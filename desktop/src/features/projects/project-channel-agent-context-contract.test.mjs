@@ -90,7 +90,7 @@ test("each send resolves the current path rather than caching an older link", ()
   assert.equal(after.localPath, "/Users/oscar/Projects/Nuncio Crew v2");
 });
 
-test("agent context names the absolute workspace but keeps cwd unchanged", () => {
+test("agent context encodes the source workspace for per-thread provisioning", () => {
   const context = projectContextForChannel(CHANNEL_ID, [project()]);
   const outgoing = appendProjectChannelAgentContext(
     "Inspect the tests.",
@@ -100,8 +100,8 @@ test("agent context names the absolute workspace but keeps cwd unchanged", () =>
   assert.match(outgoing, /Inspect the tests\./);
   assert.match(outgoing, /30617:/);
   assert.match(outgoing, /\/Users\/oscar\/Projects\/Nuncio Crew/);
-  assert.match(outgoing, /absolute path/i);
-  assert.match(outgoing, /session\/new\.cwd.+unchanged/i);
+  assert.match(outgoing, /path=%2FUsers%2Foscar%2FProjects%2FNuncio%20Crew/);
+  assert.match(outgoing, /isolated worktree per thread/i);
 });
 
 test("machine context is invisible in rendered CommonMark", () => {

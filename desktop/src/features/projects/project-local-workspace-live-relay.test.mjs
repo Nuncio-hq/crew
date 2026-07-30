@@ -173,7 +173,10 @@ test("links and relinks a Project through a real Buzz relay", {
     );
     assert.match(agentMessage, /30617:/);
     assert.match(agentMessage, /Nuncio Crew 二/);
-    assert.match(agentMessage, /session\/new\.cwd remains unchanged/);
+    assert.match(
+      agentMessage,
+      /harness provisions one isolated worktree per thread/,
+    );
     assert.doesNotMatch(agentMessage, /Đồ án/);
   } finally {
     relay.close();

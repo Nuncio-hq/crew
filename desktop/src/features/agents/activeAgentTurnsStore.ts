@@ -40,6 +40,7 @@ const PRUNE_INTERVAL_MS = 5_000;
 type ActiveTurn = {
   turnId: string;
   channelId: string;
+  conversationId: string;
   startedAt: number;
   lastActivityAt: number;
 };
@@ -48,6 +49,13 @@ type ActiveTurn = {
 export type ActiveTurnSummary = {
   channelId: string;
   anchorAt: number;
+};
+
+/** Exact target for observer controls; never collapsed by real channel. */
+export type ActiveTurnControlTarget = {
+  channelId: string;
+  conversationId: string;
+  turnId: string;
 };
 
 /** One channel with active agent work, aggregated across agents. */
@@ -83,6 +91,7 @@ const clockOffsetByAgent = new Map<string, number>();
 // Cached snapshots for useSyncExternalStore reference stability.
 // Only regenerated when the underlying turn map for an agent actually changes.
 const cachedTurnSummaries = new Map<string, ActiveTurnSummary[]>();
+const cachedControlTargets = new Map<string, ActiveTurnControlTarget[]>();
 let cachedChannelTurnSummaries: ActiveChannelTurnSummary[] | null = null;
 
 // Composite watermark per agent: the newest observer event processed, by
@@ -103,6 +112,7 @@ let pruneInterval: ReturnType<typeof setInterval> | null = null;
 
 function invalidateCache(agentKey: string) {
   cachedTurnSummaries.delete(agentKey);
+  cachedControlTargets.delete(agentKey);
   cachedChannelTurnSummaries = null;
 }
 
@@ -137,6 +147,7 @@ function parseTimestamp(timestamp: string): number | null {
 function startTurn(
   agentPubkey: string,
   channelId: string,
+  conversationId: string,
   turnId: string,
   timestamp: string,
 ) {
@@ -166,6 +177,7 @@ function startTurn(
   agentTurns.set(turnId, {
     turnId,
     channelId,
+    conversationId,
     startedAt,
     lastActivityAt: Date.now(),
   });
@@ -214,7 +226,13 @@ function resurrectTurn(agentPubkey: string, event: ObserverEvent): boolean {
     frameAt !== null && startedAtMs !== null && startedAtMs <= frameAt
       ? startedAt
       : event.timestamp;
-  startTurn(agentPubkey, event.channelId, event.turnId, safeStartedAt);
+  startTurn(
+    agentPubkey,
+    event.channelId,
+    event.conversationId ?? event.channelId,
+    event.turnId,
+    safeStartedAt,
+  );
   return true;
 }
 
@@ -351,6 +369,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
         startTurn(
           agentPubkey,
           event.channelId,
+          event.conversationId ?? event.channelId,
           event.turnId ?? `seq-${event.seq}`,
           event.timestamp,
         );
@@ -456,7 +475,35 @@ export function getActiveTurnsForAgent(
   return result;
 }
 
+export function getActiveTurnControlTargetsForAgent(
+  agentPubkey: string | null | undefined,
+): ActiveTurnControlTarget[] {
+  if (!agentPubkey) return EMPTY_CONTROL_TARGETS;
+  const key = normalizePubkey(agentPubkey);
+  const agentTurns = activeTurnsByAgent.get(key);
+  if (!agentTurns || agentTurns.size === 0) return EMPTY_CONTROL_TARGETS;
+
+  const cached = cachedControlTargets.get(key);
+  if (cached) return cached;
+
+  const result = [...agentTurns.values()]
+    .map(({ channelId, conversationId, turnId }) => ({
+      channelId,
+      conversationId,
+      turnId,
+    }))
+    .sort(
+      (a, b) =>
+        a.channelId.localeCompare(b.channelId) ||
+        a.conversationId.localeCompare(b.conversationId) ||
+        a.turnId.localeCompare(b.turnId),
+    );
+  cachedControlTargets.set(key, result);
+  return result;
+}
+
 const EMPTY_TURNS: ActiveTurnSummary[] = [];
+const EMPTY_CONTROL_TARGETS: ActiveTurnControlTarget[] = [];
 const EMPTY_CHANNEL_TURNS: ActiveChannelTurnSummary[] = [];
 
 /**
@@ -532,6 +579,16 @@ export function useActiveAgentTurns(
     [agentPubkey],
   );
 
+  return React.useSyncExternalStore(subscribeActiveAgentTurns, getSnapshot);
+}
+
+export function useActiveAgentTurnControlTargets(
+  agentPubkey: string | null | undefined,
+): ActiveTurnControlTarget[] {
+  const getSnapshot = React.useCallback(
+    () => getActiveTurnControlTargetsForAgent(agentPubkey),
+    [agentPubkey],
+  );
   return React.useSyncExternalStore(subscribeActiveAgentTurns, getSnapshot);
 }
 

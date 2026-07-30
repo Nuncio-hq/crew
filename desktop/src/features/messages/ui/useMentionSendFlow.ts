@@ -14,6 +14,7 @@ import { resolvePersonaRuntime } from "@/features/agents/lib/resolvePersonaRunti
 import { useAddChannelMembersMutation } from "@/features/channels/hooks";
 import { resolveCurrentProjectChannelAgentMessage } from "@/features/projects/lib/project-local-workspace-runtime";
 import { filterEffectiveExplicitAgentPubkeys } from "@/features/messages/lib/effectiveExplicitAgentPubkeys";
+import { resolveProjectThreadAgentRouting } from "@/features/messages/lib/projectThreadAgentRouting";
 import type { UseChannelLinksResult } from "@/features/messages/lib/useChannelLinks";
 import type { UseEmojiAutocompleteResult } from "@/features/messages/lib/useEmojiAutocomplete";
 import {
@@ -537,10 +538,20 @@ export function useMentionSendFlow({
         }
 
         try {
+          const taskRouting = resolveProjectThreadAgentRouting({
+            content: finalContent,
+            explicitAgentPubkeys: effectiveExplicitAgentPubkeys,
+            isThreadReply: draft.capturedThreadContext !== null,
+            mentionPubkeys,
+          });
+          const routedOutgoingTags = mergeOutgoingTagsWithReferenceMentions(
+            outgoingTags,
+            taskRouting.referencePubkeys,
+          );
           await onSendRef.current(
             finalContent,
-            mentionPubkeys,
-            outgoingTags,
+            taskRouting.mentionPubkeys,
+            routedOutgoingTags,
             sendChannelId,
             draft.capturedThreadContext,
           );

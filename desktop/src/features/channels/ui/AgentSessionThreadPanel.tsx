@@ -9,6 +9,7 @@ import {
 import { toast } from "sonner";
 
 import { useAgentWorking } from "@/features/agents/agentWorkingSignal";
+import { useActiveAgentTurnControlTargets } from "@/features/agents/activeAgentTurnsStore";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 import {
   mergeObserverEventWindows,
@@ -103,7 +104,18 @@ export function AgentSessionThreadPanel({
     agent.pubkey,
     sessionChannelId,
   );
-  const canStopCurrentTurn = isWorking && canInterruptTurn;
+  const activeControlTargets = useActiveAgentTurnControlTargets(agent.pubkey);
+  const scopedControlTargets = React.useMemo(
+    () =>
+      sessionChannelId
+        ? activeControlTargets.filter(
+            (target) => target.channelId === sessionChannelId,
+          )
+        : activeControlTargets,
+    [activeControlTargets, sessionChannelId],
+  );
+  const canStopCurrentTurn =
+    isWorking && canInterruptTurn && scopedControlTargets.length > 0;
   useEscapeKey(onClose, isOverlay || isSinglePanelView);
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -239,13 +251,20 @@ export function AgentSessionThreadPanel({
     : "All channels";
   const animateActivity = useTranscriptAnimationEnabled();
   const showTimestamps = useTranscriptTimestampsEnabled();
-  async function handleInterruptTurn() {
-    if (!channel) {
+  async function handleInterruptTurn(
+    target: (typeof scopedControlTargets)[number] | undefined,
+  ) {
+    if (!target) {
       return;
     }
 
     try {
-      await cancelManagedAgentTurn(agent.pubkey, channel.id);
+      await cancelManagedAgentTurn(
+        agent.pubkey,
+        target.channelId,
+        target.conversationId,
+        target.turnId,
+      );
       toast.success(
         `Stop signal sent to ${agent.name}. It may take a moment to respond.`,
       );
@@ -374,35 +393,59 @@ export function AgentSessionThreadPanel({
               />
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="items-start gap-3"
-              data-testid="agent-session-stop-turn"
-              disabled={!canStopCurrentTurn}
-              onSelect={() => {
-                void handleInterruptTurn();
-              }}
-              title={
-                canStopCurrentTurn
-                  ? "Interrupt the current ACP turn without stopping the agent process."
-                  : isWorking
-                    ? "Only locally managed agents can be interrupted from this community."
-                    : "Available while the agent is working."
-              }
-            >
-              <Octagon className="mt-0.5 h-4 w-4 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">
-                  Stop current turn
-                </span>
-                {!canStopCurrentTurn ? (
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {isWorking
-                      ? "Only available for locally managed agents."
-                      : "Available while the agent is working."}
+            {scopedControlTargets.length > 1 && canInterruptTurn ? (
+              scopedControlTargets.map((target, index) => (
+                <DropdownMenuItem
+                  className="items-start gap-3"
+                  data-testid={`agent-session-stop-turn-${target.turnId}`}
+                  key={target.turnId}
+                  onSelect={() => {
+                    void handleInterruptTurn(target);
+                  }}
+                  title="Interrupt this exact ACP turn without stopping the agent process."
+                >
+                  <Octagon className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium">
+                      Stop active turn {index + 1}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      Thread {target.conversationId.slice(0, 8)}
+                    </span>
                   </span>
-                ) : null}
-              </span>
-            </DropdownMenuItem>
+                </DropdownMenuItem>
+              ))
+            ) : (
+              <DropdownMenuItem
+                className="items-start gap-3"
+                data-testid="agent-session-stop-turn"
+                disabled={!canStopCurrentTurn}
+                onSelect={() => {
+                  void handleInterruptTurn(scopedControlTargets[0]);
+                }}
+                title={
+                  canStopCurrentTurn
+                    ? "Interrupt the current ACP turn without stopping the agent process."
+                    : isWorking
+                      ? "Only locally managed agents can be interrupted from this community."
+                      : "Available while the agent is working."
+                }
+              >
+                <Octagon className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">
+                    Stop current turn
+                  </span>
+                  {!canStopCurrentTurn ? (
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {isWorking
+                        ? "Only available for locally managed agents."
+                        : "Available while the agent is working."}
+                    </span>
+                  ) : null}
+                </span>
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}

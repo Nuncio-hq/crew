@@ -89,6 +89,21 @@ pub struct FlushBatch {
     pub cancel_reason: Option<CancelReason>,
 }
 
+impl FlushBatch {
+    /// Real NIP-29 channel for relay operations.
+    ///
+    /// `channel_id` is the scheduler identity and may represent a thread.
+    /// Production events carry the real channel in their `h` tag; the fallback
+    /// preserves compatibility with tests and older event producers.
+    pub fn routing_channel_id(&self) -> Uuid {
+        self.events
+            .last()
+            .or_else(|| self.cancelled_events.last())
+            .and_then(|event| crate::conversation::routing_channel_id(&event.event))
+            .unwrap_or(self.channel_id)
+    }
+}
+
 /// Per-channel event queue with per-channel in-flight enforcement.
 ///
 /// # State Machine
@@ -638,6 +653,41 @@ impl EventQueue {
         // will expire (auto-cleaning the channel). Removing deadlines without
         // removing in_flight_channels would disable auto-expiry and leave a
         // wedged task permanently blocking the channel.
+        ids
+    }
+
+    /// Drop queued conversations belonging to a real NIP-29 channel.
+    ///
+    /// Conversation-scoped queue keys are intentionally opaque UUIDs, so
+    /// membership cleanup resolves ownership from each event's `h` tag.
+    pub fn drain_routing_channel(&mut self, routing_channel_id: Uuid) -> Vec<String> {
+        let mut conversations = HashSet::new();
+        for (conversation, events) in &self.queues {
+            if events.iter().any(|queued| {
+                crate::conversation::routing_channel_id(&queued.event) == Some(routing_channel_id)
+            }) {
+                conversations.insert(*conversation);
+            }
+        }
+        for (conversation, events) in &self.cancelled_batches {
+            if events.iter().any(|queued| {
+                crate::conversation::routing_channel_id(&queued.event) == Some(routing_channel_id)
+            }) {
+                conversations.insert(*conversation);
+            }
+        }
+        for (conversation, events) in &self.withheld_native_steer {
+            if events.iter().any(|queued| {
+                crate::conversation::routing_channel_id(&queued.event) == Some(routing_channel_id)
+            }) {
+                conversations.insert(*conversation);
+            }
+        }
+
+        let mut ids = Vec::new();
+        for conversation in conversations {
+            ids.extend(self.drain_channel(conversation));
+        }
         ids
     }
 
@@ -1404,6 +1454,7 @@ pub(crate) fn base_section(base_prompt: &str) -> String {
 /// For agents with `protocol_version >= 2`, base_prompt and system_prompt are
 /// delivered via the system role in `session/new` and omitted from this message.
 pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<String> {
+    let routing_channel_id = batch.routing_channel_id();
     // Scope is always derived from the LAST event in the batch — that's the
     // one the agent is responding to. Thread/DM context is supplementary info
     // included alongside, not a scope override. This prevents mixed batches
@@ -1479,7 +1530,7 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
         )
     };
     sections.push(format_context_hints(
-        batch.channel_id,
+        routing_channel_id,
         args.channel_info,
         &thread_tags,
         is_dm,
@@ -1509,7 +1560,12 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
                 "\n\n--- Event {} ({}) ---\n{}",
                 i + 1,
                 be.prompt_tag,
-                format_event_block(batch.channel_id, args.channel_info, be, args.profile_lookup)
+                format_event_block(
+                    routing_channel_id,
+                    args.channel_info,
+                    be,
+                    args.profile_lookup
+                )
             ));
         }
         sections.push(s);
@@ -1523,13 +1579,23 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
                 "{}\n\n--- Event 1 ({}) ---\n{}",
                 framing.new_header_single,
                 be.prompt_tag,
-                format_event_block(batch.channel_id, args.channel_info, be, args.profile_lookup)
+                format_event_block(
+                    routing_channel_id,
+                    args.channel_info,
+                    be,
+                    args.profile_lookup
+                )
             )
         } else {
             format!(
                 "[Buzz event: {}]\n{}",
                 be.prompt_tag,
-                format_event_block(batch.channel_id, args.channel_info, be, args.profile_lookup)
+                format_event_block(
+                    routing_channel_id,
+                    args.channel_info,
+                    be,
+                    args.profile_lookup
+                )
             )
         }
     } else {
@@ -1548,7 +1614,12 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
                 "\n\n--- Event {} ({}) ---\n{}",
                 i + 1,
                 be.prompt_tag,
-                format_event_block(batch.channel_id, args.channel_info, be, args.profile_lookup)
+                format_event_block(
+                    routing_channel_id,
+                    args.channel_info,
+                    be,
+                    args.profile_lookup
+                )
             ));
         }
         s

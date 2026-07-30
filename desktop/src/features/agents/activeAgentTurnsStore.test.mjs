@@ -5,6 +5,7 @@ import {
   syncAgentTurnsFromEvents,
   syncActiveAgentTurnsFromObserver,
   getActiveTurnsForAgent,
+  getActiveTurnControlTargetsForAgent,
   getActiveTurnsByChannel,
   resetActiveAgentTurnsStore,
   subscribeActiveAgentTurns,
@@ -84,6 +85,42 @@ describe("activeAgentTurnsStore", () => {
       assert.equal(channels.size, 1);
       assert.ok(channels.has("c1"));
     });
+  });
+
+  it("keeps exact control targets for concurrent threads in one channel", () => {
+    syncAgentTurnsFromEvents(AGENT, [
+      makeEvent({
+        seq: 1,
+        channelId: "shared-channel",
+        conversationId: "thread-a",
+        turnId: "turn-a",
+      }),
+      makeEvent({
+        seq: 2,
+        timestamp: "2024-01-01T00:00:01Z",
+        channelId: "shared-channel",
+        conversationId: "thread-b",
+        turnId: "turn-b",
+      }),
+    ]);
+
+    assert.deepEqual(getActiveTurnControlTargetsForAgent(AGENT), [
+      {
+        channelId: "shared-channel",
+        conversationId: "thread-a",
+        turnId: "turn-a",
+      },
+      {
+        channelId: "shared-channel",
+        conversationId: "thread-b",
+        turnId: "turn-b",
+      },
+    ]);
+    assert.equal(
+      getActiveTurnsForAgent(AGENT).length,
+      1,
+      "visual channel badge remains aggregated",
+    );
   });
 
   describe("seq restart detection", () => {

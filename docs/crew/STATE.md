@@ -24,21 +24,21 @@ In scope:
 - Project create and update through the existing kind `30617` relay lifecycle;
 - folder-first `+ → Repository` creation in the Projects page;
 - canonical `buzz-channel` binding and relay acknowledgement;
-- Project-channel context containing the absolute path;
+- Project-channel context containing the absolute source path;
+- per-thread ACP scheduling and isolated Git worktree cwd;
+- ordered multi-agent Project task routing through normal composer mentions;
 - one-machine, one-manager use;
 - provider compatibility through existing ACP paths.
 
 Out of scope for this slice:
 
-- changing `session/new.cwd`;
-- a per-Project Rust dispatcher;
-- Git repository or worktree management;
+- a per-Project Rust dispatcher outside the ACP harness;
 - clone, init, fetch, pull, push, branch, or remote validation;
 - commit-diff loading for an exact linked workspace;
 - board implementation;
 - mobile;
 - multi-user local-path sharing;
-- final mention model syntax.
+- automatic semantic branch renaming after an agent proposes a human title;
 - Windows drive and UNC workspace paths.
 
 ## Local desktop build
@@ -93,7 +93,8 @@ Out of scope for this slice:
 
 ## Verified evidence
 
-- `buzz-acp` currently captures one process cwd for its prompt context.
+- `buzz-acp` uses the process cwd for ordinary sessions and one validated,
+  deterministic worktree cwd for each owner-authored Project task thread.
 - Project announcements already support `buzz-channel` binding.
 - `buzz-dev-mcp` accepts absolute paths and shell `workdir`.
 - Codex, Claude Code, Cursor, and Devin all completed an isolated absolute
@@ -154,8 +155,18 @@ publishing a new real relay event, which was intentionally not done.
   checkout collision isolation, empty-state create access, Markdown isolation,
   live relay reconstruction, exact local path resolution, mismatch rejection,
   no fallback, and truthful Local source state.
-- Latest full desktop suite: `3863` passed, `1` gated live-relay test skipped,
+- Latest full desktop suite: `3873` passed, `1` gated live-relay test skipped,
   zero failed.
+- Full `just ci` passed on the thread-worktree orchestration branch, including
+  Rust workspace tests, `1905` native desktop tests (`14` ignored), `906`
+  mobile tests (`1` skipped), frontend builds, lint, typecheck, and formatting.
+- Focused browser verification passed `62` Project composer, mention,
+  messaging, thread-anchor, and boot-flow scenarios against the E2E bridge.
+- Exact observer controls preserve `conversationId` and `turnId`; concurrent
+  same-channel turns can be stopped independently, and unconfirmed model
+  switches no longer surface as successful.
+- The local macOS arm64 bundle was built and ad-hoc signed at
+  `desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/NuncioCrew Local.app`.
 - Earlier focused live relay test: `1/1` passed with an isolated Buzz relay.
 - Typecheck, file-size gate, Biome checks, production build, and
   `git diff --check` passed.
