@@ -73,10 +73,11 @@ fn family_adapter_installed(modules: &std::path::Path, family: &AdapterPlatformF
         .any(|name| scope.join(name).is_dir())
 }
 
-/// Runtime ids whose adapter (or stale optional) is present under `prefix`.
+/// Runtime ids whose **adapter package** is present under `prefix`.
 ///
-/// Used so a prefix purge can reinstall every adapter it removed — not only the
-/// runtime the user clicked Install for.
+/// Orphan optional packages alone do not count — phase 02 treats "no adapters
+/// installed" as a normal state, and reinstall must not resurrect a runtime the
+/// user previously removed just because a stale optional lingered.
 pub(crate) fn managed_npm_runtime_ids_present_in_prefix(
     prefix: &std::path::Path,
 ) -> Vec<&'static str> {
@@ -86,19 +87,17 @@ pub(crate) fn managed_npm_runtime_ids_present_in_prefix(
     }
     ADAPTER_PLATFORM_FAMILIES
         .iter()
-        .filter(|family| {
-            family_adapter_installed(&modules, family)
-                || !list_optionals_for_prefix(&modules, family.optional_prefix).is_empty()
-        })
+        .filter(|family| family_adapter_installed(&modules, family))
         .map(|family| family.runtime_id)
         .collect()
 }
 
 /// Pure directory-fixture check: does `prefix` hold adapters for `expected_platform`?
 ///
-/// Validates each adapter family independently. Any installed family missing its
-/// expected optional package, or carrying a wrong-platform optional, is a
-/// `Mismatch` — a correct Codex tree cannot mask a wrong Claude tree.
+/// Validates each adapter family that has a real adapter package independently.
+/// Orphan optionals (no adapter) are ignored — that is `NoAdaptersInstalled`,
+/// not a purge trigger. Any installed family missing its expected optional, or
+/// carrying a wrong-platform optional, is a `Mismatch`.
 pub(crate) fn managed_adapter_arch_matches(
     prefix: &std::path::Path,
     expected_platform: &str,
@@ -108,32 +107,25 @@ pub(crate) fn managed_adapter_arch_matches(
         return AdapterArchCheck::NoAdaptersInstalled;
     }
 
-    let mut saw_family = false;
+    let mut saw_adapter_family = false;
     let mut mismatch = false;
 
     for family in ADAPTER_PLATFORM_FAMILIES {
-        let adapter_installed = family_adapter_installed(&modules, family);
-        let optionals = list_optionals_for_prefix(&modules, family.optional_prefix);
-        if !adapter_installed && optionals.is_empty() {
+        if !family_adapter_installed(&modules, family) {
             continue;
         }
-        saw_family = true;
+        saw_adapter_family = true;
 
+        let optionals = list_optionals_for_prefix(&modules, family.optional_prefix);
         let expected = format!("{}{expected_platform}", family.optional_prefix);
         let has_expected = optionals.iter().any(|p| p == &expected);
         let has_wrong = optionals.iter().any(|p| p != &expected);
-
-        if adapter_installed {
-            if !has_expected || has_wrong {
-                mismatch = true;
-            }
-        } else if has_wrong || !has_expected {
-            // Orphan/stale optionals without the adapter package — repair.
+        if !has_expected || has_wrong {
             mismatch = true;
         }
     }
 
-    if !saw_family {
+    if !saw_adapter_family {
         AdapterArchCheck::NoAdaptersInstalled
     } else if mismatch {
         AdapterArchCheck::Mismatch
@@ -587,13 +579,17 @@ mod tests {
     }
 
     #[test]
-    fn adapter_arch_stale_wrong_optional_without_adapter_is_mismatch() {
+    fn adapter_arch_stale_orphan_optional_without_adapter_is_no_adapters() {
         let temp = tempfile::tempdir().unwrap();
         let modules = npm_global_node_modules(temp.path());
         plant_optional(&modules, "@openai/codex-darwin-x64");
         assert_eq!(
             managed_adapter_arch_matches(temp.path(), "darwin-arm64"),
-            AdapterArchCheck::Mismatch
+            AdapterArchCheck::NoAdaptersInstalled
+        );
+        assert!(
+            managed_npm_runtime_ids_present_in_prefix(temp.path()).is_empty(),
+            "orphan optionals must not enqueue phantom reinstalls"
         );
     }
 

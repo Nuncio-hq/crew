@@ -18,6 +18,16 @@ fn active_installs() -> &'static std::sync::Mutex<std::collections::HashSet<Stri
     ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// Serialize all managed-npm inspect / purge / install / sibling-reinstall work
+/// that touches the shared `node-tools/<platform>` prefix. Per-runtime
+/// `active_installs` alone is not enough — Codex and Claude can otherwise race
+/// a purge against each other's npm install.
+fn managed_npm_prefix_lock() -> &'static std::sync::Mutex<()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 /// Returns the adapter install commands that `install_acp_runtime_blocking` would
 /// run for `runtime_id` given a resolved adapter binary at `adapter_path` (or
 /// `None` if none was found).
@@ -114,6 +124,10 @@ fn run_adapter_commands(
 /// requested runtime's install — the user asked to install one runtime, and a
 /// sibling network blip must not report that install as failed. Silent loss is
 /// still forbidden: every purged sibling gets a success or a surfaced error.
+///
+/// When managed Node is not ready (e.g. primary Node install failed after purge),
+/// each sibling still gets a failure step — we do not attempt npm against a
+/// missing/broken managed runtime.
 fn reinstall_purged_sibling_adapters(
     requested_runtime_id: &str,
     purged_runtime_ids: &[&str],
@@ -121,6 +135,7 @@ fn reinstall_purged_sibling_adapters(
 ) {
     let siblings =
         sibling_runtimes_to_reinstall_after_purge(purged_runtime_ids, requested_runtime_id);
+    let managed_node_ready = crate::managed_agents::managed_node_runtime_probe_ok();
     for sibling_id in siblings {
         let Some(sibling) = crate::managed_agents::known_acp_runtime_exact(sibling_id) else {
             continue;
@@ -133,6 +148,14 @@ fn reinstall_purged_sibling_adapters(
             .iter()
             .any(|cmd| is_npm_global_install(cmd))
             && managed_node_runtime_supported();
+        if use_managed_npm && !managed_node_ready {
+            steps.push(sibling_adapter_reinstall_failure_step(
+                sibling_id,
+                "reinstall after architecture repair",
+                "managed Node.js runtime is not ready after architecture repair".to_string(),
+            ));
+            continue;
+        }
         for cmd in sibling.adapter_install_commands {
             let planned = match if use_managed_npm {
                 managed_npm_command(cmd)
@@ -233,6 +256,18 @@ pub(super) fn install_acp_runtime_blocking(
         .any(|cmd| is_npm_global_install(cmd))
         && managed_node_runtime_supported();
 
+    // Hold the prefix lock for the entire managed-npm critical section so a
+    // concurrent Install on another managed runtime cannot purge mid-npm.
+    let _managed_npm_guard = if catalog_uses_managed_npm {
+        Some(
+            managed_npm_prefix_lock()
+                .lock()
+                .map_err(|_| "managed npm prefix lock poisoned".to_string())?,
+        )
+    } else {
+        None
+    };
+
     // Arch validation must run even when plan_adapter_install returns None
     // (adapter present + current). A current shim with wrong-arch optional
     // packages is exactly the permanently-broken state from issue #4.
@@ -271,30 +306,47 @@ pub(super) fn install_acp_runtime_blocking(
             adapter_probe_path.as_deref(),
         )
     };
+
+    // After a prefix purge, never early-return before sibling repair accounting.
+    // Primary failure is recorded, siblings still get attempt/report, and
+    // top-level success follows the primary only.
+    let mut primary_failed = false;
     if let Some(cmds) = planned_cmds {
         let use_managed_npm =
             cmds.iter().any(|cmd| is_npm_global_install(cmd)) && managed_node_runtime_supported();
         if use_managed_npm {
             if let Err(step) = ensure_managed_node_runtime_blocking() {
                 steps.push(*step);
-                return Ok(failed_install(steps));
+                primary_failed = true;
             }
         }
 
-        if run_adapter_commands(&cmds, use_managed_npm, "adapter", &mut steps).is_err() {
-            return Ok(failed_install(steps));
+        if !primary_failed
+            && run_adapter_commands(&cmds, use_managed_npm, "adapter", &mut steps).is_err()
+        {
+            primary_failed = true;
         }
 
-        if use_managed_npm {
+        if !primary_failed && use_managed_npm {
             reclaim_legacy_unscoped_npm_prefix();
         }
     }
 
-    // After a prefix purge, rebuild every other adapter that was removed.
+    // After a prefix purge, rebuild every other adapter that was removed —
+    // including when the primary Node/adapter step failed above.
     // Sibling failures are visible but must not flip the requested runtime to
     // success:false (post_install_verification still gates the primary).
     if force_adapter_reinstall {
         reinstall_purged_sibling_adapters(runtime_id, &purged_runtime_ids, &mut steps);
+    }
+
+    if primary_failed {
+        return Ok(InstallRuntimeResult {
+            success: false,
+            steps,
+            restarted_count: 0,
+            failed_restart_count: 0,
+        });
     }
 
     let primary_ok_before_verify = steps
@@ -453,5 +505,19 @@ mod tests {
             sibling_runtimes_to_reinstall_after_purge(&["codex"], "codex"),
             Vec::<&str>::new()
         );
+    }
+
+    #[test]
+    fn managed_npm_prefix_lock_is_exclusive() {
+        // Hold briefly and prove re-entrant try_lock fails. Do not assert the
+        // unlocked state afterward — parallel tests may acquire immediately.
+        let guard = managed_npm_prefix_lock()
+            .lock()
+            .expect("prefix lock must not be poisoned");
+        assert!(
+            managed_npm_prefix_lock().try_lock().is_err(),
+            "second acquirer must block while install holds the prefix lock"
+        );
+        drop(guard);
     }
 }

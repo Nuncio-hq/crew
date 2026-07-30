@@ -167,9 +167,26 @@ pub(crate) fn path_is_under_managed_npm_prefix(path: &Path) -> bool {
     path_is_within(path, &prefix)
 }
 
-/// Probe managed Node with `--version` and require the pinned version string.
-/// Shared by install readiness, PATH contribution, and managed-adapter spawn.
-pub(crate) fn managed_node_runtime_probe_ok() -> bool {
+/// Positive-only memo for managed-Node readiness.
+///
+/// `Some(())` means a prior probe returned true. `None` means "unknown / not
+/// ready" — never store `false`, or a pre-install miss sticks through the
+/// install path and breaks `ensure_managed_node_runtime_blocking`.
+fn managed_node_probe_ready_cache() -> &'static std::sync::Mutex<Option<()>> {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<Option<()>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Drop the positive managed-Node probe memo so the next call re-spawns `--version`.
+/// Invoked from `clear_resolve_cache` and immediately after a successful Node install.
+pub(crate) fn clear_managed_node_probe_cache() {
+    if let Ok(mut guard) = managed_node_probe_ready_cache().lock() {
+        *guard = None;
+    }
+}
+
+fn probe_managed_node_runtime_uncached() -> bool {
     let Some(node) = buzz_managed_node_bin_path() else {
         return false;
     };
@@ -187,6 +204,28 @@ pub(crate) fn managed_node_runtime_probe_ok() -> bool {
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim() == BUZZ_MANAGED_NODE_VERSION)
         .unwrap_or(false)
+}
+
+/// Probe managed Node with `--version` and require the pinned version string.
+/// Shared by install readiness, PATH contribution, and managed-adapter spawn.
+///
+/// Only `true` is memoized. A not-ready result is always re-probed so install
+/// can observe the tree flipping from missing → ready in the same call stack.
+/// Hot PATH builds after Node is ready pay one spawn for the process lifetime
+/// (until `clear_managed_node_probe_cache`).
+pub(crate) fn managed_node_runtime_probe_ok() -> bool {
+    if let Ok(guard) = managed_node_probe_ready_cache().lock() {
+        if guard.is_some() {
+            return true;
+        }
+    }
+    let ok = probe_managed_node_runtime_uncached();
+    if ok {
+        if let Ok(mut guard) = managed_node_probe_ready_cache().lock() {
+            *guard = Some(());
+        }
+    }
+    ok
 }
 
 /// Fail loudly when a managed adapter would run without a ready managed Node.
@@ -457,6 +496,67 @@ mod tests {
         assert!(
             require_managed_node_for_adapter(Path::new("/opt/homebrew/bin/claude-agent-acp"))
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn managed_node_probe_caches_only_true_never_false() {
+        clear_managed_node_probe_cache();
+        let ready = managed_node_runtime_probe_ok();
+        let cached = managed_node_probe_ready_cache()
+            .lock()
+            .map(|g| g.is_some())
+            .unwrap_or(false);
+        if ready {
+            assert!(
+                cached,
+                "ready probe must memoize so PATH builds avoid re-spawn"
+            );
+            assert!(managed_node_runtime_probe_ok());
+            clear_managed_node_probe_cache();
+            assert!(managed_node_probe_ready_cache()
+                .lock()
+                .map(|g| g.is_none())
+                .unwrap_or(false));
+        } else {
+            assert!(
+                !cached,
+                "not-ready must never be memoized — install path must re-probe after download"
+            );
+            // Second call still not cached after another miss.
+            assert!(!managed_node_runtime_probe_ok());
+            assert!(managed_node_probe_ready_cache()
+                .lock()
+                .map(|g| g.is_none())
+                .unwrap_or(false));
+        }
+    }
+
+    /// Policy gate for ensure_managed_node_runtime_blocking: miss → install →
+    /// ready must stay observable. Cache type is `Option<()>` (true-only); there
+    /// is no representation for a stuck false.
+    #[test]
+    fn managed_node_probe_false_then_true_transition_is_observable() {
+        clear_managed_node_probe_cache();
+        assert!(
+            managed_node_probe_ready_cache()
+                .lock()
+                .map(|g| g.is_none())
+                .unwrap_or(false),
+            "pre-install miss leaves cache empty"
+        );
+        // Simulate post-install success memo (install path stores true only).
+        if let Ok(mut guard) = managed_node_probe_ready_cache().lock() {
+            *guard = Some(());
+        }
+        assert!(managed_node_runtime_probe_ok());
+        clear_managed_node_probe_cache();
+        assert!(
+            managed_node_probe_ready_cache()
+                .lock()
+                .map(|g| g.is_none())
+                .unwrap_or(false),
+            "post-install invalidate must clear so the next probe is fresh"
         );
     }
 

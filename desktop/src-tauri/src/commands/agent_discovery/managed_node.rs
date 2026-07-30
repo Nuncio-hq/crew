@@ -141,6 +141,9 @@ pub(super) fn ensure_managed_node_runtime_blocking() -> Result<(), Box<InstallSt
 
     install_managed_node_runtime(&root, artifact)
         .map_err(|err| Box::new(managed_node_failed_step(err)))?;
+    // Probe memo is positive-only, but still invalidate so PATH/build callers
+    // that raced the download re-observe the new tree immediately.
+    crate::managed_agents::clear_managed_node_probe_cache();
     if managed_node_runtime_ready() {
         Ok(())
     } else {
