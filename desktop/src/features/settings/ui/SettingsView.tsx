@@ -301,6 +301,12 @@ export function SettingsView({
               data-testid="settings-version"
             >
               v{appVersion}
+              {import.meta.env.VITE_NUNCIO_CREW_CHANNEL === "local" ? (
+                <>
+                  {" "}
+                  · <span>Local</span>
+                </>
+              ) : null}
             </p>
           ) : null}
         </SidebarFooter>

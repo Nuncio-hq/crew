@@ -5,8 +5,8 @@ import { usePreviewFeatureWarning } from "@/shared/features";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
 
 const ProjectsScreen = React.lazy(async () => {
-  const module = await import("@/features/projects/ui/ProjectsScreen");
-  return { default: module.ProjectsScreen };
+  const module = await import("@/features/projects/ui/crew-projects-screen");
+  return { default: module.CrewProjectsScreen };
 });
 
 export const Route = createFileRoute("/projects")({

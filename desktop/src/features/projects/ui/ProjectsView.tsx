@@ -37,7 +37,10 @@ import {
   ProjectsToolbar,
   ProjectsViewModeToggle,
 } from "@/features/projects/ui/ProjectsToolbar";
-import { hasLocalCheckout } from "@/features/projects/lib/projectLocalRepos";
+import {
+  hasLocalCheckout,
+  isProjectLocal,
+} from "@/features/projects/lib/projectLocalRepos";
 import {
   getProjectUpdatedAt,
   isProjectMine,
@@ -97,7 +100,11 @@ const ISSUE_SCOPE_OPTIONS: Array<{
   { label: "My Issues", value: "mine" },
 ];
 
-export function ProjectsView() {
+export function ProjectsView({
+  onCreateRepository,
+}: {
+  onCreateRepository?: () => void;
+} = {}) {
   const { goProject } = useAppNavigation();
   const { activeCommunity } = useCommunities();
   const scrollIdleTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
@@ -279,7 +286,7 @@ export function ProjectsView() {
   // "Local" filter actually lists, not every directory in the repos folder.
   const localProjectCount = React.useMemo(
     () =>
-      projects.filter((project) => hasLocalCheckout(project, localRepoNames))
+      projects.filter((project) => isProjectLocal(project, localRepoNames))
         .length,
     [localRepoNames, projects],
   );
@@ -298,7 +305,7 @@ export function ProjectsView() {
         if (repositoryScope === "mine")
           return isProjectMine(project, currentPubkey);
         if (repositoryScope === "local")
-          return hasLocalCheckout(project, localRepoNames);
+          return isProjectLocal(project, localRepoNames);
         if (filter === "agents") {
           return projectHasAgent(project, people, profiles);
         }
@@ -447,10 +454,6 @@ export function ProjectsView() {
     );
   }
 
-  if (projects.length === 0) {
-    return <EmptyState />;
-  }
-
   const repositoryItems =
     visibleProjects.length === 0 ? (
       <EmptyFilteredState />
@@ -463,11 +466,16 @@ export function ProjectsView() {
       >
         {visibleProjects.map((project) => {
           const summary = activitySummariesQuery.data?.[project.repoAddress];
+          const hasLocal = hasLocalCheckout(project, localRepoNames);
           return (
             <ProjectGridCard
               canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
+              canOpenTerminal={
+                hasLocal ||
+                (!project.localWorkspacePath && Boolean(project.cloneUrls[0]))
+              }
               deleteDisabled={deleteProjectMutation.isPending}
-              hasLocal={hasLocalCheckout(project, localRepoNames)}
+              hasLocal={hasLocal}
               key={project.id}
               onDelete={handleDeleteProject}
               onOpen={handleOpenProject}
@@ -484,11 +492,16 @@ export function ProjectsView() {
       <div className={PROJECT_LIST_CONTAINER_CLASS}>
         {visibleProjects.map((project) => {
           const summary = activitySummariesQuery.data?.[project.repoAddress];
+          const hasLocal = hasLocalCheckout(project, localRepoNames);
           return (
             <ProjectListRow
               canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
+              canOpenTerminal={
+                hasLocal ||
+                (!project.localWorkspacePath && Boolean(project.cloneUrls[0]))
+              }
               deleteDisabled={deleteProjectMutation.isPending}
-              hasLocal={hasLocalCheckout(project, localRepoNames)}
+              hasLocal={hasLocal}
               key={project.id}
               onDelete={handleDeleteProject}
               onOpen={handleOpenProject}
@@ -564,7 +577,13 @@ export function ProjectsView() {
     <ProjectsCreateMenu
       onCreateIssue={() => setCreateIssueOpen(true)}
       onCreatePullRequest={() => setCreatePullRequestOpen(true)}
-      onCreateRepository={() => setCreateProjectOpen(true)}
+      onCreateRepository={() => {
+        if (onCreateRepository) {
+          onCreateRepository?.();
+          return;
+        }
+        setCreateProjectOpen(true);
+      }}
     />
   );
 
@@ -646,7 +665,9 @@ export function ProjectsView() {
           </div>
           <div className="mx-auto w-full max-w-6xl">
             <div className="w-full min-w-0 pb-4 pt-4">
-              {filter === "all" ? (
+              {projects.length === 0 ? (
+                <EmptyState />
+              ) : filter === "all" ? (
                 <ProjectsOverviewPanel
                   localRepositoryCount={localProjectCount}
                   metadata={

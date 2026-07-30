@@ -232,6 +232,12 @@ export function useMergeProjectPullRequestMutation(
     }: {
       pullRequest: ProjectPullRequest;
     }) => {
+      if (
+        project?.localWorkspacePath ||
+        project?.localWorkspaceStatus === "invalid"
+      ) {
+        throw new Error("Linked workspaces are read-only.");
+      }
       if (!project?.cloneUrls[0]) throw new Error("No project selected.");
       if (!pullRequest.branchName || !pullRequest.commit) {
         throw new Error("Pull request branch information is incomplete.");

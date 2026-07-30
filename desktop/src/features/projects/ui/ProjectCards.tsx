@@ -314,6 +314,7 @@ function ProjectCardButton({
 function ProjectActionsMenu({
   project,
   hasLocal,
+  canOpenTerminal,
   canDelete,
   disabled,
   onDelete,
@@ -321,6 +322,7 @@ function ProjectActionsMenu({
 }: {
   project: Project;
   hasLocal: boolean;
+  canOpenTerminal: boolean;
   canDelete: boolean;
   disabled: boolean;
   onDelete: (project: Project) => Promise<void> | void;
@@ -331,16 +333,18 @@ function ProjectActionsMenu({
   return (
     <AlertDialog onOpenChange={setConfirmOpen} open={confirmOpen}>
       <ProjectListRowMenu label={`More options for ${project.name}`}>
-        <DropdownMenuItem
-          onSelect={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            void onOpenTerminal(project);
-          }}
-        >
-          <TerminalSquare className="h-4 w-4" />
-          {projectTerminalLabel(hasLocal)}
-        </DropdownMenuItem>
+        {canOpenTerminal ? (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void onOpenTerminal(project);
+            }}
+          >
+            <TerminalSquare className="h-4 w-4" />
+            {projectTerminalLabel(hasLocal)}
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem
           className="text-destructive focus:text-destructive"
           disabled={!canDelete || disabled}
@@ -400,6 +404,7 @@ type ProjectItemProps = {
   profiles?: UserProfileLookup;
   summary: ProjectActivitySummary | undefined;
   hasLocal: boolean;
+  canOpenTerminal: boolean;
   canDelete: boolean;
   deleteDisabled: boolean;
   onDelete: (project: Project) => Promise<void> | void;
@@ -413,6 +418,7 @@ export function ProjectGridCard({
   profiles,
   summary,
   hasLocal,
+  canOpenTerminal,
   canDelete,
   deleteDisabled,
   onDelete,
@@ -444,6 +450,7 @@ export function ProjectGridCard({
             />
             <ProjectActionsMenu
               canDelete={canDelete}
+              canOpenTerminal={canOpenTerminal}
               disabled={deleteDisabled}
               hasLocal={hasLocal}
               onDelete={onDelete}
@@ -484,6 +491,7 @@ export function ProjectListRow({
   profiles,
   summary,
   hasLocal,
+  canOpenTerminal,
   canDelete,
   deleteDisabled,
   onDelete,
@@ -546,6 +554,7 @@ export function ProjectListRow({
           </div>
           <ProjectActionsMenu
             canDelete={canDelete}
+            canOpenTerminal={canOpenTerminal}
             disabled={deleteDisabled}
             hasLocal={hasLocal}
             onDelete={onDelete}

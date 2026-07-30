@@ -77,6 +77,8 @@ export function PullRequestReviewCard({
   const canApprove = canReview && !hasApproved;
   const canMerge =
     (isOwner || isManagedAgentOwner) &&
+    !project.localWorkspacePath &&
+    project.localWorkspaceStatus !== "invalid" &&
     pullRequest.status === "Open" &&
     Boolean(pullRequest.branchName && pullRequest.commit);
 

@@ -1,0 +1,322 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import test from "node:test";
+import { pathToFileURL, fileURLToPath } from "node:url";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const workflowPath = resolve(
+  repoRoot,
+  ".github/workflows/nuncio-crew-release.yml",
+);
+const channelHelperPath = resolve(
+  repoRoot,
+  "desktop/scripts/nuncio-crew-release-channel.mjs",
+);
+const manifestHelperPath = resolve(
+  repoRoot,
+  "desktop/scripts/generate-nuncio-crew-latest-json.mjs",
+);
+const cargoLockHelperPath = resolve(
+  repoRoot,
+  "desktop/scripts/sync-nuncio-crew-cargo-lock-version.mjs",
+);
+const channelAdvanceHelperPath = resolve(
+  repoRoot,
+  "desktop/scripts/assert-nuncio-crew-channel-advance.mjs",
+);
+const updaterKeyHelperPath = resolve(
+  repoRoot,
+  "desktop/scripts/verify-nuncio-crew-updater-key-id.mjs",
+);
+const upstreamPinPath = resolve(repoRoot, "docs/crew/upstream-buzz.json");
+
+const devEndpoint =
+  "https://github.com/Nuncio-hq/crew/releases/download/nuncio-crew-dev-latest/latest.json";
+const stableEndpoint =
+  "https://github.com/Nuncio-hq/crew/releases/download/nuncio-crew-stable-latest/latest.json";
+
+async function loadChannelHelper() {
+  return import(pathToFileURL(channelHelperPath).href);
+}
+
+test("release workflow is manual-only and scoped to Nuncio Crew", () => {
+  const workflow = readFileSync(workflowPath, "utf8");
+  const triggerBlock = workflow.slice(
+    workflow.indexOf("on:"),
+    workflow.indexOf("\njobs:"),
+  );
+
+  assert.match(triggerBlock, /^on:\s*\n\s+workflow_dispatch:/);
+  assert.doesNotMatch(triggerBlock, /^\s+(push|pull_request|schedule):/m);
+  assert.match(workflow, /github\.repository\s*==\s*['"]Nuncio-hq\/crew['"]/);
+  assert.match(workflow, /github\.ref\s*==\s*['"]refs\/heads\/main['"]/);
+  assert.match(workflow, /^\s+environment:\s*nuncio-crew-release$/m);
+  assert.doesNotMatch(workflow, /block\/apple-codesign-action/i);
+  assert.doesNotMatch(workflow, /github\.com\/block\/buzz/i);
+});
+
+test("manual release inputs fail closed and target macOS arm64", () => {
+  const workflow = readFileSync(workflowPath, "utf8");
+
+  for (const input of ["version", "channel", "ref"]) {
+    assert.match(
+      workflow,
+      new RegExp(`${input}:\\s*\\n(?:\\s+.*\\n)*?\\s+required:\\s*true`),
+    );
+  }
+  assert.match(workflow, /options:\s*\n\s+- dev\s*\n\s+- stable/);
+  assert.match(workflow, /git rev-parse --verify/);
+  assert.match(workflow, /\^\{commit\}/);
+  assert.match(workflow, /aarch64-apple-darwin/);
+  assert.match(workflow, /runs-on:\s*macos-/);
+  assert.match(workflow, /publish:[\s\S]*default:\s*false/);
+  assert.match(workflow, /if:\s*inputs\.publish/);
+  assert.match(workflow, /tauri\.nuncio-crew-release\.conf\.json/);
+  assert.match(workflow, /tauri\.release\.conf\.json/);
+  assert.match(workflow, /latest\.json/);
+  assert.match(workflow, /NUNCIO_TAURI_SIGNING_PRIVATE_KEY/);
+  assert.match(workflow, /NUNCIO_APPLE_API_PRIVATE_KEY/);
+  assert.match(workflow, /verify-nuncio-crew-updater-key-id\.mjs/);
+  assert.match(workflow, /verify-macos-entitlements\.sh/);
+  assert.match(
+    workflow,
+    /MAIN_SHA=.*refs\/remotes\/origin\/main[\s\S]*HEAD_SHA.*MAIN_SHA/,
+  );
+  assert.match(
+    workflow,
+    /security delete-keychain[\s\\]*"\$RUNNER_TEMP\/nuncio-crew/,
+  );
+});
+
+test("release publishes immutable assets before advancing updater channels", () => {
+  const workflow = readFileSync(workflowPath, "utf8");
+  const publishVersion = workflow.indexOf(
+    'gh release edit "$RELEASE_TAG" --draft=false',
+  );
+  const updateRollingManifest = workflow.indexOf(
+    'gh release upload "$rolling" latest.json --clobber',
+  );
+
+  assert.notEqual(publishVersion, -1);
+  assert.notEqual(updateRollingManifest, -1);
+  assert.ok(publishVersion < updateRollingManifest);
+});
+
+test("release changes only the root package version in Cargo.lock", async () => {
+  const workflow = readFileSync(workflowPath, "utf8");
+
+  assert.doesNotMatch(workflow, /cargo update(?:\s|\\)+--workspace/);
+  assert.match(
+    workflow,
+    /node scripts\/sync-nuncio-crew-cargo-lock-version\.mjs/,
+  );
+
+  const { replaceCargoLockPackageVersion } = await import(
+    pathToFileURL(cargoLockHelperPath).href
+  );
+  const original = `# generated
+
+[[package]]
+name = "buzz-desktop"
+version = "0.5.2"
+dependencies = [
+ "tauri",
+]
+
+[[package]]
+name = "tauri"
+version = "2.8.5"
+`;
+
+  assert.equal(
+    replaceCargoLockPackageVersion(original, "buzz-desktop", "0.0.1-dev"),
+    original.replace(
+      'name = "buzz-desktop"\nversion = "0.5.2"',
+      'name = "buzz-desktop"\nversion = "0.0.1-dev"',
+    ),
+  );
+});
+
+test("all releases serialize and updater channels only advance", async () => {
+  const workflow = readFileSync(workflowPath, "utf8");
+
+  assert.match(workflow, /group:\s*nuncio-crew-release\s*$/m);
+  assert.doesNotMatch(workflow, /group:.*inputs\.version/);
+  assert.match(workflow, /assert-nuncio-crew-channel-advance\.mjs/);
+
+  const { compareNuncioCrewVersions } = await import(
+    pathToFileURL(channelAdvanceHelperPath).href
+  );
+  assert.ok(compareNuncioCrewVersions("0.0.1-dev", "0.0.1-dev.1") < 0);
+  assert.ok(compareNuncioCrewVersions("0.0.1-dev.7", "0.0.1") < 0);
+  assert.ok(compareNuncioCrewVersions("0.0.2-dev", "0.0.1") > 0);
+  assert.equal(compareNuncioCrewVersions("1.2.3", "1.2.3"), 0);
+});
+
+test("updater signature key must match the embedded public key", async () => {
+  const { updaterKeyId, verifyUpdaterKeyId } = await import(
+    pathToFileURL(updaterKeyHelperPath).href
+  );
+  const publicPayload = Buffer.concat([
+    Buffer.from("Ed"),
+    Buffer.from("0123456789abcdef", "hex"),
+    Buffer.alloc(32, 1),
+  ]).toString("base64");
+  const signaturePayload = Buffer.concat([
+    Buffer.from("ED"),
+    Buffer.from("0123456789abcdef", "hex"),
+    Buffer.alloc(64, 2),
+  ]).toString("base64");
+  const publicKey = Buffer.from(
+    `untrusted comment: minisign public key\n${publicPayload}\n`,
+  ).toString("base64");
+  const signature = Buffer.from(
+    `untrusted comment: signature\n${signaturePayload}\n`,
+  ).toString("base64");
+  const mismatchedSignaturePayload = Buffer.concat([
+    Buffer.from("ED"),
+    Buffer.from("fedcba9876543210", "hex"),
+    Buffer.alloc(64, 2),
+  ]).toString("base64");
+  const mismatchedSignature = Buffer.from(
+    `untrusted comment: signature\n${mismatchedSignaturePayload}\n`,
+  ).toString("base64");
+
+  assert.equal(updaterKeyId(publicKey), "0123456789abcdef");
+  assert.doesNotThrow(() => verifyUpdaterKeyId(publicKey, signature));
+  assert.throws(() => verifyUpdaterKeyId(publicKey, mismatchedSignature));
+});
+
+test("release helper classifies dev and stable versions with isolated endpoints", async () => {
+  const { classifyNuncioCrewRelease } = await loadChannelHelper();
+
+  assert.deepEqual(classifyNuncioCrewRelease("v0.0.1-dev"), {
+    version: "0.0.1-dev",
+    channel: "dev",
+    prerelease: true,
+    rollingTags: ["nuncio-crew-dev-latest"],
+    updaterEndpoint: devEndpoint,
+  });
+  assert.deepEqual(classifyNuncioCrewRelease("v1.2.3"), {
+    version: "1.2.3",
+    channel: "stable",
+    prerelease: false,
+    rollingTags: ["nuncio-crew-stable-latest", "nuncio-crew-dev-latest"],
+    updaterEndpoint: stableEndpoint,
+  });
+  assert.notEqual(devEndpoint, stableEndpoint);
+  assert.equal(
+    classifyNuncioCrewRelease("v1.2.4-dev.7").version,
+    "1.2.4-dev.7",
+  );
+});
+
+test("release helper rejects unsupported versions and mismatched channels", async () => {
+  const { validateNuncioCrewReleaseRequest } = await loadChannelHelper();
+
+  assert.throws(() =>
+    validateNuncioCrewReleaseRequest({
+      version: "0.0.1-dev",
+      channel: "dev",
+      ref: "main",
+    }),
+  );
+  assert.throws(() =>
+    validateNuncioCrewReleaseRequest({
+      version: "v0.0.1-beta",
+      channel: "dev",
+      ref: "main",
+    }),
+  );
+  assert.throws(() =>
+    validateNuncioCrewReleaseRequest({
+      version: "v0.0.1-dev",
+      channel: "stable",
+      ref: "main",
+    }),
+  );
+  assert.throws(() =>
+    validateNuncioCrewReleaseRequest({
+      version: "v0.0.1-dev",
+      channel: "dev",
+      ref: "",
+    }),
+  );
+  assert.throws(() =>
+    validateNuncioCrewReleaseRequest({
+      version: "v0.0.1-dev.alpha",
+      channel: "dev",
+      ref: "a".repeat(40),
+    }),
+  );
+});
+
+test("release identity and updater manifest are Nuncio-owned", async () => {
+  const releaseConfig = JSON.parse(
+    readFileSync(
+      resolve(
+        repoRoot,
+        "desktop/src-tauri/tauri.nuncio-crew-release.conf.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(releaseConfig.productName, "NuncioCrew");
+  assert.equal(releaseConfig.identifier, "com.nuncio.crew");
+
+  const { buildNuncioCrewUpdateManifest } = await import(
+    pathToFileURL(manifestHelperPath).href
+  );
+  const manifest = buildNuncioCrewUpdateManifest({
+    tag: "v0.0.1-dev",
+    signature: "signed-update",
+    archiveUrl:
+      "https://github.com/Nuncio-hq/crew/releases/download/v0.0.1-dev/NuncioCrew.app.tar.gz",
+    publishedAt: new Date("2026-07-30T00:00:00.000Z"),
+  });
+
+  assert.deepEqual(manifest, {
+    version: "0.0.1-dev",
+    notes: "NuncioCrew v0.0.1-dev",
+    pub_date: "2026-07-30T00:00:00.000Z",
+    platforms: {
+      "darwin-aarch64": {
+        signature: "signed-update",
+        url: "https://github.com/Nuncio-hq/crew/releases/download/v0.0.1-dev/NuncioCrew.app.tar.gz",
+      },
+    },
+  });
+  assert.throws(() =>
+    buildNuncioCrewUpdateManifest({
+      tag: "v0.0.1-dev",
+      signature: " ",
+      archiveUrl: "https://example.invalid/update.tar.gz",
+    }),
+  );
+});
+
+test("Buzz manifests stay pinned and the exact upstream source is machine-readable", () => {
+  const packageJson = JSON.parse(
+    readFileSync(resolve(repoRoot, "desktop/package.json"), "utf8"),
+  );
+  const tauriConfig = JSON.parse(
+    readFileSync(
+      resolve(repoRoot, "desktop/src-tauri/tauri.conf.json"),
+      "utf8",
+    ),
+  );
+  const cargoToml = readFileSync(
+    resolve(repoRoot, "desktop/src-tauri/Cargo.toml"),
+    "utf8",
+  );
+  const upstreamPin = JSON.parse(readFileSync(upstreamPinPath, "utf8"));
+  const pinValues = Object.values(upstreamPin);
+
+  assert.equal(packageJson.version, "0.5.2");
+  assert.equal(tauriConfig.version, "0.5.2");
+  assert.match(cargoToml, /^\[package\][\s\S]*?^version = "0\.5\.2"$/m);
+  assert.ok(pinValues.includes("0.5.2"));
+  assert.ok(pinValues.includes("v0.5.2"));
+  assert.ok(pinValues.includes("63496cc1d4c6f1b7c613801bdcc694169dcf391a"));
+});
