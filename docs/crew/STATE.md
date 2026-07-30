@@ -8,9 +8,9 @@ Last updated: 2026-07-30
 - Fork parent: `https://github.com/block/buzz`
 - Default branch: `main`
 - Baseline upstream commit: `63496cc1d4c6f1b7c613801bdcc694169dcf391a`
-- Production code changes: implemented on a feature branch; first PR pending
-- Pending merge gate: additive `NuncioCrew CI`, macOS Apple Silicon only;
-  becomes active after PR merge and ruleset configuration
+- Production code changes: merged through PR #1 and PR #2
+- Required merge gate: additive `NuncioCrew CI`, macOS Apple Silicon only;
+  `NuncioCrew Gate` is enforced on `main`
 
 ## Current product slice
 
@@ -59,7 +59,7 @@ Out of scope for this slice:
 
 - GitHub workflow: `.github/workflows/nuncio-crew-release.yml`.
 - Trigger: manual `workflow_dispatch` only.
-- First planned release: `v0.0.1-dev`.
+- First published release: `v0.0.1-dev`.
 - Initial platform: macOS Apple Silicon.
 - Distributed identity: `com.nuncio.crew`.
 - Dev manifest: `nuncio-crew-dev-latest/latest.json`.
@@ -73,8 +73,10 @@ Out of scope for this slice:
   `63496cc1d4c6f1b7c613801bdcc694169dcf391a`.
 - The protected Environment, reviewer, nine encrypted release secrets, updater
   public variable, and Nuncio updater keypair are configured.
-- Release publication remains pending PR merge, manager-approved signed dry
-  run, clean-install verification, and a later explicit publish run.
+- Signed dry run `30537460233` and publish run `30538712572` passed.
+- The public DMG is signed, notarized, stapled, ARM64-only, and launch-tested
+  from the mounted image. Real-profile relay and Project acceptance remains a
+  manager test after manual installation.
 
 ## CI lane
 

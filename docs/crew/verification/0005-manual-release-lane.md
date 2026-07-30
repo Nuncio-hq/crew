@@ -34,9 +34,40 @@ lane before the first pull request.
   immutable assets before advancing a rolling manifest, and preserve pinned
   Cargo dependencies.
 
-## Remaining release proof
+## First release proof
 
-No tag or GitHub Release exists yet. After the PR merges, run `v0.0.1-dev` with
-`publish=false`, approve the Environment gate, install the resulting signed
-artifact on a clean machine, then run the explicit publish workflow only after
-that evidence passes.
+- PR #1 merged as `2fe36f3a5190095219bae8c4e029a7aaa37ed895`.
+- The final DMG notarization fix merged through PR #2. Release source and both
+  release tags point to
+  `eb21c3f5b8a172a876b853d53a4aa8af02eefba5`.
+- Main CI run
+  [`30536991452`](https://github.com/Nuncio-hq/crew/actions/runs/30536991452)
+  passed the required `NuncioCrew Gate`.
+- Protected signed dry run
+  [`30537460233`](https://github.com/Nuncio-hq/crew/actions/runs/30537460233)
+  passed without creating a tag or release.
+- Protected publish run
+  [`30538712572`](https://github.com/Nuncio-hq/crew/actions/runs/30538712572)
+  published the
+  [`v0.0.1-dev`](https://github.com/Nuncio-hq/crew/releases/tag/v0.0.1-dev)
+  prerelease and advanced only
+  [`nuncio-crew-dev-latest`](https://github.com/Nuncio-hq/crew/releases/tag/nuncio-crew-dev-latest).
+- The public `latest.json` reports `0.0.1-dev`, contains only
+  `darwin-aarch64`, points to the immutable versioned updater archive, and its
+  signature matches the published `.sig` asset. No stable release exists.
+- Public DMG SHA-256:
+  `92bc03adf9b4b66134cda9f3e81e580e2de46c41652c4f74a81140a52605952d`.
+- The downloaded public DMG passed `hdiutil verify` and stapler validation.
+  The app passed strict deep code-sign verification and Gatekeeper assessment
+  as `Notarized Developer ID`.
+- The app reports bundle identifier `com.nuncio.crew`, version `0.0.1-dev`,
+  and all app/sidecar executables are ARM64.
+- A launch from the mounted signed DMG reached the identity onboarding screen
+  without a Gatekeeper warning or crash.
+
+## Remaining user acceptance
+
+Install the public DMG, select **Use an existing key**, and verify relay
+reconnection plus the existing local Project on the manager's real profile.
+Updater end-to-end proof remains intentionally pending a second Crew release
+whose version is higher than the installed Crew build.

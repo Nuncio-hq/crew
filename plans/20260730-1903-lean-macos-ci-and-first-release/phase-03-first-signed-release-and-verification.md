@@ -9,7 +9,7 @@
 
 ## Overview
 
-Priority: release blocking. Status: pending merge and protected runner proof.
+Priority: release blocking. Status: complete; manager acceptance pending.
 
 Publish `v0.0.1-dev` from the verified `main` SHA using the existing manual
 release workflow. Never expose or copy App Store API credential contents.
