@@ -141,7 +141,7 @@ jobs:
         run: just desktop-install-ci
       - name: Run the relay-native Project contract
         env:
-          CREW_LIVE_RELAY_URL: ws://127.0.0.1:3000
+          CREW_LIVE_RELAY_URL: ws://localhost:3000
         run: |
           bash scripts/run-nuncio-crew-project-relay-ci.sh \
             desktop/src/features/projects/project-local-workspace-live-relay.test.mjs

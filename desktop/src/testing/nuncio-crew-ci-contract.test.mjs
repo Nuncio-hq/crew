@@ -59,6 +59,7 @@ test("relay-native Project behavior remains an automatic conditional gate", () =
   assert.match(ci, /- 'crates\/\*\*'/);
   assert.match(ci, /- 'docker-compose\.yml'/);
   assert.match(ci, /- 'scripts\/attach-schema-partitions\.sql'/);
+  assert.match(ci, /CREW_LIVE_RELAY_URL:\s*ws:\/\/localhost:3000/);
   assert.match(ci, /needs\.project-relay\.result/);
 });
 

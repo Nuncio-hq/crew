@@ -89,7 +89,8 @@ for _ in $(seq 1 60); do
   fi
   if [[ "$(curl -s -o /dev/null -w '%{http_code}' \
     http://127.0.0.1:3000/_readiness || true)" == "200" ]]; then
-    CREW_LIVE_RELAY_URL=ws://127.0.0.1:3000 \
+    # The relay resolves its community from the WebSocket Host header.
+    CREW_LIVE_RELAY_URL=ws://localhost:3000 \
       node --import ./desktop/test-loader.mjs \
       --experimental-strip-types --test "$TEST_PATH"
     exit 0
