@@ -9,6 +9,8 @@ Last updated: 2026-07-30
 - Default branch: `main`
 - Baseline upstream commit: `63496cc1d4c6f1b7c613801bdcc694169dcf391a`
 - Production code changes: implemented on a feature branch; first PR pending
+- Pending merge gate: additive `NuncioCrew CI`, macOS Apple Silicon only;
+  becomes active after PR merge and ruleset configuration
 
 ## Current product slice
 
@@ -74,6 +76,19 @@ Out of scope for this slice:
 - Release publication remains pending PR merge, manager-approved signed dry
   run, clean-install verification, and a later explicit publish run.
 
+## CI lane
+
+- Required merge signal: `NuncioCrew Gate`.
+- Automatic checks: desktop fast gate, unsigned macOS ARM64 package, and a
+  path-filtered real-relay Project contract.
+- Web, mobile, Windows, Linux distribution, Docker publishing, Helm, Sprig,
+  and optional mesh-llm builds are outside automatic Crew CI.
+- Core root and desktop Tauri Rust format, lint, unit, and dependency-policy
+  checks are available through manual `NuncioCrew Upstream Sync`; it does not
+  claim full platform or integration compatibility.
+- Inherited Buzz workflow files remain unchanged and are disabled only through
+  GitHub repository state after the Crew gate is proven.
+
 ## Verified evidence
 
 - `buzz-acp` currently captures one process cwd for its prompt context.
@@ -137,13 +152,14 @@ publishing a new real relay event, which was intentionally not done.
   checkout collision isolation, empty-state create access, Markdown isolation,
   live relay reconstruction, exact local path resolution, mismatch rejection,
   no fallback, and truthful Local source state.
-- Latest full desktop suite: `3857` passed, `1` gated live-relay test skipped,
+- Latest full desktop suite: `3863` passed, `1` gated live-relay test skipped,
   zero failed.
 - Earlier focused live relay test: `1/1` passed with an isolated Buzz relay.
 - Typecheck, file-size gate, Biome checks, production build, and
   `git diff --check` passed.
 - No release tag or public artifact has been created.
 - Manual release contracts: `10/10` passed.
+- Always-run Crew CI/local/release contracts: `20/20` passed.
 - Real unsigned Tauri bundle spike accepted `0.0.1-dev` and produced
   `NuncioCrew.app` with identifier `com.nuncio.crew`.
 

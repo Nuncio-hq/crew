@@ -73,10 +73,12 @@ through encrypted secrets.
 
 1. Merge the release implementation PR to `main`; releases accept only the
    current `origin/main` HEAD.
-2. Confirm `main` CI is green.
+2. Confirm the required `NuncioCrew Gate` on `main` is green.
 3. Copy the exact 40-character commit SHA from `main`.
 4. Confirm the version does not already have a Git tag or GitHub release.
-5. Confirm the version is greater than the installed version being tested.
+5. For updater E2E between distributed Crew builds, confirm the new version is
+   greater than the installed Crew version. Exempt the manual first
+   `v0.0.1-dev` install described below; it cannot update from Buzz `0.5.2`.
 6. Run the focused release contract from [`TESTING.md`](TESTING.md).
 7. Dispatch from branch `main`, then approve the
    `nuncio-crew-release` Environment gate when GitHub requests it.

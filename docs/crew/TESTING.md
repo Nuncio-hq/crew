@@ -210,6 +210,24 @@ Static contracts do not prove Apple signing, notarization, GitHub publication,
 installation, or updating. Those require the real manual workflow and the
 end-to-end checklist in [`RELEASING.md`](RELEASING.md).
 
+## CI contract
+
+Run the additive Crew workflow and final-gate policy contracts:
+
+```text
+node --test desktop/src/testing/nuncio-crew-ci-contract.test.mjs
+```
+
+They require:
+
+- one stable `NuncioCrew Gate`;
+- automatic work limited to desktop, macOS ARM64, and relevant Project relay
+  behavior;
+- failed, cancelled, or missing dependencies to block the gate;
+- deliberately irrelevant conditional jobs to be accepted as skipped;
+- no signing credentials or publication permissions in PR CI;
+- heavyweight upstream compatibility to remain manual-only.
+
 ## Project local workspace verification
 
 The normal desktop suite keeps the real-relay test skipped:

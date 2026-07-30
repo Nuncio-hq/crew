@@ -72,6 +72,21 @@ git diff --name-status upstream/main...HEAD
 
 1. Push the sync branch and merge it through a reviewed PR into Crew `main`.
 
+Run the manual `NuncioCrew Upstream Sync` workflow on the sync branch before
+merge. Normal feature PRs intentionally do not run the inherited multi-product
+Buzz matrix; see [`CI.md`](CI.md).
+
+In Actions, select the sync branch instead of accepting the default `main`
+branch. The CLI equivalent is:
+
+```bash
+gh workflow run nuncio-crew-upstream-sync.yml \
+  --ref sync/upstream-YYYY-MM-DD
+```
+
+Confirm the resulting run's head SHA equals the sync branch HEAD before using
+it as compatibility evidence.
+
 ## Feature branches
 
 Use short-lived, area-prefixed names, for example:

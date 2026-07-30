@@ -53,6 +53,7 @@ contract is visible, and the manager approves the plan.
 | [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md) | Mandatory delivery gates           | Rarely                       |
 | [`TESTING.md`](TESTING.md)                           | TDD and edge-case strategy         | As test surfaces evolve      |
 | [`LOCAL-BUILD.md`](LOCAL-BUILD.md)                   | Build and test NuncioCrew locally  | When packaging changes       |
+| [`CI.md`](CI.md)                                     | Lean merge and upstream-sync gates | When CI scope changes         |
 | [`RELEASING.md`](RELEASING.md)                       | Manual dev/stable release runbook  | When distribution changes    |
 | [`UPSTREAM-SYNC.md`](UPSTREAM-SYNC.md)               | Thin-fork and sync runbook         | When Git workflow changes    |
 | [`STATE.md`](STATE.md)                               | Short, current project state       | Frequently; rewrite in place |

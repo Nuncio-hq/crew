@@ -1,0 +1,166 @@
+name: NuncioCrew CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: nuncio-crew-ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  changes:
+    name: CI Policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      desktop: ${{ steps.filter.outputs.desktop }}
+      relay: ${{ steps.filter.outputs.relay }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        id: filter
+        with:
+          filters: |
+            desktop:
+              - 'desktop/**'
+              - 'crates/**'
+              - 'scripts/build-nuncio-crew-local.sh'
+              - 'scripts/bundle-sidecars.sh'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'rust-toolchain.toml'
+              - 'Justfile'
+              - '.github/workflows/nuncio-crew-ci.yml'
+            relay:
+              - 'desktop/src/features/projects/**'
+              - 'desktop/src/shared/nostr/**'
+              - 'crates/**'
+              - 'migrations/**'
+              - 'schema/**'
+              - 'docker-compose.yml'
+              - 'scripts/attach-schema-partitions.sql'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'Justfile'
+              - '.github/workflows/nuncio-crew-ci.yml'
+              - 'scripts/run-nuncio-crew-project-relay-ci.sh'
+      - name: Verify Crew workflow contracts
+        run: node --test desktop/src/testing/nuncio-crew-*.test.mjs
+
+  desktop-fast:
+    name: Desktop Fast
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - name: Install desktop dependencies
+        run: just desktop-install-ci
+      - name: Check desktop
+        run: just desktop-check
+      - name: Test desktop
+        run: just desktop-test
+      - name: Build desktop
+        run: just desktop-build
+
+  macos-arm:
+    name: macOS ARM Package
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      TARGET: aarch64-apple-darwin
+      VITE_NUNCIO_CREW_CHANNEL: dev
+      VITE_NUNCIO_CREW_RELEASES_URL: https://github.com/Nuncio-hq/crew/releases
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: desktop/src-tauri
+          key: nuncio-macos-arm
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Install dependencies
+        run: |
+          rustup target add "$TARGET"
+          just desktop-install-ci
+      - name: Create package-only sidecars
+        run: |
+          mkdir -p desktop/src-tauri/binaries
+          for binary in buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr buzz; do
+            touch "desktop/src-tauri/binaries/${binary}-${TARGET}"
+          done
+      - name: Build unsigned NuncioCrew package
+        run: |
+          cd desktop
+          pnpm exec tauri build --target "$TARGET" --bundles app \
+            --config src-tauri/tauri.nuncio-crew-release.conf.json --no-sign
+      - name: Verify package identity and architecture
+        run: |
+          APP=desktop/src-tauri/target/$TARGET/release/bundle/macos/NuncioCrew.app
+          test -d "$APP"
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \
+            "$APP/Contents/Info.plist")
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+            "$APP/Contents/Info.plist")" = "com.nuncio.crew"
+          file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+
+  project-relay:
+    name: Project Relay
+    needs: changes
+    if: needs.changes.outputs.relay == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Install desktop dependencies
+        run: just desktop-install-ci
+      - name: Run the relay-native Project contract
+        env:
+          CREW_LIVE_RELAY_URL: ws://127.0.0.1:3000
+        run: |
+          bash scripts/run-nuncio-crew-project-relay-ci.sh \
+            desktop/src/features/projects/project-local-workspace-live-relay.test.mjs
+      - name: Upload relay log
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nuncio-crew-project-relay-log
+          path: /tmp/nuncio-crew-relay.log
+          if-no-files-found: ignore
+
+  gate:
+    name: NuncioCrew Gate
+    if: ${{ always() }}
+    needs: [changes, desktop-fast, macos-arm, project-relay]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - name: Require all relevant Crew checks
+        run: |
+          node desktop/scripts/check-nuncio-crew-ci-results.mjs \
+            '{"ci-policy":"${{ needs.changes.result }}","desktop":"${{ needs.changes.outputs.desktop }}","relay":"${{ needs.changes.outputs.relay }}","desktop-fast":"${{ needs.desktop-fast.result }}","macos-arm":"${{ needs.macos-arm.result }}","project-relay":"${{ needs.project-relay.result }}"}'

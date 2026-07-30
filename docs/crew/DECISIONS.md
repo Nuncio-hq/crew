@@ -229,3 +229,24 @@ signature key ID matches the public key embedded in the app.
 
 The first `v0.0.1-dev` installation is manual because the existing local build
 reports Buzz version `0.5.2` and an updater must never downgrade it.
+
+## D-017 — Require one macOS-first Crew merge gate
+
+- **Status:** Accepted
+- **Date:** 2026-07-30
+
+Normal Crew pull requests require exactly one stable status,
+`NuncioCrew Gate`. It composes a fast desktop check, an unsigned macOS Apple
+Silicon package, and a real-relay Project contract only when its relevant paths
+change.
+
+Web, mobile, Windows, Linux distribution, Docker publication, Kubernetes,
+Sprig publication, and optional mesh-llm native builds are not automatic merge
+requirements for the current one-manager product. Full Rust compatibility
+is not claimed; a manual upstream-sync workflow retains the core Rust format,
+lint, unit, and dependency-policy checks for both root and desktop Tauri
+workspaces.
+
+Buzz workflow source files remain unchanged for upstream synchronization.
+Inherited automatic workflows are disabled in GitHub repository state only
+after the additive Crew gate passes, and can be re-enabled as rollback.

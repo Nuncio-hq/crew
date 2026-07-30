@@ -61,3 +61,4 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0005-folder-first-project-create.md`](0005-folder-first-project-create.md)
 - [`0006-reuse-existing-git-reader-for-exact-local-workspace.md`](0006-reuse-existing-git-reader-for-exact-local-workspace.md)
 - [`0007-manual-dual-channel-release.md`](0007-manual-dual-channel-release.md)
+- [`0008-lean-macos-arm-ci.md`](0008-lean-macos-arm-ci.md)
