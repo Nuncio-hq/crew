@@ -541,7 +541,11 @@ pub fn spawn_agent_child(
         }
     };
     // Resolve agent command to a full path (DMG launches have minimal PATH).
-    let resolved_agent_command = resolve_command(effective_command)
+    let resolved_agent_command_path = resolve_command(effective_command);
+    if let Some(ref path) = resolved_agent_command_path {
+        crate::managed_agents::require_managed_node_for_adapter(path)?;
+    }
+    let resolved_agent_command = resolved_agent_command_path
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| effective_command.clone());
 

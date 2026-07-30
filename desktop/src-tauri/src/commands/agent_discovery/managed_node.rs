@@ -469,6 +469,227 @@ fn managed_npm_prefix_hint() -> String {
     "Buzz could not create its private Node tools directory. Check app-data directory permissions, restart Buzz, then click Install again.".to_string()
 }
 
+/// Optional platform packages that must match `managed_platform_segment()`.
+const MANAGED_ADAPTER_PLATFORM_PACKAGE_PREFIXES: &[&str] = &[
+    "@openai/codex-",
+    "@anthropic-ai/claude-agent-sdk-",
+];
+
+/// Result of inspecting a managed npm prefix for adapter arch correctness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AdapterArchCheck {
+    Matches,
+    Mismatch,
+    NoAdaptersInstalled,
+}
+
+fn npm_global_node_modules(prefix: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        prefix.join("node_modules")
+    }
+    #[cfg(not(windows))]
+    {
+        prefix.join("lib").join("node_modules")
+    }
+}
+
+fn list_platform_optional_packages(modules: &std::path::Path) -> Vec<String> {
+    let mut found = Vec::new();
+    for scope in ["@openai", "@anthropic-ai"] {
+        let scope_dir = modules.join(scope);
+        let Ok(entries) = std::fs::read_dir(&scope_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let full = format!("{scope}/{name}");
+            if MANAGED_ADAPTER_PLATFORM_PACKAGE_PREFIXES
+                .iter()
+                .any(|prefix| full.starts_with(prefix))
+            {
+                found.push(full);
+            }
+        }
+    }
+    found
+}
+
+fn has_managed_adapter_package(modules: &std::path::Path) -> bool {
+    let scope = modules.join("@agentclientprotocol");
+    for name in ["codex-acp", "claude-agent-acp", "claude-code-acp"] {
+        if scope.join(name).is_dir() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Pure directory-fixture check: does `prefix` hold adapters for `expected_platform`?
+pub(crate) fn managed_adapter_arch_matches(
+    prefix: &std::path::Path,
+    expected_platform: &str,
+) -> AdapterArchCheck {
+    let modules = npm_global_node_modules(prefix);
+    if !modules.is_dir() {
+        return AdapterArchCheck::NoAdaptersInstalled;
+    }
+
+    let packages = list_platform_optional_packages(&modules);
+    if packages.is_empty() {
+        if has_managed_adapter_package(&modules) {
+            // Adapter present but no platform optional package dirs — treat as
+            // mismatch so self-repair can reinstall.
+            return AdapterArchCheck::Mismatch;
+        }
+        return AdapterArchCheck::NoAdaptersInstalled;
+    }
+
+    let mut saw_expected = false;
+    let mut saw_wrong = false;
+    for package in &packages {
+        let is_expected = MANAGED_ADAPTER_PLATFORM_PACKAGE_PREFIXES
+            .iter()
+            .any(|prefix| package == &format!("{prefix}{expected_platform}"));
+        if is_expected {
+            saw_expected = true;
+        } else {
+            saw_wrong = true;
+        }
+    }
+
+    if saw_wrong && !saw_expected {
+        AdapterArchCheck::Mismatch
+    } else if saw_expected {
+        AdapterArchCheck::Matches
+    } else {
+        AdapterArchCheck::NoAdaptersInstalled
+    }
+}
+
+/// Remove a managed npm prefix only when the purge guard accepts the path.
+pub(crate) fn purge_managed_npm_prefix(path: &std::path::Path) -> Result<(), String> {
+    if !crate::managed_agents::is_safe_to_purge_node_tools_path(path) {
+        return Err(format!(
+            "refusing to purge path outside managed node-tools root: {}",
+            path.display()
+        ));
+    }
+    if path.exists() {
+        std::fs::remove_dir_all(path)
+            .map_err(|e| format!("failed to remove managed npm prefix '{}': {e}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn purge_failed_step(path: &std::path::Path, error: String) -> InstallStepResult {
+    InstallStepResult {
+        step: "adapter".to_string(),
+        command: "purge mismatched managed npm prefix".to_string(),
+        success: false,
+        stdout: String::new(),
+        stderr: error,
+        exit_code: None,
+        hint: Some(format!(
+            "Buzz could not remove the mismatched Node tools directory at '{}'. Delete it manually, then open Settings → Agent runtimes and click Install again.",
+            path.display()
+        )),
+    }
+}
+
+/// On arch mismatch, purge the scoped prefix so the install path rebuilds it.
+pub(super) fn ensure_managed_adapter_arch_ready_blocking() -> Result<(), Box<InstallStepResult>> {
+    let Some(expected) = crate::managed_agents::managed_platform_segment() else {
+        return Ok(());
+    };
+    let Some(prefix) = crate::managed_agents::buzz_managed_npm_prefix() else {
+        return Ok(());
+    };
+
+    match managed_adapter_arch_matches(&prefix, expected) {
+        AdapterArchCheck::Matches | AdapterArchCheck::NoAdaptersInstalled => Ok(()),
+        AdapterArchCheck::Mismatch => {
+            if let Err(error) = purge_managed_npm_prefix(&prefix) {
+                return Err(Box::new(purge_failed_step(&prefix, error)));
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Best-effort reclaim of the legacy unscoped `node-tools/` tree after a
+/// successful scoped install. Failure is logged, not fatal.
+pub(super) fn reclaim_legacy_unscoped_npm_prefix() {
+    let Some(legacy) = crate::managed_agents::buzz_legacy_unscoped_npm_prefix() else {
+        return;
+    };
+    let modules = npm_global_node_modules(&legacy);
+    if !modules.is_dir() {
+        return;
+    }
+    // Only remove the legacy root when it still looks like an unscoped install
+    // (has lib/node_modules or node_modules directly). Never touch platform
+    // children — those are the new layout living under the same parent name.
+    // The legacy path IS `…/node-tools`; platform dirs are `…/node-tools/<platform>`.
+    // Removing `legacy` would delete platform children too — so only remove
+    // contents that belong to the old layout, not the directory wholesale if
+    // scoped children exist.
+    reclaim_legacy_unscoped_contents(&legacy);
+}
+
+fn reclaim_legacy_unscoped_contents(legacy_root: &std::path::Path) {
+    // Old layout stored `bin/`, `lib/`, `cache/`, `corepack/` directly under
+    // node-tools/. New layout stores only platform directories there. Remove
+    // known legacy entries; leave platform dirs alone.
+    for name in ["bin", "lib", "cache", "corepack", "node_modules"] {
+        let path = legacy_root.join(name);
+        if !path.exists() {
+            continue;
+        }
+        if !crate::managed_agents::is_safe_to_purge_node_tools_path(&path) {
+            eprintln!(
+                "buzz-desktop: refusing legacy reclaim outside node-tools: {}",
+                path.display()
+            );
+            continue;
+        }
+        if let Err(error) = std::fs::remove_dir_all(&path) {
+            eprintln!(
+                "buzz-desktop: legacy node-tools reclaim failed for {}: {error}",
+                path.display()
+            );
+        }
+    }
+}
+
+/// Map Rust `std::env::consts::{OS,ARCH}` to npm `--os` / `--cpu` values
+/// (`process.platform` / `process.arch`).
+pub(crate) fn npm_install_platform_flags_for(
+    os: &str,
+    arch: &str,
+) -> Option<(&'static str, &'static str)> {
+    let cpu = match arch {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        _ => return None,
+    };
+    // npm uses Node's process.platform: darwin | linux | win32
+    let os_flag = match os {
+        "macos" => "darwin",
+        "linux" => "linux",
+        "windows" => "win32",
+        _ => return None,
+    };
+    Some((cpu, os_flag))
+}
+
+fn npm_install_platform_flags() -> Option<(&'static str, &'static str)> {
+    npm_install_platform_flags_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
 pub(super) fn managed_npm_command(command: &str) -> Result<Option<String>, Box<InstallStepResult>> {
     if !is_npm_global_install(command) {
         return Ok(None);
@@ -505,12 +726,24 @@ pub(super) fn managed_npm_command(command: &str) -> Result<Option<String>, Box<I
 }
 
 fn rewrite_npm_global_install(command: &str, quoted_prefix: &str) -> String {
+    rewrite_npm_global_install_with_platform(command, quoted_prefix, npm_install_platform_flags())
+}
+
+fn rewrite_npm_global_install_with_platform(
+    command: &str,
+    quoted_prefix: &str,
+    platform: Option<(&str, &str)>,
+) -> String {
     let trimmed = command.trim_start();
+    let platform_flags = platform
+        .map(|(cpu, os)| format!(" --cpu={cpu} --os={os}"))
+        .unwrap_or_default();
     if let Some(rest) = trimmed.strip_prefix("npm install -g ") {
-        format!("npm install --global --prefix {quoted_prefix} {rest}")
+        format!("npm install --global --prefix {quoted_prefix}{platform_flags} {rest}")
     } else if let Some(rest) = trimmed.strip_prefix("npm i -g ") {
-        format!("npm i --global --prefix {quoted_prefix} {rest}")
+        format!("npm i --global --prefix {quoted_prefix}{platform_flags} {rest}")
     } else if let Some(rest) = trimmed.strip_prefix("npm uninstall -g ") {
+        // uninstall must not carry --cpu/--os
         format!("npm uninstall --global --prefix {quoted_prefix} {rest}")
     } else {
         trimmed.to_string()
@@ -535,6 +768,26 @@ pub(super) fn npm_eacces_hint(stderr: &str, _command: &str) -> Option<String> {
     }
 }
 
+/// Detect upstream Codex/Claude "Missing optional dependency …-darwin-arm64"
+/// dead-end advice and replace it with a Buzz-specific repair hint.
+pub(super) fn missing_optional_dependency_hint(stderr: &str) -> Option<String> {
+    let lower = stderr.to_ascii_lowercase();
+    let matches = lower.contains("missing optional dependency")
+        && (lower.contains("@openai/codex-")
+            || lower.contains("@anthropic-ai/claude-agent-sdk-"));
+    if !matches {
+        return None;
+    }
+    Some(
+        "A managed ACP adapter is missing its native package for this architecture. Open Settings → Agent runtimes and click Install again so Buzz can repair its private Node tools directory.".to_string(),
+    )
+}
+
+/// Prefer a specific adapter-stderr hint when present.
+pub(super) fn managed_adapter_stderr_hint(stderr: &str, command: &str) -> Option<String> {
+    npm_eacces_hint(stderr, command).or_else(|| missing_optional_dependency_hint(stderr))
+}
+
 // ── end managed npm adapter installs ──────────────────────────────────────────
 
 #[cfg(test)]
@@ -551,28 +804,37 @@ mod tests {
     }
 
     #[test]
-    fn test_rewrite_npm_install_uses_private_prefix() {
+    fn test_rewrite_npm_install_uses_private_prefix_and_platform_flags() {
         assert_eq!(
-            rewrite_npm_global_install(
+            rewrite_npm_global_install_with_platform(
                 "npm install -g @agentclientprotocol/codex-acp",
-                "'/tmp/Buzz Node'"
+                "'/tmp/Buzz Node'",
+                Some(("arm64", "darwin")),
             ),
-            "npm install --global --prefix '/tmp/Buzz Node' @agentclientprotocol/codex-acp"
+            "npm install --global --prefix '/tmp/Buzz Node' --cpu=arm64 --os=darwin @agentclientprotocol/codex-acp"
         );
     }
 
     #[test]
-    fn test_rewrite_npm_i_uses_private_prefix() {
+    fn test_rewrite_npm_i_uses_private_prefix_and_platform_flags() {
         assert_eq!(
-            rewrite_npm_global_install("npm i -g some-package", "'/tmp/buzz'"),
-            "npm i --global --prefix '/tmp/buzz' some-package"
+            rewrite_npm_global_install_with_platform(
+                "npm i -g some-package",
+                "'/tmp/buzz'",
+                Some(("x64", "linux")),
+            ),
+            "npm i --global --prefix '/tmp/buzz' --cpu=x64 --os=linux some-package"
         );
     }
 
     #[test]
-    fn test_rewrite_npm_uninstall_uses_private_prefix() {
+    fn test_rewrite_npm_uninstall_omits_cpu_os() {
         assert_eq!(
-            rewrite_npm_global_install("npm uninstall -g @zed-industries/codex-acp", "'/tmp/buzz'"),
+            rewrite_npm_global_install_with_platform(
+                "npm uninstall -g @zed-industries/codex-acp",
+                "'/tmp/buzz'",
+                Some(("arm64", "darwin")),
+            ),
             "npm uninstall --global --prefix '/tmp/buzz' @zed-industries/codex-acp"
         );
     }
@@ -580,9 +842,42 @@ mod tests {
     #[test]
     fn test_rewrite_ignores_non_global_command() {
         assert_eq!(
-            rewrite_npm_global_install("npm install foo", "'/tmp/buzz'"),
+            rewrite_npm_global_install_with_platform(
+                "npm install foo",
+                "'/tmp/buzz'",
+                Some(("arm64", "darwin")),
+            ),
             "npm install foo"
         );
+    }
+
+    #[test]
+    fn test_npm_install_platform_flags_mapping() {
+        assert_eq!(
+            npm_install_platform_flags_for("macos", "aarch64"),
+            Some(("arm64", "darwin"))
+        );
+        assert_eq!(
+            npm_install_platform_flags_for("macos", "x86_64"),
+            Some(("x64", "darwin"))
+        );
+        assert_eq!(
+            npm_install_platform_flags_for("linux", "x86_64"),
+            Some(("x64", "linux"))
+        );
+        assert_eq!(
+            npm_install_platform_flags_for("linux", "aarch64"),
+            Some(("arm64", "linux"))
+        );
+        assert_eq!(
+            npm_install_platform_flags_for("windows", "x86_64"),
+            Some(("x64", "win32"))
+        );
+        assert_eq!(
+            npm_install_platform_flags_for("windows", "aarch64"),
+            Some(("arm64", "win32"))
+        );
+        assert_eq!(npm_install_platform_flags_for("freebsd", "x86_64"), None);
     }
 
     #[test]
@@ -592,6 +887,94 @@ mod tests {
             "'/tmp/Buzz'\\''s Node'"
         );
     }
+
+    #[test]
+    fn adapter_arch_mismatch_on_wrong_platform_package() {
+        let temp = tempfile::tempdir().unwrap();
+        let modules = npm_global_node_modules(temp.path());
+        std::fs::create_dir_all(modules.join("@openai").join("codex-darwin-x64")).unwrap();
+        assert_eq!(
+            managed_adapter_arch_matches(temp.path(), "darwin-arm64"),
+            AdapterArchCheck::Mismatch
+        );
+    }
+
+    #[test]
+    fn adapter_arch_matches_expected_platform_package() {
+        let temp = tempfile::tempdir().unwrap();
+        let modules = npm_global_node_modules(temp.path());
+        std::fs::create_dir_all(modules.join("@openai").join("codex-darwin-arm64")).unwrap();
+        assert_eq!(
+            managed_adapter_arch_matches(temp.path(), "darwin-arm64"),
+            AdapterArchCheck::Matches
+        );
+    }
+
+    #[test]
+    fn adapter_arch_no_adapters_when_empty() {
+        let temp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            managed_adapter_arch_matches(temp.path(), "darwin-arm64"),
+            AdapterArchCheck::NoAdaptersInstalled
+        );
+        std::fs::create_dir_all(npm_global_node_modules(temp.path())).unwrap();
+        assert_eq!(
+            managed_adapter_arch_matches(temp.path(), "darwin-arm64"),
+            AdapterArchCheck::NoAdaptersInstalled
+        );
+    }
+
+    #[test]
+    fn purge_removes_scoped_prefix_and_leaves_runtimes() {
+        let temp = tempfile::tempdir().unwrap();
+        // Simulate data_dir()/Buzz/{node-tools,runtimes} by seeding PRODUCT_DIR
+        // is process-global — use the real managed_node_tools_root when available.
+        let Some(root) = crate::managed_agents::managed_node_tools_root() else {
+            return;
+        };
+        let _guard_dir = root.clone();
+        let platform_dir = root.join("test-purge-platform");
+        let runtimes_sibling = root
+            .parent()
+            .unwrap()
+            .join("runtimes")
+            .join("node")
+            .join("keep-me");
+        let _ = std::fs::remove_dir_all(&platform_dir);
+        std::fs::create_dir_all(&platform_dir).unwrap();
+        std::fs::create_dir_all(&runtimes_sibling).unwrap();
+        std::fs::write(platform_dir.join("marker"), "x").unwrap();
+
+        purge_managed_npm_prefix(&platform_dir).expect("purge");
+        assert!(!platform_dir.exists());
+        assert!(runtimes_sibling.exists());
+        let _ = std::fs::remove_dir_all(&runtimes_sibling);
+        let _ = temp; // keep tempdir alive unused — fixture uses real data_dir
+    }
+
+    #[test]
+    fn purge_refuses_path_outside_node_tools() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = temp.path().join("evil");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("keep"), "x").unwrap();
+        let err = purge_managed_npm_prefix(&outside).unwrap_err();
+        assert!(err.contains("refusing to purge"), "{err}");
+        assert!(outside.join("keep").exists());
+    }
+
+    #[test]
+    fn missing_optional_dependency_hint_matches_codex_and_claude() {
+        let codex = "Error: Missing optional dependency @openai/codex-darwin-arm64.\nReinstall Codex: npm install -g @openai/codex@latest";
+        let hint = missing_optional_dependency_hint(codex).expect("codex hint");
+        assert!(hint.contains("Settings → Agent runtimes"), "{hint}");
+        assert!(!hint.contains("npm install -g"), "{hint}");
+
+        let claude = "Error: Missing optional dependency @anthropic-ai/claude-agent-sdk-darwin-arm64.";
+        assert!(missing_optional_dependency_hint(claude).is_some());
+        assert!(missing_optional_dependency_hint("ENOENT: no such file").is_none());
+    }
+
 
     // ── zip validation tests ──────────────────────────────────────────────────
 

@@ -781,6 +781,22 @@ pub struct AgentLogError {
     pub code: Option<i64>,
 }
 
+fn with_optional_dependency_repair_hint(message: String) -> String {
+    let lower = message.to_ascii_lowercase();
+    let matches = lower.contains("missing optional dependency")
+        && (lower.contains("@openai/codex-")
+            || lower.contains("@anthropic-ai/claude-agent-sdk-"));
+    if !matches {
+        return message;
+    }
+    if message.contains("Settings → Agent runtimes") {
+        return message;
+    }
+    format!(
+        "{message}\n\nA managed ACP adapter is missing its native package for this architecture. Open Settings → Agent runtimes and click Install again so Buzz can repair its private Node tools directory."
+    )
+}
+
 pub fn meaningful_agent_error_from_log(path: &Path) -> Option<AgentLogError> {
     let tail = read_log_tail(path, 200).ok()?;
     tail.lines().rev().map(str::trim).find_map(|line| {
@@ -789,7 +805,7 @@ pub fn meaningful_agent_error_from_log(path: &Path) -> Option<AgentLogError> {
             if let Some(paren_end) = rest.find("): ") {
                 let code = rest[..paren_end].parse::<i64>().ok();
                 return Some(AgentLogError {
-                    message: line.to_string(),
+                    message: with_optional_dependency_repair_hint(line.to_string()),
                     code,
                 });
             }
@@ -797,7 +813,7 @@ pub fn meaningful_agent_error_from_log(path: &Path) -> Option<AgentLogError> {
         // Legacy format (older buzz-acp builds): "Agent reported error: ..."
         if line.starts_with("Agent reported error:") {
             return Some(AgentLogError {
-                message: line.to_string(),
+                message: with_optional_dependency_repair_hint(line.to_string()),
                 code: None,
             });
         }
@@ -814,6 +830,14 @@ pub fn meaningful_agent_error_from_log(path: &Path) -> Option<AgentLogError> {
             return Some(AgentLogError {
                 message: format!("Agent reported error: {line}"),
                 code: Some(-32002),
+            });
+        }
+        // Upstream Codex/Claude optional-dep crash text often appears as a bare
+        // multi-line stderr dump before any "Agent reported error" wrapper.
+        if line.to_ascii_lowercase().contains("missing optional dependency") {
+            return Some(AgentLogError {
+                message: with_optional_dependency_repair_hint(line.to_string()),
+                code: Some(1001),
             });
         }
         None

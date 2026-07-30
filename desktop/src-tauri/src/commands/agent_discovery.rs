@@ -339,6 +339,15 @@ fn install_acp_runtime_blocking(runtime_id: &str) -> Result<InstallRuntimeResult
         let use_managed_npm =
             cmds.iter().any(|cmd| is_npm_global_install(cmd)) && managed_node_runtime_supported();
         if use_managed_npm {
+            if let Err(step) = ensure_managed_adapter_arch_ready_blocking() {
+                steps.push(*step);
+                return Ok(InstallRuntimeResult {
+                    success: false,
+                    steps,
+                    restarted_count: 0,
+                    failed_restart_count: 0,
+                });
+            }
             if let Err(step) = ensure_managed_node_runtime_blocking() {
                 steps.push(*step);
                 return Ok(InstallRuntimeResult {
@@ -371,7 +380,7 @@ fn install_acp_runtime_blocking(runtime_id: &str) -> Result<InstallRuntimeResult
 
             let mut result = run_install_command_with_retry("adapter", &planned);
             if !result.success && result.hint.is_none() && is_npm_global_install(cmd) {
-                result.hint = npm_eacces_hint(&result.stderr, cmd);
+                result.hint = managed_adapter_stderr_hint(&result.stderr, cmd);
             }
             let success = result.success;
             steps.push(result);
@@ -383,6 +392,10 @@ fn install_acp_runtime_blocking(runtime_id: &str) -> Result<InstallRuntimeResult
                     failed_restart_count: 0,
                 });
             }
+        }
+
+        if use_managed_npm {
+            reclaim_legacy_unscoped_npm_prefix();
         }
     }
 
@@ -1022,9 +1035,12 @@ use install_exec::run_install_command_with_retry;
 // ── managed Node/npm runtime ──────────────────────────────────────────────────
 mod managed_node;
 use managed_node::{
-    ensure_managed_node_runtime_blocking, managed_node_runtime_supported, managed_npm_command,
-    npm_eacces_hint,
+    ensure_managed_adapter_arch_ready_blocking, ensure_managed_node_runtime_blocking,
+    managed_adapter_stderr_hint, managed_node_runtime_supported, managed_npm_command,
+    reclaim_legacy_unscoped_npm_prefix,
 };
+#[cfg(test)]
+use managed_node::npm_eacces_hint;
 
 #[tauri::command]
 pub async fn discover_managed_agent_prereqs(

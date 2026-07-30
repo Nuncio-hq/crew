@@ -361,6 +361,18 @@ pub fn run() {
         .setup(move |app| {
             let app_handle = app.handle().clone();
 
+            // Seed managed Node/npm product dir before any discovery/install/spawn.
+            // Uses productName when set; otherwise the last identifier segment.
+            // Falls back to "Buzz" inside the accessor when unset (tests/headless).
+            {
+                let config = app_handle.config();
+                let product_dir = crate::managed_agents::product_dir_from_tauri_config(
+                    config.product_name.as_deref(),
+                    &config.identifier,
+                );
+                crate::managed_agents::set_managed_product_dir(product_dir);
+            }
+
             // ── Phase 2: boot-time sentinel wipe ──────────────────────────────
             // Must run before migrations and identity resolution so the wipe
             // completes atomically on crash recovery.

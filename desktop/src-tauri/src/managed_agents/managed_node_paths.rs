@@ -1,27 +1,129 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-pub(crate) fn buzz_managed_npm_prefix() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("Buzz").join("node-tools"))
-}
+/// Product data-dir segment for managed Node/npm trees (`…/<product>/node-tools/…`).
+/// Seeded once from Tauri config at startup; falls back to `"Buzz"` when unset.
+static PRODUCT_DIR: OnceLock<String> = OnceLock::new();
 
 const BUZZ_MANAGED_NODE_VERSION: &str = "v24.18.0";
+const DEFAULT_PRODUCT_DIR: &str = "Buzz";
+
+/// Seed the product directory name used under `dirs::data_dir()`.
+///
+/// Idempotent-safe: a second call with a different value logs and keeps the first.
+pub(crate) fn set_managed_product_dir(name: String) {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let sanitized = sanitize_product_dir(trimmed);
+    if let Err(existing) = PRODUCT_DIR.set(sanitized.clone()) {
+        if existing.as_str() != sanitized.as_str() {
+            eprintln!(
+                "buzz-desktop: managed product dir already set to {existing:?}; ignoring {sanitized:?}"
+            );
+        }
+    }
+}
+
+/// Derive a stable filesystem directory name from Tauri product/identifier config.
+///
+/// Prefer `product_name` when present (stable across releases of the same product);
+/// otherwise use the last segment of the bundle identifier.
+pub(crate) fn product_dir_from_tauri_config(
+    product_name: Option<&str>,
+    identifier: &str,
+) -> String {
+    if let Some(name) = product_name {
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            return sanitize_product_dir(trimmed);
+        }
+    }
+    identifier
+        .rsplit('.')
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(sanitize_product_dir)
+        .unwrap_or_else(|| DEFAULT_PRODUCT_DIR.to_string())
+}
+
+fn sanitize_product_dir(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' => '_',
+            other => other,
+        })
+        .collect()
+}
+
+/// Resolve the product dir from an optional seed (pure helper for tests).
+#[cfg(test)]
+fn resolve_managed_product_dir(seeded: Option<&str>) -> &str {
+    seeded.unwrap_or(DEFAULT_PRODUCT_DIR)
+}
+
+fn managed_product_dir() -> &'static str {
+    PRODUCT_DIR
+        .get()
+        .map(String::as_str)
+        .unwrap_or(DEFAULT_PRODUCT_DIR)
+}
+
+/// Map `(os, arch)` from `std::env::consts` to the Node distribution platform
+/// segment (`darwin-arm64`, `win-x64`, …). Single source of truth for both the
+/// managed Node runtime tree and the managed npm prefix.
+pub(crate) fn managed_platform_segment_for(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("macos", "aarch64") => Some("darwin-arm64"),
+        ("macos", "x86_64") => Some("darwin-x64"),
+        ("linux", "x86_64") => Some("linux-x64"),
+        ("linux", "aarch64") => Some("linux-arm64"),
+        ("windows", "x86_64") => Some("win-x64"),
+        ("windows", "aarch64") => Some("win-arm64"),
+        _ => None,
+    }
+}
+
+pub(crate) fn managed_platform_segment() -> Option<&'static str> {
+    managed_platform_segment_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// Whether Windows Node archives omit the `bin/` subdirectory.
+fn managed_node_bin_subdir(os: &str) -> Option<&'static str> {
+    match os {
+        "windows" => None,
+        _ => Some("bin"),
+    }
+}
+
+/// Arch-scoped managed npm prefix: `data_dir()/<product>/node-tools/<platform>/`.
+pub(crate) fn buzz_managed_npm_prefix() -> Option<PathBuf> {
+    let platform = managed_platform_segment()?;
+    dirs::data_dir().map(|dir| {
+        dir.join(managed_product_dir())
+            .join("node-tools")
+            .join(platform)
+    })
+}
+
+/// Legacy unscoped prefix (`…/node-tools` with no platform segment).
+/// Used only to reclaim disk after a successful scoped install.
+pub(crate) fn buzz_legacy_unscoped_npm_prefix() -> Option<PathBuf> {
+    dirs::data_dir().map(|dir| dir.join(managed_product_dir()).join("node-tools"))
+}
 
 pub(crate) fn buzz_managed_node_root() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("Buzz").join("runtimes").join("node"))
+    dirs::data_dir().map(|dir| {
+        dir.join(managed_product_dir())
+            .join("runtimes")
+            .join("node")
+    })
 }
 
 pub(crate) fn buzz_managed_node_bin_dir() -> Option<PathBuf> {
-    let (platform, bin_subdir): (&str, Option<&str>) =
-        match (std::env::consts::OS, std::env::consts::ARCH) {
-            ("macos", "aarch64") => ("darwin-arm64", Some("bin")),
-            ("macos", "x86_64") => ("darwin-x64", Some("bin")),
-            ("linux", "x86_64") => ("linux-x64", Some("bin")),
-            ("linux", "aarch64") => ("linux-arm64", Some("bin")),
-            // Windows zips have node.exe + npm.cmd at the archive root — no bin/ subdir
-            ("windows", "x86_64") => ("win-x64", None),
-            ("windows", "aarch64") => ("win-arm64", None),
-            _ => return None,
-        };
+    let platform = managed_platform_segment()?;
+    let bin_subdir = managed_node_bin_subdir(std::env::consts::OS);
     buzz_managed_node_root().map(|root| {
         let dir = root.join(BUZZ_MANAGED_NODE_VERSION).join(platform);
         match bin_subdir {
@@ -57,6 +159,65 @@ pub(crate) fn buzz_managed_npm_bin_dir() -> Option<PathBuf> {
     })
 }
 
+/// True when `path` resolves under the managed npm prefix for this product/arch.
+pub(crate) fn path_is_under_managed_npm_prefix(path: &Path) -> bool {
+    let Some(prefix) = buzz_managed_npm_prefix() else {
+        return false;
+    };
+    path_is_within(path, &prefix)
+}
+
+/// Fail loudly when a managed adapter would run without a managed Node binary.
+/// Unmanaged (system PATH) adapters are unchanged.
+pub(crate) fn require_managed_node_for_adapter(resolved_agent: &Path) -> Result<(), String> {
+    if !path_is_under_managed_npm_prefix(resolved_agent) {
+        return Ok(());
+    }
+    let Some(node) = buzz_managed_node_bin_path() else {
+        return Err(managed_node_missing_hint());
+    };
+    if !node.is_file() {
+        return Err(managed_node_missing_hint());
+    }
+    Ok(())
+}
+
+fn managed_node_missing_hint() -> String {
+    "Buzz's managed Node.js runtime is missing for this architecture, so managed ACP adapters cannot start. Open Settings → Agent runtimes and click Install again.".to_string()
+}
+
+/// Return true when `path` is equal to or nested under `ancestor`.
+pub(crate) fn path_is_within(path: &Path, ancestor: &Path) -> bool {
+    let mut current = path;
+    loop {
+        if current == ancestor {
+            return true;
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
+}
+
+/// Root under which purge is allowed: `data_dir()/<product>/node-tools`.
+pub(crate) fn managed_node_tools_root() -> Option<PathBuf> {
+    dirs::data_dir().map(|dir| dir.join(managed_product_dir()).join("node-tools"))
+}
+
+/// Guard: only paths inside `…/<product>/node-tools` may be purged.
+pub(crate) fn is_safe_to_purge_node_tools_path(path: &Path) -> bool {
+    let Some(root) = managed_node_tools_root() else {
+        return false;
+    };
+    if path.as_os_str().is_empty() {
+        return false;
+    }
+    // Must be strictly inside node-tools (or the node-tools root itself / a child).
+    // Refuse anything that is not under the product node-tools tree.
+    path_is_within(path, &root)
+}
+
 pub(crate) fn buzz_managed_command_path(command: &str, basename: &str) -> Option<PathBuf> {
     if command.contains(std::path::MAIN_SEPARATOR)
         || !matches!(
@@ -80,7 +241,7 @@ pub(crate) fn buzz_managed_command_path(command: &str, basename: &str) -> Option
         .find(|candidate| is_executable_file(candidate))
 }
 
-fn is_executable_file(path: &std::path::Path) -> bool {
+fn is_executable_file(path: &Path) -> bool {
     let Ok(metadata) = path.metadata() else {
         return false;
     };
@@ -97,5 +258,167 @@ fn is_executable_file(path: &std::path::Path) -> bool {
     #[cfg(not(unix))]
     {
         true
+    }
+}
+
+/// Only contribute a managed PATH entry when the directory exists.
+pub(crate) fn existing_managed_npm_bin_dir() -> Option<PathBuf> {
+    buzz_managed_npm_bin_dir().filter(|dir| dir.is_dir())
+}
+
+/// Only contribute a managed Node PATH entry when the node binary is present.
+pub(crate) fn existing_managed_node_bin_dir() -> Option<PathBuf> {
+    let dir = buzz_managed_node_bin_dir()?;
+    let node = buzz_managed_node_bin_path()?;
+    if node.is_file() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_segment_covers_all_six_pairs() {
+        assert_eq!(
+            managed_platform_segment_for("macos", "aarch64"),
+            Some("darwin-arm64")
+        );
+        assert_eq!(
+            managed_platform_segment_for("macos", "x86_64"),
+            Some("darwin-x64")
+        );
+        assert_eq!(
+            managed_platform_segment_for("linux", "x86_64"),
+            Some("linux-x64")
+        );
+        assert_eq!(
+            managed_platform_segment_for("linux", "aarch64"),
+            Some("linux-arm64")
+        );
+        assert_eq!(
+            managed_platform_segment_for("windows", "x86_64"),
+            Some("win-x64")
+        );
+        assert_eq!(
+            managed_platform_segment_for("windows", "aarch64"),
+            Some("win-arm64")
+        );
+        assert_eq!(managed_platform_segment_for("macos", "riscv64"), None);
+        assert_eq!(managed_platform_segment_for("freebsd", "x86_64"), None);
+    }
+
+    #[test]
+    fn product_dir_falls_back_when_unseeded() {
+        assert_eq!(resolve_managed_product_dir(None), "Buzz");
+        assert_eq!(resolve_managed_product_dir(Some("NuncioCrew")), "NuncioCrew");
+    }
+
+    #[test]
+    fn product_dir_from_tauri_prefers_product_name() {
+        assert_eq!(
+            product_dir_from_tauri_config(Some("NuncioCrew"), "com.nuncio.crew"),
+            "NuncioCrew"
+        );
+        assert_eq!(
+            product_dir_from_tauri_config(None, "com.nuncio.crew"),
+            "crew"
+        );
+        assert_eq!(
+            product_dir_from_tauri_config(Some("  "), "xyz.block.buzz.app"),
+            "app"
+        );
+        assert_eq!(
+            product_dir_from_tauri_config(Some("Buzz Dev"), "xyz.block.buzz.app.dev"),
+            "Buzz Dev"
+        );
+    }
+
+    #[test]
+    fn sanitize_replaces_path_separators() {
+        assert_eq!(sanitize_product_dir("a/b\\c:d"), "a_b_c_d");
+    }
+
+    #[test]
+    fn npm_prefix_and_node_bin_dir_agree_on_platform_segment() {
+        let Some(platform) = managed_platform_segment() else {
+            // Unsupported host — both accessors must be None.
+            assert!(buzz_managed_npm_prefix().is_none());
+            assert!(buzz_managed_node_bin_dir().is_none());
+            return;
+        };
+
+        let npm = buzz_managed_npm_prefix().expect("npm prefix");
+        let node_bin = buzz_managed_node_bin_dir().expect("node bin dir");
+
+        assert!(
+            npm.ends_with(Path::new("node-tools").join(platform)),
+            "npm prefix must end with node-tools/{platform}: {}",
+            npm.display()
+        );
+
+        // Relationship: npm's platform segment equals the parent-of-bin (or the
+        // dir itself on Windows) segment under the versioned node root.
+        let npm_platform = npm.file_name().and_then(|s| s.to_str());
+        assert_eq!(npm_platform, Some(platform));
+
+        // Node bin dir contains `/<version>/<platform>/…` — find platform in components.
+        let has_platform = node_bin.components().any(|c| c.as_os_str() == platform);
+        assert!(
+            has_platform,
+            "node bin dir must contain platform segment {platform}: {}",
+            node_bin.display()
+        );
+    }
+
+    #[test]
+    fn legacy_unscoped_prefix_has_no_platform_segment() {
+        let Some(legacy) = buzz_legacy_unscoped_npm_prefix() else {
+            return;
+        };
+        assert_eq!(
+            legacy.file_name().and_then(|s| s.to_str()),
+            Some("node-tools")
+        );
+        if let Some(platform) = managed_platform_segment() {
+            assert!(
+                !legacy.ends_with(platform),
+                "legacy must not include platform: {}",
+                legacy.display()
+            );
+        }
+    }
+
+    #[test]
+    fn path_within_detects_nested_and_rejects_siblings() {
+        let root = PathBuf::from("/data/Buzz/node-tools");
+        assert!(path_is_within(
+            Path::new("/data/Buzz/node-tools/darwin-arm64"),
+            &root
+        ));
+        assert!(path_is_within(&root, &root));
+        assert!(!path_is_within(
+            Path::new("/data/Buzz/runtimes"),
+            &root
+        ));
+        assert!(!path_is_within(Path::new("/tmp/evil"), &root));
+    }
+
+    #[test]
+    fn purge_guard_rejects_paths_outside_node_tools() {
+        // Without a real data_dir this still exercises the helper shape via
+        // is_safe_to_purge when we can resolve roots.
+        if let Some(root) = managed_node_tools_root() {
+            assert!(is_safe_to_purge_node_tools_path(&root));
+            assert!(is_safe_to_purge_node_tools_path(&root.join("darwin-arm64")));
+            assert!(!is_safe_to_purge_node_tools_path(
+                &root.parent().unwrap().join("runtimes")
+            ));
+            assert!(!is_safe_to_purge_node_tools_path(Path::new("/tmp")));
+            assert!(!is_safe_to_purge_node_tools_path(Path::new("")));
+        }
     }
 }

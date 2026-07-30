@@ -5,9 +5,8 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use crate::managed_agents::{
-    buzz_managed_command_path, buzz_managed_node_bin_dir, buzz_managed_npm_bin_dir,
-    AcpAvailabilityStatus, AcpRuntimeCatalogEntry, AuthStatus, CommandAvailabilityInfo,
-    HarnessSource,
+    buzz_managed_command_path, buzz_managed_node_bin_dir, AcpAvailabilityStatus,
+    AcpRuntimeCatalogEntry, AuthStatus, CommandAvailabilityInfo, HarnessSource,
 };
 
 mod runtime_metadata;
@@ -28,10 +27,10 @@ fn common_binary_paths() -> &'static [PathBuf] {
             PathBuf::from("/usr/bin"),
             PathBuf::from("/home/linuxbrew/.linuxbrew/bin"),
         ];
-        if let Some(managed_node_bin) = buzz_managed_node_bin_dir() {
+        if let Some(managed_node_bin) = crate::managed_agents::existing_managed_node_bin_dir() {
             paths.insert(0, managed_node_bin);
         }
-        if let Some(managed_bin) = buzz_managed_npm_bin_dir() {
+        if let Some(managed_bin) = crate::managed_agents::existing_managed_npm_bin_dir() {
             paths.insert(0, managed_bin);
         }
         if let Some(home) = dirs::home_dir() {
