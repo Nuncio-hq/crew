@@ -13,3 +13,49 @@ export function getInstallErrorMessage(steps: InstallStepResult[]): string {
   const base = `Step "${lastStep.step}" failed: ${lastStep.stderr || lastStep.stdout || "unknown error"}`;
   return lastStep.hint ? `${lastStep.hint}\n\n${base}` : base;
 }
+
+/**
+ * Partial-success warning when the requested runtime installed but a purged
+ * sibling failed `adapter-repair`. Backend keeps top-level `success: true` so
+ * the primary install is not reported as failed; UI must still surface every
+ * purged sibling's outcome.
+ */
+export function getFailedAdapterRepairWarning(
+  steps: InstallStepResult[],
+): string | null {
+  const failed = steps.filter(
+    (step) => step.step === "adapter-repair" && !step.success,
+  );
+  if (failed.length === 0) {
+    return null;
+  }
+  return failed
+    .map((step) => {
+      const hint = step.hint?.trim();
+      if (hint) {
+        return hint;
+      }
+      return `Step "${step.step}" failed: ${step.stderr || step.stdout || "unknown error"}`;
+    })
+    .join("\n\n");
+}
+
+/**
+ * Shared mapping for install surfaces (catalog detail + runtime row).
+ * Hard failure → error; primary ok with failed sibling repair → warning.
+ */
+export function getInstallOutcomeMessages(result: {
+  success: boolean;
+  steps: InstallStepResult[];
+}): { error: string | null; warning: string | null } {
+  if (!result.success) {
+    return {
+      error: getInstallErrorMessage(result.steps),
+      warning: null,
+    };
+  }
+  return {
+    error: null,
+    warning: getFailedAdapterRepairWarning(result.steps),
+  };
+}

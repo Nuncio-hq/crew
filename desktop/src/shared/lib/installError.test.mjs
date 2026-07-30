@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getInstallErrorMessage } from "./installError.ts";
+import {
+  getFailedAdapterRepairWarning,
+  getInstallErrorMessage,
+  getInstallOutcomeMessages,
+} from "./installError.ts";
 
 test("getInstallErrorMessage: empty steps array returns fallback", () => {
   assert.equal(getInstallErrorMessage([]), "Install failed with no output.");
@@ -110,4 +114,99 @@ test("getInstallErrorMessage: only reports the last (failing) step when multiple
   assert.match(message, /Step "adapter" failed:/);
   assert.match(message, /npm ERR! code E404/);
   assert.doesNotMatch(message, /Step "node"/);
+});
+
+const failedAdapterRepairHint =
+  "Claude Code adapter was removed during architecture repair and could not be reinstalled; open Settings → Agent runtimes and click Install for Claude Code.";
+
+test("getFailedAdapterRepairWarning: success:true + failed adapter-repair => warning visible", () => {
+  const warning = getFailedAdapterRepairWarning([
+    {
+      step: "adapter",
+      command: "npm install -g @openai/codex",
+      success: true,
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    },
+    {
+      step: "adapter-repair",
+      command: "npm install -g @anthropic/claude",
+      success: false,
+      stdout: "",
+      stderr: "npm ERR! network",
+      exitCode: 1,
+      hint: failedAdapterRepairHint,
+    },
+  ]);
+  assert.equal(warning, failedAdapterRepairHint);
+});
+
+test("getFailedAdapterRepairWarning: no failed adapter-repair => null", () => {
+  assert.equal(
+    getFailedAdapterRepairWarning([
+      {
+        step: "adapter",
+        command: "npm install -g @openai/codex",
+        success: true,
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      },
+      {
+        step: "adapter-repair",
+        command: "npm install -g @anthropic/claude",
+        success: true,
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      },
+    ]),
+    null,
+  );
+});
+
+test("getInstallOutcomeMessages: primary success with failed sibling repair is warning not error", () => {
+  const outcome = getInstallOutcomeMessages({
+    success: true,
+    steps: [
+      {
+        step: "adapter",
+        command: "npm install -g @openai/codex",
+        success: true,
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      },
+      {
+        step: "adapter-repair",
+        command: "reinstall after architecture repair",
+        success: false,
+        stdout: "",
+        stderr: "managed Node.js runtime is not ready",
+        exitCode: null,
+        hint: failedAdapterRepairHint,
+      },
+    ],
+  });
+  assert.equal(outcome.error, null);
+  assert.equal(outcome.warning, failedAdapterRepairHint);
+});
+
+test("getInstallOutcomeMessages: hard failure stays error (not warning)", () => {
+  const outcome = getInstallOutcomeMessages({
+    success: false,
+    steps: [
+      {
+        step: "adapter",
+        command: "npm install -g @openai/codex",
+        success: false,
+        stdout: "",
+        stderr: "EACCES",
+        exitCode: 1,
+      },
+    ],
+  });
+  assert.match(outcome.error ?? "", /EACCES/);
+  assert.equal(outcome.warning, null);
 });

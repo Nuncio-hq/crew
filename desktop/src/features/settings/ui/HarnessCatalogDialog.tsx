@@ -11,7 +11,7 @@ import {
   RuntimeIcon,
 } from "@/features/onboarding/ui/RuntimeIcon";
 import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
-import { getInstallErrorMessage } from "@/shared/lib/installError";
+import { getInstallOutcomeMessages } from "@/shared/lib/installError";
 import { cn } from "@/shared/lib/cn";
 import {
   AlertDialog,
@@ -393,6 +393,9 @@ function CatalogListItem({
 function CatalogDetail({ entry }: { entry: AcpRuntimeCatalogEntry }) {
   const install = useInstallAcpRuntimeMutation();
   const [installError, setInstallError] = React.useState<string | null>(null);
+  const [installWarning, setInstallWarning] = React.useState<string | null>(
+    null,
+  );
   const [isUpdateWarningOpen, setIsUpdateWarningOpen] = React.useState(false);
   const action = catalogPrimaryAction(entry);
   const statusLabel = entryStatusLabel(entry);
@@ -402,16 +405,18 @@ function CatalogDetail({ entry }: { entry: AcpRuntimeCatalogEntry }) {
 
   function handleInstall() {
     setInstallError(null);
+    setInstallWarning(null);
     install.mutate(entry.id, {
       onSuccess: (result) => {
-        if (!result.success) {
-          setInstallError(getInstallErrorMessage(result.steps));
-        }
+        const { error, warning } = getInstallOutcomeMessages(result);
+        setInstallError(error);
+        setInstallWarning(warning);
       },
       onError: (error) => {
         setInstallError(
           error instanceof Error ? error.message : "Install failed.",
         );
+        setInstallWarning(null);
       },
     });
   }
@@ -503,8 +508,19 @@ function CatalogDetail({ entry }: { entry: AcpRuntimeCatalogEntry }) {
         ) : null}
 
         {installError ? (
-          <p className="whitespace-pre-line rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-sm text-destructive">
+          <p
+            className="whitespace-pre-line rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-sm text-destructive"
+            data-testid={`harness-catalog-install-error-${entry.id}`}
+          >
             {installError}
+          </p>
+        ) : null}
+        {installWarning ? (
+          <p
+            className="whitespace-pre-line rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-600 dark:text-amber-400"
+            data-testid={`harness-catalog-install-warning-${entry.id}`}
+          >
+            {installWarning}
           </p>
         ) : null}
 

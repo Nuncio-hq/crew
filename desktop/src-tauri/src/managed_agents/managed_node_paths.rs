@@ -186,14 +186,12 @@ pub(crate) fn clear_managed_node_probe_cache() {
     }
 }
 
-fn probe_managed_node_runtime_uncached() -> bool {
-    let Some(node) = buzz_managed_node_bin_path() else {
-        return false;
-    };
-    if !is_executable_file(&node) {
+/// Uncached readiness probe against an explicit Node binary path.
+fn probe_managed_node_runtime_at(node: &Path) -> bool {
+    if !is_executable_file(node) {
         return false;
     }
-    let mut cmd = std::process::Command::new(&node);
+    let mut cmd = std::process::Command::new(node);
     cmd.arg("--version")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -206,20 +204,24 @@ fn probe_managed_node_runtime_uncached() -> bool {
         .unwrap_or(false)
 }
 
-/// Probe managed Node with `--version` and require the pinned version string.
-/// Shared by install readiness, PATH contribution, and managed-adapter spawn.
+fn probe_managed_node_runtime_uncached() -> bool {
+    let Some(node) = buzz_managed_node_bin_path() else {
+        return false;
+    };
+    probe_managed_node_runtime_at(&node)
+}
+
+/// Positive-only memo wrapper around an uncached probe.
 ///
 /// Only `true` is memoized. A not-ready result is always re-probed so install
 /// can observe the tree flipping from missing → ready in the same call stack.
-/// Hot PATH builds after Node is ready pay one spawn for the process lifetime
-/// (until `clear_managed_node_probe_cache`).
-pub(crate) fn managed_node_runtime_probe_ok() -> bool {
+fn managed_node_runtime_probe_ok_with(probe: impl FnOnce() -> bool) -> bool {
     if let Ok(guard) = managed_node_probe_ready_cache().lock() {
         if guard.is_some() {
             return true;
         }
     }
-    let ok = probe_managed_node_runtime_uncached();
+    let ok = probe();
     if ok {
         if let Ok(mut guard) = managed_node_probe_ready_cache().lock() {
             *guard = Some(());
@@ -228,13 +230,38 @@ pub(crate) fn managed_node_runtime_probe_ok() -> bool {
     ok
 }
 
+/// Probe managed Node with `--version` and require the pinned version string.
+/// Shared by install readiness, PATH contribution, and managed-adapter spawn.
+///
+/// Hot PATH builds after Node is ready pay one spawn for the process lifetime
+/// (until `clear_managed_node_probe_cache`).
+pub(crate) fn managed_node_runtime_probe_ok() -> bool {
+    managed_node_runtime_probe_ok_with(probe_managed_node_runtime_uncached)
+}
+
 /// Fail loudly when a managed adapter would run without a ready managed Node.
 /// Unmanaged (system PATH) adapters are unchanged.
+///
+/// Always re-probes: a warm positive PATH memo must not pass spawn after the
+/// managed Node binary was removed, lost execute bits, or was replaced.
+/// A fresh `true` still re-warms the memo for the PATH build that follows.
 pub(crate) fn require_managed_node_for_adapter(resolved_agent: &Path) -> Result<(), String> {
-    if !path_is_under_managed_npm_prefix(resolved_agent) {
+    require_managed_node_for_adapter_with_probe(
+        path_is_under_managed_npm_prefix(resolved_agent),
+        managed_node_runtime_probe_ok,
+    )
+}
+
+/// Spawn-gate core with injectable managed-adapter + probe seams (hermetic tests).
+fn require_managed_node_for_adapter_with_probe(
+    is_managed_adapter: bool,
+    probe: impl FnOnce() -> bool,
+) -> Result<(), String> {
+    if !is_managed_adapter {
         return Ok(());
     }
-    if managed_node_runtime_probe_ok() {
+    clear_managed_node_probe_cache();
+    if probe() {
         Ok(())
     } else {
         Err(managed_node_missing_hint())
@@ -557,6 +584,45 @@ mod tests {
                 .map(|g| g.is_none())
                 .unwrap_or(false),
             "post-install invalidate must clear so the next probe is fresh"
+        );
+    }
+
+    /// Spawn gate must not trust a warm positive memo when the binary is gone.
+    /// Hermetic: tempfile fixture only — never touches app managed-Node data_dir.
+    #[test]
+    fn require_managed_node_rejects_stale_true_cache_when_binary_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let missing_node = tmp.path().join("node");
+        assert!(
+            !missing_node.exists(),
+            "fixture binary must be absent: {}",
+            missing_node.display()
+        );
+
+        struct ClearProbeCache;
+        impl Drop for ClearProbeCache {
+            fn drop(&mut self) {
+                clear_managed_node_probe_cache();
+            }
+        }
+        let _clear = ClearProbeCache;
+
+        // Warm positive-only memo (stale relative to the missing fixture binary).
+        if let Ok(mut guard) = managed_node_probe_ready_cache().lock() {
+            *guard = Some(());
+        }
+        assert!(
+            managed_node_runtime_probe_ok_with(|| probe_managed_node_runtime_at(&missing_node)),
+            "warm true memo must short-circuit before probing the missing fixture"
+        );
+
+        let err = require_managed_node_for_adapter_with_probe(true, || {
+            managed_node_runtime_probe_ok_with(|| probe_managed_node_runtime_at(&missing_node))
+        })
+        .expect_err("stale true memo must not pass spawn when managed Node is missing/broken");
+        assert!(
+            err.contains("managed Node.js"),
+            "unexpected spawn-gate error: {err}"
         );
     }
 
