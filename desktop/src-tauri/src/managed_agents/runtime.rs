@@ -540,10 +540,9 @@ pub fn spawn_agent_child(
             }
         }
     };
-    // Resolve agent command to a full path (DMG launches have minimal PATH).
-    let resolved_agent_command = resolve_command(effective_command)
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| effective_command.clone());
+    // Resolve agent command to a full path; managed shims require ready Node.
+    let resolved_agent_command =
+        crate::managed_agents::resolve_managed_aware_agent_command(effective_command)?;
 
     // The caller supplies the explicit canonical pair relay. This is the only
     // relay this child may connect to, regardless of the record/workspace default.

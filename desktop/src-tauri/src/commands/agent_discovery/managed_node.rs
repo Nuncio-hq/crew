@@ -3,7 +3,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use std::{io::Read, io::Write};
 
-use crate::managed_agents::{is_npm_global_install, InstallStepResult};
+use crate::managed_agents::InstallStepResult;
 
 const MANAGED_NODE_VERSION: &str = "v24.18.0";
 const MANAGED_NODE_MAX_BYTES: u64 = 90 * 1024 * 1024;
@@ -103,24 +103,7 @@ fn managed_node_failed_step(stderr: String) -> InstallStepResult {
 }
 
 fn managed_node_runtime_ready() -> bool {
-    let Some(node) = crate::managed_agents::buzz_managed_node_bin_path() else {
-        return false;
-    };
-    if !node.is_file() {
-        return false;
-    }
-    let mut cmd = std::process::Command::new(&node);
-    cmd.arg("--version")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
-    crate::util::configure_no_window(&mut cmd);
-    let output = cmd.output();
-    output
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == MANAGED_NODE_VERSION)
-        .unwrap_or(false)
+    crate::managed_agents::managed_node_runtime_probe_ok()
 }
 
 fn managed_node_install_lock() -> &'static Mutex<()> {
@@ -158,6 +141,9 @@ pub(super) fn ensure_managed_node_runtime_blocking() -> Result<(), Box<InstallSt
 
     install_managed_node_runtime(&root, artifact)
         .map_err(|err| Box::new(managed_node_failed_step(err)))?;
+    // Probe memo is positive-only, but still invalidate so PATH/build callers
+    // that raced the download re-observe the new tree immediately.
+    crate::managed_agents::clear_managed_node_probe_cache();
     if managed_node_runtime_ready() {
         Ok(())
     } else {
@@ -462,136 +448,9 @@ fn verify_node_tree(dir: &std::path::Path) -> Result<(), String> {
     }
 }
 
-// ── managed npm adapter installs ──────────────────────────────────────────────
-
-/// Guidance text shown when the Buzz-private npm prefix is not available.
-fn managed_npm_prefix_hint() -> String {
-    "Buzz could not create its private Node tools directory. Check app-data directory permissions, restart Buzz, then click Install again.".to_string()
-}
-
-pub(super) fn managed_npm_command(command: &str) -> Result<Option<String>, Box<InstallStepResult>> {
-    if !is_npm_global_install(command) {
-        return Ok(None);
-    }
-
-    let Some(prefix) = crate::managed_agents::buzz_managed_npm_prefix() else {
-        return Err(Box::new(InstallStepResult {
-            step: "adapter".to_string(),
-            command: command.to_string(),
-            success: false,
-            stdout: String::new(),
-            stderr: "failed to resolve Buzz app-data directory for private npm prefix".to_string(),
-            exit_code: None,
-            hint: Some(managed_npm_prefix_hint()),
-        }));
-    };
-    if let Err(error) = std::fs::create_dir_all(&prefix) {
-        return Err(Box::new(InstallStepResult {
-            step: "adapter".to_string(),
-            command: command.to_string(),
-            success: false,
-            stdout: String::new(),
-            stderr: format!(
-                "failed to create Buzz private npm prefix '{}': {error}",
-                prefix.display()
-            ),
-            exit_code: None,
-            hint: Some(managed_npm_prefix_hint()),
-        }));
-    }
-
-    let prefix_arg = shell_quote(&prefix);
-    Ok(Some(rewrite_npm_global_install(command, &prefix_arg)))
-}
-
-fn rewrite_npm_global_install(command: &str, quoted_prefix: &str) -> String {
-    let trimmed = command.trim_start();
-    if let Some(rest) = trimmed.strip_prefix("npm install -g ") {
-        format!("npm install --global --prefix {quoted_prefix} {rest}")
-    } else if let Some(rest) = trimmed.strip_prefix("npm i -g ") {
-        format!("npm i --global --prefix {quoted_prefix} {rest}")
-    } else if let Some(rest) = trimmed.strip_prefix("npm uninstall -g ") {
-        format!("npm uninstall --global --prefix {quoted_prefix} {rest}")
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn shell_quote(path: &std::path::Path) -> String {
-    let value = path.to_string_lossy();
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-/// Inspect `stderr` for known npm EACCES patterns and return actionable
-/// guidance if matched, or `None` when the error is unrelated.
-pub(super) fn npm_eacces_hint(stderr: &str, _command: &str) -> Option<String> {
-    if stderr.contains("EACCES: permission denied") || stderr.contains("npm error EACCES") {
-        Some(
-            "npm could not write to Buzz's private Node tools directory. Check app-data directory permissions, restart Buzz, then click Install again."
-                .to_string(),
-        )
-    } else {
-        None
-    }
-}
-
-// ── end managed npm adapter installs ──────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_npm_eacces_hint_guidance_mentions_buzz_private_dir() {
-        let hint = npm_eacces_hint("EACCES: permission denied", "npm install -g foo").unwrap();
-        assert!(
-            hint.contains("Buzz's private Node tools directory"),
-            "hint: {hint}"
-        );
-    }
-
-    #[test]
-    fn test_rewrite_npm_install_uses_private_prefix() {
-        assert_eq!(
-            rewrite_npm_global_install(
-                "npm install -g @agentclientprotocol/codex-acp",
-                "'/tmp/Buzz Node'"
-            ),
-            "npm install --global --prefix '/tmp/Buzz Node' @agentclientprotocol/codex-acp"
-        );
-    }
-
-    #[test]
-    fn test_rewrite_npm_i_uses_private_prefix() {
-        assert_eq!(
-            rewrite_npm_global_install("npm i -g some-package", "'/tmp/buzz'"),
-            "npm i --global --prefix '/tmp/buzz' some-package"
-        );
-    }
-
-    #[test]
-    fn test_rewrite_npm_uninstall_uses_private_prefix() {
-        assert_eq!(
-            rewrite_npm_global_install("npm uninstall -g @zed-industries/codex-acp", "'/tmp/buzz'"),
-            "npm uninstall --global --prefix '/tmp/buzz' @zed-industries/codex-acp"
-        );
-    }
-
-    #[test]
-    fn test_rewrite_ignores_non_global_command() {
-        assert_eq!(
-            rewrite_npm_global_install("npm install foo", "'/tmp/buzz'"),
-            "npm install foo"
-        );
-    }
-
-    #[test]
-    fn test_shell_quote_escapes_single_quotes() {
-        assert_eq!(
-            shell_quote(std::path::Path::new("/tmp/Buzz's Node")),
-            "'/tmp/Buzz'\\''s Node'"
-        );
-    }
 
     // ── zip validation tests ──────────────────────────────────────────────────
 

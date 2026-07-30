@@ -120,10 +120,12 @@ pub(in crate::managed_agents) fn build_augmented_path(
     // This keeps tests/utility callers that intentionally pass no local context
     // from manufacturing a PATH out of ambient platform dirs alone.
     if has_local_context {
-        if let Some(managed_npm_bin) = crate::managed_agents::buzz_managed_npm_bin_dir() {
+        // Only contribute managed dirs that actually exist. A missing arch-scoped
+        // node dir must not occupy PATH ahead of system Node (shebang fallthrough).
+        if let Some(managed_npm_bin) = crate::managed_agents::existing_managed_npm_bin_dir() {
             managed.push(managed_npm_bin);
         }
-        if let Some(managed_node_bin) = crate::managed_agents::buzz_managed_node_bin_dir() {
+        if let Some(managed_node_bin) = crate::managed_agents::existing_managed_node_bin_dir() {
             managed.push(managed_node_bin);
         }
     }

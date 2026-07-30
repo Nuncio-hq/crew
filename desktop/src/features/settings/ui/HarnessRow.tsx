@@ -12,7 +12,7 @@ import {
 } from "@/features/agents/hooks";
 import { RuntimeIcon } from "@/features/onboarding/ui/RuntimeIcon";
 import type { AcpAuthMethod, AcpRuntimeCatalogEntry } from "@/shared/api/types";
-import { getInstallErrorMessage } from "@/shared/lib/installError";
+import { getInstallOutcomeMessages } from "@/shared/lib/installError";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import {
@@ -314,6 +314,7 @@ export function HarnessRow({
   const [installResult, setInstallResult] = React.useState<{
     success: boolean;
     error: string | null;
+    warning: string | null;
   } | null>(null);
   // Clear stale install results when the parent triggers a catalog refresh
   // (Check again) — the runtime may now be healthy and stale failure state
@@ -324,6 +325,7 @@ export function HarnessRow({
   }, [resetEpoch]);
   const isInstalling = installMutation.isPending;
   const installError = installResult?.error ?? null;
+  const installWarning = installResult?.warning ?? null;
 
   const del = useDeleteCustomHarnessMutation();
   // Blast-radius data for the delete confirmation — only fetched while the
@@ -343,19 +345,18 @@ export function HarnessRow({
     setInstallResult(null);
     installMutation.mutate(runtime.id, {
       onSuccess: (result) => {
-        if (result.success) {
-          setInstallResult({ success: true, error: null });
-        } else {
-          setInstallResult({
-            success: false,
-            error: getInstallErrorMessage(result.steps),
-          });
-        }
+        const { error, warning } = getInstallOutcomeMessages(result);
+        setInstallResult({
+          success: result.success,
+          error,
+          warning,
+        });
       },
       onError: (error) => {
         setInstallResult({
           success: false,
           error: error instanceof Error ? error.message : "Install failed.",
+          warning: null,
         });
       },
     });
@@ -485,6 +486,14 @@ export function HarnessRow({
             data-testid={`doctor-runtime-install-error-${runtime.id}`}
           >
             {installError}
+          </p>
+        ) : null}
+        {installWarning ? (
+          <p
+            className="mt-2 whitespace-pre-line rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-600 dark:text-amber-400"
+            data-testid={`doctor-runtime-install-warning-${runtime.id}`}
+          >
+            {installWarning}
           </p>
         ) : null}
         {connectionError ? (

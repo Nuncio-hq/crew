@@ -3843,6 +3843,7 @@ async fn initialize_agent_pool(
                         }));
                     }
                     Ok(Err(e)) => {
+                        let e = with_managed_optional_dependency_hint(e.to_string());
                         tracing::error!(agent = i, "agent initialize failed: {e}");
                         acp.shutdown().await;
                         agent_slots.push(None);
@@ -3876,6 +3877,20 @@ async fn initialize_agent_pool(
     }
     tracing::info!("agent_pool_ready agents={}", live_count);
     Ok(AgentPool::from_slots(agent_slots))
+}
+
+/// When upstream Codex/Claude emit "Missing optional dependency …" plus a
+/// useless `npm install -g` suggestion, append Buzz-specific repair guidance.
+fn with_managed_optional_dependency_hint(message: String) -> String {
+    let lower = message.to_ascii_lowercase();
+    let matches = lower.contains("missing optional dependency")
+        && (lower.contains("@openai/codex-") || lower.contains("@anthropic-ai/claude-agent-sdk-"));
+    if !matches || message.contains("Settings → Agent runtimes") {
+        return message;
+    }
+    format!(
+        "{message}\n\nA managed ACP adapter is missing its native package for this architecture. Open Settings → Agent runtimes and click Install again so Buzz can repair its private Node tools directory."
+    )
 }
 
 // ── spawn_and_init ────────────────────────────────────────────────────────────
@@ -3915,7 +3930,10 @@ async fn spawn_and_init(
             // Drop only does start_kill + try_wait (best-effort); shutdown()
             // does start_kill + bounded wait (guaranteed reap).
             acp.shutdown().await;
-            Err(anyhow::anyhow!("agent initialize failed: {e}"))
+            Err(anyhow::anyhow!(
+                "agent initialize failed: {}",
+                with_managed_optional_dependency_hint(e.to_string())
+            ))
         }
     }
 }
