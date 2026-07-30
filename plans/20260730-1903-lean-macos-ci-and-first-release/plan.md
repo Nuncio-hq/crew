@@ -42,7 +42,7 @@ upstream workflow files or pinned `0.5.2` manifests.
    GitHub repository settings.
 7. Run `v0.0.1-dev` first as `publish=false`, inspect the signed artifact, then
    rerun the identical immutable inputs with `publish=true`.
-8. Verify the versioned release, dev manifest, clean install, and rollback path.
+8. Verify the versioned release, dev manifest, public DMG, and rollback path.
 
 ## Release blockers
 
@@ -60,7 +60,12 @@ then revert only the additive Crew workflow and contract files. For release
 rollback, never reuse a tag or signing key: stop before moving `latest.json`,
 or restore the last known-good manifest and publish a higher fixed version.
 
+## Result
+
+Completed 2026-07-30. Main gate, protected signed dry run, public release,
+notarization, stapling, public manifest, and mounted-DMG launch all passed.
+
 ## Unresolved questions
 
-None for CI implementation. Public release remains contingent on the protected
-dry run proving Apple and updater signing.
+Real-profile relay/Project acceptance remains a manager test. Updater E2E
+requires a second Crew version higher than the installed Crew build.
