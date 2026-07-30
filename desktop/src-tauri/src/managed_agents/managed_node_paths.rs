@@ -186,8 +186,22 @@ fn managed_node_missing_hint() -> String {
     "Buzz's managed Node.js runtime is missing for this architecture, so managed ACP adapters cannot start. Open Settings → Agent runtimes and click Install again.".to_string()
 }
 
+/// True when `path` contains a `..` component. Lexical parent walks treat `..`
+/// as a normal component, so a path like `node-tools/../runtimes` would otherwise
+/// appear to be "within" `node-tools`. Same pattern as archive zip/tar guards.
+fn path_has_parent_dir_component(path: &Path) -> bool {
+    path.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
 /// Return true when `path` is equal to or nested under `ancestor`.
+///
+/// Rejects any path (or ancestor) that contains `..` — lexical parent walks
+/// must not be allowed to climb out of the intended tree.
 pub(crate) fn path_is_within(path: &Path, ancestor: &Path) -> bool {
+    if path_has_parent_dir_component(path) || path_has_parent_dir_component(ancestor) {
+        return false;
+    }
     let mut current = path;
     loop {
         if current == ancestor {
@@ -205,17 +219,30 @@ pub(crate) fn managed_node_tools_root() -> Option<PathBuf> {
     dirs::data_dir().map(|dir| dir.join(managed_product_dir()).join("node-tools"))
 }
 
-/// Guard: only paths inside `…/<product>/node-tools` may be purged.
+/// Guard: only **strict children** of `root` may be purged (not `root` itself).
+///
+/// Pure over `(path, root)` so tests can use a tempdir fixture. Rejects `..`
+/// components on either side.
+pub(crate) fn is_safe_to_purge_node_tools_path_with_root(path: &Path, root: &Path) -> bool {
+    if path.as_os_str().is_empty() || root.as_os_str().is_empty() {
+        return false;
+    }
+    if path_has_parent_dir_component(path) || path_has_parent_dir_component(root) {
+        return false;
+    }
+    // Never delete the node-tools root wholesale — only a platform/legacy child.
+    if path == root {
+        return false;
+    }
+    path_is_within(path, root)
+}
+
+/// Guard: only paths that are strict children of `…/<product>/node-tools` may be purged.
 pub(crate) fn is_safe_to_purge_node_tools_path(path: &Path) -> bool {
     let Some(root) = managed_node_tools_root() else {
         return false;
     };
-    if path.as_os_str().is_empty() {
-        return false;
-    }
-    // Must be strictly inside node-tools (or the node-tools root itself / a child).
-    // Refuse anything that is not under the product node-tools tree.
-    path_is_within(path, &root)
+    is_safe_to_purge_node_tools_path_with_root(path, &root)
 }
 
 pub(crate) fn buzz_managed_command_path(command: &str, basename: &str) -> Option<PathBuf> {
@@ -400,25 +427,65 @@ mod tests {
             &root
         ));
         assert!(path_is_within(&root, &root));
-        assert!(!path_is_within(
-            Path::new("/data/Buzz/runtimes"),
-            &root
-        ));
+        assert!(!path_is_within(Path::new("/data/Buzz/runtimes"), &root));
         assert!(!path_is_within(Path::new("/tmp/evil"), &root));
     }
 
     #[test]
-    fn purge_guard_rejects_paths_outside_node_tools() {
-        // Without a real data_dir this still exercises the helper shape via
-        // is_safe_to_purge when we can resolve roots.
-        if let Some(root) = managed_node_tools_root() {
-            assert!(is_safe_to_purge_node_tools_path(&root));
-            assert!(is_safe_to_purge_node_tools_path(&root.join("darwin-arm64")));
-            assert!(!is_safe_to_purge_node_tools_path(
-                &root.parent().unwrap().join("runtimes")
-            ));
-            assert!(!is_safe_to_purge_node_tools_path(Path::new("/tmp")));
-            assert!(!is_safe_to_purge_node_tools_path(Path::new("")));
-        }
+    fn path_within_rejects_parent_dir_components() {
+        let root = PathBuf::from("/data/Buzz/node-tools");
+        assert!(!path_is_within(
+            Path::new("/data/Buzz/node-tools/.."),
+            &root
+        ));
+        assert!(!path_is_within(
+            Path::new("/data/Buzz/node-tools/../runtimes"),
+            &root
+        ));
+        assert!(!path_is_within(
+            Path::new("/data/Buzz/node-tools/../../../../etc"),
+            &root
+        ));
+        assert!(!path_is_within(
+            Path::new("/data/Buzz/node-tools/darwin-arm64"),
+            Path::new("/data/Buzz/node-tools/../node-tools"),
+        ));
+    }
+
+    #[test]
+    fn purge_guard_allows_strict_children_only() {
+        let root = PathBuf::from("/data/Buzz/node-tools");
+        assert!(!is_safe_to_purge_node_tools_path_with_root(&root, &root));
+        assert!(is_safe_to_purge_node_tools_path_with_root(
+            &root.join("darwin-arm64"),
+            &root
+        ));
+        assert!(is_safe_to_purge_node_tools_path_with_root(
+            &root.join("bin"),
+            &root
+        ));
+        assert!(!is_safe_to_purge_node_tools_path_with_root(
+            Path::new("/data/Buzz/runtimes"),
+            &root
+        ));
+        assert!(!is_safe_to_purge_node_tools_path_with_root(Path::new("/tmp"), &root));
+        assert!(!is_safe_to_purge_node_tools_path_with_root(Path::new(""), &root));
+    }
+
+    #[test]
+    fn purge_guard_rejects_parent_dir_escapes() {
+        let root = PathBuf::from("/data/NuncioCrew/node-tools");
+        assert!(!is_safe_to_purge_node_tools_path_with_root(
+            Path::new("/data/NuncioCrew/node-tools/.."),
+            &root
+        ));
+        assert!(!is_safe_to_purge_node_tools_path_with_root(
+            Path::new("/data/NuncioCrew/node-tools/../runtimes"),
+            &root
+        ));
+        assert!(!is_safe_to_purge_node_tools_path_with_root(
+            Path::new("/data/NuncioCrew/node-tools/../../../../etc"),
+            &root
+        ));
     }
 }

@@ -572,7 +572,18 @@ pub(crate) fn managed_adapter_arch_matches(
 
 /// Remove a managed npm prefix only when the purge guard accepts the path.
 pub(crate) fn purge_managed_npm_prefix(path: &std::path::Path) -> Result<(), String> {
-    if !crate::managed_agents::is_safe_to_purge_node_tools_path(path) {
+    let Some(root) = crate::managed_agents::managed_node_tools_root() else {
+        return Err("failed to resolve managed node-tools root for purge guard".to_string());
+    };
+    purge_managed_npm_prefix_with_root(path, &root)
+}
+
+/// Pure purge helper: guard against `root`, then `remove_dir_all(path)`.
+pub(crate) fn purge_managed_npm_prefix_with_root(
+    path: &std::path::Path,
+    root: &std::path::Path,
+) -> Result<(), String> {
+    if !crate::managed_agents::is_safe_to_purge_node_tools_path_with_root(path, root) {
         return Err(format!(
             "refusing to purge path outside managed node-tools root: {}",
             path.display()
@@ -601,21 +612,24 @@ fn purge_failed_step(path: &std::path::Path, error: String) -> InstallStepResult
 }
 
 /// On arch mismatch, purge the scoped prefix so the install path rebuilds it.
-pub(super) fn ensure_managed_adapter_arch_ready_blocking() -> Result<(), Box<InstallStepResult>> {
+///
+/// Returns `Ok(true)` when a mismatched tree was purged (caller should force
+/// reinstall even if an adapter binary still resolves elsewhere).
+pub(super) fn ensure_managed_adapter_arch_ready_blocking() -> Result<bool, Box<InstallStepResult>> {
     let Some(expected) = crate::managed_agents::managed_platform_segment() else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(prefix) = crate::managed_agents::buzz_managed_npm_prefix() else {
-        return Ok(());
+        return Ok(false);
     };
 
     match managed_adapter_arch_matches(&prefix, expected) {
-        AdapterArchCheck::Matches | AdapterArchCheck::NoAdaptersInstalled => Ok(()),
+        AdapterArchCheck::Matches | AdapterArchCheck::NoAdaptersInstalled => Ok(false),
         AdapterArchCheck::Mismatch => {
             if let Err(error) = purge_managed_npm_prefix(&prefix) {
                 return Err(Box::new(purge_failed_step(&prefix, error)));
             }
-            Ok(())
+            Ok(true)
         }
     }
 }
@@ -927,40 +941,52 @@ mod tests {
     #[test]
     fn purge_removes_scoped_prefix_and_leaves_runtimes() {
         let temp = tempfile::tempdir().unwrap();
-        // Simulate data_dir()/Buzz/{node-tools,runtimes} by seeding PRODUCT_DIR
-        // is process-global — use the real managed_node_tools_root when available.
-        let Some(root) = crate::managed_agents::managed_node_tools_root() else {
-            return;
-        };
-        let _guard_dir = root.clone();
-        let platform_dir = root.join("test-purge-platform");
-        let runtimes_sibling = root
-            .parent()
-            .unwrap()
-            .join("runtimes")
-            .join("node")
-            .join("keep-me");
-        let _ = std::fs::remove_dir_all(&platform_dir);
+        let product = temp.path().join("Buzz");
+        let root = product.join("node-tools");
+        let platform_dir = root.join("darwin-arm64");
+        let runtimes_sibling = product.join("runtimes").join("node").join("keep-me");
         std::fs::create_dir_all(&platform_dir).unwrap();
         std::fs::create_dir_all(&runtimes_sibling).unwrap();
         std::fs::write(platform_dir.join("marker"), "x").unwrap();
 
-        purge_managed_npm_prefix(&platform_dir).expect("purge");
+        purge_managed_npm_prefix_with_root(&platform_dir, &root).expect("purge");
         assert!(!platform_dir.exists());
         assert!(runtimes_sibling.exists());
-        let _ = std::fs::remove_dir_all(&runtimes_sibling);
-        let _ = temp; // keep tempdir alive unused — fixture uses real data_dir
     }
 
     #[test]
     fn purge_refuses_path_outside_node_tools() {
         let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("node-tools");
+        std::fs::create_dir_all(&root).unwrap();
         let outside = temp.path().join("evil");
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("keep"), "x").unwrap();
-        let err = purge_managed_npm_prefix(&outside).unwrap_err();
+        let err = purge_managed_npm_prefix_with_root(&outside, &root).unwrap_err();
         assert!(err.contains("refusing to purge"), "{err}");
         assert!(outside.join("keep").exists());
+    }
+
+    #[test]
+    fn purge_refuses_node_tools_root_itself() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("node-tools");
+        std::fs::create_dir_all(&root).unwrap();
+        let err = purge_managed_npm_prefix_with_root(&root, &root).unwrap_err();
+        assert!(err.contains("refusing to purge"), "{err}");
+        assert!(root.exists());
+    }
+
+    #[test]
+    fn purge_refuses_parent_dir_escape() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("node-tools");
+        std::fs::create_dir_all(temp.path().join("runtimes")).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let escape = root.join("..").join("runtimes");
+        let err = purge_managed_npm_prefix_with_root(&escape, &root).unwrap_err();
+        assert!(err.contains("refusing to purge"), "{err}");
+        assert!(temp.path().join("runtimes").exists());
     }
 
     #[test]

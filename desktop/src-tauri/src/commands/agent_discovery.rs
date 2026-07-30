@@ -325,21 +325,24 @@ fn install_acp_runtime_blocking(runtime_id: &str) -> Result<InstallRuntimeResult
     // For the codex runtime, "found" is not enough — the resolved binary must also
     // pass the 1.x version gate. An outdated 0.16.x adapter must be overwritten by
     // the new npm install so the CODEX_CONFIG spawn contract works correctly.
-    let adapter_path = runtime
-        .commands
+    let catalog_uses_managed_npm = runtime
+        .adapter_install_commands
         .iter()
-        .find_map(|cmd| crate::managed_agents::resolve_command(cmd));
-    let adapter_probe_path = crate::managed_agents::readiness::cli_probe::augmented_path();
-    if let Some(cmds) = plan_adapter_install(
-        runtime_id,
-        adapter_path.as_deref(),
-        runtime.adapter_install_commands,
-        adapter_probe_path.as_deref(),
-    ) {
-        let use_managed_npm =
-            cmds.iter().any(|cmd| is_npm_global_install(cmd)) && managed_node_runtime_supported();
-        if use_managed_npm {
-            if let Err(step) = ensure_managed_adapter_arch_ready_blocking() {
+        .any(|cmd| is_npm_global_install(cmd))
+        && managed_node_runtime_supported();
+
+    // Arch validation must run even when plan_adapter_install returns None
+    // (adapter present + current). A current shim with wrong-arch optional
+    // packages is exactly the permanently-broken state from issue #4.
+    let mut force_adapter_reinstall = false;
+    if catalog_uses_managed_npm {
+        match ensure_managed_adapter_arch_ready_blocking() {
+            Ok(true) => {
+                force_adapter_reinstall = true;
+                crate::managed_agents::clear_resolve_cache();
+            }
+            Ok(false) => {}
+            Err(step) => {
                 steps.push(*step);
                 return Ok(InstallRuntimeResult {
                     success: false,
@@ -348,6 +351,28 @@ fn install_acp_runtime_blocking(runtime_id: &str) -> Result<InstallRuntimeResult
                     failed_restart_count: 0,
                 });
             }
+        }
+    }
+
+    let adapter_path = runtime
+        .commands
+        .iter()
+        .find_map(|cmd| crate::managed_agents::resolve_command(cmd));
+    let adapter_probe_path = crate::managed_agents::readiness::cli_probe::augmented_path();
+    let planned_cmds = if force_adapter_reinstall {
+        Some(runtime.adapter_install_commands.to_vec())
+    } else {
+        plan_adapter_install(
+            runtime_id,
+            adapter_path.as_deref(),
+            runtime.adapter_install_commands,
+            adapter_probe_path.as_deref(),
+        )
+    };
+    if let Some(cmds) = planned_cmds {
+        let use_managed_npm =
+            cmds.iter().any(|cmd| is_npm_global_install(cmd)) && managed_node_runtime_supported();
+        if use_managed_npm {
             if let Err(step) = ensure_managed_node_runtime_blocking() {
                 steps.push(*step);
                 return Ok(InstallRuntimeResult {
