@@ -784,8 +784,7 @@ pub struct AgentLogError {
 fn with_optional_dependency_repair_hint(message: String) -> String {
     let lower = message.to_ascii_lowercase();
     let matches = lower.contains("missing optional dependency")
-        && (lower.contains("@openai/codex-")
-            || lower.contains("@anthropic-ai/claude-agent-sdk-"));
+        && (lower.contains("@openai/codex-") || lower.contains("@anthropic-ai/claude-agent-sdk-"));
     if !matches {
         return message;
     }
@@ -834,7 +833,10 @@ pub fn meaningful_agent_error_from_log(path: &Path) -> Option<AgentLogError> {
         }
         // Upstream Codex/Claude optional-dep crash text often appears as a bare
         // multi-line stderr dump before any "Agent reported error" wrapper.
-        if line.to_ascii_lowercase().contains("missing optional dependency") {
+        if line
+            .to_ascii_lowercase()
+            .contains("missing optional dependency")
+        {
             return Some(AgentLogError {
                 message: with_optional_dependency_repair_hint(line.to_string()),
                 code: Some(1001),

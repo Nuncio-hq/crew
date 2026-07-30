@@ -167,19 +167,50 @@ pub(crate) fn path_is_under_managed_npm_prefix(path: &Path) -> bool {
     path_is_within(path, &prefix)
 }
 
-/// Fail loudly when a managed adapter would run without a managed Node binary.
+/// Probe managed Node with `--version` and require the pinned version string.
+/// Shared by install readiness, PATH contribution, and managed-adapter spawn.
+pub(crate) fn managed_node_runtime_probe_ok() -> bool {
+    let Some(node) = buzz_managed_node_bin_path() else {
+        return false;
+    };
+    if !is_executable_file(&node) {
+        return false;
+    }
+    let mut cmd = std::process::Command::new(&node);
+    cmd.arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    crate::util::configure_no_window(&mut cmd);
+    cmd.output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == BUZZ_MANAGED_NODE_VERSION)
+        .unwrap_or(false)
+}
+
+/// Fail loudly when a managed adapter would run without a ready managed Node.
 /// Unmanaged (system PATH) adapters are unchanged.
 pub(crate) fn require_managed_node_for_adapter(resolved_agent: &Path) -> Result<(), String> {
     if !path_is_under_managed_npm_prefix(resolved_agent) {
         return Ok(());
     }
-    let Some(node) = buzz_managed_node_bin_path() else {
-        return Err(managed_node_missing_hint());
-    };
-    if !node.is_file() {
-        return Err(managed_node_missing_hint());
+    if managed_node_runtime_probe_ok() {
+        Ok(())
+    } else {
+        Err(managed_node_missing_hint())
     }
-    Ok(())
+}
+
+/// Resolve an agent command, enforcing managed-Node readiness for managed shims.
+pub(crate) fn resolve_managed_aware_agent_command(command: &str) -> Result<String, String> {
+    match crate::managed_agents::resolve_command(command) {
+        Some(path) => {
+            require_managed_node_for_adapter(&path)?;
+            Ok(path.display().to_string())
+        }
+        None => Ok(command.to_string()),
+    }
 }
 
 fn managed_node_missing_hint() -> String {
@@ -293,15 +324,12 @@ pub(crate) fn existing_managed_npm_bin_dir() -> Option<PathBuf> {
     buzz_managed_npm_bin_dir().filter(|dir| dir.is_dir())
 }
 
-/// Only contribute a managed Node PATH entry when the node binary is present.
+/// Only contribute a managed Node PATH entry when the pinned Node passes probe.
 pub(crate) fn existing_managed_node_bin_dir() -> Option<PathBuf> {
-    let dir = buzz_managed_node_bin_dir()?;
-    let node = buzz_managed_node_bin_path()?;
-    if node.is_file() {
-        Some(dir)
-    } else {
-        None
+    if !managed_node_runtime_probe_ok() {
+        return None;
     }
+    buzz_managed_node_bin_dir()
 }
 
 #[cfg(test)]
@@ -341,7 +369,10 @@ mod tests {
     #[test]
     fn product_dir_falls_back_when_unseeded() {
         assert_eq!(resolve_managed_product_dir(None), "Buzz");
-        assert_eq!(resolve_managed_product_dir(Some("NuncioCrew")), "NuncioCrew");
+        assert_eq!(
+            resolve_managed_product_dir(Some("NuncioCrew")),
+            "NuncioCrew"
+        );
     }
 
     #[test]
@@ -420,6 +451,16 @@ mod tests {
     }
 
     #[test]
+    fn require_managed_node_leaves_unmanaged_cli_unchanged() {
+        // System PATH adapters are outside the managed npm prefix — never gated.
+        assert!(require_managed_node_for_adapter(Path::new("/usr/local/bin/codex-acp")).is_ok());
+        assert!(
+            require_managed_node_for_adapter(Path::new("/opt/homebrew/bin/claude-agent-acp"))
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn path_within_detects_nested_and_rejects_siblings() {
         let root = PathBuf::from("/data/Buzz/node-tools");
         assert!(path_is_within(
@@ -468,8 +509,14 @@ mod tests {
             Path::new("/data/Buzz/runtimes"),
             &root
         ));
-        assert!(!is_safe_to_purge_node_tools_path_with_root(Path::new("/tmp"), &root));
-        assert!(!is_safe_to_purge_node_tools_path_with_root(Path::new(""), &root));
+        assert!(!is_safe_to_purge_node_tools_path_with_root(
+            Path::new("/tmp"),
+            &root
+        ));
+        assert!(!is_safe_to_purge_node_tools_path_with_root(
+            Path::new(""),
+            &root
+        ));
     }
 
     #[test]

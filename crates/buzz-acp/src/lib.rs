@@ -3884,8 +3884,7 @@ async fn initialize_agent_pool(
 fn with_managed_optional_dependency_hint(message: String) -> String {
     let lower = message.to_ascii_lowercase();
     let matches = lower.contains("missing optional dependency")
-        && (lower.contains("@openai/codex-")
-            || lower.contains("@anthropic-ai/claude-agent-sdk-"));
+        && (lower.contains("@openai/codex-") || lower.contains("@anthropic-ai/claude-agent-sdk-"));
     if !matches || message.contains("Settings → Agent runtimes") {
         return message;
     }
