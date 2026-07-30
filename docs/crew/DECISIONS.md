@@ -250,3 +250,25 @@ workspaces.
 Buzz workflow source files remain unchanged for upstream synchronization.
 Inherited automatic workflows are disabled in GitHub repository state only
 after the additive Crew gate passes, and can be re-enabled as rollback.
+
+## D-018 — Scope managed agent execution by Project thread
+
+- **Status:** Accepted
+- **Date:** 2026-07-31
+
+Each non-DM channel thread owns an independent ACP queue/session identity.
+Top-level event IDs establish that identity; NIP-10 replies reuse the root ID.
+The real NIP-29 channel remains separate for relay queries, reactions,
+observer frames, membership cleanup, and thread-scoped typing indicators.
+
+For an owner-authored Project task, Crew encodes the linked source workspace
+as hidden composer metadata. Before a new ACP session, the harness validates
+the source Git repository and creates one deterministic worktree and branch
+from the immutable thread-root event ID. All agents handed work inside that
+thread converge on the same path. Invalid metadata or worktree failure stops
+the task instead of falling back to the source checkout.
+
+A new multi-agent Project task notifies only the first explicitly ordered
+agent. Later agents remain visible through non-notifying reference tags and
+are woken by explicit mentions in subsequent thread replies. Ordinary chat,
+single-agent prompts, DMs, and non-Project channels keep existing routing.

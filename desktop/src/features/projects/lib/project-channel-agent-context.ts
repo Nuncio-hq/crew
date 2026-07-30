@@ -126,14 +126,19 @@ export function appendProjectChannelAgentContext(
   }
   const title = [
     `Project ${context.repoAddress}.`,
-    `Use workspace absolute path ${context.localPath}.`,
-    "session/new.cwd remains unchanged.",
+    `Source workspace ${context.localPath}.`,
+    "The harness provisions one isolated worktree per thread.",
   ]
     .join(" ")
     .replaceAll("\\", "\\\\")
     .replaceAll('"', '\\"');
   const label = `buzz-project-context-${globalThis.crypto.randomUUID()}`;
-  return `[${label}]: <buzz://project-workspace> "${title}"\n\n${content}`;
+  const workspaceUrl = [
+    "buzz://project-workspace",
+    `?repo=${encodeURIComponent(context.repoAddress)}`,
+    `&path=${encodeURIComponent(context.localPath)}`,
+  ].join("");
+  return `[${label}]: <${workspaceUrl}> "${title}"\n\n${content}`;
 }
 
 export async function resolveProjectChannelAgentMessage(

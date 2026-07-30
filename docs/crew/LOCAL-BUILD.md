@@ -72,17 +72,21 @@ The relay is authoritative, but no separate CLI registration is required:
 7. Quit and reopen NuncioCrew.
 8. Return to **Projects** and confirm the same Project is reconstructed from
    the relay.
-9. Mention an agent in the Project's bound channel and ask it to inspect a
-   harmless file by absolute path.
+9. Start two top-level task messages in the Project channel and mention an
+   agent in each. Confirm both thread activity indicators can run together.
+10. In one task, mention a second agent in a reply and confirm it sees the
+    first agent's changes in the same worktree.
 
 Expected result:
 
 - Project identity remains `(pubkey, identifier)`;
 - the local path is location metadata on kind `30617`;
-- no Git remote is inspected and no `clone` tag is fabricated in this slice;
-- the selected folder is not cloned, initialized, or modified;
-- `session/new.cwd` remains unchanged;
-- the agent receives the path through Project-channel context.
+- no `clone` tag is fabricated and the selected source checkout is not used
+  as an agent write target;
+- Crew creates a sibling `.buzz-worktrees` directory with one deterministic
+  worktree per thread root;
+- `session/new.cwd` is the thread worktree for Project tasks;
+- ordinary chat and non-Project sessions retain the process cwd.
 
 ## Rebuild checks
 

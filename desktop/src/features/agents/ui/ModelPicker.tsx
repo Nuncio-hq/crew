@@ -10,7 +10,7 @@ import { getAgentModels, updateManagedAgent } from "@/shared/api/tauri";
 import { switchManagedAgentModel } from "@/shared/api/agentControl";
 import { awaitLiveSwitchOutcome } from "@/features/agents/lib/liveSwitchOutcome";
 import { subscribeControlResults } from "@/features/agents/observerRelayStore";
-import { useActiveAgentTurns } from "@/features/agents/activeAgentTurnsStore";
+import { useActiveAgentTurnControlTargets } from "@/features/agents/activeAgentTurnsStore";
 import {
   useAgentConfigSurface,
   managedAgentsQueryKey,
@@ -43,7 +43,7 @@ export function ModelPicker({
   const queryClient = useQueryClient();
 
   const isRunning = agent.status === "running" || agent.status === "deployed";
-  const activeTurns = useActiveAgentTurns(agent.pubkey);
+  const activeTurns = useActiveAgentTurnControlTargets(agent.pubkey);
   // A live switch rides the agent's running session(s) instead of persisting a
   // new default. It applies only to a persona-linked running agent with at
   // least one active turn — those are the channels the desktop can name in the
@@ -107,22 +107,27 @@ export function ModelPicker({
     return labels[origin] ?? null;
   }, [configSurface]);
 
-  // Send a live `switch_model` frame to each channel the agent is working in
+  // Send a live `switch_model` frame to each exact turn the agent is working in
   // and wait for the harness to acknowledge. Any single `unsupported_model`
-  // result rejects the whole pick immediately; all other statuses must arrive
-  // from every channel before resolving success.
+  // result rejects the whole pick immediately; only exact per-turn success
+  // acknowledgements resolve the switch.
   const sendLiveSwitch = React.useCallback(
     (modelId: string) => {
-      const channelIds = activeTurns.map((turn) => turn.channelId);
       return awaitLiveSwitchOutcome({
-        channelCount: channelIds.length,
+        targetTurnIds: activeTurns.map((turn) => turn.turnId),
         modelId,
         subscribe: (listener) =>
           subscribeControlResults(agent.pubkey, listener),
         sendSwitches: async () => {
           await Promise.all(
-            channelIds.map((channelId) =>
-              switchManagedAgentModel(agent.pubkey, channelId, modelId),
+            activeTurns.map((turn) =>
+              switchManagedAgentModel(
+                agent.pubkey,
+                turn.channelId,
+                turn.conversationId,
+                turn.turnId,
+                modelId,
+              ),
             ),
           );
         },
@@ -145,6 +150,14 @@ export function ModelPicker({
         const outcome = await sendLiveSwitch(modelId);
         if (outcome === "unsupported") {
           toast.error("That model isn't available for this agent.");
+          return;
+        }
+        if (outcome === "not_applied") {
+          toast.error("The active turn ended before the model switch landed.");
+          return;
+        }
+        if (outcome === "unconfirmed") {
+          toast.warning("Model switch sent, but the agent did not confirm it.");
           return;
         }
         toast.success("Model switched for this session.");

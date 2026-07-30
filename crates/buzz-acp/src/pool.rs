@@ -50,7 +50,10 @@ const RECENT_ACTIVITY_WINDOW: Duration = Duration::from_secs(60);
 /// Metadata stored per in-flight task for panic recovery.
 pub struct TaskMeta {
     pub agent_index: usize,
+    /// Scheduler/session identity. For channel work this identifies a thread.
     pub channel_id: Option<Uuid>,
+    /// Real NIP-29 channel used for relay operations and observer context.
+    pub routing_channel_id: Option<Uuid>,
     /// Identifies terminal events when the task panics before returning a result.
     pub turn_id: String,
     /// Clone of batch for Queue mode panic recovery.
@@ -102,6 +105,8 @@ pub struct SessionState {
     /// fetch fails — all fail open. Cleared on session invalidation alongside
     /// `core_sections` so the next session picks up any canvas change.
     pub canvas_sections: HashMap<Uuid, String>,
+    /// Conversation identity → real NIP-29 channel.
+    pub routing_channels: HashMap<Uuid, Uuid>,
 }
 
 impl SessionState {
@@ -124,7 +129,23 @@ impl SessionState {
         self.turn_counts.remove(channel_id);
         self.core_sections.remove(channel_id);
         self.canvas_sections.remove(channel_id);
+        self.routing_channels.remove(channel_id);
         self.sessions.remove(channel_id).is_some()
+    }
+
+    /// Invalidate every thread session belonging to a real channel.
+    pub fn invalidate_routing_channel(&mut self, routing_channel_id: Uuid) -> usize {
+        let conversations: Vec<Uuid> = self
+            .routing_channels
+            .iter()
+            .filter_map(|(conversation, routing)| {
+                (*routing == routing_channel_id).then_some(*conversation)
+            })
+            .collect();
+        conversations
+            .iter()
+            .filter(|conversation| self.invalidate_channel(conversation))
+            .count()
     }
 
     /// Invalidate all sessions and turn counters (e.g. after agent exit).
@@ -135,6 +156,7 @@ impl SessionState {
         self.heartbeat_turn_count = 0;
         self.core_sections.clear();
         self.canvas_sections.clear();
+        self.routing_channels.clear();
     }
 
     #[cfg(test)]
@@ -143,6 +165,7 @@ impl SessionState {
             || self.turn_counts.contains_key(channel_id)
             || self.core_sections.contains_key(channel_id)
             || self.canvas_sections.contains_key(channel_id)
+            || self.routing_channels.contains_key(channel_id)
     }
 }
 
@@ -729,9 +752,8 @@ impl AgentPool {
         let mut count = 0;
         for slot in &mut self.agents {
             if let Some(agent) = slot.as_mut() {
-                if agent.state.invalidate_channel(&channel_id) {
-                    count += 1;
-                }
+                count += usize::from(agent.state.invalidate_channel(&channel_id));
+                count += agent.state.invalidate_routing_channel(channel_id);
             }
         }
         count
@@ -755,12 +777,14 @@ impl AgentPool {
         channel_id: Uuid,
         model_id: &str,
     ) -> IdleSwitchResult {
-        let Some(agent) = self
-            .agents
-            .iter_mut()
-            .flatten()
-            .find(|a| a.state.sessions.contains_key(&channel_id))
-        else {
+        let Some(agent) = self.agents.iter_mut().flatten().find(|agent| {
+            agent.state.sessions.contains_key(&channel_id)
+                || agent
+                    .state
+                    .routing_channels
+                    .values()
+                    .any(|routing| *routing == channel_id)
+        }) else {
             return IdleSwitchResult::NoIdleAgent;
         };
 
@@ -779,6 +803,7 @@ impl AgentPool {
         agent.desired_model = Some(model_id.to_string());
         agent.model_overridden = true;
         agent.state.invalidate_channel(&channel_id);
+        agent.state.invalidate_routing_channel(channel_id);
         IdleSwitchResult::Switched
     }
 }
@@ -868,6 +893,7 @@ async fn resolve_new_session_channel_context(
 async fn create_session_and_apply_model(
     agent: &mut OwnedAgent,
     ctx: &PromptContext,
+    session_cwd: &str,
     agent_core: Option<&str>,
     agent_canvas: Option<&str>,
     channel_name: Option<&str>,
@@ -882,7 +908,7 @@ async fn create_session_and_apply_model(
     let combined_system_prompt = with_canvas(
         with_core(
             with_team(
-                framed_system_prompt(&ctx.cwd, ctx.base_prompt, ctx.system_prompt.as_deref()),
+                framed_system_prompt(session_cwd, ctx.base_prompt, ctx.system_prompt.as_deref()),
                 ctx.team_instructions.as_deref(),
             ),
             agent_core,
@@ -898,7 +924,7 @@ async fn create_session_and_apply_model(
     let resp = agent
         .acp
         .session_new_full(
-            &ctx.cwd,
+            session_cwd,
             ctx.mcp_servers.clone(),
             session_new_system_prompt(
                 is_goose,
@@ -1347,17 +1373,18 @@ pub async fn run_prompt_task(
         Some(b) => PromptSource::Channel(b.channel_id),
         None => PromptSource::Heartbeat,
     };
-    let observer_channel_id = match &source {
-        PromptSource::Channel(channel_id) => Some(*channel_id),
-        PromptSource::Heartbeat => None,
-    };
+    let observer_channel_id = batch.as_ref().map(FlushBatch::routing_channel_id);
+    let observer_conversation_id = batch.as_ref().map(|batch| batch.channel_id);
     let turn_started_at = chrono::Utc::now().to_rfc3339();
-    agent.acp.set_observer_context(observer::context_for_turn(
-        observer_channel_id,
-        None,
-        turn_id.clone(),
-        turn_started_at.clone(),
-    ));
+    agent
+        .acp
+        .set_observer_context(observer::context_for_conversation_turn(
+            observer_channel_id,
+            observer_conversation_id,
+            None,
+            turn_id.clone(),
+            turn_started_at.clone(),
+        ));
     let triggering_event_ids: Vec<String> = batch
         .as_ref()
         .map(|b| b.events.iter().map(|be| be.event.id.to_hex()).collect())
@@ -1381,6 +1408,7 @@ pub async fn run_prompt_task(
         agent.acp.observer_handle(),
         agent.acp.observer_agent_index(),
         observer_channel_id,
+        observer_conversation_id,
         turn_id.clone(),
     );
 
@@ -1400,8 +1428,9 @@ pub async fn run_prompt_task(
     let liveness = run_turn_liveness(
         agent.acp.observer_handle(),
         agent.acp.observer_agent_index(),
-        observer::context_for_turn(
+        observer::context_for_conversation_turn(
             observer_channel_id,
+            observer_conversation_id,
             None,
             turn_id.clone(),
             turn_started_at.clone(),
@@ -1420,6 +1449,26 @@ pub async fn run_prompt_task(
         .map(|b| b.events.iter().map(|be| be.event.id.to_hex()).collect())
         .unwrap_or_default();
     let _reaction_guard = ReactionGuard::new(ctx.rest_client.clone(), reaction_ids.clone());
+
+    let session_cwd = match (&source, &batch) {
+        (PromptSource::Channel(cid), Some(batch)) if !agent.state.sessions.contains_key(cid) => {
+            match resolve_thread_session_cwd(batch, &ctx).await {
+                Ok(cwd) => cwd,
+                Err(error) => {
+                    send_prompt_result(
+                        &result_tx,
+                        &turn_id,
+                        agent,
+                        source,
+                        PromptOutcome::Error(AcpError::Protocol(error.to_string())),
+                        requeue_batch_if_queue(&ctx, Some(batch.clone())),
+                    );
+                    return;
+                }
+            }
+        }
+        _ => ctx.cwd.clone(),
+    };
 
     //
     // Core memory is delivered inside the system prompt the harness already
@@ -1502,17 +1551,20 @@ pub async fn run_prompt_task(
     // canvas DM check uses — see `resolve_new_session_channel_context`.
     let mut title_channel: Option<String> = None;
     if let PromptSource::Channel(cid) = &source {
+        let routing_channel_id = observer_channel_id.unwrap_or(*cid);
         let is_new_channel_session = !agent.state.sessions.contains_key(cid);
         let needs_canvas = is_new_channel_session && !agent.state.canvas_sections.contains_key(cid);
         let needs_title = is_new_channel_session && ctx.session_title.is_some();
         if needs_canvas || needs_title {
             let (is_dm, resolved_channel) =
-                resolve_new_session_channel_context(&ctx.channel_info, *cid).await;
+                resolve_new_session_channel_context(&ctx.channel_info, routing_channel_id).await;
             title_channel = resolved_channel;
             // A confirmed DM never receives a canvas section; an undeterminable
             // channel type fails closed as a DM for the same reason.
             if needs_canvas && !is_dm {
-                if let Some(section) = fetch_canvas_section(*cid, &ctx.rest_client).await {
+                if let Some(section) =
+                    fetch_canvas_section(routing_channel_id, &ctx.rest_client).await
+                {
                     pending_canvas = Some((*cid, section));
                 }
             }
@@ -1550,6 +1602,7 @@ pub async fn run_prompt_task(
                 match create_session_and_apply_model(
                     &mut agent,
                     &ctx,
+                    &session_cwd,
                     agent_core.as_deref(),
                     agent_canvas.as_deref(),
                     title_channel.as_deref(),
@@ -1562,6 +1615,10 @@ pub async fn run_prompt_task(
                             "created session {sid} for channel {cid}"
                         );
                         agent.state.sessions.insert(*cid, sid.clone());
+                        agent
+                            .state
+                            .routing_channels
+                            .insert(*cid, observer_channel_id.unwrap_or(*cid));
                         // Commit canvas only after session creation succeeds (I3).
                         if let Some((pending_cid, section)) = pending_canvas.take() {
                             agent.state.canvas_sections.insert(pending_cid, section);
@@ -1600,7 +1657,9 @@ pub async fn run_prompt_task(
             if let Some(sid) = &agent.state.heartbeat_session {
                 (sid.clone(), false)
             } else {
-                match create_session_and_apply_model(&mut agent, &ctx, None, None, None).await {
+                match create_session_and_apply_model(&mut agent, &ctx, &ctx.cwd, None, None, None)
+                    .await
+                {
                     Ok(sid) => {
                         tracing::info!(
                             target: "pool::session",
@@ -1637,12 +1696,15 @@ pub async fn run_prompt_task(
             }
         }
     };
-    agent.acp.set_observer_context(observer::context_for_turn(
-        observer_channel_id,
-        Some(session_id.clone()),
-        turn_id.clone(),
-        turn_started_at,
-    ));
+    agent
+        .acp
+        .set_observer_context(observer::context_for_conversation_turn(
+            observer_channel_id,
+            observer_conversation_id,
+            Some(session_id.clone()),
+            turn_id.clone(),
+            turn_started_at,
+        ));
     // Backfill liveness's shared session ID so ticks after this point carry
     // it too, matching every other observer frame for this turn.
     liveness_guard.set_session_id(session_id.clone());
@@ -1818,7 +1880,7 @@ pub async fn run_prompt_task(
     } else if let Some(ref b) = batch {
         // Build prompt from batch with context enrichment.
         // Try startup cache first; lazy-fetch via REST for dynamic channels.
-        let channel_info = ctx.channel_info.resolve(b.channel_id).await;
+        let channel_info = ctx.channel_info.resolve(b.routing_channel_id()).await;
 
         let conversation_context = if ctx.context_message_limit > 0 {
             fetch_conversation_context(b, &channel_info, &ctx).await
@@ -1839,7 +1901,7 @@ pub async fn run_prompt_task(
         if let Some(ref cmd) = slash_command {
             tracing::info!(
                 target: "pool::prompt",
-                channel = %b.channel_id,
+                channel = %b.routing_channel_id(),
                 command = %cmd,
                 "slash-command pass-through"
             );
@@ -2600,15 +2662,154 @@ async fn fetch_conversation_context(
     let last_event = batch.events.last()?;
     let tags = crate::queue::parse_thread_tags(&last_event.event);
     if let Some(root_id) = tags.root_event_id {
-        return fetch_thread_context(batch.channel_id, &root_id, limit, &ctx.rest_client).await;
+        return fetch_thread_context(
+            batch.routing_channel_id(),
+            &root_id,
+            limit,
+            &ctx.rest_client,
+        )
+        .await;
     }
 
     // DM non-reply: fetch recent conversation history.
     if is_dm {
-        return fetch_dm_context(batch.channel_id, limit, &ctx.rest_client).await;
+        return fetch_dm_context(batch.routing_channel_id(), limit, &ctx.rest_client).await;
     }
 
     None
+}
+
+async fn resolve_thread_session_cwd(
+    batch: &FlushBatch,
+    ctx: &PromptContext,
+) -> anyhow::Result<String> {
+    let Some(last_event) = batch.events.last() else {
+        return Ok(ctx.cwd.clone());
+    };
+    let owner = ctx
+        .agent_owner_pubkey
+        .as_ref()
+        .map(nostr::PublicKey::to_hex);
+    let thread_root_id = crate::queue::parse_thread_tags(&last_event.event).root_event_id;
+    let root_event_id = thread_root_id
+        .clone()
+        .unwrap_or_else(|| last_event.event.id.to_hex());
+
+    let fetched_root = if owner.is_some() && thread_root_id.is_some() {
+        // Once a thread exists, its root freezes the repository authority.
+        // Never trust a later reply's freshly-resolved Project path: the
+        // Project may have been relinked between agent handoffs.
+        fetch_thread_context(
+            batch.routing_channel_id(),
+            &root_event_id,
+            1,
+            &ctx.rest_client,
+        )
+        .await
+    } else {
+        None
+    };
+    let trusted_content = if let Some(owner) = owner.as_deref() {
+        select_trusted_workspace_content(
+            owner,
+            &last_event.event.pubkey.to_hex(),
+            &last_event.event.content,
+            thread_root_id.is_some(),
+            fetched_root.as_ref(),
+        )?
+    } else {
+        None
+    };
+
+    let Some(content) = trusted_content else {
+        return Ok(ctx.cwd.clone());
+    };
+    let Some(workspace) = crate::thread_workspace::parse_project_workspace(content)? else {
+        return Ok(ctx.cwd.clone());
+    };
+    let worktree =
+        crate::thread_workspace::ensure_thread_worktree(&workspace, &root_event_id).await?;
+    tracing::info!(
+        channel = %batch.routing_channel_id(),
+        root = %root_event_id,
+        cwd = %worktree.display(),
+        "resolved isolated thread worktree"
+    );
+    Ok(worktree.to_string_lossy().into_owned())
+}
+
+fn trusted_fetched_root_content<'a>(
+    owner: &str,
+    context: Option<&'a ConversationContext>,
+) -> anyhow::Result<Option<&'a str>> {
+    let Some(context) = context else {
+        anyhow::bail!("could not verify thread root before creating an agent session");
+    };
+    let ConversationContext::Thread { messages, .. } = context else {
+        return Ok(None);
+    };
+    let Some(root) = messages.first() else {
+        anyhow::bail!("thread root lookup returned no messages");
+    };
+    Ok(root
+        .pubkey
+        .eq_ignore_ascii_case(owner)
+        .then_some(root.content.as_str()))
+}
+
+fn select_trusted_workspace_content<'a>(
+    owner: &str,
+    direct_author: &str,
+    direct_content: &'a str,
+    is_thread_reply: bool,
+    fetched_root: Option<&'a ConversationContext>,
+) -> anyhow::Result<Option<&'a str>> {
+    if is_thread_reply {
+        return trusted_fetched_root_content(owner, fetched_root);
+    }
+    Ok(direct_author
+        .eq_ignore_ascii_case(owner)
+        .then_some(direct_content))
+}
+
+#[cfg(test)]
+mod thread_session_cwd_tests {
+    use super::{select_trusted_workspace_content, trusted_fetched_root_content};
+    use crate::queue::{ContextMessage, ConversationContext};
+
+    #[test]
+    fn missing_root_context_fails_closed() {
+        let error = trusted_fetched_root_content("owner", None).unwrap_err();
+        assert!(error.to_string().contains("could not verify thread root"));
+    }
+
+    #[test]
+    fn handoff_reply_cannot_replace_root_workspace_authority() {
+        let root = ConversationContext::Thread {
+            messages: vec![ContextMessage {
+                pubkey: "owner".into(),
+                timestamp: "2026-07-31T00:00:00Z".into(),
+                content: "buzz://project-workspace?path=%2Frepo-a".into(),
+            }],
+            total: 1,
+            truncated: false,
+        };
+
+        let selected = select_trusted_workspace_content(
+            "owner",
+            "owner",
+            "buzz://project-workspace?path=%2Frepo-b",
+            true,
+            Some(&root),
+        )
+        .unwrap();
+
+        assert_eq!(
+            selected,
+            Some("buzz://project-workspace?path=%2Frepo-a"),
+            "a later owner reply must not move the thread to a relinked Project"
+        );
+    }
 }
 
 /// Normalize AND validate a pubkey for the batch profile API request.
@@ -3364,6 +3565,7 @@ struct TurnCompletionGuard {
     observer: Option<observer::ObserverHandle>,
     agent_index: Option<usize>,
     channel_id: Option<uuid::Uuid>,
+    conversation_id: Option<uuid::Uuid>,
     turn_id: String,
 }
 
@@ -3372,12 +3574,14 @@ impl TurnCompletionGuard {
         observer: Option<observer::ObserverHandle>,
         agent_index: Option<usize>,
         channel_id: Option<uuid::Uuid>,
+        conversation_id: Option<uuid::Uuid>,
         turn_id: String,
     ) -> Self {
         Self {
             observer,
             agent_index,
             channel_id,
+            conversation_id,
             turn_id,
         }
     }
@@ -3386,7 +3590,12 @@ impl TurnCompletionGuard {
 impl Drop for TurnCompletionGuard {
     fn drop(&mut self) {
         if let Some(observer) = self.observer.take() {
-            let context = observer::context_for(self.channel_id, None, Some(self.turn_id.clone()));
+            let context = observer::context_for_conversation(
+                self.channel_id,
+                self.conversation_id,
+                None,
+                Some(self.turn_id.clone()),
+            );
             observer.emit(
                 "turn_completed",
                 self.agent_index,

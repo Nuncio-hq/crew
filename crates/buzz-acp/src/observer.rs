@@ -22,6 +22,9 @@ const OBSERVER_BUFFER_CAP: usize = 1_000;
 pub struct ObserverContext {
     /// Buzz channel UUID for the current turn, when channel-scoped.
     pub channel_id: Option<String>,
+    /// Scheduler/session identity. For channel work this identifies one
+    /// top-level conversation or thread independently of the real channel.
+    pub conversation_id: Option<String>,
     /// ACP session ID associated with the current turn, once known.
     pub session_id: Option<String>,
     /// Local UUID for one prompt turn.
@@ -67,6 +70,8 @@ pub struct ObserverEvent {
     pub agent_index: Option<usize>,
     /// Buzz channel UUID for channel-scoped events.
     pub channel_id: Option<String>,
+    /// Scheduler/session identity for the exact conversation or thread.
+    pub conversation_id: Option<String>,
     /// ACP session ID when known.
     pub session_id: Option<String>,
     /// Local UUID for one prompt turn.
@@ -114,6 +119,7 @@ impl ObserverHandle {
             kind: kind.into(),
             agent_index,
             channel_id: context.channel_id.clone(),
+            conversation_id: context.conversation_id.clone(),
             session_id: context.session_id.clone(),
             turn_id: context.turn_id.clone(),
             started_at: context.started_at.clone(),
@@ -137,6 +143,7 @@ impl ObserverHandle {
 }
 
 /// Build observer context values from optional channel/session/turn IDs.
+#[cfg(test)]
 pub fn context_for(
     channel_id: Option<uuid::Uuid>,
     session_id: Option<String>,
@@ -144,6 +151,7 @@ pub fn context_for(
 ) -> ObserverContext {
     ObserverContext {
         channel_id: channel_id.map(|id| id.to_string()),
+        conversation_id: None,
         session_id,
         turn_id,
         started_at: None,
@@ -151,6 +159,7 @@ pub fn context_for(
 }
 
 /// Attach the authoritative start timestamp to every observer frame for a turn.
+#[cfg(test)]
 pub fn context_for_turn(
     channel_id: Option<uuid::Uuid>,
     session_id: Option<String>,
@@ -159,8 +168,42 @@ pub fn context_for_turn(
 ) -> ObserverContext {
     ObserverContext {
         channel_id: channel_id.map(|id| id.to_string()),
+        conversation_id: None,
         session_id,
         turn_id: Some(turn_id),
         started_at: Some(started_at),
+    }
+}
+
+/// Build observer context for one exact channel conversation and turn.
+pub fn context_for_conversation_turn(
+    channel_id: Option<uuid::Uuid>,
+    conversation_id: Option<uuid::Uuid>,
+    session_id: Option<String>,
+    turn_id: String,
+    started_at: String,
+) -> ObserverContext {
+    ObserverContext {
+        channel_id: channel_id.map(|id| id.to_string()),
+        conversation_id: conversation_id.map(|id| id.to_string()),
+        session_id,
+        turn_id: Some(turn_id),
+        started_at: Some(started_at),
+    }
+}
+
+/// Build observer context for one exact channel conversation.
+pub fn context_for_conversation(
+    channel_id: Option<uuid::Uuid>,
+    conversation_id: Option<uuid::Uuid>,
+    session_id: Option<String>,
+    turn_id: Option<String>,
+) -> ObserverContext {
+    ObserverContext {
+        channel_id: channel_id.map(|id| id.to_string()),
+        conversation_id: conversation_id.map(|id| id.to_string()),
+        session_id,
+        turn_id,
+        started_at: None,
     }
 }

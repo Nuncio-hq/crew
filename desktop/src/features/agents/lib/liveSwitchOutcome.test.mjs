@@ -6,7 +6,13 @@ import { awaitLiveSwitchOutcome } from "./liveSwitchOutcome.ts";
 const MODEL = "goose-claude-fable-5";
 
 function frame(status, overrides = {}) {
-  return { type: "switch_model", status, modelId: MODEL, ...overrides };
+  return {
+    type: "switch_model",
+    status,
+    modelId: MODEL,
+    turnId: "turn-1",
+    ...overrides,
+  };
 }
 
 /**
@@ -26,7 +32,10 @@ function harness(channelCount) {
   });
 
   const outcome = awaitLiveSwitchOutcome({
-    channelCount,
+    targetTurnIds: Array.from(
+      { length: channelCount },
+      (_, index) => `turn-${index + 1}`,
+    ),
     modelId: MODEL,
     subscribe: (fn) => {
       listener = fn;
@@ -65,8 +74,8 @@ test("awaitLiveSwitchOutcome fast sent on one channel does not mask a later unsu
   const h = harness(2);
   // Channel A acks fast as `sent`; a first-ack-resolves impl would settle "ok"
   // here. The fail-fast contract must keep waiting and then reject on B.
-  h.push(frame("sent"));
-  h.push(frame("unsupported_model"));
+  h.push(frame("sent", { turnId: "turn-1" }));
+  h.push(frame("unsupported_model", { turnId: "turn-2" }));
   assert.equal(await h.outcome, "unsupported");
 });
 
@@ -88,16 +97,23 @@ test("awaitLiveSwitchOutcome resolves ok only after the last channel acks", asyn
     }
   };
 
-  h.push(frame("sent"));
+  h.push(frame("sent", { turnId: "turn-1" }));
   await drainMicrotasks();
   assert.equal(settled, false, "must not resolve on the first ack");
 
-  h.push(frame("switched"));
+  h.push(frame("switched", { turnId: "turn-2" }));
   await drainMicrotasks();
   assert.equal(settled, false, "must not resolve before the last ack");
 
-  h.push(frame("turn_ending"));
+  h.push(frame("sent", { turnId: "turn-3" }));
   assert.equal(await h.outcome, "ok");
+});
+
+test("awaitLiveSwitchOutcome does not report success when a targeted turn is already ending", async () => {
+  const h = harness(2);
+  h.push(frame("sent", { turnId: "turn-1" }));
+  h.push(frame("turn_ending", { turnId: "turn-2" }));
+  assert.equal(await h.outcome, "not_applied");
 });
 
 test("awaitLiveSwitchOutcome rejects on unsupported immediately and unsubscribes exactly once", async () => {
@@ -117,6 +133,7 @@ test("awaitLiveSwitchOutcome ignores frames for a different model or control typ
   const h = harness(1);
   h.push(frame("sent", { modelId: "some-other-model" }));
   h.push({ type: "cancel_turn", status: "sent", modelId: MODEL });
+  h.push(frame("sent", { turnId: "some-other-turn" }));
   let settled = false;
   void h.outcome.then(() => {
     settled = true;
@@ -128,10 +145,10 @@ test("awaitLiveSwitchOutcome ignores frames for a different model or control typ
   assert.equal(await h.outcome, "ok");
 });
 
-test("awaitLiveSwitchOutcome resolves ok via the timeout fallback when the harness never replies", async () => {
+test("awaitLiveSwitchOutcome reports unconfirmed when the harness never replies", async () => {
   const h = harness(2);
   h.fireTimeout();
-  assert.equal(await h.outcome, "ok");
+  assert.equal(await h.outcome, "unconfirmed");
   assert.equal(h.unsubscribeCalls, 1, "timeout fallback unsubscribes");
 });
 
@@ -144,11 +161,11 @@ test("awaitLiveSwitchOutcome fires the per-channel sends after subscribing", asy
   assert.equal(await h.outcome, "ok");
 });
 
-test("awaitLiveSwitchOutcome with zero channels resolves ok at the timeout (no acks expected)", async () => {
+test("awaitLiveSwitchOutcome with zero targets is unconfirmed at timeout", async () => {
   // No active turns means channelCount 0: remaining starts at 0 but the success
   // resolve only fires inside a frame callback, so with no frames the timeout
   // fallback is what settles it. This documents the degenerate path.
   const h = harness(0);
   h.fireTimeout();
-  assert.equal(await h.outcome, "ok");
+  assert.equal(await h.outcome, "unconfirmed");
 });
