@@ -37,6 +37,7 @@ test("automatic Crew CI is macOS ARM and desktop only", () => {
   assert.match(ci, /tauri\.nuncio-crew-release\.conf\.json/);
   assert.match(ci, /--no-sign/);
   assert.match(ci, /- 'Justfile'/);
+  assert.match(ci, /fetch-depth:\s*2/);
   assert.doesNotMatch(ci, /mesh-llm|LLAMA_STAGE|SKIPPY_LLAMA/);
   assert.doesNotMatch(
     ci,
