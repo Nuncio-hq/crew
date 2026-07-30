@@ -103,6 +103,28 @@ test("release publishes immutable assets before advancing updater channels", () 
   assert.ok(publishVersion < updateRollingManifest);
 });
 
+test("release notarizes and staples the DMG before validating its ticket", () => {
+  const workflow = readFileSync(workflowPath, "utf8");
+  const notarizeStart = workflow.indexOf("- name: Notarize and staple DMG");
+  const verifyStart = workflow.indexOf("- name: Verify and locate artifacts");
+  const notarizeStep = workflow.slice(notarizeStart, verifyStart);
+  const submitDmg = notarizeStep.indexOf('xcrun notarytool submit "$DMG"');
+  const stapleDmg = notarizeStep.indexOf('xcrun stapler staple "$DMG"');
+  const validateDmg = workflow.indexOf('xcrun stapler validate "$DMG"');
+
+  assert.notEqual(notarizeStart, -1);
+  assert.notEqual(verifyStart, -1);
+  assert.match(notarizeStep, /set -euo pipefail/);
+  assert.notEqual(submitDmg, -1);
+  assert.notEqual(stapleDmg, -1);
+  assert.notEqual(validateDmg, -1);
+  for (const flag of ["--key", "--key-id", "--issuer", "--wait"]) {
+    assert.match(notarizeStep, new RegExp(`\\s${flag}(?:\\s|$)`));
+  }
+  assert.ok(submitDmg < stapleDmg);
+  assert.ok(workflow.indexOf('xcrun stapler staple "$DMG"') < validateDmg);
+});
+
 test("release changes only the root package version in Cargo.lock", async () => {
   const workflow = readFileSync(workflowPath, "utf8");
 
