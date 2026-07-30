@@ -48,16 +48,27 @@ export function useProjectCommitDiffQuery(
   reposDir?: string | null,
 ) {
   return useQuery({
-    enabled: Boolean(project && commitHash),
+    enabled: Boolean(
+      project &&
+        commitHash &&
+        !project.localWorkspacePath &&
+        project.localWorkspaceStatus !== "invalid",
+    ),
     queryKey: [
       "project",
       project?.id ?? "none",
       "commit-diff",
       repoSource,
+      project?.localWorkspacePath ?? "managed",
+      project?.localWorkspaceStatus ?? "unlinked",
       commitHash ?? "none",
     ],
     queryFn: () => {
-      if (!project || !commitHash) {
+      if (
+        !project ||
+        !commitHash ||
+        project.localWorkspaceStatus === "invalid"
+      ) {
         return Promise.reject(new Error("No commit selected."));
       }
       return fetchProjectCommitDiff(project, commitHash, repoSource, reposDir);

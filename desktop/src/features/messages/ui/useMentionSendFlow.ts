@@ -12,6 +12,7 @@ import {
 } from "@/features/agents/hooks";
 import { resolvePersonaRuntime } from "@/features/agents/lib/resolvePersonaRuntime";
 import { useAddChannelMembersMutation } from "@/features/channels/hooks";
+import { resolveCurrentProjectChannelAgentMessage } from "@/features/projects/lib/project-local-workspace-runtime";
 import { filterEffectiveExplicitAgentPubkeys } from "@/features/messages/lib/effectiveExplicitAgentPubkeys";
 import type { UseChannelLinksResult } from "@/features/messages/lib/useChannelLinks";
 import type { UseEmojiAutocompleteResult } from "@/features/messages/lib/useEmojiAutocomplete";
@@ -504,6 +505,27 @@ export function useMentionSendFlow({
             draft.explicitAgentPubkeys,
             mentionPubkeys,
           );
+        let finalContent = draft.finalContent;
+        if (effectiveExplicitAgentPubkeys.length > 0) {
+          try {
+            finalContent = await resolveCurrentProjectChannelAgentMessage({
+              channelId: sendChannelId ?? draft.capturedChannelId ?? "",
+              content: draft.finalContent,
+              explicitAgentPubkeys: effectiveExplicitAgentPubkeys,
+            });
+          } catch (error) {
+            const message = `Could not resolve Project workspace: ${getErrorMessage(
+              error,
+              "relay lookup failed",
+            )}`;
+            setNonMemberPromptError(message);
+            toast.error(message);
+            return;
+          }
+          if (!isMountedRef.current) {
+            return;
+          }
+        }
 
         // Replace the sent body directly with its final post-send state before
         // the async network send starts. This avoids an intermediate blank frame
@@ -516,7 +538,7 @@ export function useMentionSendFlow({
 
         try {
           await onSendRef.current(
-            draft.finalContent,
+            finalContent,
             mentionPubkeys,
             outgoingTags,
             sendChannelId,

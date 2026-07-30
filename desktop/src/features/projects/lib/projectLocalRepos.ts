@@ -39,7 +39,20 @@ export function hasLocalCheckout(
   project: Project,
   localRepoNames: Set<string>,
 ) {
+  if (
+    project.localWorkspacePath ||
+    project.localWorkspaceStatus === "invalid"
+  ) {
+    return false;
+  }
   return localRepoCandidates(project).some((candidate) =>
     localRepoNames.has(candidate),
+  );
+}
+
+export function isProjectLocal(project: Project, localRepoNames: Set<string>) {
+  return (
+    Boolean(project.localWorkspacePath) ||
+    hasLocalCheckout(project, localRepoNames)
   );
 }

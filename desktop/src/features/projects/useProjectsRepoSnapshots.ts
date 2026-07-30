@@ -1,12 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
 
-import {
-  getProjectLocalRepoSnapshot,
-  getProjectRepoSnapshot,
-} from "@/shared/api/projectGit";
+import { getProjectRepoSnapshot } from "@/shared/api/projectGit";
 import type { ProjectRepoSnapshot } from "@/shared/api/types";
 import type { Project } from "./hooks";
+import { readProjectLocalRepoSnapshot } from "./lib/project-exact-local-workspace";
 
 // Remote snapshots are backed by a blobless `git clone` per repository, so the
 // overview scan is deliberately throttled and cached for a long time.
@@ -28,10 +26,12 @@ async function fetchProjectSnapshot(
   reposDir: string | null | undefined,
 ): Promise<ProjectRepoSnapshot | null> {
   try {
-    const local = await getProjectLocalRepoSnapshot({
+    const local = await readProjectLocalRepoSnapshot({
+      cloneUrl: project.cloneUrls[0] ?? null,
+      localWorkspacePath: project.localWorkspacePath,
+      localWorkspaceStatus: project.localWorkspaceStatus,
       reposDir,
       projectDtag: project.dtag,
-      cloneUrl: project.cloneUrls[0] ?? null,
       defaultBranch: project.defaultBranch,
       baseBranch: project.defaultBranch,
     });
@@ -40,6 +40,7 @@ async function fetchProjectSnapshot(
     // Best-effort: fall through to the remote snapshot.
   }
 
+  if (project.localWorkspacePath) return null;
   const cloneUrl = project.cloneUrls[0];
   if (!cloneUrl) return null;
   return getProjectRepoSnapshot({
@@ -86,14 +87,25 @@ export function useProjectsRepoSnapshotsQuery(
   projects: Project[],
   reposDir?: string | null,
 ) {
-  const projectIds = React.useMemo(
-    () => projects.map((project) => project.id).sort(),
+  const projectLocations = React.useMemo(
+    () =>
+      projects
+        .map(
+          (project) =>
+            `${project.id}:${project.localWorkspaceStatus ?? "unlinked"}:${project.localWorkspacePath ?? "managed"}:${project.cloneUrls[0] ?? "no-clone"}:${project.defaultBranch}`,
+        )
+        .sort(),
     [projects],
   );
 
   return useQuery({
     enabled: projects.length > 0,
-    queryKey: ["projects", "repo-snapshots", reposDir ?? "default", projectIds],
+    queryKey: [
+      "projects",
+      "repo-snapshots",
+      reposDir ?? "default",
+      projectLocations,
+    ],
     queryFn: () => fetchProjectsRepoSnapshots(projects, reposDir),
     staleTime: 15 * 60_000,
     retry: 0,

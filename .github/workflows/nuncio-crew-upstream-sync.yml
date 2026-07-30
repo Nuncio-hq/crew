@@ -1,0 +1,39 @@
+name: NuncioCrew Upstream Sync
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: nuncio-crew-upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compatibility:
+    name: Desktop and relay compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Rust format
+        run: just fmt-check
+      - name: Rust lint
+        run: just clippy
+      - name: Rust unit tests
+        run: just test-unit
+      - name: Desktop Tauri Rust format
+        run: just desktop-tauri-fmt-check
+      - name: Desktop Tauri Rust lint
+        run: just desktop-tauri-clippy
+      - name: Desktop Tauri Rust tests
+        run: just desktop-tauri-test
+      - name: Rust dependency policy
+        run: cargo-deny check

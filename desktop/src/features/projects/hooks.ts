@@ -9,7 +9,6 @@ import { getIdentity } from "@/shared/api/tauriIdentity";
 import {
   getProjectLocalRepoDiff,
   getProjectRepoDiff,
-  getProjectLocalRepoSnapshot,
   getProjectRepoSnapshot,
   listProjectLocalRepositories,
 } from "@/shared/api/projectGit";
@@ -40,7 +39,8 @@ import type {
 } from "@/shared/api/types";
 import { summarizeProjectActivityEvents } from "./projectActivity.mjs";
 import { resolveProjectDefaultBranch } from "./lib/projectBranches";
-import { effectiveCloneUrls } from "./lib/projectCloneUrl";
+import { readProjectLocalRepoSnapshot } from "./lib/project-exact-local-workspace";
+import { projectWorkspaceReadFields } from "./lib/project-read-model";
 import type { ProjectIssue } from "./projectIssues.mjs";
 import { projectIssueEventsToIssues } from "./projectIssues.mjs";
 import type {
@@ -72,6 +72,8 @@ export type Project = {
   name: string;
   description: string;
   cloneUrls: string[];
+  localWorkspacePath: string | null;
+  localWorkspaceStatus?: "invalid" | "linked" | "unlinked";
   webUrl: string | null;
   owner: string;
   contributors: string[];
@@ -139,11 +141,6 @@ function getAllTags(event: RelayEvent, name: string): string[] {
     .map((t) => t[1]);
 }
 
-function getCloneUrls(event: RelayEvent): string[] {
-  const tag = event.tags.find((t) => t[0] === "clone");
-  return tag ? tag.slice(1) : [];
-}
-
 function projectCoordinate(project: Pick<Project, "owner" | "dtag">): string {
   return `${KIND_REPO_ANNOUNCEMENT}:${project.owner}:${project.dtag}`;
 }
@@ -171,8 +168,6 @@ function isHiddenLocally(project: Project): boolean {
 
 function isDeletedByA(project: Project, deletionEvents: RelayEvent[]): boolean {
   const coordinate = projectCoordinate(project);
-  // NIP-09: a deletion is only valid when signed by the author of the
-  // referenced event — otherwise anyone could hide someone else's project.
   return deletionEvents.some(
     (event) =>
       event.pubkey.toLowerCase() === project.owner.toLowerCase() &&
@@ -180,14 +175,6 @@ function isDeletedByA(project: Project, deletionEvents: RelayEvent[]): boolean {
   );
 }
 
-/**
- * Converts a kind:30617 repo announcement into a `Project`.
- *
- * `relayOrigin` is the resolved relay HTTP origin (from `getCachedRelayOrigin`)
- * used to synthesize a canonical clone URL when the announcement omits an
- * explicit `clone` tag. Callers outside the relay-connected app (e.g. unit
- * tests) may omit it, in which case no default is derived.
- */
 export function eventToProject(
   event: RelayEvent,
   relayOrigin?: string | null,
@@ -195,23 +182,21 @@ export function eventToProject(
   const d = getTag(event, "d") ?? event.id;
   const name = getTag(event, "name") || d;
   const description = getTag(event, "description") || event.content || "";
-  const cloneUrls = effectiveCloneUrls(
-    getCloneUrls(event),
-    relayOrigin,
-    event.pubkey,
-    d,
-  );
+  const {
+    localWorkspacePath,
+    localWorkspaceStatus,
+    cloneUrls,
+    canonicalChannel,
+  } = projectWorkspaceReadFields(event, relayOrigin);
   const webUrl = getTag(event, "web") ?? null;
   const setupUsers = getAllTags(event, "auth");
   const contributors = [...new Set([...getAllTags(event, "p"), ...setupUsers])];
-  // `h`/`project-channel`, `status`, and `default-branch` are NOT part of
-  // NIP-34 — they are read-side tolerance for extension tags no code writes
-  // today (the write path that emitted them was removed). If a write path is
-  // reintroduced it must go through the buzz-sdk repo-announcement builder;
-  // the canonical NIP-34 source for the default branch is the kind:30618
-  // state event's HEAD ref, not a 30617 tag.
   const projectChannelId =
-    getTag(event, "h") ?? getTag(event, "project-channel") ?? null;
+    canonicalChannel.status === "ready"
+      ? canonicalChannel.channelId
+      : canonicalChannel.status === "absent"
+        ? (getTag(event, "h") ?? getTag(event, "project-channel") ?? null)
+        : null;
 
   return {
     id: `${event.pubkey}:${d}`,
@@ -219,6 +204,8 @@ export function eventToProject(
     name,
     description,
     cloneUrls,
+    localWorkspacePath,
+    localWorkspaceStatus,
     webUrl,
     owner: event.pubkey,
     contributors,
@@ -435,11 +422,6 @@ async function fetchProjectPullRequests(
   );
 }
 
-// Issue/PR comments are published as kind:1 text notes because the relay
-// does not register NIP-22 kind 1111 (current NIP-34 reply convention).
-// Pulse feeds filter these out via the repo-address `a` tag (see
-// features/pulse/lib/projectComments.ts). If the relay ever allowlists
-// 1111, migrate these to NIP-22 comments and drop that filter.
 async function createProjectPullRequestComment({
   anchor,
   content,
@@ -629,10 +611,12 @@ async function fetchProjectLocalRepoSnapshot(
   reposDir?: string | null,
   branchName?: string | null,
 ): Promise<ProjectLocalRepoSnapshot | null> {
-  return getProjectLocalRepoSnapshot({
+  return readProjectLocalRepoSnapshot({
+    cloneUrl: project.cloneUrls[0] ?? null,
+    localWorkspacePath: project.localWorkspacePath,
+    localWorkspaceStatus: project.localWorkspaceStatus,
     reposDir,
     projectDtag: project.dtag,
-    cloneUrl: project.cloneUrls[0] ?? null,
     defaultBranch: branchName ?? project.defaultBranch,
     baseBranch: project.defaultBranch,
   });
@@ -722,11 +706,12 @@ export function useProjectRepoSnapshotQuery(
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
 
   return useQuery({
-    enabled: Boolean(project?.cloneUrls[0]),
+    enabled: Boolean(project?.cloneUrls[0] && !project?.localWorkspacePath),
     queryKey: [
       "project",
       project?.id ?? "none",
       "repo-snapshot",
+      project?.localWorkspacePath ?? "managed",
       selectedBranch ?? "default",
       pullRequest?.id ?? "none",
       pullRequest?.commit ?? "none",
@@ -756,11 +741,17 @@ export function useProjectRepoDiffQuery(
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
 
   return useQuery({
-    enabled: Boolean(enabled && project?.cloneUrls[0] && pullRequest),
+    enabled: Boolean(
+      enabled &&
+        project?.cloneUrls[0] &&
+        !project?.localWorkspacePath &&
+        pullRequest,
+    ),
     queryKey: [
       "project",
       project?.id ?? "none",
       "repo-diff",
+      project?.localWorkspacePath ?? "managed",
       selectedBranch ?? "default",
       pullRequest?.id ?? "none",
       pullRequest?.commit ?? "none",
@@ -784,18 +775,26 @@ export function useProjectLocalRepoDiffQuery(
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
 
   return useQuery({
-    enabled: Boolean(enabled && project),
+    enabled: Boolean(
+      enabled &&
+        project &&
+        !project.localWorkspacePath &&
+        project.localWorkspaceStatus !== "invalid",
+    ),
     queryKey: [
       "project",
       project?.id ?? "none",
       "local-repo-diff",
+      project?.localWorkspaceStatus ?? "unlinked",
       reposDir ?? "default",
       selectedBranch ?? "default",
       pullRequest?.initialCommit ?? "none",
       pullRequest?.commit ?? "none",
     ],
     queryFn: () => {
-      if (!project) throw new Error("No project selected.");
+      if (!project || project.localWorkspaceStatus === "invalid") {
+        throw new Error("No readable local workspace is available.");
+      }
       return fetchProjectLocalRepoDiff(
         project,
         reposDir,
@@ -816,11 +815,13 @@ export function useProjectLocalRepoSnapshotQuery(
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
 
   return useQuery({
-    enabled: Boolean(project),
+    enabled: Boolean(project && project?.localWorkspaceStatus !== "invalid"),
     queryKey: [
       "project",
       project?.id ?? "none",
       "local-repo-snapshot",
+      project?.localWorkspacePath ?? "managed",
+      project?.localWorkspaceStatus ?? "unlinked",
       reposDir ?? "default",
       selectedBranch ?? "default",
     ],

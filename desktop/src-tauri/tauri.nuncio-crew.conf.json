@@ -1,0 +1,9 @@
+{
+  "productName": "NuncioCrew Local",
+  "identifier": "xyz.block.buzz.app",
+  "bundle": {
+    "macOS": {
+      "infoPlist": "Info.NuncioCrew.plist"
+    }
+  }
+}

@@ -45,7 +45,6 @@ import {
   profilePanelViewFromSearch,
 } from "@/features/profile/ui/UserProfilePanelUtils";
 import { useIdentityQuery } from "@/shared/api/hooks";
-import { openProjectMergeRecoveryTerminal } from "@/shared/api/projectGit";
 import { useMainInsetRef } from "@/shared/layout/MainInsetContext";
 import {
   channelChrome,
@@ -69,6 +68,8 @@ import {
   projectBranchOptionsFromSync,
   resolveProjectDefaultBranch,
 } from "@/features/projects/lib/projectBranches";
+import { localWorkspaceSourceState } from "@/features/projects/lib/project-exact-local-workspace";
+import { useProjectMergeRecoveryTerminal } from "@/features/projects/lib/use-project-merge-recovery-terminal";
 import { normalizeRepositoryUrl } from "@/features/projects/lib/projectsViewHelpers";
 import { WorkspaceTabs } from "./ProjectWorkspaceTabs";
 import type { RepoSourceHeaderControls } from "./ProjectRepositorySource";
@@ -91,7 +92,6 @@ type ProjectDetailScreenProps = {
   pullRequestId?: string;
   issueId?: string;
 };
-
 const PROJECT_DETAIL_PANEL_SEARCH_KEYS = [
   "profile",
   "profileTab",
@@ -111,6 +111,9 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const projectQuery = useProjectQuery(projectId);
   const projectsQuery = useProjectsQuery();
   const project = projectQuery.data;
+  const isLinkedWorkspace =
+    Boolean(project?.localWorkspacePath) ||
+    project?.localWorkspaceStatus === "invalid";
   const repoStateQuery = useRepoStateQuery(project);
   const pullRequestsQuery = useProjectPullRequestsQuery(project);
   const defaultBranch = project
@@ -154,14 +157,8 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     () => setSelectedCommitHash(commitHash ?? null),
     [commitHash],
   );
-  // Bumped when breadcrumb navigation should land on the project Overview
-  // tab; remounts WorkspaceTabs, which owns the selected-tab state.
   const [tabsResetKey, setTabsResetKey] = React.useState(0);
-  // Mirror of the WorkspaceTabs selection so the breadcrumb can name the
-  // active sub-tab. The Overview (readme) tab is "home" and gets no crumb.
   const [activeTab, setActiveTab] = React.useState("overview");
-  // Commit, PR, and issue details are mutually exclusive views, so opening
-  // one clears the others.
   const handleSelectedPullRequestIdChange = React.useCallback(
     (id: string | null) => {
       setSelectedPullRequestId(id);
@@ -209,6 +206,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const [repoSource, setRepoSource] = React.useState<"remote" | "local">(
     "remote",
   );
+  const effectiveRepoSource = isLinkedWorkspace ? "local" : repoSource;
   const repoSnapshotQuery = useProjectRepoSnapshotQuery(
     project,
     activeBranch,
@@ -219,19 +217,19 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     project,
     activeBranch,
     activeRepoPullRequest,
-    repoSource === "remote",
+    effectiveRepoSource === "remote",
   );
   const localRepoDiffQuery = useProjectLocalRepoDiffQuery(
     project,
     activeCommunity?.reposDir,
     activeBranch,
     activeRepoPullRequest,
-    repoSource === "local" && Boolean(activeRepoPullRequest),
+    effectiveRepoSource === "local" && Boolean(activeRepoPullRequest),
   );
   const commitDiffQuery = useProjectCommitDiffQuery(
     project,
     selectedCommitHash,
-    repoSource,
+    effectiveRepoSource,
     activeCommunity?.reposDir,
   );
   const localRepoSnapshotQuery = useProjectLocalRepoSnapshotQuery(
@@ -267,13 +265,25 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const hasLocalCheckout = Boolean(
     localRepoSnapshotQuery.data || repoSyncStatusQuery.data?.localPath,
   );
+  const canOpenTerminal =
+    !isLinkedWorkspace && Boolean(hasLocalCheckout || project?.cloneUrls[0]);
+  const localSource = localWorkspaceSourceState({
+    hasSnapshot: hasLocalCheckout,
+    isError: localRepoSnapshotQuery.isError,
+    isLinked: isLinkedWorkspace,
+    isLoading: localRepoSnapshotQuery.isLoading,
+  });
   const hasRemoteSnapshot = snapshotHasContent(repoSnapshotQuery.data);
   const displayedRepoDiff =
-    repoSource === "local" ? localRepoDiffQuery.data : repoDiffQuery.data;
+    effectiveRepoSource === "local"
+      ? localRepoDiffQuery.data
+      : repoDiffQuery.data;
   const displayedRepoDiffError =
-    repoSource === "local" ? localRepoDiffQuery.error : repoDiffQuery.error;
+    effectiveRepoSource === "local"
+      ? localRepoDiffQuery.error
+      : repoDiffQuery.error;
   const displayedRepoDiffLoading =
-    repoSource === "local"
+    effectiveRepoSource === "local"
       ? localRepoDiffQuery.isLoading
       : repoDiffQuery.isLoading;
   const branchOptionsWithLocal = projectBranchOptionsFromSync(
@@ -299,13 +309,19 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
       selectBranch(branch);
       if (
         branch &&
-        repoSource === "local" &&
+        effectiveRepoSource === "local" &&
+        !isLinkedWorkspace &&
         branch !== repoSyncStatusQuery.data?.localBranch
       ) {
         setRepoSource("remote");
       }
     },
-    [repoSource, repoSyncStatusQuery.data?.localBranch, selectBranch],
+    [
+      isLinkedWorkspace,
+      effectiveRepoSource,
+      repoSyncStatusQuery.data?.localBranch,
+      selectBranch,
+    ],
   );
   const handleTagChange = React.useCallback(
     (tag: string) => {
@@ -347,60 +363,64 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     }
     toast.success("Remote state refreshed.");
   }, [repoSnapshotQuery, repoStateQuery, repoSyncStatusQuery]);
-  // Compact branch + remote/local controls shared by the readme and Files
-  // tab headers.
   const filesSourceControls: RepoSourceHeaderControls = {
     branch: activeBranch ?? "",
     branchOptions: branchOptionsWithLocal,
     selectedTag,
     tagOptions: repoStateQuery.data?.tags ?? [],
     onBranchChange: handleBranchChange,
-    onTagChange: handleTagChange,
-    onCreateBranch: () => branchActions.setCreateOpen(true),
+    onTagChange: isLinkedWorkspace ? undefined : handleTagChange,
+    onCreateBranch: isLinkedWorkspace
+      ? undefined
+      : () => branchActions.setCreateOpen(true),
     createBranchDisabled: branchActions.createPending || !activeBranchCommit,
     createBranchTitle: createBranchReason ?? "Create a remote branch",
-    onDeleteBranch: () => branchActions.setDeleteOpen(true),
+    onDeleteBranch: isLinkedWorkspace
+      ? undefined
+      : () => branchActions.setDeleteOpen(true),
     deleteBranchDisabled:
       branchActions.deletePending || Boolean(deleteBranchReason),
     deleteBranchTitle: deleteBranchReason ?? "Delete this remote branch",
-    source: selectedTag ? "remote" : repoSource,
-    onSourceChange: setRepoSource,
-    localDisabled:
-      Boolean(selectedTag) ||
-      (!repoSyncStatusQuery.data?.localPath &&
-        !localRepoSnapshotQuery.data &&
-        !localRepoSnapshotQuery.isLoading),
-    localLabel: localRepoSnapshotQuery.isLoading
-      ? "Local checking"
-      : repoSyncStatusQuery.data?.localPath || localRepoSnapshotQuery.data
-        ? "Local"
-        : "Local missing",
+    source: isLinkedWorkspace ? "local" : selectedTag ? "remote" : repoSource,
+    onSourceChange: isLinkedWorkspace
+      ? () => setRepoSource("local")
+      : setRepoSource,
+    localDisabled: Boolean(selectedTag) || localSource.disabled,
+    localLabel: localSource.label,
     remoteLabel: repoSnapshotQuery.isLoading ? "Remote checking" : "Remote",
     onCloneLocal:
-      !selectedTag && project?.cloneUrls[0]
+      !selectedTag && !isLinkedWorkspace && project?.cloneUrls[0]
         ? () => {
             void handleCloneRepo();
           }
         : undefined,
     clonePending: cloneRepoMutation.isPending,
-    canPush: !selectedTag && (repoSyncStatusQuery.data?.canPush ?? false),
-    onPush: selectedTag
-      ? undefined
-      : () => {
-          void handlePushLocalRepo();
-        },
+    canPush:
+      !isLinkedWorkspace &&
+      !selectedTag &&
+      Boolean(repoSyncStatusQuery.data?.canPush),
+    onPush:
+      selectedTag || isLinkedWorkspace
+        ? undefined
+        : () => {
+            void handlePushLocalRepo();
+          },
     pushDisabled:
       pushLocalRepoMutation.isPending || !repoSyncStatusQuery.data?.canPush,
     pushPending: pushLocalRepoMutation.isPending,
     pushTitle:
       repoSyncStatusQuery.data?.pushBlockReason ??
       pushPullTitle("Push", repoSyncStatusQuery.data?.aheadCount, "local"),
-    canPull: !selectedTag && (repoSyncStatusQuery.data?.canPull ?? false),
-    onPull: selectedTag
-      ? undefined
-      : () => {
-          void handlePullLocalRepo();
-        },
+    canPull:
+      !isLinkedWorkspace &&
+      !selectedTag &&
+      Boolean(repoSyncStatusQuery.data?.canPull),
+    onPull:
+      selectedTag || isLinkedWorkspace
+        ? undefined
+        : () => {
+            void handlePullLocalRepo();
+          },
     pullDisabled:
       pullLocalRepoMutation.isPending || !repoSyncStatusQuery.data?.canPull,
     pullPending: pullLocalRepoMutation.isPending,
@@ -409,9 +429,11 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
       pushPullTitle("Pull", repoSyncStatusQuery.data?.behindCount, "remote"),
     aheadCount: repoSyncStatusQuery.data?.aheadCount ?? null,
     behindCount: repoSyncStatusQuery.data?.behindCount ?? null,
-    onFetch: () => {
-      void handleFetchRepo();
-    },
+    onFetch: isLinkedWorkspace
+      ? undefined
+      : () => {
+          void handleFetchRepo();
+        },
     fetchPending:
       repoSnapshotQuery.isFetching ||
       repoStateQuery.isFetching ||
@@ -422,9 +444,6 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const projectPending = projectQuery.isPending;
   React.useEffect(() => {
     if (!project) {
-      // While the project query is still loading, keep the URL-seeded
-      // pullRequestId/issueId selections — clearing here would discard them
-      // before the detail view ever gets a chance to open.
       if (projectPending) return;
       setSelectedPullRequestId(null);
       setSelectedIssueId(null);
@@ -447,8 +466,6 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   }, [hasLocalCheckout, hasRemoteSnapshot, selectedTag]);
   const peoplePubkeys = React.useMemo(() => {
     if (!project) return [];
-    // Include PR authors/updaters so commit rows can resolve avatars for
-    // publishers who are not listed as project contributors.
     const pullRequestPubkeys = (pullRequestsQuery.data ?? []).flatMap(
       (pullRequest) => [
         pullRequest.author,
@@ -646,27 +663,11 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
       hasLocalCheckout,
     });
   }, [activeBranch, hasLocalCheckout, openTerminal, project]);
-  const handleOpenMergeRecoveryTerminal = React.useCallback(
-    async (input: {
-      expectedCommit: string;
-      sourceBranch: string;
-      sourceCloneUrl: string;
-      targetBranch: string;
-    }) => {
-      const targetCloneUrl = project?.cloneUrls[0];
-      if (!project || !targetCloneUrl) {
-        throw new Error("No project selected.");
-      }
-      return openProjectMergeRecoveryTerminal({
-        ...input,
-        projectDtag: project.dtag,
-        reposDir: activeCommunity?.reposDir,
-        targetCloneUrl,
-      });
-    },
-    [activeCommunity?.reposDir, project],
-  );
-
+  const handleOpenMergeRecoveryTerminal = useProjectMergeRecoveryTerminal({
+    project,
+    reposDir: activeCommunity?.reposDir,
+    restricted: isLinkedWorkspace,
+  });
   if (projectQuery.isLoading) {
     return null;
   }
@@ -727,7 +728,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const selectedIssue =
     issuesQuery.data?.find((item) => item.id === selectedIssueId) ?? null;
   const displayedSnapshotCommits =
-    repoSource === "local"
+    effectiveRepoSource === "local"
       ? (localRepoSnapshotQuery.data?.snapshot.commits ?? [])
       : (repoSnapshotQuery.data?.commits ?? []);
   const selectedCommit = selectedCommitHash
@@ -736,9 +737,6 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
       ) ?? null)
     : null;
 
-  // The active work item drives the breadcrumb trail: Projects › project ›
-  // sub-tab › title. `clear` steps back to the item's list tab. Categories
-  // match the workspace tab labels.
   const activeWorkItemCrumb = selectedPullRequest
     ? {
         category: "Pull Request",
@@ -758,7 +756,6 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
             clear: () => setSelectedCommitHash(null),
           }
         : null;
-  // Sub-tab crumb when no work item is open. Overview (readme) is home.
   const activeTabCrumb = activeWorkItemCrumb
     ? null
     : (PROJECT_TAB_CRUMB_LABELS[activeTab] ?? null);
@@ -766,8 +763,6 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     setSelectedPullRequestId(null);
     setSelectedIssueId(null);
     setSelectedCommitHash(null);
-    // Remount the workspace tabs so the project page opens on Overview
-    // instead of whatever tab the work item left behind.
     setTabsResetKey((key) => key + 1);
   };
 
@@ -917,12 +912,17 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
                   onCreate: handleCreateIssue,
                   pending: createIssueMutation.isPending,
                 }}
-                createPullRequestAction={{
-                  onCreated: handlePullRequestCreated,
-                  projects: projectsQuery.data ?? [project],
-                  reposDir: activeCommunity?.reposDir,
-                }}
+                createPullRequestAction={
+                  isLinkedWorkspace
+                    ? undefined
+                    : {
+                        onCreated: handlePullRequestCreated,
+                        projects: projectsQuery.data ?? [project],
+                        reposDir: activeCommunity?.reposDir,
+                      }
+                }
                 updatePullRequestAction={
+                  !isLinkedWorkspace &&
                   openBranchPullRequest &&
                   repoSyncStatusQuery.data?.remoteHead &&
                   repoSyncStatusQuery.data.remoteHead !==
@@ -939,10 +939,14 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
                 localSnapshotError={localRepoSnapshotQuery.error}
                 localSnapshotLoading={localRepoSnapshotQuery.isLoading}
                 onBranchChange={handleBranchChange}
-                onOpenMergeRecoveryTerminal={handleOpenMergeRecoveryTerminal}
-                onOpenTerminal={() => {
-                  void handleOpenTerminal();
-                }}
+                onOpenMergeRecoveryTerminal={
+                  isLinkedWorkspace
+                    ? undefined
+                    : handleOpenMergeRecoveryTerminal
+                }
+                onOpenTerminal={
+                  canOpenTerminal ? () => void handleOpenTerminal() : undefined
+                }
                 terminalTitle={projectTerminalLabel(hasLocalCheckout)}
                 onSelectedCommitHashChange={handleSelectedCommitHashChange}
                 onSelectedIssueIdChange={handleSelectedIssueIdChange}
@@ -959,7 +963,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
                 pullRequestsError={pullRequestsQuery.error}
                 pullRequestsLoading={pullRequestsQuery.isLoading}
                 repoContributors={repoContributors}
-                repoSource={repoSource}
+                repoSource={effectiveRepoSource}
                 selectedCommitHash={selectedCommitHash}
                 selectedIssueId={selectedIssueId}
                 selectedPullRequestId={selectedPullRequestId}

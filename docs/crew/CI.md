@@ -1,0 +1,64 @@
+# NuncioCrew CI
+
+## Merge contract
+
+Normal Crew pull requests use one required GitHub check:
+
+```text
+NuncioCrew Gate
+```
+
+The gate always appears. It requires `CI Policy` and accepts a deliberately
+skipped conditional job only when the path classifier says that surface is
+unchanged.
+
+| Job | Runs when | Proves |
+| --- | --- | --- |
+| `CI Policy` | Always | Workflow contract and relevant-path classification |
+| `Desktop Fast` | Desktop, Tauri, Rust, or dependency paths change | Desktop lint, tests, and production frontend build |
+| `macOS ARM Package` | Same desktop boundary | Unsigned `aarch64-apple-darwin` Tauri package with Nuncio identity |
+| `Project Relay` | Project, relay, schema, or Nostr paths change | Kind `30617` local-path lifecycle against an isolated real relay |
+
+The PR package uses placeholder sidecars only to satisfy Tauri's packaging
+shape. The manual release workflow builds real sidecars, signs the app,
+notarizes it, and verifies the final archive.
+
+## Deliberately excluded from automatic CI
+
+- Buzz web client;
+- Flutter mobile;
+- Windows and Linux distribution;
+- relay and push-gateway container publication;
+- Helm and Kubernetes;
+- Sprig Linux publication;
+- optional mesh-llm native libraries;
+- Apple signing, notarization, and updater publication.
+
+These exclusions describe Crew's current macOS Apple Silicon scope. They do
+not delete upstream workflows or claim those platforms work.
+
+## Upstream synchronization
+
+`NuncioCrew Upstream Sync` is manual-only. Run it on an upstream-sync branch
+after merging `block/buzz` to exercise Rust format, Clippy, unit tests, and
+dependency policy for the root and desktop Tauri workspaces without putting
+those core checks on every Crew feature PR. It does not run the inherited
+integration or cross-platform matrices.
+
+Cut over in this order:
+
+1. verify `NuncioCrew CI` succeeds on the exact merged `main` SHA;
+2. require the exact status context `NuncioCrew Gate`;
+3. disable inherited `CI` and `Docker image` in GitHub Actions;
+4. keep `NuncioCrew CI`, `NuncioCrew Release`, and
+   `NuncioCrew Upstream Sync` enabled;
+5. verify no disabled inherited job remains required.
+
+Inherited Buzz workflow files remain byte-for-byte unchanged. For rollback,
+re-enable the inherited workflows before disabling the Crew gate.
+
+## Release boundary
+
+A green merge gate is not release proof. `NuncioCrew Release` separately
+checks the exact current `main` SHA, protected signing inputs, Developer ID,
+notarization, entitlements, updater signature, and publication ordering.

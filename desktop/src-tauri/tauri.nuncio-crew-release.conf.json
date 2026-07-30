@@ -1,0 +1,9 @@
+{
+  "productName": "NuncioCrew",
+  "identifier": "com.nuncio.crew",
+  "bundle": {
+    "macOS": {
+      "infoPlist": "Info.NuncioCrew.Release.plist"
+    }
+  }
+}
