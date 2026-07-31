@@ -30,20 +30,29 @@ pub(crate) async fn validate_target(
     let common = git_output_at(&repository_path, ["rev-parse", "--git-common-dir"]).await?;
     let common_git = canonical_git_path(&repository_path, common.trim())?;
     let root_key = format!("branch.{branch}.buzzThreadRoot");
-    let roots =
-        match git_optional_output_dir(&common_git, ["config", "--get-all", root_key.as_str()])
-            .await?
-        {
-            Some(roots) => roots,
-            None => std::fs::read_to_string(common_git.join("buzz-thread-workspace-roots").join(
-                format!("{}.root", &root_event_id[..12].to_ascii_lowercase()),
-            ))
-            .map_err(|_| "Thread branch identity could not be verified.".to_string())?,
-        };
+    // Destructive actions require the live branch ownership record. The
+    // durable prefix claim is only a creation/adoption primitive; accepting it
+    // alone would authorize a later unrelated branch that reused this name.
+    let roots = git_optional_output_dir(
+        &common_git,
+        ["config", "--get-all", root_key.as_str()],
+    )
+    .await?
+    .ok_or_else(|| "Thread branch identity could not be verified.".to_string())?;
+    let claim = std::fs::read_to_string(
+        common_git
+            .join("buzz-thread-workspace-roots")
+            .join(format!(
+                "{}.root",
+                &root_event_id[..12].to_ascii_lowercase()
+            )),
+    )
+    .map_err(|_| "Thread branch identity could not be verified.".to_string())?;
     if roots.trim().is_empty()
         || roots
             .lines()
             .any(|root| !root.trim().eq_ignore_ascii_case(root_event_id))
+        || !claim.trim().eq_ignore_ascii_case(root_event_id)
     {
         return Err("Thread branch identity could not be verified.".to_string());
     }
