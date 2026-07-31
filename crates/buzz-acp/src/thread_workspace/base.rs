@@ -34,7 +34,6 @@ pub(crate) struct WorkspaceBase {
     pub(crate) revision: String,
     pub(crate) source: BaseSource,
     pub(crate) remote_default_branch: Option<String>,
-    pub(crate) commits_behind_remote: Option<u64>,
 }
 
 pub(crate) async fn resolve_workspace_base(repo_root: &Path) -> Result<WorkspaceBase> {
@@ -51,27 +50,12 @@ pub(crate) async fn resolve_workspace_base(repo_root: &Path) -> Result<Workspace
         .map(|revision| revision.trim().to_string()),
         None => None,
     };
-    let commits_behind_remote = match (&default_branch, &remote_revision) {
-        (Some(branch), Some(_)) => git_optional_output(
-            repo_root,
-            [
-                "rev-list",
-                "--count",
-                &format!("HEAD..{REMOTE_NAME}/{branch}"),
-            ],
-        )
-        .await
-        .and_then(|count| count.trim().parse().ok()),
-        _ => None,
-    };
-
     if fetched {
         if let Some(revision) = remote_revision {
             return Ok(WorkspaceBase {
                 revision,
                 source: BaseSource::Remote,
                 remote_default_branch: default_branch,
-                commits_behind_remote,
             });
         }
     }
@@ -80,7 +64,6 @@ pub(crate) async fn resolve_workspace_base(repo_root: &Path) -> Result<Workspace
         revision: local_revision,
         source: BaseSource::LocalFallback,
         remote_default_branch: default_branch,
-        commits_behind_remote,
     })
 }
 
