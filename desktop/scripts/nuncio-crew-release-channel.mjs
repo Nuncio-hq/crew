@@ -9,11 +9,12 @@ function endpoint(rollingTag) {
   return `${RELEASE_BASE}/${rollingTag}/latest.json`;
 }
 
-export function classifyNuncioCrewRelease(tag) {
-  const devMatch = DEV_VERSION.exec(tag);
+export function classifyNuncioCrewRelease(versionTag) {
+  const devMatch = DEV_VERSION.exec(versionTag);
   if (devMatch) {
     return {
       version: devMatch[1],
+      releaseTag: `crew-${versionTag}`,
       channel: "dev",
       prerelease: true,
       rollingTags: ["nuncio-crew-dev-latest"],
@@ -21,10 +22,11 @@ export function classifyNuncioCrewRelease(tag) {
     };
   }
 
-  const stableMatch = STABLE_VERSION.exec(tag);
+  const stableMatch = STABLE_VERSION.exec(versionTag);
   if (stableMatch) {
     return {
       version: stableMatch[1],
+      releaseTag: `crew-${versionTag}`,
       channel: "stable",
       prerelease: false,
       rollingTags: ["nuncio-crew-stable-latest", "nuncio-crew-dev-latest"],
@@ -33,7 +35,7 @@ export function classifyNuncioCrewRelease(tag) {
   }
 
   throw new Error(
-    `Unsupported release version "${tag}"; use vX.Y.Z-dev[.N] or vX.Y.Z`,
+    `Unsupported release version "${versionTag}"; use vX.Y.Z-dev[.N] or vX.Y.Z`,
   );
 }
 
@@ -54,6 +56,7 @@ function runCli() {
   const [version, channel, ref] = process.argv.slice(2);
   const release = validateNuncioCrewReleaseRequest({ version, channel, ref });
   console.log(`version=${release.version}`);
+  console.log(`release_tag=${release.releaseTag}`);
   console.log(`channel=${release.channel}`);
   console.log(`prerelease=${release.prerelease}`);
   console.log(`rolling_tags=${release.rollingTags.join(",")}`);

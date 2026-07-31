@@ -1452,15 +1452,39 @@ pub async fn run_prompt_task(
 
     let session_cwd = match (&source, &batch) {
         (PromptSource::Channel(cid), Some(batch)) if !agent.state.sessions.contains_key(cid) => {
-            match resolve_thread_session_cwd(batch, &ctx).await {
-                Ok(cwd) => cwd,
+            match resolve_thread_session_workspace(batch, &ctx).await {
+                Ok(Some(workspace)) => {
+                    agent.acp.observe(
+                        "thread_workspace_ready",
+                        thread_workspace_ready_payload(&workspace),
+                    );
+                    workspace.worktree_path.to_string_lossy().into_owned()
+                }
+                Ok(None) => ctx.cwd.clone(),
                 Err(error) => {
+                    let protocol_error = if let Some(workspace_error) =
+                        error.downcast_ref::<ThreadWorkspaceProvisionError>()
+                    {
+                        tracing::warn!(
+                            channel = %batch.routing_channel_id(),
+                            root = %workspace_error.root_event_id,
+                            error = %workspace_error.source,
+                            "failed to provision isolated thread worktree"
+                        );
+                        agent.acp.observe(
+                            "thread_workspace_error",
+                            thread_workspace_error_payload(&workspace_error.root_event_id),
+                        );
+                        THREAD_WORKSPACE_ERROR_MESSAGE.to_string()
+                    } else {
+                        error.to_string()
+                    };
                     send_prompt_result(
                         &result_tx,
                         &turn_id,
                         agent,
                         source,
-                        PromptOutcome::Error(AcpError::Protocol(error.to_string())),
+                        PromptOutcome::Error(AcpError::Protocol(protocol_error)),
                         requeue_batch_if_queue(&ctx, Some(batch.clone())),
                     );
                     return;
@@ -2679,12 +2703,66 @@ async fn fetch_conversation_context(
     None
 }
 
-async fn resolve_thread_session_cwd(
+const THREAD_WORKSPACE_ERROR_MESSAGE: &str = "Could not prepare the isolated Project workspace.";
+
+#[derive(Debug)]
+struct ThreadWorkspaceProvisionError {
+    root_event_id: String,
+    source: anyhow::Error,
+}
+
+struct VerifiedThreadRoot {
+    root_event_id: String,
+    context: ConversationContext,
+}
+
+impl std::fmt::Display for ThreadWorkspaceProvisionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.source.fmt(formatter)
+    }
+}
+
+impl std::error::Error for ThreadWorkspaceProvisionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+fn thread_workspace_ready_payload(
+    workspace: &crate::thread_workspace::ThreadWorkspace,
+) -> serde_json::Value {
+    serde_json::json!({
+        "rootEventId": workspace.root_event_id,
+        "worktreePath": workspace.worktree_path,
+        "worktreeName": workspace.worktree_name,
+        "branch": workspace.branch,
+        "baseRevision": workspace.base_revision,
+    })
+}
+
+fn thread_workspace_error_payload(root_event_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "rootEventId": root_event_id,
+        "message": THREAD_WORKSPACE_ERROR_MESSAGE,
+    })
+}
+
+fn thread_workspace_provision_error(
+    root_event_id: &str,
+    source: anyhow::Error,
+) -> ThreadWorkspaceProvisionError {
+    ThreadWorkspaceProvisionError {
+        root_event_id: root_event_id.to_string(),
+        source,
+    }
+}
+
+async fn resolve_thread_session_workspace(
     batch: &FlushBatch,
     ctx: &PromptContext,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Option<crate::thread_workspace::ThreadWorkspace>> {
     let Some(last_event) = batch.events.last() else {
-        return Ok(ctx.cwd.clone());
+        return Ok(None);
     };
     let owner = ctx
         .agent_owner_pubkey
@@ -2706,6 +2784,10 @@ async fn resolve_thread_session_cwd(
             &ctx.rest_client,
         )
         .await
+        .map(|context| VerifiedThreadRoot {
+            root_event_id: root_event_id.clone(),
+            context,
+        })
     } else {
         None
     };
@@ -2715,46 +2797,58 @@ async fn resolve_thread_session_cwd(
             &last_event.event.pubkey.to_hex(),
             &last_event.event.content,
             thread_root_id.is_some(),
+            &root_event_id,
             fetched_root.as_ref(),
-        )?
+        )
+        .map_err(|source| thread_workspace_provision_error(&root_event_id, source))?
     } else {
         None
     };
 
     let Some(content) = trusted_content else {
-        return Ok(ctx.cwd.clone());
+        return Ok(None);
     };
-    let Some(workspace) = crate::thread_workspace::parse_project_workspace(content)? else {
-        return Ok(ctx.cwd.clone());
+    let Some(workspace) = crate::thread_workspace::parse_project_workspace(content)
+        .map_err(|source| thread_workspace_provision_error(&root_event_id, source))?
+    else {
+        return Ok(None);
     };
-    let worktree =
-        crate::thread_workspace::ensure_thread_worktree(&workspace, &root_event_id).await?;
+    let worktree = crate::thread_workspace::ensure_thread_worktree(&workspace, &root_event_id)
+        .await
+        .map_err(|source| thread_workspace_provision_error(&root_event_id, source))?;
     tracing::info!(
         channel = %batch.routing_channel_id(),
         root = %root_event_id,
-        cwd = %worktree.display(),
+        cwd = %worktree.worktree_path.display(),
         "resolved isolated thread worktree"
     );
-    Ok(worktree.to_string_lossy().into_owned())
+    Ok(Some(worktree))
 }
 
 fn trusted_fetched_root_content<'a>(
     owner: &str,
-    context: Option<&'a ConversationContext>,
+    expected_root_event_id: &str,
+    fetched_root: Option<&'a VerifiedThreadRoot>,
 ) -> anyhow::Result<Option<&'a str>> {
-    let Some(context) = context else {
+    let Some(fetched_root) = fetched_root else {
         anyhow::bail!("could not verify thread root before creating an agent session");
     };
-    let ConversationContext::Thread { messages, .. } = context else {
-        return Ok(None);
+    if !fetched_root
+        .root_event_id
+        .eq_ignore_ascii_case(expected_root_event_id)
+    {
+        anyhow::bail!("thread root lookup returned an unexpected root");
+    }
+    let ConversationContext::Thread { messages, .. } = &fetched_root.context else {
+        anyhow::bail!("thread root lookup returned unexpected context");
     };
     let Some(root) = messages.first() else {
         anyhow::bail!("thread root lookup returned no messages");
     };
-    Ok(root
-        .pubkey
-        .eq_ignore_ascii_case(owner)
-        .then_some(root.content.as_str()))
+    if !root.pubkey.eq_ignore_ascii_case(owner) {
+        anyhow::bail!("thread root author does not match the Project owner");
+    }
+    Ok(Some(root.content.as_str()))
 }
 
 fn select_trusted_workspace_content<'a>(
@@ -2762,10 +2856,11 @@ fn select_trusted_workspace_content<'a>(
     direct_author: &str,
     direct_content: &'a str,
     is_thread_reply: bool,
-    fetched_root: Option<&'a ConversationContext>,
+    expected_root_event_id: &str,
+    fetched_root: Option<&'a VerifiedThreadRoot>,
 ) -> anyhow::Result<Option<&'a str>> {
     if is_thread_reply {
-        return trusted_fetched_root_content(owner, fetched_root);
+        return trusted_fetched_root_content(owner, expected_root_event_id, fetched_root);
     }
     Ok(direct_author
         .eq_ignore_ascii_case(owner)
@@ -2774,25 +2869,36 @@ fn select_trusted_workspace_content<'a>(
 
 #[cfg(test)]
 mod thread_session_cwd_tests {
-    use super::{select_trusted_workspace_content, trusted_fetched_root_content};
+    use std::path::PathBuf;
+
+    use super::{
+        select_trusted_workspace_content, thread_workspace_error_payload,
+        thread_workspace_ready_payload, trusted_fetched_root_content, VerifiedThreadRoot,
+        THREAD_WORKSPACE_ERROR_MESSAGE,
+    };
     use crate::queue::{ContextMessage, ConversationContext};
+    use crate::thread_workspace::ThreadWorkspace;
 
     #[test]
     fn missing_root_context_fails_closed() {
-        let error = trusted_fetched_root_content("owner", None).unwrap_err();
+        let error = trusted_fetched_root_content("owner", &"a".repeat(64), None).unwrap_err();
         assert!(error.to_string().contains("could not verify thread root"));
     }
 
     #[test]
     fn handoff_reply_cannot_replace_root_workspace_authority() {
-        let root = ConversationContext::Thread {
-            messages: vec![ContextMessage {
-                pubkey: "owner".into(),
-                timestamp: "2026-07-31T00:00:00Z".into(),
-                content: "buzz://project-workspace?path=%2Frepo-a".into(),
-            }],
-            total: 1,
-            truncated: false,
+        let root_id = "a".repeat(64);
+        let root = VerifiedThreadRoot {
+            root_event_id: root_id.clone(),
+            context: ConversationContext::Thread {
+                messages: vec![ContextMessage {
+                    pubkey: "owner".into(),
+                    timestamp: "2026-07-31T00:00:00Z".into(),
+                    content: "buzz://project-workspace?path=%2Frepo-a".into(),
+                }],
+                total: 1,
+                truncated: false,
+            },
         };
 
         let selected = select_trusted_workspace_content(
@@ -2800,6 +2906,7 @@ mod thread_session_cwd_tests {
             "owner",
             "buzz://project-workspace?path=%2Frepo-b",
             true,
+            &root_id,
             Some(&root),
         )
         .unwrap();
@@ -2808,6 +2915,76 @@ mod thread_session_cwd_tests {
             selected,
             Some("buzz://project-workspace?path=%2Frepo-a"),
             "a later owner reply must not move the thread to a relinked Project"
+        );
+    }
+
+    #[test]
+    fn fetched_context_for_another_root_fails_closed() {
+        let root = VerifiedThreadRoot {
+            root_event_id: "b".repeat(64),
+            context: ConversationContext::Thread {
+                messages: vec![ContextMessage {
+                    pubkey: "owner".into(),
+                    timestamp: "2026-07-31T00:00:00Z".into(),
+                    content: "buzz://project-workspace?path=%2Frepo-a".into(),
+                }],
+                total: 1,
+                truncated: false,
+            },
+        };
+
+        let error = trusted_fetched_root_content("owner", &"a".repeat(64), Some(&root))
+            .expect_err("mismatched root identity must not be trusted");
+        assert!(error.to_string().contains("unexpected root"));
+    }
+
+    #[test]
+    fn fetched_root_by_another_author_fails_closed() {
+        let root_id = "a".repeat(64);
+        let root = VerifiedThreadRoot {
+            root_event_id: root_id.clone(),
+            context: ConversationContext::Thread {
+                messages: vec![ContextMessage {
+                    pubkey: "another-author".into(),
+                    timestamp: "2026-07-31T00:00:00Z".into(),
+                    content: "buzz://project-workspace?path=%2Frepo-a".into(),
+                }],
+                total: 1,
+                truncated: false,
+            },
+        };
+
+        let error = trusted_fetched_root_content("owner", &root_id, Some(&root))
+            .expect_err("non-owner root must not become workspace authority");
+        assert!(error.to_string().contains("author"));
+    }
+
+    #[test]
+    fn workspace_observer_payloads_are_structured_and_errors_are_safe() {
+        let workspace = ThreadWorkspace {
+            root_event_id: "a".repeat(64),
+            worktree_path: PathBuf::from("/private/project/.buzz-worktrees/project-aaaaaaaaaaaa"),
+            worktree_name: "project-aaaaaaaaaaaa".into(),
+            branch: "buzz/aaaaaaaaaaaa".into(),
+            base_revision: "b".repeat(40),
+        };
+
+        let ready = thread_workspace_ready_payload(&workspace);
+        assert_eq!(ready["rootEventId"], "a".repeat(64));
+        assert_eq!(
+            ready["worktreePath"],
+            workspace.worktree_path.to_string_lossy().as_ref()
+        );
+        assert_eq!(ready["worktreeName"], workspace.worktree_name);
+        assert_eq!(ready["branch"], workspace.branch);
+        assert_eq!(ready["baseRevision"], workspace.base_revision);
+
+        let error = thread_workspace_error_payload(&workspace.root_event_id);
+        assert_eq!(error["rootEventId"], workspace.root_event_id);
+        assert_eq!(error["message"], THREAD_WORKSPACE_ERROR_MESSAGE);
+        assert!(
+            !error.to_string().contains("/private/project"),
+            "error observer payload must not leak the workspace path"
         );
     }
 }
@@ -3190,7 +3367,7 @@ fn parse_nostr_thread_response(
     for ev in events {
         let ev_id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("");
         if let Some(msg) = json_to_context_message(ev) {
-            if ev_id == root_event_id {
+            if ev_id.eq_ignore_ascii_case(root_event_id) {
                 root_msg = Some(msg);
             } else {
                 reply_msgs.push((
@@ -3204,17 +3381,10 @@ fn parse_nostr_thread_response(
     // Sort replies chronologically.
     reply_msgs.sort_by_key(|(ts, _)| *ts);
 
-    let mut messages = Vec::new();
-    if let Some(root) = root_msg {
-        messages.push(root);
-    }
+    let mut messages = vec![root_msg?];
     messages.extend(reply_msgs.into_iter().map(|(_, msg)| msg));
 
     let total = messages.len();
-    if messages.is_empty() {
-        return None;
-    }
-
     Some(ConversationContext::Thread {
         messages,
         total,
@@ -3988,6 +4158,49 @@ mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
     use serde_json::json;
+
+    #[test]
+    fn thread_response_requires_the_exact_requested_root() {
+        let requested_root = "a".repeat(64);
+        let response = json!([{
+            "id": "b".repeat(64),
+            "pubkey": "owner",
+            "created_at": 2,
+            "content": "reply without requested root"
+        }]);
+
+        assert!(
+            parse_nostr_thread_response(response, &requested_root).is_none(),
+            "replies cannot stand in for a missing requested root"
+        );
+    }
+
+    #[test]
+    fn thread_response_places_the_exact_root_before_replies() {
+        let requested_root = "a".repeat(64);
+        let response = json!([
+            {
+                "id": "b".repeat(64),
+                "pubkey": "reply-author",
+                "created_at": 1,
+                "content": "reply"
+            },
+            {
+                "id": requested_root,
+                "pubkey": "root-author",
+                "created_at": 2,
+                "content": "root"
+            }
+        ]);
+
+        let Some(ConversationContext::Thread { messages, .. }) =
+            parse_nostr_thread_response(response, &"a".repeat(64))
+        else {
+            panic!("exact root should produce thread context");
+        };
+        assert_eq!(messages[0].content, "root");
+        assert_eq!(messages[1].content, "reply");
+    }
 
     // These pin the initial_message dispatch path (run_prompt_task, ~line 855):
     // a legacy agent WITH a base_prompt must get [Base] prepended to the user

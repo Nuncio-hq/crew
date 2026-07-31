@@ -1,6 +1,6 @@
 # Crew State
 
-Last updated: 2026-07-30
+Last updated: 2026-07-31
 
 ## Repository
 
@@ -26,6 +26,10 @@ In scope:
 - canonical `buzz-channel` binding and relay acknowledgement;
 - Project-channel context containing the absolute source path;
 - per-thread ACP scheduling and isolated Git worktree cwd;
+- owner-scoped worktree-ready/error telemetry and a root-scoped Project-thread
+  workspace surface;
+- ordered Project-thread handoff state from mentions, active-turn telemetry,
+  and signed agent replies;
 - ordered multi-agent Project task routing through normal composer mentions;
 - one-machine, one-manager use;
 - provider compatibility through existing ACP paths.
@@ -64,6 +68,11 @@ Out of scope for this slice:
 - Distributed identity: `com.nuncio.crew`.
 - Dev manifest: `nuncio-crew-dev-latest/latest.json`.
 - Stable manifest: `nuncio-crew-stable-latest/latest.json`.
+- Workflow versions stay semantic (`v0.0.5` or `v0.0.5-dev.N`); immutable
+  releases use Crew-owned tags (`crew-v0.0.5` or `crew-v0.0.5-dev.N`) while
+  artifact and manifest versions omit both prefixes.
+- Release collision checks and archive URLs use the Crew-owned immutable tag,
+  so inherited unprefixed Buzz tags cannot block Crew publication.
 - Signing secrets: protected `nuncio-crew-release` GitHub Environment, `main`
   branch only.
 - Safety: one global release queue, current-main-only source, monotonic rolling
@@ -113,6 +122,21 @@ Out of scope for this slice:
 - The manager confirmed that the relay lifecycle is mandatory: a filesystem
   path never replaces Buzz Project registration or relay authority.
 - A local workspace is not required to be a Git worktree in this slice.
+- Thread worktrees record their full root event ID in branch-local Git config.
+  Existing `0.0.4` worktrees without that record are adopted only after their
+  canonical path, common Git directory, and deterministic branch all verify;
+  conflicting roots fail closed.
+- The ACP harness emits owner-scoped encrypted `thread_workspace_ready` and
+  `thread_workspace_error` frames. Ready includes the verified path, worktree
+  name, branch, and base revision; errors expose only the root ID and a safe
+  message.
+- Desktop keeps a bounded workspace projection by thread root, preserves each
+  community's latest projection across community switches, and rejects stale
+  observer frames. Project threads show preparing, ready, or error state, a
+  branch/details popover with copy-path action, and an ordered handoff list.
+  Working comes from conversation-scoped active turns; done requires a signed
+  agent reply.
+- Ordinary channels and non-Project threads keep the existing UI and composer.
 - Add Project now selects a folder first, derives an editable default name,
   creates/reuses a Project channel, and publishes the Project only after
   explicit plaintext-path consent.
@@ -139,10 +163,10 @@ and the
 
 ## Current gate
 
-Exact local workspace reading is implemented and its automated gates pass.
-Computer Use opened the rebuilt release and reached Projects, but the current
-relay returned no Projects. Exact repository data could not be smoked without
-publishing a new real relay event, which was intentionally not done.
+Project-thread worktree telemetry and UI are implemented and their automated
+gates pass. The branch is not merged, `crew-v0.0.5` is not published, and the
+real signed `0.0.4 → 0.0.5` updater relaunch remains the required post-merge
+release verification.
 
 ## Current test gate
 
@@ -162,6 +186,13 @@ publishing a new real relay event, which was intentionally not done.
   mobile tests (`1` skipped), frontend builds, lint, typecheck, and formatting.
 - Focused browser verification passed `62` Project composer, mention,
   messaging, thread-anchor, and boot-flow scenarios against the E2E bridge.
+- Thread-worktree verification passed `8` focused provisioning tests, `5`
+  session-cwd tests, all `661` `buzz-acp` library tests plus `9` integration
+  tests, and `18` focused Desktop/release-contract tests.
+- The full Desktop suite passed `3885` tests with one environment-gated live
+  relay test skipped; Project-thread Playwright verification passed after a
+  fresh E2E build and showed distinct workspace state across two roots. Its two
+  scenarios also cover the explicit failed-workspace UI.
 - Exact observer controls preserve `conversationId` and `turnId`; concurrent
   same-channel turns can be stopped independently, and unconfirmed model
   switches no longer surface as successful.
@@ -170,7 +201,7 @@ publishing a new real relay event, which was intentionally not done.
 - Earlier focused live relay test: `1/1` passed with an isolated Buzz relay.
 - Typecheck, file-size gate, Biome checks, production build, and
   `git diff --check` passed.
-- No release tag or public artifact has been created.
+- No `crew-v0.0.5` tag or public `0.0.5` artifact has been created.
 - Manual release contracts: `10/10` passed.
 - Always-run Crew CI/local/release contracts: `20/20` passed.
 - Real unsigned Tauri bundle spike accepted `0.0.1-dev` and produced

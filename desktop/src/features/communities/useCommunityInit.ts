@@ -23,6 +23,10 @@ import {
 } from "@/features/agents/activeAgentTurnsStore";
 import { resetAgentWorkingSignal } from "@/features/agents/agentWorkingSignal";
 import { resetAgentObserverStore } from "@/features/agents/observerRelayStore";
+import {
+  restoreProjectThreadWorkspacesForCommunity,
+  saveProjectThreadWorkspacesForCommunity,
+} from "@/features/agents/projectThreadWorkspaceStore";
 import { resetAvatarPresentations } from "@/features/profile/avatarPresentationStore";
 import { resetAvatarProfileSync } from "@/features/profile/avatarProfileSync";
 import { resetSidebarRelayConnectionCardState } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
@@ -181,6 +185,7 @@ export function useCommunityInit(
         // timers survive a round-trip (A → B → A keeps A's elapsed time).
         if (prevCommunityIdRef.current) {
           saveActiveAgentTurnsForCommunity(prevCommunityIdRef.current);
+          saveProjectThreadWorkspacesForCommunity(prevCommunityIdRef.current);
           // Null out immediately so a rapid community switch (A→B→C before
           // B's applyCommunity resolves) doesn't re-save the now-empty
           // store under the outgoing community ID and delete its snapshot.
@@ -259,6 +264,7 @@ export function useCommunityInit(
         // trip). This runs after applyCommunity succeeds and before the app
         // renders so components see the restored timers on first render.
         restoreActiveAgentTurnsForCommunity(activeCommunity.id);
+        restoreProjectThreadWorkspacesForCommunity(activeCommunity.id);
         // Prime the ref so the NEXT switch saves this community's state.
         prevCommunityIdRef.current = activeCommunity.id;
         setResult({

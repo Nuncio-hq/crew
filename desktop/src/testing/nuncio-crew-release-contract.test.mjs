@@ -103,6 +103,31 @@ test("release publishes immutable assets before advancing updater channels", () 
   assert.ok(publishVersion < updateRollingManifest);
 });
 
+test("release collision checks use the Crew-owned immutable tag", () => {
+  const workflow = readFileSync(workflowPath, "utf8");
+  const validation = workflow.indexOf("- name: Validate version and channel");
+  const collisionCheck = workflow.indexOf(
+    "- name: Verify Crew release tag is available",
+  );
+  const collisionStep = workflow.slice(
+    collisionCheck,
+    workflow.indexOf("\n      - ", collisionCheck + 1),
+  );
+
+  assert.notEqual(validation, -1);
+  assert.notEqual(collisionCheck, -1);
+  assert.ok(validation < collisionCheck);
+  assert.doesNotMatch(
+    workflow,
+    /RELEASE_TAG:\s*\$\{\{\s*inputs\.version\s*\}\}/,
+  );
+  assert.match(
+    collisionStep,
+    /RELEASE_TAG:\s*\$\{\{\s*steps\.release\.outputs\.release_tag\s*\}\}/,
+  );
+  assert.match(collisionStep, /"refs\/tags\/\$RELEASE_TAG"/);
+});
+
 test("release notarizes and staples the DMG before validating its ticket", () => {
   const workflow = readFileSync(workflowPath, "utf8");
   const notarizeStart = workflow.indexOf("- name: Notarize and staple DMG");
@@ -215,6 +240,7 @@ test("release helper classifies dev and stable versions with isolated endpoints"
 
   assert.deepEqual(classifyNuncioCrewRelease("v0.0.1-dev"), {
     version: "0.0.1-dev",
+    releaseTag: "crew-v0.0.1-dev",
     channel: "dev",
     prerelease: true,
     rollingTags: ["nuncio-crew-dev-latest"],
@@ -222,6 +248,7 @@ test("release helper classifies dev and stable versions with isolated endpoints"
   });
   assert.deepEqual(classifyNuncioCrewRelease("v1.2.3"), {
     version: "1.2.3",
+    releaseTag: "crew-v1.2.3",
     channel: "stable",
     prerelease: false,
     rollingTags: ["nuncio-crew-stable-latest", "nuncio-crew-dev-latest"],
@@ -232,6 +259,11 @@ test("release helper classifies dev and stable versions with isolated endpoints"
     classifyNuncioCrewRelease("v1.2.4-dev.7").version,
     "1.2.4-dev.7",
   );
+  assert.equal(
+    classifyNuncioCrewRelease("v1.2.4-dev.7").releaseTag,
+    "crew-v1.2.4-dev.7",
+  );
+  assert.notEqual(classifyNuncioCrewRelease("v0.0.5").releaseTag, "v0.0.5");
 });
 
 test("release helper rejects unsupported versions and mismatched channels", async () => {
@@ -291,29 +323,37 @@ test("release identity and updater manifest are Nuncio-owned", async () => {
     pathToFileURL(manifestHelperPath).href
   );
   const manifest = buildNuncioCrewUpdateManifest({
-    tag: "v0.0.1-dev",
+    versionTag: "v0.0.5",
     signature: "signed-update",
     archiveUrl:
-      "https://github.com/Nuncio-hq/crew/releases/download/v0.0.1-dev/NuncioCrew.app.tar.gz",
+      "https://github.com/Nuncio-hq/crew/releases/download/crew-v0.0.5/NuncioCrew.app.tar.gz",
     publishedAt: new Date("2026-07-30T00:00:00.000Z"),
   });
 
   assert.deepEqual(manifest, {
-    version: "0.0.1-dev",
-    notes: "NuncioCrew v0.0.1-dev",
+    version: "0.0.5",
+    notes: "NuncioCrew v0.0.5",
     pub_date: "2026-07-30T00:00:00.000Z",
     platforms: {
       "darwin-aarch64": {
         signature: "signed-update",
-        url: "https://github.com/Nuncio-hq/crew/releases/download/v0.0.1-dev/NuncioCrew.app.tar.gz",
+        url: "https://github.com/Nuncio-hq/crew/releases/download/crew-v0.0.5/NuncioCrew.app.tar.gz",
       },
     },
   });
   assert.throws(() =>
     buildNuncioCrewUpdateManifest({
-      tag: "v0.0.1-dev",
+      versionTag: "v0.0.1-dev",
       signature: " ",
       archiveUrl: "https://example.invalid/update.tar.gz",
+    }),
+  );
+  assert.throws(() =>
+    buildNuncioCrewUpdateManifest({
+      versionTag: "v0.0.5",
+      signature: "signed-update",
+      archiveUrl:
+        "https://github.com/Nuncio-hq/crew/releases/download/v0.0.5/NuncioCrew.app.tar.gz",
     }),
   );
 });
