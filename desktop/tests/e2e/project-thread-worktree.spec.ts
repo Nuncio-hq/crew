@@ -139,10 +139,12 @@ async function seedWorkspace(
   conversationId: string,
   branch: string,
   path: string,
+  commitsBehindRemote = 0,
 ) {
   await page.evaluate(
     ({
       agentPubkey,
+      behind,
       branchName,
       channelId,
       conversation,
@@ -180,7 +182,7 @@ async function seedWorkspace(
               worktreeName: worktreePath.split("/").at(-1),
               baseRevision: "2e94a442f54a",
               baseSource: "remote",
-              commitsBehindRemote: 0,
+              commitsBehindRemote: behind,
               remoteDefaultBranch: "main",
               repositoryPath: "/tmp/crew",
             },
@@ -190,6 +192,7 @@ async function seedWorkspace(
     },
     {
       agentPubkey: TEST_IDENTITIES.alice.pubkey,
+      behind: commitsBehindRemote,
       branchName: branch,
       channelId: CHANNEL_ID,
       conversation: conversationId,
@@ -310,8 +313,12 @@ test("Project threads show truthful isolated workspace and agent handoff", async
     "conversation-b",
     "buzz/bbbbbbbbbbbb",
     "/tmp/.buzz-worktrees/crew-bbbbbbbbbbbb",
+    2,
   );
   await expect(panel).toContainText("buzz/bbbbbbbbbbbb");
+  await expect(panel).toContainText("2 behind origin/main");
+  await panel.getByRole("button", { name: /Workspace/ }).click();
+  await expect(panel).toContainText("Remote base");
   await expect(panel).not.toContainText("buzz/aaaaaaaaaaaa");
   await expect(panel.getByRole("button", { name: /Pull request/ })).toHaveCount(
     0,
