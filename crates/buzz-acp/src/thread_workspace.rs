@@ -7,6 +7,11 @@ use std::{
 use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 
+mod base;
+
+pub(crate) use base::BaseSource;
+use base::{resolve_workspace_base, WorkspaceBase};
+
 const CONTEXT_URL_PREFIX: &str = "buzz://project-workspace?";
 const ROOT_CLAIM_DIRECTORY: &str = "buzz-thread-workspace-roots";
 const ROOT_CLAIM_READ_ATTEMPTS: usize = 10;
@@ -20,10 +25,14 @@ pub struct ProjectWorkspace {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ThreadWorkspace {
     pub(crate) root_event_id: String,
+    pub(crate) repository_path: PathBuf,
     pub(crate) worktree_path: PathBuf,
     pub(crate) worktree_name: String,
     pub(crate) branch: String,
     pub(crate) base_revision: String,
+    pub(crate) base_source: BaseSource,
+    pub(crate) remote_default_branch: Option<String>,
+    pub(crate) commits_behind_remote: Option<u64>,
 }
 
 pub fn parse_project_workspace(content: &str) -> Result<Option<ProjectWorkspace>> {
@@ -85,17 +94,15 @@ pub async fn ensure_thread_worktree(
         .join(".buzz-worktrees");
     let worktree_path = parent.join(format!("{repo_name}-{short_root}"));
     let branch = format!("buzz/{short_root}");
-    let source_revision = git_output(&repo_root, ["rev-parse", "HEAD"])
-        .await?
-        .trim()
-        .to_string();
+    let workspace_base = resolve_workspace_base(&repo_root).await?;
 
     if let Some(metadata) = verified_metadata(
+        &repo_root,
         &worktree_path,
         &common_git,
         &branch,
         root_event_id,
-        &source_revision,
+        &workspace_base,
     )
     .await?
     {
@@ -108,7 +115,7 @@ pub async fn ensure_thread_worktree(
         .arg(&repo_root)
         .args(["worktree", "add", "-b", &branch])
         .arg(&worktree_path)
-        .arg(&source_revision)
+        .arg(&workspace_base.revision)
         .kill_on_drop(true)
         .output()
         .await
@@ -118,11 +125,12 @@ pub async fn ensure_thread_worktree(
         // Another harness may have won the same idempotent create race.
         for _ in 0..10 {
             if let Some(metadata) = verified_metadata(
+                &repo_root,
                 &worktree_path,
                 &common_git,
                 &branch,
                 root_event_id,
-                &source_revision,
+                &workspace_base,
             )
             .await?
             {
@@ -149,11 +157,12 @@ pub async fn ensure_thread_worktree(
                 bail!("git worktree add failed: {}", stderr.trim());
             }
             if let Some(metadata) = verified_metadata(
+                &repo_root,
                 &worktree_path,
                 &common_git,
                 &branch,
                 root_event_id,
-                &source_revision,
+                &workspace_base,
             )
             .await?
             {
@@ -165,22 +174,24 @@ pub async fn ensure_thread_worktree(
     }
 
     verified_metadata(
+        &repo_root,
         &worktree_path,
         &common_git,
         &branch,
         root_event_id,
-        &source_revision,
+        &workspace_base,
     )
     .await?
     .context("created worktree failed repository verification")
 }
 
 async fn verified_metadata(
+    repo_root: &Path,
     path: &Path,
     expected_common_git: &Path,
     expected_branch: &str,
     root_event_id: &str,
-    source_revision: &str,
+    workspace_base: &WorkspaceBase,
 ) -> Result<Option<ThreadWorkspace>> {
     if !verify_worktree(path, expected_common_git, expected_branch, root_event_id).await {
         return Ok(None);
@@ -195,10 +206,13 @@ async fn verified_metadata(
     // On creation this is exactly the source checkout HEAD supplied to
     // `git worktree add`. On normal idempotent reuse, merge-base preserves
     // that branch point after either the source or worktree branch advances.
-    let base_revision = git_output(&worktree_path, ["merge-base", "HEAD", source_revision])
-        .await?
-        .trim()
-        .to_string();
+    let base_revision = git_output(
+        &worktree_path,
+        ["merge-base", "HEAD", workspace_base.revision.as_str()],
+    )
+    .await?
+    .trim()
+    .to_string();
     if base_revision.len() != 40
         || !base_revision
             .chars()
@@ -208,10 +222,14 @@ async fn verified_metadata(
     }
     Ok(Some(ThreadWorkspace {
         root_event_id: root_event_id.to_string(),
+        repository_path: repo_root.to_path_buf(),
         worktree_path,
         worktree_name,
         branch: expected_branch.to_string(),
         base_revision,
+        base_source: workspace_base.source,
+        remote_default_branch: workspace_base.remote_default_branch.clone(),
+        commits_behind_remote: workspace_base.commits_behind_remote,
     }))
 }
 

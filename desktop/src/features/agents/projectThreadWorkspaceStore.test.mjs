@@ -45,6 +45,10 @@ function readyPayload(rootEventId, branch = "buzz/aaaaaaaaaaaa") {
     worktreePath: `/tmp/.buzz-worktrees/${branch.slice(5)}`,
     worktreeName: branch.slice(5),
     baseRevision: "deadbeef",
+    baseSource: "remote",
+    remoteDefaultBranch: "main",
+    commitsBehindRemote: 0,
+    repositoryPath: "/tmp/project",
   };
 }
 
@@ -74,10 +78,14 @@ test("ready projection preserves verified worktree identity", () => {
   assert.deepEqual(getProjectThreadWorkspaceSnapshot(root), {
     status: "ready",
     agentPubkey: "agent-a",
+    baseSource: "local-fallback",
     baseRevision: "deadbeef",
     branch: "buzz/aaaaaaaaaaaa",
     conversationId: "conversation-a",
     rootEventId: root,
+    remoteDefaultBranch: null,
+    commitsBehindRemote: null,
+    repositoryPath: null,
     worktreeName: "app-aaaaaaaaaaaa",
     worktreePath: "/tmp/.buzz-worktrees/app-aaaaaaaaaaaa",
   });

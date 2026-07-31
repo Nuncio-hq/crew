@@ -1,6 +1,6 @@
 # Thread integration strip + worktree lifecycle — v0.0.6
 
-- **Status:** Ready for implementation
+- **Status:** In progress — Phase 01 complete
 - **Base:** `40773ea6d` (`crew-v0.0.5`, `origin/main`)
 - **Branch:** `buzz/eb791333c0ee` (thread worktree, already fast-forwarded to base)
 - **Release:** stable `v0.0.6` → immutable tag `crew-v0.0.6`

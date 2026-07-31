@@ -1,6 +1,6 @@
 # Phase 01 — Worktree base from origin + lifecycle commands
 
-- **Status:** Not started
+- **Status:** Complete
 - **Priority:** high — this is the bug that corrupted the v0.0.5 test session
 
 ## Context

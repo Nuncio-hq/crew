@@ -1,5 +1,9 @@
 import { sendAgentObserverControl } from "@/shared/api/observerRelay";
-import type { CancelManagedAgentTurnResult } from "@/shared/api/types";
+import { invokeTauri } from "@/shared/api/tauri";
+import type {
+  CancelManagedAgentTurnResult,
+  ThreadWorkspaceActionResult,
+} from "@/shared/api/types";
 
 export async function cancelManagedAgentTurn(
   pubkey: string,
@@ -36,4 +40,28 @@ export async function switchManagedAgentModel(
     turnId,
     modelId,
   });
+}
+
+type ThreadWorkspaceTarget = {
+  repositoryPath: string;
+  branch: string;
+  rootEventId: string;
+};
+
+export function removeThreadWorktree(
+  input: ThreadWorkspaceTarget & { worktreePath: string },
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("remove_thread_worktree", input);
+}
+
+export function deleteThreadBranch(
+  input: ThreadWorkspaceTarget,
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("delete_thread_branch", input);
+}
+
+export function closeThreadPullRequest(
+  input: ThreadWorkspaceTarget,
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("close_thread_pull_request", input);
 }

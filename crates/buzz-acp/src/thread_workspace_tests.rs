@@ -3,6 +3,7 @@ use std::{fs, path::PathBuf};
 use tokio::process::Command;
 use uuid::Uuid;
 
+use crate::thread_workspace::BaseSource;
 use crate::thread_workspace::{ensure_thread_worktree, parse_project_workspace, ProjectWorkspace};
 
 #[test]
@@ -19,6 +20,80 @@ fn parses_encoded_project_workspace_context() {
 fn rejects_relative_workspace_path() {
     let content = "buzz://project-workspace?repo=acme%2Fapp&path=relative";
     assert!(parse_project_workspace(content).is_err());
+}
+
+#[tokio::test]
+async fn remote_ahead_tip_is_used_as_the_new_worktree_base() {
+    let (fixture, workspace, remote) = remote_git_fixture("main").await;
+    let remote_tip = push_remote_commit(&fixture, &remote, "main").await;
+
+    let created = ensure_thread_worktree(&workspace, &"1".repeat(64))
+        .await
+        .expect("create succeeds");
+
+    assert_eq!(created.base_revision, remote_tip);
+    assert_eq!(created.base_source, BaseSource::Remote);
+    assert_eq!(created.remote_default_branch.as_deref(), Some("main"));
+    assert_eq!(created.commits_behind_remote, Some(1));
+    assert_eq!(
+        git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await,
+        remote_tip
+    );
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn fetch_failure_falls_back_to_local_head_without_blocking_creation() {
+    let (fixture, workspace, remote) = remote_git_fixture("main").await;
+    let local_head = git_output(&workspace.local_path, &["rev-parse", "HEAD"]).await;
+    fs::rename(&remote, fixture.join("remote-unavailable.git")).expect("disable remote");
+
+    let created = ensure_thread_worktree(&workspace, &"2".repeat(64))
+        .await
+        .expect("fallback create succeeds");
+
+    assert_eq!(created.base_revision, local_head);
+    assert_eq!(created.base_source, BaseSource::LocalFallback);
+    assert_eq!(created.remote_default_branch.as_deref(), Some("main"));
+    assert_eq!(
+        git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await,
+        local_head
+    );
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn detached_remote_head_reuses_the_configured_remote_default_branch() {
+    let (fixture, workspace, remote) = remote_git_fixture("main").await;
+    let head = git_output(&workspace.local_path, &["rev-parse", "HEAD"]).await;
+    fs::write(remote.join("HEAD"), format!("{head}\n")).expect("detach remote HEAD");
+    run_git(
+        &workspace.local_path,
+        &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
+    )
+    .await;
+
+    let created = ensure_thread_worktree(&workspace, &"3".repeat(64))
+        .await
+        .expect("fallback create succeeds");
+
+    assert_eq!(created.base_source, BaseSource::Remote);
+    assert_eq!(created.remote_default_branch.as_deref(), Some("main"));
+    assert_eq!(created.base_revision, head);
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn remote_default_branch_is_not_assumed_to_be_main() {
+    let (fixture, workspace, _) = remote_git_fixture("trunk").await;
+
+    let created = ensure_thread_worktree(&workspace, &"4".repeat(64))
+        .await
+        .expect("create succeeds");
+
+    assert_eq!(created.base_source, BaseSource::Remote);
+    assert_eq!(created.remote_default_branch.as_deref(), Some("trunk"));
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
 }
 
 #[tokio::test]
@@ -233,6 +308,86 @@ async fn git_fixture() -> (PathBuf, ProjectWorkspace, String) {
         local_path: repo,
     };
     (fixture, workspace, base_revision)
+}
+
+async fn remote_git_fixture(default_branch: &str) -> (PathBuf, ProjectWorkspace, PathBuf) {
+    let fixture = std::env::temp_dir().join(format!("buzz-remote-test-{}", Uuid::new_v4()));
+    let remote = fixture.join("remote.git");
+    let repo = fixture.join("project");
+    fs::create_dir_all(&fixture).expect("fixture directory");
+    run_git(
+        &fixture,
+        &["init", "--bare", remote.to_str().expect("remote UTF-8")],
+    )
+    .await;
+    fs::create_dir_all(&repo).expect("repository directory");
+    run_git(&repo, &["init", "-b", default_branch]).await;
+    run_git(&repo, &["config", "user.email", "test@example.com"]).await;
+    run_git(&repo, &["config", "user.name", "Test"]).await;
+    fs::write(repo.join("README.md"), "fixture").expect("fixture file");
+    run_git(&repo, &["add", "README.md"]).await;
+    run_git(&repo, &["commit", "-m", "fixture"]).await;
+    run_git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote.to_str().expect("remote UTF-8"),
+        ],
+    )
+    .await;
+    run_git(&repo, &["push", "-u", "origin", default_branch]).await;
+    run_git(
+        &fixture,
+        &[
+            "--git-dir",
+            remote.to_str().expect("remote UTF-8"),
+            "symbolic-ref",
+            "HEAD",
+            &format!("refs/heads/{default_branch}"),
+        ],
+    )
+    .await;
+    run_git(&repo, &["remote", "set-head", "origin", default_branch]).await;
+    (
+        fixture,
+        ProjectWorkspace {
+            repo_address: "fixture/project".to_string(),
+            local_path: repo,
+        },
+        remote,
+    )
+}
+
+async fn push_remote_commit(
+    fixture: &std::path::Path,
+    remote: &std::path::Path,
+    branch: &str,
+) -> String {
+    let publisher = fixture.join("publisher");
+    run_git(
+        fixture,
+        &[
+            "clone",
+            "--branch",
+            branch,
+            remote.to_str().expect("remote UTF-8"),
+            publisher.to_str().expect("publisher UTF-8"),
+        ],
+    )
+    .await;
+    run_git(
+        &publisher,
+        &["config", "user.email", "publisher@example.com"],
+    )
+    .await;
+    run_git(&publisher, &["config", "user.name", "Publisher"]).await;
+    fs::write(publisher.join("REMOTE.md"), "remote ahead").expect("remote file");
+    run_git(&publisher, &["add", "REMOTE.md"]).await;
+    run_git(&publisher, &["commit", "-m", "remote ahead"]).await;
+    run_git(&publisher, &["push", "origin", branch]).await;
+    git_output(&publisher, &["rev-parse", "HEAD"]).await
 }
 
 async fn run_git(cwd: &std::path::Path, args: &[&str]) {
