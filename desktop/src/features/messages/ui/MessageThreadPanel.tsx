@@ -3,7 +3,10 @@ import { ArrowDown } from "lucide-react";
 
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { normalizePubkey } from "@/shared/lib/pubkey";
-import { collectProjectThreadAgentMentions } from "@/features/messages/lib/projectThreadWorkspace";
+import {
+  collectProjectThreadAgentMentions,
+  projectThreadRootAudiencePubkeys,
+} from "@/features/messages/lib/projectThreadWorkspace";
 import {
   buildThreadSummaryFromVisibleEntries,
   hasNestedThreadBranches,
@@ -529,7 +532,7 @@ export function MessageThreadPanel({
     });
   }, [currentPubkey, knownAgentPubkeys, profiles, threadHead, threadMessages]);
   const initialAgentPubkeys = React.useMemo(
-    () => projectThreadAgentMentions.map((mention) => mention.pubkey),
+    () => projectThreadRootAudiencePubkeys(projectThreadAgentMentions),
     [projectThreadAgentMentions],
   );
 

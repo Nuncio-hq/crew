@@ -4,8 +4,8 @@
 
 - Layout reference:
   `plans/260731-1425-thread-integration-strip/prototype.html`
-- Prototype screenshot:
-  `https://lilgroup.communities.buzz.xyz/media/b0d127394d9e7486c39b83f693109baebe870ae1e96a9a852d60784247484d5b.png`
+- Prototype screenshot omitted because the original relay URL requires
+  authentication; use the local HTML layout reference above.
 - App captures:
   `desktop/test-results/thread-worktree/01-integration-strip.png` and
   `desktop/test-results/thread-worktree/02-pr-history.png`

@@ -83,7 +83,9 @@ export function ProjectThreadWorkspaceDetails({
     }
   };
   const behind =
-    workspace.commitsBehindRemote && workspace.commitsBehindRemote > 0
+    workspace.baseSource === "local-fallback" &&
+    workspace.commitsBehindRemote &&
+    workspace.commitsBehindRemote > 0
       ? `${workspace.commitsBehindRemote} behind origin/${workspace.remoteDefaultBranch ?? "default"}`
       : null;
 

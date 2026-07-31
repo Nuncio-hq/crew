@@ -22,6 +22,14 @@ export type ProjectThreadAgentMention = {
   source: "root" | "reply";
 };
 
+export function projectThreadRootAudiencePubkeys(
+  mentions: readonly ProjectThreadAgentMention[],
+): string[] {
+  return mentions
+    .filter((mention) => mention.source === "root")
+    .map((mention) => mention.pubkey);
+}
+
 export function parseProjectThreadContext(
   content: string | null | undefined,
 ): ProjectThreadContext | null {

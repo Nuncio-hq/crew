@@ -5,6 +5,7 @@ import {
   buildProjectThreadAgentSteps,
   collectProjectThreadAgentMentions,
   parseProjectThreadContext,
+  projectThreadRootAudiencePubkeys,
 } from "./projectThreadWorkspace.ts";
 
 test("Project context parses the hidden workspace URL", () => {
@@ -88,5 +89,16 @@ test("an agent introduced only in a reply is retained", () => {
       replies: [{ body: "Add @Gamma", tags: [["p", "agent-c"]] }],
     }),
     [{ pubkey: "agent-c", source: "reply" }],
+  );
+});
+
+test("composer audience remains limited to agents mentioned at the root", () => {
+  assert.deepEqual(
+    projectThreadRootAudiencePubkeys([
+      { pubkey: "agent-a", source: "root" },
+      { pubkey: "agent-b", source: "reply" },
+      { pubkey: "agent-c", source: "root" },
+    ]),
+    ["agent-a", "agent-c"],
   );
 });
