@@ -83,11 +83,15 @@ export function ProjectThreadWorkspaceDetails({
     }
   };
   const behind =
-    workspace.baseSource === "local-fallback" &&
-    workspace.commitsBehindRemote &&
-    workspace.commitsBehindRemote > 0
+    workspace.commitsBehindRemote && workspace.commitsBehindRemote > 0
       ? `${workspace.commitsBehindRemote} behind origin/${workspace.remoteDefaultBranch ?? "default"}`
       : null;
+  const sourceLabel =
+    workspace.baseSource === "local-fallback"
+      ? "Local fallback"
+      : behind
+        ? "Remote base"
+        : "Remote tip";
 
   return (
     <div className="space-y-3" data-testid="project-thread-workspace-details">
@@ -107,9 +111,7 @@ export function ProjectThreadWorkspaceDetails({
         <dt className="text-muted-foreground">Base</dt>
         <dd className="truncate font-mono">{workspace.baseRevision}</dd>
         <dt className="text-muted-foreground">Source</dt>
-        <dd>
-          {workspace.baseSource === "remote" ? "Remote tip" : "Local fallback"}
-        </dd>
+        <dd>{sourceLabel}</dd>
         <dt className="text-muted-foreground">Status</dt>
         <dd className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
           <Check className="h-3.5 w-3.5" /> Ready
