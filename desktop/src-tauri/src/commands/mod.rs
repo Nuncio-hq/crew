@@ -55,6 +55,7 @@ mod relay_reconnect;
 mod social;
 mod team_snapshot;
 mod teams;
+mod thread_github;
 mod thread_workspace;
 mod thread_workspace_git;
 #[cfg(test)]
@@ -110,6 +111,7 @@ pub use relay_reconnect::*;
 pub use social::*;
 pub use team_snapshot::*;
 pub use teams::*;
+pub use thread_github::*;
 pub use thread_workspace::*;
 pub use updater::*;
 pub use window_chrome::*;

@@ -146,13 +146,7 @@ export function ingestProjectThreadWorkspaceEvent(
     payload.commitsBehindRemote >= 0
       ? payload.commitsBehindRemote
       : null;
-  if (
-    !branch ||
-    !worktreePath ||
-    !worktreeName ||
-    !baseRevision ||
-    !baseSource
-  )
+  if (!branch || !worktreePath || !worktreeName || !baseRevision || !baseSource)
     return;
   setWorkspaceEntry(rootEventId, {
     snapshot: {

@@ -690,6 +690,8 @@ pub fn run() {
             remove_thread_worktree,
             delete_thread_branch,
             close_thread_pull_request,
+            get_thread_workspace_lifecycle,
+            get_thread_github_status,
             push_project_local_repository,
             pull_project_local_repository,
             sign_project_pull_request_status,

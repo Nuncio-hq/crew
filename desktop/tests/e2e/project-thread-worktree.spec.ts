@@ -26,6 +26,53 @@ const agents = [
     channelNames: ["general"],
   },
 ];
+const threadPullRequest = {
+  availability: "available" as const,
+  pullRequest: {
+    additions: 214,
+    baseRefName: "main",
+    changedFiles: 12,
+    checks: [
+      {
+        name: "Crew CI",
+        state: "SUCCESS",
+        url: "https://github.com/Nuncio-hq/crew/actions/runs/1",
+        workflow: "Crew CI",
+      },
+      {
+        name: "Desktop E2E",
+        state: "IN_PROGRESS",
+        url: "https://github.com/Nuncio-hq/crew/actions/runs/2",
+        workflow: "Crew CI",
+      },
+    ],
+    closingIssuesReferences: [
+      {
+        number: 12,
+        state: "OPEN",
+        title: "Integrate Project thread lifecycle",
+        url: "https://github.com/Nuncio-hq/crew/issues/12",
+      },
+    ],
+    comments: [
+      {
+        author: { login: "oscarlehuu" },
+        body: "Keep the 2×3 layout and existing app colors.",
+        createdAt: "2026-07-31T05:00:00Z",
+        url: "https://github.com/Nuncio-hq/crew/pull/9#issuecomment-1",
+      },
+    ],
+    deletions: 32,
+    headRefName: "buzz/aaaaaaaaaaaa",
+    isDraft: false,
+    mergeStateStatus: "CLEAN",
+    number: 9,
+    reviewDecision: "REVIEW_REQUIRED",
+    state: "OPEN",
+    title: "Thread integration strip",
+    url: "https://github.com/Nuncio-hq/crew/pull/9",
+  },
+};
 
 test.use({ viewport: { height: 750, width: 1200 } });
 
@@ -44,26 +91,35 @@ async function waitForLiveChannel(page: Page) {
 
 async function emitProjectRoot(page: Page, id: string, label: string) {
   return page.evaluate(
-    ({ alice, bob, charlie, eventId, taskLabel }) =>
+    ({ alice, charlie, eventId, taskLabel }) =>
       window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: "general",
         content:
           `[ctx]: <buzz://project-workspace?repo=Nuncio-hq%2Fcrew&path=%2Ftmp%2Fcrew>\n\n` +
-          `@Claude Opus ${taskLabel}, hand off to @Cursor Grok High Fast, then @Codex GPT 5.6 reviews.`,
+          `@Claude Opus ${taskLabel}, then @Codex GPT 5.6 reviews.`,
         mentionPubkeys: [alice],
-        extraTags: [
-          ["mention", bob],
-          ["mention", charlie],
-        ],
+        extraTags: [["mention", charlie]],
         id: eventId,
       }),
     {
       alice: TEST_IDENTITIES.alice.pubkey,
-      bob: TEST_IDENTITIES.bob.pubkey,
       charlie: TEST_IDENTITIES.charlie.pubkey,
       eventId: id,
       taskLabel: label,
     },
+  );
+}
+
+async function emitReplyMention(page: Page, rootEventId: string) {
+  await page.evaluate(
+    ({ bob, root }) =>
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName: "general",
+        content: "Adding @Cursor Grok High Fast for implementation review.",
+        mentionPubkeys: [bob],
+        parentEventId: root,
+      }),
+    { bob: TEST_IDENTITIES.bob.pubkey, root: rootEventId },
   );
 }
 
@@ -123,6 +179,10 @@ async function seedWorkspace(
               worktreePath,
               worktreeName: worktreePath.split("/").at(-1),
               baseRevision: "2e94a442f54a",
+              baseSource: "remote",
+              commitsBehindRemote: 0,
+              remoteDefaultBranch: "main",
+              repositoryPath: "/tmp/crew",
             },
           },
         ],
@@ -177,16 +237,25 @@ async function seedWorkspaceError(
 test("Project threads show truthful isolated workspace and agent handoff", async ({
   page,
 }) => {
-  await installMockBridge(page, { managedAgents: agents });
+  await installMockBridge(page, {
+    managedAgents: agents,
+    threadGitHubByBranch: {
+      "buzz/aaaaaaaaaaaa": threadPullRequest,
+    },
+    threadWorkspaceDirtyByBranch: {
+      "buzz/aaaaaaaaaaaa": true,
+    },
+  });
   await page.goto("/");
   await page.getByTestId("channel-general").click();
   await waitForLiveChannel(page);
 
   await emitProjectRoot(page, ROOT_A, "plan issue 4");
   let panel = await openThread(page, "plan issue 4");
+  await panel.getByRole("button", { name: /Workspace/ }).click();
   await expect(
     panel.getByTestId("project-thread-workspace-panel"),
-  ).toContainText("Preparing isolated workspace");
+  ).toContainText("The harness is preparing this isolated worktree");
 
   await seedWorkspace(
     page,
@@ -195,18 +264,41 @@ test("Project threads show truthful isolated workspace and agent handoff", async
     "buzz/aaaaaaaaaaaa",
     "/tmp/.buzz-worktrees/crew-aaaaaaaaaaaa",
   );
-  await expect(panel.getByText("Shared workspace ready")).toBeVisible();
+  await expect(panel.getByText("Ready", { exact: true })).toBeVisible();
   await expect(panel).toContainText("buzz/aaaaaaaaaaaa");
+  await emitReplyMention(page, ROOT_A);
+  await panel.getByRole("button", { name: /Handoff/ }).click();
   await expect(panel).toContainText("Handoff in this thread");
   await expect(panel).toContainText("Claude Opus");
   await expect(panel).toContainText("Cursor Grok High Fast");
   await expect(panel).toContainText("Codex GPT 5.6");
+  await expect(panel).toContainText("Added in a reply");
+  await panel.getByRole("button", { name: "Close details" }).click();
   await waitForAnimations(page);
   await panel.screenshot({
-    path: "test-results/thread-worktree/01-workspace-ready.png",
+    path: "test-results/thread-worktree/01-integration-strip.png",
+  });
+  await panel.getByRole("button", { name: /Pull request/ }).click();
+  await expect(panel).toContainText(
+    "Keep the 2×3 layout and existing app colors.",
+  );
+  await waitForAnimations(page);
+  await panel.screenshot({
+    path: "test-results/thread-worktree/02-pr-history.png",
+  });
+  await panel.getByRole("button", { name: /Workspace/ }).click();
+  await expect(
+    panel.getByRole("button", { name: "Remove worktree" }),
+  ).toBeDisabled();
+  await expect(
+    panel.getByRole("button", { name: /Pull request/ }),
+  ).toBeVisible();
+  await waitForAnimations(page);
+  await panel.screenshot({
+    path: "test-results/thread-worktree/03-workspace-ready.png",
   });
   await page.screenshot({
-    path: "test-results/thread-worktree/02-full-project-thread.png",
+    path: "test-results/thread-worktree/04-full-project-thread.png",
   });
 
   await panel.getByRole("button", { name: "Close panel" }).click();
@@ -221,6 +313,9 @@ test("Project threads show truthful isolated workspace and agent handoff", async
   );
   await expect(panel).toContainText("buzz/bbbbbbbbbbbb");
   await expect(panel).not.toContainText("buzz/aaaaaaaaaaaa");
+  await expect(panel.getByRole("button", { name: /Pull request/ })).toHaveCount(
+    0,
+  );
 });
 
 test("Project workspace errors render failed truth without preparing affordances", async ({
@@ -240,13 +335,9 @@ test("Project workspace errors render failed truth without preparing affordances
     "branch already checked out",
   );
 
-  await expect(
-    panel.getByText("Workspace setup failed", { exact: true }),
-  ).toBeVisible();
-  await expect(panel.getByText("Failed", { exact: true })).toBeVisible();
-  await expect(panel).toContainText("workspace setup failed");
+  await panel.getByRole("button", { name: /Workspace/ }).click();
+  await expect(panel).toContainText("Setup failed");
   await expect(panel).toContainText("branch already checked out");
-  await expect(panel.getByText("Preparing", { exact: true })).toHaveCount(0);
-  await expect(panel).not.toContainText("preparing workspace");
-  await expect(panel).not.toContainText("shared thread worktree");
+  await expect(panel).not.toContainText("Preparing");
+  await expect(panel).not.toContainText("preparing this isolated worktree");
 });

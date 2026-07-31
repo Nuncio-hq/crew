@@ -177,16 +177,6 @@ export type UpdateProfileInput = {
 
 export type PresenceStatus = "online" | "away" | "offline";
 
-export type ThreadWorkspaceActionStatus =
-  | "completed"
-  | "refused"
-  | "not-found";
-
-export type ThreadWorkspaceActionResult = {
-  status: ThreadWorkspaceActionStatus;
-  message: string;
-};
-
 export type PresenceLookup = Record<string, PresenceStatus>;
 
 export type UserStatus = {

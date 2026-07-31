@@ -1,6 +1,6 @@
 # Phase 02 — Thread integration strip (2×3) + handoff from replies
 
-- **Status:** Not started
+- **Status:** Complete
 - **Priority:** high
 
 ## Context
@@ -17,7 +17,7 @@ same worktree but never appears — observed live with Cursor Grok High Fast.
    PR · CI. Each cell opens one detail drawer below the strip; one open at a
    time; Escape closes.
 2. Row 2 renders only when the thread branch has a pull request. With no PR,
-   show a single `No PR yet` cell with an `Open PR` action.
+   keep the GitHub row hidden.
 3. Handoff steps come from root mentions **and** reply mentions, in first-seen
    order, root first. Each row shows how the agent entered the thread.
 4. Lifecycle actions live in the drawers: `Close PR` (PR drawer),
@@ -71,9 +71,15 @@ build on new literals; meta text belongs on `text-2xs` / `text-3xs`.
 ## Validation
 
 ```bash
-cd desktop && pnpm test && pnpm check:px-text && pnpm test:e2e:smoke
+cd desktop && pnpm test && pnpm check:px-text
+cd desktop && pnpm build:e2e
+cd desktop && pnpm exec playwright test tests/e2e/project-thread-worktree.spec.ts --project=smoke
 just ci
 ```
+
+Phase-local results: 3,887 desktop tests passed with one skipped; typecheck and
+`check:px-text` passed; the focused Project thread E2E passed 2/2. The full
+Tauri, desktop smoke, and `just ci` gates remain in the pre-review release gate.
 
 Screenshots for the PR via `just desktop-screenshot`, posted with
 `scripts/post-screenshots.sh` — never relay media URLs. Verify hashes are

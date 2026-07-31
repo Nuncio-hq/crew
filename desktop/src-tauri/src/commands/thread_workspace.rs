@@ -20,6 +20,54 @@ pub struct ThreadWorkspaceActionResult {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadWorkspaceLifecycle {
+    pub branch_checked_out: bool,
+    pub branch_exists: bool,
+    pub dirty: Option<bool>,
+    pub worktree_exists: bool,
+}
+
+#[tauri::command]
+pub async fn get_thread_workspace_lifecycle(
+    repository_path: String,
+    worktree_path: String,
+    branch: String,
+    root_event_id: String,
+) -> Result<ThreadWorkspaceLifecycle, String> {
+    let target = validate_target(&repository_path, &branch, &root_event_id).await?;
+    let branch_exists = git_success_dir(
+        &target.common_git,
+        [
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .await?;
+    let worktree = std::fs::canonicalize(worktree_path).ok();
+    let dirty = match worktree.as_deref() {
+        Some(path) => {
+            validate_checked_out_worktree(&target, path).await?;
+            Some(
+                !git_output_at(path, ["status", "--porcelain"])
+                    .await?
+                    .trim()
+                    .is_empty(),
+            )
+        }
+        None => None,
+    };
+    Ok(ThreadWorkspaceLifecycle {
+        branch_checked_out: branch_is_checked_out(&target).await?,
+        branch_exists,
+        dirty,
+        worktree_exists: worktree.is_some(),
+    })
+}
+
 #[tauri::command]
 pub async fn remove_thread_worktree(
     repository_path: String,
