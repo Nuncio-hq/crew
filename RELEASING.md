@@ -1,5 +1,12 @@
 # Releasing Buzz
 
+> **NuncioCrew fork.** This file documents **upstream Buzz** release lanes.
+> For NuncioCrew signed/notarized macOS releases on this checkout, use
+> [`docs/crew/RELEASING.md`](docs/crew/RELEASING.md) and workflow
+> `nuncio-crew-release.yml` against `Nuncio-hq/crew`. Do **not** dispatch
+> Buzz release workflows against the upstream `block/buzz` GitHub repo from
+> this fork.
+
 Buzz has three independent release lanes. Desktop and relay use release PRs.
 Mobile uses immutable release-candidate tags cut directly from remote `main`:
 
@@ -120,10 +127,18 @@ release-metadata PR.
 ## Signed macOS Canary
 
 Use the manual **Signed macOS Canary** workflow when you need an Apple Silicon
-build of current `main` for explicit testing without publishing a release:
+build of current `main` for explicit testing without publishing a release.
+
+**NuncioCrew agents:** skip this section. Use [`docs/crew/LOCAL-BUILD.md`](docs/crew/LOCAL-BUILD.md)
+for local packages, or [`docs/crew/RELEASING.md`](docs/crew/RELEASING.md) for
+Crew's signed release lane (`nuncio-crew-release.yml` on `Nuncio-hq/crew`).
+
+**Upstream Buzz maintainers only** (requires write access to `block/buzz`; run
+from an upstream checkout so `gh` targets that repo by default):
 
 ```sh
-gh workflow run signed-macos-canary.yml --repo block/buzz --ref main
+gh workflow run signed-macos-canary.yml --ref main
+gh run download <run-id> --name <artifact-name>
 ```
 
 The workflow derives a `-test.<run-number>` version, signs and notarizes the
@@ -132,13 +147,6 @@ artifact with seven-day retention. Because this is a public repository, any
 signed-in GitHub user can download that artifact while it exists; it is
 unpublished, not private. The workflow has no release permissions, does not
 create or move tags, and cannot update `buzz-desktop-latest` or `latest.json`.
-
-Download the artifact from the completed run:
-
-```sh
-gh run download <run-id> --repo block/buzz --name <artifact-name>
-```
-
 The workflow intentionally accepts only `main`. Use the normal release process
 for distributable builds or builds from an immutable release tag.
 

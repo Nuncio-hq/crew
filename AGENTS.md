@@ -341,10 +341,10 @@ delete the previous one. After reposting, delete the superseded comment so
 only the current set remains, otherwise reviewers still see the stale images:
 
 ```bash
-# List screenshot comments to find the stale one's id
-gh pr view <pr> --repo block/buzz --json comments \
+# List screenshot comments to find the stale one's id (this fork: Nuncio-hq/crew)
+gh pr view <pr> --repo Nuncio-hq/crew --json comments \
   --jq '.comments[] | select(.body | test("pr-<pr>--")) | {id, url}'
-gh api -X DELETE repos/block/buzz/issues/comments/<stale-comment-id>
+gh api -X DELETE repos/Nuncio-hq/crew/issues/comments/<stale-comment-id>
 ```
 
 Branch cleanup when fully done: `git push origin --delete agent-screenshots/<username>`.

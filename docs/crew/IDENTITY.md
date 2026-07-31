@@ -40,6 +40,15 @@ Do not silently prefer upstream "Buzz" wording for fork product decisions.
 
 ## Product directory vs protocol name
 
+macOS Application Support paths agents hit while debugging (do not conflate):
+
+| Path | Belongs to |
+|------|------------|
+| `~/Library/Application Support/NuncioCrew/` | Crew node-tools + runtimes (Tauri `productName`) |
+| `~/Library/Application Support/Buzz/` | Older shared / stock Buzz tree — **leave in place** from Crew automation |
+| `~/Library/Application Support/com.nuncio.crew/` | Crew identity + agents (bundle id) |
+| `~/Library/Application Support/xyz.block.buzz.app/` | Stock Buzz / local Crew build using upstream bundle id |
+
 Desktop managed Node/npm trees use Tauri `productName`:
 
 | App | Data directory segment |
@@ -52,6 +61,7 @@ Example (macOS):
 ```text
 ~/Library/Application Support/NuncioCrew/node-tools/<platform>/
 ~/Library/Application Support/NuncioCrew/runtimes/node/…
+~/Library/Application Support/com.nuncio.crew/…
 ```
 
 Older NuncioCrew builds used the literal `Buzz/` segment. Legacy reclaim only
