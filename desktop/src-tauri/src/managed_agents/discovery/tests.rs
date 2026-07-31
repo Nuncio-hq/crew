@@ -187,13 +187,13 @@ fn classifies_cli_missing_when_adapter_found_but_cli_absent() {
     assert_eq!(path.as_deref(), Some("/opt/homebrew/bin/codex-acp"));
 }
 
-/// Amp-shaped preset: an ACP adapter (`amp-acp`) wrapping a separately
-/// installed vendor CLI (`amp`).
+/// Amp-shaped ACP adapter (`amp-acp`) wrapping a separately installed vendor CLI (`amp`).
 const ADAPTER_PRESET: PresetHarness = PresetHarness {
     id: "amp-test",
     label: "Amp Test",
     command: "amp-acp",
     args: &[],
+    avatar_url: "https://example.com/amp.png",
     install_instructions_url: "https://example.com/install",
     install_hint: "Install the amp-acp npm adapter.",
     underlying_cli: Some("amp"),

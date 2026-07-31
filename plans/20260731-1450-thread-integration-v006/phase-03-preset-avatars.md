@@ -1,6 +1,6 @@
 # Phase 03 — Provider avatars for preset harnesses + Devin
 
-- **Status:** Not started
+- **Status:** Complete
 - **Priority:** medium
 
 ## Context — two different avatar surfaces
@@ -48,11 +48,10 @@ licence calls for it.
 
 ## Devin
 
-Devin has no verified ACP command. Add the catalog entry with the command and
-args taken from Devin's official CLI documentation. If the docs describe no
-ACP or stdio agent mode, still add the entry with its documented CLI command
-and say so plainly in `install_hint` — **do not invent arguments** to make it
-look runnable. Note the outcome in the PR description either way.
+The installed official Devin for Terminal binary is
+`devin 3000.3.22 (d5152ff5)`. Its own `devin acp --help` output says “Run as an
+ACP (Agent Client Protocol) server over stdio”, so the preset uses the verified
+`devin` command with `["acp"]`; no arguments were inferred or invented.
 
 ## Files
 
@@ -73,6 +72,13 @@ just ci
 
 Manual: create an agent on a preset harness and confirm its chat avatar is the
 vendor mark, not initials.
+
+All nine selected URLs returned HTTP 200 with an `image/*` content type on
+2026-07-31. Verification on the completed phase:
+
+- `cargo test --manifest-path desktop/src-tauri/Cargo.toml`: 1,910 passed,
+  14 ignored.
+- `pnpm check && pnpm typecheck && pnpm test`: 3,888 passed, 1 skipped.
 
 ## Risk
 

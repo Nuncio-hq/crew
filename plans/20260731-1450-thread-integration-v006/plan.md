@@ -1,6 +1,6 @@
 # Thread integration strip + worktree lifecycle — v0.0.6
 
-- **Status:** In progress — Phases 01–02 complete
+- **Status:** In progress — Phases 01–03 complete
 - **Base:** `40773ea6d` (`crew-v0.0.5`, `origin/main`)
 - **Branch:** `buzz/eb791333c0ee` (thread worktree, already fast-forwarded to base)
 - **Release:** stable `v0.0.6` → immutable tag `crew-v0.0.6`
@@ -68,5 +68,5 @@ app's own tokens and the real logo registries instead.
 
 ## Unresolved questions
 
-- Devin's ACP command is unverified. Phase 03 states how to handle that without
-  inventing arguments.
+None. Devin's installed official CLI verifies `devin acp` as an ACP stdio
+server.

@@ -14,6 +14,7 @@ license permits redistribution.
 | `omp.svg` | [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi) | `667111575ebba136dadfd6989379e7f67e0d40d9` | MIT © 2025 Mario Zechner; © 2025–2026 Can Bölük | `assets/icon.svg` | None |
 | `kimi.png` | [MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli) | `4a550effdfcb29a25a5d325bf935296cc50cd417` | Apache-2.0; NOTICE: Kimi Code CLI © 2025 Moonshot AI | `web/public/logo.png` | None |
 | `grok.svg` | [SpaceXAI brand guidelines](https://x.ai/legal/brand-guidelines) | Retrieved 2026-07-25 | xAI Brand Guidelines: marks may be used to accurately refer to xAI or its services; logos must be used exactly as provided | `SpaceXAI_Grok_Assets.zip` → `Grok_Logomark_Dark.svg` | None |
+| `devin.png` | [Devin Docs](https://docs.devin.ai/) | Retrieved 2026-07-31 | Cognition product mark, nominative use | Mintlify-generated 192×192 Android favicon | None |
 
 ## Inline SVG marks (`RUNTIME_MARKS`)
 
@@ -37,3 +38,21 @@ CC0-licensed simple-icons path (above) resolves that, mirroring the grok
 nominative-use precedent. The previous unproven `cursor.png` was removed, as
 were the unproven `chatgpt.png` and `goose.png` builtin-runtime bitmaps
 (replaced by the inline marks above).
+
+## Managed chat/profile avatar URLs
+
+Preset chat avatars use public, vendor-hosted assets compiled into the desktop
+binary. They are separate from the bundled gallery marks above; custom harness
+avatar URLs remain rejected.
+
+| Preset | Official source |
+|---|---|
+| Cursor | `https://cursor.com/marketing-static/icon-192x192-light.png` |
+| Oh My Pi | `https://raw.githubusercontent.com/can1357/oh-my-pi/667111575ebba136dadfd6989379e7f67e0d40d9/assets/icon.svg` |
+| Grok Build | `https://grok.com/images/android-chrome-192x192.png` |
+| OpenCode | `https://opencode.ai/apple-touch-icon-v3.png` |
+| Kimi Code | `https://raw.githubusercontent.com/MoonshotAI/kimi-cli/4a550effdfcb29a25a5d325bf935296cc50cd417/web/public/logo.png` |
+| Amp | `https://ampcode.com/app-icon.png?v=3` |
+| Hermes Agent | `https://raw.githubusercontent.com/NousResearch/hermes-agent/6ad632b/website/static/img/logo.png` |
+| OpenClaw | `https://docs.openclaw.ai/assets/openclaw.svg` |
+| Devin | `https://docs.devin.ai/mintlify-assets/_mintlify/favicons/cognitionai/Ycul7J1XWDV1FX48/_generated/favicon/android-chrome-192x192.png` |
