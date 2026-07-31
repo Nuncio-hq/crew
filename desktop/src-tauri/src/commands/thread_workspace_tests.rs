@@ -107,11 +107,16 @@ async fn clean_worktree_can_be_removed_then_branch_deleted() {
         .expect("delete command succeeds");
     assert_eq!(deleted.status, ThreadWorkspaceActionStatus::Completed);
 
+    // Recreating the deterministic branch name without the ownership config
+    // must not let a stale thread panel delete that new branch.
+    git(&fixture.repository, &["branch", fixture.branch.as_str()]);
     let (repository, branch, root) = fixture.args();
-    let deleted_again = delete_thread_branch(repository, branch, root)
-        .await
-        .expect("repeat delete succeeds");
-    assert_eq!(deleted_again.status, ThreadWorkspaceActionStatus::NotFound);
+    let recreated = delete_thread_branch(repository, branch.clone(), root).await;
+    assert!(recreated.is_err());
+    git(
+        &fixture.repository,
+        &["show-ref", "--verify", &format!("refs/heads/{branch}")],
+    );
 }
 
 #[tokio::test]
