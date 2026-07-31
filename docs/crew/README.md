@@ -1,25 +1,32 @@
 # Crew Documentation
 
-Crew is Nuncio's thin fork of [block/buzz](https://github.com/block/buzz).
-It turns Buzz into mission control for a manager coordinating a team of
-long-running coding agents.
+**This repository is [Nuncio-hq/crew](https://github.com/Nuncio-hq/crew), not
+[block/buzz](https://github.com/block/buzz).** Crew (product name **NuncioCrew**)
+is Nuncio's thin fork of Buzz. It turns Buzz into mission control for a manager
+coordinating a team of long-running coding agents.
+
+Start with [`IDENTITY.md`](IDENTITY.md) if you are unsure when to say "Buzz"
+versus "NuncioCrew" / "Crew".
 
 This directory contains Crew-specific product rules and engineering decisions.
 Upstream documentation remains intact so updates from `block/buzz` stay easy to
-review and merge.
+review and merge. Leaving "Buzz" in upstream docs is intentional — do not mass
+rename those files.
 
 ## Authority and reading order
 
 Before researching, planning, or changing Crew, an agent must read:
 
-1. Upstream [`AGENTS.md`](../../AGENTS.md) and [`CLAUDE.md`](../../CLAUDE.md).
-2. This file.
-3. [`VISION.md`](VISION.md).
-4. [`ARCHITECTURE.md`](ARCHITECTURE.md).
-5. [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md).
-6. [`TESTING.md`](TESTING.md).
-7. [`STATE.md`](STATE.md) and [`DECISIONS.md`](DECISIONS.md).
-8. The relevant spike and feature plan.
+1. [`IDENTITY.md`](IDENTITY.md) — fork vs upstream naming (read first).
+2. Upstream [`AGENTS.md`](../../AGENTS.md) and [`CLAUDE.md`](../../CLAUDE.md)
+   (Buzz codebase conventions; this checkout is still the Buzz tree).
+3. This file.
+4. [`VISION.md`](VISION.md).
+5. [`ARCHITECTURE.md`](ARCHITECTURE.md).
+6. [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md).
+7. [`TESTING.md`](TESTING.md).
+8. [`STATE.md`](STATE.md) and [`DECISIONS.md`](DECISIONS.md).
+9. The relevant spike and feature plan.
 
 Upstream rules govern the Buzz codebase. Crew rules add stricter fork,
 product, and delivery constraints. If they conflict, stop and surface the
@@ -48,6 +55,7 @@ contract is visible, and the manager approves the plan.
 
 | Document                                             | Purpose                            | Update style                 |
 | ---------------------------------------------------- | ---------------------------------- | ---------------------------- |
+| [`IDENTITY.md`](IDENTITY.md)                         | Fork vs Buzz naming for agents     | When identity/CI/paths change |
 | [`VISION.md`](VISION.md)                             | Product intent and locked behavior | Rarely                       |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md)                 | Crew boundaries and data flow      | When architecture changes    |
 | [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md) | Mandatory delivery gates           | Rarely                       |

@@ -1,5 +1,15 @@
 # AGENTS.md — AI Agent Contributor Guide
 
+> **NuncioCrew fork notice.** This checkout is
+> [`Nuncio-hq/crew`](https://github.com/Nuncio-hq/crew), a thin fork of
+> [`block/buzz`](https://github.com/block/buzz). Product name: **NuncioCrew**
+> (also called Crew). Most of this file is upstream Buzz contributor guidance
+> and still applies to the shared codebase. For fork identity, naming
+> (Buzz vs NuncioCrew), remotes, CI, and data dirs, read
+> [`docs/crew/IDENTITY.md`](docs/crew/IDENTITY.md) and the
+> [`docs/crew/`](docs/crew/README.md) index **before** planning or opening PRs.
+> Do not treat issues/PRs as belonging to `block/buzz`.
+
 This guide is for AI agents contributing to the Buzz codebase. It covers
 agent-specific context and conventions. For general contributor info (setup,
 code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -8,7 +18,11 @@ code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Ecosystem
 
-Buzz spans five repos. This one (`block/buzz`) is the OSS source for the relay, desktop, mobile, and CLI. The others handle internal builds and deployment:
+Buzz spans five repos. Upstream (`block/buzz`) is the OSS source for the relay,
+desktop, mobile, and CLI. **This repository is the NuncioCrew fork**
+(`Nuncio-hq/crew`); sync from upstream per
+[`docs/crew/UPSTREAM-SYNC.md`](docs/crew/UPSTREAM-SYNC.md). The other repos
+below are Block-internal and usually irrelevant to Crew feature work:
 
 | Repo | Purpose |
 |------|---------|

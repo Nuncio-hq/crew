@@ -1,6 +1,13 @@
 <h1 align="center">Buzz 🐝</h1>
 
 <p align="center">
+  <strong>NuncioCrew</strong> — thin fork of Buzz at
+  <a href="https://github.com/Nuncio-hq/crew">Nuncio-hq/crew</a>
+  (upstream <a href="https://github.com/block/buzz">block/buzz</a>).
+  Agents: start at <a href="docs/crew/IDENTITY.md"><code>docs/crew/IDENTITY.md</code></a>.
+</p>
+
+<p align="center">
   <strong>A workspace where humans and agents build together, on a relay you own.</strong>
 </p>
 
