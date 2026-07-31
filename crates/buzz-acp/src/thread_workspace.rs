@@ -220,6 +220,27 @@ async fn verified_metadata(
     {
         bail!("git returned an invalid worktree base revision");
     }
+    // Freshness belongs to the thread worktree, not to the source checkout.
+    // A reused worktree may have been created from an older remote tip even
+    // though the latest fetch succeeded, so compare its actual HEAD with the
+    // fetched revision. When fetch failed, the remote distance is unknowable.
+    let commits_behind_remote = match workspace_base.source {
+        BaseSource::Remote => Some(
+            git_output(
+                &worktree_path,
+                [
+                    "rev-list",
+                    "--count",
+                    &format!("HEAD..{}", workspace_base.revision),
+                ],
+            )
+            .await?
+            .trim()
+            .parse()
+            .context("git returned an invalid remote distance")?,
+        ),
+        BaseSource::LocalFallback => None,
+    };
     Ok(Some(ThreadWorkspace {
         root_event_id: root_event_id.to_string(),
         repository_path: repo_root.to_path_buf(),
@@ -229,7 +250,7 @@ async fn verified_metadata(
         base_revision,
         base_source: workspace_base.source,
         remote_default_branch: workspace_base.remote_default_branch.clone(),
-        commits_behind_remote: workspace_base.commits_behind_remote,
+        commits_behind_remote,
     }))
 }
 
