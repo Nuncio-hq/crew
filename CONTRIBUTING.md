@@ -1,10 +1,17 @@
 # Contributing to Buzz
 
+> **NuncioCrew fork.** This checkout is
+> [`Nuncio-hq/crew`](https://github.com/Nuncio-hq/crew) (thin fork of
+> [`block/buzz`](https://github.com/block/buzz)). Agents: read
+> [`docs/crew/IDENTITY.md`](docs/crew/IDENTITY.md) first. Open issues and PRs
+> against **Nuncio-hq/crew**, not `block/buzz`. Upstream contribution flow for
+> stock Buzz remains documented below where noted.
+
 Welcome, and thank you for your interest in contributing! Buzz is an
 open-source project and we're glad you're here. This guide will help you
 get from zero to a merged pull request.
 
-If you have questions that aren't answered here, [open an issue](https://github.com/block/buzz/issues/new).
+If you have questions that aren't answered here, [open an issue](https://github.com/Nuncio-hq/crew/issues/new).
 
 ---
 
@@ -35,7 +42,7 @@ unacceptable behavior to **conduct@buzz-relay.org**.
 
 ## Before You Open a PR
 
-Before starting, search [open PRs](https://github.com/block/buzz/pulls) and [open issues](https://github.com/block/buzz/issues) for duplicates — someone may already be working on the same thing. When you open your PR, link the closest existing one in the description (or say "none found").
+Before starting, search [open PRs](https://github.com/Nuncio-hq/crew/pulls) and [open issues](https://github.com/Nuncio-hq/crew/issues) for duplicates — someone may already be working on the same thing. When you open your PR, link the closest existing one in the description (or say "none found").
 
 For anything beyond a small fix, opening an issue first is strongly recommended. Describe the problem and proposed solution so a maintainer can acknowledge the approach before you build — it avoids two people building the same thing in parallel.
 
@@ -132,9 +139,9 @@ clippy`, `just test-unit`, and `just test` need no GTK.
 ### First-Time Setup
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/block/buzz.git
-cd buzz
+# 1. Clone this fork (NuncioCrew). Upstream Buzz is block/buzz.
+git clone https://github.com/Nuncio-hq/crew.git
+cd crew
 
 # 2. Activate Hermit (optional but recommended)
 . ./bin/activate-hermit
@@ -390,16 +397,18 @@ to existing clients.
 
 ## Ecosystem
 
-Buzz is developed across multiple repositories. This repo (`block/buzz`)
-is the open-source home for all application code — the relay, desktop app,
-mobile app, CLI, and agent harness. Internal repositories handle
-enterprise-signed builds and infrastructure deployment.
+Buzz is developed across multiple repositories. Upstream (`block/buzz`) is
+the open-source home for the shared application code — the relay, desktop app,
+mobile app, CLI, and agent harness. **This repository is the NuncioCrew fork**
+(`Nuncio-hq/crew`). Block-internal repositories handle enterprise-signed builds
+and infrastructure deployment and are usually irrelevant to Crew feature work.
 
 See [AGENTS.md § Ecosystem](AGENTS.md#ecosystem) for the full repo table and
-dependency diagram.
+dependency diagram. Crew release/CI: [`docs/crew/RELEASING.md`](docs/crew/RELEASING.md),
+[`docs/crew/CI.md`](docs/crew/CI.md).
 
-**External contributors:** Fork `block/buzz`, open a PR, and CI runs
-automatically. No special access is required.
+**External contributors to this fork:** Fork `Nuncio-hq/crew`, open a PR, and
+Crew CI (`NuncioCrew Gate`) runs automatically. No special access is required.
 
 **Block team members:** See the internal
 [sprout-releases CONTRIBUTING.md](https://github.com/squareup/sprout-releases/blob/main/CONTRIBUTING.md)
