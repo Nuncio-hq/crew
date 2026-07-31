@@ -3,18 +3,28 @@ import { fileURLToPath } from "node:url";
 import { classifyNuncioCrewRelease } from "./nuncio-crew-release-channel.mjs";
 
 export function buildNuncioCrewUpdateManifest({
-  tag,
+  versionTag,
   signature,
   archiveUrl,
   publishedAt = new Date(),
 }) {
-  const release = classifyNuncioCrewRelease(tag);
+  const release = classifyNuncioCrewRelease(versionTag);
   if (!signature.trim()) {
     throw new Error("Updater signature is empty");
   }
+  const archive = new URL(archiveUrl);
+  const releasePath = `/Nuncio-hq/crew/releases/download/${release.releaseTag}/`;
+  if (
+    archive.origin !== "https://github.com" ||
+    !archive.pathname.startsWith(releasePath)
+  ) {
+    throw new Error(
+      `Updater archive must belong to immutable release ${release.releaseTag}`,
+    );
+  }
   return {
     version: release.version,
-    notes: `NuncioCrew ${tag}`,
+    notes: `NuncioCrew ${versionTag}`,
     pub_date: publishedAt.toISOString(),
     platforms: {
       "darwin-aarch64": {
@@ -26,14 +36,14 @@ export function buildNuncioCrewUpdateManifest({
 }
 
 function runCli() {
-  const [tag, signaturePath, archiveUrl] = process.argv.slice(2);
-  if (!tag || !signaturePath || !archiveUrl) {
+  const [versionTag, signaturePath, archiveUrl] = process.argv.slice(2);
+  if (!versionTag || !signaturePath || !archiveUrl) {
     throw new Error(
-      "Usage: generate-nuncio-crew-latest-json.mjs <tag> <signature-file> <archive-url>",
+      "Usage: generate-nuncio-crew-latest-json.mjs <version> <signature-file> <archive-url>",
     );
   }
   const manifest = buildNuncioCrewUpdateManifest({
-    tag,
+    versionTag,
     signature: readFileSync(signaturePath, "utf8"),
     archiveUrl,
   });

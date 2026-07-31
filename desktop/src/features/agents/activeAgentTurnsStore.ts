@@ -92,6 +92,7 @@ const clockOffsetByAgent = new Map<string, number>();
 // Only regenerated when the underlying turn map for an agent actually changes.
 const cachedTurnSummaries = new Map<string, ActiveTurnSummary[]>();
 const cachedControlTargets = new Map<string, ActiveTurnControlTarget[]>();
+const cachedAgentsByConversation = new Map<string, string[]>();
 let cachedChannelTurnSummaries: ActiveChannelTurnSummary[] | null = null;
 
 // Composite watermark per agent: the newest observer event processed, by
@@ -113,6 +114,7 @@ let pruneInterval: ReturnType<typeof setInterval> | null = null;
 function invalidateCache(agentKey: string) {
   cachedTurnSummaries.delete(agentKey);
   cachedControlTargets.delete(agentKey);
+  cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
 }
 
@@ -505,6 +507,26 @@ export function getActiveTurnControlTargetsForAgent(
 const EMPTY_TURNS: ActiveTurnSummary[] = [];
 const EMPTY_CONTROL_TARGETS: ActiveTurnControlTarget[] = [];
 const EMPTY_CHANNEL_TURNS: ActiveChannelTurnSummary[] = [];
+const EMPTY_CONVERSATION_AGENTS: string[] = [];
+
+export function getActiveAgentsForConversation(
+  conversationId: string | null | undefined,
+): string[] {
+  if (!conversationId) return EMPTY_CONVERSATION_AGENTS;
+  const cached = cachedAgentsByConversation.get(conversationId);
+  if (cached) return cached;
+  const agentPubkeys: string[] = [];
+  for (const [agentPubkey, turns] of activeTurnsByAgent) {
+    if (
+      [...turns.values()].some((turn) => turn.conversationId === conversationId)
+    ) {
+      agentPubkeys.push(agentPubkey);
+    }
+  }
+  const result = agentPubkeys.sort();
+  cachedAgentsByConversation.set(conversationId, result);
+  return result;
+}
 
 /**
  * Returns active working channels across all tracked agents, sorted by
@@ -603,6 +625,16 @@ export function useActiveAgentTurnsByChannel(): ActiveChannelTurnSummary[] {
   );
 }
 
+export function useActiveAgentsForConversation(
+  conversationId: string | null | undefined,
+): string[] {
+  const getSnapshot = React.useCallback(
+    () => getActiveAgentsForConversation(conversationId),
+    [conversationId],
+  );
+  return React.useSyncExternalStore(subscribeActiveAgentTurns, getSnapshot);
+}
+
 /**
  * Sync every running/deployed agent's observer events into the active-turns
  * store. Extracted from the bridge hook so a regression can drive the exact
@@ -675,6 +707,7 @@ export function resetActiveAgentTurnsStore() {
   lastProcessed.clear();
   clockOffsetByAgent.clear();
   cachedTurnSummaries.clear();
+  cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
   terminalAtByAgent.clear();
   notifyListeners();

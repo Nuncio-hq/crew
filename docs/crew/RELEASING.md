@@ -21,14 +21,21 @@ The committed desktop manifests remain at the pinned Buzz version. Release CI
 patches its temporary checkout to the Crew version and never commits that
 change.
 
-## Channels
+## Versions, release tags, and channels
 
-Accepted tags:
+The workflow input is a semantic Crew version. The release helper derives a
+Crew-owned immutable GitHub tag while keeping the packaged app and updater
+manifest on the semantic version:
 
 ```text
-dev     v0.0.1-dev, v0.0.1-dev.1, v0.0.2-dev
-stable  v0.0.1, v0.0.2, v1.0.0
+channel  workflow input   immutable GitHub tag     artifact/manifest version
+dev      v0.0.5-dev       crew-v0.0.5-dev          0.0.5-dev
+dev      v0.0.5-dev.1     crew-v0.0.5-dev.1        0.0.5-dev.1
+stable   v0.0.5           crew-v0.0.5              0.0.5
 ```
+
+An inherited or historical Buzz tag such as `v0.0.5` does not collide with the
+Crew release because collision checks and publication use `crew-v0.0.5`.
 
 Dev publication updates `nuncio-crew-dev-latest`. Stable publication updates
 both `nuncio-crew-stable-latest` and `nuncio-crew-dev-latest`. This lets dev
@@ -75,9 +82,12 @@ through encrypted secrets.
    current `origin/main` HEAD.
 2. Confirm the required `NuncioCrew Gate` on `main` is green.
 3. Copy the exact 40-character commit SHA from `main`.
-4. Confirm the version does not already have a Git tag or GitHub release.
+4. Derive `crew-<workflow-version>` and confirm that namespaced Git tag and
+   GitHub release do not already exist. An unprefixed inherited tag is
+   irrelevant.
 5. For updater E2E between distributed Crew builds, confirm the new version is
-   greater than the installed Crew version. Exempt the manual first
+   greater than the installed Crew version. For `v0.0.5`, preserve a working
+   `0.0.4` installation as the update source. Exempt the manual first
    `v0.0.1-dev` install described below; it cannot update from Buzz `0.5.2`.
 6. Run the focused release contract from [`TESTING.md`](TESTING.md).
 7. Dispatch from branch `main`, then approve the
@@ -100,8 +110,9 @@ exposes signing secrets.
 The workflow must:
 
 1. prove the SHA is the current `origin/main` HEAD;
-2. reject an existing tag;
-3. validate version and channel;
+2. validate the semantic version and channel, deriving the namespaced release
+   tag;
+3. reject an existing Crew-prefixed tag;
 4. import signing material into a disposable Keychain;
 5. patch only the CI checkout's artifact version;
 6. build, sign, notarize, and staple;
@@ -123,13 +134,15 @@ only:
 publish  true
 ```
 
-Publication creates the version tag and versioned release only after the signed
-build passes. A dev tag becomes a GitHub prerelease. The workflow uploads the
-DMG, updater archive, and signature, then updates the selected rolling
-`latest.json`. All release runs share one queue, and an existing channel refuses
-an equal or lower version. The immutable versioned release becomes public before
-the rolling manifest changes, so a failed channel update leaves clients on the
-previous known-good version.
+Publication creates the Crew-prefixed version tag and versioned release only
+after the signed build passes. A dev version becomes a GitHub prerelease. The
+workflow uploads the DMG, updater archive, and signature, then updates the
+selected rolling `latest.json`. The manifest keeps the semantic version and
+human-facing note (`NuncioCrew v0.0.5`) while its archive URL points to the
+immutable namespaced release (`crew-v0.0.5`). All release runs share one queue,
+and an existing channel refuses an equal or lower version. The immutable
+versioned release becomes public before the rolling manifest changes, so a
+failed channel update leaves clients on the previous known-good version.
 
 ## End-to-end verification
 
@@ -145,11 +158,16 @@ Verify:
 - the expected relay and identity can be configured;
 - an older signed dev build detects, downloads, verifies, installs, and
   relaunches into the new version;
+- for stable `0.0.5`, an installed stable `0.0.4` detects, downloads, verifies,
+  installs, and relaunches into `0.0.5` without replacing its Crew application
+  data;
 - stable does not see a dev-only manifest;
 - dev sees a later stable manifest.
 
 Record the commands, source SHA, workflow run, release URL, installed versions,
-and observed relaunch in a new file under `verification/`.
+application-data check, and observed relaunch in a new file under
+`verification/`. Do not mark the release complete from CI or manifest evidence
+alone; the installed updater relaunch is a post-merge publication gate.
 
 ## First release limitation
 
@@ -166,7 +184,8 @@ or the next monotonically higher Crew release.
 - Partial draft release: leave it draft while diagnosing; do not point a
   rolling manifest at an incomplete release.
 - Bad updater manifest: restore the last known-good `latest.json` on the rolling
-  release. Never reuse an immutable version tag for different bits.
+  release. Never reuse an immutable Crew-prefixed version tag for different
+  bits.
 - Published version but unchanged rolling manifest: keep the immutable release,
   diagnose the channel step, then advance the rolling manifest only after its
   version and signature are verified.

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Exact tag: vX.Y.Z-dev[.N] or vX.Y.Z"
+        description: "Crew version: vX.Y.Z-dev[.N] or vX.Y.Z"
         required: true
         type: string
       channel:
@@ -41,7 +41,7 @@ jobs:
     env:
       TARGET: aarch64-apple-darwin
       SOURCE_REF: ${{ inputs.ref }}
-      RELEASE_TAG: ${{ inputs.version }}
+      RELEASE_VERSION_TAG: ${{ inputs.version }}
       RELEASE_CHANNEL: ${{ inputs.channel }}
       VITE_NUNCIO_CREW_CHANNEL: ${{ inputs.channel }}
       VITE_NUNCIO_CREW_RELEASES_URL: https://github.com/Nuncio-hq/crew/releases
@@ -71,17 +71,24 @@ jobs:
             echo "::error::release commit is not the current origin/main HEAD"
             exit 1
           }
-          if git ls-remote --exit-code --tags origin \
-            "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "::error::release tag already exists"
-            exit 1
-          fi
 
       - name: Validate version and channel
         id: release
         run: |
           node desktop/scripts/nuncio-crew-release-channel.mjs \
-            "$RELEASE_TAG" "$RELEASE_CHANNEL" "$SOURCE_REF" >> "$GITHUB_OUTPUT"
+            "$RELEASE_VERSION_TAG" "$RELEASE_CHANNEL" "$SOURCE_REF" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Verify Crew release tag is available
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin \
+            "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::release tag already exists: $RELEASE_TAG"
+            exit 1
+          fi
 
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
 
@@ -238,6 +245,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
           ROLLING_TAGS: ${{ steps.release.outputs.rolling_tags }}
           DMG_PATH: ${{ steps.artifacts.outputs.dmg }}
@@ -259,14 +267,14 @@ jobs:
           RELEASE_FLAGS=(--draft --latest=false)
           [[ "$PRERELEASE" == "true" ]] && RELEASE_FLAGS+=(--prerelease)
           gh release create "$RELEASE_TAG" --target "$SOURCE_REF" \
-            --title "NuncioCrew $RELEASE_TAG" \
-            --notes "NuncioCrew $RELEASE_TAG ($RELEASE_CHANNEL channel)." \
+            --title "NuncioCrew v$VERSION" \
+            --notes "NuncioCrew v$VERSION ($RELEASE_CHANNEL channel)." \
             "${RELEASE_FLAGS[@]}"
           gh release upload "$RELEASE_TAG" \
             "$DMG_PATH" "$ARCHIVE_PATH" "$SIGNATURE_PATH"
           ARCHIVE_URL="https://github.com/Nuncio-hq/crew/releases/download/$RELEASE_TAG/$ARCHIVE_NAME"
           node desktop/scripts/generate-nuncio-crew-latest-json.mjs \
-            "$RELEASE_TAG" "$SIGNATURE_PATH" "$ARCHIVE_URL" > latest.json
+            "v$VERSION" "$SIGNATURE_PATH" "$ARCHIVE_URL" > latest.json
           if [[ "$PRERELEASE" == "true" ]]; then
             gh release edit "$RELEASE_TAG" --draft=false --latest=false
           else

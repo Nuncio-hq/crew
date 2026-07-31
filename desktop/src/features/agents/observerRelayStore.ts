@@ -25,6 +25,10 @@ import {
   createEmptyTranscriptState,
   processTranscriptEvent,
 } from "./ui/agentSessionTranscript";
+import {
+  ingestProjectThreadWorkspaceEvent,
+  resetProjectThreadWorkspaceStore,
+} from "./projectThreadWorkspaceStore";
 
 const MAX_OBSERVER_EVENTS = 3000;
 const MAX_PENDING_UNKNOWN_AGENT_FRAMES = 100;
@@ -211,6 +215,7 @@ function appendAgentEvent(agentPubkey: string, event: ObserverEvent) {
     ? sorted.slice(sorted.length - MAX_OBSERVER_EVENTS)
     : sorted;
   eventsByAgent.set(key, final);
+  ingestProjectThreadWorkspaceEvent(key, event);
 
   // Determine whether the new event landed at the end of the sorted array.
   // If it did (common case), we can incrementally process just this event.
@@ -745,6 +750,7 @@ export function resetAgentObserverStore() {
   transcriptByAgent.clear();
   snapshotByAgent.clear();
   archiveEventsByChannel.clear();
+  resetProjectThreadWorkspaceStore();
   knownAgentPubkeys.clear();
   knownAgentsBySubscription.clear();
   pendingUnknownAgentFrames.length = 0;

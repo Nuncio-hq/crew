@@ -44,6 +44,7 @@ import { MessageComposer } from "./MessageComposer";
 import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
+import { ProjectThreadWorkspacePanel } from "./ProjectThreadWorkspacePanel";
 import { TypingIndicatorRow } from "./TypingIndicatorRow";
 import { UnreadDivider } from "./UnreadDivider";
 import { useComposerHeightPadding } from "./useComposerHeightPadding";
@@ -603,6 +604,12 @@ export function MessageThreadPanel({
               videoReviewContext={threadHeadVideoReviewContext}
             />
           </div>
+          <ProjectThreadWorkspacePanel
+            agentPubkeys={initialAgentPubkeys}
+            profiles={profiles}
+            replies={threadMessages}
+            threadHead={threadHead}
+          />
         </div>
 
         {showThreadHeadDivider ? (
