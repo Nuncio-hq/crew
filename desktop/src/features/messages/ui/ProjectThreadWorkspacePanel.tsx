@@ -116,8 +116,11 @@ export function ProjectThreadWorkspacePanel({
           detail={
             workspace.status === "ready"
               ? workspace.baseSource === "remote"
-                ? "Remote tip · ready"
-                : `${workspace.commitsBehindRemote ?? "?"} behind remote`
+                ? workspace.commitsBehindRemote &&
+                  workspace.commitsBehindRemote > 0
+                  ? `${workspace.commitsBehindRemote} behind origin/${workspace.remoteDefaultBranch ?? "default"}`
+                  : "Remote tip · ready"
+                : "Local fallback · remote unavailable"
               : workspace.status === "error"
                 ? "Setup failed"
                 : "Preparing"
