@@ -34,7 +34,7 @@ async fn remote_ahead_tip_is_used_as_the_new_worktree_base() {
     assert_eq!(created.base_revision, remote_tip);
     assert_eq!(created.base_source, BaseSource::Remote);
     assert_eq!(created.remote_default_branch.as_deref(), Some("main"));
-    assert_eq!(created.commits_behind_remote, Some(1));
+    assert_eq!(created.commits_behind_remote, Some(0));
     assert_eq!(
         git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await,
         remote_tip
@@ -55,10 +55,34 @@ async fn fetch_failure_falls_back_to_local_head_without_blocking_creation() {
     assert_eq!(created.base_revision, local_head);
     assert_eq!(created.base_source, BaseSource::LocalFallback);
     assert_eq!(created.remote_default_branch.as_deref(), Some("main"));
+    assert_eq!(created.commits_behind_remote, None);
     assert_eq!(
         git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await,
         local_head
     );
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn reused_worktree_reports_its_actual_distance_from_the_latest_remote_tip() {
+    let (fixture, workspace, remote) = remote_git_fixture("main").await;
+    let root = "8".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    let original_head = git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await;
+    push_remote_commit(&fixture, &remote, "main").await;
+
+    let reused = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("reuse succeeds");
+
+    assert_eq!(
+        git_output(&reused.worktree_path, &["rev-parse", "HEAD"]).await,
+        original_head
+    );
+    assert_eq!(reused.base_source, BaseSource::Remote);
+    assert_eq!(reused.commits_behind_remote, Some(1));
     fs::remove_dir_all(&fixture).expect("fixture cleanup");
 }
 
