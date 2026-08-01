@@ -4,6 +4,7 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   type ActiveChannelTurnSummary,
   getActiveTurnsByChannel,
+  getActiveAgentsForConversation,
   getActiveTurnsForAgent,
   subscribeActiveAgentTurns,
 } from "./activeAgentTurnsStore";
@@ -296,6 +297,18 @@ export function getWorkingAgentPubkeysForChannel(
   return result;
 }
 
+export function mergeWorkingAgentPubkeys(
+  ...pubkeyLists: readonly string[][]
+): string[] {
+  const merged = new Set<string>();
+  for (const pubkeyList of pubkeyLists) {
+    for (const pubkey of pubkeyList) {
+      merged.add(normalizePubkey(pubkey));
+    }
+  }
+  return merged.size === 0 ? EMPTY_PUBKEYS : [...merged];
+}
+
 // ── Hooks ────────────────────────────────────────────────────────────────────
 
 /** Working state for one agent, optionally scoped to a channel. */
@@ -323,6 +336,27 @@ export function useChannelWorkingAgentPubkeys(
   return React.useSyncExternalStore(subscribeAgentWorkingSignal, () =>
     getWorkingAgentPubkeysForChannel(channelId),
   );
+}
+
+/** Normalized pubkeys of agents working in a conversation. */
+export function useConversationWorkingAgentPubkeys(
+  conversationId: string | null | undefined,
+  fallbackPubkeys: readonly string[] = EMPTY_PUBKEYS,
+): string[] {
+  const observerPubkeys = React.useSyncExternalStore(
+    subscribeAgentWorkingSignal,
+    () => getWorkingAgentPubkeysForConversation(conversationId),
+  );
+  return React.useMemo(
+    () => mergeWorkingAgentPubkeys(observerPubkeys, fallbackPubkeys),
+    [fallbackPubkeys, observerPubkeys],
+  );
+}
+
+export function getWorkingAgentPubkeysForConversation(
+  conversationId: string | null | undefined,
+): string[] {
+  return getActiveAgentsForConversation(conversationId);
 }
 
 /** Community-switch reset (see resetCommunityState in useCommunityInit). */

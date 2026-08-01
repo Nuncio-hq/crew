@@ -312,10 +312,18 @@ void main() {
     addTearDown(unsubscribe);
     sockets.single.emitEose('l-1');
 
+    sockets.single.inboundAt = DateTime.now();
     session.onAppPaused();
     session.onAppResumed();
     await Future<void>.delayed(Duration.zero);
+    expect(sockets, hasLength(1));
 
+    sockets.single.inboundAt = DateTime.now().subtract(
+      const Duration(seconds: 10),
+    );
+    session.onAppPaused();
+    session.onAppResumed();
+    await Future<void>.delayed(Duration.zero);
     expect(sockets, hasLength(2));
     sockets.last.connectSuccessfully();
     expect(
@@ -444,6 +452,8 @@ class _ControlledRelaySocket extends RelaySocket {
   final void Function(Object? error) _disconnected;
   final void Function(List<dynamic>) _message;
   final List<List<dynamic>> sent = [];
+  bool _isConnected = false;
+  DateTime? inboundAt;
 
   _ControlledRelaySocket({
     required super.wsUrl,
@@ -459,12 +469,27 @@ class _ControlledRelaySocket extends RelaySocket {
   Future<void> connect() async {}
 
   @override
-  void dispose() {}
+  SocketState get state =>
+      _isConnected ? SocketState.connected : SocketState.disconnected;
+
+  @override
+  Future<void> disconnect() async {
+    _isConnected = false;
+  }
+
+  @override
+  void dispose() => _isConnected = false;
+
+  @override
+  DateTime? get lastInboundAt => inboundAt;
 
   @override
   void send(List<dynamic> payload) => sent.add(payload);
 
-  void connectSuccessfully() => _connected();
+  void connectSuccessfully() {
+    _isConnected = true;
+    _connected();
+  }
 
   void disconnectWith(Object? error) => _disconnected(error);
 

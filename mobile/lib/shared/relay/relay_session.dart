@@ -75,6 +75,8 @@ typedef RelaySocketFactory =
     });
 
 class RelaySessionNotifier extends Notifier<SessionState> {
+  static const _shortBackgroundThreshold = Duration(seconds: 5);
+
   RelaySessionNotifier({
     http.Client? httpClient,
     RelaySocketFactory socketFactory = RelaySocket.new,
@@ -336,17 +338,26 @@ class RelaySessionNotifier extends Notifier<SessionState> {
 
   /// Called by the app lifecycle provider when the app returns to foreground.
   void onAppResumed() {
-    final wasBackgrounded = _pausedAt != null;
+    final pausedAt = _pausedAt;
     _pausedAt = null;
     _paused = false;
     _backgroundGraceTimer?.cancel();
     _backgroundGraceTimer = null;
 
-    // A suspended isolate may not run the grace timer, and a half-open socket
-    // can remain locally connected without delivering onDisconnected. Once the
-    // app has actually been backgrounded, always replace the socket so resume
-    // cannot leave a dead connection marked as connected.
-    if (wasBackgrounded) {
+    // A suspended isolate may not run the grace timer. Preserve a very short
+    // app switch only when the connected socket saw a recent data frame;
+    // otherwise replace it so a half-open socket cannot remain "connected".
+    if (pausedAt != null) {
+      final now = DateTime.now();
+      final socket = _socket;
+      final hasRecentInbound =
+          socket?.state == SocketState.connected &&
+          socket?.lastInboundAt != null &&
+          now.difference(socket!.lastInboundAt!) <= _shortBackgroundThreshold;
+      if (now.difference(pausedAt) < _shortBackgroundThreshold &&
+          hasRecentInbound) {
+        return;
+      }
       unawaited(reconnect());
       return;
     }

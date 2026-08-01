@@ -38,7 +38,11 @@ import { getThreadPanelLayout } from "@/features/channels/lib/threadPanelLayout"
 import { useThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 import { useThreadViewModeSwitch } from "@/features/channels/ui/useThreadViewModeSwitch";
 import { useFocusDrawerPresence } from "@/features/channels/ui/useFocusDrawerPresence";
-import { useChannelWorkingAgentPubkeys } from "@/features/agents/agentWorkingSignal";
+import {
+  useChannelWorkingAgentPubkeys,
+  useConversationWorkingAgentPubkeys,
+} from "@/features/agents/agentWorkingSignal";
+import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
 import { BotActivityComposerAction } from "@/features/channels/ui/BotActivityBar";
 import { ChannelComposerActivityAccessory } from "@/features/channels/ui/ChannelComposerActivityAccessory";
 import {
@@ -423,18 +427,12 @@ export const ChannelPane = React.memo(function ChannelPane({
           ) === index,
       );
   }, [botTypingEntries, openThreadHeadId]);
-  const threadComposerWorkingBotPubkeys = useChannelWorkingAgentPubkeys(
-    activeChannel?.id ?? null,
+  const threadComposerWorkingBotPubkeys = useConversationWorkingAgentPubkeys(
+    deriveAgentConversationIdOrNull(activeChannel?.id, openThreadHeadId),
+    threadComposerBotTypingPubkeys,
   );
-  const threadComposerBotPubkeys = Array.from(
-    new Set(
-      [
-        ...threadComposerWorkingBotPubkeys,
-        ...threadComposerBotTypingPubkeys,
-      ].map((pubkey) => pubkey.toLowerCase()),
-    ),
-  );
-  const hasThreadComposerBotActivity = threadComposerBotPubkeys.length > 0;
+  const hasThreadComposerBotActivity =
+    threadComposerWorkingBotPubkeys.length > 0;
   const directMessageIntro = React.useMemo(
     () =>
       buildDirectMessageIntro({
@@ -904,7 +902,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                       onOpenAgentSession={onOpenAgentSession}
                       openAgentSessionPubkey={openAgentSessionPubkey}
                       profiles={profiles}
-                      workingBotPubkeys={threadComposerBotPubkeys}
+                      workingBotPubkeys={threadComposerWorkingBotPubkeys}
                       variant="inline"
                     />
                   ) : null
