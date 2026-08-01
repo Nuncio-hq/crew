@@ -35,7 +35,11 @@ import { getThreadPanelLayout } from "@/features/channels/lib/threadPanelLayout"
 import { useThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 import { useThreadViewModeSwitch } from "@/features/channels/ui/useThreadViewModeSwitch";
 import { useFocusDrawerPresence } from "@/features/channels/ui/useFocusDrawerPresence";
-import { useChannelWorkingAgentPubkeys } from "@/features/agents/agentWorkingSignal";
+import {
+  useChannelWorkingAgentPubkeys,
+  useConversationWorkingAgentPubkeys,
+} from "@/features/agents/agentWorkingSignal";
+import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
 import { BotActivityComposerAction } from "@/features/channels/ui/BotActivityBar";
 import { ChannelComposerActivityAccessory } from "@/features/channels/ui/ChannelComposerActivityAccessory";
 import {
@@ -421,8 +425,16 @@ export const ChannelPane = React.memo(function ChannelPane({
           ) === index,
       );
   }, [botTypingEntries, openThreadHeadId]);
+  const threadComposerConversationId = React.useMemo(
+    () => deriveAgentConversationIdOrNull(activeChannel?.id, openThreadHeadId),
+    [activeChannel?.id, openThreadHeadId],
+  );
+  const threadComposerWorkingBotPubkeys = useConversationWorkingAgentPubkeys(
+    threadComposerConversationId,
+    threadComposerBotTypingPubkeys,
+  );
   const hasThreadComposerBotActivity =
-    threadComposerBotTypingPubkeys.length > 0;
+    threadComposerWorkingBotPubkeys.length > 0;
   const directMessageIntro = React.useMemo(
     () =>
       buildDirectMessageIntro({
@@ -896,7 +908,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                       onOpenAgentSession={onOpenAgentSession}
                       openAgentSessionPubkey={openAgentSessionPubkey}
                       profiles={profiles}
-                      workingBotPubkeys={threadComposerBotTypingPubkeys}
+                      workingBotPubkeys={threadComposerWorkingBotPubkeys}
                       variant="inline"
                     />
                   ) : null

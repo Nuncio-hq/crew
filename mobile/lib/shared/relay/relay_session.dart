@@ -75,6 +75,8 @@ typedef RelaySocketFactory =
     });
 
 class RelaySessionNotifier extends Notifier<SessionState> {
+  static const _shortBackgroundThreshold = Duration(seconds: 5);
+
   RelaySessionNotifier({
     http.Client? httpClient,
     RelaySocketFactory socketFactory = RelaySocket.new,
@@ -103,6 +105,7 @@ class RelaySessionNotifier extends Notifier<SessionState> {
   int _subIdCounter = 0;
   bool _disposed = false;
   bool _paused = false;
+  DateTime? _pausedAt;
   bool _hasConnectedOnce = false;
   int _connectionGeneration = 0;
 
@@ -307,6 +310,10 @@ class RelaySessionNotifier extends Notifier<SessionState> {
 
   /// Force a reconnect (e.g., returning from background).
   Future<void> reconnect() async {
+    // Invalidate callbacks from the socket being replaced before closing it.
+    // Some WebSocket implementations deliver onDone asynchronously, which
+    // must not schedule a second reconnect while this one is in progress.
+    _connectionGeneration++;
     await _socket?.disconnect();
     _reconnectDelayMs = _baseReconnectDelayMs;
     final config = ref.read(relayConfigProvider);
@@ -315,6 +322,7 @@ class RelaySessionNotifier extends Notifier<SessionState> {
 
   /// Called by the app lifecycle provider when the app goes to background.
   void onAppPaused() {
+    _pausedAt = DateTime.now();
     _backgroundGraceTimer?.cancel();
     _backgroundGraceTimer = Timer(const Duration(seconds: 5), _pauseNow);
   }
@@ -330,12 +338,30 @@ class RelaySessionNotifier extends Notifier<SessionState> {
 
   /// Called by the app lifecycle provider when the app returns to foreground.
   void onAppResumed() {
+    final pausedAt = _pausedAt;
+    _pausedAt = null;
     _paused = false;
     _backgroundGraceTimer?.cancel();
     _backgroundGraceTimer = null;
 
-    // If still connected, nothing to do — the socket survived the background
-    // grace window.
+    // A suspended isolate may not run the grace timer. Preserve a very short
+    // app switch only when the connected socket saw a recent data frame;
+    // otherwise replace it so a half-open socket cannot remain "connected".
+    if (pausedAt != null) {
+      final now = DateTime.now();
+      final socket = _socket;
+      final hasRecentInbound =
+          socket?.state == SocketState.connected &&
+          socket?.lastInboundAt != null &&
+          now.difference(socket!.lastInboundAt!) <= _shortBackgroundThreshold;
+      if (now.difference(pausedAt) < _shortBackgroundThreshold &&
+          hasRecentInbound) {
+        return;
+      }
+      unawaited(reconnect());
+      return;
+    }
+
     if (state.status == SessionStatus.connected) return;
 
     // Cancel any in-flight reconnect backoff timer so we reconnect immediately
@@ -650,6 +676,7 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     _reconnectTimer?.cancel();
     _flushTimer?.cancel();
     _backgroundGraceTimer?.cancel();
+    _pausedAt = null;
     _cancelAllHistory(null);
     _rejectAllPending(null);
     _recentDeliveryKeys.clear();

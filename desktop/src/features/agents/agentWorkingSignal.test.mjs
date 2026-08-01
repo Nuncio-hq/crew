@@ -3,6 +3,7 @@ import { beforeEach, describe, it } from "node:test";
 
 import {
   getAgentWorkingState,
+  getWorkingAgentPubkeysForConversation,
   getWorkingAgentPubkeysForChannel,
   getWorkingChannels,
   reportChannelBotTyping,
@@ -74,6 +75,45 @@ describe("getAgentWorkingState", () => {
     assert.equal(elsewhere.source, "none");
     // The unscoped channel list is still exposed for badges.
     assert.equal(elsewhere.channels.length, 1);
+  });
+
+  it("keeps thread turns visible through the parent channel scope", () => {
+    startTurn(AGENT, "chan-1", "thread-turn");
+    syncAgentTurnsFromEvents(AGENT, [
+      makeEvent({
+        channelId: "chan-1",
+        conversationId: "thread-conversation",
+        turnId: "thread-turn",
+        seq: 2,
+      }),
+    ]);
+
+    assert.deepEqual(getWorkingAgentPubkeysForChannel("chan-1"), [AGENT]);
+    assert.equal(getAgentWorkingState(AGENT, "chan-1").working, true);
+  });
+
+  it("scopes thread activity by the derived conversation identity", () => {
+    syncAgentTurnsFromEvents(AGENT, [
+      makeEvent({
+        channelId: "chan-1",
+        conversationId: "thread-a",
+        turnId: "thread-a-turn",
+      }),
+    ]);
+    syncAgentTurnsFromEvents(AGENT_2, [
+      makeEvent({
+        channelId: "chan-1",
+        conversationId: "thread-b",
+        turnId: "thread-b-turn",
+      }),
+    ]);
+
+    assert.deepEqual(getWorkingAgentPubkeysForConversation("thread-a"), [
+      AGENT,
+    ]);
+    assert.deepEqual(getWorkingAgentPubkeysForConversation("thread-b"), [
+      AGENT_2,
+    ]);
   });
 
   it("falls back to typing when no observer turns exist", () => {

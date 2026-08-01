@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:nostr/nostr.dart' as nostr;
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'nostr_models.dart';
@@ -30,6 +31,8 @@ Exception classifyRelayAuthFailure(String message) {
 }
 
 class RelaySocket {
+  static const _pingInterval = Duration(seconds: 30);
+
   final String _wsUrl;
   final String? _nsec;
   final void Function(List<dynamic> message) _onMessage;
@@ -41,9 +44,11 @@ class RelaySocket {
   SocketState _state = SocketState.disconnected;
   Completer<void>? _authCompleter;
   Timer? _authTimeout;
+  DateTime? _lastInboundAt;
   String? _pendingAuthEventId;
 
   SocketState get state => _state;
+  DateTime? get lastInboundAt => _lastInboundAt;
 
   RelaySocket({
     required String wsUrl,
@@ -63,7 +68,14 @@ class RelaySocket {
     _state = SocketState.connecting;
 
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
+      // Use dart:io's protocol-level ping watchdog. The relay sends a Ping
+      // every 30 seconds, but those control frames are handled below the
+      // channel stream; an inbound-data-only watchdog would falsely kill a
+      // healthy idle subscription after 60 seconds.
+      _channel = IOWebSocketChannel.connect(
+        Uri.parse(_wsUrl),
+        pingInterval: _pingInterval,
+      );
       await _channel!.ready;
     } catch (e) {
       _state = SocketState.disconnected;
@@ -143,6 +155,7 @@ class RelaySocket {
     _subscription = null;
     _authTimeout?.cancel();
     _authTimeout = null;
+    _lastInboundAt = null;
     _pendingAuthEventId = null;
   }
 
@@ -153,6 +166,7 @@ class RelaySocket {
   }
 
   void _handleRawMessage(dynamic raw) {
+    _lastInboundAt = DateTime.now();
     final String text;
     if (raw is String) {
       text = raw;

@@ -260,6 +260,84 @@ void main() {
     expect(session.state.status, SessionStatus.disconnected);
   });
 
+  test('reconnects and replays live subscriptions after resume', () async {
+    final sockets = <_ControlledRelaySocket>[];
+    final keychain = nostr.Keys.generate();
+    final session = RelaySessionNotifier(
+      socketFactory:
+          ({
+            required wsUrl,
+            required nsec,
+            required onMessage,
+            required onConnected,
+            required onDisconnected,
+          }) {
+            final socket = _ControlledRelaySocket(
+              wsUrl: wsUrl,
+              nsec: nsec,
+              onMessage: onMessage,
+              onConnected: onConnected,
+              onDisconnected: onDisconnected,
+            );
+            sockets.add(socket);
+            return socket;
+          },
+    );
+    final container = ProviderContainer(
+      overrides: [
+        relaySessionProvider.overrideWith(() => session),
+        relayConfigProvider.overrideWith(
+          () => _FakeRelayConfigNotifier(
+            baseUrl: 'https://relay.example',
+            nsec: keychain.nsec,
+          ),
+        ),
+        authProvider.overrideWith(() => _AuthenticatedAuthNotifier()),
+      ],
+    );
+    addTearDown(container.dispose);
+    final providerSubscription = container.listen(
+      relaySessionProvider,
+      (_, _) {},
+    );
+    addTearDown(providerSubscription.close);
+    await container.read(authProvider.future);
+    await Future<void>.delayed(Duration.zero);
+
+    sockets.single.connectSuccessfully();
+    final unsubscribe = await session.subscribe(
+      const NostrFilter(kinds: [1], limit: 1),
+      (_) {},
+    );
+    addTearDown(unsubscribe);
+    sockets.single.emitEose('l-1');
+
+    sockets.single.inboundAt = DateTime.now();
+    session.onAppPaused();
+    session.onAppResumed();
+    await Future<void>.delayed(Duration.zero);
+    expect(sockets, hasLength(1));
+
+    sockets.single.inboundAt = DateTime.now().subtract(
+      const Duration(seconds: 10),
+    );
+    session.onAppPaused();
+    session.onAppResumed();
+    await Future<void>.delayed(Duration.zero);
+    expect(sockets, hasLength(2));
+    sockets.last.connectSuccessfully();
+    expect(
+      sockets.last.sent,
+      contains(
+        predicate<List<dynamic>>((payload) {
+          return payload.length >= 3 &&
+              payload.first == 'REQ' &&
+              payload[1] == 'l-1';
+        }),
+      ),
+    );
+  });
+
   test('delivers the same live event to each matching subscription', () async {
     final session = RelaySessionNotifier();
     final firstEvents = <NostrEvent>[];
@@ -402,6 +480,10 @@ class _AuthenticatedAuthNotifier extends AuthNotifier {
 class _ControlledRelaySocket extends RelaySocket {
   final void Function() _connected;
   final void Function(Object? error) _disconnected;
+  final void Function(List<dynamic>) _message;
+  final List<List<dynamic>> sent = [];
+  bool _isConnected = false;
+  DateTime? inboundAt;
 
   _ControlledRelaySocket({
     required super.wsUrl,
@@ -410,17 +492,38 @@ class _ControlledRelaySocket extends RelaySocket {
     required super.onConnected,
     required super.onDisconnected,
   }) : _connected = onConnected,
-       _disconnected = onDisconnected;
+       _disconnected = onDisconnected,
+       _message = onMessage;
 
   @override
   Future<void> connect() async {}
 
   @override
-  void dispose() {}
+  SocketState get state =>
+      _isConnected ? SocketState.connected : SocketState.disconnected;
 
-  void connectSuccessfully() => _connected();
+  @override
+  Future<void> disconnect() async {
+    _isConnected = false;
+  }
+
+  @override
+  void dispose() => _isConnected = false;
+
+  @override
+  DateTime? get lastInboundAt => inboundAt;
+
+  @override
+  void send(List<dynamic> payload) => sent.add(payload);
+
+  void connectSuccessfully() {
+    _isConnected = true;
+    _connected();
+  }
 
   void disconnectWith(Object? error) => _disconnected(error);
+
+  void emitEose(String subId) => _message(['EOSE', subId]);
 }
 
 const _channelId = '11111111-1111-4111-8111-111111111111';
