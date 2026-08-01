@@ -423,8 +423,18 @@ export const ChannelPane = React.memo(function ChannelPane({
           ) === index,
       );
   }, [botTypingEntries, openThreadHeadId]);
-  const hasThreadComposerBotActivity =
-    threadComposerBotTypingPubkeys.length > 0;
+  const threadComposerWorkingBotPubkeys = useChannelWorkingAgentPubkeys(
+    activeChannel?.id ?? null,
+  );
+  const threadComposerBotPubkeys = Array.from(
+    new Set(
+      [
+        ...threadComposerWorkingBotPubkeys,
+        ...threadComposerBotTypingPubkeys,
+      ].map((pubkey) => pubkey.toLowerCase()),
+    ),
+  );
+  const hasThreadComposerBotActivity = threadComposerBotPubkeys.length > 0;
   const directMessageIntro = React.useMemo(
     () =>
       buildDirectMessageIntro({
@@ -894,7 +904,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                       onOpenAgentSession={onOpenAgentSession}
                       openAgentSessionPubkey={openAgentSessionPubkey}
                       profiles={profiles}
-                      workingBotPubkeys={threadComposerBotTypingPubkeys}
+                      workingBotPubkeys={threadComposerBotPubkeys}
                       variant="inline"
                     />
                   ) : null

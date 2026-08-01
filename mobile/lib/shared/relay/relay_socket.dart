@@ -30,6 +30,9 @@ Exception classifyRelayAuthFailure(String message) {
 }
 
 class RelaySocket {
+  static const _stallCheckInterval = Duration(seconds: 10);
+  static const _stallIdleTimeout = Duration(seconds: 60);
+
   final String _wsUrl;
   final String? _nsec;
   final void Function(List<dynamic> message) _onMessage;
@@ -41,6 +44,8 @@ class RelaySocket {
   SocketState _state = SocketState.disconnected;
   Completer<void>? _authCompleter;
   Timer? _authTimeout;
+  Timer? _stallWatchdog;
+  DateTime? _lastInboundAt;
   String? _pendingAuthEventId;
 
   SocketState get state => _state;
@@ -108,6 +113,7 @@ class RelaySocket {
       await _authCompleter!.future;
       _authTimeout?.cancel();
       _state = SocketState.connected;
+      _startStallWatchdog();
       _onConnected();
     } catch (e) {
       _authTimeout?.cancel();
@@ -143,6 +149,9 @@ class RelaySocket {
     _subscription = null;
     _authTimeout?.cancel();
     _authTimeout = null;
+    _stallWatchdog?.cancel();
+    _stallWatchdog = null;
+    _lastInboundAt = null;
     _pendingAuthEventId = null;
   }
 
@@ -153,6 +162,7 @@ class RelaySocket {
   }
 
   void _handleRawMessage(dynamic raw) {
+    _lastInboundAt = DateTime.now();
     final String text;
     if (raw is String) {
       text = raw;
@@ -179,6 +189,41 @@ class RelaySocket {
         // Pass EVENT, EOSE, NOTICE, etc. upstream.
         _onMessage(data);
     }
+  }
+
+  void _startStallWatchdog() {
+    _stallWatchdog?.cancel();
+    _lastInboundAt = DateTime.now();
+    _stallWatchdog = Timer.periodic(_stallCheckInterval, (_) {
+      final lastInboundAt = _lastInboundAt;
+      if (lastInboundAt == null ||
+          DateTime.now().difference(lastInboundAt) < _stallIdleTimeout) {
+        return;
+      }
+
+      final channel = _channel;
+      _resetConnection();
+      _channel = null;
+      if (channel != null) {
+        unawaited(channel.sink.close());
+      }
+      _onDisconnected(
+        TimeoutException(
+          'Relay socket stalled — no inbound frames for $_stallIdleTimeout.',
+        ),
+      );
+    });
+  }
+
+  @visibleForTesting
+  void debugTriggerStall() {
+    final channel = _channel;
+    _resetConnection();
+    _channel = null;
+    if (channel != null) {
+      unawaited(channel.sink.close());
+    }
+    _onDisconnected(TimeoutException('Relay socket stalled — test trigger.'));
   }
 
   /// Handle the relay's AUTH challenge: sign a kind:22242 event and respond.

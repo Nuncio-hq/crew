@@ -76,6 +76,21 @@ describe("getAgentWorkingState", () => {
     assert.equal(elsewhere.channels.length, 1);
   });
 
+  it("keeps thread turns visible through the parent channel scope", () => {
+    startTurn(AGENT, "chan-1", "thread-turn");
+    syncAgentTurnsFromEvents(AGENT, [
+      makeEvent({
+        channelId: "chan-1",
+        conversationId: "thread-conversation",
+        turnId: "thread-turn",
+        seq: 2,
+      }),
+    ]);
+
+    assert.deepEqual(getWorkingAgentPubkeysForChannel("chan-1"), [AGENT]);
+    assert.equal(getAgentWorkingState(AGENT, "chan-1").working, true);
+  });
+
   it("falls back to typing when no observer turns exist", () => {
     reportChannelBotTyping("chan-1", [AGENT]);
     const state = getAgentWorkingState(AGENT, "chan-1");
