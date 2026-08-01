@@ -228,7 +228,7 @@ channel points at its immutable updater archive. CI also proves the updater
 signature key ID matches the public key embedded in the app.
 
 The first `v0.0.1-dev` installation is manual because the existing local build
-reports Buzz version `0.5.2` and an updater must never downgrade it.
+reports Buzz version `0.5.3` and an updater must never downgrade it.
 
 ## D-017 — Require one macOS-first Crew merge gate
 

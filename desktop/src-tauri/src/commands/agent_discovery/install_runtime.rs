@@ -3,6 +3,7 @@
 use crate::managed_agents::{is_npm_global_install, InstallRuntimeResult, InstallStepResult};
 
 use super::install_exec::run_install_command_with_retry;
+use super::install_report::InstallReporter;
 use super::managed_adapter_install::{
     ensure_managed_adapter_arch_ready_blocking, managed_adapter_stderr_hint, managed_npm_command,
     reclaim_legacy_unscoped_npm_prefix, sibling_adapter_reinstall_failure_step,
@@ -76,20 +77,12 @@ pub(crate) fn plan_adapter_install<'c>(
     }
 }
 
-fn failed_install(steps: Vec<InstallStepResult>) -> InstallRuntimeResult {
-    InstallRuntimeResult {
-        success: false,
-        steps,
-        restarted_count: 0,
-        failed_restart_count: 0,
-    }
-}
-
 fn run_adapter_commands(
     cmds: &[&str],
     use_managed_npm: bool,
     step_name: &str,
     steps: &mut Vec<InstallStepResult>,
+    reporter: &InstallReporter,
 ) -> Result<(), ()> {
     for cmd in cmds {
         let planned = match if use_managed_npm {
@@ -105,7 +98,7 @@ fn run_adapter_commands(
             }
         };
 
-        let mut result = run_install_command_with_retry(step_name, &planned);
+        let mut result = run_install_command_with_retry(step_name, &planned, reporter);
         if !result.success && result.hint.is_none() && is_npm_global_install(cmd) {
             result.hint = managed_adapter_stderr_hint(&result.stderr, cmd);
         }
@@ -132,6 +125,7 @@ fn reinstall_purged_sibling_adapters(
     requested_runtime_id: &str,
     purged_runtime_ids: &[&str],
     steps: &mut Vec<InstallStepResult>,
+    reporter: &InstallReporter,
 ) {
     let siblings =
         sibling_runtimes_to_reinstall_after_purge(purged_runtime_ids, requested_runtime_id);
@@ -176,7 +170,7 @@ fn reinstall_purged_sibling_adapters(
                 }
             };
 
-            let result = run_install_command_with_retry("adapter-repair", &planned);
+            let result = run_install_command_with_retry("adapter-repair", &planned, reporter);
             if !result.success {
                 steps.push(sibling_adapter_reinstall_failure_step(
                     sibling_id,
@@ -194,6 +188,7 @@ fn reinstall_purged_sibling_adapters(
 /// Ok({success: false}) = an install step failed (stderr captured in steps).
 pub(super) fn install_acp_runtime_blocking(
     runtime_id: &str,
+    app: &tauri::AppHandle,
 ) -> Result<InstallRuntimeResult, String> {
     // Re-fetch the login-shell PATH so a Node.js installation that happened
     // after app launch (or after a previous failed install) is visible to this
@@ -226,6 +221,7 @@ pub(super) fn install_acp_runtime_blocking(
 
     let runtime = crate::managed_agents::known_acp_runtime_exact(runtime_id)
         .ok_or_else(|| format!("unknown runtime: {runtime_id}"))?;
+    let reporter = InstallReporter::for_run(app, runtime.id);
 
     let mut steps = Vec::new();
 
@@ -236,11 +232,11 @@ pub(super) fn install_acp_runtime_blocking(
     if let Some(cli) = runtime.underlying_cli {
         if crate::managed_agents::resolve_command(cli).is_none() {
             for cmd in runtime.cli_install_commands_for_os() {
-                let result = run_install_command_with_retry("cli", cmd);
+                let result = run_install_command_with_retry("cli", cmd, &reporter);
                 let success = result.success;
                 steps.push(result);
                 if !success {
-                    return Ok(failed_install(steps));
+                    return Ok(reporter.failed(steps));
                 }
             }
         }
@@ -286,7 +282,7 @@ pub(super) fn install_acp_runtime_blocking(
             Ok(_) => {}
             Err(step) => {
                 steps.push(*step);
-                return Ok(failed_install(steps));
+                return Ok(reporter.failed(steps));
             }
         }
     }
@@ -322,7 +318,7 @@ pub(super) fn install_acp_runtime_blocking(
         }
 
         if !primary_failed
-            && run_adapter_commands(&cmds, use_managed_npm, "adapter", &mut steps).is_err()
+            && run_adapter_commands(&cmds, use_managed_npm, "adapter", &mut steps, &reporter).is_err()
         {
             primary_failed = true;
         }
@@ -337,7 +333,7 @@ pub(super) fn install_acp_runtime_blocking(
     // Sibling failures are visible but must not flip the requested runtime to
     // success:false (post_install_verification still gates the primary).
     if force_adapter_reinstall {
-        reinstall_purged_sibling_adapters(runtime_id, &purged_runtime_ids, &mut steps);
+        reinstall_purged_sibling_adapters(runtime_id, &purged_runtime_ids, &mut steps, &reporter);
     }
 
     if primary_failed {
@@ -346,6 +342,7 @@ pub(super) fn install_acp_runtime_blocking(
             steps,
             restarted_count: 0,
             failed_restart_count: 0,
+            log_path: reporter.log_path(),
         });
     }
 
@@ -354,7 +351,7 @@ pub(super) fn install_acp_runtime_blocking(
         .filter(|step| step.step != "adapter-repair")
         .all(|step| step.success);
 
-    post_install_verification::run(runtime_id, &mut steps);
+    post_install_verification::run(runtime_id, &mut steps, &reporter);
 
     let primary_ok = primary_ok_before_verify
         && steps
@@ -367,6 +364,7 @@ pub(super) fn install_acp_runtime_blocking(
         steps,
         restarted_count: 0,
         failed_restart_count: 0,
+        log_path: reporter.log_path(),
     })
 }
 
