@@ -57,9 +57,10 @@ export function getFailedAdapterRepairWarning(
  * Shared mapping for install surfaces (catalog detail + runtime row).
  * Hard failure → error; primary ok with failed sibling repair → warning.
  */
-export function getInstallOutcomeMessages(
-  result: InstallRuntimeResult,
-): { error: string | null; warning: string | null } {
+export function getInstallOutcomeMessages(result: InstallRuntimeResult): {
+  error: string | null;
+  warning: string | null;
+} {
   if (!result.success) {
     return {
       error: getInstallErrorMessage(result),

@@ -318,7 +318,8 @@ pub(super) fn install_acp_runtime_blocking(
         }
 
         if !primary_failed
-            && run_adapter_commands(&cmds, use_managed_npm, "adapter", &mut steps, &reporter).is_err()
+            && run_adapter_commands(&cmds, use_managed_npm, "adapter", &mut steps, &reporter)
+                .is_err()
         {
             primary_failed = true;
         }

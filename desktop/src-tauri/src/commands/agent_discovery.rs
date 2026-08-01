@@ -9,15 +9,14 @@ use crate::{
     nostr_convert,
     relay::query_relay,
 };
-
+mod install_capture;
 mod install_exec;
+mod install_report;
 mod install_runtime;
 mod managed_adapter_install;
 mod managed_node;
 mod post_install_verification;
-
 use install_runtime::install_acp_runtime_blocking;
-
 #[tauri::command]
 pub async fn discover_acp_providers(
     app: tauri::AppHandle,
@@ -884,6 +883,7 @@ pub async fn list_relay_agents(state: State<'_, AppState>) -> Result<Vec<RelayAg
 
 #[cfg(test)]
 mod tests {
+    use super::managed_adapter_install::npm_eacces_hint;
     use super::*;
     use crate::managed_agents::is_npm_global_install;
 
