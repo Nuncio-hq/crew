@@ -27,6 +27,7 @@ import {
   KIND_EMOJI_SET,
 } from "@/shared/api/customEmoji";
 import {
+  KIND_AGENT_USER_INPUT_REQUESTED,
   KIND_AGENT_OBSERVER_FRAME,
   KIND_CHANNEL_THREAD_SUMMARY,
   KIND_CHANNEL_WINDOW_BOUNDS,
@@ -1071,6 +1072,12 @@ declare global {
       pending?: boolean;
       /** 64-hex id required for the event to be a valid reaction target. */
       id?: string;
+    }) => RelayEvent;
+    __BUZZ_E2E_EMIT_MOCK_USER_INPUT__?: (input: {
+      channelName: string;
+      requestId?: string;
+      content: string;
+      pubkey?: string;
     }) => RelayEvent;
     /** Prepend `count` synthetic older messages to a channel's mock store so
      *  an older-history fetch has something to paginate. Mirrors how the real
@@ -9682,6 +9689,27 @@ export function maybeInstallE2eTauriMocks() {
       id,
     );
   };
+  window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__ = ({
+    channelName,
+    requestId,
+    content,
+    pubkey,
+  }) => {
+    const channel = mockChannels.find(
+      (candidate) => candidate.name === channelName,
+    );
+    if (!channel) throw new Error(`Mock channel ${channelName} not found.`);
+    const event = createMockEvent(
+      KIND_AGENT_USER_INPUT_REQUESTED,
+      content,
+      [["h", channel.id]],
+      pubkey,
+      Math.floor(Date.now() / 1000),
+      requestId,
+    );
+    emitMockLiveEvent(channel.id, event);
+    return event;
+  };
   window.__BUZZ_E2E_PREPEND_MOCK_HISTORY__ = prependMockHistory;
   window.__BUZZ_E2E_EMIT_MOCK_TYPING__ = ({
     channelName,
@@ -11768,6 +11796,12 @@ export function maybeInstallE2eTauriMocks() {
           payload as Parameters<typeof handleSendChannelMessage>[0],
           activeConfig,
         );
+      case "send_channel_user_input_answer":
+        return {
+          event_id: `mock-user-input-answer-${Date.now()}`,
+          accepted: true,
+          message: "accepted",
+        };
       case "has_managed_agent_channel_message_marker": {
         const args = payload as {
           channelId: string;

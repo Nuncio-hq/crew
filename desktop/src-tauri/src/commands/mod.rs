@@ -61,6 +61,7 @@ mod thread_workspace_git;
 #[cfg(test)]
 mod thread_workspace_tests;
 mod updater;
+mod user_input;
 mod window_chrome;
 mod window_vibrancy;
 mod workflows;
@@ -114,6 +115,7 @@ pub use teams::*;
 pub use thread_github::*;
 pub use thread_workspace::*;
 pub use updater::*;
+pub use user_input::*;
 pub use window_chrome::*;
 pub use window_vibrancy::*;
 pub use workflows::*;

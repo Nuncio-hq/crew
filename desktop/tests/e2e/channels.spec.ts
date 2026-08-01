@@ -491,6 +491,88 @@ test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
 });
 
+test("channel question card accepts an answer", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.waitForFunction(() =>
+    window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+      channelName: "general",
+      kind: 46040,
+    }),
+  );
+
+  await page.evaluate(() => {
+    const win = window as Window & {
+      __BUZZ_E2E_EMIT_MOCK_USER_INPUT__?: (input: {
+        channelName: string;
+        requestId?: string;
+        content: string;
+      }) => unknown;
+    };
+    win.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__?.({
+      channelName: "general",
+      requestId: "a".repeat(64),
+      content: JSON.stringify({
+        request_id: "elicit-1",
+        session_id: "session-1",
+        turn_id: "turn-1",
+        channel_id: "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50",
+        engine: "claude",
+        message: "Choose an environment",
+        questions: [
+          {
+            id: "q0",
+            header: "Environment",
+            question: "Where should this run?",
+            options: [
+              {
+                value: "production",
+                label: "Production",
+                description: "The live environment",
+              },
+            ],
+          },
+        ],
+      }),
+    });
+  });
+
+  const card = page.getByTestId(
+    "channel-user-input-card-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  );
+  await expect(card).toBeVisible();
+  await card.getByRole("radio", { name: "Production" }).check();
+  await card.getByTestId("channel-user-input-submit").click();
+  await expect(card).toContainText("Sent, waiting for the agent.");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as Window & {
+            __BUZZ_E2E_COMMAND_LOG__?: Array<{
+              command: string;
+              payload: {
+                channelId?: string;
+                requestEventId?: string;
+                answers?: unknown;
+              };
+            }>;
+          }
+        ).__BUZZ_E2E_COMMAND_LOG__?.find(
+          (entry) => entry.command === "send_channel_user_input_answer",
+        ),
+      ),
+    )
+    .toMatchObject({
+      command: "send_channel_user_input_answer",
+      payload: {
+        channelId: "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50",
+        requestEventId: "a".repeat(64),
+        answers: { q0: "production" },
+      },
+    });
+});
+
 test("sidebar shows all channel types", async ({ page }) => {
   await page.goto("/");
 

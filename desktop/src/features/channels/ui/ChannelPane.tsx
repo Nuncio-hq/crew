@@ -38,6 +38,8 @@ import { useFocusDrawerPresence } from "@/features/channels/ui/useFocusDrawerPre
 import { useChannelWorkingAgentPubkeys } from "@/features/agents/agentWorkingSignal";
 import { BotActivityComposerAction } from "@/features/channels/ui/BotActivityBar";
 import { ChannelComposerActivityAccessory } from "@/features/channels/ui/ChannelComposerActivityAccessory";
+import { ChannelUserInputStack } from "@/features/channels/ui/ChannelUserInputStack";
+import { useChannelUserInput } from "@/features/channels/hooks/useChannelUserInput";
 import { useThreadComposerBotActivity } from "@/features/channels/ui/useThreadComposerBotActivity";
 import {
   containsWelcomePersonaMention,
@@ -182,6 +184,7 @@ export const ChannelPane = React.memo(function ChannelPane({
     !activeChannel.archivedAt;
   const hasMainComposerOverlay = !isNonMemberView;
   const activeChannelId = activeChannel?.id ?? null;
+  const userInput = useChannelUserInput(activeChannelId);
   const activeChannelIdRef = React.useRef(activeChannelId);
   const channelPaneMountedRef = React.useRef(false);
   activeChannelIdRef.current = activeChannelId;
@@ -740,6 +743,16 @@ export const ChannelPane = React.memo(function ChannelPane({
                   </div>
                 ) : null}
                 <ComposerDockBackdrop gutterClassName="inset-x-5" />
+                {userInput.pending.length > 0 || userInput.sent.length > 0 ? (
+                  <ChannelUserInputStack
+                    currentPubkey={currentPubkey ?? ""}
+                    pending={userInput.pending}
+                    profiles={profiles}
+                    sent={userInput.sent}
+                    onSkip={userInput.skip}
+                    onSubmit={userInput.answer}
+                  />
+                ) : null}
                 <MessageComposer
                   channelId={activeChannel?.id ?? null}
                   channelName={activeChannel?.name ?? "channel"}
