@@ -1392,7 +1392,7 @@ pub async fn run_prompt_task(
     }
     if let Some(ref batch) = batch {
         agent.acp.set_user_input_context(
-            batch.channel_id,
+            batch.routing_channel_id(),
             turn_id.clone(),
             ctx.harness_name.clone(),
         );

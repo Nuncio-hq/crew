@@ -323,7 +323,16 @@ pub(crate) fn reconstruct_content(
         };
         let (key, value) = match answer {
             UserInputAnswer::Text(value) => {
-                if let Some(custom_key) = &mapping.custom_key {
+                let matches_option = question
+                    .options
+                    .iter()
+                    .any(|option| option.value == value || option.label == value);
+                if matches_option {
+                    (
+                        mapping.field_key.clone(),
+                        serde_json::Value::String(wire_value(value)),
+                    )
+                } else if let Some(custom_key) = &mapping.custom_key {
                     (custom_key.clone(), serde_json::Value::String(value))
                 } else {
                     (
@@ -417,6 +426,36 @@ mod tests {
         let content = reconstruct_content(&form, &answers).expect("answers");
         assert_eq!(content["question_0_custom"], "custom");
         assert_eq!(content["question_1"], serde_json::json!(["x"]));
+    }
+
+    #[test]
+    fn reconstructs_matching_plain_option_on_native_key() {
+        let schema = serde_json::json!({"type":"object","properties":{
+            "question_0":{"type":"string","oneOf":[
+                {"const":"production","title":"Production"}
+            ]},
+            "question_0_custom":{"type":"string"}
+        }});
+        let form = normalize_form(&schema).expect("supported");
+        let by_value = BTreeMap::from([(
+            "q0".into(),
+            Some(UserInputAnswer::Text("production".into())),
+        )]);
+        let by_label = BTreeMap::from([(
+            "q0".into(),
+            Some(UserInputAnswer::Text("Production".into())),
+        )]);
+        assert_eq!(
+            reconstruct_content(&form, &by_value).expect("value")["question_0"],
+            "production"
+        );
+        assert_eq!(
+            reconstruct_content(&form, &by_label).expect("label")["question_0"],
+            "production"
+        );
+        assert!(!reconstruct_content(&form, &by_value)
+            .expect("value")
+            .contains_key("question_0_custom"));
     }
 
     #[test]

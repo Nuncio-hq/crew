@@ -1977,8 +1977,11 @@ async fn tokio_main() -> Result<()> {
                     let _ = result_rx; // end split borrow before relay handling
                     match buzz_event {
                         Some(buzz_event) => {
-                            user_input_runtime.handle_event(&buzz_event).await;
                             let kind_u32 = buzz_event.event.kind.as_u16() as u32;
+                            if kind_u32 == KIND_AGENT_USER_INPUT_ANSWER {
+                                user_input_runtime.handle_event(&buzz_event).await;
+                                continue;
+                            }
 
                             if kind_u32 == KIND_MEMBER_ADDED_NOTIFICATION
                                 || kind_u32 == KIND_MEMBER_REMOVED_NOTIFICATION

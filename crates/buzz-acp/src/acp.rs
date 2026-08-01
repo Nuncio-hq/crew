@@ -1884,7 +1884,7 @@ impl AcpClient {
                 &turn_id,
                 engine,
                 form.clone(),
-                &id.to_string(),
+                &Self::json_rpc_id_string(&id),
                 msg.pointer("/params/message").and_then(|v| v.as_str()),
                 msg.pointer("/params/toolCallId").and_then(|v| v.as_str()),
             )
@@ -1905,6 +1905,12 @@ impl AcpClient {
             form,
             receiver,
         }))
+    }
+
+    fn json_rpc_id_string(id: &serde_json::Value) -> String {
+        id.as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| id.to_string())
     }
 
     /// Log a `session/update` notification via tracing.

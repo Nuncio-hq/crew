@@ -21,8 +21,12 @@ pub async fn cmd_list(client: &BuzzClient, channel: &str) -> Result<(), CliError
         serde_json::from_str(&client.query(&filter).await?).unwrap_or_default();
     let answers: Vec<serde_json::Value> =
         serde_json::from_str(&client.query(&answer_filter).await?).unwrap_or_default();
+    let own_pubkey = client.keys().public_key().to_hex();
     let answered: std::collections::HashSet<String> = answers
         .iter()
+        .filter(|event| {
+            event.get("pubkey").and_then(serde_json::Value::as_str) == Some(own_pubkey.as_str())
+        })
         .flat_map(|event| event.get("tags").and_then(|tags| tags.as_array()))
         .filter_map(|tags| {
             tags.iter().find_map(|tag| {
