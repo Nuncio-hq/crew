@@ -5,14 +5,14 @@
 
 use buzz_core::{
     kind::{
-        KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_DELETION,
-        KIND_DM_ADD_MEMBER, KIND_DM_OPEN, KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH,
-        KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT,
-        KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED,
-        KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST,
-        KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
-        KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_PRESENCE_UPDATE, KIND_USER_STATUS,
-        KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+        KIND_AGENT_OBSERVER_FRAME, KIND_AGENT_USER_INPUT_ANSWER, KIND_AGENT_USER_INPUT_REQUESTED,
+        KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_OPEN,
+        KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+        KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
+        KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST,
+        KIND_IA_UNARCHIVE_REQUEST, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
+        KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT,
+        KIND_PRESENCE_UPDATE, KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -1536,6 +1536,35 @@ pub fn build_workflow_approval(
     };
     let tags = vec![tag(&["d", token_hash])?];
     Ok(EventBuilder::new(Kind::Custom(kind as u16), note).tags(tags))
+}
+
+/// Build a durable channel-scoped agent question request.
+pub fn build_agent_user_input_request(
+    channel_id: Uuid,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    check_content(content, 256 * 1024)?;
+    let tags = vec![tag(&["h", &channel_id.to_string()])?];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_AGENT_USER_INPUT_REQUESTED as u16),
+        content,
+    )
+    .tags(tags))
+}
+
+/// Build an owner-authored answer to an agent question request.
+pub fn build_agent_user_input_answer(
+    channel_id: Uuid,
+    request_event_id: &str,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    check_content(content, 64 * 1024)?;
+    let request_event_id = check_hex_exact(request_event_id, 64, "request_event_id")?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["e", &request_event_id])?,
+    ];
+    Ok(EventBuilder::new(Kind::Custom(KIND_AGENT_USER_INPUT_ANSWER as u16), content).tags(tags))
 }
 
 /// Build a DM open event (kind 41010).

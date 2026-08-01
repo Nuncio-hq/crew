@@ -573,6 +573,8 @@ pub struct PromptContext {
     /// the desktop keys per (agent, relay) pair, e.g. `session_config_captured`,
     /// mirroring the `managed_agent_runtime_lifecycle` frames.
     pub relay_url: String,
+    /// Shared durable user-input request/answer transport.
+    pub user_input_runtime: Option<Arc<crate::elicitation::QuestionRuntime>>,
 }
 
 impl AgentPool {
@@ -1385,6 +1387,14 @@ pub async fn run_prompt_task(
             turn_id.clone(),
             turn_started_at.clone(),
         ));
+    if let Some(runtime) = ctx.user_input_runtime.clone() {
+        agent.acp.set_user_input_runtime(runtime);
+    }
+    if let Some(ref batch) = batch {
+        agent
+            .acp
+            .set_user_input_context(batch.channel_id, turn_id.clone());
+    }
     let triggering_event_ids: Vec<String> = batch
         .as_ref()
         .map(|b| b.events.iter().map(|be| be.event.id.to_hex()).collect())
@@ -5972,6 +5982,7 @@ mod tests {
             memory_enabled: false,
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
+            user_input_runtime: None,
         }
     }
 

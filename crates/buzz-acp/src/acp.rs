@@ -211,6 +211,8 @@ pub struct AcpClient {
     /// deltas. Both goose and buzz-agent emit this notification; goose gates
     /// on client capability advertisement, buzz-agent emits unconditionally.
     goose_usage: UsageTracker,
+    user_input_runtime: Option<std::sync::Arc<crate::elicitation::QuestionRuntime>>,
+    user_input_context: Option<(uuid::Uuid, String, String)>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -388,6 +390,9 @@ enum SteerTransport {
 }
 
 fn build_client_capabilities() -> serde_json::Value {
+    let enabled = std::env::var("BUZZ_ACP_NO_USER_INPUT")
+        .map(|value| !matches!(value.as_str(), "1" | "true" | "yes"))
+        .unwrap_or(true);
     serde_json::json!({
         // Signal to ACP adapters that Buzz can hand users to terminal-native
         // auth flows. Adapters decide which auth methods to expose; Buzz does
@@ -395,6 +400,7 @@ fn build_client_capabilities() -> serde_json::Value {
         "auth": {
             "terminal": true
         },
+        "elicitation": { "form": enabled },
         // Signal to goose that we handle `_goose/unstable/session/update`
         // notifications. Without this the custom notification is suppressed
         // on goose's side and usage data is never emitted.
@@ -550,6 +556,8 @@ impl AcpClient {
             steering_supported: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
+            user_input_runtime: None,
+            user_input_context: None,
         })
     }
 
@@ -896,6 +904,19 @@ impl AcpClient {
         self.steer_rx = None;
     }
 
+    /// Install the shared durable user-input transport for this agent.
+    pub fn set_user_input_runtime(
+        &mut self,
+        runtime: std::sync::Arc<crate::elicitation::QuestionRuntime>,
+    ) {
+        self.user_input_runtime = Some(runtime);
+    }
+
+    /// Associate the current prompt with its channel and turn identifiers.
+    pub fn set_user_input_context(&mut self, channel_id: uuid::Uuid, turn_id: String) {
+        self.user_input_context = Some((channel_id, turn_id, String::new()));
+    }
+
     /// Returns `true` if no steer receiver is currently installed.
     ///
     /// Test-only: used by `pool` tests to assert the post-return invariant
@@ -979,6 +1000,9 @@ impl AcpClient {
         session_id: &str,
         hard_deadline: tokio::time::Instant,
     ) -> Result<StopReason, AcpError> {
+        if let Some(runtime) = self.user_input_runtime.as_ref() {
+            runtime.cancel_all().await;
+        }
         // Validate precondition before any side effects — fail fast if there's
         // no in-flight prompt (prevents writing permission responses or cancel
         // notifications to the agent when no prompt is active).
@@ -1667,6 +1691,17 @@ impl AcpClient {
                             "session/request_permission" => {
                                 self.handle_permission_request(&msg).await?;
                             }
+                            "elicitation/create" => {
+                                self.handle_elicitation_request(&msg).await?;
+                                let resumed_at = Instant::now();
+                                idle_deadline = resumed_at + idle_timeout;
+                                hard_deadline = resumed_at + max_duration;
+                                self.current_hard_deadline = Some(hard_deadline);
+                                last_activity_at = resumed_at;
+                                tracing::debug!(
+                                    "idle and hard clocks reset after user-input elicitation"
+                                );
+                            }
                             other => {
                                 // If the unknown message has an id, it's a request expecting a reply.
                                 // Silence would cause the agent to hang waiting for a response.
@@ -1688,6 +1723,76 @@ impl AcpClient {
                 }
             }
         }
+    }
+
+    /// Normalize, publish, and await an ACP form elicitation request.
+    async fn handle_elicitation_request(
+        &mut self,
+        msg: &serde_json::Value,
+    ) -> Result<(), AcpError> {
+        let id = msg
+            .get("id")
+            .cloned()
+            .ok_or_else(|| AcpError::Protocol("elicitation/create missing request id".into()))?;
+        let enabled = std::env::var("BUZZ_ACP_NO_USER_INPUT")
+            .map(|value| !matches!(value.as_str(), "1" | "true" | "yes"))
+            .unwrap_or(true);
+        let cancel = || {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "action": "cancel" }
+            })
+        };
+        if !enabled {
+            return self.write_ndjson(&cancel()).await;
+        }
+        let Some(schema) = msg.pointer("/params/requestedSchema") else {
+            return self.write_ndjson(&cancel()).await;
+        };
+        let engine = if schema.get("required").is_some() {
+            buzz_core::user_input::Engine::Codex
+        } else {
+            buzz_core::user_input::Engine::Claude
+        };
+        let Some(form) = crate::elicitation::normalize_form(schema, engine.clone()) else {
+            return self.write_ndjson(&cancel()).await;
+        };
+        let Some(runtime) = self.user_input_runtime.clone() else {
+            return self.write_ndjson(&cancel()).await;
+        };
+        let Some((channel_id, turn_id, _)) = self.user_input_context.clone() else {
+            return self.write_ndjson(&cancel()).await;
+        };
+        let session_id = msg
+            .pointer("/params/sessionId")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        let answers = runtime
+            .publish_and_wait(
+                channel_id,
+                session_id,
+                &turn_id,
+                engine,
+                form.clone(),
+                &id.to_string(),
+            )
+            .await;
+        let response = match answers {
+            Ok(None) => cancel(),
+            Ok(Some(answers)) if answers.values().all(Option::is_none) => serde_json::json!({
+                "jsonrpc": "2.0", "id": id, "result": { "action": "decline" }
+            }),
+            Ok(Some(answers)) => match crate::elicitation::reconstruct_content(&form, &answers) {
+                Some(content) => serde_json::json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "result": { "action": "accept", "content": content }
+                }),
+                None => cancel(),
+            },
+            Err(_) => cancel(),
+        };
+        self.write_ndjson(&response).await
     }
 
     /// Log a `session/update` notification via tracing.

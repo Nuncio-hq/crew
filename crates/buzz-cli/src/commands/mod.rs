@@ -16,5 +16,6 @@ pub mod reactions;
 pub mod repos;
 pub mod social;
 pub mod upload;
+pub mod user_input;
 pub mod users;
 pub mod workflows;

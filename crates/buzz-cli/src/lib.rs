@@ -236,6 +236,28 @@ enum Cmd {
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
+    /// List and answer pending agent user-input questions
+    #[command(subcommand)]
+    UserInput(UserInputCmd),
+}
+
+#[derive(Subcommand)]
+pub enum UserInputCmd {
+    /// List pending questions in a channel
+    List {
+        #[arg(long)]
+        channel: String,
+    },
+    /// Answer a pending question request with a JSON answer map
+    Answer {
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        request: String,
+        /// JSON object keyed by the stable question IDs
+        #[arg(long)]
+        answers: String,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -1823,6 +1845,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Upload(sub) => commands::upload::dispatch(sub, &client).await,
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
+        Cmd::UserInput(sub) => commands::user_input::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
     }
 }

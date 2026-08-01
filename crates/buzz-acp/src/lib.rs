@@ -3,6 +3,7 @@
 mod acp;
 mod config;
 mod conversation;
+mod elicitation;
 mod engram_fetch;
 mod filter;
 mod observer;
@@ -25,8 +26,8 @@ use std::time::Duration;
 use acp::{AcpClient, EnvVar, McpServer};
 use anyhow::Result;
 use buzz_core::kind::{
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_STREAM_MESSAGE,
-    KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
+    KIND_AGENT_USER_INPUT_ANSWER, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
+    KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
 };
 use buzz_core::observer::{
     decrypt_observer_payload, encrypt_observer_payload, OBSERVER_FRAME_TELEMETRY,
@@ -1441,7 +1442,13 @@ async fn tokio_main() -> Result<()> {
             _ => {} // anyone/nobody don't depend on owner
         }
     }
-    let owner_cache = OwnerCache::new(startup_owner.clone());
+    let owner_cache = Arc::new(OwnerCache::new(startup_owner.clone()));
+    let user_input_runtime = elicitation::QuestionRuntime::new(
+        relay.event_publisher(),
+        config.keys.clone(),
+        owner_cache.clone(),
+        relay.rest_client(),
+    );
 
     let mut relay_observer_control_rx = None;
     let mut relay_observer_publisher_task = None;
@@ -1497,6 +1504,7 @@ async fn tokio_main() -> Result<()> {
                         KIND_STREAM_MESSAGE,
                         KIND_WORKFLOW_APPROVAL_REQUESTED,
                         KIND_STREAM_REMINDER,
+                        KIND_AGENT_USER_INPUT_ANSWER,
                     ]
                 }),
                 require_mention: !config.no_mention_filter,
@@ -1612,6 +1620,7 @@ async fn tokio_main() -> Result<()> {
         memory_enabled: config.memory_enabled,
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
+        user_input_runtime: Some(user_input_runtime.clone()),
     });
 
     if !config.memory_enabled {
@@ -1958,6 +1967,7 @@ async fn tokio_main() -> Result<()> {
                     let _ = result_rx; // end split borrow before relay handling
                     match buzz_event {
                         Some(buzz_event) => {
+                            user_input_runtime.handle_event(&buzz_event).await;
                             let kind_u32 = buzz_event.event.kind.as_u16() as u32;
 
                             if kind_u32 == KIND_MEMBER_ADDED_NOTIFICATION
@@ -5278,6 +5288,7 @@ mod build_mcp_servers_tests {
             kinds_override: None,
             channels_override: None,
             no_mention_filter: false,
+            user_input_enabled: true,
             config_path: std::path::PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
@@ -5499,6 +5510,7 @@ mod error_outcome_emission_tests {
             kinds_override: None,
             channels_override: None,
             no_mention_filter: false,
+            user_input_enabled: true,
             config_path: std::path::PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
