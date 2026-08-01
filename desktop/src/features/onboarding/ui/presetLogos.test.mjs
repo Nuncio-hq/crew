@@ -34,9 +34,17 @@ const presetBlock = presetsRs.match(
 );
 assert.ok(presetBlock, "could not locate PRESET_HARNESSES in presets.rs");
 
-const presetIds = [...presetBlock[1].matchAll(/^\s{8}id: "([^"]+)",$/gm)].map(
-  (match) => match[1],
-);
+const presetEntries = [
+  ...[...presetBlock[1].matchAll(/\bpreset\(\s*"([^"]+)"/g)].map((match) => ({
+    id: match[1],
+    index: match.index,
+  })),
+  ...[...presetBlock[1].matchAll(/^\s+id: "([^"]+)",$/gm)].map((match) => ({
+    id: match[1],
+    index: match.index,
+  })),
+].sort((left, right) => left.index - right.index);
+const presetIds = [...new Set(presetEntries.map((entry) => entry.id))];
 
 test("PRESET_HARNESSES parse found the preset ids", () => {
   // Guards the regex itself: a struct-field rename would otherwise silently

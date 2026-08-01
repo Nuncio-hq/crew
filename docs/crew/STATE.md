@@ -163,10 +163,13 @@ and the
 
 ## Current gate
 
-Project-thread worktree telemetry and UI are implemented and their automated
-gates pass. The branch is not merged, `crew-v0.0.5` is not published, and the
-real signed `0.0.4 → 0.0.5` updater relaunch remains the required post-merge
-release verification.
+Project-thread worktree lifecycle telemetry and UI are implemented for the
+`0.0.6` candidate. The branch is not merged, `crew-v0.0.6` is not published,
+and the real signed `0.0.5 → 0.0.6` updater relaunch remains the required
+post-merge release verification. Worktree freshness is measured from the
+thread worktree's actual `HEAD`; an unavailable fetch reports an unknown
+remote distance, and lifecycle actions require both the live branch ownership
+record and its durable root claim.
 
 ## Current test gate
 
@@ -186,9 +189,11 @@ release verification.
   mobile tests (`1` skipped), frontend builds, lint, typecheck, and formatting.
 - Focused browser verification passed `62` Project composer, mention,
   messaging, thread-anchor, and boot-flow scenarios against the E2E bridge.
-- Thread-worktree verification passed `8` focused provisioning tests, `5`
+- Thread-worktree verification passed `14` focused provisioning tests, `5`
   session-cwd tests, all `661` `buzz-acp` library tests plus `9` integration
-  tests, and `18` focused Desktop/release-contract tests.
+  tests, and `18` focused Desktop/release-contract tests. Three focused native
+  lifecycle tests also cover dirty-worktree refusal, clean removal, and safe
+  rejection of a later branch that reuses a stale deterministic name.
 - The full Desktop suite passed `3885` tests with one environment-gated live
   relay test skipped; Project-thread Playwright verification passed after a
   fresh E2E build and showed distinct workspace state across two roots. Its two
@@ -201,7 +206,7 @@ release verification.
 - Earlier focused live relay test: `1/1` passed with an isolated Buzz relay.
 - Typecheck, file-size gate, Biome checks, production build, and
   `git diff --check` passed.
-- No `crew-v0.0.5` tag or public `0.0.5` artifact has been created.
+- No `crew-v0.0.6` tag or public `0.0.6` artifact has been created.
 - Manual release contracts: `10/10` passed.
 - Always-run Crew CI/local/release contracts: `20/20` passed.
 - Real unsigned Tauri bundle spike accepted `0.0.1-dev` and produced

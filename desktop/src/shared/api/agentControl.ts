@@ -1,4 +1,10 @@
 import { sendAgentObserverControl } from "@/shared/api/observerRelay";
+import { invokeTauri } from "@/shared/api/tauri";
+import type {
+  ThreadGitHubStatus,
+  ThreadWorkspaceActionResult,
+  ThreadWorkspaceLifecycle,
+} from "@/shared/api/thread-workspace-types";
 import type { CancelManagedAgentTurnResult } from "@/shared/api/types";
 
 export async function cancelManagedAgentTurn(
@@ -36,4 +42,40 @@ export async function switchManagedAgentModel(
     turnId,
     modelId,
   });
+}
+
+type ThreadWorkspaceTarget = {
+  repositoryPath: string;
+  branch: string;
+  rootEventId: string;
+};
+
+export function removeThreadWorktree(
+  input: ThreadWorkspaceTarget & { worktreePath: string },
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("remove_thread_worktree", input);
+}
+
+export function deleteThreadBranch(
+  input: ThreadWorkspaceTarget,
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("delete_thread_branch", input);
+}
+
+export function closeThreadPullRequest(
+  input: ThreadWorkspaceTarget,
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("close_thread_pull_request", input);
+}
+
+export function getThreadWorkspaceLifecycle(
+  input: ThreadWorkspaceTarget & { worktreePath: string },
+): Promise<ThreadWorkspaceLifecycle> {
+  return invokeTauri("get_thread_workspace_lifecycle", input);
+}
+
+export function getThreadGitHubStatus(
+  input: ThreadWorkspaceTarget,
+): Promise<ThreadGitHubStatus> {
+  return invokeTauri("get_thread_github_status", input);
 }

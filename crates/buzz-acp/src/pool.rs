@@ -2738,10 +2738,14 @@ fn thread_workspace_ready_payload(
 ) -> serde_json::Value {
     serde_json::json!({
         "rootEventId": workspace.root_event_id,
+        "repositoryPath": workspace.repository_path,
         "worktreePath": workspace.worktree_path,
         "worktreeName": workspace.worktree_name,
         "branch": workspace.branch,
         "baseRevision": workspace.base_revision,
+        "baseSource": workspace.base_source.as_str(),
+        "remoteDefaultBranch": workspace.remote_default_branch,
+        "commitsBehindRemote": workspace.commits_behind_remote,
     })
 }
 
@@ -2969,14 +2973,22 @@ mod thread_session_cwd_tests {
     fn workspace_observer_payloads_are_structured_and_errors_are_safe() {
         let workspace = ThreadWorkspace {
             root_event_id: "a".repeat(64),
+            repository_path: PathBuf::from("/private/project"),
             worktree_path: PathBuf::from("/private/project/.buzz-worktrees/project-aaaaaaaaaaaa"),
             worktree_name: "project-aaaaaaaaaaaa".into(),
             branch: "buzz/aaaaaaaaaaaa".into(),
             base_revision: "b".repeat(40),
+            base_source: crate::thread_workspace::BaseSource::Remote,
+            remote_default_branch: Some("main".into()),
+            commits_behind_remote: Some(0),
         };
 
         let ready = thread_workspace_ready_payload(&workspace);
         assert_eq!(ready["rootEventId"], "a".repeat(64));
+        assert_eq!(
+            ready["repositoryPath"],
+            workspace.repository_path.to_string_lossy().as_ref()
+        );
         assert_eq!(
             ready["worktreePath"],
             workspace.worktree_path.to_string_lossy().as_ref()
@@ -2984,6 +2996,9 @@ mod thread_session_cwd_tests {
         assert_eq!(ready["worktreeName"], workspace.worktree_name);
         assert_eq!(ready["branch"], workspace.branch);
         assert_eq!(ready["baseRevision"], workspace.base_revision);
+        assert_eq!(ready["baseSource"], "remote");
+        assert_eq!(ready["remoteDefaultBranch"], "main");
+        assert_eq!(ready["commitsBehindRemote"], 0);
 
         let error = thread_workspace_error_payload(&workspace.root_event_id);
         assert_eq!(error["rootEventId"], workspace.root_event_id);

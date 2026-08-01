@@ -13,6 +13,7 @@ import {
 import { relayClient } from "@/shared/api/relayClient";
 import { activateRateLimit } from "@/shared/api/relayRateLimitGate";
 import type { ConnectionState } from "@/shared/api/relayClientShared";
+import type { ThreadGitHubStatus } from "@/shared/api/thread-workspace-types";
 import type { ChannelTemplate, RelayEvent } from "@/shared/api/types";
 import { getMarkdownParseCount } from "@/shared/ui/markdown/nodeCache";
 import { syncAgentTurnsFromEvents } from "@/features/agents/activeAgentTurnsStore";
@@ -170,6 +171,10 @@ type E2eConfig = {
     pocketVoiceImportResult?: "success" | "cancel" | "invalid";
     /** Advertised HEAD for the first mock project without adding that branch. */
     projectHeadBranch?: string;
+    /** Project-thread GitHub state returned by branch. */
+    threadGitHubByBranch?: Record<string, ThreadGitHubStatus>;
+    /** Dirty worktree state returned by branch. */
+    threadWorkspaceDirtyByBranch?: Record<string, boolean>;
     /** Builderlab account returned by hosted-community onboarding. Null/omitted = signed out. */
     builderlabAuth?: {
       email?: string;
@@ -10551,6 +10556,29 @@ export function maybeInstallE2eTauriMocks() {
         // Matches the "Thomas P" author on a mock snapshot commit so the
         // viewer-identity avatar attribution is exercised in e2e.
         return { name: "Thomas P", email: "thomasp@example.com" };
+      case "get_thread_github_status": {
+        const branch = (payload as { branch?: string })?.branch ?? "";
+        return (
+          activeConfig?.mock?.threadGitHubByBranch?.[branch] ?? {
+            availability: "available",
+            pullRequest: null,
+          }
+        );
+      }
+      case "get_thread_workspace_lifecycle": {
+        const branch = (payload as { branch?: string })?.branch ?? "";
+        return {
+          branchCheckedOut: true,
+          branchExists: true,
+          dirty:
+            activeConfig?.mock?.threadWorkspaceDirtyByBranch?.[branch] ?? false,
+          worktreeExists: true,
+        };
+      }
+      case "remove_thread_worktree":
+      case "delete_thread_branch":
+      case "close_thread_pull_request":
+        return { status: "completed", message: "Completed." };
       case "get_project_repo_snapshot":
         return {
           latest_commit: {
