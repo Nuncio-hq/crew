@@ -33,20 +33,12 @@ pub(crate) async fn validate_target(
     // Destructive actions require the live branch ownership record. The
     // durable prefix claim is only a creation/adoption primitive; accepting it
     // alone would authorize a later unrelated branch that reused this name.
-    let roots = git_optional_output_dir(
-        &common_git,
-        ["config", "--get-all", root_key.as_str()],
-    )
-    .await?
-    .ok_or_else(|| "Thread branch identity could not be verified.".to_string())?;
-    let claim = std::fs::read_to_string(
-        common_git
-            .join("buzz-thread-workspace-roots")
-            .join(format!(
-                "{}.root",
-                &root_event_id[..12].to_ascii_lowercase()
-            )),
-    )
+    let roots = git_optional_output_dir(&common_git, ["config", "--get-all", root_key.as_str()])
+        .await?
+        .ok_or_else(|| "Thread branch identity could not be verified.".to_string())?;
+    let claim = std::fs::read_to_string(common_git.join("buzz-thread-workspace-roots").join(
+        format!("{}.root", &root_event_id[..12].to_ascii_lowercase()),
+    ))
     .map_err(|_| "Thread branch identity could not be verified.".to_string())?;
     if roots.trim().is_empty()
         || roots
