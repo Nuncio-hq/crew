@@ -133,6 +133,10 @@ test("submit only requires required questions", () => {
   );
 });
 
+test("submit requires at least one answered question", () => {
+  assert.equal(canSubmitUserInput([{ id: "q0", required: false }], {}), false);
+});
+
 test("answer payloads preserve all wire shapes", () => {
   assert.equal(
     serializeUserInputAnswers(

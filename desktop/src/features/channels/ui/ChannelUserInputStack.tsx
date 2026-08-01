@@ -19,6 +19,7 @@ type Props = {
   sendingRequestId: string | null;
   onSkip: (item: UserInputEvent) => Promise<void>;
   onSubmit: (item: UserInputEvent, answers: UserInputAnswers) => Promise<void>;
+  onDismiss: (requestEventId: string) => void;
 };
 
 type ResolvedUserInputEvent = UserInputEvent & {
@@ -37,6 +38,7 @@ export function ChannelUserInputStack({
   sendingRequestId,
   onSkip,
   onSubmit,
+  onDismiss,
 }: Props) {
   const sentIds = React.useMemo(
     () => new Set(sent.map(({ event }) => event.id)),
@@ -61,6 +63,7 @@ export function ChannelUserInputStack({
             sending={sendingRequestId === item.event.id}
             onSkip={onSkip}
             onSubmit={onSubmit}
+            onDismiss={onDismiss}
           />
         );
       })}

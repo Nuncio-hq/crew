@@ -87,11 +87,18 @@ export function canSubmitUserInput(
   questions: UserInputQuestion[],
   drafts: Record<string, UserInputDraft>,
 ): boolean {
-  return questions.every((question) => {
-    if (!question.required) return true;
+  const hasAnswer = questions.some((question) => {
     const value = drafts[question.id];
     return Boolean(value?.custom.trim() || value?.selected.length);
   });
+  return (
+    hasAnswer &&
+    questions.every((question) => {
+      if (!question.required) return true;
+      const value = drafts[question.id];
+      return Boolean(value?.custom.trim() || value?.selected.length);
+    })
+  );
 }
 
 export function selectUserInputOption(

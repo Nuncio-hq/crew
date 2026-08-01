@@ -754,6 +754,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                     sendingRequestId={userInput.sendingRequestId}
                     onSkip={userInput.skip}
                     onSubmit={userInput.answer}
+                    onDismiss={userInput.dismissResolved}
                   />
                 ) : null}
                 <MessageComposer

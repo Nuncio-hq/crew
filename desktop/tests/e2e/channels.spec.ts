@@ -595,6 +595,8 @@ test("channel question card accepts an answer", async ({ page }) => {
   await expect(card).toContainText("Question answered");
   await expect(card.getByTestId("channel-user-input-submit")).toHaveCount(0);
   await expect(card.locator("input, textarea")).toHaveCount(0);
+  await card.getByTestId("channel-user-input-dismiss").click();
+  await expect(card).toHaveCount(0);
 });
 
 test("sidebar shows all channel types", async ({ page }) => {

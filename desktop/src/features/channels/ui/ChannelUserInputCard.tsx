@@ -34,6 +34,7 @@ type Props = {
     answers: Record<string, UserInputAnswerValue>,
   ) => Promise<void>;
   onSkip: (item: UserInputEvent) => Promise<void>;
+  onDismiss?: (requestEventId: string) => void;
 };
 
 export function ChannelUserInputCard({
@@ -46,6 +47,7 @@ export function ChannelUserInputCard({
   sending = false,
   onSubmit,
   onSkip,
+  onDismiss,
 }: Props) {
   const [state, setState] = React.useState<Record<string, UserInputDraft>>({});
   const ownerPubkey = profiles?.[item.event.pubkey]?.ownerPubkey ?? null;
@@ -208,6 +210,18 @@ export function ChannelUserInputCard({
             );
           })}
         </CardContent>
+      ) : null}
+      {terminal && onDismiss ? (
+        <CardFooter>
+          <Button
+            data-testid="channel-user-input-dismiss"
+            type="button"
+            variant="ghost"
+            onClick={() => onDismiss(item.event.id)}
+          >
+            Dismiss
+          </Button>
+        </CardFooter>
       ) : null}
       {!sent && !terminal ? (
         <CardFooter className="gap-2">

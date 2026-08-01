@@ -4,6 +4,7 @@ import { relayClient } from "@/shared/api/relayClient";
 import { buildChannelUserInputFilter } from "@/shared/api/relayChannelFilters";
 import type { RelayEvent } from "@/shared/api/types";
 import { sendChannelUserInputAnswer } from "@/shared/api/tauriUserInput";
+import { KIND_AGENT_USER_INPUT_REQUESTED } from "@/shared/constants/kinds";
 import {
   buildSkippedAnswers,
   buildUserInputAnswers,
@@ -30,12 +31,20 @@ export function useChannelUserInput(channelId: string | null) {
     () => new Set<string>(),
   );
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+  const [visibleRequestIds, setVisibleRequestIds] = React.useState(
+    () => new Set<string>(),
+  );
+  const [dismissedResolutionIds, setDismissedResolutionIds] = React.useState(
+    () => new Set<string>(),
+  );
 
   React.useEffect(() => {
     setEvents([]);
     setOptimisticallyResolved(new Set());
     setSentRequestIds(new Set());
     setErrors({});
+    setVisibleRequestIds(new Set());
+    setDismissedResolutionIds(new Set());
     if (!channelId) return;
 
     let cancelled = false;
@@ -43,6 +52,12 @@ export function useChannelUserInput(channelId: string | null) {
     const filter = buildChannelUserInputFilter(channelId, RETAINED_EVENTS);
     const onEvent = (event: RelayEvent) => {
       if (cancelled) return;
+      if (event.kind === KIND_AGENT_USER_INPUT_REQUESTED) {
+        setVisibleRequestIds((current) => {
+          if (current.has(event.id)) return current;
+          return new Set(current).add(event.id);
+        });
+      }
       setEvents((current) => {
         if (current.some((existing) => existing.id === event.id))
           return current;
@@ -60,6 +75,16 @@ export function useChannelUserInput(channelId: string | null) {
         }
         const history = await relayClient.fetchEvents(filter);
         if (!cancelled) {
+          const pendingIds = new Set(
+            derivePendingUserInputs(history, currentPubkey).map(
+              ({ event }) => event.id,
+            ),
+          );
+          setVisibleRequestIds((current) => {
+            const next = new Set(current);
+            for (const id of pendingIds) next.add(id);
+            return next;
+          });
           setEvents((current) => {
             const byId = new Map(current.map((event) => [event.id, event]));
             for (const event of history) byId.set(event.id, event);
@@ -78,7 +103,7 @@ export function useChannelUserInput(channelId: string | null) {
       cancelled = true;
       void dispose?.();
     };
-  }, [channelId]);
+  }, [channelId, currentPubkey]);
 
   const pending = React.useMemo(
     () =>
@@ -91,9 +116,21 @@ export function useChannelUserInput(channelId: string | null) {
     );
   }, [currentPubkey, events, sentRequestIds]);
   const resolved = React.useMemo(
-    () => deriveResolvedUserInputs(events),
-    [events],
+    () =>
+      deriveResolvedUserInputs(events).filter(
+        ({ event }) =>
+          visibleRequestIds.has(event.id) &&
+          !dismissedResolutionIds.has(event.id),
+      ),
+    [dismissedResolutionIds, events, visibleRequestIds],
   );
+  const dismissResolved = React.useCallback((requestEventId: string) => {
+    setDismissedResolutionIds((current) => {
+      const next = new Set(current);
+      next.add(requestEventId);
+      return next;
+    });
+  }, []);
 
   const answer = React.useCallback(
     async (request: UserInputEvent, answers: UserInputAnswers) => {
@@ -151,6 +188,7 @@ export function useChannelUserInput(channelId: string | null) {
     errors,
     answer,
     skip,
+    dismissResolved,
     isLoading: Boolean(channelId) && identityQuery.isLoading,
   };
 }
