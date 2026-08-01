@@ -48,6 +48,9 @@ if [[ -z "$GH_USER" ]]; then
   esac
 fi
 if [[ -z "$GH_USER" ]]; then
+  GH_USER=$(gh api user --jq .login 2>/dev/null || true)
+fi
+if [[ -z "$GH_USER" ]]; then
   echo "error: could not determine GitHub username; set GITHUB_ACTOR or GH_USERNAME" >&2
   exit 1
 fi
