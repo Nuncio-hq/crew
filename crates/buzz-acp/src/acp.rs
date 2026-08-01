@@ -1858,7 +1858,7 @@ impl AcpClient {
             Some(value) => buzz_core::user_input::Engine::Other(value.to_owned()),
             None => buzz_core::user_input::Engine::Other("unknown".to_owned()),
         };
-        let Some(form) = crate::elicitation::normalize_form(schema, engine.clone()) else {
+        let Some(form) = crate::elicitation::normalize_form(schema) else {
             self.write_ndjson(&cancel()).await?;
             return Ok(None);
         };

@@ -3913,4 +3913,38 @@ mod tests {
             .iter()
             .any(|t| t.as_slice().first().map(String::as_str) == Some("replaced-by")));
     }
+
+    #[test]
+    fn agent_user_input_request_builder_sets_kind_and_channel() {
+        let channel = Uuid::new_v4();
+        let event = sign(build_agent_user_input_request(channel, r#"{"q0":"Pick"}"#).unwrap());
+        assert_eq!(
+            event.kind,
+            Kind::Custom(KIND_AGENT_USER_INPUT_REQUESTED as u16)
+        );
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["h".to_string(), channel.to_string()] }));
+    }
+
+    #[test]
+    fn agent_user_input_answer_builder_sets_channel_and_request_link() {
+        let channel = Uuid::new_v4();
+        let request = "a".repeat(64);
+        let event =
+            sign(build_agent_user_input_answer(channel, &request, r#"{"q0":"Pick"}"#).unwrap());
+        assert_eq!(
+            event.kind,
+            Kind::Custom(KIND_AGENT_USER_INPUT_ANSWER as u16)
+        );
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["h".to_string(), channel.to_string()] }));
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["e".to_string(), request.clone()] }));
+    }
 }

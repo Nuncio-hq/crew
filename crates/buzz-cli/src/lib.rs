@@ -1862,6 +1862,32 @@ mod tests {
     }
 
     #[test]
+    fn user_input_commands_parse() {
+        assert!(Cli::try_parse_from([
+            "buzz",
+            "user-input",
+            "list",
+            "--channel",
+            "00000000-0000-0000-0000-000000000000",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "buzz",
+            "--format",
+            "compact",
+            "user-input",
+            "answer",
+            "--channel",
+            "00000000-0000-0000-0000-000000000000",
+            "--request",
+            &"a".repeat(64),
+            "--answers",
+            r#"{"q0":"Pick"}"#,
+        ])
+        .is_ok());
+    }
+
+    #[test]
     fn set_status_clear_rejects_text_and_emoji() {
         for extra in [["--text", "busy"], ["--emoji", "🎶"]] {
             let args = ["buzz", "users", "set-status", "--clear"]

@@ -76,6 +76,7 @@ impl QuestionRuntime {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn publish(
         &self,
         channel_id: Uuid,
@@ -220,10 +221,7 @@ fn natural_cmp(left: &str, right: &str) -> std::cmp::Ordering {
 }
 
 /// Normalize the supported ACP form subset into Crew's contract.
-pub(crate) fn normalize_form(
-    schema: &serde_json::Value,
-    _engine: Engine,
-) -> Option<NormalizedForm> {
+pub(crate) fn normalize_form(schema: &serde_json::Value) -> Option<NormalizedForm> {
     let properties = schema.get("properties")?.as_object()?;
     let required = schema
         .get("required")
@@ -398,7 +396,7 @@ mod tests {
             ]},
             "question_1":{"type":"string","description":"Why?"}
         }});
-        let form = normalize_form(&schema, Engine::Claude).expect("supported");
+        let form = normalize_form(&schema).expect("supported");
         assert_eq!(form.questions[0].options[0].value, "yes");
         assert_eq!(form.questions[0].options[0].label, "Yes");
         assert!(form.questions[1].options.is_empty());
@@ -411,7 +409,7 @@ mod tests {
             "question_0_custom":{"type":"string"},
             "question_1":{"type":"array","items":{"anyOf":[{"const":"x"}]}}
         }});
-        let form = normalize_form(&schema, Engine::Claude).expect("supported");
+        let form = normalize_form(&schema).expect("supported");
         let answers = BTreeMap::from([
             ("q0".into(), Some(UserInputAnswer::Text("custom".into()))),
             ("q1".into(), Some(UserInputAnswer::Multi(vec!["x".into()]))),
@@ -423,10 +421,10 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_schema() {
-        assert!(normalize_form(
-            &serde_json::json!({"type":"object","properties":{"x":{"type":"number"}}}),
-            Engine::Codex
-        )
+        assert!(normalize_form(&serde_json::json!({
+            "type":"object",
+            "properties":{"x":{"type":"number"}}
+        }))
         .is_none());
     }
 
@@ -439,11 +437,8 @@ mod tests {
                 serde_json::json!({"type":"string","title":format!("Q{index}")}),
             );
         }
-        let form = normalize_form(
-            &serde_json::json!({"type":"object","properties":properties}),
-            Engine::Claude,
-        )
-        .expect("supported");
+        let form = normalize_form(&serde_json::json!({"type":"object","properties":properties}))
+            .expect("supported");
         let headers = form
             .questions
             .iter()
@@ -463,7 +458,7 @@ mod tests {
             },
             "required":["question_0"]
         });
-        let form = normalize_form(&schema, Engine::Codex).expect("supported");
+        let form = normalize_form(&schema).expect("supported");
         let partial = BTreeMap::from([("q0".into(), Some(UserInputAnswer::Text("answer".into())))]);
         assert!(reconstruct_content(&form, &partial).is_some());
         let missing_required =
@@ -488,13 +483,10 @@ mod tests {
                 auth_tag_json: None,
             },
         );
-        let form = normalize_form(
-            &serde_json::json!({
-                "type":"object",
-                "properties":{"question_0":{"type":"string","oneOf":[{"const":"yes"}]}}
-            }),
-            Engine::Claude,
-        )
+        let form = normalize_form(&serde_json::json!({
+            "type":"object",
+            "properties":{"question_0":{"type":"string","oneOf":[{"const":"yes"}]}}
+        }))
         .expect("supported");
         let (event_id, mut receiver) = runtime
             .publish(
