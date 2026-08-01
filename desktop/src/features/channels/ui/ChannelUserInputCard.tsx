@@ -10,9 +10,14 @@ import {
 } from "@/shared/ui/card";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
-import type {
-  UserInputAnswerValue,
-  UserInputEvent,
+import {
+  buildQuestionAnswer,
+  emptyUserInputDraft,
+  selectUserInputOption,
+  setUserInputCustom,
+  type UserInputAnswerValue,
+  type UserInputDraft,
+  type UserInputEvent,
 } from "@/features/channels/lib/userInput";
 
 type Props = {
@@ -20,6 +25,8 @@ type Props = {
   currentPubkey: string;
   profiles?: Record<string, { ownerPubkey: string | null }>;
   sent?: boolean;
+  error?: string;
+  sending?: boolean;
   onSubmit: (
     item: UserInputEvent,
     answers: Record<string, UserInputAnswerValue>,
@@ -27,21 +34,17 @@ type Props = {
   onSkip: (item: UserInputEvent) => Promise<void>;
 };
 
-type QuestionState = {
-  selected: string[];
-  custom: string;
-  notes: Record<string, string>;
-};
-
 export function ChannelUserInputCard({
   item,
   currentPubkey,
   profiles,
   sent = false,
+  error,
+  sending = false,
   onSubmit,
   onSkip,
 }: Props) {
-  const [state, setState] = React.useState<Record<string, QuestionState>>({});
+  const [state, setState] = React.useState<Record<string, UserInputDraft>>({});
   const ownerPubkey = profiles?.[item.event.pubkey]?.ownerPubkey ?? null;
   const readOnly = ownerPubkey !== null && ownerPubkey !== currentPubkey;
   const hasAnswer = item.request.questions.every((question) => {
@@ -49,7 +52,7 @@ export function ChannelUserInputCard({
     return Boolean(value?.custom.trim() || value?.selected.length);
   });
 
-  const update = (id: string, patch: Partial<QuestionState>) => {
+  const update = (id: string, patch: Partial<UserInputDraft>) => {
     setState((current) => ({
       ...current,
       [id]: {
@@ -62,23 +65,10 @@ export function ChannelUserInputCard({
   const submit = async () => {
     const answers: Record<string, UserInputAnswerValue> = {};
     for (const question of item.request.questions) {
-      const value = state[question.id] ?? {
-        selected: [],
-        custom: "",
-        notes: {},
-      };
-      if (value.custom.trim()) {
-        answers[question.id] = value.custom.trim();
-      } else if (question.allow_notes && Object.keys(value.notes).length > 0) {
-        answers[question.id] = {
-          selected: question.multi_select ? value.selected : value.selected[0],
-          choice_notes: value.notes,
-        };
-      } else {
-        answers[question.id] = question.multi_select
-          ? value.selected
-          : value.selected[0];
-      }
+      answers[question.id] = buildQuestionAnswer(
+        question,
+        state[question.id] ?? emptyUserInputDraft(),
+      );
     }
     await onSubmit(item, answers);
   };
@@ -108,11 +98,7 @@ export function ChannelUserInputCard({
       {!sent ? (
         <CardContent className="space-y-5">
           {item.request.questions.map((question) => {
-            const value = state[question.id] ?? {
-              selected: [],
-              custom: "",
-              notes: {},
-            };
+            const value = state[question.id] ?? emptyUserInputDraft();
             return (
               <fieldset key={question.id} className="space-y-2">
                 <legend className="text-sm font-medium">
@@ -139,14 +125,14 @@ export function ChannelUserInputCard({
                           name={question.id}
                           type={question.multi_select ? "checkbox" : "radio"}
                           onChange={() => {
-                            const selected = question.multi_select
-                              ? checked
-                                ? value.selected.filter(
-                                    (v) => v !== option.value,
-                                  )
-                                : [...value.selected, option.value]
-                              : [option.value];
-                            update(question.id, { selected });
+                            update(
+                              question.id,
+                              selectUserInputOption(
+                                question,
+                                value,
+                                option.value,
+                              ),
+                            );
                           }}
                         />
                         <span>
@@ -168,27 +154,42 @@ export function ChannelUserInputCard({
                     placeholder="Your answer"
                     value={value.custom}
                     onChange={(event) =>
-                      update(question.id, {
-                        custom: event.target.value,
-                        selected: [],
-                      })
+                      setState((current) => ({
+                        ...current,
+                        [question.id]: setUserInputCustom(
+                          value,
+                          event.target.value,
+                        ),
+                      }))
                     }
                   />
                 ) : null}
                 {question.allow_notes && value.selected.length > 0 ? (
-                  <Textarea
-                    aria-label={`${question.header} notes`}
-                    disabled={readOnly}
-                    placeholder="Notes (optional)"
-                    value={Object.values(value.notes)[0] ?? ""}
-                    onChange={(event) =>
-                      update(question.id, {
-                        notes: {
-                          [value.selected[0]]: event.target.value,
-                        },
-                      })
-                    }
-                  />
+                  <div className="space-y-2">
+                    {value.selected.map((selectedValue) => {
+                      const option = question.options.find(
+                        ({ value: optionValue }) =>
+                          optionValue === selectedValue,
+                      );
+                      return (
+                        <Textarea
+                          aria-label={`${question.header} notes for ${option?.label ?? selectedValue}`}
+                          disabled={readOnly}
+                          key={selectedValue}
+                          placeholder={`Notes for ${option?.label ?? selectedValue} (optional)`}
+                          value={value.notes[selectedValue] ?? ""}
+                          onChange={(event) =>
+                            update(question.id, {
+                              notes: {
+                                ...value.notes,
+                                [selectedValue]: event.target.value,
+                              },
+                            })
+                          }
+                        />
+                      );
+                    })}
+                  </div>
                 ) : null}
               </fieldset>
             );
@@ -199,22 +200,27 @@ export function ChannelUserInputCard({
         <CardFooter className="gap-2">
           <Button
             data-testid="channel-user-input-skip"
-            disabled={readOnly}
+            disabled={readOnly || sending}
             type="button"
             variant="ghost"
             onClick={() => void onSkip(item)}
           >
-            Skip
+            {sending ? "Sending..." : "Answer nothing"}
           </Button>
           <Button
             data-testid="channel-user-input-submit"
-            disabled={readOnly || !hasAnswer}
+            disabled={readOnly || !hasAnswer || sending}
             type="button"
             onClick={() => void submit()}
           >
-            Submit
+            {sending ? "Sending..." : "Submit"}
           </Button>
         </CardFooter>
+      ) : null}
+      {error ? (
+        <CardDescription className="px-6 pb-4 text-destructive" role="alert">
+          Could not send answer: {error}
+        </CardDescription>
       ) : null}
     </Card>
   );

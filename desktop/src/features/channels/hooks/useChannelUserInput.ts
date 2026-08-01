@@ -8,6 +8,7 @@ import {
   buildSkippedAnswers,
   buildUserInputAnswers,
   derivePendingUserInputs,
+  publishUserInputAnswer,
   type UserInputAnswers,
   type UserInputEvent,
 } from "@/features/channels/lib/userInput";
@@ -27,14 +28,17 @@ export function useChannelUserInput(channelId: string | null) {
   const [sentRequestIds, setSentRequestIds] = React.useState(
     () => new Set<string>(),
   );
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   React.useEffect(() => {
     setEvents([]);
     setOptimisticallyResolved(new Set());
     setSentRequestIds(new Set());
+    setErrors({});
     if (!channelId) return;
 
     let cancelled = false;
+    let dispose: (() => Promise<void>) | undefined;
     const filter = buildChannelUserInputFilter(channelId, RETAINED_EVENTS);
     const onEvent = (event: RelayEvent) => {
       if (cancelled) return;
@@ -47,9 +51,10 @@ export function useChannelUserInput(channelId: string | null) {
 
     const load = async () => {
       try {
-        const dispose = await relayClient.subscribeLive(filter, onEvent);
+        dispose = await relayClient.subscribeLive(filter, onEvent);
         if (cancelled) {
           await dispose();
+          dispose = undefined;
           return;
         }
         const history = await relayClient.fetchEvents(filter);
@@ -62,17 +67,12 @@ export function useChannelUserInput(channelId: string | null) {
               .slice(0, RETAINED_EVENTS);
           });
         }
-        return dispose;
       } catch (error) {
         console.error("Failed to load agent questions", error);
       }
     };
 
-    let dispose: (() => Promise<void>) | undefined;
-    void load().then((cleanup) => {
-      dispose = cleanup;
-      if (cancelled) void cleanup?.();
-    });
+    void load();
     return () => {
       cancelled = true;
       void dispose?.();
@@ -85,27 +85,30 @@ export function useChannelUserInput(channelId: string | null) {
     [currentPubkey, events, optimisticallyResolved],
   );
   const sent = React.useMemo(() => {
-    const active = new Set(
-      derivePendingUserInputs(events, currentPubkey).map(
-        ({ event }) => event.id,
-      ),
+    return derivePendingUserInputs(events, currentPubkey).filter(({ event }) =>
+      sentRequestIds.has(event.id),
     );
-    return derivePendingUserInputs(events, currentPubkey, new Set())
-      .filter(
-        ({ event }) => sentRequestIds.has(event.id) && active.has(event.id),
-      )
-      .map((request) => request);
   }, [currentPubkey, events, sentRequestIds]);
 
   const answer = React.useCallback(
     async (request: UserInputEvent, answers: UserInputAnswers) => {
+      setErrors((current) => {
+        const next = { ...current };
+        delete next[request.event.id];
+        return next;
+      });
       setSendingRequestId(request.event.id);
       try {
-        await sendChannelUserInputAnswer(
+        const error = await publishUserInputAnswer(
+          sendChannelUserInputAnswer,
           channelId ?? request.request.channel_id,
           request.event.id,
           buildUserInputAnswers(answers),
         );
+        if (error) {
+          setErrors((current) => ({ ...current, [request.event.id]: error }));
+          return;
+        }
         setOptimisticallyResolved((current) => {
           const next = new Set(current);
           next.add(request.event.id);
@@ -138,6 +141,7 @@ export function useChannelUserInput(channelId: string | null) {
     currentPubkey,
     sendingRequestId,
     sentRequestIds,
+    errors,
     answer,
     skip,
     isLoading: Boolean(channelId) && identityQuery.isLoading,

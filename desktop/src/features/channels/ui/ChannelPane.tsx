@@ -749,6 +749,8 @@ export const ChannelPane = React.memo(function ChannelPane({
                     pending={userInput.pending}
                     profiles={profiles}
                     sent={userInput.sent}
+                    errors={userInput.errors}
+                    sendingRequestId={userInput.sendingRequestId}
                     onSkip={userInput.skip}
                     onSubmit={userInput.answer}
                   />

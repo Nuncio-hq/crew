@@ -10,6 +10,8 @@ type Props = {
   sent: UserInputEvent[];
   currentPubkey: string;
   profiles?: Record<string, { ownerPubkey: string | null }>;
+  errors: Record<string, string>;
+  sendingRequestId: string | null;
   onSkip: (item: UserInputEvent) => Promise<void>;
   onSubmit: (item: UserInputEvent, answers: UserInputAnswers) => Promise<void>;
 };
@@ -19,6 +21,8 @@ export function ChannelUserInputStack({
   sent,
   currentPubkey,
   profiles,
+  errors,
+  sendingRequestId,
   onSkip,
   onSubmit,
 }: Props) {
@@ -38,6 +42,8 @@ export function ChannelUserInputStack({
           key={item.event.id}
           profiles={profiles}
           sent={sentIds.has(item.event.id)}
+          error={errors[item.event.id]}
+          sending={sendingRequestId === item.event.id}
           onSkip={onSkip}
           onSubmit={onSubmit}
         />

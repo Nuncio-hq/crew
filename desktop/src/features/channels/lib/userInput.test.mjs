@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildQuestionAnswer,
   buildSkippedAnswers,
   buildUserInputAnswers,
   derivePendingUserInputs,
+  publishUserInputAnswer,
+  selectUserInputOption,
+  serializeUserInputAnswers,
+  setUserInputCustom,
 } from "./userInput.ts";
 
 const request = (id, created_at = 10) => ({
@@ -87,13 +92,82 @@ test("optimistic resolution hides the card", () => {
 
 test("answer payloads preserve all wire shapes", () => {
   assert.equal(
-    buildUserInputAnswers({
-      q0: "production",
-      q1: ["lint", "tests"],
-      q2: { selected: "yes", choice_notes: { yes: "because" } },
-      q3: null,
-    }),
+    serializeUserInputAnswers(
+      buildUserInputAnswers({
+        q0: "production",
+        q1: ["lint", "tests"],
+        q2: { selected: "yes", choice_notes: { yes: "because" } },
+        q3: null,
+      }),
+    ),
     '{"q0":"production","q1":["lint","tests"],"q2":{"selected":"yes","choice_notes":{"yes":"because"}},"q3":null}',
   );
   assert.deepEqual(buildSkippedAnswers(["q0", "q1"]), { q0: null, q1: null });
+});
+
+test("custom text and option selection are mutually exclusive", () => {
+  const question = {
+    id: "q0",
+    header: "Environment",
+    question: "Where?",
+    options: [{ value: "production", label: "Production", description: "" }],
+    allow_custom_answer: true,
+  };
+  const withCustom = setUserInputCustom(
+    { selected: [], custom: "", notes: {} },
+    "staging",
+  );
+  assert.deepEqual(withCustom.selected, []);
+  const withOption = selectUserInputOption(question, withCustom, "production");
+  assert.deepEqual(withOption, {
+    selected: ["production"],
+    custom: "",
+    notes: {},
+  });
+});
+
+test("publish failures return an inline-safe error and do not resolve", async () => {
+  const answers = { q0: "production" };
+  const error = await publishUserInputAnswer(
+    async () => {
+      throw new Error("relay rejected");
+    },
+    "channel",
+    "request",
+    answers,
+  );
+  assert.equal(error, "relay rejected");
+  assert.deepEqual(answers, { q0: "production" });
+});
+
+test("multi-select notes are keyed and pruned by selected option", () => {
+  const question = {
+    id: "q0",
+    header: "Checks",
+    question: "Which?",
+    options: [
+      { value: "lint", label: "Lint", description: "" },
+      { value: "tests", label: "Tests", description: "" },
+    ],
+    multi_select: true,
+    allow_notes: true,
+  };
+  let draft = selectUserInputOption(
+    question,
+    { selected: [], custom: "", notes: {} },
+    "lint",
+  );
+  draft = { ...draft, notes: { lint: "fast", tests: "old" } };
+  draft = selectUserInputOption(question, draft, "tests");
+  assert.deepEqual(draft, {
+    selected: ["lint", "tests"],
+    custom: "",
+    notes: { lint: "fast", tests: "old" },
+  });
+  draft = selectUserInputOption(question, draft, "lint");
+  assert.deepEqual(draft.notes, { tests: "old" });
+  assert.deepEqual(buildQuestionAnswer(question, draft), {
+    selected: ["tests"],
+    choice_notes: { tests: "old" },
+  });
 });

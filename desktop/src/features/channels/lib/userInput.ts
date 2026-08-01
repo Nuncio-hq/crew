@@ -44,6 +44,79 @@ export type UserInputAnswerValue =
 
 export type UserInputAnswers = Record<string, UserInputAnswerValue>;
 
+export async function publishUserInputAnswer(
+  publish: (
+    channelId: string,
+    requestEventId: string,
+    answers: UserInputAnswers,
+  ) => Promise<unknown>,
+  channelId: string,
+  requestEventId: string,
+  answers: UserInputAnswers,
+): Promise<string | null> {
+  try {
+    await publish(channelId, requestEventId, answers);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "Failed to send answer.";
+  }
+}
+
+export type UserInputDraft = {
+  selected: string[];
+  custom: string;
+  notes: Record<string, string>;
+};
+
+export const emptyUserInputDraft = (): UserInputDraft => ({
+  selected: [],
+  custom: "",
+  notes: {},
+});
+
+export function selectUserInputOption(
+  question: UserInputQuestion,
+  draft: UserInputDraft,
+  value: string,
+): UserInputDraft {
+  const selected = question.multi_select
+    ? draft.selected.includes(value)
+      ? draft.selected.filter((item) => item !== value)
+      : [...draft.selected, value]
+    : [value];
+  const selectedSet = new Set(selected);
+  return {
+    selected,
+    custom: "",
+    notes: Object.fromEntries(
+      Object.entries(draft.notes).filter(([key]) => selectedSet.has(key)),
+    ),
+  };
+}
+
+export function setUserInputCustom(
+  draft: UserInputDraft,
+  custom: string,
+): UserInputDraft {
+  return custom.trim()
+    ? { selected: [], custom, notes: {} }
+    : { ...draft, custom };
+}
+
+export function buildQuestionAnswer(
+  question: UserInputQuestion,
+  draft: UserInputDraft,
+): UserInputAnswerValue {
+  if (draft.custom.trim()) return draft.custom.trim();
+  if (question.allow_notes && Object.keys(draft.notes).length > 0) {
+    return {
+      selected: question.multi_select ? draft.selected : draft.selected[0],
+      choice_notes: draft.notes,
+    };
+  }
+  return question.multi_select ? draft.selected : draft.selected[0];
+}
+
 export function parseUserInputRequest(
   event: RelayEvent,
 ): UserInputRequest | null {
@@ -114,11 +187,18 @@ export function derivePendingUserInputs(
 }
 
 export function buildUserInputAnswers(
-  values: Record<string, UserInputAnswerValue>,
-): string {
+  values: UserInputAnswers,
+): UserInputAnswers {
+  return values;
+}
+
+export function serializeUserInputAnswers(values: UserInputAnswers): string {
   return JSON.stringify(values);
 }
 
+// `null` is decoded by the harness as `None`: optional fields are omitted,
+// while a required field cancels the form. This intentionally means "answer
+// nothing", rather than dismissing the durable request locally.
 export function buildSkippedAnswers(questionIds: string[]): UserInputAnswers {
   return Object.fromEntries(questionIds.map((id) => [id, null]));
 }
