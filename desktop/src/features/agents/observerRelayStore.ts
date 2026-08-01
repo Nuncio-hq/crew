@@ -399,10 +399,11 @@ async function handleRelayObserverEvent(
 ) {
   const agentPubkey = observerTag(event, "agent");
   const frame = observerTag(event, "frame");
-  if (!agentPubkey || frame !== "telemetry") {
+  if (!agentPubkey || frame == null) {
     logObserverDrop("missing_telemetry_tag", event, activeGeneration);
     return;
   }
+  if (frame !== "telemetry") return;
 
   // Ownership data arrives asynchronously during startup. Buffer raw signed
   // frames until the first trusted-agent set is registered, then re-run this
@@ -727,10 +728,11 @@ export async function ingestArchivedObserverEvents(
   for (const event of rawEvents) {
     const agentPubkey = observerTag(event, "agent");
     const frame = observerTag(event, "frame");
-    if (!agentPubkey || frame !== "telemetry") {
+    if (!agentPubkey || frame == null) {
       logObserverDrop("missing_telemetry_tag", event, generation);
       continue;
     }
+    if (frame !== "telemetry") continue;
     if (!knownAgentPubkeys.has(normalizePubkey(agentPubkey))) {
       if (knownAgentPubkeys.size > 0) {
         logObserverDrop("unknown_agent", event, generation);
@@ -862,9 +864,4 @@ export function _testGetObserverDropCounts(): Record<
     counts[reason] = state.count;
   }
   return counts;
-}
-
-/** Test-only: exercise the stale-generation drop logging path. */
-export function _testLogStaleObserverDrop(event: RelayEvent): void {
-  logObserverDrop("stale_generation", event, generation - 1);
 }

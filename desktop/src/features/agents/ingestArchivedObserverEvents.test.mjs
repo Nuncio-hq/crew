@@ -19,7 +19,6 @@ import {
   _testRegisterKnownAgents,
   _testGetArchivedChannelEvents,
   _testGetObserverDropCounts,
-  _testLogStaleObserverDrop,
 } from "@/features/agents/observerRelayStore.ts";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -131,6 +130,11 @@ describe("ingestArchivedObserverEvents", () => {
     });
     await ingestArchivedObserverEvents([nonTelemetryEvent], decryptFn);
     assert.equal(decryptCalled, false, "non-telemetry frame must be dropped");
+    assert.equal(
+      _testGetObserverDropCounts().missing_telemetry_tag,
+      undefined,
+      "valid non-telemetry frames must not emit drop diagnostics",
+    );
     const snap = getAgentObserverSnapshot(AGENT_PUBKEY, true);
     assert.equal(snap.events.length, 0);
   });
@@ -149,7 +153,7 @@ describe("ingestArchivedObserverEvents", () => {
     await ingestArchivedObserverEvents(
       [
         makeRawEvent({
-          tags: [["frame", "control"]],
+          tags: [["agent", AGENT_PUBKEY]],
         }),
         makeRawEvent({
           tags: [
@@ -165,14 +169,12 @@ describe("ingestArchivedObserverEvents", () => {
       ],
       makeDecryptFail(),
     );
-    _testLogStaleObserverDrop(makeRawEvent());
 
     assert.deepEqual(_testGetObserverDropCounts(), {
       missing_telemetry_tag: 1,
       unknown_agent: 1,
       sender_agent_mismatch: 1,
       decrypt_failed: 2,
-      stale_generation: 1,
     });
   });
 
