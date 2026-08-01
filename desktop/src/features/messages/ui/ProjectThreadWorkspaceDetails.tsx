@@ -13,6 +13,16 @@ import type {
   ThreadWorkspaceLifecycle,
 } from "@/shared/api/thread-workspace-types";
 import { writeTextToClipboard } from "@/shared/lib/clipboard";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/shared/ui/alert-dialog";
 import { Button } from "@/shared/ui/button";
 
 type ReadyWorkspace = Extract<
@@ -28,6 +38,11 @@ export function ProjectThreadWorkspaceDetails({
   const [lifecycle, setLifecycle] =
     React.useState<ThreadWorkspaceLifecycle | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [pendingAction, setPendingAction] = React.useState<{
+    action: () => Promise<ThreadWorkspaceActionResult>;
+    description: string;
+    title: string;
+  } | null>(null);
   const target = React.useMemo(
     () =>
       workspace.repositoryPath
@@ -64,11 +79,7 @@ export function ProjectThreadWorkspaceDetails({
       toast.error("Could not copy workspace path");
     }
   };
-  const run = async (
-    prompt: string,
-    action: () => Promise<ThreadWorkspaceActionResult>,
-  ) => {
-    if (!window.confirm(prompt)) return;
+  const run = async (action: () => Promise<ThreadWorkspaceActionResult>) => {
     setBusy(true);
     try {
       const result = await action();
@@ -139,14 +150,16 @@ export function ProjectThreadWorkspaceDetails({
           disabled={!target || busy || lifecycle?.dirty !== false}
           onClick={() =>
             target &&
-            void run(
-              "Remove this clean thread worktree? The branch will remain.",
-              () =>
+            setPendingAction({
+              action: () =>
                 removeThreadWorktree({
                   ...target,
                   worktreePath: workspace.worktreePath,
                 }),
-            )
+              description:
+                "Remove this clean thread worktree? The branch will remain.",
+              title: "Remove worktree?",
+            })
           }
           size="sm"
           type="button"
@@ -163,9 +176,11 @@ export function ProjectThreadWorkspaceDetails({
           }
           onClick={() =>
             target &&
-            void run("Delete this local and remote thread branch?", () =>
-              deleteThreadBranch(target),
-            )
+            setPendingAction({
+              action: () => deleteThreadBranch(target),
+              description: "Delete this local and remote thread branch?",
+              title: "Delete branch?",
+            })
           }
           size="sm"
           type="button"
@@ -180,6 +195,40 @@ export function ProjectThreadWorkspaceDetails({
           discarded.
         </p>
       ) : null}
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!open && !busy) setPendingAction(null);
+        }}
+        open={pendingAction !== null}
+      >
+        <AlertDialogContent data-testid="project-thread-workspace-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingAction?.title}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingAction?.description}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button
+                data-testid="project-thread-workspace-confirm-action"
+                disabled={busy}
+                onClick={(event) => {
+                  event.preventDefault();
+                  const action = pendingAction?.action;
+                  setPendingAction(null);
+                  if (action) void run(action);
+                }}
+                type="button"
+                variant="destructive"
+              >
+                {busy ? "Working…" : "Confirm"}
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

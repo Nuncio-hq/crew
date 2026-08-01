@@ -16,6 +16,16 @@ import type {
   ThreadPullRequest,
   ThreadPullRequestCheck,
 } from "@/shared/api/thread-workspace-types";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/shared/ui/alert-dialog";
 import { Button } from "@/shared/ui/button";
 
 export type ProjectThreadGitHubDrawer = "issue" | "pr" | "ci";
@@ -108,11 +118,11 @@ export function ProjectThreadGitHubDetails({
   target: { branch: string; repositoryPath: string; rootEventId: string };
 }) {
   const [busy, setBusy] = React.useState(false);
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
   if (drawer === "issue") return <IssueDetails pullRequest={pullRequest} />;
   if (drawer === "ci") return <CiDetails checks={pullRequest.checks} />;
 
   const close = async () => {
-    if (!window.confirm(`Close pull request #${pullRequest.number}?`)) return;
     setBusy(true);
     try {
       const result = await closeThreadPullRequest(target);
@@ -176,13 +186,46 @@ export function ProjectThreadGitHubDetails({
       </div>
       <Button
         disabled={busy || pullRequest.state.toUpperCase() !== "OPEN"}
-        onClick={() => void close()}
+        onClick={() => setConfirmOpen(true)}
         size="sm"
         type="button"
         variant="destructive"
       >
         Close PR
       </Button>
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!busy) setConfirmOpen(open);
+        }}
+        open={confirmOpen}
+      >
+        <AlertDialogContent data-testid="project-thread-close-pr-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Close pull request?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Close pull request #{pullRequest.number}?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button
+                data-testid="project-thread-close-pr-confirm-action"
+                disabled={busy}
+                onClick={(event) => {
+                  event.preventDefault();
+                  setConfirmOpen(false);
+                  void close();
+                }}
+                type="button"
+                variant="destructive"
+              >
+                {busy ? "Closing…" : "Close PR"}
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
