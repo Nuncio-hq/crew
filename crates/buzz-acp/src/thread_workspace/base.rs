@@ -95,6 +95,20 @@ async fn resolve_default_branch(repo_root: &Path, allow_remote_query: bool) -> O
                 .and_then(|output| parse_remote_head_branch(&output))
         }
         None => None,
+    };
+    let branch = match branch {
+        Some(branch) => Some(branch),
+        None => git_optional_output(
+            repo_root,
+            [
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ],
+        )
+        .await
+        .and_then(|value| value.trim().strip_prefix("origin/").map(str::to_string)),
     }?;
     if !git_success(repo_root, ["check-ref-format", "--branch", branch.as_str()]).await {
         return None;
