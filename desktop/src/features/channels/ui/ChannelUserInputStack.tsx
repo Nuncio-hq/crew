@@ -8,6 +8,11 @@ import type {
 type Props = {
   pending: UserInputEvent[];
   sent: UserInputEvent[];
+  resolved: Array<
+    UserInputEvent & {
+      resolution: "answered" | "declined" | "cancelled";
+    }
+  >;
   currentPubkey: string;
   profiles?: Record<string, { ownerPubkey: string | null }>;
   errors: Record<string, string>;
@@ -16,9 +21,16 @@ type Props = {
   onSubmit: (item: UserInputEvent, answers: UserInputAnswers) => Promise<void>;
 };
 
+type ResolvedUserInputEvent = UserInputEvent & {
+  resolution: "answered" | "declined" | "cancelled";
+};
+
+type CardItem = UserInputEvent | ResolvedUserInputEvent;
+
 export function ChannelUserInputStack({
   pending,
   sent,
+  resolved,
   currentPubkey,
   profiles,
   errors,
@@ -35,19 +47,23 @@ export function ChannelUserInputStack({
       className="pointer-events-auto mx-5 mb-2 max-h-[min(48vh,34rem)] space-y-2 overflow-y-auto"
       data-testid="channel-user-input-stack"
     >
-      {[...sent, ...pending].map((item) => (
-        <ChannelUserInputCard
-          currentPubkey={currentPubkey}
-          item={item}
-          key={item.event.id}
-          profiles={profiles}
-          sent={sentIds.has(item.event.id)}
-          error={errors[item.event.id]}
-          sending={sendingRequestId === item.event.id}
-          onSkip={onSkip}
-          onSubmit={onSubmit}
-        />
-      ))}
+      {([...sent, ...resolved, ...pending] as CardItem[]).map((item) => {
+        const resolution = "resolution" in item ? item.resolution : undefined;
+        return (
+          <ChannelUserInputCard
+            currentPubkey={currentPubkey}
+            item={item}
+            key={item.event.id}
+            profiles={profiles}
+            sent={sentIds.has(item.event.id)}
+            resolution={resolution}
+            error={errors[item.event.id]}
+            sending={sendingRequestId === item.event.id}
+            onSkip={onSkip}
+            onSubmit={onSubmit}
+          />
+        );
+      })}
     </div>
   );
 }

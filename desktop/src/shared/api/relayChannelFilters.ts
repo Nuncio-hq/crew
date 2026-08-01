@@ -6,6 +6,7 @@ import {
   KIND_DELETION,
   KIND_AGENT_USER_INPUT_ANSWER,
   KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_RESOLVED,
   KIND_NIP29_DELETE_EVENT,
   KIND_REACTION,
   KIND_STREAM_MESSAGE,
@@ -27,7 +28,11 @@ export function buildChannelUserInputFilter(
   since?: number,
 ): RelaySubscriptionFilter {
   const filter: RelaySubscriptionFilter = {
-    kinds: [KIND_AGENT_USER_INPUT_REQUESTED, KIND_AGENT_USER_INPUT_ANSWER],
+    kinds: [
+      KIND_AGENT_USER_INPUT_REQUESTED,
+      KIND_AGENT_USER_INPUT_ANSWER,
+      KIND_AGENT_USER_INPUT_RESOLVED,
+    ],
     "#h": [channelId],
     limit,
   };

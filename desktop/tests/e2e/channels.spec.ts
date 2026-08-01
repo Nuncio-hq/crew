@@ -544,6 +544,12 @@ test("channel question card accepts an answer", async ({ page }) => {
   await card.getByRole("radio", { name: "Production" }).check();
   await card.getByTestId("channel-user-input-submit").click();
   await expect(card).toContainText("Sent, waiting for the agent.");
+  await page.waitForFunction(() =>
+    window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+      channelName: "general",
+      kind: 46042,
+    }),
+  );
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -571,6 +577,24 @@ test("channel question card accepts an answer", async ({ page }) => {
         answers: { q0: "production" },
       },
     });
+
+  await page.evaluate(() => {
+    const win = window as Window & {
+      __BUZZ_E2E_EMIT_MOCK_USER_INPUT_RESOLVED__?: (input: {
+        channelName: string;
+        requestEventId: string;
+        outcome: "answered" | "declined" | "cancelled";
+      }) => unknown;
+    };
+    win.__BUZZ_E2E_EMIT_MOCK_USER_INPUT_RESOLVED__?.({
+      channelName: "general",
+      requestEventId: "a".repeat(64),
+      outcome: "answered",
+    });
+  });
+  await expect(card).toContainText("Question answered");
+  await expect(card.getByTestId("channel-user-input-submit")).toHaveCount(0);
+  await expect(card.locator("input, textarea")).toHaveCount(0);
 });
 
 test("sidebar shows all channel types", async ({ page }) => {

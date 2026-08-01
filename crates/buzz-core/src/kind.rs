@@ -571,6 +571,8 @@ pub const KIND_WORKFLOW_APPROVAL_DENIED: u32 = 46012;
 pub const KIND_AGENT_USER_INPUT_REQUESTED: u32 = 46040;
 /// An owner-authored answer to an ACP agent human-input request.
 pub const KIND_AGENT_USER_INPUT_ANSWER: u32 = 46041;
+/// Terminal resolution of an ACP agent human-input request.
+pub const KIND_AGENT_USER_INPUT_RESOLVED: u32 = 46042;
 
 // User groups (47000–47999)
 
@@ -728,6 +730,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_WORKFLOW_APPROVAL_DENIED,
     KIND_AGENT_USER_INPUT_REQUESTED,
     KIND_AGENT_USER_INPUT_ANSWER,
+    KIND_AGENT_USER_INPUT_RESOLVED,
     KIND_AUDIT_ENTRY,
     KIND_HUDDLE_STARTED,
     KIND_HUDDLE_PARTICIPANT_JOINED,

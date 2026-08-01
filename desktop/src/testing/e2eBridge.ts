@@ -28,6 +28,7 @@ import {
 } from "@/shared/api/customEmoji";
 import {
   KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_RESOLVED,
   KIND_AGENT_OBSERVER_FRAME,
   KIND_CHANNEL_THREAD_SUMMARY,
   KIND_CHANNEL_WINDOW_BOUNDS,
@@ -1078,6 +1079,11 @@ declare global {
       requestId?: string;
       content: string;
       pubkey?: string;
+    }) => RelayEvent;
+    __BUZZ_E2E_EMIT_MOCK_USER_INPUT_RESOLVED__?: (input: {
+      channelName: string;
+      requestEventId: string;
+      outcome: "answered" | "declined" | "cancelled";
     }) => RelayEvent;
     /** Prepend `count` synthetic older messages to a channel's mock store so
      *  an older-history fetch has something to paginate. Mirrors how the real
@@ -9707,6 +9713,28 @@ export function maybeInstallE2eTauriMocks() {
       Math.floor(Date.now() / 1000),
       requestId,
     );
+    emitMockLiveEvent(channel.id, event);
+    return event;
+  };
+  window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT_RESOLVED__ = ({
+    channelName,
+    requestEventId,
+    outcome,
+  }) => {
+    const channel = mockChannels.find(
+      (candidate) => candidate.name === channelName,
+    );
+    if (!channel) throw new Error(`Mock channel ${channelName} not found.`);
+    const event = createMockEvent(
+      KIND_AGENT_USER_INPUT_RESOLVED,
+      JSON.stringify({ request_event_id: requestEventId, outcome }),
+      [
+        ["h", channel.id],
+        ["e", requestEventId],
+      ],
+      DEFAULT_MOCK_IDENTITY.pubkey,
+    );
+    recordMockMessage(channel.id, event);
     emitMockLiveEvent(channel.id, event);
     return event;
   };

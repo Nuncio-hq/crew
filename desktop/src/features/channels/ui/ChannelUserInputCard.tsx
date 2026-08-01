@@ -12,6 +12,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
 import {
   buildQuestionAnswer,
+  canSubmitUserInput,
   emptyUserInputDraft,
   selectUserInputOption,
   setUserInputCustom,
@@ -25,6 +26,7 @@ type Props = {
   currentPubkey: string;
   profiles?: Record<string, { ownerPubkey: string | null }>;
   sent?: boolean;
+  resolution?: "answered" | "declined" | "cancelled";
   error?: string;
   sending?: boolean;
   onSubmit: (
@@ -39,6 +41,7 @@ export function ChannelUserInputCard({
   currentPubkey,
   profiles,
   sent = false,
+  resolution,
   error,
   sending = false,
   onSubmit,
@@ -47,10 +50,8 @@ export function ChannelUserInputCard({
   const [state, setState] = React.useState<Record<string, UserInputDraft>>({});
   const ownerPubkey = profiles?.[item.event.pubkey]?.ownerPubkey ?? null;
   const readOnly = ownerPubkey !== null && ownerPubkey !== currentPubkey;
-  const hasAnswer = item.request.questions.every((question) => {
-    const value = state[question.id];
-    return Boolean(value?.custom.trim() || value?.selected.length);
-  });
+  const terminal = resolution !== undefined;
+  const hasAnswer = canSubmitUserInput(item.request.questions, state);
 
   const update = (id: string, patch: Partial<UserInputDraft>) => {
     setState((current) => ({
@@ -65,10 +66,10 @@ export function ChannelUserInputCard({
   const submit = async () => {
     const answers: Record<string, UserInputAnswerValue> = {};
     for (const question of item.request.questions) {
-      answers[question.id] = buildQuestionAnswer(
-        question,
-        state[question.id] ?? emptyUserInputDraft(),
-      );
+      const value = state[question.id] ?? emptyUserInputDraft();
+      if (value.custom.trim() || value.selected.length > 0) {
+        answers[question.id] = buildQuestionAnswer(question, value);
+      }
     }
     await onSubmit(item, answers);
   };
@@ -80,7 +81,15 @@ export function ChannelUserInputCard({
     >
       <CardHeader className="pb-3">
         <CardTitle className="text-base">
-          {sent ? "Answer sent" : "Agent question"}
+          {terminal
+            ? resolution === "cancelled"
+              ? "Question cancelled"
+              : resolution === "declined"
+                ? "Question declined"
+                : "Question answered"
+            : sent
+              ? "Answer sent"
+              : "Agent question"}
         </CardTitle>
         {item.request.message ? (
           <CardDescription className="whitespace-pre-wrap text-sm text-foreground/80">
@@ -93,9 +102,13 @@ export function ChannelUserInputCard({
           </CardDescription>
         ) : sent ? (
           <CardDescription>Sent, waiting for the agent.</CardDescription>
+        ) : terminal ? (
+          <CardDescription>
+            This question is no longer waiting for an answer.
+          </CardDescription>
         ) : null}
       </CardHeader>
-      {!sent ? (
+      {!sent && !terminal ? (
         <CardContent className="space-y-5">
           {item.request.questions.map((question) => {
             const value = state[question.id] ?? emptyUserInputDraft();
@@ -196,7 +209,7 @@ export function ChannelUserInputCard({
           })}
         </CardContent>
       ) : null}
-      {!sent ? (
+      {!sent && !terminal ? (
         <CardFooter className="gap-2">
           <Button
             data-testid="channel-user-input-skip"

@@ -815,11 +815,24 @@ impl AcpClient {
                 // caller will invoke cancel_with_cleanup.
             }
             Err(_) => {
+                self.cancel_pending_user_input().await;
                 self.last_prompt_id = None;
                 self.current_hard_deadline = None;
             }
         }
         self.parse_stop_reason(&result?)
+    }
+
+    async fn cancel_pending_user_input(&mut self) {
+        if let (Some(runtime), Some(event_id)) = (
+            self.user_input_runtime.as_ref(),
+            self.pending_user_input_event_id.as_deref(),
+        ) {
+            runtime.cancel(event_id).await;
+        }
+        self.pending_user_input_id = None;
+        self.pending_user_input_event_id = None;
+        self.user_input_responded = false;
     }
 
     /// Send a `session/cancel` **notification** (no `id` field, no response expected).

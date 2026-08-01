@@ -46,6 +46,9 @@ pub struct UserInputQuestion {
     /// Whether notes may accompany a selection.
     #[serde(default)]
     pub allow_notes: bool,
+    /// Whether an answer is required by the originating engine schema.
+    #[serde(default)]
+    pub required: bool,
 }
 
 /// A durable question request published to a channel.
@@ -101,3 +104,52 @@ pub enum UserInputSelection {
 
 /// Answers keyed by Crew-owned question IDs.
 pub type UserInputAnswers = BTreeMap<String, Option<UserInputAnswer>>;
+
+/// Outcome of a durable agent question request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UserInputResolutionOutcome {
+    /// The owner supplied an answer.
+    Answered,
+    /// The owner explicitly answered nothing.
+    Declined,
+    /// The turn or harness terminated before an answer was received.
+    Cancelled,
+}
+
+/// Terminal resolution of a durable agent question request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserInputResolved {
+    /// Event id of the corresponding kind-46040 request.
+    pub request_event_id: String,
+    /// Terminal outcome.
+    pub outcome: UserInputResolutionOutcome,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolution_contract_uses_stable_wire_vocabulary() {
+        let value = UserInputResolved {
+            request_event_id: "a".repeat(64),
+            outcome: UserInputResolutionOutcome::Cancelled,
+        };
+        assert_eq!(
+            serde_json::to_value(value).expect("serialize resolution"),
+            serde_json::json!({
+                "request_event_id": "a".repeat(64),
+                "outcome": "cancelled"
+            })
+        );
+    }
+
+    #[test]
+    fn question_required_defaults_for_legacy_events() {
+        let question: UserInputQuestion =
+            serde_json::from_str(r#"{"id":"q0","header":"Pick","question":"Choose","options":[]}"#)
+                .expect("deserialize legacy question");
+        assert!(!question.required);
+    }
+}

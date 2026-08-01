@@ -743,10 +743,11 @@ export const ChannelPane = React.memo(function ChannelPane({
                   </div>
                 ) : null}
                 <ComposerDockBackdrop gutterClassName="inset-x-5" />
-                {userInput.pending.length > 0 || userInput.sent.length > 0 ? (
+                {userInput.hasCards ? (
                   <ChannelUserInputStack
                     currentPubkey={currentPubkey ?? ""}
                     pending={userInput.pending}
+                    resolved={userInput.resolved}
                     profiles={profiles}
                     sent={userInput.sent}
                     errors={userInput.errors}

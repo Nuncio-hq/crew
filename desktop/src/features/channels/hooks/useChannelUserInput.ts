@@ -7,6 +7,7 @@ import { sendChannelUserInputAnswer } from "@/shared/api/tauriUserInput";
 import {
   buildSkippedAnswers,
   buildUserInputAnswers,
+  deriveResolvedUserInputs,
   derivePendingUserInputs,
   publishUserInputAnswer,
   type UserInputAnswers,
@@ -89,6 +90,10 @@ export function useChannelUserInput(channelId: string | null) {
       sentRequestIds.has(event.id),
     );
   }, [currentPubkey, events, sentRequestIds]);
+  const resolved = React.useMemo(
+    () => deriveResolvedUserInputs(events),
+    [events],
+  );
 
   const answer = React.useCallback(
     async (request: UserInputEvent, answers: UserInputAnswers) => {
@@ -136,8 +141,10 @@ export function useChannelUserInput(channelId: string | null) {
   );
 
   return {
+    hasCards: pending.length > 0 || sent.length > 0 || resolved.length > 0,
     pending,
     sent,
+    resolved,
     currentPubkey,
     sendingRequestId,
     sentRequestIds,

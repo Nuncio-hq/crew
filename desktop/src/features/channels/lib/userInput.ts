@@ -1,6 +1,7 @@
 import {
   KIND_AGENT_USER_INPUT_ANSWER,
   KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_RESOLVED,
 } from "@/shared/constants/kinds";
 import type { RelayEvent } from "@/shared/api/types";
 
@@ -18,6 +19,7 @@ export type UserInputQuestion = {
   multi_select?: boolean;
   allow_custom_answer?: boolean;
   allow_notes?: boolean;
+  required?: boolean;
 };
 
 export type UserInputRequest = {
@@ -34,6 +36,13 @@ export type UserInputRequest = {
 export type UserInputEvent = {
   event: RelayEvent;
   request: UserInputRequest;
+};
+
+export type UserInputResolutionOutcome = "answered" | "declined" | "cancelled";
+
+export type UserInputResolved = {
+  request_event_id: string;
+  outcome: UserInputResolutionOutcome;
 };
 
 export type UserInputAnswerValue =
@@ -73,6 +82,17 @@ export const emptyUserInputDraft = (): UserInputDraft => ({
   custom: "",
   notes: {},
 });
+
+export function canSubmitUserInput(
+  questions: UserInputQuestion[],
+  drafts: Record<string, UserInputDraft>,
+): boolean {
+  return questions.every((question) => {
+    if (!question.required) return true;
+    const value = drafts[question.id];
+    return Boolean(value?.custom.trim() || value?.selected.length);
+  });
+}
 
 export function selectUserInputOption(
   question: UserInputQuestion,
@@ -143,6 +163,32 @@ export function getAnswerRequestId(event: RelayEvent): string | null {
   return tag?.[1] ?? null;
 }
 
+export function getResolvedRequestId(event: RelayEvent): string | null {
+  if (event.kind !== KIND_AGENT_USER_INPUT_RESOLVED) return null;
+  const tag = event.tags.find(([name]) => name === "e");
+  return tag?.[1] ?? null;
+}
+
+export function parseUserInputResolution(
+  event: RelayEvent,
+): UserInputResolved | null {
+  if (event.kind !== KIND_AGENT_USER_INPUT_RESOLVED) return null;
+  try {
+    const value = JSON.parse(event.content) as UserInputResolved;
+    if (
+      !value ||
+      typeof value !== "object" ||
+      typeof value.request_event_id !== "string" ||
+      !["answered", "declined", "cancelled"].includes(value.outcome)
+    ) {
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 export function dedupeUserInputEvents(
   events: RelayEvent[],
   limit = 200,
@@ -172,6 +218,12 @@ export function derivePendingUserInputs(
       .map(getAnswerRequestId)
       .filter((id): id is string => id !== null),
   );
+  const resolved = new Map<string, UserInputResolutionOutcome>();
+  for (const event of deduped) {
+    const resolution = parseUserInputResolution(event);
+    const requestId = getResolvedRequestId(event);
+    if (resolution && requestId) resolved.set(requestId, resolution.outcome);
+  }
   return deduped
     .filter((event) => event.kind === KIND_AGENT_USER_INPUT_REQUESTED)
     .map((event) => {
@@ -181,7 +233,38 @@ export function derivePendingUserInputs(
     .filter((item): item is UserInputEvent => item !== null)
     .filter(
       ({ event }) =>
-        !answered.has(event.id) && !optimisticallyResolvedIds.has(event.id),
+        !answered.has(event.id) &&
+        !resolved.has(event.id) &&
+        !optimisticallyResolvedIds.has(event.id),
+    )
+    .sort((left, right) => right.event.created_at - left.event.created_at);
+}
+
+export function deriveResolvedUserInputs(
+  events: RelayEvent[],
+): Array<UserInputEvent & { resolution: UserInputResolutionOutcome }> {
+  const deduped = dedupeUserInputEvents(events);
+  const resolutions = new Map<string, UserInputResolutionOutcome>();
+  for (const event of deduped) {
+    const requestId = getResolvedRequestId(event);
+    const resolution = parseUserInputResolution(event);
+    if (requestId && resolution) resolutions.set(requestId, resolution.outcome);
+  }
+  return deduped
+    .filter((event) => event.kind === KIND_AGENT_USER_INPUT_REQUESTED)
+    .map((event) => {
+      const request = parseUserInputRequest(event);
+      const outcome = resolutions.get(event.id);
+      return request && outcome
+        ? { event, request, resolution: outcome }
+        : null;
+    })
+    .filter(
+      (
+        item,
+      ): item is UserInputEvent & {
+        resolution: UserInputResolutionOutcome;
+      } => item !== null,
     )
     .sort((left, right) => right.event.created_at - left.event.created_at);
 }

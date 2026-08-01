@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildQuestionAnswer,
+  canSubmitUserInput,
   buildSkippedAnswers,
   buildUserInputAnswers,
   derivePendingUserInputs,
@@ -9,6 +10,7 @@ import {
   selectUserInputOption,
   serializeUserInputAnswers,
   setUserInputCustom,
+  deriveResolvedUserInputs,
 } from "./userInput.ts";
 
 const request = (id, created_at = 10) => ({
@@ -87,6 +89,47 @@ test("optimistic resolution hides the card", () => {
       new Set(["request-1"]),
     ).length,
     0,
+  );
+});
+
+test("resolved requests become terminal and stay out of pending questions", () => {
+  const requestEvent = request("request-1");
+  const resolvedEvent = {
+    id: "resolved-1",
+    kind: 46042,
+    pubkey: "agent",
+    content: JSON.stringify({
+      request_event_id: "request-1",
+      outcome: "cancelled",
+    }),
+    tags: [
+      ["h", "channel"],
+      ["e", "request-1"],
+    ],
+    created_at: 20,
+  };
+  assert.equal(
+    derivePendingUserInputs([requestEvent, resolvedEvent], "owner").length,
+    0,
+  );
+  assert.deepEqual(
+    deriveResolvedUserInputs([requestEvent, resolvedEvent]).map(
+      ({ resolution }) => resolution,
+    ),
+    ["cancelled"],
+  );
+});
+
+test("submit only requires required questions", () => {
+  const questions = [
+    { id: "q0", required: true },
+    { id: "q1", required: false },
+  ];
+  assert.equal(
+    canSubmitUserInput(questions, {
+      q0: { selected: ["yes"], custom: "", notes: {} },
+    }),
+    true,
   );
 });
 
