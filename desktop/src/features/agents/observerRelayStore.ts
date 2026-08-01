@@ -32,6 +32,19 @@ import {
 
 const MAX_OBSERVER_EVENTS = 3000;
 const MAX_PENDING_UNKNOWN_AGENT_FRAMES = 100;
+const OBSERVER_DROP_LOG_INTERVAL_MS = 10_000;
+
+type ObserverDropReason =
+  | "missing_telemetry_tag"
+  | "unknown_agent"
+  | "sender_agent_mismatch"
+  | "stale_generation"
+  | "decrypt_failed";
+
+type ObserverDropLogState = {
+  count: number;
+  lastLoggedAt: number;
+};
 
 export type ObserverSnapshot = {
   connectionState: ConnectionState;
@@ -120,6 +133,43 @@ const agentManagementListeners = new Set<
 const knownAgentPubkeys = new Set<string>();
 const knownAgentsBySubscription = new Map<string, Set<string>>();
 const pendingUnknownAgentFrames: RelayEvent[] = [];
+const observerDropLogState = new Map<
+  ObserverDropReason,
+  ObserverDropLogState
+>();
+
+function logObserverDrop(
+  reason: ObserverDropReason,
+  event: RelayEvent,
+  activeGeneration: number,
+) {
+  const previous = observerDropLogState.get(reason) ?? {
+    count: 0,
+    lastLoggedAt: 0,
+  };
+  const count = previous.count + 1;
+  const now = Date.now();
+  const shouldLog =
+    count === 1 ||
+    now - previous.lastLoggedAt >= OBSERVER_DROP_LOG_INTERVAL_MS ||
+    count % 100 === 0;
+  observerDropLogState.set(reason, {
+    count,
+    lastLoggedAt: shouldLog ? now : previous.lastLoggedAt,
+  });
+  if (!shouldLog) return;
+
+  const agentTag = observerTag(event, "agent");
+  console.debug("[observerRelayStore] observer frame dropped", {
+    reason,
+    count,
+    eventId: event.id,
+    agentTag,
+    senderPubkey: event.pubkey,
+    currentGeneration: generation,
+    eventGeneration: activeGeneration,
+  });
+}
 
 // Callback invoked when session_config_captured is received, so React Query
 // can invalidate the config-surface query for the affected agent. Wired up
@@ -350,6 +400,7 @@ async function handleRelayObserverEvent(
   const agentPubkey = observerTag(event, "agent");
   const frame = observerTag(event, "frame");
   if (!agentPubkey || frame !== "telemetry") {
+    logObserverDrop("missing_telemetry_tag", event, activeGeneration);
     return;
   }
 
@@ -362,6 +413,8 @@ async function handleRelayObserverEvent(
       if (pendingUnknownAgentFrames.length > MAX_PENDING_UNKNOWN_AGENT_FRAMES) {
         pendingUnknownAgentFrames.shift();
       }
+    } else {
+      logObserverDrop("unknown_agent", event, activeGeneration);
     }
     return;
   }
@@ -369,12 +422,14 @@ async function handleRelayObserverEvent(
   // Defense-in-depth: verify the event sender matches the claimed agent pubkey.
   // The relay gates on is_agent_owner, but a compromised relay could misroute.
   if (normalizePubkey(event.pubkey) !== normalizePubkey(agentPubkey)) {
+    logObserverDrop("sender_agent_mismatch", event, activeGeneration);
     return;
   }
 
   try {
     const parsed = (await decryptObserverEvent(event)) as ObserverEvent;
     if (activeGeneration !== generation) {
+      logObserverDrop("stale_generation", event, activeGeneration);
       return;
     }
     // Track the latest-live-session-id per (agent, channel) on the live path.
@@ -417,8 +472,10 @@ async function handleRelayObserverEvent(
     }
   } catch (error) {
     if (activeGeneration !== generation) {
+      logObserverDrop("stale_generation", event, activeGeneration);
       return;
     }
+    logObserverDrop("decrypt_failed", event, activeGeneration);
     setConnectionState(
       "error",
       error instanceof Error
@@ -671,12 +728,17 @@ export async function ingestArchivedObserverEvents(
     const agentPubkey = observerTag(event, "agent");
     const frame = observerTag(event, "frame");
     if (!agentPubkey || frame !== "telemetry") {
+      logObserverDrop("missing_telemetry_tag", event, generation);
       continue;
     }
     if (!knownAgentPubkeys.has(normalizePubkey(agentPubkey))) {
+      if (knownAgentPubkeys.size > 0) {
+        logObserverDrop("unknown_agent", event, generation);
+      }
       continue;
     }
     if (normalizePubkey(event.pubkey) !== normalizePubkey(agentPubkey)) {
+      logObserverDrop("sender_agent_mismatch", event, generation);
       continue;
     }
     try {
@@ -697,7 +759,7 @@ export async function ingestArchivedObserverEvents(
         appendAgentEvent(agentPubkey, parsed);
       }
     } catch {
-      // Silently drop decrypt failures — same as live path error handling.
+      logObserverDrop("decrypt_failed", event, generation);
     }
   }
   // Batch-notify once for the whole page of archive events. appendAgentEvent
@@ -754,6 +816,7 @@ export function resetAgentObserverStore() {
   knownAgentPubkeys.clear();
   knownAgentsBySubscription.clear();
   pendingUnknownAgentFrames.length = 0;
+  observerDropLogState.clear();
   latestLiveSessionByAgentChannel.clear();
   agentManagementListeners.clear();
   onSessionConfigCaptured = null;
@@ -787,4 +850,21 @@ export function _testGetArchivedChannelEvents(
   return (
     archiveEventsByChannel.get(archiveChannelKey(agentPubkey, channelId)) ?? []
   );
+}
+
+/** Test-only: read the aggregated live observer drop counters. */
+export function _testGetObserverDropCounts(): Record<
+  ObserverDropReason,
+  number
+> {
+  const counts = {} as Record<ObserverDropReason, number>;
+  for (const [reason, state] of observerDropLogState) {
+    counts[reason] = state.count;
+  }
+  return counts;
+}
+
+/** Test-only: exercise the stale-generation drop logging path. */
+export function _testLogStaleObserverDrop(event: RelayEvent): void {
+  logObserverDrop("stale_generation", event, generation - 1);
 }
