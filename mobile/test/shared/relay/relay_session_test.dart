@@ -327,7 +327,7 @@ void main() {
     expect(sockets, hasLength(2));
     sockets.last.connectSuccessfully();
     expect(
-      sockets.last.sent,
+      sockets.last.messages,
       contains(
         predicate<List<dynamic>>((payload) {
           return payload.length >= 3 &&
