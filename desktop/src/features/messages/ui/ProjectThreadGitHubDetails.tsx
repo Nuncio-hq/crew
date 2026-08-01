@@ -117,7 +117,7 @@ function CiDetails({ checks }: { checks: ThreadPullRequestCheck[] }) {
           ) : checkTone(check) === "text-destructive" ? (
             <X className="h-4 w-4 text-destructive" />
           ) : (
-            <LoaderCircle className="h-4 w-4 text-muted-foreground" />
+            <LoaderCircle className={`h-4 w-4 ${checkTone(check)}`} />
           )}
           <span className="min-w-0 flex-1 truncate text-xs font-medium">
             {check.name}
