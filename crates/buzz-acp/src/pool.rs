@@ -1391,9 +1391,11 @@ pub async fn run_prompt_task(
         agent.acp.set_user_input_runtime(runtime);
     }
     if let Some(ref batch) = batch {
-        agent
-            .acp
-            .set_user_input_context(batch.channel_id, turn_id.clone());
+        agent.acp.set_user_input_context(
+            batch.channel_id,
+            turn_id.clone(),
+            ctx.harness_name.clone(),
+        );
     }
     let triggering_event_ids: Vec<String> = batch
         .as_ref()

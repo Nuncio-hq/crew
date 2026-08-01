@@ -18,9 +18,11 @@ pub enum Engine {
 /// A selectable option in an agent-directed question.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Option_ {
-    /// Stable display value supplied by the engine schema.
+    /// Engine-native wire value supplied by the schema's `const`.
+    pub value: String,
+    /// Human-facing display label supplied by the schema's `title`.
     pub label: String,
-    /// Human-readable option explanation.
+    /// Human-readable option explanation supplied by the schema's `description`.
     pub description: String,
 }
 
@@ -46,14 +48,6 @@ pub struct UserInputQuestion {
     pub allow_notes: bool,
 }
 
-/// Origin metadata retained for engine-specific answer reconstruction.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Native {
-    /// Engine-native request metadata and field mapping.
-    #[serde(flatten)]
-    pub data: serde_json::Map<String, serde_json::Value>,
-}
-
 /// A durable question request published to a channel.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserInputRequest {
@@ -73,8 +67,6 @@ pub struct UserInputRequest {
     pub message: Option<String>,
     /// Questions in client-facing stable-ID form.
     pub questions: Vec<UserInputQuestion>,
-    /// Internal/native mapping metadata.
-    pub native: Native,
 }
 
 /// A normalized answer value.

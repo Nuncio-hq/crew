@@ -121,10 +121,10 @@ fn agent_error_from_json(error: &serde_json::Value) -> AcpError {
     AcpError::AgentError { code, message }
 }
 
-fn build_initialize_params() -> serde_json::Value {
+fn build_initialize_params_with_user_input(user_input_enabled: bool) -> serde_json::Value {
     serde_json::json!({
         "protocolVersion": 2,
-        "clientCapabilities": build_client_capabilities(),
+        "clientCapabilities": build_client_capabilities(user_input_enabled),
         "clientInfo": {
             "name": "buzz-acp",
             "version": env!("CARGO_PKG_VERSION")
@@ -212,7 +212,12 @@ pub struct AcpClient {
     /// on client capability advertisement, buzz-agent emits unconditionally.
     goose_usage: UsageTracker,
     user_input_runtime: Option<std::sync::Arc<crate::elicitation::QuestionRuntime>>,
-    user_input_context: Option<(uuid::Uuid, String, String)>,
+    user_input_context: Option<(uuid::Uuid, String)>,
+    user_input_harness: Option<String>,
+    user_input_enabled: bool,
+    pending_user_input_id: Option<serde_json::Value>,
+    pending_user_input_event_id: Option<String>,
+    user_input_responded: bool,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -389,10 +394,7 @@ enum SteerTransport {
     AcpExtension,
 }
 
-fn build_client_capabilities() -> serde_json::Value {
-    let enabled = std::env::var("BUZZ_ACP_NO_USER_INPUT")
-        .map(|value| !matches!(value.as_str(), "1" | "true" | "yes"))
-        .unwrap_or(true);
+fn build_client_capabilities(user_input_enabled: bool) -> serde_json::Value {
     serde_json::json!({
         // Signal to ACP adapters that Buzz can hand users to terminal-native
         // auth flows. Adapters decide which auth methods to expose; Buzz does
@@ -400,7 +402,7 @@ fn build_client_capabilities() -> serde_json::Value {
         "auth": {
             "terminal": true
         },
-        "elicitation": { "form": enabled },
+        "elicitation": { "form": user_input_enabled },
         // Signal to goose that we handle `_goose/unstable/session/update`
         // notifications. Without this the custom notification is suppressed
         // on goose's side and usage data is never emitted.
@@ -558,6 +560,11 @@ impl AcpClient {
             goose_usage: UsageTracker::default(),
             user_input_runtime: None,
             user_input_context: None,
+            user_input_harness: None,
+            user_input_enabled: true,
+            pending_user_input_id: None,
+            pending_user_input_event_id: None,
+            user_input_responded: false,
         })
     }
 
@@ -606,7 +613,7 @@ impl AcpClient {
     pub async fn initialize(&mut self) -> Result<serde_json::Value, AcpError> {
         // Requesting version 2 is an intentional temporary pin — we are squatting
         // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
-        let params = build_initialize_params();
+        let params = build_initialize_params_with_user_input(self.user_input_enabled);
         let result = self.send_request("initialize", params).await?;
         self.steering_supported = result
             .pointer("/_meta/steering/supported")
@@ -913,8 +920,19 @@ impl AcpClient {
     }
 
     /// Associate the current prompt with its channel and turn identifiers.
-    pub fn set_user_input_context(&mut self, channel_id: uuid::Uuid, turn_id: String) {
-        self.user_input_context = Some((channel_id, turn_id, String::new()));
+    pub fn set_user_input_context(
+        &mut self,
+        channel_id: uuid::Uuid,
+        turn_id: String,
+        harness_name: String,
+    ) {
+        self.user_input_context = Some((channel_id, turn_id));
+        self.user_input_harness = Some(harness_name);
+    }
+
+    /// Configure whether ACP form elicitation is advertised and handled.
+    pub fn set_user_input_enabled(&mut self, enabled: bool) {
+        self.user_input_enabled = enabled;
     }
 
     /// Returns `true` if no steer receiver is currently installed.
@@ -1000,15 +1018,18 @@ impl AcpClient {
         session_id: &str,
         hard_deadline: tokio::time::Instant,
     ) -> Result<StopReason, AcpError> {
-        if let Some(runtime) = self.user_input_runtime.as_ref() {
-            runtime.cancel_all().await;
-        }
         // Validate precondition before any side effects — fail fast if there's
         // no in-flight prompt (prevents writing permission responses or cancel
         // notifications to the agent when no prompt is active).
         let prompt_id = self.last_prompt_id.take().ok_or_else(|| {
             AcpError::Protocol("cancel_with_cleanup called with no in-flight prompt".into())
         })?;
+        if let (Some(runtime), Some(event_id)) = (
+            self.user_input_runtime.as_ref(),
+            self.pending_user_input_event_id.as_deref(),
+        ) {
+            runtime.cancel(event_id).await;
+        }
 
         // Step 1: respond to any pending permission request with "cancelled",
         // but only if we haven't already responded (guards against double-response race).
@@ -1023,6 +1044,24 @@ impl AcpClient {
             }
             self.pending_permission_id = None;
             self.permission_responded = false;
+        }
+        if let Some(user_input_id) = self.pending_user_input_id.clone() {
+            if !self.user_input_responded {
+                let response = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": user_input_id,
+                    "result": { "action": "cancel" }
+                });
+                self.write_ndjson(&response).await?;
+                tracing::debug!(
+                    target: "acp::cancel",
+                    "responded cancel to pending elicitation id={user_input_id}"
+                );
+                self.user_input_responded = true;
+            }
+            self.pending_user_input_id = None;
+            self.pending_user_input_event_id = None;
+            self.user_input_responded = false;
         }
 
         // Step 2: send session/cancel notification (no id)
@@ -1332,6 +1371,7 @@ impl AcpClient {
         let mut idle_deadline = now + idle_timeout;
         let mut hard_deadline = hard_deadline;
         let mut last_activity_at = now;
+        let mut pending_elicitation: Option<crate::elicitation::PendingQuestion> = None;
 
         loop {
             // Determine which deadline fires first BEFORE sleeping — this is
@@ -1350,7 +1390,7 @@ impl AcpClient {
             // producing output (see `acp.rs:608` for why the hard deadline
             // exists). Check the classified deadline here so a steady-
             // stream agent is still bounded.
-            if Instant::now() >= next_deadline {
+            if pending_elicitation.is_none() && Instant::now() >= next_deadline {
                 if let Some((_, _, ack_tx)) = pending_steer.take() {
                     // Prompt is timing out — release the withheld event via
                     // PromptCompletedNeutral (no fallback signal: there is
@@ -1471,7 +1511,65 @@ impl AcpClient {
                     // response or the steer response next.
                     None
                 }
-                _ = tokio::time::sleep_until(next_deadline) => {
+                answer = async {
+                    match pending_elicitation.as_mut() {
+                        Some(pending) => Some((&mut pending.receiver).await),
+                        None => None,
+                    }
+                }, if pending_elicitation.is_some() => {
+                    let Some(pending) = pending_elicitation.take() else {
+                        continue;
+                    };
+                    let response = match answer {
+                        Some(Ok(None)) | Some(Err(_)) => serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": pending.request_id,
+                            "result": { "action": "cancel" }
+                        }),
+                        Some(Ok(Some(answers)))
+                            if answers.values().all(Option::is_none) =>
+                        {
+                            serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "id": pending.request_id,
+                                "result": { "action": "decline" }
+                            })
+                        }
+                        Some(Ok(Some(answers))) => {
+                            match crate::elicitation::reconstruct_content(
+                                &pending.form,
+                                &answers,
+                            ) {
+                                Some(content) => serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": pending.request_id,
+                                    "result": {
+                                        "action": "accept",
+                                        "content": content
+                                    }
+                                }),
+                                None => serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": pending.request_id,
+                                    "result": { "action": "cancel" }
+                                }),
+                            }
+                        }
+                        None => continue,
+                    };
+                    self.pending_user_input_id = None;
+                    self.pending_user_input_event_id = None;
+                    self.user_input_responded = false;
+                    self.write_ndjson(&response).await?;
+                    let resumed_at = Instant::now();
+                    idle_deadline = resumed_at + idle_timeout;
+                    hard_deadline = resumed_at + max_duration;
+                    self.current_hard_deadline = Some(hard_deadline);
+                    last_activity_at = resumed_at;
+                    tracing::debug!("idle and hard clocks reset after user-input elicitation");
+                    None
+                }
+                _ = tokio::time::sleep_until(next_deadline), if pending_elicitation.is_none() => {
                     // The pre-select check at the top of the next iteration
                     // would catch this anyway, but firing the deadline arm
                     // here makes the wakeup immediate (no extra reader poll
@@ -1692,15 +1790,20 @@ impl AcpClient {
                                 self.handle_permission_request(&msg).await?;
                             }
                             "elicitation/create" => {
-                                self.handle_elicitation_request(&msg).await?;
-                                let resumed_at = Instant::now();
-                                idle_deadline = resumed_at + idle_timeout;
-                                hard_deadline = resumed_at + max_duration;
-                                self.current_hard_deadline = Some(hard_deadline);
-                                last_activity_at = resumed_at;
-                                tracing::debug!(
-                                    "idle and hard clocks reset after user-input elicitation"
-                                );
+                                if pending_elicitation.is_some() {
+                                    let response = serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": msg["id"],
+                                        "result": { "action": "cancel" }
+                                    });
+                                    self.write_ndjson(&response).await?;
+                                } else if let Some(pending) =
+                                    self.start_elicitation_request(&msg).await?
+                                {
+                                    pending_elicitation = Some(pending);
+                                    idle_deadline = Instant::now() + idle_timeout;
+                                    last_activity_at = Instant::now();
+                                }
                             }
                             other => {
                                 // If the unknown message has an id, it's a request expecting a reply.
@@ -1725,18 +1828,15 @@ impl AcpClient {
         }
     }
 
-    /// Normalize, publish, and await an ACP form elicitation request.
-    async fn handle_elicitation_request(
+    /// Normalize and publish an ACP form elicitation request.
+    async fn start_elicitation_request(
         &mut self,
         msg: &serde_json::Value,
-    ) -> Result<(), AcpError> {
+    ) -> Result<Option<crate::elicitation::PendingQuestion>, AcpError> {
         let id = msg
             .get("id")
             .cloned()
             .ok_or_else(|| AcpError::Protocol("elicitation/create missing request id".into()))?;
-        let enabled = std::env::var("BUZZ_ACP_NO_USER_INPUT")
-            .map(|value| !matches!(value.as_str(), "1" | "true" | "yes"))
-            .unwrap_or(true);
         let cancel = || {
             serde_json::json!({
                 "jsonrpc": "2.0",
@@ -1744,55 +1844,67 @@ impl AcpClient {
                 "result": { "action": "cancel" }
             })
         };
-        if !enabled {
-            return self.write_ndjson(&cancel()).await;
+        if !self.user_input_enabled {
+            self.write_ndjson(&cancel()).await?;
+            return Ok(None);
         }
         let Some(schema) = msg.pointer("/params/requestedSchema") else {
-            return self.write_ndjson(&cancel()).await;
+            self.write_ndjson(&cancel()).await?;
+            return Ok(None);
         };
-        let engine = if schema.get("required").is_some() {
-            buzz_core::user_input::Engine::Codex
-        } else {
-            buzz_core::user_input::Engine::Claude
+        let engine = match self.user_input_harness.as_deref() {
+            Some(value) if value.contains("codex") => buzz_core::user_input::Engine::Codex,
+            Some(value) if value.contains("claude") => buzz_core::user_input::Engine::Claude,
+            Some(value) => buzz_core::user_input::Engine::Other(value.to_owned()),
+            None => buzz_core::user_input::Engine::Other("unknown".to_owned()),
         };
         let Some(form) = crate::elicitation::normalize_form(schema, engine.clone()) else {
-            return self.write_ndjson(&cancel()).await;
+            self.write_ndjson(&cancel()).await?;
+            return Ok(None);
         };
         let Some(runtime) = self.user_input_runtime.clone() else {
-            return self.write_ndjson(&cancel()).await;
+            self.write_ndjson(&cancel()).await?;
+            return Ok(None);
         };
-        let Some((channel_id, turn_id, _)) = self.user_input_context.clone() else {
-            return self.write_ndjson(&cancel()).await;
+        let Some((channel_id, turn_id)) = self.user_input_context.clone() else {
+            tracing::warn!(
+                "cancelling elicitation/create because the prompt has no channel/turn context"
+            );
+            self.write_ndjson(&cancel()).await?;
+            return Ok(None);
         };
         let session_id = msg
             .pointer("/params/sessionId")
             .and_then(|value| value.as_str())
             .unwrap_or_default();
-        let answers = runtime
-            .publish_and_wait(
+        let receiver = runtime
+            .publish(
                 channel_id,
                 session_id,
                 &turn_id,
                 engine,
                 form.clone(),
                 &id.to_string(),
+                msg.pointer("/params/message").and_then(|v| v.as_str()),
+                msg.pointer("/params/toolCallId").and_then(|v| v.as_str()),
             )
             .await;
-        let response = match answers {
-            Ok(None) => cancel(),
-            Ok(Some(answers)) if answers.values().all(Option::is_none) => serde_json::json!({
-                "jsonrpc": "2.0", "id": id, "result": { "action": "decline" }
-            }),
-            Ok(Some(answers)) => match crate::elicitation::reconstruct_content(&form, &answers) {
-                Some(content) => serde_json::json!({
-                    "jsonrpc": "2.0", "id": id,
-                    "result": { "action": "accept", "content": content }
-                }),
-                None => cancel(),
-            },
-            Err(_) => cancel(),
+        let (event_id, receiver) = match receiver {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::warn!(%error, "cancelling failed user-input publication");
+                self.write_ndjson(&cancel()).await?;
+                return Ok(None);
+            }
         };
-        self.write_ndjson(&response).await
+        self.pending_user_input_id = Some(id.clone());
+        self.pending_user_input_event_id = Some(event_id.clone());
+        self.user_input_responded = false;
+        Ok(Some(crate::elicitation::PendingQuestion {
+            request_id: id,
+            form,
+            receiver,
+        }))
     }
 
     /// Log a `session/update` notification via tracing.
@@ -2472,7 +2584,7 @@ mod tests {
             "method": "initialize",
             "params": {
                 "protocolVersion": 2,
-                "clientCapabilities": build_client_capabilities(),
+                "clientCapabilities": build_client_capabilities(true),
                 "clientInfo": {
                     "name": "buzz-acp",
                     "version": "0.1.0"
@@ -3089,6 +3201,108 @@ mod tests {
             matches!(result, Err(AcpError::CancelDrainTimeout(g)) if g == grace),
             "expected CancelDrainTimeout({grace:?}), got {result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn cancel_pending_elicitation_writes_one_cancel_response() {
+        let output =
+            std::env::temp_dir().join(format!("buzz-acp-cancel-{}.txt", uuid::Uuid::new_v4()));
+        let script = format!(
+            "read first; read second; printf '%s\\n%s\\n' \"$first\" \"$second\" > '{}'; \
+             echo '{{\"jsonrpc\":\"2.0\",\"id\":999,\"result\":{{\"stopReason\":\"cancelled\"}}}}'",
+            output.display()
+        );
+        let mut client = spawn_script(&script).await;
+        client.last_prompt_id = Some(999);
+        client.pending_user_input_id = Some(serde_json::json!("elicitation-1"));
+        let result = client
+            .cancel_with_cleanup_grace("test-session", std::time::Duration::from_secs(2))
+            .await;
+        assert!(
+            result.is_ok(),
+            "cancel should drain prompt response: {result:?}"
+        );
+        let lines = std::fs::read_to_string(&output).expect("agent captured cancel frames");
+        let frames = lines.lines().collect::<Vec<_>>();
+        assert_eq!(frames.len(), 2);
+        let cancel = serde_json::from_str::<serde_json::Value>(frames[0]).expect("cancel JSON");
+        assert_eq!(cancel["id"], "elicitation-1");
+        assert_eq!(cancel["result"]["action"], "cancel");
+        let session_cancel =
+            serde_json::from_str::<serde_json::Value>(frames[1]).expect("session cancel JSON");
+        assert_eq!(session_cancel["method"], "session/cancel");
+        let _ = std::fs::remove_file(output);
+    }
+
+    #[tokio::test]
+    async fn pending_elicitation_pauses_idle_and_hard_deadlines() {
+        use std::sync::Arc;
+
+        let channel_id = uuid::Uuid::new_v4();
+        let owner_keys = nostr::Keys::generate();
+        let (publisher, mut published) = crate::relay::RelayEventPublisher::test_pair();
+        let owner_cache = Arc::new(crate::OwnerCache::new(Some(
+            owner_keys.public_key().to_hex(),
+        )));
+        let rest_client = crate::relay::RestClient {
+            http: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:0".to_string(),
+            keys: owner_keys.clone(),
+            auth_tag_json: None,
+        };
+        let runtime = crate::elicitation::QuestionRuntime::new(
+            publisher,
+            owner_keys.clone(),
+            owner_cache,
+            rest_client,
+        );
+        let script = r#"
+echo '{"jsonrpc":"2.0","id":"elic","method":"elicitation/create","params":{"sessionId":"sess","message":"Choose","toolCallId":"tool","requestedSchema":{"type":"object","properties":{"question_0":{"type":"string","title":"Pick","oneOf":[{"const":"yes","title":"Yes"}]}}}}}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"id":"elic"'*) echo '{"jsonrpc":"2.0","id":"elic","result":{"action":"accept","content":{"question_0":"yes"}}}'; echo '{"jsonrpc":"2.0","id":999,"result":{"stopReason":"end_turn"}}'; exit 0 ;;
+  esac
+done
+"#;
+        let mut client = spawn_script(script).await;
+        client.set_user_input_runtime(runtime.clone());
+        client.set_user_input_context(channel_id, "turn-1".to_string(), "claude".to_string());
+
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let answer_task = tokio::spawn(async move {
+            let request_event = published.recv().await.expect("request was published");
+            let _ = ready_tx.send(());
+            let _ = request_event;
+            std::future::pending::<()>().await;
+        });
+
+        let idle = std::time::Duration::from_secs(5);
+        let max_duration = std::time::Duration::from_secs(10);
+        let hard_deadline = tokio::time::Instant::now() + max_duration;
+        let read_task = tokio::spawn(async move {
+            client
+                .read_until_response_with_idle_timeout(
+                    "sess",
+                    999,
+                    idle,
+                    hard_deadline,
+                    max_duration,
+                )
+                .await
+        });
+        ready_rx.await.expect("question reached pending state");
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::pause();
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_secs(50)).await;
+        assert!(
+            !read_task.is_finished(),
+            "pending question must pause deadlines"
+        );
+        read_task.abort();
+        answer_task.abort();
     }
 
     #[tokio::test]

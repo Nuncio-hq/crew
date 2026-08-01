@@ -520,7 +520,6 @@ pub struct Config {
     pub channels_override: Option<Vec<String>>,
     pub no_mention_filter: bool,
     /// Whether ACP form elicitation is advertised and handled.
-    #[allow(dead_code)]
     pub user_input_enabled: bool,
     pub config_path: PathBuf,
     pub context_message_limit: u32,

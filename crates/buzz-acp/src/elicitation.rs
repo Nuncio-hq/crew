@@ -28,6 +28,8 @@ pub(crate) struct FieldMapping {
     pub custom_key: Option<String>,
     /// Whether the native field accepts an array.
     pub multi_select: bool,
+    /// Whether the native field is required by the engine schema.
+    pub required: bool,
 }
 
 /// Normalized ACP form and its native field mapping.
@@ -37,6 +39,16 @@ pub(crate) struct NormalizedForm {
     pub questions: Vec<UserInputQuestion>,
     /// Native reconstruction map.
     pub mappings: Vec<FieldMapping>,
+}
+
+/// A published elicitation whose answer is still pending.
+pub(crate) struct PendingQuestion {
+    /// ACP JSON-RPC request identifier.
+    pub request_id: serde_json::Value,
+    /// Normalized form used to rebuild the engine response.
+    pub form: NormalizedForm,
+    /// Receiver resolved by the relay answer router or cancellation.
+    pub receiver: oneshot::Receiver<Option<UserInputAnswers>>,
 }
 
 /// Shared transport for durable user-input requests and owner-authored answers.
@@ -64,7 +76,7 @@ impl QuestionRuntime {
         })
     }
 
-    pub(crate) async fn publish_and_wait(
+    pub(crate) async fn publish(
         &self,
         channel_id: Uuid,
         session_id: &str,
@@ -72,19 +84,18 @@ impl QuestionRuntime {
         engine: Engine,
         form: NormalizedForm,
         request_id: &str,
-    ) -> Result<Option<UserInputAnswers>, String> {
+        message: Option<&str>,
+        tool_call_id: Option<&str>,
+    ) -> Result<(String, oneshot::Receiver<Option<UserInputAnswers>>), String> {
         let request = UserInputRequest {
             request_id: request_id.to_string(),
             session_id: session_id.to_string(),
             turn_id: turn_id.to_string(),
             channel_id: channel_id.to_string(),
-            tool_call_id: None,
+            tool_call_id: tool_call_id.map(str::to_owned),
             engine,
-            message: None,
+            message: message.map(str::to_owned),
             questions: form.questions,
-            native: buzz_core::user_input::Native {
-                data: serde_json::Map::new(),
-            },
         };
         let content = serde_json::to_string(&request).map_err(|e| e.to_string())?;
         let builder = buzz_sdk::build_agent_user_input_request(channel_id, &content)
@@ -99,16 +110,11 @@ impl QuestionRuntime {
             self.pending.lock().await.remove(&event_id);
             return Err(error.to_string());
         }
-        match rx.await {
-            Ok(answers) => Ok(answers),
-            Err(_) => Err("pending user-input request was cancelled".to_string()),
-        }
+        Ok((event_id, rx))
     }
 
-    #[allow(dead_code)]
-    pub(crate) async fn cancel_all(&self) {
-        let mut pending = self.pending.lock().await;
-        for (_, sender) in pending.drain() {
+    pub(crate) async fn cancel(&self, event_id: &str) {
+        if let Some(sender) = self.pending.lock().await.remove(event_id) {
             let _ = sender.send(None);
         }
     }
@@ -160,20 +166,64 @@ impl QuestionRuntime {
 
 fn option(value: &serde_json::Value) -> Option<Option_> {
     let object = value.as_object()?;
-    let label = object.get("const")?.as_str()?.to_owned();
+    let value = object.get("const")?.as_str()?.to_owned();
     Some(Option_ {
-        label,
+        value: value.clone(),
+        label: object
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&value)
+            .to_owned(),
         description: object
             .get("description")
-            .or_else(|| object.get("title"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_owned(),
     })
 }
 
+fn natural_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+    let mut l = left.chars().peekable();
+    let mut r = right.chars().peekable();
+    loop {
+        match (l.peek(), r.peek()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some(a), Some(b)) if a.is_ascii_digit() && b.is_ascii_digit() => {
+                let mut ln = String::new();
+                let mut rn = String::new();
+                while l.peek().is_some_and(char::is_ascii_digit) {
+                    ln.push(l.next().unwrap_or_default());
+                }
+                while r.peek().is_some_and(char::is_ascii_digit) {
+                    rn.push(r.next().unwrap_or_default());
+                }
+                let ordering = ln
+                    .parse::<u64>()
+                    .unwrap_or(u64::MAX)
+                    .cmp(&rn.parse::<u64>().unwrap_or(u64::MAX));
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
+                }
+            }
+            (Some(a), Some(b)) => {
+                let ordering = a.cmp(b);
+                l.next();
+                r.next();
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
+                }
+            }
+        }
+    }
+}
+
 /// Normalize the supported ACP form subset into Crew's contract.
-pub(crate) fn normalize_form(schema: &serde_json::Value, engine: Engine) -> Option<NormalizedForm> {
+pub(crate) fn normalize_form(
+    schema: &serde_json::Value,
+    _engine: Engine,
+) -> Option<NormalizedForm> {
     let properties = schema.get("properties")?.as_object()?;
     let required = schema
         .get("required")
@@ -185,11 +235,13 @@ pub(crate) fn normalize_form(schema: &serde_json::Value, engine: Engine) -> Opti
                 .collect::<std::collections::HashSet<_>>()
         })
         .unwrap_or_default();
-    let is_codex = matches!(engine, Engine::Codex);
     let mut questions = Vec::new();
     let mut mappings = Vec::new();
 
-    for (key, field) in properties {
+    let mut property_keys = properties.keys().collect::<Vec<_>>();
+    property_keys.sort_by(|left, right| natural_cmp(left, right));
+    for key in property_keys {
+        let field = properties.get(key)?;
         if key.ends_with("_custom") {
             continue;
         }
@@ -230,17 +282,13 @@ pub(crate) fn normalize_form(schema: &serde_json::Value, engine: Engine) -> Opti
             allow_custom_answer: custom_key.is_some(),
             allow_notes: false,
         };
-        if is_codex && !required.is_empty() && !required.contains(key.as_str()) {
-            // Optional fields are still representable; preserve the schema
-            // without inventing a value. The required set is carried by the
-            // native map in the caller when it needs engine-specific policy.
-        }
         questions.push(question);
         mappings.push(FieldMapping {
             id,
             field_key: key.clone(),
             custom_key,
             multi_select,
+            required: required.contains(key.as_str()),
         });
     }
     (!questions.is_empty()).then_some(NormalizedForm {
@@ -250,26 +298,50 @@ pub(crate) fn normalize_form(schema: &serde_json::Value, engine: Engine) -> Opti
 }
 
 /// Rebuild ACP content using native field keys.
-#[allow(dead_code)]
 pub(crate) fn reconstruct_content(
     form: &NormalizedForm,
     answers: &BTreeMap<String, Option<UserInputAnswer>>,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     let mut content = serde_json::Map::new();
     for mapping in &form.mappings {
-        let answer = answers.get(&mapping.id).cloned().flatten()?;
+        let question = form
+            .questions
+            .iter()
+            .find(|question| question.id == mapping.id)?;
+        let wire_value = |value: String| {
+            question
+                .options
+                .iter()
+                .find(|option| option.label == value || option.value == value)
+                .map(|option| option.value.clone())
+                .unwrap_or(value)
+        };
+        let answer = match answers.get(&mapping.id) {
+            Some(Some(UserInputAnswer::Skipped)) | Some(None) | None if !mapping.required => {
+                continue
+            }
+            Some(Some(UserInputAnswer::Skipped)) | Some(None) | None => return None,
+            Some(Some(answer)) => answer.clone(),
+        };
         let (key, value) = match answer {
             UserInputAnswer::Text(value) => {
                 if let Some(custom_key) = &mapping.custom_key {
                     (custom_key.clone(), serde_json::Value::String(value))
                 } else {
-                    (mapping.field_key.clone(), serde_json::Value::String(value))
+                    (
+                        mapping.field_key.clone(),
+                        serde_json::Value::String(wire_value(value)),
+                    )
                 }
             }
             UserInputAnswer::Multi(values) => (
                 mapping.field_key.clone(),
                 serde_json::Value::Array(
-                    values.into_iter().map(serde_json::Value::String).collect(),
+                    values
+                        .into_iter()
+                        .map(wire_value)
+                        .map(serde_json::Value::String)
+                        .collect(),
                 ),
             ),
             UserInputAnswer::Structured {
@@ -280,6 +352,7 @@ pub(crate) fn reconstruct_content(
                     UserInputSelection::One(value) => vec![value],
                     UserInputSelection::Many(values) => values,
                 };
+                let selected = selected.into_iter().map(wire_value).collect::<Vec<_>>();
                 let value = if mapping.multi_select {
                     serde_json::Value::Array(
                         selected
@@ -326,7 +399,8 @@ mod tests {
             "question_1":{"type":"string","description":"Why?"}
         }});
         let form = normalize_form(&schema, Engine::Claude).expect("supported");
-        assert_eq!(form.questions[0].options[0].label, "yes");
+        assert_eq!(form.questions[0].options[0].value, "yes");
+        assert_eq!(form.questions[0].options[0].label, "Yes");
         assert!(form.questions[1].options.is_empty());
     }
 
@@ -354,5 +428,134 @@ mod tests {
             Engine::Codex
         )
         .is_none());
+    }
+
+    #[test]
+    fn preserves_natural_question_order() {
+        let mut properties = serde_json::Map::new();
+        for index in 0..12 {
+            properties.insert(
+                format!("question_{index}"),
+                serde_json::json!({"type":"string","title":format!("Q{index}")}),
+            );
+        }
+        let form = normalize_form(
+            &serde_json::json!({"type":"object","properties":properties}),
+            Engine::Claude,
+        )
+        .expect("supported");
+        let headers = form
+            .questions
+            .iter()
+            .map(|question| question.header.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(headers[2], "Q2");
+        assert_eq!(headers[10], "Q10");
+    }
+
+    #[test]
+    fn omits_unanswered_optional_fields_but_requires_required_fields() {
+        let schema = serde_json::json!({
+            "type":"object",
+            "properties":{
+                "question_0":{"type":"string","title":"Required"},
+                "question_1":{"type":"string","title":"Optional"}
+            },
+            "required":["question_0"]
+        });
+        let form = normalize_form(&schema, Engine::Codex).expect("supported");
+        let partial = BTreeMap::from([("q0".into(), Some(UserInputAnswer::Text("answer".into())))]);
+        assert!(reconstruct_content(&form, &partial).is_some());
+        let missing_required =
+            BTreeMap::from([("q1".into(), Some(UserInputAnswer::Text("answer".into())))]);
+        assert!(reconstruct_content(&form, &missing_required).is_none());
+    }
+
+    #[tokio::test]
+    async fn ignores_non_owner_then_accepts_first_owner_answer() {
+        let channel_id = Uuid::new_v4();
+        let owner = Keys::generate();
+        let stranger = Keys::generate();
+        let (publisher, mut published) = RelayEventPublisher::test_pair();
+        let runtime = QuestionRuntime::new(
+            publisher,
+            owner.clone(),
+            Arc::new(crate::OwnerCache::new(Some(owner.public_key().to_hex()))),
+            RestClient {
+                http: reqwest::Client::new(),
+                base_url: "http://127.0.0.1:0".to_string(),
+                keys: owner.clone(),
+                auth_tag_json: None,
+            },
+        );
+        let form = normalize_form(
+            &serde_json::json!({
+                "type":"object",
+                "properties":{"question_0":{"type":"string","oneOf":[{"const":"yes"}]}}
+            }),
+            Engine::Claude,
+        )
+        .expect("supported");
+        let (event_id, mut receiver) = runtime
+            .publish(
+                channel_id,
+                "session",
+                "turn",
+                Engine::Claude,
+                form,
+                "request",
+                Some("Choose"),
+                Some("tool"),
+            )
+            .await
+            .expect("publish");
+        let request = published.recv().await.expect("request event");
+        assert_eq!(event_id, request.id.to_hex());
+        let request_content: UserInputRequest =
+            serde_json::from_str(&request.content).expect("request contract");
+        assert_eq!(request_content.message.as_deref(), Some("Choose"));
+        assert_eq!(request_content.tool_call_id.as_deref(), Some("tool"));
+
+        let stranger_answer =
+            buzz_sdk::build_agent_user_input_answer(channel_id, &event_id, r#"{"q0":"stranger"}"#)
+                .expect("answer builder")
+                .sign_with_keys(&stranger)
+                .expect("signed stranger answer");
+        runtime
+            .handle_event(&BuzzEvent {
+                channel_id,
+                event: stranger_answer,
+            })
+            .await;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), &mut receiver)
+                .await
+                .is_err()
+        );
+
+        let owner_answer =
+            buzz_sdk::build_agent_user_input_answer(channel_id, &event_id, r#"{"q0":"owner"}"#)
+                .expect("answer builder")
+                .sign_with_keys(&owner)
+                .expect("signed owner answer");
+        runtime
+            .handle_event(&BuzzEvent {
+                channel_id,
+                event: owner_answer,
+            })
+            .await;
+        assert!(receiver.await.expect("owner answer received").is_some());
+
+        let late_answer =
+            buzz_sdk::build_agent_user_input_answer(channel_id, &event_id, r#"{"q0":"late"}"#)
+                .expect("answer builder")
+                .sign_with_keys(&owner)
+                .expect("signed late answer");
+        runtime
+            .handle_event(&BuzzEvent {
+                channel_id,
+                event: late_answer,
+            })
+            .await;
     }
 }
