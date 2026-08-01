@@ -35,13 +35,10 @@ import { getThreadPanelLayout } from "@/features/channels/lib/threadPanelLayout"
 import { useThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 import { useThreadViewModeSwitch } from "@/features/channels/ui/useThreadViewModeSwitch";
 import { useFocusDrawerPresence } from "@/features/channels/ui/useFocusDrawerPresence";
-import {
-  useChannelWorkingAgentPubkeys,
-  useConversationWorkingAgentPubkeys,
-} from "@/features/agents/agentWorkingSignal";
-import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
+import { useChannelWorkingAgentPubkeys } from "@/features/agents/agentWorkingSignal";
 import { BotActivityComposerAction } from "@/features/channels/ui/BotActivityBar";
 import { ChannelComposerActivityAccessory } from "@/features/channels/ui/ChannelComposerActivityAccessory";
+import { useThreadComposerBotActivity } from "@/features/channels/ui/useThreadComposerBotActivity";
 import {
   containsWelcomePersonaMention,
   WelcomeComposerBanner,
@@ -413,28 +410,12 @@ export const ChannelPane = React.memo(function ChannelPane({
   );
   const hasComposerBotActivity = composerWorkingBotPubkeys.length > 0;
   const hasComposerBottomActivity = hasComposerBotActivity || hasTypingActivity;
-  const threadComposerBotTypingPubkeys = React.useMemo(() => {
-    if (!openThreadHeadId) return [];
-    return botTypingEntries
-      .filter((entry) => entry.threadHeadId === openThreadHeadId)
-      .map((entry) => entry.pubkey)
-      .filter(
-        (pubkey, index, all) =>
-          all.findIndex(
-            (candidate) => candidate.toLowerCase() === pubkey.toLowerCase(),
-          ) === index,
-      );
-  }, [botTypingEntries, openThreadHeadId]);
-  const threadComposerConversationId = React.useMemo(
-    () => deriveAgentConversationIdOrNull(activeChannel?.id, openThreadHeadId),
-    [activeChannel?.id, openThreadHeadId],
-  );
-  const threadComposerWorkingBotPubkeys = useConversationWorkingAgentPubkeys(
-    threadComposerConversationId,
-    threadComposerBotTypingPubkeys,
-  );
-  const hasThreadComposerBotActivity =
-    threadComposerWorkingBotPubkeys.length > 0;
+  const { hasThreadComposerBotActivity, threadComposerWorkingBotPubkeys } =
+    useThreadComposerBotActivity(
+      activeChannel?.id,
+      openThreadHeadId,
+      botTypingEntries,
+    );
   const directMessageIntro = React.useMemo(
     () =>
       buildDirectMessageIntro({
