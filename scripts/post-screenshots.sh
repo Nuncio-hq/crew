@@ -15,9 +15,48 @@ if ! [[ "$PR" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-GH_USER=$(gh api user --jq .login)
+REPO="${GITHUB_REPOSITORY:-${GH_REPOSITORY:-}}"
+if [[ -z "$REPO" ]]; then
+  REMOTE_URL=$(git config --get remote.origin.url || true)
+  case "$REMOTE_URL" in
+    git@github.com:*)
+      REPO="${REMOTE_URL#git@github.com:}"
+      ;;
+    *github.com/*)
+      REPO="${REMOTE_URL#*github.com/}"
+      ;;
+  esac
+fi
+REPO="${REPO%.git}"
+if ! [[ "$REPO" =~ ^[^/]+/[^/]+$ ]]; then
+  echo "error: could not determine GitHub repository; set GITHUB_REPOSITORY=owner/repo" >&2
+  exit 1
+fi
+
+GH_USER="${GITHUB_ACTOR:-${GH_USERNAME:-${GITHUB_USERNAME:-}}}"
+if [[ -z "$GH_USER" ]]; then
+  GIT_EMAIL=$(git config user.email || true)
+  case "$GIT_EMAIL" in
+    *+*@users.noreply.github.com)
+      GH_USER="${GIT_EMAIL#*+}"
+      GH_USER="${GH_USER%@users.noreply.github.com}"
+      GH_USER="${GH_USER%\[bot\]}"
+      ;;
+    *@users.noreply.github.com)
+      GH_USER="${GIT_EMAIL%@users.noreply.github.com}"
+      ;;
+  esac
+fi
+if [[ -z "$GH_USER" ]]; then
+  echo "error: could not determine GitHub username; set GITHUB_ACTOR or GH_USERNAME" >&2
+  exit 1
+fi
+GH_USER="${GH_USER%\[bot\]}"
+if ! [[ "$GH_USER" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+  echo "error: invalid GitHub username for screenshot branch: $GH_USER" >&2
+  exit 1
+fi
 BRANCH="agent-screenshots/${GH_USER}"
-REPO="block/buzz"
 
 mapfile -t PNGS < <(find "$PNG_DIR" -maxdepth 1 -name "*.png" -type f | sort)
 if [[ ${#PNGS[@]} -eq 0 ]]; then
