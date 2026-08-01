@@ -1,6 +1,6 @@
 # Thread integration strip + worktree lifecycle — v0.0.6
 
-- **Status:** In progress — Phases 01–03 complete
+- **Status:** Phases 01–04 executed; merge and release pending
 - **Base:** `40773ea6d` (`crew-v0.0.5`, `origin/main`)
 - **Branch:** `buzz/eb791333c0ee` (thread worktree, already fast-forwarded to base)
 - **Release:** stable `v0.0.6` → immutable tag `crew-v0.0.6`
@@ -40,8 +40,34 @@ cards, with destructive lifecycle actions available and guarded.
 | 03 | Provider avatars for preset harnesses + Devin | [phase-03-preset-avatars.md](phase-03-preset-avatars.md) |
 | 04 | Local release build + computer-use verification | [phase-04-release-verification.md](phase-04-release-verification.md) |
 
-Phases 01–03 can land as separate commits on one branch and one PR.
-Phase 04 gates merge.
+Phases 01–03 landed as separate commits on one branch and one PR. Phase 04
+runtime verification was executed against a real Linux Tauri dev build; the
+documented deviations are pre-existing or unavailable product behavior. The
+merge and release steps remain pending.
+
+## Verification record
+
+Phase 04 was exercised on the real Linux Tauri dev build on `DISPLAY=:0`, with
+the local relay and GitHub CLI integration. Screenshots and recordings are
+linked from the PR comments and retained in the companion runtime test
+artifacts in this directory.
+
+The verification also included these fixes:
+
+- `crates/buzz-acp/src/thread_workspace/base.rs` now reuses the configured
+  `origin` upstream branch when symbolic remote `HEAD` discovery is
+  unavailable, while retaining the local fallback behavior.
+- Project-thread `Close PR`, `Delete branch`, and `Remove worktree` actions now
+  use in-app confirmation dialogs; cancellation is inert.
+
+Two checklist deviations remain documented:
+
+- Item 10 (community switching) was not completed because switching crashes
+  the Linux/WebKit app on both this branch and `origin/main`; this is
+  pre-existing and out of scope for this PR.
+- The "open a PR from the thread" portion of item 5 was not completed because
+  the product has no in-app action for opening a PR. Existing PR data and the
+  issue/PR/CI drawers were verified.
 
 ## Acceptance criteria
 

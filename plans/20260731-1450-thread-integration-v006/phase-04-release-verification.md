@@ -1,6 +1,6 @@
 # Phase 04 — Local release build + computer-use verification
 
-- **Status:** Not started
+- **Status:** Executed on Linux Tauri dev build with documented deviations
 - **Priority:** high — this gates merge
 
 ## Context
@@ -10,6 +10,26 @@ agents driving the real app before publication, not only by CI. Per
 `docs/crew/RELEASING.md`, publication is a manager action: the workflow is a
 signed dry run unless the `publish` input is enabled. Oscar has authorised the
 publish for `v0.0.6`.
+
+## Result
+
+The runtime verification was executed against the real Linux Tauri dev build
+on `DISPLAY=:0`, using the local relay and GitHub CLI integration. The
+screenshots and recordings are linked from the PR comments; the detailed
+test plan and report are retained beside this plan.
+
+All executable checks passed except the following documented deviations:
+
+- Item 10 (community switching) remains untested because the app crashes when
+  switching communities on Linux/WebKit on both this branch and `origin/main`.
+  This is pre-existing and not a PR regression.
+- The "open a PR from the thread" portion of item 5 remains untested because
+  there is no in-app action to open a PR. Existing PR discovery and the issue,
+  PR, and CI drawers were verified.
+
+The runtime pass also verified the in-app confirmation fix for `Close PR`,
+`Delete branch`, and `Remove worktree`, including inert cancellation, and the
+`buzz-acp` remote-default-base fallback in `base.rs`.
 
 ## Requirements
 
