@@ -32,8 +32,8 @@ test("workspace lifecycle buttons fit their grid cells", async () => {
   const source = await readFile(workspaceUrl, "utf8");
 
   assert.match(source, /grid min-w-0 grid-cols-1/);
-  assert.match(source, /className="min-w-0 w-full"/);
-  assert.match(source, /<span className="truncate">Remove worktree<\/span>/);
+  assert.match(source, /whitespace-normal px-2 py-2 leading-tight/);
+  assert.match(source, /<span className="text-center">Remove worktree<\/span>/);
 });
 
 test("GitHub status colors cover PR and CI states", async () => {

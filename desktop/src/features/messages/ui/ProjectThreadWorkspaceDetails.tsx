@@ -144,17 +144,17 @@ export function ProjectThreadWorkspaceDetails({
       ) : null}
       <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-3">
         <Button
-          className="min-w-0 w-full"
+          className="h-auto min-h-8 min-w-0 w-full whitespace-normal px-2 py-2 leading-tight"
           onClick={copyPath}
           size="sm"
           type="button"
           variant="outline"
         >
           <Copy className="h-4 w-4 shrink-0" />
-          <span className="truncate">Copy path</span>
+          <span className="text-center">Copy path</span>
         </Button>
         <Button
-          className="min-w-0 w-full"
+          className="h-auto min-h-8 min-w-0 w-full whitespace-normal px-2 py-2 leading-tight"
           disabled={!target || busy || lifecycle?.dirty !== false}
           onClick={() =>
             target &&
@@ -174,10 +174,10 @@ export function ProjectThreadWorkspaceDetails({
           variant="destructive"
         >
           <Trash2 className="h-4 w-4 shrink-0" />
-          <span className="truncate">Remove worktree</span>
+          <span className="text-center">Remove worktree</span>
         </Button>
         <Button
-          className="min-w-0 w-full"
+          className="h-auto min-h-8 min-w-0 w-full whitespace-normal px-2 py-2 leading-tight"
           disabled={
             !target ||
             busy ||
@@ -197,7 +197,7 @@ export function ProjectThreadWorkspaceDetails({
           variant="destructive"
         >
           <Trash2 className="h-4 w-4 shrink-0" />
-          <span className="truncate">Delete branch</span>
+          <span className="text-center">Delete branch</span>
         </Button>
       </div>
       {lifecycle?.dirty ? (
