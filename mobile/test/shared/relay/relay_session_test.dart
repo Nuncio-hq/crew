@@ -322,9 +322,148 @@ void main() {
   });
 
   test(
+    'retryable CLOSED keeps the subscription and sends REQ after backoff',
+    () async {
+      final socket = _ControlledRelaySocket(
+        wsUrl: 'wss://relay.example',
+        nsec: null,
+        onMessage: (_) {},
+        onConnected: () {},
+        onDisconnected: (_) {},
+      );
+      final session = RelaySessionNotifier();
+      final container = ProviderContainer(
+        overrides: [
+          relaySessionProvider.overrideWith(() => session),
+          relayConfigProvider.overrideWith(
+            () => _FakeRelayConfigNotifier(
+              baseUrl: 'https://relay.example',
+              nsec: null,
+            ),
+          ),
+          authProvider.overrideWith(() => _FakeAuthNotifier()),
+        ],
+      );
+      addTearDown(container.dispose);
+      container.read(relaySessionProvider);
+      final listener = container.listen(relaySessionProvider, (_, _) {});
+      addTearDown(listener.close);
+      await container.read(authProvider.future);
+      session.debugAttachSocketForTest(socket);
+      const filter = NostrFilter(kinds: EventKind.channelEventKinds, limit: 0);
+
+      final subscribe = session.subscribe(filter, (_) {});
+      session.debugHandleMessage(['EOSE', 'l-1']);
+      final unsubscribe = await subscribe;
+
+      session.debugHandleMessage([
+        'CLOSED',
+        'l-1',
+        'error: database temporarily unavailable',
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+
+      expect(
+        socket.messages.where((message) => message.first == 'REQ'),
+        hasLength(2),
+      );
+      unsubscribe();
+    },
+  );
+
+  test('observer subscription recovers after a rate-limited CLOSED', () async {
+    final socket = _ControlledRelaySocket(
+      wsUrl: 'wss://relay.example',
+      nsec: null,
+      onMessage: (_) {},
+      onConnected: () {},
+      onDisconnected: (_) {},
+    );
+    final session = RelaySessionNotifier();
+    final container = ProviderContainer(
+      overrides: [
+        relaySessionProvider.overrideWith(() => session),
+        relayConfigProvider.overrideWith(
+          () => _FakeRelayConfigNotifier(
+            baseUrl: 'https://relay.example',
+            nsec: null,
+          ),
+        ),
+        authProvider.overrideWith(() => _FakeAuthNotifier()),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.read(relaySessionProvider);
+    final listener = container.listen(relaySessionProvider, (_, _) {});
+    addTearDown(listener.close);
+    await container.read(authProvider.future);
+    session.debugAttachSocketForTest(socket);
+    const filter = NostrFilter(
+      kinds: [EventKind.agentObserverFrame],
+      tags: {
+        '#p': [_channelId],
+      },
+      limit: 0,
+    );
+    final closedMessages = <String>[];
+
+    final subscribe = session.subscribe(
+      filter,
+      (_) {},
+      onClosed: closedMessages.add,
+    );
+    session.debugHandleMessage(['EOSE', 'l-1']);
+    final unsubscribe = await subscribe;
+
+    session.debugHandleMessage([
+      'CLOSED',
+      'l-1',
+      'rate-limited: quota exceeded; retry in 2s',
+    ]);
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    expect(
+      socket.messages.where((message) => message.first == 'REQ'),
+      hasLength(1),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+
+    expect(
+      socket.messages.where((message) => message.first == 'REQ'),
+      hasLength(2),
+    );
+    expect(closedMessages, isEmpty);
+    unsubscribe();
+  });
+
+  test(
     'live onClosed callback runs when relay closes an open subscription',
     () async {
+      final socket = _ControlledRelaySocket(
+        wsUrl: 'wss://relay.example',
+        nsec: null,
+        onMessage: (_) {},
+        onConnected: () {},
+        onDisconnected: (_) {},
+      );
       final session = RelaySessionNotifier();
+      final container = ProviderContainer(
+        overrides: [
+          relaySessionProvider.overrideWith(() => session),
+          relayConfigProvider.overrideWith(
+            () => _FakeRelayConfigNotifier(
+              baseUrl: 'https://relay.example',
+              nsec: null,
+            ),
+          ),
+          authProvider.overrideWith(() => _FakeAuthNotifier()),
+        ],
+      );
+      addTearDown(container.dispose);
+      container.read(relaySessionProvider);
+      final listener = container.listen(relaySessionProvider, (_, _) {});
+      addTearDown(listener.close);
+      await container.read(authProvider.future);
+      session.debugAttachSocketForTest(socket);
       final closedMessages = <String>[];
       const filter = NostrFilter(
         kinds: [EventKind.agentObserverFrame],
@@ -345,6 +484,11 @@ void main() {
       ]);
 
       expect(closedMessages, ['restricted: no longer valid']);
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+      expect(
+        socket.messages.where((message) => message.first == 'REQ'),
+        hasLength(1),
+      );
       unsubscribe();
     },
   );
@@ -372,6 +516,7 @@ class _AuthenticatedAuthNotifier extends AuthNotifier {
 class _ControlledRelaySocket extends RelaySocket {
   final void Function() _connected;
   final void Function(Object? error) _disconnected;
+  final messages = <List<dynamic>>[];
 
   _ControlledRelaySocket({
     required super.wsUrl,
@@ -387,6 +532,9 @@ class _ControlledRelaySocket extends RelaySocket {
 
   @override
   void dispose() {}
+
+  @override
+  void send(List<dynamic> payload) => messages.add(payload);
 
   void connectSuccessfully() => _connected();
 

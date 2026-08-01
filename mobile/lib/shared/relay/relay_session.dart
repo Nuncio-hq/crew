@@ -40,6 +40,8 @@ class _LiveSubscription {
   final void Function(String message)? onClosed;
   Completer<void>? readyCompleter;
   int? lastSeenCreatedAt;
+  Timer? closedRetryTimer;
+  int closedRetryAttempt = 0;
 
   _LiveSubscription({
     required this.filter,
@@ -89,6 +91,7 @@ class RelaySessionNotifier extends Notifier<SessionState> {
   static const _eventBatchMs = 16;
   static const _reconnectReplaySkewSeconds = 5;
   static const _maxRecentDeliveryKeys = 5000;
+  static const _maxClosedRetryDelayMs = 30000;
 
   RelaySocket? _socket;
   final Map<String, _HistorySubscription> _historySubscriptions = {};
@@ -416,6 +419,8 @@ class RelaySessionNotifier extends Notifier<SessionState> {
   void _replayLiveSubscriptions() {
     for (final entry in _liveSubscriptions.entries) {
       final sub = entry.value;
+      sub.closedRetryTimer?.cancel();
+      sub.closedRetryTimer = null;
       final since = sub.lastSeenCreatedAt != null
           ? sub.lastSeenCreatedAt! - _reconnectReplaySkewSeconds
           : null;
@@ -458,6 +463,9 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     // Live subscriptions get batched.
     final liveSub = _liveSubscriptions[subId];
     if (liveSub != null) {
+      liveSub.closedRetryAttempt = 0;
+      liveSub.closedRetryTimer?.cancel();
+      liveSub.closedRetryTimer = null;
       // Track last seen timestamp for reconnect replay.
       if (liveSub.lastSeenCreatedAt == null ||
           event.createdAt > liveSub.lastSeenCreatedAt!) {
@@ -509,17 +517,27 @@ class RelaySessionNotifier extends Notifier<SessionState> {
       return;
     }
 
-    final liveSub = _liveSubscriptions.remove(subId);
+    final liveSub = _liveSubscriptions[subId];
     if (liveSub == null) return;
-    _recentDeliveryKeys.removeWhere((key) => key.startsWith('$subId:'));
 
     final readyCompleter = liveSub.readyCompleter;
-    if (readyCompleter != null && !readyCompleter.isCompleted) {
-      readyCompleter.completeError(Exception(message));
+    if (_isTerminalClosed(message)) {
+      _liveSubscriptions.remove(subId);
+      _recentDeliveryKeys.removeWhere((key) => key.startsWith('$subId:'));
+      liveSub.closedRetryTimer?.cancel();
+      liveSub.closedRetryTimer = null;
+      if (readyCompleter != null && !readyCompleter.isCompleted) {
+        readyCompleter.completeError(Exception(message));
+      } else {
+        liveSub.onClosed?.call(message);
+      }
       return;
     }
 
-    liveSub.onClosed?.call(message);
+    if (readyCompleter != null && !readyCompleter.isCompleted) {
+      readyCompleter.complete();
+    }
+    _scheduleClosedRetry(subId, liveSub, message);
   }
 
   void _handleOk(List<dynamic> data) {
@@ -608,10 +626,58 @@ class RelaySessionNotifier extends Notifier<SessionState> {
   }
 
   void _unsubscribe(String subId) {
-    _liveSubscriptions.remove(subId);
+    final sub = _liveSubscriptions.remove(subId);
+    sub?.closedRetryTimer?.cancel();
     _recentDeliveryKeys.removeWhere((key) => key.startsWith('$subId:'));
     _sendClose(subId);
   }
+
+  void _scheduleClosedRetry(
+    String subId,
+    _LiveSubscription subscription,
+    String message,
+  ) {
+    if (subscription.closedRetryTimer != null) return;
+
+    final attempt = subscription.closedRetryAttempt;
+    final backoffMs = min(
+      _baseReconnectDelayMs * (1 << min(attempt, 5)),
+      _maxClosedRetryDelayMs,
+    );
+    final delayMs = max(backoffMs, _rateLimitDelayMs(message));
+    subscription.closedRetryAttempt = attempt + 1;
+    subscription.closedRetryTimer = Timer(Duration(milliseconds: delayMs), () {
+      subscription.closedRetryTimer = null;
+      if (_liveSubscriptions[subId] != subscription) return;
+      _sendReq(subId, subscription.filter);
+    });
+  }
+
+  int _rateLimitDelayMs(String message) {
+    if (!_isRateLimitedClosed(message)) return 0;
+    final match = RegExp(
+      r'retry in (\d+)s',
+      caseSensitive: false,
+    ).firstMatch(message);
+    final seconds = match == null ? 10 : int.parse(match.group(1)!);
+    return seconds.clamp(1, 300).toInt() * 1000;
+  }
+
+  bool _isTerminalClosed(String message) {
+    final normalized = message.trim().toLowerCase();
+    return normalized.startsWith('restricted:') ||
+        normalized.startsWith('auth-required:') ||
+        normalized.startsWith('blocked:') ||
+        normalized.startsWith('invalid:') ||
+        normalized.startsWith('pow:') ||
+        normalized.startsWith('duplicate:') ||
+        normalized.startsWith('unsupported:') ||
+        normalized.startsWith('error: mixed search') ||
+        normalized.startsWith('error: too many subscriptions');
+  }
+
+  bool _isRateLimitedClosed(String message) =>
+      message.trim().toLowerCase().startsWith('rate-limited:');
 
   void _cancelAllHistory(Object? error) {
     for (final entry in _historySubscriptions.values) {
@@ -639,6 +705,9 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     _reconnectTimer?.cancel();
     _flushTimer?.cancel();
     _backgroundGraceTimer?.cancel();
+    for (final sub in _liveSubscriptions.values) {
+      sub.closedRetryTimer?.cancel();
+    }
     _cancelAllHistory(null);
     _rejectAllPending(null);
     _recentDeliveryKeys.clear();
