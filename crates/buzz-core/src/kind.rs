@@ -567,6 +567,10 @@ pub const KIND_WORKFLOW_APPROVAL_REQUESTED: u32 = 46010;
 pub const KIND_WORKFLOW_APPROVAL_GRANTED: u32 = 46011;
 /// A pending workflow approval was denied.
 pub const KIND_WORKFLOW_APPROVAL_DENIED: u32 = 46012;
+/// A durable request for human input from an ACP agent turn.
+pub const KIND_AGENT_USER_INPUT_REQUESTED: u32 = 46040;
+/// An owner-authored answer to an ACP agent human-input request.
+pub const KIND_AGENT_USER_INPUT_ANSWER: u32 = 46041;
 
 // User groups (47000–47999)
 
@@ -722,6 +726,8 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_WORKFLOW_APPROVAL_REQUESTED,
     KIND_WORKFLOW_APPROVAL_GRANTED,
     KIND_WORKFLOW_APPROVAL_DENIED,
+    KIND_AGENT_USER_INPUT_REQUESTED,
+    KIND_AGENT_USER_INPUT_ANSWER,
     KIND_AUDIT_ENTRY,
     KIND_HUDDLE_STARTED,
     KIND_HUDDLE_PARTICIPANT_JOINED,

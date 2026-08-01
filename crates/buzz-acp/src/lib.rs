@@ -3,6 +3,7 @@
 mod acp;
 mod config;
 mod conversation;
+mod elicitation;
 mod engram_fetch;
 mod filter;
 mod observer;
@@ -25,8 +26,8 @@ use std::time::Duration;
 use acp::{AcpClient, EnvVar, McpServer};
 use anyhow::Result;
 use buzz_core::kind::{
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_STREAM_MESSAGE,
-    KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
+    KIND_AGENT_USER_INPUT_ANSWER, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
+    KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
 };
 use buzz_core::observer::{
     decrypt_observer_payload, encrypt_observer_payload, OBSERVER_FRAME_TELEMETRY,
@@ -1441,7 +1442,13 @@ async fn tokio_main() -> Result<()> {
             _ => {} // anyone/nobody don't depend on owner
         }
     }
-    let owner_cache = OwnerCache::new(startup_owner.clone());
+    let owner_cache = Arc::new(OwnerCache::new(startup_owner.clone()));
+    let user_input_runtime = elicitation::QuestionRuntime::new(
+        relay.event_publisher(),
+        config.keys.clone(),
+        owner_cache.clone(),
+        relay.rest_client(),
+    );
 
     let mut relay_observer_control_rx = None;
     let mut relay_observer_publisher_task = None;
@@ -1497,6 +1504,7 @@ async fn tokio_main() -> Result<()> {
                         KIND_STREAM_MESSAGE,
                         KIND_WORKFLOW_APPROVAL_REQUESTED,
                         KIND_STREAM_REMINDER,
+                        KIND_AGENT_USER_INPUT_ANSWER,
                     ]
                 }),
                 require_mention: !config.no_mention_filter,
@@ -1612,6 +1620,7 @@ async fn tokio_main() -> Result<()> {
         memory_enabled: config.memory_enabled,
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
+        user_input_runtime: Some(user_input_runtime.clone()),
     });
 
     if !config.memory_enabled {
@@ -1813,10 +1822,20 @@ async fn tokio_main() -> Result<()> {
                 let args = config.agent_args.clone();
                 let env = config.persona_env_vars.clone();
                 let has_codex = config.has_generated_codex_config;
+                let user_input_enabled = config.user_input_enabled;
                 let observer = observer.clone();
                 let guard = RespawnGuard::new(idx, respawn_tx.clone());
                 respawn_tasks.spawn(async move {
-                    let result = spawn_and_init(&cmd, &args, &env, has_codex, idx, observer).await;
+                    let result = spawn_and_init(
+                        &cmd,
+                        &args,
+                        &env,
+                        has_codex,
+                        user_input_enabled,
+                        idx,
+                        observer,
+                    )
+                    .await;
                     guard.send(result);
                 });
             }
@@ -1959,6 +1978,10 @@ async fn tokio_main() -> Result<()> {
                     match buzz_event {
                         Some(buzz_event) => {
                             let kind_u32 = buzz_event.event.kind.as_u16() as u32;
+                            if kind_u32 == KIND_AGENT_USER_INPUT_ANSWER {
+                                user_input_runtime.handle_event(&buzz_event).await;
+                                continue;
+                            }
 
                             if kind_u32 == KIND_MEMBER_ADDED_NOTIFICATION
                                 || kind_u32 == KIND_MEMBER_REMOVED_NOTIFICATION
@@ -3655,12 +3678,22 @@ fn recover_panicked_agent(
     let args = config.agent_args.clone();
     let env = config.persona_env_vars.clone();
     let has_codex = config.has_generated_codex_config;
+    let user_input_enabled = config.user_input_enabled;
     let guard = RespawnGuard::new(i, respawn_tx.clone());
     respawn_tasks.spawn(async move {
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
-        let result = spawn_and_init(&cmd, &args, &env, has_codex, i, observer).await;
+        let result = spawn_and_init(
+            &cmd,
+            &args,
+            &env,
+            has_codex,
+            user_input_enabled,
+            i,
+            observer,
+        )
+        .await;
         guard.send(result);
     });
 }
@@ -3850,6 +3883,7 @@ fn spawn_respawn_task(
     let args = config.agent_args.clone();
     let env = config.persona_env_vars.clone();
     let has_codex = config.has_generated_codex_config;
+    let user_input_enabled = config.user_input_enabled;
     let guard = RespawnGuard::new(index, respawn_tx.clone());
     respawn_tasks.spawn(async move {
         // Shutdown old agent (reap child, prevent zombie).
@@ -3861,7 +3895,16 @@ fn spawn_respawn_task(
             tokio::time::sleep(delay).await;
         }
 
-        let result = spawn_and_init(&cmd, &args, &env, has_codex, index, observer).await;
+        let result = spawn_and_init(
+            &cmd,
+            &args,
+            &env,
+            has_codex,
+            user_input_enabled,
+            index,
+            observer,
+        )
+        .await;
         guard.send(result);
     });
 
@@ -3907,6 +3950,7 @@ struct PoolStartup {
     has_generated_codex_config: bool,
     model: Option<String>,
     observer: Option<observer::ObserverHandle>,
+    user_input_enabled: bool,
 }
 
 impl PoolStartup {
@@ -3919,6 +3963,7 @@ impl PoolStartup {
             has_generated_codex_config: config.has_generated_codex_config,
             model: config.model.clone(),
             observer,
+            user_input_enabled: config.user_input_enabled,
         }
     }
 }
@@ -3940,6 +3985,7 @@ async fn initialize_agent_pool(
         .await;
         match spawn_result {
             Ok(mut acp) => {
+                acp.set_user_input_enabled(startup.user_input_enabled);
                 acp.set_observer(startup.observer.clone(), i);
                 let initialize = tokio::time::timeout(Duration::from_secs(60), acp.initialize());
                 let initialize_result = match shutdown.as_mut() {
@@ -4051,12 +4097,14 @@ async fn spawn_and_init(
     args: &[String],
     extra_env: &[(String, String)],
     has_generated_codex_config: bool,
+    user_input_enabled: bool,
     agent_index: usize,
     observer: Option<observer::ObserverHandle>,
 ) -> Result<(AcpClient, u32, String)> {
     let mut acp = AcpClient::spawn(command, args, extra_env, has_generated_codex_config)
         .await
         .map_err(|e| anyhow::anyhow!("failed to spawn agent: {e}"))?;
+    acp.set_user_input_enabled(user_input_enabled);
     acp.set_observer(observer, agent_index);
 
     match acp.initialize().await {
@@ -5278,6 +5326,7 @@ mod build_mcp_servers_tests {
             kinds_override: None,
             channels_override: None,
             no_mention_filter: false,
+            user_input_enabled: true,
             config_path: std::path::PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
@@ -5499,6 +5548,7 @@ mod error_outcome_emission_tests {
             kinds_override: None,
             channels_override: None,
             no_mention_filter: false,
+            user_input_enabled: true,
             config_path: std::path::PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
