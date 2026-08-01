@@ -9,6 +9,7 @@ export function ProjectThreadIntegrationCell({
   icon,
   label,
   onClick,
+  statusClassName,
   title,
 }: {
   active: boolean;
@@ -16,6 +17,7 @@ export function ProjectThreadIntegrationCell({
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
+  statusClassName?: string;
   title: string;
 }) {
   return (
@@ -38,8 +40,20 @@ export function ProjectThreadIntegrationCell({
           )}
         />
       </span>
-      <span className="mt-1 block truncate text-xs font-semibold">{title}</span>
-      <span className="mt-0.5 block truncate text-2xs text-muted-foreground">
+      <span
+        className={cn(
+          "mt-1 block truncate text-xs font-semibold",
+          statusClassName,
+        )}
+      >
+        {title}
+      </span>
+      <span
+        className={cn(
+          "mt-0.5 block truncate text-2xs text-muted-foreground",
+          statusClassName,
+        )}
+      >
         {detail}
       </span>
     </button>

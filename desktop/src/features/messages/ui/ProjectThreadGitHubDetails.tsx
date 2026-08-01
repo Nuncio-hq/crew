@@ -27,6 +27,12 @@ import {
   AlertDialogTitle,
 } from "@/shared/ui/alert-dialog";
 import { Button } from "@/shared/ui/button";
+import { Badge } from "@/shared/ui/badge";
+import {
+  ciStatus,
+  projectThreadStatusClassName,
+  pullRequestStatus,
+} from "./projectThreadGitHubStatus";
 
 export type ProjectThreadGitHubDrawer = "issue" | "pr" | "ci";
 
@@ -76,11 +82,28 @@ function IssueDetails({ pullRequest }: { pullRequest: ThreadPullRequest }) {
 }
 
 function CiDetails({ checks }: { checks: ThreadPullRequestCheck[] }) {
+  const status = ciStatus(checks);
   if (checks.length === 0) {
-    return <p className="text-xs text-muted-foreground">No checks reported.</p>;
+    return (
+      <div className="space-y-2">
+        <Badge
+          className={projectThreadStatusClassName(status.tone)}
+          variant="secondary"
+        >
+          {status.label}
+        </Badge>
+        <p className="text-xs text-muted-foreground">No checks reported.</p>
+      </div>
+    );
   }
   return (
     <div className="space-y-1.5">
+      <Badge
+        className={projectThreadStatusClassName(status.tone)}
+        variant="secondary"
+      >
+        {status.label}
+      </Badge>
       {checks.map((check) => (
         <button
           className="flex w-full items-center gap-2 rounded-lg border border-border/60 px-2 py-1.5 text-left disabled:cursor-default"
@@ -136,14 +159,23 @@ export function ProjectThreadGitHubDetails({
       setBusy(false);
     }
   };
+  const status = pullRequestStatus(pullRequest);
   return (
     <div className="space-y-3">
       <div className="flex items-start gap-2">
         <GitPullRequest className="mt-0.5 h-4 w-4 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">
-            #{pullRequest.number} {pullRequest.title}
-          </p>
+          <div className="flex min-w-0 items-center gap-2">
+            <p className="min-w-0 truncate text-sm font-semibold">
+              #{pullRequest.number} {pullRequest.title}
+            </p>
+            <Badge
+              className={projectThreadStatusClassName(status.tone)}
+              variant="secondary"
+            >
+              {status.label}
+            </Badge>
+          </div>
           <p className="text-xs text-muted-foreground">
             {pullRequest.headRefName} → {pullRequest.baseRefName} · +
             {pullRequest.additions} −{pullRequest.deletions} ·{" "}

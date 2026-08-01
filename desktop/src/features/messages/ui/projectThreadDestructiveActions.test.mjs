@@ -7,6 +7,8 @@ const workspaceUrl = new URL(
   import.meta.url,
 );
 const githubUrl = new URL("./ProjectThreadGitHubDetails.tsx", import.meta.url);
+const githubRowUrl = new URL("./ProjectThreadGitHubRow.tsx", import.meta.url);
+const statusUrl = new URL("./projectThreadGitHubStatus.ts", import.meta.url);
 
 test("workspace destructive actions use an in-app confirmation with a cancel path", async () => {
   const source = await readFile(workspaceUrl, "utf8");
@@ -24,4 +26,26 @@ test("close PR uses an in-app confirmation and does not run from cancel", async 
   assert.match(source, /AlertDialogCancel/);
   assert.match(source, /data-testid="project-thread-close-pr-confirm-action"/);
   assert.match(source, /setConfirmOpen\(false\);\s*void close\(\)/s);
+});
+
+test("workspace lifecycle buttons fit their grid cells", async () => {
+  const source = await readFile(workspaceUrl, "utf8");
+
+  assert.match(source, /grid min-w-0 grid-cols-1/);
+  assert.match(source, /className="min-w-0 w-full"/);
+  assert.match(source, /<span className="truncate">Remove worktree<\/span>/);
+});
+
+test("GitHub status colors cover PR and CI states", async () => {
+  const statusSource = await readFile(statusUrl, "utf8");
+  const rowSource = await readFile(githubRowUrl, "utf8");
+
+  assert.match(statusSource, /state === "MERGED"/);
+  assert.match(statusSource, /state === "CLOSED"/);
+  assert.match(statusSource, /pullRequest\.isDraft/);
+  assert.match(statusSource, /return \{ label: "Open"/);
+  assert.match(statusSource, /return \{ label: "Failing"/);
+  assert.match(statusSource, /return \{ label: "Pending"/);
+  assert.match(statusSource, /return \{ label: "Passing"/);
+  assert.match(rowSource, /statusClassName={projectThreadStatusClassName/);
 });

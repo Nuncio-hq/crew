@@ -142,11 +142,19 @@ export function ProjectThreadWorkspaceDetails({
           {behind}
         </p>
       ) : null}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <Button onClick={copyPath} size="sm" type="button" variant="outline">
-          <Copy className="h-4 w-4" /> Copy path
+      <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-3">
+        <Button
+          className="min-w-0 w-full"
+          onClick={copyPath}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          <Copy className="h-4 w-4 shrink-0" />
+          <span className="truncate">Copy path</span>
         </Button>
         <Button
+          className="min-w-0 w-full"
           disabled={!target || busy || lifecycle?.dirty !== false}
           onClick={() =>
             target &&
@@ -165,9 +173,11 @@ export function ProjectThreadWorkspaceDetails({
           type="button"
           variant="destructive"
         >
-          <Trash2 className="h-4 w-4" /> Remove worktree
+          <Trash2 className="h-4 w-4 shrink-0" />
+          <span className="truncate">Remove worktree</span>
         </Button>
         <Button
+          className="min-w-0 w-full"
           disabled={
             !target ||
             busy ||
@@ -186,7 +196,8 @@ export function ProjectThreadWorkspaceDetails({
           type="button"
           variant="destructive"
         >
-          <Trash2 className="h-4 w-4" /> Delete branch
+          <Trash2 className="h-4 w-4 shrink-0" />
+          <span className="truncate">Delete branch</span>
         </Button>
       </div>
       {lifecycle?.dirty ? (
