@@ -298,7 +298,7 @@ export function getWorkingAgentPubkeysForChannel(
 }
 
 export function mergeWorkingAgentPubkeys(
-  ...pubkeyLists: readonly string[][]
+  ...pubkeyLists: readonly (readonly string[])[]
 ): string[] {
   const merged = new Set<string>();
   for (const pubkeyList of pubkeyLists) {
