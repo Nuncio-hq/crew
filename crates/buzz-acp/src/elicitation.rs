@@ -7,7 +7,7 @@ use buzz_core::{
     kind::KIND_AGENT_USER_INPUT_ANSWER,
     user_input::{
         Engine, Option_, UserInputAnswer, UserInputAnswers, UserInputQuestion, UserInputRequest,
-        UserInputSelection,
+        UserInputResolutionOutcome, UserInputResolved, UserInputSelection,
     },
 };
 use nostr::{Alphabet, Keys, SingleLetterTag, TagKind};
@@ -57,7 +57,12 @@ pub(crate) struct QuestionRuntime {
     keys: Keys,
     owner_cache: Arc<OwnerCache>,
     rest_client: RestClient,
-    pending: Mutex<std::collections::HashMap<String, oneshot::Sender<Option<UserInputAnswers>>>>,
+    pending: Mutex<std::collections::HashMap<String, PendingRequest>>,
+}
+
+struct PendingRequest {
+    channel_id: Uuid,
+    sender: oneshot::Sender<Option<UserInputAnswers>>,
 }
 
 impl QuestionRuntime {
@@ -106,7 +111,13 @@ impl QuestionRuntime {
             .map_err(|e| e.to_string())?;
         let event_id = event.id.to_hex();
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(event_id.clone(), tx);
+        self.pending.lock().await.insert(
+            event_id.clone(),
+            PendingRequest {
+                channel_id,
+                sender: tx,
+            },
+        );
         if let Err(error) = self.publisher.publish_event(event).await {
             self.pending.lock().await.remove(&event_id);
             return Err(error.to_string());
@@ -115,8 +126,70 @@ impl QuestionRuntime {
     }
 
     pub(crate) async fn cancel(&self, event_id: &str) {
-        if let Some(sender) = self.pending.lock().await.remove(event_id) {
-            let _ = sender.send(None);
+        if let Some(pending) = self.pending.lock().await.remove(event_id) {
+            let _ = pending.sender.send(None);
+            self.publish_resolution(
+                pending.channel_id,
+                event_id,
+                UserInputResolutionOutcome::Cancelled,
+            )
+            .await;
+        }
+    }
+
+    /// Resolve every request still owned by this runtime during graceful shutdown.
+    pub(crate) async fn shutdown_pending(&self) {
+        let pending = {
+            let mut guard = self.pending.lock().await;
+            std::mem::take(&mut *guard)
+        };
+        for (event_id, pending) in pending {
+            let _ = pending.sender.send(None);
+            self.publish_resolution(
+                pending.channel_id,
+                &event_id,
+                UserInputResolutionOutcome::Cancelled,
+            )
+            .await;
+        }
+    }
+
+    async fn publish_resolution(
+        &self,
+        channel_id: Uuid,
+        request_event_id: &str,
+        outcome: UserInputResolutionOutcome,
+    ) {
+        let content = match serde_json::to_string(&UserInputResolved {
+            request_event_id: request_event_id.to_owned(),
+            outcome,
+        }) {
+            Ok(content) => content,
+            Err(error) => {
+                tracing::warn!(%error, request_event_id, "failed to serialize user-input resolution");
+                return;
+            }
+        };
+        let builder = match buzz_sdk::build_agent_user_input_resolved(
+            channel_id,
+            request_event_id,
+            &content,
+        ) {
+            Ok(builder) => builder,
+            Err(error) => {
+                tracing::warn!(%error, request_event_id, "failed to build user-input resolution");
+                return;
+            }
+        };
+        match builder.sign_with_keys(&self.keys) {
+            Ok(event) => {
+                if let Err(error) = self.publisher.publish_event(event).await {
+                    tracing::warn!(%error, request_event_id, "failed to publish user-input resolution");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, request_event_id, "failed to sign user-input resolution");
+            }
         }
     }
 
@@ -156,9 +229,20 @@ impl QuestionRuntime {
                 return;
             }
         };
-        let sender = self.pending.lock().await.remove(&request_event_id);
-        if let Some(sender) = sender {
-            let _ = sender.send(Some(answers));
+        let pending = self.pending.lock().await.remove(&request_event_id);
+        if let Some(pending) = pending {
+            let declined = answers.values().all(Option::is_none);
+            let _ = pending.sender.send(Some(answers));
+            self.publish_resolution(
+                pending.channel_id,
+                &request_event_id,
+                if declined {
+                    UserInputResolutionOutcome::Declined
+                } else {
+                    UserInputResolutionOutcome::Answered
+                },
+            )
+            .await;
         } else {
             tracing::debug!(request_event_id, "ignoring late user-input answer");
         }
@@ -278,6 +362,9 @@ pub(crate) fn normalize_form(schema: &serde_json::Value) -> Option<NormalizedFor
             options,
             multi_select,
             allow_custom_answer: custom_key.is_some(),
+            required: required.contains(key.as_str()),
+            // ACP has no notes concept; intentionally false until an engine
+            // provides a notes affordance.
             allow_notes: false,
         };
         questions.push(question);
@@ -395,6 +482,7 @@ pub(crate) fn reconstruct_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
 
     #[test]
     fn normalizes_select_and_freeform() {
@@ -505,6 +593,29 @@ mod tests {
         assert!(reconstruct_content(&form, &missing_required).is_none());
     }
 
+    #[test]
+    fn required_round_trips_and_old_question_events_default_to_false() {
+        let schema = serde_json::json!({
+            "type":"object",
+            "properties":{"question_0":{"type":"string"}},
+            "required":["question_0"]
+        });
+        let form = normalize_form(&schema).expect("supported");
+        assert!(form.questions[0].required);
+        let encoded = serde_json::to_string(&form.questions[0]).expect("question JSON");
+        assert!(
+            serde_json::from_str::<UserInputQuestion>(&encoded)
+                .expect("question round trip")
+                .required
+        );
+        let old = r#"{"id":"q0","header":"Pick","question":"Choose","options":[]}"#;
+        assert!(
+            !serde_json::from_str::<UserInputQuestion>(old)
+                .expect("old question JSON")
+                .required
+        );
+    }
+
     #[tokio::test]
     async fn ignores_non_owner_then_accepts_first_owner_answer() {
         let channel_id = Uuid::new_v4();
@@ -588,5 +699,124 @@ mod tests {
                 event: late_answer,
             })
             .await;
+    }
+
+    #[tokio::test]
+    async fn publishes_one_resolution_for_each_terminal_outcome() {
+        async fn publish_request(
+            channel_id: Uuid,
+            owner: &Keys,
+        ) -> (
+            Arc<QuestionRuntime>,
+            mpsc::Receiver<nostr::Event>,
+            String,
+            oneshot::Receiver<Option<UserInputAnswers>>,
+        ) {
+            let (publisher, published) = RelayEventPublisher::test_pair();
+            let runtime = QuestionRuntime::new(
+                publisher,
+                owner.clone(),
+                Arc::new(crate::OwnerCache::new(Some(owner.public_key().to_hex()))),
+                RestClient {
+                    http: reqwest::Client::new(),
+                    base_url: "http://127.0.0.1:0".to_string(),
+                    keys: owner.clone(),
+                    auth_tag_json: None,
+                },
+            );
+            let form = normalize_form(&serde_json::json!({
+                "type":"object",
+                "properties":{"question_0":{"type":"string"}}
+            }))
+            .expect("supported");
+            let (event_id, receiver) = runtime
+                .publish(
+                    channel_id,
+                    "session",
+                    "turn",
+                    Engine::Claude,
+                    form,
+                    "request",
+                    None,
+                    None,
+                )
+                .await
+                .expect("publish");
+            (runtime, published, event_id, receiver)
+        }
+
+        async fn resolution(published: &mut mpsc::Receiver<nostr::Event>) -> UserInputResolved {
+            let _request = published.recv().await.expect("request event");
+            let event = published.recv().await.expect("resolution event");
+            assert_eq!(
+                event.kind.as_u16() as u32,
+                buzz_core::kind::KIND_AGENT_USER_INPUT_RESOLVED
+            );
+            serde_json::from_str(&event.content).expect("resolution contract")
+        }
+
+        let channel_id = Uuid::new_v4();
+        let owner = Keys::generate();
+
+        let (runtime, mut published, event_id, receiver) =
+            publish_request(channel_id, &owner).await;
+        let answer =
+            buzz_sdk::build_agent_user_input_answer(channel_id, &event_id, r#"{"q0":"answer"}"#)
+                .expect("answer builder")
+                .sign_with_keys(&owner)
+                .expect("answer signature");
+        runtime
+            .handle_event(&BuzzEvent {
+                channel_id,
+                event: answer,
+            })
+            .await;
+        assert!(receiver.await.expect("answer received").is_some());
+        assert_eq!(
+            resolution(&mut published).await.outcome,
+            UserInputResolutionOutcome::Answered
+        );
+
+        let (runtime, mut published, event_id, receiver) =
+            publish_request(channel_id, &owner).await;
+        let decline =
+            buzz_sdk::build_agent_user_input_answer(channel_id, &event_id, r#"{"q0":null}"#)
+                .expect("answer builder")
+                .sign_with_keys(&owner)
+                .expect("answer signature");
+        runtime
+            .handle_event(&BuzzEvent {
+                channel_id,
+                event: decline,
+            })
+            .await;
+        assert!(receiver.await.expect("decline received").is_some());
+        assert_eq!(
+            resolution(&mut published).await.outcome,
+            UserInputResolutionOutcome::Declined
+        );
+
+        let (runtime, mut published, event_id, receiver) =
+            publish_request(channel_id, &owner).await;
+        runtime.cancel(&event_id).await;
+        assert!(receiver.await.expect("cancel received").is_none());
+        assert_eq!(
+            resolution(&mut published).await.outcome,
+            UserInputResolutionOutcome::Cancelled
+        );
+
+        let (runtime, mut published, _event_id, receiver) =
+            publish_request(channel_id, &owner).await;
+        runtime.shutdown_pending().await;
+        assert!(receiver.await.expect("shutdown received").is_none());
+        assert_eq!(
+            resolution(&mut published).await.outcome,
+            UserInputResolutionOutcome::Cancelled
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), published.recv())
+                .await
+                .is_err()
+        );
     }
 }

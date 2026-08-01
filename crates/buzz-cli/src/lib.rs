@@ -1936,6 +1936,7 @@ mod tests {
             "repos",
             "social",
             "upload",
+            "user-input",
             "users",
             "workflows",
         ];

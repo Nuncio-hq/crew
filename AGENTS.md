@@ -607,7 +607,9 @@ usage.
 for agent-directed human questions. Requests are published as durable,
 channel-scoped `KIND_AGENT_USER_INPUT_REQUESTED` events; owner-authored
 answers use `KIND_AGENT_USER_INPUT_ANSWER` and link to the request with an
-`e` tag. Permission requests remain governed by the existing bypass/approval
+`e` tag. Terminal requests publish `KIND_AGENT_USER_INPUT_RESOLVED` with the
+request event id and outcome (`answered`, `declined`, or `cancelled`), also
+linked with an `e` tag. Permission requests remain governed by the existing bypass/approval
 path. The agent-facing controls are:
 
 ```text

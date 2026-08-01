@@ -2729,6 +2729,9 @@ async fn tokio_main() -> Result<()> {
     }
 
     tracing::info!("shutdown: waiting for in-flight prompts");
+    // Resolve pending elicitation requests before reaping agents so clients
+    // receive a terminal event during graceful harness shutdown.
+    user_input_runtime.shutdown_pending().await;
     // 30 s is generous for in-flight prompts to be cancelled; using
     // max_turn_duration here would cause Ctrl+C to hang for up to an hour.
     let grace = Duration::from_secs(30);

@@ -4,6 +4,9 @@ import {
   CHANNEL_TIMELINE_CONTENT_KINDS,
   HOME_MENTION_EVENT_KINDS,
   KIND_DELETION,
+  KIND_AGENT_USER_INPUT_ANSWER,
+  KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_RESOLVED,
   KIND_NIP29_DELETE_EVENT,
   KIND_REACTION,
   KIND_STREAM_MESSAGE,
@@ -18,6 +21,24 @@ import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 // a single reaction-heavy message can have many aux events.
 export const AUX_BACKFILL_CHUNK_SIZE = 100;
 export const MAX_HISTORICAL_LIMIT = 10_000;
+
+export function buildChannelUserInputFilter(
+  channelId: string,
+  limit = 200,
+  since?: number,
+): RelaySubscriptionFilter {
+  const filter: RelaySubscriptionFilter = {
+    kinds: [
+      KIND_AGENT_USER_INPUT_REQUESTED,
+      KIND_AGENT_USER_INPUT_ANSWER,
+      KIND_AGENT_USER_INPUT_RESOLVED,
+    ],
+    "#h": [channelId],
+    limit,
+  };
+  if (since !== undefined) filter.since = since;
+  return filter;
+}
 
 /**
  * Live-subscription filter for an open channel: the broad
