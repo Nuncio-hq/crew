@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { deriveAgentConversationId } from "./conversationId.ts";
+import {
+  deriveAgentConversationId,
+  deriveAgentConversationIdOrNull,
+} from "./conversationId.ts";
 
 describe("deriveAgentConversationId", () => {
   it("matches Rust conversation identity vectors", () => {
@@ -19,5 +22,23 @@ describe("deriveAgentConversationId", () => {
       ),
       "026dfba8-bd95-7847-6709-920a0e6d9b97",
     );
+  });
+
+  it("returns null for malformed channel or root IDs", () => {
+    assert.equal(
+      deriveAgentConversationIdOrNull(
+        "not-a-uuid",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      ),
+      null,
+    );
+    assert.equal(
+      deriveAgentConversationIdOrNull(
+        "00112233-4455-6677-8899-aabbccddeeff",
+        "not-an-event-id",
+      ),
+      null,
+    );
+    assert.equal(deriveAgentConversationIdOrNull(null, null), null);
   });
 });

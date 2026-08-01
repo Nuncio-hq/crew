@@ -47,7 +47,10 @@ export function deriveAgentConversationIdOrNull(
   channelId: string | null | undefined,
   rootEventId: string | null | undefined,
 ): string | null {
-  return channelId && rootEventId
-    ? deriveAgentConversationId(channelId, rootEventId)
-    : null;
+  if (!channelId || !rootEventId) return null;
+  try {
+    return deriveAgentConversationId(channelId, rootEventId);
+  } catch {
+    return null;
+  }
 }

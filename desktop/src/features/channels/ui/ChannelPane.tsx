@@ -427,8 +427,12 @@ export const ChannelPane = React.memo(function ChannelPane({
           ) === index,
       );
   }, [botTypingEntries, openThreadHeadId]);
+  const threadComposerConversationId = React.useMemo(
+    () => deriveAgentConversationIdOrNull(activeChannel?.id, openThreadHeadId),
+    [activeChannel?.id, openThreadHeadId],
+  );
   const threadComposerWorkingBotPubkeys = useConversationWorkingAgentPubkeys(
-    deriveAgentConversationIdOrNull(activeChannel?.id, openThreadHeadId),
+    threadComposerConversationId,
     threadComposerBotTypingPubkeys,
   );
   const hasThreadComposerBotActivity =
