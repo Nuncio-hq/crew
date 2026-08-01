@@ -9,15 +9,14 @@ use crate::{
     nostr_convert,
     relay::query_relay,
 };
-
+mod install_capture;
 mod install_exec;
+mod install_report;
 mod install_runtime;
 mod managed_adapter_install;
 mod managed_node;
 mod post_install_verification;
-
 use install_runtime::install_acp_runtime_blocking;
-
 #[tauri::command]
 pub async fn discover_acp_providers(
     app: tauri::AppHandle,
@@ -186,10 +185,12 @@ pub async fn install_acp_runtime(
     // returns (Guard impl Drop) — so Phase 2's restart path runs outside
     // the guard and cannot re-enter the mutex.
     let runtime_id_clone = runtime_id.clone();
-    let install_result =
-        tokio::task::spawn_blocking(move || install_acp_runtime_blocking(&runtime_id_clone))
-            .await
-            .map_err(|e| format!("install task panicked: {e}"))??;
+    let app_clone = app.clone();
+    let install_result = tokio::task::spawn_blocking(move || {
+        install_acp_runtime_blocking(&runtime_id_clone, &app_clone)
+    })
+    .await
+    .map_err(|e| format!("install task panicked: {e}"))??;
 
     if !install_result.success {
         return Ok(install_result);
@@ -209,6 +210,7 @@ pub async fn install_acp_runtime(
         steps: install_result.steps,
         restarted_count,
         failed_restart_count,
+        log_path: install_result.log_path,
     })
 }
 
@@ -831,9 +833,6 @@ fn build_install_command(command: &str) -> Result<std::process::Command, String>
     install_shell_command(command)
 }
 
-#[cfg(test)]
-use managed_adapter_install::npm_eacces_hint;
-
 #[tauri::command]
 pub async fn discover_managed_agent_prereqs(
     input: DiscoverManagedAgentPrereqsRequest,
@@ -884,6 +883,7 @@ pub async fn list_relay_agents(state: State<'_, AppState>) -> Result<Vec<RelayAg
 
 #[cfg(test)]
 mod tests {
+    use super::managed_adapter_install::npm_eacces_hint;
     use super::*;
     use crate::managed_agents::is_npm_global_install;
 

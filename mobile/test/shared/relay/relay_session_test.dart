@@ -260,6 +260,84 @@ void main() {
     expect(session.state.status, SessionStatus.disconnected);
   });
 
+  test('reconnects and replays live subscriptions after resume', () async {
+    final sockets = <_ControlledRelaySocket>[];
+    final keychain = nostr.Keys.generate();
+    final session = RelaySessionNotifier(
+      socketFactory:
+          ({
+            required wsUrl,
+            required nsec,
+            required onMessage,
+            required onConnected,
+            required onDisconnected,
+          }) {
+            final socket = _ControlledRelaySocket(
+              wsUrl: wsUrl,
+              nsec: nsec,
+              onMessage: onMessage,
+              onConnected: onConnected,
+              onDisconnected: onDisconnected,
+            );
+            sockets.add(socket);
+            return socket;
+          },
+    );
+    final container = ProviderContainer(
+      overrides: [
+        relaySessionProvider.overrideWith(() => session),
+        relayConfigProvider.overrideWith(
+          () => _FakeRelayConfigNotifier(
+            baseUrl: 'https://relay.example',
+            nsec: keychain.nsec,
+          ),
+        ),
+        authProvider.overrideWith(() => _AuthenticatedAuthNotifier()),
+      ],
+    );
+    addTearDown(container.dispose);
+    final providerSubscription = container.listen(
+      relaySessionProvider,
+      (_, _) {},
+    );
+    addTearDown(providerSubscription.close);
+    await container.read(authProvider.future);
+    await Future<void>.delayed(Duration.zero);
+
+    sockets.single.connectSuccessfully();
+    final unsubscribe = await session.subscribe(
+      const NostrFilter(kinds: [1], limit: 1),
+      (_) {},
+    );
+    addTearDown(unsubscribe);
+    sockets.single.emitEose('l-1');
+
+    sockets.single.inboundAt = DateTime.now();
+    session.onAppPaused();
+    session.onAppResumed();
+    await Future<void>.delayed(Duration.zero);
+    expect(sockets, hasLength(1));
+
+    sockets.single.inboundAt = DateTime.now().subtract(
+      const Duration(seconds: 10),
+    );
+    session.onAppPaused();
+    session.onAppResumed();
+    await Future<void>.delayed(Duration.zero);
+    expect(sockets, hasLength(2));
+    sockets.last.connectSuccessfully();
+    expect(
+      sockets.last.messages,
+      contains(
+        predicate<List<dynamic>>((payload) {
+          return payload.length >= 3 &&
+              payload.first == 'REQ' &&
+              payload[1] == 'l-1';
+        }),
+      ),
+    );
+  });
+
   test('delivers the same live event to each matching subscription', () async {
     final session = RelaySessionNotifier();
     final firstEvents = <NostrEvent>[];
@@ -298,6 +376,36 @@ void main() {
     unsubscribeSecond();
   });
 
+  test('flushes replay events before a post-EOSE query can begin', () async {
+    final session = RelaySessionNotifier();
+    final deliveryPhases = <bool>[];
+    var queryHasBegun = false;
+    const filter = NostrFilter(
+      kinds: EventKind.channelEventKinds,
+      tags: {
+        '#h': [_channelId],
+      },
+      limit: 50,
+    );
+
+    final subscribe = session.subscribe(
+      filter,
+      (_) => deliveryPhases.add(queryHasBegun),
+    );
+    final replayEvent = _event();
+    session.debugHandleMessage(['EVENT', 'l-1', replayEvent.toJson()]);
+    session.debugHandleMessage(['EOSE', 'l-1']);
+
+    final unsubscribe = await subscribe;
+    queryHasBegun = true;
+    // The original batch timer must not deliver the replay event after the
+    // caller has advanced to its query phase.
+    session.debugFlushEventBuffer();
+
+    expect(deliveryPhases, [false]);
+    unsubscribe();
+  });
+
   test('live subscribe fails when relay closes before ready', () async {
     final session = RelaySessionNotifier();
     const filter = NostrFilter(kinds: [EventKind.agentObserverFrame], limit: 0);
@@ -322,9 +430,226 @@ void main() {
   });
 
   test(
+    'retryable CLOSED keeps the subscription and sends REQ after backoff',
+    () async {
+      final socket = _ControlledRelaySocket(
+        wsUrl: 'wss://relay.example',
+        nsec: null,
+        onMessage: (_) {},
+        onConnected: () {},
+        onDisconnected: (_) {},
+      );
+      final session = RelaySessionNotifier();
+      final container = ProviderContainer(
+        overrides: [
+          relaySessionProvider.overrideWith(() => session),
+          relayConfigProvider.overrideWith(
+            () => _FakeRelayConfigNotifier(
+              baseUrl: 'https://relay.example',
+              nsec: null,
+            ),
+          ),
+          authProvider.overrideWith(() => _FakeAuthNotifier()),
+        ],
+      );
+      addTearDown(container.dispose);
+      container.read(relaySessionProvider);
+      final listener = container.listen(relaySessionProvider, (_, _) {});
+      addTearDown(listener.close);
+      await container.read(authProvider.future);
+      await Future<void>.delayed(Duration.zero);
+      session.debugAttachSocketForTest(socket);
+      session.debugHandleConnected();
+      expect(session.state.status, SessionStatus.connected);
+      const filter = NostrFilter(kinds: EventKind.channelEventKinds, limit: 0);
+
+      final subscribe = session.subscribe(filter, (_) {});
+      session.debugHandleMessage(['EOSE', 'l-1']);
+      final unsubscribe = await subscribe;
+
+      session.debugHandleMessage([
+        'CLOSED',
+        'l-1',
+        'error: database temporarily unavailable',
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+
+      expect(
+        socket.messages.where((message) => message.first == 'REQ'),
+        hasLength(2),
+      );
+      session.debugHandleMessage(['EOSE', 'l-1']);
+      session.debugHandleMessage([
+        'CLOSED',
+        'l-1',
+        'error: database temporarily unavailable',
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+      expect(
+        socket.messages.where((message) => message.first == 'REQ'),
+        hasLength(3),
+      );
+      unsubscribe();
+    },
+  );
+
+  test('observer subscription recovers after a rate-limited CLOSED', () async {
+    final socket = _ControlledRelaySocket(
+      wsUrl: 'wss://relay.example',
+      nsec: null,
+      onMessage: (_) {},
+      onConnected: () {},
+      onDisconnected: (_) {},
+    );
+    final session = RelaySessionNotifier();
+    final container = ProviderContainer(
+      overrides: [
+        relaySessionProvider.overrideWith(() => session),
+        relayConfigProvider.overrideWith(
+          () => _FakeRelayConfigNotifier(
+            baseUrl: 'https://relay.example',
+            nsec: null,
+          ),
+        ),
+        authProvider.overrideWith(() => _FakeAuthNotifier()),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.read(relaySessionProvider);
+    final listener = container.listen(relaySessionProvider, (_, _) {});
+    addTearDown(listener.close);
+    await container.read(authProvider.future);
+    await Future<void>.delayed(Duration.zero);
+    session.debugAttachSocketForTest(socket);
+    session.debugHandleConnected();
+    expect(session.state.status, SessionStatus.connected);
+    const filter = NostrFilter(
+      kinds: [EventKind.agentObserverFrame],
+      tags: {
+        '#p': [_channelId],
+      },
+      limit: 0,
+    );
+    final closedMessages = <String>[];
+
+    final subscribe = session.subscribe(
+      filter,
+      (_) {},
+      onClosed: closedMessages.add,
+    );
+    session.debugHandleMessage(['EOSE', 'l-1']);
+    final unsubscribe = await subscribe;
+
+    session.debugHandleMessage([
+      'CLOSED',
+      'l-1',
+      'rate-limited: quota exceeded; retry in 2s',
+    ]);
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    expect(
+      socket.messages.where((message) => message.first == 'REQ'),
+      hasLength(1),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+
+    expect(
+      socket.messages.where((message) => message.first == 'REQ'),
+      hasLength(2),
+    );
+    expect(closedMessages, isEmpty);
+    unsubscribe();
+  });
+
+  test(
+    'closed retry waits for reconnect replay when the session is disconnected',
+    () async {
+      final socket = _ControlledRelaySocket(
+        wsUrl: 'wss://relay.example',
+        nsec: null,
+        onMessage: (_) {},
+        onConnected: () {},
+        onDisconnected: (_) {},
+      );
+      final session = RelaySessionNotifier();
+      final container = ProviderContainer(
+        overrides: [
+          relaySessionProvider.overrideWith(() => session),
+          relayConfigProvider.overrideWith(
+            () => _FakeRelayConfigNotifier(
+              baseUrl: 'https://relay.example',
+              nsec: null,
+            ),
+          ),
+          authProvider.overrideWith(() => _FakeAuthNotifier()),
+        ],
+      );
+      addTearDown(container.dispose);
+      container.read(relaySessionProvider);
+      final listener = container.listen(relaySessionProvider, (_, _) {});
+      addTearDown(listener.close);
+      await container.read(authProvider.future);
+      await Future<void>.delayed(Duration.zero);
+      session.debugAttachSocketForTest(socket);
+      session.debugHandleConnected();
+      const filter = NostrFilter(kinds: EventKind.channelEventKinds, limit: 0);
+
+      final subscribe = session.subscribe(filter, (_) {});
+      session.debugHandleMessage(['EOSE', 'l-1']);
+      final unsubscribe = await subscribe;
+
+      session.debugHandleMessage([
+        'CLOSED',
+        'l-1',
+        'error: database temporarily unavailable',
+      ]);
+      session.debugHandleDisconnected();
+      session.debugPauseNow();
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+      expect(
+        socket.messages.where((message) => message.first == 'REQ'),
+        hasLength(1),
+      );
+
+      session.debugHandleConnected();
+      expect(
+        socket.messages.where((message) => message.first == 'REQ'),
+        hasLength(2),
+      );
+      unsubscribe();
+    },
+  );
+
+  test(
     'live onClosed callback runs when relay closes an open subscription',
     () async {
+      final socket = _ControlledRelaySocket(
+        wsUrl: 'wss://relay.example',
+        nsec: null,
+        onMessage: (_) {},
+        onConnected: () {},
+        onDisconnected: (_) {},
+      );
       final session = RelaySessionNotifier();
+      final container = ProviderContainer(
+        overrides: [
+          relaySessionProvider.overrideWith(() => session),
+          relayConfigProvider.overrideWith(
+            () => _FakeRelayConfigNotifier(
+              baseUrl: 'https://relay.example',
+              nsec: null,
+            ),
+          ),
+          authProvider.overrideWith(() => _FakeAuthNotifier()),
+        ],
+      );
+      addTearDown(container.dispose);
+      container.read(relaySessionProvider);
+      final listener = container.listen(relaySessionProvider, (_, _) {});
+      addTearDown(listener.close);
+      await container.read(authProvider.future);
+      await Future<void>.delayed(Duration.zero);
+      session.debugAttachSocketForTest(socket);
+      session.debugHandleConnected();
       final closedMessages = <String>[];
       const filter = NostrFilter(
         kinds: [EventKind.agentObserverFrame],
@@ -345,6 +670,11 @@ void main() {
       ]);
 
       expect(closedMessages, ['restricted: no longer valid']);
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+      expect(
+        socket.messages.where((message) => message.first == 'REQ'),
+        hasLength(1),
+      );
       unsubscribe();
     },
   );
@@ -372,6 +702,10 @@ class _AuthenticatedAuthNotifier extends AuthNotifier {
 class _ControlledRelaySocket extends RelaySocket {
   final void Function() _connected;
   final void Function(Object? error) _disconnected;
+  final void Function(List<dynamic>) _message;
+  final messages = <List<dynamic>>[];
+  bool _isConnected = false;
+  DateTime? inboundAt;
 
   _ControlledRelaySocket({
     required super.wsUrl,
@@ -380,17 +714,38 @@ class _ControlledRelaySocket extends RelaySocket {
     required super.onConnected,
     required super.onDisconnected,
   }) : _connected = onConnected,
-       _disconnected = onDisconnected;
+       _disconnected = onDisconnected,
+       _message = onMessage;
 
   @override
   Future<void> connect() async {}
 
   @override
-  void dispose() {}
+  SocketState get state =>
+      _isConnected ? SocketState.connected : SocketState.disconnected;
 
-  void connectSuccessfully() => _connected();
+  @override
+  Future<void> disconnect() async {
+    _isConnected = false;
+  }
+
+  @override
+  void dispose() => _isConnected = false;
+
+  @override
+  DateTime? get lastInboundAt => inboundAt;
+
+  @override
+  void send(List<dynamic> payload) => messages.add(payload);
+
+  void connectSuccessfully() {
+    _isConnected = true;
+    _connected();
+  }
 
   void disconnectWith(Object? error) => _disconnected(error);
+
+  void emitEose(String subId) => _message(['EOSE', subId]);
 }
 
 const _channelId = '11111111-1111-4111-8111-111111111111';

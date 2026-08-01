@@ -1,0 +1,190 @@
+use serde::{Deserialize, Serialize};
+use tokio::process::Command;
+
+use super::thread_workspace_git::{command_output, validate_target};
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadGitHubStatus {
+    pub availability: ThreadGitHubAvailability,
+    pub pull_request: Option<ThreadPullRequest>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThreadGitHubAvailability {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadIssue {
+    pub number: u64,
+    pub state: String,
+    pub title: String,
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadPullRequestComment {
+    pub author: Option<ThreadGitHubAuthor>,
+    pub body: String,
+    pub created_at: String,
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ThreadGitHubAuthor {
+    pub login: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadPullRequestCheck {
+    pub name: String,
+    pub state: String,
+    pub url: Option<String>,
+    pub workflow: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadPullRequest {
+    pub additions: u64,
+    pub base_ref_name: String,
+    pub changed_files: u64,
+    pub closing_issues_references: Vec<ThreadIssue>,
+    pub comments: Vec<ThreadPullRequestComment>,
+    pub deletions: u64,
+    pub head_ref_name: String,
+    pub is_draft: bool,
+    pub merge_state_status: String,
+    pub number: u64,
+    pub review_decision: String,
+    pub state: String,
+    pub title: String,
+    pub url: String,
+    #[serde(skip_deserializing)]
+    pub checks: Vec<ThreadPullRequestCheck>,
+    #[serde(rename = "statusCheckRollup", skip_serializing)]
+    status_check_rollup: Vec<serde_json::Value>,
+}
+
+#[tauri::command]
+pub async fn get_thread_github_status(
+    repository_path: String,
+    branch: String,
+    root_event_id: String,
+) -> Result<ThreadGitHubStatus, String> {
+    let target = validate_target(&repository_path, &branch, &root_event_id).await?;
+    let Some(number) = find_pull_request_number(&target.repository_path, &branch).await else {
+        return Ok(unavailable());
+    };
+    if number == 0 {
+        return Ok(ThreadGitHubStatus {
+            availability: ThreadGitHubAvailability::Available,
+            pull_request: None,
+        });
+    }
+    let Some(mut pull_request) = read_pull_request(&target.repository_path, number).await else {
+        return Ok(unavailable());
+    };
+    pull_request.checks = pull_request
+        .status_check_rollup
+        .iter()
+        .filter_map(parse_check)
+        .collect();
+    pull_request.comments = pull_request.comments.into_iter().rev().take(20).collect();
+    pull_request.comments.reverse();
+    Ok(ThreadGitHubStatus {
+        availability: ThreadGitHubAvailability::Available,
+        pull_request: Some(pull_request),
+    })
+}
+
+async fn find_pull_request_number(repository: &std::path::Path, branch: &str) -> Option<u64> {
+    let output = command_output(
+        Command::new("gh")
+            .args(["pr", "list", "--state", "all", "--head", branch])
+            .args(["--json", "number", "--limit", "1"])
+            .current_dir(repository),
+    )
+    .await
+    .ok()?;
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).ok()?;
+    Some(
+        rows.first()
+            .and_then(|row| row["number"].as_u64())
+            .unwrap_or(0),
+    )
+}
+
+async fn read_pull_request(repository: &std::path::Path, number: u64) -> Option<ThreadPullRequest> {
+    let fields = "number,title,state,url,headRefName,baseRefName,isDraft,mergeStateStatus,reviewDecision,additions,deletions,changedFiles,comments,closingIssuesReferences,statusCheckRollup";
+    let output = command_output(
+        Command::new("gh")
+            .args(["pr", "view", &number.to_string(), "--json", fields])
+            .current_dir(repository),
+    )
+    .await
+    .ok()?;
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+fn parse_check(value: &serde_json::Value) -> Option<ThreadPullRequestCheck> {
+    let name = value["name"]
+        .as_str()
+        .or_else(|| value["context"].as_str())?
+        .to_string();
+    let state = ["conclusion", "state", "status"]
+        .iter()
+        .find_map(|key| value[*key].as_str().filter(|state| !state.is_empty()))?
+        .to_string();
+    Some(ThreadPullRequestCheck {
+        name,
+        state,
+        url: value["detailsUrl"]
+            .as_str()
+            .or_else(|| value["targetUrl"].as_str())
+            .map(str::to_string),
+        workflow: value["workflowName"].as_str().map(str::to_string),
+    })
+}
+
+fn unavailable() -> ThreadGitHubStatus {
+    ThreadGitHubStatus {
+        availability: ThreadGitHubAvailability::Unavailable,
+        pull_request: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_check;
+
+    #[test]
+    fn parses_check_runs_and_commit_statuses() {
+        let check_run = serde_json::json!({
+            "name": "Desktop E2E",
+            "status": "IN_PROGRESS",
+            "detailsUrl": "https://github.com/org/repo/actions/runs/1",
+            "workflowName": "Crew CI"
+        });
+        let commit_status = serde_json::json!({
+            "context": "release/ready",
+            "state": "SUCCESS",
+            "targetUrl": "https://example.test/status"
+        });
+
+        let run = parse_check(&check_run).expect("check run should parse");
+        assert_eq!(run.name, "Desktop E2E");
+        assert_eq!(run.state, "IN_PROGRESS");
+        assert_eq!(run.workflow.as_deref(), Some("Crew CI"));
+        let status = parse_check(&commit_status).expect("commit status should parse");
+        assert_eq!(status.name, "release/ready");
+        assert_eq!(status.state, "SUCCESS");
+        assert_eq!(status.url.as_deref(), Some("https://example.test/status"));
+    }
+}

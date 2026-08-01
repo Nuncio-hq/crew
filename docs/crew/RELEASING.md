@@ -88,7 +88,7 @@ through encrypted secrets.
 5. For updater E2E between distributed Crew builds, confirm the new version is
    greater than the installed Crew version. For `v0.0.5`, preserve a working
    `0.0.4` installation as the update source. Exempt the manual first
-   `v0.0.1-dev` install described below; it cannot update from Buzz `0.5.2`.
+   `v0.0.1-dev` install described below; it cannot update from Buzz `0.5.3`.
 6. Run the focused release contract from [`TESTING.md`](TESTING.md).
 7. Dispatch from branch `main`, then approve the
    `nuncio-crew-release` Environment gate when GitHub requests it.
@@ -171,7 +171,7 @@ alone; the installed updater relaunch is a post-merge publication gate.
 
 ## First release limitation
 
-`NuncioCrew Local` reports the pinned Buzz version `0.5.2`. Tauri correctly
+`NuncioCrew Local` reports the pinned Buzz version `0.5.3`. Tauri correctly
 refuses to update it to lower `0.0.1-dev`. Install the first distributed dev
 build manually. Auto-update evidence begins with a signed lower Crew dev probe
 or the next monotonically higher Crew release.

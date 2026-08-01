@@ -1,0 +1,1028 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Thread integration strip — prototype</title>
+    <style>
+      /* Catppuccin tokens lifted from desktop/src/shared/styles/globals/theme.css */
+      :root {
+        --radius: 0.625rem;
+        --background: 220 23.08% 94.9%;
+        --foreground: 234 16.02% 35.49%;
+        --card: 220 23.08% 94.9%;
+        --muted: 223 15.91% 82.75%;
+        --muted-foreground: 233 12.8% 41.37%;
+        --border: 225 13.56% 76.86%;
+        --primary: 266 85.05% 58.04%;
+        --destructive: 347 86.67% 44.12%;
+        --ok: 152 68% 33%;
+        --warn: 35 77% 42%;
+        --surface: 0 0% 100%;
+      }
+      html.dark {
+        --background: 232 23.4% 18.43%;
+        --foreground: 227 68.25% 87.65%;
+        --card: 232 23.4% 18.43%;
+        --muted: 230 18.8% 26.08%;
+        --muted-foreground: 228 39.22% 80%;
+        --border: 231 15.61% 33.92%;
+        --primary: 267 82.69% 79.61%;
+        --destructive: 351 73.91% 72.94%;
+        --ok: 152 58% 62%;
+        --warn: 40 70% 68%;
+        --surface: 231 20% 22%;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        font-size: 16px;
+      }
+      body {
+        margin: 0;
+        padding: 2.5rem 1.5rem 6rem;
+        background: hsl(var(--background));
+        color: hsl(var(--foreground));
+        font-family:
+          ui-sans-serif, -apple-system, "Inter", "Segoe UI", system-ui,
+          sans-serif;
+        font-size: 1rem;
+        line-height: 1.5;
+      }
+      .page {
+        margin: 0 auto;
+        max-width: 60rem;
+      }
+
+      /* ---------- prototype chrome (not part of the app) ---------- */
+      .chrome {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+        margin-bottom: 1.75rem;
+        padding-bottom: 1.25rem;
+        border-bottom: 1px dashed hsl(var(--border));
+      }
+      .chrome-label {
+        margin-right: 0.25rem;
+        font-size: 0.6875rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: hsl(var(--muted-foreground));
+      }
+      .seg {
+        display: inline-flex;
+        border: 1px solid hsl(var(--border));
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .seg button {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: hsl(var(--muted-foreground));
+        font: inherit;
+        font-size: 0.75rem;
+        padding: 0.3rem 0.7rem;
+        cursor: pointer;
+      }
+      .seg button[aria-pressed="true"] {
+        background: hsl(var(--primary) / 0.18);
+        color: hsl(var(--foreground));
+      }
+
+      h1 {
+        font-size: 1.125rem;
+        margin: 0 0 0.25rem;
+      }
+      .sub {
+        margin: 0 0 1.75rem;
+        font-size: 0.8125rem;
+        color: hsl(var(--muted-foreground));
+      }
+      h2.section {
+        font-size: 0.6875rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: hsl(var(--muted-foreground));
+        margin: 2rem 0 0.6rem;
+        font-weight: 600;
+      }
+
+      /* ---------- thread mock ---------- */
+      .thread-head {
+        display: flex;
+        gap: 0.625rem;
+        align-items: flex-start;
+        margin-bottom: 0.75rem;
+      }
+      .thread-head .body {
+        font-size: 1rem;
+      }
+      .chip-name {
+        background: hsl(var(--muted));
+        border-radius: 0.3rem;
+        padding: 0 0.3rem;
+        font-weight: 600;
+      }
+
+      /* ---------- the strip ---------- */
+      .strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        border: 1px solid hsl(var(--border) / 0.6);
+        border-radius: 0.75rem;
+        background: hsl(var(--muted) / 0.25);
+        overflow: hidden;
+      }
+      .strip + .strip {
+        margin-top: 0.5rem;
+      }
+      /* Single-row layout flattens both strips into one 6-column grid. */
+      body[data-layout="single"] .strips {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        border: 1px solid hsl(var(--border) / 0.6);
+        border-radius: 0.75rem;
+        background: hsl(var(--muted) / 0.25);
+        overflow: hidden;
+      }
+      body[data-layout="single"] .strip {
+        display: contents;
+      }
+      body[data-layout="single"] .cell {
+        border-right: 1px solid hsl(var(--border) / 0.5);
+      }
+      body[data-layout="single"] .strip:last-of-type .cell:last-child {
+        border-right: 0;
+      }
+
+      .cell {
+        appearance: none;
+        font: inherit;
+        text-align: left;
+        background: transparent;
+        color: inherit;
+        border: 0;
+        border-right: 1px solid hsl(var(--border) / 0.5);
+        padding: 0.5rem 0.75rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-width: 0;
+        cursor: pointer;
+        transition: background 120ms ease;
+      }
+      .cell:last-child {
+        border-right: 0;
+      }
+      .cell:hover {
+        background: hsl(var(--muted) / 0.55);
+      }
+      .cell:focus-visible {
+        outline: 2px solid hsl(var(--primary));
+        outline-offset: -2px;
+      }
+      .cell[aria-expanded="true"] {
+        background: hsl(var(--muted) / 0.7);
+      }
+      .cell-text {
+        min-width: 0;
+        flex: 1;
+      }
+      .cell-label {
+        font-size: 0.6875rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: hsl(var(--muted-foreground));
+        line-height: 1.2;
+      }
+      .cell-value {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        line-height: 1.35;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .cell-meta {
+        font-size: 0.6875rem;
+        color: hsl(var(--muted-foreground));
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .cell .chev {
+        flex-shrink: 0;
+        opacity: 0.45;
+        transition: transform 140ms ease;
+      }
+      .cell[aria-expanded="true"] .chev {
+        transform: rotate(180deg);
+        opacity: 0.9;
+      }
+
+      /* avatars */
+      .avatars {
+        display: flex;
+        flex-shrink: 0;
+      }
+      .avatars .av + .av {
+        margin-left: -0.35rem;
+      }
+      .av {
+        width: 1.375rem;
+        height: 1.375rem;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        font-size: 0.5rem;
+        font-weight: 700;
+        color: #1b1b1f;
+        box-shadow: 0 0 0 2px hsl(var(--background));
+      }
+      .av.opus {
+        background: linear-gradient(140deg, #f0a58a, #d9603c);
+      }
+      .av.grok {
+        background: linear-gradient(140deg, #9fd0ff, #4d86d6);
+      }
+      .av.codex {
+        background: linear-gradient(140deg, #b6e7c1, #46a86a);
+      }
+      .av.oscar {
+        background: linear-gradient(140deg, #e8d58a, #b99334);
+      }
+      .av.lg {
+        width: 1.75rem;
+        height: 1.75rem;
+        font-size: 0.625rem;
+      }
+
+      /* status dots + badges */
+      .dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 999px;
+        flex-shrink: 0;
+      }
+      .dot.ok {
+        background: hsl(var(--ok));
+      }
+      .dot.run {
+        background: hsl(var(--ok));
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+      .dot.warn {
+        background: hsl(var(--warn));
+      }
+      .dot.bad {
+        background: hsl(var(--destructive));
+      }
+      .dot.idle {
+        background: hsl(var(--muted-foreground) / 0.6);
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.25;
+        }
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        border-radius: 999px;
+        padding: 0.05rem 0.45rem;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        border: 1px solid transparent;
+        white-space: nowrap;
+      }
+      .badge.ok {
+        color: hsl(var(--ok));
+        border-color: hsl(var(--ok) / 0.35);
+        background: hsl(var(--ok) / 0.12);
+      }
+      .badge.warn {
+        color: hsl(var(--warn));
+        border-color: hsl(var(--warn) / 0.35);
+        background: hsl(var(--warn) / 0.12);
+      }
+      .badge.bad {
+        color: hsl(var(--destructive));
+        border-color: hsl(var(--destructive) / 0.35);
+        background: hsl(var(--destructive) / 0.12);
+      }
+      .badge.mute {
+        color: hsl(var(--muted-foreground));
+        border-color: hsl(var(--border));
+      }
+      .badge.purple {
+        color: hsl(var(--primary));
+        border-color: hsl(var(--primary) / 0.4);
+        background: hsl(var(--primary) / 0.12);
+      }
+      code,
+      .mono {
+        font-family: ui-monospace, "SF Mono", "JetBrains Mono", monospace;
+        font-size: 0.75rem;
+      }
+
+      /* ---------- drawer ---------- */
+      .drawer {
+        border: 1px solid hsl(var(--border) / 0.6);
+        border-top: 0;
+        border-radius: 0 0 0.75rem 0.75rem;
+        background: hsl(var(--surface) / 0.55);
+        padding: 0.85rem 0.95rem;
+        margin-top: -0.5rem;
+        animation: slide 160ms ease;
+      }
+      @keyframes slide {
+        from {
+          opacity: 0;
+          transform: translateY(-0.25rem);
+        }
+      }
+      .drawer[hidden] {
+        display: none;
+      }
+      .drawer h3 {
+        margin: 0 0 0.6rem;
+        font-size: 0.8125rem;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      .kv {
+        display: grid;
+        grid-template-columns: 8.5rem 1fr;
+        gap: 0.3rem 0.75rem;
+        font-size: 0.8125rem;
+      }
+      .kv dt {
+        color: hsl(var(--muted-foreground));
+        font-size: 0.75rem;
+      }
+      .kv dd {
+        margin: 0;
+        min-width: 0;
+        word-break: break-all;
+      }
+      .row-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+      }
+      .row-item {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.4rem 0.15rem;
+        border-bottom: 1px solid hsl(var(--border) / 0.35);
+        font-size: 0.8125rem;
+      }
+      .row-item:last-child {
+        border-bottom: 0;
+      }
+      .row-item .grow {
+        flex: 1;
+        min-width: 0;
+      }
+      .row-item .when {
+        font-size: 0.6875rem;
+        color: hsl(var(--muted-foreground));
+        white-space: nowrap;
+      }
+      .idx {
+        width: 1rem;
+        text-align: center;
+        font-size: 0.6875rem;
+        color: hsl(var(--muted-foreground));
+      }
+      .comment {
+        display: flex;
+        gap: 0.55rem;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid hsl(var(--border) / 0.35);
+      }
+      .comment:last-child {
+        border-bottom: 0;
+      }
+      .comment .who {
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+      .comment .txt {
+        font-size: 0.8125rem;
+        color: hsl(var(--muted-foreground));
+      }
+      .actions {
+        display: flex;
+        gap: 0.4rem;
+        margin-top: 0.75rem;
+        flex-wrap: wrap;
+      }
+      .btn {
+        appearance: none;
+        font: inherit;
+        font-size: 0.75rem;
+        border: 1px solid hsl(var(--border));
+        background: transparent;
+        color: hsl(var(--foreground));
+        border-radius: 0.5rem;
+        padding: 0.25rem 0.6rem;
+        cursor: pointer;
+      }
+      .btn:hover {
+        background: hsl(var(--muted) / 0.6);
+      }
+      .btn.primary {
+        border-color: hsl(var(--primary) / 0.5);
+        background: hsl(var(--primary) / 0.15);
+      }
+      .callout {
+        display: flex;
+        gap: 0.5rem;
+        align-items: flex-start;
+        border-radius: 0.5rem;
+        padding: 0.5rem 0.6rem;
+        font-size: 0.75rem;
+        margin-top: 0.7rem;
+      }
+      .callout.warn {
+        border: 1px solid hsl(var(--warn) / 0.35);
+        background: hsl(var(--warn) / 0.1);
+      }
+      .note {
+        font-size: 0.75rem;
+        color: hsl(var(--muted-foreground));
+        margin-top: 0.85rem;
+      }
+
+      /* ---------- old layout (for comparison) ---------- */
+      .old .block {
+        border: 1px solid hsl(var(--border) / 0.6);
+        border-radius: 0.75rem;
+        padding: 0.6rem 0.75rem;
+        margin-bottom: 0.5rem;
+      }
+      .old .ready {
+        border-color: hsl(var(--ok) / 0.3);
+        background: hsl(var(--ok) / 0.1);
+      }
+      .old .hdr {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid hsl(var(--border) / 0.5);
+        margin: -0.6rem -0.75rem 0.35rem;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+        font-weight: 600;
+      }
+      .measure {
+        font-size: 0.75rem;
+        color: hsl(var(--muted-foreground));
+        margin-top: 0.4rem;
+      }
+      svg {
+        flex-shrink: 0;
+      }
+    </style>
+  </head>
+  <body data-layout="two-row" data-variant="new">
+    <div class="page">
+      <h1>Thread integration strip</h1>
+      <p class="sub">
+        Prototype for the Project thread panel — workspace + GitHub context
+        collapsed into compact rows. Click any cell to open its history.
+      </p>
+
+      <div class="chrome">
+        <span class="chrome-label">Variant</span>
+        <div class="seg" id="seg-variant">
+          <button data-variant="old" aria-pressed="false">Current v0.0.5</button>
+          <button data-variant="new" aria-pressed="true">Proposed</button>
+        </div>
+        <span class="chrome-label" style="margin-left: 0.75rem">Layout</span>
+        <div class="seg" id="seg-layout">
+          <button data-layout="two-row" aria-pressed="true">2 rows × 3</button>
+          <button data-layout="single" aria-pressed="false">1 row × 6</button>
+        </div>
+        <span class="chrome-label" style="margin-left: 0.75rem">Workspace</span>
+        <div class="seg" id="seg-state">
+          <button data-state="pending" aria-pressed="false">Preparing</button>
+          <button data-state="ready" aria-pressed="true">Ready</button>
+          <button data-state="error" aria-pressed="false">Error</button>
+        </div>
+        <span class="chrome-label" style="margin-left: 0.75rem">Theme</span>
+        <div class="seg" id="seg-theme">
+          <button data-theme="dark" aria-pressed="true">Dark</button>
+          <button data-theme="light" aria-pressed="false">Light</button>
+        </div>
+      </div>
+
+      <div class="thread-head">
+        <div class="av oscar lg">OS</div>
+        <div class="body">
+          <span class="chip-name">@Claude Opus</span> mình đang test version
+          0.0.5, đọc commit/change logs và xem xét hành vi thread này có đúng k
+        </div>
+      </div>
+
+      <!-- ============ PROPOSED ============ -->
+      <div id="new-view">
+        <div class="strips">
+        <div class="strip workspace">
+          <button class="cell" data-panel="task" aria-expanded="false">
+            <div class="avatars">
+              <div class="av opus">CO</div>
+              <div class="av grok">CG</div>
+            </div>
+            <div class="cell-text">
+              <div class="cell-value" id="task-value">2-agent task</div>
+              <div class="cell-meta">nunciocrew · project thread</div>
+            </div>
+            <svg
+              class="chev"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+
+          <button class="cell" data-panel="workspace" aria-expanded="false">
+            <span class="dot ok" id="ws-dot"></span>
+            <div class="cell-text">
+              <div class="cell-value mono" id="ws-value">
+                buzz/eb791333c0ee
+              </div>
+              <div class="cell-meta" id="ws-meta">
+                workspace ready · 4 behind main
+              </div>
+            </div>
+            <svg
+              class="chev"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+
+          <button class="cell" data-panel="handoff" aria-expanded="false">
+            <span class="dot run"></span>
+            <div class="cell-text">
+              <div class="cell-value">Claude Opus working</div>
+              <div class="cell-meta" id="handoff-meta">
+                1 done · 1 working · 0 queued
+              </div>
+            </div>
+            <svg
+              class="chev"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="strip integration">
+          <button class="cell" data-panel="issue" aria-expanded="false">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
+            </svg>
+            <div class="cell-text">
+              <div class="cell-value">#12 Thread worktree UI</div>
+              <div class="cell-meta">open · 3 comments</div>
+            </div>
+            <svg
+              class="chev"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+
+          <button class="cell" data-panel="pr" aria-expanded="false">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="6" cy="6" r="2.5" />
+              <circle cx="6" cy="18" r="2.5" />
+              <path d="M6 8.5v7" />
+              <circle cx="18" cy="18" r="2.5" />
+              <path d="M18 15.5V9a3 3 0 0 0-3-3h-4" />
+              <path d="m13 3-2 3 2 3" />
+            </svg>
+            <div class="cell-text">
+              <div class="cell-value">#9 surface thread worktrees</div>
+              <div class="cell-meta">
+                <span class="badge purple">review requested</span> · 5 comments
+              </div>
+            </div>
+            <svg
+              class="chev"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+
+          <button class="cell" data-panel="ci" aria-expanded="false">
+            <span class="dot run"></span>
+            <div class="cell-text">
+              <div class="cell-value">CI running · 4/6</div>
+              <div class="cell-meta">just ci · started 2m ago</div>
+            </div>
+            <svg
+              class="chev"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+        </div>
+        </div>
+
+        <div class="drawer" id="drawer" hidden></div>
+
+        <p class="note">
+          Height: <strong>2 rows ≈ 88&nbsp;px</strong> vs the current
+          <strong>3 stacked cards ≈ 232&nbsp;px</strong> — and it now carries
+          issue / PR / CI that the current panel does not show at all.
+        </p>
+      </div>
+
+      <!-- ============ CURRENT ============ -->
+      <div id="old-view" class="old" hidden>
+        <div class="block">
+          <div style="display: flex; align-items: center; gap: 0.5rem">
+            <div class="av opus lg">CO</div>
+            <div>
+              <div style="font-weight: 600; font-size: 0.875rem">
+                1-agent task
+              </div>
+              <div style="font-size: 0.75rem; color: hsl(var(--muted-foreground))">
+                Claude Opus · shared thread worktree
+              </div>
+            </div>
+            <span class="badge mute" style="margin-left: auto"
+              >buzz/eb791333c0ee</span
+            >
+          </div>
+        </div>
+        <div class="block ready">
+          <div style="font-weight: 600; font-size: 0.875rem; color: hsl(var(--ok))">
+            ✓ Shared workspace ready
+          </div>
+          <div style="font-size: 0.75rem; color: hsl(var(--muted-foreground))">
+            buzz/eb791333c0ee · all agents in this thread use this worktree
+          </div>
+        </div>
+        <div class="block" style="padding-bottom: 0.2rem">
+          <div class="hdr">
+            <span>Handoff in this thread</span>
+            <span style="font-weight: 400; font-size: 0.75rem">1 worktree</span>
+          </div>
+          <div class="row-item">
+            <span class="idx">1</span>
+            <div class="av opus"></div>
+            <span class="grow">Claude Opus</span>
+            <span class="badge ok">Working</span>
+          </div>
+        </div>
+        <p class="measure">
+          Cursor Grok High Fast is missing — it was added in a reply, and the
+          list only reads the thread root. No issue / PR / CI anywhere.
+        </p>
+      </div>
+    </div>
+
+    <script>
+      const body = document.body;
+      const drawer = document.getElementById("drawer");
+
+      const HANDOFF = [
+        {
+          name: "Claude Opus",
+          cls: "opus",
+          init: "CO",
+          status: "working",
+          via: "root mention",
+          when: "12:31 PM",
+        },
+        {
+          name: "Cursor Grok High Fast",
+          cls: "grok",
+          init: "CG",
+          status: "done",
+          via: "added in reply",
+          when: "2:16 PM",
+        },
+      ];
+
+      const STATUS_BADGE = {
+        working: '<span class="badge ok">● Working</span>',
+        done: '<span class="badge ok">✓ Done</span>',
+        queued: '<span class="badge mute">Queued</span>',
+      };
+
+      const PANELS = {
+        task: () => `
+          <h3>Project task context</h3>
+          <dl class="kv">
+            <dt>Repo</dt><dd class="mono">30617:142ef1b9…:nunciocrew</dd>
+            <dt>Source workspace</dt><dd class="mono">/Users/a1241968/Desktop/Oscar/LilGroup/Nuncio/crew</dd>
+            <dt>Thread root</dt><dd class="mono">eb791333c0ee702e…1436a</dd>
+            <dt>Agents</dt><dd>${HANDOFF.map((a) => a.name).join(", ")}</dd>
+            <dt>Opened</dt><dd>Today 12:31 PM by Oscar</dd>
+          </dl>
+          <div class="actions">
+            <button class="btn">Open source workspace</button>
+            <button class="btn">Copy thread link</button>
+          </div>`,
+
+        workspace: () => {
+          const state = body.dataset.state || "ready";
+          if (state === "pending")
+            return `
+            <h3>Preparing isolated workspace</h3>
+            <p class="txt" style="font-size:.8125rem">
+              Agents start after the harness creates and verifies this thread's worktree.
+            </p>
+            <dl class="kv">
+              <dt>Planned branch</dt><dd class="mono">buzz/eb791333c0ee</dd>
+              <dt>Base</dt><dd class="mono">origin/main @ 40773ea6d (fetched just now)</dd>
+            </dl>`;
+          if (state === "error")
+            return `
+            <h3>Workspace setup failed</h3>
+            <dl class="kv">
+              <dt>Error</dt><dd>fatal: 'buzz/eb791333c0ee' is already checked out at .buzz-worktrees/crew-eb791333c0ee</dd>
+              <dt>Attempted base</dt><dd class="mono">origin/main @ 40773ea6d</dd>
+            </dl>
+            <div class="actions">
+              <button class="btn primary">Retry setup</button>
+              <button class="btn">Reveal in Finder</button>
+            </div>`;
+          return `
+            <h3>Shared thread worktree</h3>
+            <dl class="kv">
+              <dt>Branch</dt><dd class="mono">buzz/eb791333c0ee</dd>
+              <dt>Worktree</dt><dd class="mono">.buzz-worktrees/crew-eb791333c0ee</dd>
+              <dt>Base revision</dt><dd class="mono">a152f59b1 <span class="badge warn">4 behind origin/main</span></dd>
+              <dt>Created</dt><dd>Today 12:31 PM · 1 worktree for this thread</dd>
+              <dt>Uncommitted</dt><dd>3 files changed</dd>
+            </dl>
+            <div class="callout warn">
+              <span>⚠</span>
+              <div>
+                Worktree was cut from the local checkout, not from
+                <code>origin/main</code>. Agents here are editing pre-v0.0.5 code.
+              </div>
+            </div>
+            <div class="actions">
+              <button class="btn primary">Rebase onto origin/main</button>
+              <button class="btn" data-copy=".buzz-worktrees/crew-eb791333c0ee">Copy path</button>
+              <button class="btn">Open in terminal</button>
+              <button class="btn">Remove worktree</button>
+            </div>`;
+        },
+
+        handoff: () => `
+          <h3>Handoff in this thread <span class="badge mute">1 worktree</span></h3>
+          <div class="row-list">
+            ${HANDOFF.map(
+              (a, i) => `
+              <div class="row-item">
+                <span class="idx">${i + 1}</span>
+                <div class="av ${a.cls}">${a.init}</div>
+                <span class="grow">${a.name}
+                  <span class="badge mute" style="margin-left:.35rem">${a.via}</span>
+                </span>
+                <span class="when">${a.when}</span>
+                ${STATUS_BADGE[a.status]}
+              </div>`,
+            ).join("")}
+          </div>
+          <p class="note">
+            Order follows first mention — thread root first, then agents pulled in by later replies.
+          </p>`,
+
+        issue: () => `
+          <h3>Issue #12 · Thread worktree UI <span class="badge ok">open</span></h3>
+          <dl class="kv">
+            <dt>Linked by</dt><dd>branch name <code>buzz/eb791333c0ee</code> → PR #9 → issue #12</dd>
+            <dt>Labels</dt><dd><span class="badge purple">desktop</span> <span class="badge purple">ux</span></dd>
+            <dt>Assignee</dt><dd>oscarlehuu</dd>
+          </dl>
+          <h3 style="margin-top:.9rem">Timeline</h3>
+          <div class="row-list">
+            <div class="row-item"><span class="dot ok"></span><span class="grow">Opened by oscarlehuu</span><span class="when">2d ago</span></div>
+            <div class="row-item"><span class="dot idle"></span><span class="grow">Labeled <code>ux</code></span><span class="when">2d ago</span></div>
+            <div class="row-item"><span class="dot idle"></span><span class="grow">PR #9 linked</span><span class="when">3h ago</span></div>
+          </div>`,
+
+        pr: () => `
+          <h3>PR #9 · feat: surface Project thread worktrees
+            <span class="badge purple">review requested</span></h3>
+          <dl class="kv">
+            <dt>Head → base</dt><dd class="mono">buzz/eb791333c0ee → main</dd>
+            <dt>Diff</dt><dd>+6,772 / −830 across 78 files</dd>
+            <dt>Checks</dt><dd><span class="badge warn">4/6 running</span></dd>
+            <dt>Mergeable</dt><dd>clean</dd>
+          </dl>
+          <h3 style="margin-top:.9rem">Review comments</h3>
+          <div>
+            <div class="comment">
+              <div class="av grok">CG</div>
+              <div>
+                <div class="who">Cursor Grok High Fast <span class="when">· 18m ago</span></div>
+                <div class="txt"><code>MessageThreadPanel.tsx:516</code> — steps only read the root; reply mentions never land in the list.</div>
+              </div>
+            </div>
+            <div class="comment">
+              <div class="av opus">CO</div>
+              <div>
+                <div class="who">Claude Opus <span class="when">· 12m ago</span></div>
+                <div class="txt">Agreed — merging reply mentions in first-seen order, root agents keep priority.</div>
+              </div>
+            </div>
+            <div class="comment">
+              <div class="av oscar">OS</div>
+              <div>
+                <div class="who">Oscar <span class="when">· 4m ago</span></div>
+                <div class="txt">Ship it after the base-revision fix lands.</div>
+              </div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn primary">Open on GitHub</button>
+            <button class="btn">Copy PR link</button>
+          </div>`,
+
+        ci: () => `
+          <h3>Latest run · <code>just ci</code> <span class="badge warn">running</span></h3>
+          <div class="row-list">
+            <div class="row-item"><span class="dot ok"></span><span class="grow">fmt</span><span class="when">12s</span></div>
+            <div class="row-item"><span class="dot ok"></span><span class="grow">clippy</span><span class="when">1m 48s</span></div>
+            <div class="row-item"><span class="dot ok"></span><span class="grow">desktop lint</span><span class="when">22s</span></div>
+            <div class="row-item"><span class="dot ok"></span><span class="grow">unit tests</span><span class="when">2m 05s</span></div>
+            <div class="row-item"><span class="dot run"></span><span class="grow">desktop e2e (smoke)</span><span class="when">running</span></div>
+            <div class="row-item"><span class="dot idle"></span><span class="grow">build</span><span class="when">queued</span></div>
+          </div>
+          <h3 style="margin-top:.9rem">History</h3>
+          <div class="row-list">
+            <div class="row-item"><span class="dot bad"></span><span class="grow">run #47 · <code>fix px-text guard</code></span><span class="when">1h ago</span></div>
+            <div class="row-item"><span class="dot ok"></span><span class="grow">run #46 · <code>add handoff steps</code></span><span class="when">3h ago</span></div>
+          </div>
+          <div class="actions"><button class="btn">Re-run failed jobs</button></div>`,
+      };
+
+      function closeDrawer() {
+        drawer.hidden = true;
+        document
+          .querySelectorAll(".cell[aria-expanded='true']")
+          .forEach((c) => c.setAttribute("aria-expanded", "false"));
+      }
+
+      document.querySelectorAll(".cell").forEach((cell) => {
+        cell.addEventListener("click", () => {
+          const open = cell.getAttribute("aria-expanded") === "true";
+          closeDrawer();
+          if (open) return;
+          cell.setAttribute("aria-expanded", "true");
+          drawer.innerHTML = PANELS[cell.dataset.panel]();
+          drawer.hidden = false;
+        });
+      });
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeDrawer();
+      });
+
+      drawer.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-copy]");
+        if (!btn) return;
+        navigator.clipboard?.writeText(btn.dataset.copy);
+        const original = btn.textContent;
+        btn.textContent = "Copied";
+        setTimeout(() => (btn.textContent = original), 1200);
+      });
+
+      function wireSeg(id, apply) {
+        const seg = document.getElementById(id);
+        seg.addEventListener("click", (e) => {
+          const btn = e.target.closest("button");
+          if (!btn) return;
+          seg
+            .querySelectorAll("button")
+            .forEach((b) => b.setAttribute("aria-pressed", "false"));
+          btn.setAttribute("aria-pressed", "true");
+          apply(btn.dataset);
+          closeDrawer();
+        });
+      }
+
+      wireSeg("seg-theme", (d) =>
+        document.documentElement.classList.toggle("dark", d.theme === "dark"),
+      );
+      wireSeg("seg-layout", (d) => (body.dataset.layout = d.layout));
+      wireSeg("seg-variant", (d) => {
+        body.dataset.variant = d.variant;
+        document.getElementById("new-view").hidden = d.variant !== "new";
+        document.getElementById("old-view").hidden = d.variant !== "old";
+      });
+      wireSeg("seg-state", (d) => {
+        body.dataset.state = d.state;
+        const dot = document.getElementById("ws-dot");
+        const value = document.getElementById("ws-value");
+        const meta = document.getElementById("ws-meta");
+        if (d.state === "pending") {
+          dot.className = "dot warn";
+          value.textContent = "Preparing workspace";
+          meta.textContent = "creating buzz/eb791333c0ee…";
+        } else if (d.state === "error") {
+          dot.className = "dot bad";
+          value.textContent = "Workspace failed";
+          meta.textContent = "branch already checked out";
+        } else {
+          dot.className = "dot ok";
+          value.textContent = "buzz/eb791333c0ee";
+          meta.textContent = "workspace ready · 4 behind main";
+        }
+      });
+
+      body.dataset.state = "ready";
+
+      // Deep-linkable states so a screenshot can target one view:
+      // ?panel=pr&layout=single&theme=light&variant=old
+      const q = new URLSearchParams(location.search);
+      for (const [id, key] of [
+        ["seg-theme", "theme"],
+        ["seg-layout", "layout"],
+        ["seg-variant", "variant"],
+        ["seg-state", "state"],
+      ]) {
+        const want = q.get(key);
+        if (!want) continue;
+        document
+          .querySelector(`#${id} button[data-${key}="${want}"]`)
+          ?.click();
+      }
+      const panel = q.get("panel");
+      if (panel) document.querySelector(`.cell[data-panel="${panel}"]`)?.click();
+    </script>
+  </body>
+</html>

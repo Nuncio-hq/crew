@@ -4,9 +4,14 @@ mod archive;
 mod builderlab;
 mod commands;
 mod deep_link;
+mod egress_guard;
 mod event_sync;
 mod events;
 mod huddle;
+mod identity_storage;
+mod initial_window;
+mod key_backup;
+mod linux_media;
 mod managed_agents;
 mod media_proxy;
 #[cfg(feature = "mesh-llm")]
@@ -28,6 +33,8 @@ mod reset;
 mod secret_store;
 mod shutdown;
 mod templates;
+#[cfg(target_os = "macos")]
+mod tray_menu;
 mod util;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
@@ -48,6 +55,12 @@ use huddle::{
     join_huddle, leave_huddle, push_audio_pcm, set_huddle_transcription_enabled, set_tts_enabled,
     set_voice_input_mode, speak_agent_message, start_huddle, start_stt_pipeline,
 };
+use initial_window::reveal_initial_window;
+#[cfg(target_os = "macos")]
+use initial_window::{
+    clear_initial_window_backing, set_initial_window_backing,
+    wait_for_stable_initial_window_geometry,
+};
 use managed_agents::{
     backfill_persona_snapshots, ensure_nest, list_managed_agent_runtimes,
     put_managed_agent_runtime_lifecycle, reconcile_managed_agent_runtimes,
@@ -63,77 +76,15 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-#[cfg(target_os = "macos")]
-use tauri::Listener;
 use tauri::{Emitter, Manager, RunEvent};
+#[cfg(target_os = "macos")]
+use tauri::{Listener, WindowEvent};
 use tauri_plugin_window_state::StateFlags;
+#[cfg(target_os = "macos")]
+use tray_menu::show_main_window;
 
 #[cfg(target_os = "macos")]
 const INITIAL_RENDER_READY_EVENT: &str = "initial-render-ready";
-
-fn reveal_initial_window<R: tauri::Runtime>(window: &tauri::Window<R>) {
-    if let Err(error) = window.show() {
-        eprintln!("buzz-desktop: failed to reveal main window: {error}");
-        return;
-    }
-    if let Err(error) = window.set_focus() {
-        eprintln!("buzz-desktop: failed to focus main window: {error}");
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn set_initial_window_backing<R: tauri::Runtime>(window: &tauri::Window<R>) {
-    // The window remains transparent at runtime for vibrancy. Use an opaque
-    // native backing only across the first visible frames so the previous app
-    // cannot show through before WebKit has submitted its first surface.
-    if let Err(error) = window.set_background_color(Some(tauri::window::Color(17, 21, 24, 255))) {
-        eprintln!("buzz-desktop: failed to set initial window backing: {error}");
-    }
-}
-
-#[cfg(target_os = "macos")]
-async fn clear_initial_window_backing<R: tauri::Runtime>(window: &tauri::Window<R>) {
-    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    if let Err(error) = window.set_background_color(None) {
-        eprintln!("buzz-desktop: failed to clear initial window backing: {error}");
-    }
-}
-
-#[cfg(target_os = "macos")]
-async fn wait_for_stable_initial_window_geometry<R: tauri::Runtime>(window: &tauri::Window<R>) {
-    const MAX_POLLS: usize = 120;
-    const REQUIRED_STABLE_POLLS: usize = 4;
-
-    let mut previous_bounds = None;
-    let mut stable_polls = 0;
-
-    for _ in 0..MAX_POLLS {
-        // Accept whatever geometry the window-state plugin restores — maximized
-        // or a normal saved size. macOS applies the restore asynchronously, so
-        // we only need consecutive identical outer bounds to know it settled.
-        // Gating on `is_maximized()` here would leave `bounds` permanently
-        // `None` for restored non-maximized windows and stall the reveal until
-        // the poll timeout.
-        let bounds = match (window.outer_position(), window.outer_size()) {
-            (Ok(position), Ok(size)) => Some((position.x, position.y, size.width, size.height)),
-            _ => None,
-        };
-
-        if bounds.is_some() && bounds == previous_bounds {
-            stable_polls += 1;
-            if stable_polls >= REQUIRED_STABLE_POLLS {
-                return;
-            }
-        } else {
-            stable_polls = 0;
-        }
-        previous_bounds = bounds;
-
-        tokio::time::sleep(std::time::Duration::from_millis(16)).await;
-    }
-
-    eprintln!("buzz-desktop: initial window geometry did not settle before reveal timeout");
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -194,6 +145,11 @@ pub fn run() {
                     if webview.label() != "main" {
                         return;
                     }
+
+                    // Linux/WebKitGTK needs media-stream settings and a
+                    // permission-request handler for getUserMedia; no-op
+                    // on macOS/Windows.
+                    linux_media::enable_media_capture(&webview);
 
                     // macOS applies the restored geometry asynchronously. Wait
                     // for several identical outer bounds and for React to
@@ -360,6 +316,8 @@ pub fn run() {
         .manage(commands::pairing::PairingHandle::new())
         .setup(move |app| {
             let app_handle = app.handle().clone();
+            #[cfg(target_os = "macos")]
+            tray_menu::init(&app_handle)?;
 
             // Seed managed Node/npm product dir before any discovery/install/spawn.
             // Uses productName when set; otherwise the last identifier segment.
@@ -462,6 +420,18 @@ pub fn run() {
             // through every call site.
             if let Ok(mut guard) = state.app_handle.lock() {
                 *guard = Some(app_handle.clone());
+            }
+
+            let (tts_settings, tts_settings_load_error) =
+                huddle::tts_settings::load_for_app(&app_handle);
+            if let Ok(mut guard) = state.huddle_audio.tts.lock() {
+                *guard = tts_settings.clone();
+            }
+            if let Ok(mut guard) = state.huddle_audio.tts_load_error.lock() {
+                *guard = tts_settings_load_error;
+            }
+            if let Ok(mut huddle) = state.huddle_state.lock() {
+                huddle.tts_enabled = tts_settings.agent_text_to_speech;
             }
 
             // Bring up the runtime-owned shared-compute coordinator before
@@ -669,6 +639,10 @@ pub fn run() {
             title_bar_double_click,
             get_identity,
             get_nsec,
+            generate_backup_passphrase,
+            create_ncryptsec_backup,
+            verify_ncryptsec_backup,
+            save_ncryptsec_copy,
             import_identity,
             persist_current_identity,
             get_profile,
@@ -687,6 +661,11 @@ pub fn run() {
             clone_project_repository,
             create_project_remote_branch,
             delete_project_remote_branch,
+            remove_thread_worktree,
+            delete_thread_branch,
+            close_thread_pull_request,
+            get_thread_workspace_lifecycle,
+            get_thread_github_status,
             push_project_local_repository,
             pull_project_local_repository,
             sign_project_pull_request_status,
@@ -870,6 +849,12 @@ pub fn run() {
             download_voice_models,
             get_model_status,
             set_tts_enabled,
+            huddle::tts_settings::get_tts_settings,
+            huddle::tts_settings::list_voice_registry,
+            huddle::tts_settings::set_pocket_voice,
+            huddle::tts_settings::preview_pocket_voice,
+            huddle::tts_settings::import_pocket_voice,
+            huddle::tts_settings::delete_pocket_voice,
             speak_agent_message,
             add_agent_to_huddle,
             check_pipeline_hotstart,
@@ -907,6 +892,14 @@ pub fn run() {
             archive::read_unindexed_observer_rows,
             is_auto_update_supported,
             set_window_vibrancy,
+            #[cfg(target_os = "macos")]
+            tray_menu::clear_tray_agent_activity,
+            #[cfg(target_os = "macos")]
+            tray_menu::requeue_tray_actions,
+            #[cfg(target_os = "macos")]
+            tray_menu::take_tray_actions,
+            #[cfg(target_os = "macos")]
+            tray_menu::update_tray_agent_activity,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -919,6 +912,22 @@ pub fn run() {
     let run_shutdown_done = Arc::clone(&shutdown_done);
     let restart_requested = Arc::new(AtomicBool::new(false));
     app.run(move |app_handle, event| match event {
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { .. } => show_main_window(app_handle),
+        #[cfg(target_os = "macos")]
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "main" => {
+            // Keep the webview alive so Buzz can be reopened from its tray menu.
+            api.prevent_close();
+            if let Some(window) = app_handle.get_webview_window("main") {
+                if let Err(error) = window.hide() {
+                    eprintln!("buzz-desktop: failed to hide main window: {error}");
+                }
+            }
+        }
         RunEvent::ExitRequested { code, .. } => {
             if is_restart_request(code) {
                 restart_requested.store(true, Ordering::SeqCst);

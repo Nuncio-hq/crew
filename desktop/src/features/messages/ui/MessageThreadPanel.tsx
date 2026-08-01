@@ -2,9 +2,11 @@ import * as React from "react";
 import { ArrowDown } from "lucide-react";
 
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
-import { orderMentionPubkeysByText } from "@/features/messages/lib/orderMentionPubkeys";
 import { normalizePubkey } from "@/shared/lib/pubkey";
-import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
+import {
+  collectProjectThreadAgentMentions,
+  projectThreadRootAudiencePubkeys,
+} from "@/features/messages/lib/projectThreadWorkspace";
 import {
   buildThreadSummaryFromVisibleEntries,
   hasNestedThreadBranches,
@@ -109,7 +111,7 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
   threadUnreadCount?: number;
   threadReplyUnreadCounts?: ReadonlyMap<string, number>;
   threadTypingPubkeys: string[];
-  threadHeadVideoReviewContext?: VideoReviewContext;
+  videoReviewContextsByMessageId?: ReadonlyMap<string, VideoReviewContext>;
   activityAccessoryContent?: React.ReactNode;
   activityAccessoryVisible: boolean;
   widthPx: number;
@@ -222,7 +224,7 @@ export function MessageThreadPanel({
   scrollTargetId,
   scrollTargetHighlights = true,
   threadHead,
-  threadHeadVideoReviewContext,
+  videoReviewContextsByMessageId,
   threadReplies,
   threadRepliesPending = false,
   threadUnreadCount,
@@ -513,7 +515,7 @@ export function MessageThreadPanel({
   );
 
   const knownAgentPubkeys = useKnownAgentPubkeys();
-  const initialAgentPubkeys = React.useMemo(() => {
+  const projectThreadAgentMentions = React.useMemo(() => {
     if (
       !threadHead ||
       !currentPubkey ||
@@ -522,19 +524,17 @@ export function MessageThreadPanel({
     ) {
       return [];
     }
-    const { mentionPubkeysByName } = resolveMentionProps(
-      threadHead.tags,
+    return collectProjectThreadAgentMentions({
+      knownAgentPubkeys,
       profiles,
-    );
-    if (!mentionPubkeysByName) return [];
-
-    return orderMentionPubkeysByText(
-      threadHead.body,
-      mentionPubkeysByName,
-      (pubkey) =>
-        knownAgentPubkeys.has(pubkey) || profiles?.[pubkey]?.isAgent === true,
-    );
-  }, [currentPubkey, knownAgentPubkeys, profiles, threadHead]);
+      replies: threadMessages,
+      threadHead,
+    });
+  }, [currentPubkey, knownAgentPubkeys, profiles, threadHead, threadMessages]);
+  const initialAgentPubkeys = React.useMemo(
+    () => projectThreadRootAudiencePubkeys(projectThreadAgentMentions),
+    [projectThreadAgentMentions],
+  );
 
   if (!threadHead) {
     return null;
@@ -601,11 +601,13 @@ export function MessageThreadPanel({
               }
               profiles={profiles}
               showDepthGuides={shouldShowThreadBranchGuides}
-              videoReviewContext={threadHeadVideoReviewContext}
+              videoReviewContext={videoReviewContextsByMessageId?.get(
+                threadHead.id,
+              )}
             />
           </div>
           <ProjectThreadWorkspacePanel
-            agentPubkeys={initialAgentPubkeys}
+            agentMentions={projectThreadAgentMentions}
             profiles={profiles}
             replies={threadMessages}
             threadHead={threadHead}
@@ -763,6 +765,9 @@ export function MessageThreadPanel({
                         onToggleReaction={onToggleReaction}
                         profiles={profiles}
                         showDepthGuides={shouldShowThreadBranchGuides}
+                        videoReviewContext={videoReviewContextsByMessageId?.get(
+                          entry.message.id,
+                        )}
                       />
                       {entry.summary ? (
                         <MessageThreadSummaryRow

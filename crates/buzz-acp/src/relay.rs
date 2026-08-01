@@ -405,6 +405,19 @@ impl RestClient {
             .map_err(|e| RelayError::Http(e.to_string()))
     }
 
+    /// Count events via the HTTP bridge: `POST /count` with NIP-98 auth.
+    ///
+    /// Accepts a slice of `nostr::Filter` (serialized as JSON array).
+    /// Returns the bridge response as a `serde_json::Value` (usually `{ "count": n }`).
+    pub async fn count(&self, filters: &[nostr::Filter]) -> Result<Value, RelayError> {
+        let body_bytes = serde_json::to_vec(filters)
+            .map_err(|e| RelayError::Http(format!("filter serialize error: {e}")))?;
+        let resp = self.bridge_post("/count", &body_bytes).await?;
+        resp.json()
+            .await
+            .map_err(|e| RelayError::Http(e.to_string()))
+    }
+
     /// Submit a signed event via the HTTP bridge: `POST /events` with NIP-98 auth.
     ///
     /// The event must already be signed. Returns the relay response JSON.
@@ -3151,7 +3164,9 @@ async fn wait_for_reconnect(
 /// Send a NIP-01 REQ for a channel, built from a [`ChannelFilter`].
 ///
 /// - `kinds` is included only when `filter.kinds` is `Some`; `None` = wildcard.
-/// - `#p` is included only when `filter.require_mention` is `true`.
+/// - When mentions are required and user-input answers are included, the
+///   answer kind gets a separate filter without `#p`, since answers are not
+///   mention-triggered events.
 /// - `#h` is always included (channel-scoped subscription).
 /// - On first subscribe (`since` is `None`) adds `since=now` to avoid replaying
 ///   history. On reconnect (`since` is `Some`) subtracts [`SINCE_SKEW_SECS`].
@@ -3167,21 +3182,6 @@ async fn send_subscribe(
 ) -> bool {
     let sub_id = channel_sub_id(channel_id);
 
-    let mut req_filter = serde_json::Map::new();
-
-    // kinds — omit entirely for wildcard subscriptions.
-    if let Some(ref kinds) = filter.kinds {
-        req_filter.insert("kinds".into(), json!(kinds));
-    }
-
-    // #h — always present (channel scope).
-    req_filter.insert("#h".into(), json!([channel_id.to_string()]));
-
-    // #p — only when require_mention is true.
-    if filter.require_mention {
-        req_filter.insert("#p".into(), json!([agent_pubkey_hex]));
-    }
-
     // since — on first subscribe use current time to skip history; on reconnect
     // subtract skew buffer to catch events missed during the disconnect window.
     let since_ts = match since {
@@ -3191,9 +3191,43 @@ async fn send_subscribe(
             .unwrap_or_default()
             .as_secs(),
     };
-    req_filter.insert("since".into(), json!(since_ts));
+    let mut filters = Vec::new();
+    let answer_kind = buzz_core::kind::KIND_AGENT_USER_INPUT_ANSWER;
+    let split_answers = filter.require_mention
+        && filter
+            .kinds
+            .as_ref()
+            .is_some_and(|kinds| kinds.contains(&answer_kind));
+    let build_filter = |kinds: Option<Vec<u32>>, require_mention: bool| {
+        let mut req_filter = serde_json::Map::new();
+        if let Some(kinds) = kinds {
+            req_filter.insert("kinds".into(), json!(kinds));
+        }
+        req_filter.insert("#h".into(), json!([channel_id.to_string()]));
+        if require_mention {
+            req_filter.insert("#p".into(), json!([agent_pubkey_hex]));
+        }
+        req_filter.insert("since".into(), json!(since_ts));
+        Value::Object(req_filter)
+    };
+    if split_answers {
+        let kinds = filter.kinds.clone().unwrap_or_default();
+        let mention_kinds = kinds
+            .iter()
+            .copied()
+            .filter(|kind| *kind != answer_kind)
+            .collect::<Vec<_>>();
+        if !mention_kinds.is_empty() {
+            filters.push(build_filter(Some(mention_kinds), true));
+        }
+        filters.push(build_filter(Some(vec![answer_kind]), false));
+    } else {
+        filters.push(build_filter(filter.kinds.clone(), filter.require_mention));
+    }
 
-    let req = json!(["REQ", sub_id, Value::Object(req_filter)]);
+    let mut req_parts = vec![json!("REQ"), json!(sub_id)];
+    req_parts.extend(filters);
+    let req = Value::Array(req_parts);
 
     match serde_json::to_string(&req) {
         Ok(text) => {
@@ -4371,6 +4405,38 @@ mod tests {
             kinds: Some(vec![9]),
             require_mention: false,
         }
+    }
+
+    #[tokio::test]
+    async fn answer_subscription_is_not_mention_filtered() {
+        let (mut client, mut server) = test_ws_pair().await;
+        let channel_id = Uuid::new_v4();
+        let filter = ChannelFilter {
+            kinds: Some(vec![
+                buzz_core::kind::KIND_STREAM_MESSAGE,
+                buzz_core::kind::KIND_AGENT_USER_INPUT_ANSWER,
+            ]),
+            require_mention: true,
+        };
+        assert!(
+            send_subscribe(
+                &mut client,
+                &BgState::new(),
+                channel_id,
+                "agent-pubkey",
+                None,
+                &filter,
+            )
+            .await
+        );
+        let frame = next_test_frame(&mut server).await;
+        assert_eq!(frame[0], "REQ");
+        assert_eq!(frame[2]["#p"], serde_json::json!(["agent-pubkey"]));
+        assert_eq!(
+            frame[3]["kinds"],
+            serde_json::json!([buzz_core::kind::KIND_AGENT_USER_INPUT_ANSWER])
+        );
+        assert!(frame[3].get("#p").is_none());
     }
 
     fn seed_test_subscription(state: &mut BgState, channel_id: Uuid) {

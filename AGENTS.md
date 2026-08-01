@@ -601,6 +601,25 @@ usage.
 
 ## See Also
 
+### ACP user-input elicitation
+
+`buzz-acp` advertises ACP form elicitation and handles `elicitation/create`
+for agent-directed human questions. Requests are published as durable,
+channel-scoped `KIND_AGENT_USER_INPUT_REQUESTED` events; owner-authored
+answers use `KIND_AGENT_USER_INPUT_ANSWER` and link to the request with an
+`e` tag. Permission requests remain governed by the existing bypass/approval
+path. The agent-facing controls are:
+
+```text
+buzz --format compact user-input list --channel <UUID>
+buzz user-input answer --channel <UUID> --request <EVENT_ID> \
+  --answers '{"q0":"Option"}'
+```
+
+Pending questions wait for an answer without a question-specific timeout.
+Turn cancellation or agent exit cancels the ACP request. Only the agent
+owner or a verified same-owner sibling may answer.
+
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup, code style, PR process, how to add event kinds / CLI subcommands / HTTP endpoints
 - [TESTING.md](TESTING.md) — multi-agent E2E test guide
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system design and component relationships

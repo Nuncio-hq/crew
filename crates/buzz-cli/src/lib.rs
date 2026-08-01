@@ -236,6 +236,28 @@ enum Cmd {
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
+    /// List and answer pending agent user-input questions
+    #[command(subcommand)]
+    UserInput(UserInputCmd),
+}
+
+#[derive(Subcommand)]
+pub enum UserInputCmd {
+    /// List pending questions in a channel
+    List {
+        #[arg(long)]
+        channel: String,
+    },
+    /// Answer a pending question request with a JSON answer map
+    Answer {
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        request: String,
+        /// JSON object keyed by the stable question IDs
+        #[arg(long)]
+        answers: String,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -811,6 +833,9 @@ pub enum UsersCmd {
         /// Search by display name (case-insensitive substring match)
         #[arg(long = "name")]
         name: Option<String>,
+        /// Scope an exact-name agent lookup to its owner (`me`, hex, or npub)
+        #[arg(long = "owner", requires = "name")]
+        owner: Option<String>,
     },
     /// Update the current identity's profile
     #[command(name = "set-profile")]
@@ -1823,6 +1848,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Upload(sub) => commands::upload::dispatch(sub, &client).await,
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
+        Cmd::UserInput(sub) => commands::user_input::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
     }
 }
@@ -1836,6 +1862,32 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn user_input_commands_parse() {
+        assert!(Cli::try_parse_from([
+            "buzz",
+            "user-input",
+            "list",
+            "--channel",
+            "00000000-0000-0000-0000-000000000000",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "buzz",
+            "--format",
+            "compact",
+            "user-input",
+            "answer",
+            "--channel",
+            "00000000-0000-0000-0000-000000000000",
+            "--request",
+            &"a".repeat(64),
+            "--answers",
+            r#"{"q0":"Pick"}"#,
+        ])
+        .is_ok());
     }
 
     #[test]

@@ -166,7 +166,7 @@ test("release changes only the root package version in Cargo.lock", async () => 
 
 [[package]]
 name = "buzz-desktop"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "tauri",
 ]
@@ -179,7 +179,7 @@ version = "2.8.5"
   assert.equal(
     replaceCargoLockPackageVersion(original, "buzz-desktop", "0.0.1-dev"),
     original.replace(
-      'name = "buzz-desktop"\nversion = "0.5.2"',
+      'name = "buzz-desktop"\nversion = "0.5.3"',
       'name = "buzz-desktop"\nversion = "0.0.1-dev"',
     ),
   );
@@ -375,10 +375,10 @@ test("Buzz manifests stay pinned and the exact upstream source is machine-readab
   const upstreamPin = JSON.parse(readFileSync(upstreamPinPath, "utf8"));
   const pinValues = Object.values(upstreamPin);
 
-  assert.equal(packageJson.version, "0.5.2");
-  assert.equal(tauriConfig.version, "0.5.2");
-  assert.match(cargoToml, /^\[package\][\s\S]*?^version = "0\.5\.2"$/m);
-  assert.ok(pinValues.includes("0.5.2"));
-  assert.ok(pinValues.includes("v0.5.2"));
-  assert.ok(pinValues.includes("63496cc1d4c6f1b7c613801bdcc694169dcf391a"));
+  assert.equal(packageJson.version, "0.5.3");
+  assert.equal(tauriConfig.version, "0.5.3");
+  assert.match(cargoToml, /^\[package\][\s\S]*?^version = "0\.5\.3"$/m);
+  assert.ok(pinValues.includes("0.5.3"));
+  assert.ok(pinValues.includes("desktop-v0.5.3"));
+  assert.ok(pinValues.includes("3a96acea09b4a9e3f02c3a26cfb0607d2ccacf42"));
 });

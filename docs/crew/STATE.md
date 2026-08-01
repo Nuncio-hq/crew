@@ -56,7 +56,7 @@ Out of scope for this slice:
 - Identity store: existing system-Keychain service `buzz-desktop`.
 - Buzz and NuncioCrew must not run concurrently.
 - The build includes real release versions of all five agent sidecars.
-- Settings displays `v0.5.2 · Local`.
+- Settings displays `v0.5.3 · Local`.
 - Updater configuration and updater signing are disabled for this flavor.
 
 ## Release lane
@@ -78,8 +78,8 @@ Out of scope for this slice:
 - Safety: one global release queue, current-main-only source, monotonic rolling
   manifests, public versioned assets before channel advance, updater key-ID
   match, and explicit entitlements verification.
-- Buzz source pin: `upstream-buzz.json`, currently `0.5.2` at
-  `63496cc1d4c6f1b7c613801bdcc694169dcf391a`.
+- Buzz source pin: `upstream-buzz.json`, currently `0.5.3` at
+  `3a96acea09b4a9e3f02c3a26cfb0607d2ccacf42`.
 - The protected Environment, reviewer, nine encrypted release secrets, updater
   public variable, and Nuncio updater keypair are configured.
 - Signed dry run `30537460233` and publish run `30538712572` passed.
@@ -163,10 +163,13 @@ and the
 
 ## Current gate
 
-Project-thread worktree telemetry and UI are implemented and their automated
-gates pass. The branch is not merged, `crew-v0.0.5` is not published, and the
-real signed `0.0.4 → 0.0.5` updater relaunch remains the required post-merge
-release verification.
+Project-thread worktree lifecycle telemetry and UI are implemented for the
+`0.0.6` candidate. The branch is not merged, `crew-v0.0.6` is not published,
+and the real signed `0.0.5 → 0.0.6` updater relaunch remains the required
+post-merge release verification. Worktree freshness is measured from the
+thread worktree's actual `HEAD`; an unavailable fetch reports an unknown
+remote distance, and lifecycle actions require both the live branch ownership
+record and its durable root claim.
 
 ## Current test gate
 
@@ -186,9 +189,11 @@ release verification.
   mobile tests (`1` skipped), frontend builds, lint, typecheck, and formatting.
 - Focused browser verification passed `62` Project composer, mention,
   messaging, thread-anchor, and boot-flow scenarios against the E2E bridge.
-- Thread-worktree verification passed `8` focused provisioning tests, `5`
+- Thread-worktree verification passed `14` focused provisioning tests, `5`
   session-cwd tests, all `661` `buzz-acp` library tests plus `9` integration
-  tests, and `18` focused Desktop/release-contract tests.
+  tests, and `18` focused Desktop/release-contract tests. Three focused native
+  lifecycle tests also cover dirty-worktree refusal, clean removal, and safe
+  rejection of a later branch that reuses a stale deterministic name.
 - The full Desktop suite passed `3885` tests with one environment-gated live
   relay test skipped; Project-thread Playwright verification passed after a
   fresh E2E build and showed distinct workspace state across two roots. Its two
@@ -201,7 +206,7 @@ release verification.
 - Earlier focused live relay test: `1/1` passed with an isolated Buzz relay.
 - Typecheck, file-size gate, Biome checks, production build, and
   `git diff --check` passed.
-- No `crew-v0.0.5` tag or public `0.0.5` artifact has been created.
+- No `crew-v0.0.6` tag or public `0.0.6` artifact has been created.
 - Manual release contracts: `10/10` passed.
 - Always-run Crew CI/local/release contracts: `20/20` passed.
 - Real unsigned Tauri bundle spike accepted `0.0.1-dev` and produced

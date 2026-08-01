@@ -5,10 +5,14 @@ export type ProjectThreadWorkspaceSnapshot =
   | {
       status: "ready";
       agentPubkey: string;
+      baseSource: "remote" | "local-fallback";
       baseRevision: string;
       branch: string;
       conversationId: string | null;
       rootEventId: string;
+      repositoryPath: string | null;
+      remoteDefaultBranch: string | null;
+      commitsBehindRemote: number | null;
       worktreeName: string;
       worktreePath: string;
     }
@@ -126,16 +130,36 @@ export function ingestProjectThreadWorkspaceEvent(
   const branch = nonEmpty(payload.branch);
   const worktreePath = nonEmpty(payload.worktreePath);
   const worktreeName = nonEmpty(payload.worktreeName);
+  const repositoryPath = nonEmpty(payload.repositoryPath);
   const baseRevision = nonEmpty(payload.baseRevision);
-  if (!branch || !worktreePath || !worktreeName || !baseRevision) return;
+  const rawBaseSource = nonEmpty(payload.baseSource);
+  const baseSource =
+    rawBaseSource === null
+      ? "local-fallback"
+      : rawBaseSource === "remote" || rawBaseSource === "local-fallback"
+        ? rawBaseSource
+        : null;
+  const remoteDefaultBranch = nonEmpty(payload.remoteDefaultBranch);
+  const commitsBehindRemote =
+    typeof payload.commitsBehindRemote === "number" &&
+    Number.isSafeInteger(payload.commitsBehindRemote) &&
+    payload.commitsBehindRemote >= 0
+      ? payload.commitsBehindRemote
+      : null;
+  if (!branch || !worktreePath || !worktreeName || !baseRevision || !baseSource)
+    return;
   setWorkspaceEntry(rootEventId, {
     snapshot: {
       status: "ready",
       agentPubkey,
+      baseSource,
       baseRevision,
       branch,
       conversationId: event.conversationId ?? null,
       rootEventId,
+      repositoryPath,
+      remoteDefaultBranch,
+      commitsBehindRemote,
       worktreeName,
       worktreePath,
     },
