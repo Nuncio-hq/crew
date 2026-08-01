@@ -18,6 +18,7 @@ import {
   resetAgentObserverStore,
   _testRegisterKnownAgents,
   _testGetArchivedChannelEvents,
+  _testGetObserverDropCounts,
 } from "@/features/agents/observerRelayStore.ts";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -129,6 +130,11 @@ describe("ingestArchivedObserverEvents", () => {
     });
     await ingestArchivedObserverEvents([nonTelemetryEvent], decryptFn);
     assert.equal(decryptCalled, false, "non-telemetry frame must be dropped");
+    assert.equal(
+      _testGetObserverDropCounts().missing_telemetry_tag,
+      undefined,
+      "valid non-telemetry frames must not emit drop diagnostics",
+    );
     const snap = getAgentObserverSnapshot(AGENT_PUBKEY, true);
     assert.equal(snap.events.length, 0);
   });
@@ -140,6 +146,36 @@ describe("ingestArchivedObserverEvents", () => {
     const snap = getAgentObserverSnapshot(AGENT_PUBKEY, true);
     // Error is silently dropped — no crash, no event in store.
     assert.equal(snap.events.length, 0);
+  });
+
+  it("aggregates observer drop diagnostics by stable reason", async () => {
+    _testRegisterKnownAgents(SUB_ID, [AGENT_PUBKEY]);
+    await ingestArchivedObserverEvents(
+      [
+        makeRawEvent({
+          tags: [["agent", AGENT_PUBKEY]],
+        }),
+        makeRawEvent({
+          tags: [
+            ["agent", OTHER_PUBKEY],
+            ["frame", "telemetry"],
+          ],
+        }),
+        makeRawEvent({
+          pubkey: OTHER_PUBKEY,
+        }),
+        makeRawEvent(),
+        makeRawEvent(),
+      ],
+      makeDecryptFail(),
+    );
+
+    assert.deepEqual(_testGetObserverDropCounts(), {
+      missing_telemetry_tag: 1,
+      unknown_agent: 1,
+      sender_agent_mismatch: 1,
+      decrypt_failed: 2,
+    });
   });
 
   it("test_successful_ingest_adds_event_to_store", async () => {
