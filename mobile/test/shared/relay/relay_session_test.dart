@@ -349,7 +349,10 @@ void main() {
       final listener = container.listen(relaySessionProvider, (_, _) {});
       addTearDown(listener.close);
       await container.read(authProvider.future);
+      await Future<void>.delayed(Duration.zero);
       session.debugAttachSocketForTest(socket);
+      session.debugHandleConnected();
+      expect(session.state.status, SessionStatus.connected);
       const filter = NostrFilter(kinds: EventKind.channelEventKinds, limit: 0);
 
       final subscribe = session.subscribe(filter, (_) {});
@@ -366,6 +369,17 @@ void main() {
       expect(
         socket.messages.where((message) => message.first == 'REQ'),
         hasLength(2),
+      );
+      session.debugHandleMessage(['EOSE', 'l-1']);
+      session.debugHandleMessage([
+        'CLOSED',
+        'l-1',
+        'error: database temporarily unavailable',
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+      expect(
+        socket.messages.where((message) => message.first == 'REQ'),
+        hasLength(3),
       );
       unsubscribe();
     },
@@ -397,7 +411,10 @@ void main() {
     final listener = container.listen(relaySessionProvider, (_, _) {});
     addTearDown(listener.close);
     await container.read(authProvider.future);
+    await Future<void>.delayed(Duration.zero);
     session.debugAttachSocketForTest(socket);
+    session.debugHandleConnected();
+    expect(session.state.status, SessionStatus.connected);
     const filter = NostrFilter(
       kinds: [EventKind.agentObserverFrame],
       tags: {
@@ -436,6 +453,65 @@ void main() {
   });
 
   test(
+    'closed retry waits for reconnect replay when the session is disconnected',
+    () async {
+      final socket = _ControlledRelaySocket(
+        wsUrl: 'wss://relay.example',
+        nsec: null,
+        onMessage: (_) {},
+        onConnected: () {},
+        onDisconnected: (_) {},
+      );
+      final session = RelaySessionNotifier();
+      final container = ProviderContainer(
+        overrides: [
+          relaySessionProvider.overrideWith(() => session),
+          relayConfigProvider.overrideWith(
+            () => _FakeRelayConfigNotifier(
+              baseUrl: 'https://relay.example',
+              nsec: null,
+            ),
+          ),
+          authProvider.overrideWith(() => _FakeAuthNotifier()),
+        ],
+      );
+      addTearDown(container.dispose);
+      container.read(relaySessionProvider);
+      final listener = container.listen(relaySessionProvider, (_, _) {});
+      addTearDown(listener.close);
+      await container.read(authProvider.future);
+      await Future<void>.delayed(Duration.zero);
+      session.debugAttachSocketForTest(socket);
+      session.debugHandleConnected();
+      const filter = NostrFilter(kinds: EventKind.channelEventKinds, limit: 0);
+
+      final subscribe = session.subscribe(filter, (_) {});
+      session.debugHandleMessage(['EOSE', 'l-1']);
+      final unsubscribe = await subscribe;
+
+      session.debugHandleMessage([
+        'CLOSED',
+        'l-1',
+        'error: database temporarily unavailable',
+      ]);
+      session.debugHandleDisconnected();
+      session.debugPauseNow();
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+      expect(
+        socket.messages.where((message) => message.first == 'REQ'),
+        hasLength(1),
+      );
+
+      session.debugHandleConnected();
+      expect(
+        socket.messages.where((message) => message.first == 'REQ'),
+        hasLength(2),
+      );
+      unsubscribe();
+    },
+  );
+
+  test(
     'live onClosed callback runs when relay closes an open subscription',
     () async {
       final socket = _ControlledRelaySocket(
@@ -463,7 +539,9 @@ void main() {
       final listener = container.listen(relaySessionProvider, (_, _) {});
       addTearDown(listener.close);
       await container.read(authProvider.future);
+      await Future<void>.delayed(Duration.zero);
       session.debugAttachSocketForTest(socket);
+      session.debugHandleConnected();
       final closedMessages = <String>[];
       const filter = NostrFilter(
         kinds: [EventKind.agentObserverFrame],

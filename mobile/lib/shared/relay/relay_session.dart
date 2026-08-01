@@ -493,11 +493,15 @@ class RelaySessionNotifier extends Notifier<SessionState> {
 
     // Live subscription: signal ready.
     final liveSub = _liveSubscriptions[subId];
-    if (liveSub != null &&
-        liveSub.readyCompleter != null &&
-        !liveSub.readyCompleter!.isCompleted) {
-      liveSub.readyCompleter!.complete();
-      liveSub.readyCompleter = null;
+    if (liveSub != null) {
+      liveSub.closedRetryAttempt = 0;
+      liveSub.closedRetryTimer?.cancel();
+      liveSub.closedRetryTimer = null;
+      if (liveSub.readyCompleter != null &&
+          !liveSub.readyCompleter!.isCompleted) {
+        liveSub.readyCompleter!.complete();
+        liveSub.readyCompleter = null;
+      }
     }
   }
 
@@ -534,9 +538,6 @@ class RelaySessionNotifier extends Notifier<SessionState> {
       return;
     }
 
-    if (readyCompleter != null && !readyCompleter.isCompleted) {
-      readyCompleter.complete();
-    }
     _scheduleClosedRetry(subId, liveSub, message);
   }
 
@@ -649,6 +650,7 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     subscription.closedRetryTimer = Timer(Duration(milliseconds: delayMs), () {
       subscription.closedRetryTimer = null;
       if (_liveSubscriptions[subId] != subscription) return;
+      if (state.status != SessionStatus.connected) return;
       _sendReq(subId, subscription.filter);
     });
   }
