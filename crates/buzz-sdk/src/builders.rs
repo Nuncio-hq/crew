@@ -1,4 +1,4 @@
-//! Typed event builder functions (38 builders).
+//! Typed event builder functions.
 //!
 //! All functions return `Result<nostr::EventBuilder, SdkError>`.
 //! The caller signs: `builder.sign_with_keys(&keys)?`.
@@ -235,6 +235,78 @@ pub fn build_message(
         tags.push(tag(&["broadcast", "1"])?);
     }
     imeta_tags(media_tags, &mut tags)?;
+    Ok(EventBuilder::new(Kind::Custom(9), content).tags(tags))
+}
+
+/// Tag name marking a kind:9 as an ACP failure notice (`["failure_notice", <cause>]`).
+pub const FAILURE_NOTICE_TAG: &str = "failure_notice";
+
+/// NIP-10 `e`-tag marker for events that failed and may be retried
+/// (`["e", <id>, "", "failed"]`). Distinct from thread `root` / `reply` markers.
+pub const FAILURE_NOTICE_E_MARKER: &str = "failed";
+
+/// Machine-readable cause class for [`build_failure_notice`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureNoticeCause {
+    /// Automatic requeue budget exhausted (`queue::MAX_RETRIES`).
+    RetryExhausted,
+    /// Non-retryable authentication failure (dead-lettered immediately).
+    Auth,
+    /// Agent task panicked until the panic requeue budget was exhausted.
+    Panic,
+    /// Hard-cap timeout with no recent activity (dead-lettered immediately,
+    /// without consuming the retry budget). Distinct from [`Self::RetryExhausted`].
+    Timeout,
+}
+
+impl FailureNoticeCause {
+    /// Wire value stored in the `failure_notice` tag.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RetryExhausted => "retry_exhausted",
+            Self::Auth => "auth",
+            Self::Panic => "panic",
+            Self::Timeout => "timeout",
+        }
+    }
+}
+
+/// Build a machine-readable ACP failure notice (kind 9).
+///
+/// Same human-readable kind as a normal channel message so every client
+/// (including mobile) can render the content. Machine readers use:
+/// - `["failure_notice", <cause>]` — marker + cause class
+/// - `["e", <id>, "", "failed"]` — one per failed batch event (retry targets)
+///
+/// Thread `e` tags (root/reply) are unchanged and must not be confused with
+/// the `failed` marker. Does not accept mentions/broadcast/media — notices are
+/// harness-authored status lines, not general chat.
+pub fn build_failure_notice(
+    channel_id: Uuid,
+    content: &str,
+    thread_ref: Option<&ThreadRef>,
+    cause: FailureNoticeCause,
+    failed_event_ids: &[nostr::EventId],
+) -> Result<EventBuilder, SdkError> {
+    check_content(content, 64 * 1024)?;
+    // Empty failed ids are allowed: the human-readable notice is the primary
+    // job. Tags are additive Retry affordances — a missing target must not
+    // silence the person-facing message.
+
+    let mut tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&[FAILURE_NOTICE_TAG, cause.as_str()])?,
+    ];
+    if let Some(tr) = thread_ref {
+        thread_tags(tr, &mut tags)?;
+    }
+    let mut seen = std::collections::HashSet::new();
+    for id in failed_event_ids {
+        let hex = id.to_hex();
+        if seen.insert(hex.clone()) {
+            tags.push(tag(&["e", &hex, "", FAILURE_NOTICE_E_MARKER])?);
+        }
+    }
     Ok(EventBuilder::new(Kind::Custom(9), content).tags(tags))
 }
 
@@ -1938,6 +2010,120 @@ mod tests {
         assert_eq!(ev.kind.as_u16(), 9);
         assert_eq!(ev.content, "hello");
         assert!(has_tag(&ev, "h", &cid.to_string()));
+    }
+
+    #[test]
+    fn failure_notice_tags_cause_and_failed_events() {
+        let cid = uuid();
+        let failed_a = event_id();
+        let failed_b = event_id();
+        let root = event_id();
+        let tr = ThreadRef {
+            root_event_id: root,
+            parent_event_id: root,
+        };
+        let ev = sign(
+            build_failure_notice(
+                cid,
+                "⚠️ failed",
+                Some(&tr),
+                FailureNoticeCause::RetryExhausted,
+                &[failed_a, failed_b, failed_a],
+            )
+            .unwrap(),
+        );
+        assert_eq!(ev.kind.as_u16(), 9);
+        assert!(has_tag(&ev, FAILURE_NOTICE_TAG, "retry_exhausted"));
+        // Thread reply marker stays distinct from failed-event targets.
+        let e_tags: Vec<_> = ev
+            .tags
+            .iter()
+            .filter(|t| t.as_slice().first().map(|v| v.as_str()) == Some("e"))
+            .map(|t| t.as_slice().to_vec())
+            .collect();
+        assert!(e_tags.iter().any(|t| {
+            t.get(1).map(|v| v.as_str()) == Some(root.to_hex().as_str())
+                && t.get(3).map(|v| v.as_str()) == Some("reply")
+        }));
+        let failed: Vec<_> = e_tags
+            .iter()
+            .filter(|t| t.get(3).map(|v| v.as_str()) == Some(FAILURE_NOTICE_E_MARKER))
+            .collect();
+        assert_eq!(failed.len(), 2, "duplicate failed ids must be deduped");
+        assert!(failed
+            .iter()
+            .any(|t| { t.get(1).map(|v| v.as_str()) == Some(failed_a.to_hex().as_str()) }));
+        assert!(failed
+            .iter()
+            .any(|t| { t.get(1).map(|v| v.as_str()) == Some(failed_b.to_hex().as_str()) }));
+    }
+
+    #[test]
+    fn failure_notice_allows_empty_failed_ids() {
+        // Human-readable notice must still post when there is nothing to Retry.
+        let ev = sign(
+            build_failure_notice(uuid(), "⚠️ failed", None, FailureNoticeCause::Auth, &[]).unwrap(),
+        );
+        assert_eq!(ev.kind.as_u16(), 9);
+        assert!(has_tag(&ev, FAILURE_NOTICE_TAG, "auth"));
+        assert!(!ev.tags.iter().any(|t| {
+            t.as_slice().first().map(|v| v.as_str()) == Some("e")
+                && t.as_slice().get(3).map(|v| v.as_str()) == Some(FAILURE_NOTICE_E_MARKER)
+        }));
+    }
+
+    #[test]
+    fn failure_notice_cause_wire_values() {
+        assert_eq!(
+            FailureNoticeCause::RetryExhausted.as_str(),
+            "retry_exhausted"
+        );
+        assert_eq!(FailureNoticeCause::Auth.as_str(), "auth");
+        assert_eq!(FailureNoticeCause::Panic.as_str(), "panic");
+        assert_eq!(FailureNoticeCause::Timeout.as_str(), "timeout");
+    }
+
+    #[test]
+    fn failure_notice_failed_marker_survives_same_id_as_thread_root() {
+        // Nested reply: root + reply + a failed target that *is* the root.
+        // Desktop must key off the marker, never tag order or id equality.
+        let cid = uuid();
+        let root = event_id();
+        let parent = event_id();
+        let tr = ThreadRef {
+            root_event_id: root,
+            parent_event_id: parent,
+        };
+        let ev = sign(
+            build_failure_notice(
+                cid,
+                "⚠️ failed",
+                Some(&tr),
+                FailureNoticeCause::Auth,
+                &[root],
+            )
+            .unwrap(),
+        );
+        let e_tags: Vec<_> = ev
+            .tags
+            .iter()
+            .filter(|t| t.as_slice().first().map(|v| v.as_str()) == Some("e"))
+            .map(|t| t.as_slice().to_vec())
+            .collect();
+        assert_eq!(e_tags.len(), 3);
+        assert!(e_tags.iter().any(|t| {
+            t.get(1).map(|v| v.as_str()) == Some(root.to_hex().as_str())
+                && t.get(3).map(|v| v.as_str()) == Some("root")
+        }));
+        assert!(e_tags.iter().any(|t| {
+            t.get(1).map(|v| v.as_str()) == Some(parent.to_hex().as_str())
+                && t.get(3).map(|v| v.as_str()) == Some("reply")
+        }));
+        assert!(e_tags.iter().any(|t| {
+            t.get(1).map(|v| v.as_str()) == Some(root.to_hex().as_str())
+                && t.get(3).map(|v| v.as_str()) == Some(FAILURE_NOTICE_E_MARKER)
+        }));
+        assert!(has_tag(&ev, FAILURE_NOTICE_TAG, "auth"));
     }
 
     #[test]

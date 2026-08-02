@@ -11,6 +11,7 @@ mod pool;
 mod pool_lifecycle;
 mod queue;
 mod relay;
+mod retry_turn;
 mod setup_mode;
 mod thread_workspace;
 #[cfg(test)]
@@ -846,7 +847,8 @@ async fn publish_relay_observer_event(
 /// Maximum age (seconds) for an observer control frame to be considered fresh.
 const OBSERVER_CONTROL_FRESHNESS_SECS: i64 = 300;
 
-fn handle_relay_observer_control_event(
+#[allow(clippy::too_many_arguments)]
+async fn handle_relay_observer_control_event(
     keys: &nostr::Keys,
     event: nostr::Event,
     pool: &mut AgentPool,
@@ -854,6 +856,8 @@ fn handle_relay_observer_control_event(
     rest_client: Option<&relay::RestClient>,
     observer: Option<&observer::ObserverHandle>,
     owner_pubkey_hex: &str,
+    rules: &[SubscriptionRule],
+    channel_info: &pool::ChannelInfoResolver,
 ) {
     // Defense-in-depth: verify signature even though the relay already checked.
     if let Err(e) = buzz_core::verify_event(&event) {
@@ -895,6 +899,19 @@ fn handle_relay_observer_control_event(
     match command_type {
         Some("cancel_turn") => {
             handle_cancel_turn_control(&payload, pool, queue, rest_client, observer);
+        }
+        Some("retry_turn") => {
+            retry_turn::handle_retry_turn_control(
+                &payload,
+                pool,
+                queue,
+                rest_client,
+                observer,
+                &keys.public_key().to_hex(),
+                rules,
+                channel_info,
+            )
+            .await;
         }
         Some("switch_model") => {
             handle_switch_model_control(&payload, pool, observer);
@@ -2006,7 +2023,10 @@ async fn tokio_main() -> Result<()> {
                                     Some(&ctx.rest_client),
                                     observer.as_ref(),
                                     owner_hex,
-                                );
+                                    &rules,
+                                    &ctx.channel_info,
+                                )
+                                .await;
                             } else {
                                 tracing::warn!("observer control frame received but no owner resolved — dropping");
                             }
@@ -2572,6 +2592,7 @@ async fn tokio_main() -> Result<()> {
                     &respawn_tx,
                     &mut respawn_tasks,
                     observer.clone(),
+                    Some(&ctx.rest_client),
                 ) == LoopAction::Exit
                 {
                     break;
@@ -2594,6 +2615,7 @@ async fn tokio_main() -> Result<()> {
                     &respawn_tx,
                     &mut respawn_tasks,
                     observer.clone(),
+                    Some(&ctx.rest_client),
                 );
                 if pool.live_count() == 0 && !any_respawn_in_flight(&crash_history) {
                     tracing::error!("all agents dead — exiting");
@@ -2943,7 +2965,7 @@ fn event_mentions_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
 }
 
 /// Extract the 64-hex `e` tag target from a kind:40003 edit event.
-fn edit_target_event_id(event: &nostr::Event) -> Option<String> {
+pub(crate) fn edit_target_event_id(event: &nostr::Event) -> Option<String> {
     event.tags.iter().find_map(|t| {
         let parts = t.as_slice();
         if parts.first().map(String::as_str) != Some("e") {
@@ -2963,7 +2985,7 @@ fn edit_target_event_id(event: &nostr::Event) -> Option<String> {
 /// Desktop emits `["p-removed", "<hex>"]` for mentions the composer dropped.
 /// Decision reads **only** this tag — never body/`@Name` matching. A false
 /// positive here silently discards a real request.
-fn edit_removes_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
+pub(crate) fn edit_removes_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
     event.tags.iter().any(|t| {
         let parts = t.as_slice();
         parts.first().map(String::as_str) == Some("p-removed")
@@ -3483,11 +3505,14 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
 /// Spawn a task that posts a user-visible failure notice to the relay.
 ///
 /// Shared by the hard-cap immediate dead-letter path and the retries-exhausted
-/// dead-letter path so neither duplicates the tokio::spawn block.
+/// dead-letter path so neither duplicates the tokio::spawn block. Carries the
+/// failed batch event ids + cause class so desktop can offer Retry without
+/// string-matching the notice body.
 fn spawn_failure_notice(
     rest_client: Option<&relay::RestClient>,
     batch: &FlushBatch,
     content: String,
+    cause: buzz_sdk::FailureNoticeCause,
 ) {
     if let Some(rest) = rest_client {
         let thread_tags = batch
@@ -3495,10 +3520,20 @@ fn spawn_failure_notice(
             .last()
             .map(|be| queue::parse_thread_tags(&be.event))
             .unwrap_or_default();
+        let failed_event_ids: Vec<nostr::EventId> =
+            batch.events.iter().map(|be| be.event.id).collect();
         let rest = rest.clone();
         let channel_id = batch.routing_channel_id();
         tokio::spawn(async move {
-            pool::post_failure_notice(&rest, channel_id, &thread_tags, &content).await;
+            pool::post_failure_notice(
+                &rest,
+                channel_id,
+                &thread_tags,
+                &content,
+                cause,
+                &failed_event_ids,
+            )
+            .await;
         });
     }
 }
@@ -3524,6 +3559,7 @@ fn handle_prompt_result(
         PromptSource::Channel(id) => Some(*id),
         PromptSource::Heartbeat => None,
     };
+    let result_turn_id = result.turn_id.clone();
     pool.task_map_mut()
         .retain(|_, meta| meta.agent_index != agent_index);
     debug_assert_eq!(before, pool.task_map().len() + 1);
@@ -3544,6 +3580,7 @@ fn handle_prompt_result(
     // dead-letter protection.
     if let Some(batch) = result.batch.take() {
         let routing_channel_id = batch.routing_channel_id();
+        let conversation_id = batch.channel_id;
         // Don't requeue batches for channels the agent was removed from —
         // those events are stale and should be silently dropped.
         if !removed_channels.contains(&routing_channel_id) {
@@ -3583,7 +3620,12 @@ fn handle_prompt_result(
                     "⚠️ I couldn't process the last request (the turn exceeded the maximum duration ({}s)). Please re-send if it's still needed.",
                     config.max_turn_duration_secs
                 );
-                spawn_failure_notice(rest_client, &batch, content);
+                spawn_failure_notice(
+                    rest_client,
+                    &batch,
+                    content,
+                    buzz_sdk::FailureNoticeCause::Timeout,
+                );
                 hard_timeout_fate_suffix = Some(" — dead-lettered (no recent activity)");
             } else if matches!(
                 result.outcome,
@@ -3601,9 +3643,22 @@ fn handle_prompt_result(
                         "⚠️ I couldn't process the last request after multiple retries (the turn exceeded the maximum duration ({}s)). Please re-send if it's still needed.",
                         config.max_turn_duration_secs
                     );
-                    spawn_failure_notice(rest_client, &dead, content);
+                    spawn_failure_notice(
+                        rest_client,
+                        &dead,
+                        content,
+                        buzz_sdk::FailureNoticeCause::RetryExhausted,
+                    );
                     hard_timeout_fate_suffix = Some(" — dead-lettered (retry budget exhausted)");
                 } else {
+                    retry_turn::emit_turn_retrying(
+                        observer.as_ref(),
+                        routing_channel_id,
+                        conversation_id,
+                        Some(result_turn_id.clone()),
+                        queue.retry_count(conversation_id),
+                        queue::MAX_RETRIES,
+                    );
                     hard_timeout_fate_suffix = Some(" — requeued for retry (recently active)");
                 }
             } else if matches!(&result.outcome, PromptOutcome::Error(e) if is_auth_error(e)) {
@@ -3620,7 +3675,12 @@ fn handle_prompt_result(
                     Please re-authenticate the CLI (e.g. run `claude /login` or `codex login`) \
                     and then re-send."
                     .to_string();
-                spawn_failure_notice(rest_client, &batch, content);
+                spawn_failure_notice(
+                    rest_client,
+                    &batch,
+                    content,
+                    buzz_sdk::FailureNoticeCause::Auth,
+                );
             } else if let Some(dead) = queue.requeue(batch) {
                 let reason = match &result.outcome {
                     PromptOutcome::Timeout(TimeoutKind::Idle) => "the turn timed out".to_string(),
@@ -3634,7 +3694,21 @@ fn handle_prompt_result(
                 let content = format!(
                     "⚠️ I couldn't process the last request after multiple retries ({reason}). Please re-send if it's still needed."
                 );
-                spawn_failure_notice(rest_client, &dead, content);
+                spawn_failure_notice(
+                    rest_client,
+                    &dead,
+                    content,
+                    buzz_sdk::FailureNoticeCause::RetryExhausted,
+                );
+            } else {
+                retry_turn::emit_turn_retrying(
+                    observer.as_ref(),
+                    routing_channel_id,
+                    conversation_id,
+                    Some(result_turn_id.clone()),
+                    queue.retry_count(conversation_id),
+                    queue::MAX_RETRIES,
+                );
             }
         } else {
             tracing::debug!(
@@ -3893,6 +3967,7 @@ fn recover_panicked_agent(
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
+    rest_client: Option<&relay::RestClient>,
 ) {
     let task_id = join_error.id();
     let Some(meta) = pool.task_map_mut().remove(&task_id) else {
@@ -3908,10 +3983,30 @@ fn recover_panicked_agent(
                 .routing_channel_id
                 .is_some_and(|routing| removed_channels.contains(&routing))
             {
-                // Dead-letter on exhaustion is logged inside requeue(); a
-                // panic path has no outcome to report, so no notice here.
-                let _ = queue.requeue(batch);
-                tracing::warn!("requeued batch for panicked agent {i}");
+                // Dead-letter on exhaustion still needs a person-visible
+                // notice — the message disappearing is itself the outcome.
+                let routing_channel_id = meta.routing_channel_id.unwrap_or(ch);
+                let conversation_id = batch.channel_id;
+                if let Some(dead) = queue.requeue(batch) {
+                    let content = "⚠️ I couldn't process the last request after multiple retries (the agent process crashed). Please re-send if it's still needed."
+                        .to_string();
+                    spawn_failure_notice(
+                        rest_client,
+                        &dead,
+                        content,
+                        buzz_sdk::FailureNoticeCause::Panic,
+                    );
+                } else {
+                    retry_turn::emit_turn_retrying(
+                        observer.as_ref(),
+                        routing_channel_id,
+                        conversation_id,
+                        Some(meta.turn_id.clone()),
+                        queue.retry_count(conversation_id),
+                        queue::MAX_RETRIES,
+                    );
+                    tracing::warn!("requeued batch for panicked agent {i}");
+                }
             } else {
                 tracing::debug!(
                     channel_id = %meta.routing_channel_id.unwrap_or(ch),
@@ -4009,6 +4104,7 @@ fn drain_ready_join_results(
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
+    rest_client: Option<&relay::RestClient>,
 ) -> LoopAction {
     while let Some(Some(join_result)) = pool.join_set.join_next().now_or_never() {
         if let Err(join_error) = join_result {
@@ -4025,6 +4121,7 @@ fn drain_ready_join_results(
                 respawn_tx,
                 respawn_tasks,
                 observer.clone(),
+                rest_client,
             );
             if pool.live_count() == 0 && !any_respawn_in_flight(crash_history) {
                 return LoopAction::Exit;
@@ -6108,6 +6205,7 @@ mod error_outcome_emission_tests {
             &respawn_tx,
             &mut respawn_tasks,
             Some(observer.clone()),
+            None,
         );
 
         let panic = observer

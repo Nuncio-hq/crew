@@ -6,6 +6,12 @@ import {
   subscribeActiveAgentTurns,
 } from "@/features/agents/activeAgentTurnsStore";
 import {
+  getRetryingTurn,
+  getRetryingTurnsForChannel,
+  subscribeRetryingTurns,
+  type RetryingTurn,
+} from "@/features/agents/retryingTurnsStore";
+import {
   ACTIVITY_SILENCE_MS,
   ACTIVITY_STUCK_MS,
   AGENT_ACTIVITY_CHROME,
@@ -59,15 +65,24 @@ export function BotActivityComposerAction({
     conversationId,
   });
 
+  const retryingTurns = useRetryingTurns(channelId, conversationId);
+  const retryingPubkeys = React.useMemo(
+    () => new Set(retryingTurns.map((entry) => entry.agentPubkey)),
+    [retryingTurns],
+  );
+
   const workingAgents = React.useMemo(() => {
     const workingSet = new Set(
       workingBotPubkeys.map((pubkey) => pubkey.toLowerCase()),
     );
+    for (const pubkey of retryingPubkeys) workingSet.add(pubkey);
 
     return agents.filter((agent) => workingSet.has(agent.pubkey.toLowerCase()));
-  }, [agents, workingBotPubkeys]);
+  }, [agents, retryingPubkeys, workingBotPubkeys]);
   const singleWorkingAgent =
     workingAgents.length === 1 ? (workingAgents[0] ?? null) : null;
+  const primaryRetrying =
+    retryingTurns.length === 1 ? (retryingTurns[0] ?? null) : null;
 
   const activityBounds = useActiveTurnActivityBounds(
     workingBotPubkeys,
@@ -132,9 +147,13 @@ export function BotActivityComposerAction({
   const elapsedMs = activityBounds
     ? Math.max(0, now - activityBounds.anchorAt)
     : 0;
-  // Silence only applies to in-flight turns. Queued/held work has no bounds,
-  // so Stop stays visible during the dispatch-hold window.
-  if (activityBounds && elapsedMs < ACTIVITY_SILENCE_MS) {
+  // Silence only applies to in-flight turns. Queued/held work and automatic
+  // retries have no live bounds, so the chrome stays visible for those.
+  if (
+    activityBounds &&
+    elapsedMs < ACTIVITY_SILENCE_MS &&
+    retryingTurns.length === 0
+  ) {
     return null;
   }
 
@@ -148,11 +167,26 @@ export function BotActivityComposerAction({
     workingAgents.length === 1
       ? `${workingAgents[0]?.name ?? "Agent"} ${AGENT_ACTIVITY_CHROME.isWorking}`
       : AGENT_ACTIVITY_CHROME.agentsWorking(workingAgents.length);
-  const statusLabel = stuck
-    ? `${triggerLabel} · ${AGENT_ACTIVITY_CHROME.seemsStuck}`
-    : activityBounds
-      ? `${triggerLabel} · ${formatElapsed(elapsedMs)}`
-      : triggerLabel;
+  const retryingLabel = primaryRetrying
+    ? AGENT_ACTIVITY_CHROME.retrying(
+        primaryRetrying.attempt,
+        primaryRetrying.maxAttempts,
+      )
+    : retryingTurns.length > 1
+      ? AGENT_ACTIVITY_CHROME.retrying(
+          retryingTurns[0]?.attempt ?? 1,
+          retryingTurns[0]?.maxAttempts ?? 10,
+        )
+      : null;
+  const statusLabel = retryingLabel
+    ? workingAgents.length === 1
+      ? `${workingAgents[0]?.name ?? "Agent"} · ${retryingLabel}`
+      : retryingLabel
+    : stuck
+      ? `${triggerLabel} · ${AGENT_ACTIVITY_CHROME.seemsStuck}`
+      : activityBounds
+        ? `${triggerLabel} · ${formatElapsed(elapsedMs)}`
+        : triggerLabel;
   const isInline = variant === "inline";
   const inlineStop =
     isInline &&
@@ -324,6 +358,46 @@ export function BotActivityComposerAction({
       {inlineStop}
     </div>
   );
+}
+
+function useRetryingTurns(
+  channelId: string | null,
+  conversationId: string | null,
+): RetryingTurn[] {
+  const cacheRef = React.useRef<{
+    channelId: string | null;
+    conversationId: string | null;
+    value: RetryingTurn[];
+  } | null>(null);
+
+  const getSnapshot = React.useCallback(() => {
+    const next = conversationId
+      ? (() => {
+          const single = getRetryingTurn(conversationId);
+          return single ? [single] : [];
+        })()
+      : getRetryingTurnsForChannel(channelId);
+    const prev = cacheRef.current;
+    if (
+      prev &&
+      prev.channelId === channelId &&
+      prev.conversationId === conversationId &&
+      prev.value.length === next.length &&
+      prev.value.every(
+        (entry, index) =>
+          entry.agentPubkey === next[index]?.agentPubkey &&
+          entry.conversationId === next[index]?.conversationId &&
+          entry.attempt === next[index]?.attempt &&
+          entry.maxAttempts === next[index]?.maxAttempts,
+      )
+    ) {
+      return prev.value;
+    }
+    cacheRef.current = { channelId, conversationId, value: next };
+    return next;
+  }, [channelId, conversationId]);
+
+  return React.useSyncExternalStore(subscribeRetryingTurns, getSnapshot);
 }
 
 function useActiveTurnActivityBounds(

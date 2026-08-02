@@ -41,6 +41,7 @@ import { resolveSnapshotSharedBy } from "@/features/messages/lib/snapshotSharedB
 import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
 import { Markdown } from "@/shared/ui/markdown";
 import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
+import { FailureNoticeRetryButton } from "./FailureNoticeRetryButton";
 import { MessageActionBar } from "./MessageActionBar";
 import { MessageAgentOwner } from "./MessageAgentOwner";
 import { MessageAuthorText, MessageHeaderRow } from "./MessageHeader";
@@ -623,6 +624,7 @@ export const MessageRow = React.memo(
     const messageBodyNode = (
       <>
         {renderBody()}
+        <FailureNoticeRetryButton channelId={channelId} message={message} />
         {continuationMetadataNode}
         <MessageReactions
           messageId={message.id}
