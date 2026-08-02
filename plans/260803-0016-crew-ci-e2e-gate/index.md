@@ -52,14 +52,37 @@ deliberately on a scratch branch, push, and confirm `NuncioCrew Gate` goes red.
 A green pipeline proves nothing about a gate — a gate that cannot fail is
 decoration. Revert the break before opening the PR.
 
-**5. Triage flake, do not paper over it.** A local run at `31607c7a3` had
-failures in `relay-reconnect.spec.ts` and `video-attachment.spec.ts`. Before this
-job becomes blocking, each needs attribution: real bug, environment-dependent, or
-genuinely flaky. Options in order of preference — fix it, mark it
-`test.fixme()` with a linked issue, or exclude it from the `smoke` project with a
-comment naming the issue. **Do not** add a blanket `retries: N` to make the suite
-quiet; that converts a real failure into a slow one and is how the suite became
-untrustworthy in the first place.
+**5. Triage flake first — this is a prerequisite, not cleanup.**
+
+Measured 2026-08-03, two full runs on the same machine, ~22 min each:
+
+```text
+clean main  5c79c8cc2   5 failed / 822 passed / 1 skipped
+PR #35 tip  31607c7a3   9 failed / 819 passed / 1 skipped
+```
+
+The failing sets only partly overlap, and `main` failed two specs
+(`community-rail:798`, `onboarding-agent-defaults:675`) that the PR tip passed. A
+targeted rerun of the six tip-only failures under a quiet machine passed five of
+six. So the suite's steady state on green code is roughly **5 failures per run,
+with the identity of the failures moving between runs**.
+
+**Turning this job on as a blocking gate today would red-wall every PR.** The
+order therefore matters:
+
+1. Attribute each recurring failure. Known repeat offenders: `relay-reconnect:135`,
+   `video-attachment:229`, and the `composer-selection-formatting:203` parametrized
+   family (a *different* case fails each run, on `main` as well as on feature tips).
+2. Fix, or quarantine out of the `smoke` project with a comment naming a tracking
+   issue — quarantine is honest, a blanket `retries: N` is not. Retries convert a
+   real failure into a slow one and are how the suite lost its meaning.
+3. Only then flip the job to blocking, and prove it fails (step 4).
+
+If quarantining the flaky set is more work than the gate is worth tonight, land
+the job **non-blocking** (`continue-on-error: true`, not in the gate JSON) and say
+so plainly in the PR — a visible-but-advisory signal beats both a fake gate and
+nothing. Do not register a job in `JOB_RELEVANCE` that cannot be trusted to fail
+for real reasons.
 
 ## Non-goals
 
