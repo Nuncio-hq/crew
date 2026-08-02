@@ -951,7 +951,8 @@ pub async fn edit_message(
         &mention_refs,
         &removed_refs,
     )?;
-    submit_event(builder, &state).await
+    submit_event(builder, &state).await?;
+    Ok(())
 }
 
 #[tauri::command]
