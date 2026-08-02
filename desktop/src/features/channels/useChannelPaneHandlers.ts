@@ -150,6 +150,7 @@ export function useChannelPaneHandlers({
       content: string,
       mediaTags?: string[][],
       mentionPubkeys?: string[],
+      removedMentionPubkeys?: string[],
     ) => {
       const eventId = editTargetIdRef.current;
       if (!eventId) {
@@ -177,6 +178,7 @@ export function useChannelPaneHandlers({
         content,
         mediaTags,
         mentionPubkeys,
+        removedMentionPubkeys,
       });
       setEditTargetId(null);
     },

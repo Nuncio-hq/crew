@@ -98,6 +98,28 @@ export function diffAddedMentionPubkeys(
   );
 }
 
+/**
+ * Mentions an edit *removes*, relative to the original message body.
+ *
+ * Mirror of {@link diffAddedMentionPubkeys}. The harness uses the resulting
+ * `p-removed` tags on kind:40003 to drop a still-queued request when this
+ * agent is no longer addressed — never body/`@Name` matching.
+ */
+export function diffRemovedMentionPubkeys(
+  originalPubkeys: string[],
+  editedPubkeys: string[],
+  selfPubkey: string,
+): string[] {
+  const edited = new Set(
+    normalizeMentionPubkeys(editedPubkeys, selfPubkey).map((pk) =>
+      pk.toLowerCase(),
+    ),
+  );
+  return normalizeMentionPubkeys(originalPubkeys, selfPubkey).filter(
+    (pubkey) => !edited.has(pubkey),
+  );
+}
+
 export function buildReplyTags(
   channelId: string,
   authorPubkey: string,
