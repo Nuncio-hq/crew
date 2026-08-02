@@ -19,6 +19,7 @@ import { cn } from "@/shared/lib/cn";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import { isPositiveEmojiParticle } from "@/shared/ui/EmojiBurstProvider";
+import { agentMentionAvatarStyle } from "@/shared/ui/agentMentionAvatar";
 import {
   MENTION_CHIP_BASE_CLASSES,
   MENTION_CHIP_HOVER_CLASSES,
@@ -226,12 +227,14 @@ function isKnownAgentPubkey(
 }
 
 function ProfileName({
+  avatarUrl,
   children,
   highlight = false,
   isAgent = false,
   pubkey,
   underlineOnHover = false,
 }: {
+  avatarUrl?: string | null;
   children: React.ReactNode;
   highlight?: boolean;
   isAgent?: boolean;
@@ -239,6 +242,7 @@ function ProfileName({
   underlineOnHover?: boolean;
 }) {
   const isAgentMention = highlight && isAgent;
+  const avatar = isAgentMention ? agentMentionAvatarStyle(avatarUrl) : {};
   const node = (
     <span
       data-mention={highlight ? "" : undefined}
@@ -249,10 +253,12 @@ function ProfileName({
               MENTION_CHIP_BASE_CLASSES,
               MENTION_CHIP_HOVER_CLASSES,
               isAgentMention && "agent-mention-highlight",
+              avatar.className,
             )
           : "rounded-xs transition-colors hover:text-foreground",
         underlineOnHover && "hover:underline",
       )}
+      style={avatar.style}
     >
       {highlight && !isAgentMention ? (
         <span className={MENTION_CHIP_PREFIX_CLASS}>@</span>
@@ -532,8 +538,16 @@ function describeSystemEvent(
   const actorName = (
     <ProfileName pubkey={payload.actor}>{actorLabel}</ProfileName>
   );
+  const targetAvatarUrl = payload.target
+    ? (profiles?.[normalizePubkey(payload.target)]?.avatarUrl ?? null)
+    : null;
   const targetName = (
-    <ProfileName highlight isAgent={isTargetAgent} pubkey={payload.target}>
+    <ProfileName
+      avatarUrl={targetAvatarUrl}
+      highlight
+      isAgent={isTargetAgent}
+      pubkey={payload.target}
+    >
       {inlineTargetLabel}
     </ProfileName>
   );
