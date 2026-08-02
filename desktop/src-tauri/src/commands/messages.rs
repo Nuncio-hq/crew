@@ -920,6 +920,7 @@ pub async fn remove_reaction(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // mention add/remove lists for edit-as-undo
 pub async fn edit_message(
     channel_id: String,
     event_id: String,
@@ -940,8 +941,8 @@ pub async fn edit_message(
     let emoji = emoji_tags.unwrap_or_default();
     let mentions = mention_pubkeys.unwrap_or_default();
     let removed = removed_mention_pubkeys.unwrap_or_default();
-    let mention_refs: Vec<&str> = mentions.iter().map(|s| s.as_str()).collect();
-    let removed_refs: Vec<&str> = removed.iter().map(|s| s.as_str()).collect();
+    let mention_refs: Vec<&str> = mentions.iter().map(String::as_str).collect();
+    let removed_refs: Vec<&str> = removed.iter().map(String::as_str).collect();
     let builder = events::build_message_edit(
         channel_uuid,
         target_eid,
@@ -968,7 +969,6 @@ pub async fn delete_message(
     submit_event(builder, &state).await?;
     Ok(())
 }
-
 // ── Local helpers ───────────────────────────────────────────────────────────
 
 fn channel_id_from_tags(ev: &nostr::Event) -> Option<String> {

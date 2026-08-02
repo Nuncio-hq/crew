@@ -7,6 +7,9 @@ import { TypingIndicatorRow } from "@/features/messages/ui/TypingIndicatorRow";
 type ChannelComposerActivityAccessoryProps = {
   agents: ComponentProps<typeof BotActivityComposerAction>["agents"];
   channel: ComponentProps<typeof TypingIndicatorRow>["channel"];
+  conversationId?: ComponentProps<
+    typeof BotActivityComposerAction
+  >["conversationId"];
   currentPubkey: ComponentProps<typeof TypingIndicatorRow>["currentPubkey"];
   onOpenAgentSession: ComponentProps<
     typeof BotActivityComposerAction
@@ -23,6 +26,7 @@ type ChannelComposerActivityAccessoryProps = {
 export function ChannelComposerActivityAccessory({
   agents,
   channel,
+  conversationId = null,
   currentPubkey,
   onOpenAgentSession,
   openAgentSessionPubkey,
@@ -43,6 +47,7 @@ export function ChannelComposerActivityAccessory({
             <BotActivityComposerAction
               agents={agents}
               channelId={channel?.id ?? null}
+              conversationId={conversationId}
               onOpenAgentSession={onOpenAgentSession}
               openAgentSessionPubkey={openAgentSessionPubkey}
               profiles={profiles}
