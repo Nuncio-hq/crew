@@ -1,6 +1,8 @@
 import { sendAgentObserverControl } from "@/shared/api/observerRelay";
 import { invokeTauri } from "@/shared/api/tauri";
 import type {
+  ProjectWorktreeDetails,
+  ProjectWorktreeRegistry,
   ThreadGitHubStatus,
   ThreadWorkspaceActionResult,
   ThreadWorkspaceLifecycle,
@@ -85,4 +87,36 @@ export function getThreadGitHubStatus(
   input: ThreadWorkspaceTarget,
 ): Promise<ThreadGitHubStatus> {
   return invokeTauri("get_thread_github_status", input);
+}
+
+export function getProjectWorktreeRegistry(
+  repositoryPath: string,
+): Promise<ProjectWorktreeRegistry> {
+  return invokeTauri("get_project_worktree_registry", { repositoryPath });
+}
+
+export function getProjectWorktreeDetails(
+  repositoryPath: string,
+  worktreePath: string,
+): Promise<ProjectWorktreeDetails> {
+  return invokeTauri("get_project_worktree_details", {
+    repositoryPath,
+    worktreePath,
+  });
+}
+
+export function removeProjectWorktree(
+  repositoryPath: string,
+  worktreePath: string,
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("remove_project_worktree", {
+    repositoryPath,
+    worktreePath,
+  });
+}
+
+export function pruneProjectWorktrees(
+  repositoryPath: string,
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("prune_project_worktrees", { repositoryPath });
 }
