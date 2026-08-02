@@ -14,8 +14,10 @@ class ObserverFrame {
   final String kind;
   final int? agentIndex;
   final String? channelId;
+  final String? conversationId;
   final String? sessionId;
   final String? turnId;
+  final String? startedAt;
   final dynamic payload;
 
   const ObserverFrame({
@@ -24,8 +26,10 @@ class ObserverFrame {
     required this.kind,
     this.agentIndex,
     this.channelId,
+    this.conversationId,
     this.sessionId,
     this.turnId,
+    this.startedAt,
     this.payload,
   });
 
@@ -35,8 +39,10 @@ class ObserverFrame {
     kind: json['kind'] as String? ?? '',
     agentIndex: json['agentIndex'] as int?,
     channelId: json['channelId'] as String?,
+    conversationId: json['conversationId'] as String?,
     sessionId: json['sessionId'] as String?,
     turnId: json['turnId'] as String?,
+    startedAt: json['startedAt'] as String?,
     payload: json['payload'],
   );
 }
