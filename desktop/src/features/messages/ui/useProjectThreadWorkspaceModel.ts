@@ -86,25 +86,54 @@ export function useProjectThreadWorkspaceModel({
   const { refresh: refreshGitHub, snapshot: githubSnapshot } =
     useProjectThreadGitHub(target);
 
-  if (!context || steps.length === 0) return null;
+  const workingPubkeys = React.useMemo(
+    () => activeAgentPubkeys.map(normalizePubkey),
+    [activeAgentPubkeys],
+  );
 
   const activeStep =
-    steps.find((step) => step.status === "working") ?? steps[0];
-  const activeProfile = profiles?.[normalizePubkey(activeStep.pubkey)];
-  const activeName =
-    activeProfile?.displayName ??
-    activeProfile?.name ??
-    truncatePubkey(activeStep.pubkey);
-  const counts = {
-    done: steps.filter((step) => step.status === "done").length,
-    queued: steps.filter((step) => step.status === "queued").length,
-    working: steps.filter((step) => step.status === "working").length,
-  };
+    steps.length > 0
+      ? (steps.find((step) => step.status === "working") ?? steps[0])
+      : null;
+  const activeProfile = activeStep
+    ? profiles?.[normalizePubkey(activeStep.pubkey)]
+    : undefined;
+  const activeName = activeStep
+    ? (activeProfile?.displayName ??
+      activeProfile?.name ??
+      truncatePubkey(activeStep.pubkey))
+    : "";
+  const counts = React.useMemo(
+    () => ({
+      done: steps.filter((step) => step.status === "done").length,
+      queued: steps.filter((step) => step.status === "queued").length,
+      working: steps.filter((step) => step.status === "working").length,
+    }),
+    [steps],
+  );
   const pullRequest =
     githubSnapshot.status === "ready" ? githubSnapshot.value.pullRequest : null;
 
-  return {
+  // Fresh `{}` each render defeats every effect keyed on `model` (CLAUDE.md
+  // gotcha #7). Memoize over the real inputs so drawer refresh effects stay
+  // stable — see #34.
+  return React.useMemo(() => {
+    if (!context || !activeStep || steps.length === 0) return null;
+    return {
+      activeName,
+      context,
+      conversationId,
+      counts,
+      pullRequest,
+      refreshGitHub,
+      steps,
+      target,
+      workspace,
+      workingPubkeys,
+    };
+  }, [
     activeName,
+    activeStep,
     context,
     conversationId,
     counts,
@@ -113,6 +142,6 @@ export function useProjectThreadWorkspaceModel({
     steps,
     target,
     workspace,
-    workingPubkeys: activeAgentPubkeys.map(normalizePubkey),
-  };
+    workingPubkeys,
+  ]);
 }

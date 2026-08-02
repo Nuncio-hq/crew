@@ -106,15 +106,16 @@ export function ProjectThreadWorkspacePanel({
     if (!isFocusMode) setExpanded(false);
   }, [isFocusMode]);
 
+  const refreshGitHub = model?.refreshGitHub;
   React.useEffect(() => {
     if (
       activeDrawer === "issue" ||
       activeDrawer === "pr" ||
       activeDrawer === "ci"
     ) {
-      void model?.refreshGitHub();
+      void refreshGitHub?.();
     }
-  }, [activeDrawer, model]);
+  }, [activeDrawer, refreshGitHub]);
 
   const workingPubkeys = model?.workingPubkeys ?? [];
   const conversationId = model?.conversationId ?? null;
