@@ -1,13 +1,6 @@
 import * as React from "react";
 import { ArrowDown } from "lucide-react";
 
-import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
-import { normalizePubkey } from "@/shared/lib/pubkey";
-import {
-  collectProjectThreadAgentMentions,
-  projectThreadRootAudiencePubkeys,
-  projectThreadStickyBarOwnsAgentSignal,
-} from "@/features/messages/lib/projectThreadWorkspace";
 import {
   buildThreadSummaryFromVisibleEntries,
   hasNestedThreadBranches,
@@ -31,7 +24,8 @@ import { AuxiliaryPanelBody } from "@/shared/layout/AuxiliaryPanel";
 import {
   AuxiliaryPanelHeader,
   AuxiliaryPanelHeaderGroup,
-  AuxiliaryPanelTitle,
+  getAuxiliaryPanelBodyClass,
+  getAuxiliaryPanelMode,
 } from "@/shared/layout/AuxiliaryPanel";
 import {
   THREAD_PANEL_COLUMN_CLASS,
@@ -48,10 +42,16 @@ import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
 import { ProjectThreadWorkspacePanel } from "./ProjectThreadWorkspacePanel";
+import type { ThreadBreadcrumb } from "@/features/messages/lib/threadOrientation";
+import {
+  ThreadPanelAncestry,
+  ThreadPanelOrientationTitle,
+} from "./ThreadPanelOrientation";
 import { TypingIndicatorRow } from "./TypingIndicatorRow";
 import { UnreadDivider } from "./UnreadDivider";
 import { useComposerHeightPadding } from "./useComposerHeightPadding";
 import { useAnchoredScroll } from "./useAnchoredScroll";
+import { useMessageThreadPanelChrome } from "./useMessageThreadPanelChrome";
 import { selectDeferredListRenderState } from "@/features/messages/lib/timelineSnapshot";
 
 type MessageThreadPanelProps = ThreadPanelLayoutProps & {
@@ -63,6 +63,11 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
   firstUnreadReplyId?: string | null;
   huddleMemberPubkeys?: readonly string[];
   huddleMemberPubkeysPending?: boolean;
+  /**
+   * Orientation breadcrumb owned by ChannelPane so the timeline anchor and
+   * panel title share one source of truth (anchorMessageId).
+   */
+  breadcrumb?: ThreadBreadcrumb | null;
   editTarget?: {
     author: string;
     body: string;
@@ -85,6 +90,9 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
   onMarkUnread?: (message: TimelineMessage) => void;
   onMarkRead?: (message: TimelineMessage) => void;
   onExpandReplies: (message: TimelineMessage) => void;
+  /** Scroll the channel timeline to a message; returns whether the row was found. */
+  onJumpToTimelineMessage?: (messageId: string) => boolean;
+  onOpenAncestorThread?: (message: TimelineMessage) => void;
   onScrollTargetResolved: () => void;
   onScrollTargetSettled?: (messageId: string) => void;
   scrollTargetHighlights?: boolean;
@@ -215,6 +223,9 @@ export function MessageThreadPanel({
   onMarkUnread,
   onMarkRead,
   onExpandReplies,
+  breadcrumb = null,
+  onJumpToTimelineMessage,
+  onOpenAncestorThread,
   onScrollTargetResolved,
   onScrollTargetSettled,
   onSelectReplyTarget,
@@ -512,49 +523,40 @@ export function MessageThreadPanel({
     settleAtBottomAfterLayout,
   );
 
-  const knownAgentPubkeys = useKnownAgentPubkeys();
-  const projectThreadAgentMentions = React.useMemo(() => {
-    if (
-      !threadHead ||
-      !currentPubkey ||
-      normalizePubkey(threadHead.signerPubkey ?? threadHead.pubkey ?? "") !==
-        normalizePubkey(currentPubkey)
-    ) {
-      return [];
-    }
-    return collectProjectThreadAgentMentions({
-      knownAgentPubkeys,
-      profiles,
-      replies: threadMessages,
-      threadHead,
-    });
-  }, [currentPubkey, knownAgentPubkeys, profiles, threadHead, threadMessages]);
-  const initialAgentPubkeys = React.useMemo(
-    () => projectThreadRootAudiencePubkeys(projectThreadAgentMentions),
-    [projectThreadAgentMentions],
-  );
-
-  // Project threads: the sticky status bar owns the agent signal, so the
-  // composer drops its duplicate. Typing still shows; only bot activity is
-  // suppressed. The rule lives in projectThreadWorkspace so it stays testable
-  // and cannot drift from the bar's own visibility condition.
-  // threadHead is only narrowed below; the helper accepts a nullish body.
-  const stickyBarOwnsAgentSignal = projectThreadStickyBarOwnsAgentSignal(
-    threadHead?.body,
-    projectThreadAgentMentions.length,
-  );
-  const showComposerBotActivity =
-    activityAccessoryVisible && !stickyBarOwnsAgentSignal;
-  const hasComposerBottomActivity =
-    showComposerBotActivity || threadTypingPubkeys.length > 0;
+  const {
+    handleNavigateToAnchor,
+    hasComposerBottomActivity,
+    initialAgentPubkeys,
+    projectThreadAgentMentions,
+    showComposerBotActivity,
+  } = useMessageThreadPanelChrome({
+    activityAccessoryVisible,
+    breadcrumb,
+    currentPubkey,
+    isFocusMode,
+    onClose,
+    onJumpToTimelineMessage,
+    profiles,
+    threadHead,
+    threadMessages,
+    threadTypingCount: threadTypingPubkeys.length,
+  });
 
   if (!threadHead) {
     return null;
   }
 
+  // Docked header uses negative margin + matching body padding. Put sticky bar
+  // and scroll body as siblings in that padded column so Workspace stays below
+  // the header hit target — without putting sticky inside the scroll region.
+  const panelChromeMode = getAuxiliaryPanelMode(
+    layout === "split",
+    isOverlay && !isSinglePanelView,
+  );
+
   const threadScrollRegion = (
     <AuxiliaryPanelBody
-      className="overflow-y-auto overflow-x-hidden overscroll-contain pb-24"
+      className="overflow-y-auto overflow-x-hidden overscroll-contain pb-24 pt-0"
       data-buzz-conversation-scroll
       data-testid="message-thread-body"
       onScroll={onScroll}
@@ -568,6 +570,10 @@ export function MessageThreadPanel({
           hasConstrainedColumn ? { maxWidth: columnMaxWidthPx } : undefined
         }
       >
+        <ThreadPanelAncestry
+          breadcrumb={breadcrumb}
+          onOpenAncestorThread={onOpenAncestorThread}
+        />
         <div
           className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-1 pt-0")}
           data-testid="message-thread-head"
@@ -940,7 +946,12 @@ export function MessageThreadPanel({
         leading={headerLeading}
         onBack={isSinglePanelView && !isFocusMode ? onClose : undefined}
       >
-        <AuxiliaryPanelTitle>Thread</AuxiliaryPanelTitle>
+        <ThreadPanelOrientationTitle
+          breadcrumb={breadcrumb}
+          onNavigate={
+            onJumpToTimelineMessage ? handleNavigateToAnchor : undefined
+          }
+        />
       </AuxiliaryPanelHeaderGroup>
     </>
   );
@@ -962,16 +973,24 @@ export function MessageThreadPanel({
       widthPx={widthPx}
     >
       {/* Sticky status bar lives outside the scroll region so expand/collapse
-          cannot fight useAnchoredScroll's ResizeObserver. */}
-      <ProjectThreadWorkspacePanel
-        agentMentions={projectThreadAgentMentions}
-        channelId={channelId}
-        isFocusMode={isFocusMode}
-        profiles={profiles}
-        replies={threadMessages}
-        threadHead={threadHead}
-      />
-      {threadScrollRegion}
+          cannot fight useAnchoredScroll's ResizeObserver. Sibling padded
+          column keeps docked header chrome from stealing Workspace clicks. */}
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col",
+          getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
+        )}
+      >
+        <ProjectThreadWorkspacePanel
+          agentMentions={projectThreadAgentMentions}
+          channelId={channelId}
+          isFocusMode={isFocusMode}
+          profiles={profiles}
+          replies={threadMessages}
+          threadHead={threadHead}
+        />
+        {threadScrollRegion}
+      </div>
     </AuxiliaryPanel>
   );
 }

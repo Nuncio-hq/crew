@@ -1,0 +1,1157 @@
+<!doctype html>
+<html lang="vi" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Thread orientation — prototype (NuncioCrew)</title>
+    <style>
+      /* ------------------------------------------------------------------
+         Tokens lifted from desktop/src/shared/styles/globals/theme.css
+         (Catppuccin Latte / Macchiato) so the prototype reads like the app.
+         ------------------------------------------------------------------ */
+      [data-theme="light"] {
+        --background: 220 23.08% 94.9%;
+        --foreground: 234 16.02% 35.49%;
+        --primary: 266 85.05% 58.04%;
+        --primary-foreground: 220 23.08% 94.9%;
+        --muted: 223 15.91% 82.75%;
+        --muted-foreground: 233 12.8% 41.37%;
+        --border: 225 13.56% 76.86%;
+        --surface: 220 23% 92%;
+      }
+      [data-theme="dark"] {
+        --background: 232 23.4% 18.43%;
+        --foreground: 227 68.25% 87.65%;
+        --primary: 267 82.69% 79.61%;
+        --primary-foreground: 232 23.4% 18.43%;
+        --muted: 230 18.8% 26.08%;
+        --muted-foreground: 228 39.22% 80%;
+        --border: 231 15.61% 33.92%;
+        --surface: 232 23% 15%;
+      }
+
+      /* Real layout constants from the codebase. */
+      :root {
+        --sidebar-w: 256px;
+        --panel-w: 380px; /* AUXILIARY_PANEL_DEFAULT_WIDTH_PX */
+        --sliver-w: 72px; /* THREAD_FOCUS_SLIVER_WIDTH_PX */
+        --focus-col: 880px; /* THREAD_FOCUS_COLUMN_MAX_WIDTH_PX */
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: hsl(var(--surface));
+        color: hsl(var(--foreground));
+        font-family:
+          ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+        font-size: 16px; /* chat body === text-base, per CLAUDE.md */
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* ---------------------------- toolbar ---------------------------- */
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 16px;
+        padding: 10px 16px;
+        background: hsl(var(--background));
+        border-bottom: 1px solid hsl(var(--border));
+        font-size: 13px;
+      }
+      .toolbar strong {
+        font-size: 13px;
+        letter-spacing: -0.01em;
+      }
+      .seg {
+        display: inline-flex;
+        border: 1px solid hsl(var(--border));
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .seg button {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: hsl(var(--muted-foreground));
+        font: inherit;
+        font-size: 12px;
+        padding: 5px 12px;
+        cursor: pointer;
+      }
+      .seg button[aria-pressed="true"] {
+        background: hsl(var(--primary));
+        color: hsl(var(--primary-foreground));
+        font-weight: 600;
+      }
+      .toolbar .hint {
+        color: hsl(var(--muted-foreground));
+        font-size: 12px;
+        margin-left: auto;
+      }
+
+      /* ------------------------------ app ------------------------------ */
+      .app {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        padding: 12px;
+        gap: 0;
+      }
+      .sidebar {
+        width: var(--sidebar-w);
+        flex: 0 0 var(--sidebar-w);
+        padding: 12px 8px;
+        color: hsl(var(--muted-foreground));
+        font-size: 14px;
+      }
+      .sidebar .ws {
+        font-weight: 700;
+        color: hsl(var(--foreground));
+        font-size: 15px;
+        padding: 4px 8px 12px;
+      }
+      .sidebar .group {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 8px;
+        opacity: 0.7;
+      }
+      .sidebar .ch {
+        padding: 5px 8px;
+        border-radius: 8px;
+      }
+      .sidebar .ch.active {
+        background: hsl(var(--primary) / 0.16);
+        color: hsl(var(--foreground));
+        font-weight: 600;
+      }
+
+      /* Channel content area — the positioned root the focus drawer overlays. */
+      .content {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        background: hsl(var(--background));
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .channel {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .channel-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 48px;
+        padding: 0 16px;
+        border-bottom: 1px solid hsl(var(--border) / 0.6);
+        font-weight: 600;
+        font-size: 15px;
+        flex: 0 0 auto;
+      }
+      .timeline {
+        position: relative; /* containing block for the callout tags */
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 12px 8px 16px;
+        scroll-behavior: smooth;
+      }
+      .composer {
+        flex: 0 0 auto;
+        margin: 0 12px 12px;
+        border: 1px solid hsl(var(--border));
+        border-radius: 14px;
+        padding: 10px 14px;
+        color: hsl(var(--muted-foreground));
+        font-size: 15px;
+      }
+
+      /* ---------------------------- messages ---------------------------- */
+      .msg {
+        position: relative;
+        display: flex;
+        gap: 10px;
+        margin: 0 4px 4px;
+        padding: 6px 10px;
+        border-radius: 14px;
+      }
+      .msg:hover {
+        background: hsl(var(--muted) / 0.5);
+      }
+      .avatar {
+        flex: 0 0 auto;
+        width: 36px;
+        height: 36px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        font-size: 13px;
+        font-weight: 700;
+        color: #fff;
+      }
+      .msg .body {
+        min-width: 0;
+        flex: 1;
+      }
+      .msg .head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+      .msg .author {
+        font-weight: 600;
+        font-size: 16px;
+      }
+      .msg .time {
+        font-size: 11px; /* text-2xs */
+        color: hsl(var(--muted-foreground) / 0.75);
+      }
+      .msg .text {
+        font-size: 16px;
+        line-height: 1.5;
+        margin-top: 1px;
+        white-space: pre-wrap;
+      }
+
+      /* === B. Anchor state: the timeline marks the thread that is open === */
+      .msg.is-open-thread {
+        background: hsl(var(--primary) / 0.09);
+      }
+      .msg.is-open-thread::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 6px;
+        bottom: 6px;
+        width: 3px;
+        border-radius: 999px;
+        background: hsl(var(--primary));
+      }
+      /* Off in the "before" variant so the A/B comparison is honest. */
+      body[data-variant="before"] .msg.is-open-thread {
+        background: transparent;
+      }
+      body[data-variant="before"] .msg.is-open-thread::before {
+        display: none;
+      }
+
+      /* C. Flash target — mirrors the app's route-target-highlight-fade. */
+      @keyframes flash-fade {
+        from {
+          background: hsl(var(--primary) / 0.28);
+        }
+        to {
+          background: transparent;
+        }
+      }
+      .msg.flash {
+        animation: flash-fade 2s ease-out forwards;
+      }
+
+      /* ------------------------- thread summary ------------------------- */
+      .summary {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin: 2px 0 8px 60px;
+        padding: 3px 12px 3px 6px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: hsl(var(--muted-foreground));
+        font: inherit;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      .summary:hover {
+        background: hsl(var(--background));
+        border-color: hsl(var(--border) / 0.7);
+        color: hsl(var(--foreground));
+      }
+      .summary .stack {
+        display: flex;
+      }
+      .summary .stack .avatar {
+        width: 22px;
+        height: 22px;
+        font-size: 10px;
+        box-shadow: 0 0 0 2px hsl(var(--background));
+      }
+      .summary .stack .avatar + .avatar {
+        margin-left: -5px;
+      }
+      .summary .sep {
+        opacity: 0.45;
+      }
+      .summary .last {
+        font-weight: 400;
+        opacity: 0.8;
+      }
+      .summary .open-label {
+        display: none;
+      }
+
+      /* === B (cont). The pill states the thread is open, not just hovered. */
+      .summary.is-active {
+        background: hsl(var(--primary) / 0.14);
+        border-color: hsl(var(--primary) / 0.45);
+        color: hsl(var(--primary));
+        font-weight: 600;
+      }
+      .summary.is-active .last {
+        display: none;
+      }
+      .summary.is-active .open-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .summary.is-active .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: hsl(var(--primary));
+      }
+      body[data-variant="before"] .summary.is-active {
+        background: transparent;
+        border-color: transparent;
+        color: hsl(var(--muted-foreground));
+        font-weight: 500;
+      }
+      body[data-variant="before"] .summary.is-active .last {
+        display: inline;
+      }
+      body[data-variant="before"] .summary.is-active .open-label {
+        display: none;
+      }
+
+      /* --------------------------- thread panel --------------------------- */
+      .panel {
+        position: relative; /* containing block for the callout tags */
+        display: flex;
+        flex-direction: column;
+        background: hsl(var(--background));
+        min-width: 0;
+      }
+      /* Split: a resizable pane in the row, the app's default presentation. */
+      body[data-mode="split"] .panel {
+        flex: 0 0 var(--panel-w);
+        width: var(--panel-w);
+        border-left: 1px solid hsl(var(--border));
+      }
+      /* Focus: right-anchored drawer over the channel, 72px sliver left. */
+      body[data-mode="focus"] .panel {
+        position: absolute;
+        inset: 0 0 0 var(--sliver-w);
+        z-index: 41;
+        border-radius: 16px 0 0 16px;
+        box-shadow:
+          -1px 0 0 0 hsl(var(--border) / 0.8),
+          -16px 0 32px -12px rgb(0 0 0 / 0.18);
+      }
+      .scrim {
+        display: none;
+        position: absolute;
+        inset: 0;
+        z-index: 40;
+        border: 0;
+        padding: 0;
+        cursor: pointer;
+        background: hsl(var(--background) / 0.78);
+      }
+      body[data-mode="focus"].thread-open .scrim {
+        display: block;
+      }
+      body:not(.thread-open) .panel {
+        display: none;
+      }
+
+      .panel-header {
+        flex: 0 0 auto;
+        min-height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px 6px 14px;
+        border-bottom: 1px solid hsl(var(--border) / 0.6);
+      }
+      .panel-title {
+        font-weight: 600;
+        font-size: 15px;
+      }
+      .icon-btn {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: hsl(var(--muted-foreground));
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+      }
+      .icon-btn:hover {
+        background: hsl(var(--muted) / 0.7);
+        color: hsl(var(--foreground));
+      }
+
+      /* === A. Breadcrumb replaces the bare word "Thread" === */
+      .crumb {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        min-width: 0;
+        flex: 1;
+      }
+      /* At 380px the crumb must give way to the header buttons, never overlap
+         them: every level clips inward and only the head segment shrinks. */
+      .crumb-stack {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+      }
+      .crumb-line {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        min-width: 0;
+        overflow: hidden;
+        font-size: 13px;
+      }
+      .crumb-btn {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        font: inherit;
+        font-size: 13px;
+        color: hsl(var(--muted-foreground));
+        padding: 2px 5px;
+        margin: 0 -2px;
+        border-radius: 6px;
+        cursor: pointer;
+        flex: 0 0 auto;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* Only the head segment absorbs the squeeze — #general and the ancestor
+         are the orientation payload and must stay whole. */
+      .crumb-btn.head {
+        flex: 0 1 auto;
+        min-width: 0;
+      }
+      .crumb-btn:hover {
+        background: hsl(var(--muted) / 0.7);
+        color: hsl(var(--foreground));
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .crumb-btn.channel {
+        font-weight: 600;
+        color: hsl(var(--foreground));
+      }
+      .crumb-btn.head {
+        color: hsl(var(--foreground));
+      }
+      .crumb-btn.head .snippet {
+        color: hsl(var(--muted-foreground));
+        font-weight: 400;
+      }
+      .crumb-chev {
+        opacity: 0.45;
+        font-size: 12px;
+        flex: 0 0 auto;
+      }
+      .crumb-sub {
+        font-size: 11px;
+        color: hsl(var(--muted-foreground) / 0.85);
+        padding-left: 3px;
+      }
+
+      /* === D. Ancestry strip for a thread opened from inside a thread === */
+      .ancestry {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 10px 14px 0;
+        padding: 7px 10px;
+        border-radius: 12px;
+        border: 1px dashed hsl(var(--border));
+        background: transparent;
+        color: hsl(var(--muted-foreground));
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        text-align: left;
+        width: calc(100% - 28px);
+      }
+      .ancestry:hover {
+        background: hsl(var(--muted) / 0.55);
+        color: hsl(var(--foreground));
+      }
+      .ancestry .avatar {
+        width: 20px;
+        height: 20px;
+        font-size: 9px;
+      }
+      .ancestry .snip {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .ancestry .up {
+        margin-left: auto;
+        opacity: 0.6;
+        flex: 0 0 auto;
+      }
+
+      .panel-body {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 8px 4px 16px;
+      }
+      /* Focus mode keeps a readable measure regardless of window width. */
+      body[data-mode="focus"] .panel-inner {
+        max-width: var(--focus-col);
+        margin: 0 auto;
+      }
+      .panel-divider {
+        height: 1px;
+        background: hsl(var(--border) / 0.6);
+        margin: 10px 16px;
+      }
+      .panel-composer {
+        flex: 0 0 auto;
+        margin: 0 12px 12px;
+        border: 1px solid hsl(var(--border));
+        border-radius: 14px;
+        padding: 10px 14px;
+        color: hsl(var(--muted-foreground));
+        font-size: 15px;
+      }
+      body[data-mode="focus"] .panel-composer {
+        max-width: var(--focus-col);
+        margin: 0 auto 12px;
+        width: calc(100% - 24px);
+      }
+
+      .reply-nested {
+        margin-left: 26px;
+        border-left: 2px solid hsl(var(--border) / 0.6);
+        padding-left: 6px;
+      }
+
+      /* Callout labels marking which idea each affordance is. */
+      .tag {
+        position: absolute;
+        z-index: 60;
+        transform: translateY(-50%);
+        background: hsl(var(--primary));
+        color: hsl(var(--primary-foreground));
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        padding: 2px 6px;
+        border-radius: 999px;
+        pointer-events: none;
+        white-space: nowrap;
+      }
+      body:not(.show-tags) .tag,
+      body[data-variant="before"] .tag {
+        display: none;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .timeline {
+          scroll-behavior: auto;
+        }
+        .msg.flash {
+          animation-duration: 0.01ms;
+        }
+      }
+    </style>
+  </head>
+
+  <body data-mode="split" data-variant="after">
+    <div class="toolbar">
+      <strong>Thread orientation — prototype</strong>
+
+      <div class="seg" role="group" aria-label="Biến thể">
+        <button data-set="variant" data-value="before" type="button">
+          Trước
+        </button>
+        <button
+          data-set="variant"
+          data-value="after"
+          aria-pressed="true"
+          type="button"
+        >
+          Sau
+        </button>
+      </div>
+
+      <div class="seg" role="group" aria-label="Chế độ">
+        <button
+          data-set="mode"
+          data-value="split"
+          aria-pressed="true"
+          type="button"
+        >
+          Split (mặc định)
+        </button>
+        <button data-set="mode" data-value="focus" type="button">Focus</button>
+      </div>
+
+      <div class="seg" role="group" aria-label="Theme">
+        <button
+          data-set="theme"
+          data-value="light"
+          aria-pressed="true"
+          type="button"
+        >
+          Latte
+        </button>
+        <button data-set="theme" data-value="dark" type="button">
+          Macchiato
+        </button>
+      </div>
+
+      <div class="seg" role="group" aria-label="Nhãn">
+        <button data-set="tags" data-value="on" type="button">
+          Hiện nhãn A/B/C/D
+        </button>
+        <button
+          data-set="tags"
+          data-value="off"
+          aria-pressed="true"
+          type="button"
+        >
+          Tắt nhãn
+        </button>
+      </div>
+
+      <span class="hint" id="hint"
+        >Click "2 replies" để mở thread · click breadcrumb để nhảy về
+        root</span
+      >
+    </div>
+
+    <div class="app">
+      <aside class="sidebar">
+        <div class="ws">NuncioCrew</div>
+        <div class="group">Channels</div>
+        <div class="ch active"># general</div>
+        <div class="ch"># engineering</div>
+        <div class="ch"># design</div>
+        <div class="ch"># agents</div>
+      </aside>
+
+      <div class="content">
+        <div class="channel">
+          <div class="channel-header"># general</div>
+          <div class="timeline" id="timeline"></div>
+          <div class="composer">Nhắn vào #general</div>
+        </div>
+
+        <button
+          class="scrim"
+          id="scrim"
+          type="button"
+          aria-label="Back to #general"
+        ></button>
+        <aside class="panel" id="panel" aria-label="Thread"></aside>
+      </div>
+    </div>
+
+    <script>
+      // ----------------------------------------------------------------
+      // Fixture data. `replies` may nest, which is the case that makes
+      // "which thread am I in?" genuinely unanswerable today.
+      // ----------------------------------------------------------------
+      const PALETTE = {
+        Oscar: "#8839ef",
+        "Alice Nguyen": "#1e66f5",
+        "Minh Trần": "#40a02b",
+        "Claude Opus": "#d20f39",
+        "Hà Vũ": "#df8e1d",
+      };
+
+      const MESSAGES = [
+        {
+          id: "m1",
+          author: "Hà Vũ",
+          time: "09:12",
+          text: "Sáng nay relay staging restart xong, mọi thứ xanh.",
+        },
+        {
+          id: "m2",
+          author: "Alice Nguyen",
+          time: "09:31",
+          text: "Mình vừa đọc lại luồng thread panel. Đang mở thread mà không biết nó thuộc message nào trong channel — cứ phải đóng ra mở lại để định vị.",
+          replies: [
+            {
+              id: "m2r1",
+              author: "Oscar",
+              time: "09:33",
+              text: "Đúng vấn đề mình gặp. Nhất là lúc để split pane mở cả ngày.",
+            },
+            {
+              id: "m2r2",
+              author: "Minh Trần",
+              time: "09:40",
+              text: "Header panel chỉ ghi mỗi chữ Thread nên không có gì để bám. Mình nghĩ nên có breadcrumb.",
+              replies: [
+                {
+                  id: "m2r2r1",
+                  author: "Alice Nguyen",
+                  time: "09:44",
+                  text: "Breadcrumb thì bấm được luôn chứ? Bấm phát nhảy về root.",
+                },
+                {
+                  id: "m2r2r2",
+                  author: "Claude Opus",
+                  time: "09:47",
+                  text: "Có sẵn scrollToMessage(id, { highlight: true }) trong MessageTimeline nên chỉ cần gọi lại, không phải viết mới.",
+                },
+              ],
+            },
+            {
+              id: "m2r3",
+              author: "Claude Opus",
+              time: "09:52",
+              text: "Và timeline cũng nên đánh dấu message đang mở thread — hiện tại không có state nào cả.",
+            },
+          ],
+        },
+        // Filler so the channel actually scrolls — the thread root goes
+        // off-screen, which is the only condition where idea C earns its keep.
+        {
+          id: "m3",
+          author: "Minh Trần",
+          time: "10:04",
+          text: "Note: text trong app phải dùng rem, px là đóng băng với zoom.",
+        },
+        {
+          id: "f1",
+          author: "Hà Vũ",
+          time: "10:06",
+          text: "Ai review giúp PR #26 với, thread agent activity line.",
+        },
+        {
+          id: "f2",
+          author: "Claude Opus",
+          time: "10:08",
+          text: "Mình đọc rồi, chỉ có 1 chỗ cần đổi: reset singleton khi switch community.",
+        },
+        {
+          id: "f3",
+          author: "Alice Nguyen",
+          time: "10:09",
+          text: "Đúng rồi, cái nào giữ state theo community đều phải vào resetCommunityState().",
+        },
+        {
+          id: "f4",
+          author: "Hà Vũ",
+          time: "10:11",
+          text: "Ok mình sửa luôn.",
+        },
+        {
+          id: "f5",
+          author: "Minh Trần",
+          time: "10:13",
+          text: "Nhân tiện, migration đặt tên theo domain slug thôi nhé, đừng nhét số phase vào.",
+        },
+        {
+          id: "f6",
+          author: "Claude Opus",
+          time: "10:15",
+          text: "Chuẩn — phase number đổi suốt, tên file thì sống mãi.",
+        },
+        {
+          id: "f7",
+          author: "Alice Nguyen",
+          time: "10:17",
+          text: "just ci xanh hết chưa ai check?",
+        },
+        {
+          id: "f8",
+          author: "Hà Vũ",
+          time: "10:18",
+          text: "Xanh, mình vừa chạy xong.",
+        },
+        {
+          id: "m4",
+          author: "Oscar",
+          time: "10:20",
+          text: "Chốt: split là mặc định, focus là lựa chọn.",
+          replies: [
+            {
+              id: "m4r1",
+              author: "Hà Vũ",
+              time: "10:22",
+              text: "Ok, vậy ưu tiên polish split trước.",
+            },
+            {
+              id: "m4r2",
+              author: "Alice Nguyen",
+              time: "10:25",
+              text: "Focus vẫn cần breadcrumb vì channel bị scrim che gần hết.",
+            },
+          ],
+        },
+        {
+          id: "m5",
+          author: "Claude Opus",
+          time: "10:41",
+          text: "Đang dựng prototype, sẽ gửi link ngay.",
+        },
+      ];
+
+      // ------------------------------- index -------------------------------
+      /** id -> { msg, parentId, depth } for every message at any depth. */
+      const INDEX = new Map();
+      (function indexAll(list, parentId, depth) {
+        for (const msg of list) {
+          INDEX.set(msg.id, { msg, parentId, depth });
+          if (msg.replies) indexAll(msg.replies, msg.id, depth + 1);
+        }
+      })(MESSAGES, null, 0);
+
+      const state = { openThreadId: null, flashId: null };
+
+      /**
+       * Pin an A/B/C/D callout to an element. Positions off measured rects
+       * rather than offsetTop so it survives scrolling and both presentations.
+       */
+      function placeTag(container, target, text, dx = 0, dy = 0) {
+        const box = target.getBoundingClientRect();
+        const base = container.getBoundingClientRect();
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = text;
+        tag.style.left = `${box.left - base.left + dx + 6}px`;
+        tag.style.top = `${box.top - base.top + container.scrollTop + dy}px`;
+        container.appendChild(tag);
+      }
+
+      const initials = (name) =>
+        name
+          .split(" ")
+          .map((part) => part[0])
+          .slice(-2)
+          .join("")
+          .toUpperCase();
+
+      const avatar = (name, cls = "") =>
+        `<div class="avatar ${cls}" style="background:${PALETTE[name] ?? "#7c7f93"}">${initials(name)}</div>`;
+
+      const esc = (value) =>
+        value.replace(
+          /[&<>"]/g,
+          (ch) =>
+            ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch],
+        );
+
+      const snippet = (text, max = 42) =>
+        text.length > max ? `${text.slice(0, max).trimEnd()}…` : text;
+
+      /** Every descendant of a message, flattened — what the panel lists. */
+      function flattenReplies(msg, depth = 0, out = []) {
+        for (const reply of msg.replies ?? []) {
+          out.push({ msg: reply, depth });
+          if (reply.replies) flattenReplies(reply, depth + 1, out);
+        }
+        return out;
+      }
+
+      function participantsOf(msg) {
+        const seen = [];
+        for (const { msg: reply } of flattenReplies(msg)) {
+          if (!seen.includes(reply.author)) seen.push(reply.author);
+        }
+        return seen.slice(0, 3);
+      }
+
+      function countReplies(msg) {
+        return flattenReplies(msg).length;
+      }
+
+      /** Root-most ancestor of a thread head — the channel-level message. */
+      function chainOf(id) {
+        const chain = [];
+        let cursor = id;
+        while (cursor) {
+          const entry = INDEX.get(cursor);
+          if (!entry) break;
+          chain.unshift(entry.msg);
+          cursor = entry.parentId;
+        }
+        return chain;
+      }
+
+      // ------------------------------ timeline ------------------------------
+      function renderTimeline() {
+        const openId = state.openThreadId;
+        const openChain = openId ? chainOf(openId).map((m) => m.id) : [];
+
+        document.getElementById("timeline").innerHTML = MESSAGES.map((msg) => {
+          // A top-level row is marked when the open thread lives anywhere
+          // beneath it — including a nested sub-thread.
+          const isAnchor = openChain.includes(msg.id);
+          const flash = state.flashId === msg.id ? " flash" : "";
+          const replyCount = msg.replies ? countReplies(msg) : 0;
+
+          const summary = replyCount
+            ? `<button class="summary${isAnchor ? " is-active" : ""}" data-open="${msg.id}" type="button">
+                 <span class="stack">${participantsOf(msg).map((n) => avatar(n)).join("")}</span>
+                 <span>${replyCount} replies</span>
+                 <span class="sep">·</span>
+                 <span class="last">last reply 09:52</span>
+                 <span class="open-label"><span class="dot"></span>Đang mở</span>
+               </button>`
+            : "";
+
+          return `
+            <div class="msg${isAnchor ? " is-open-thread" : ""}${flash}" id="row-${msg.id}">
+              ${avatar(msg.author)}
+              <div class="body">
+                <div class="head">
+                  <span class="author">${esc(msg.author)}</span>
+                  <span class="time">${msg.time}</span>
+                </div>
+                <div class="text">${esc(msg.text)}</div>
+              </div>
+            </div>
+            ${summary}`;
+        }).join("");
+
+        const anchorRow = openChain.length
+          ? document.getElementById(`row-${openChain[0]}`)
+          : null;
+        if (anchorRow) {
+          placeTag(document.getElementById("timeline"), anchorRow, "B · anchor");
+        }
+      }
+
+      // ------------------------------- panel -------------------------------
+      function renderPanel() {
+        const panel = document.getElementById("panel");
+        const openId = state.openThreadId;
+        document.body.classList.toggle("thread-open", Boolean(openId));
+        if (!openId) {
+          panel.innerHTML = "";
+          return;
+        }
+
+        const head = INDEX.get(openId).msg;
+        const chain = chainOf(openId);
+        const rootMsg = chain[0];
+        const isNested = chain.length > 1;
+        const before = document.body.dataset.variant === "before";
+
+        // --- header ---------------------------------------------------
+        // "before" keeps today's bare title so the A/B is a fair comparison.
+        const header = before
+          ? `<span class="panel-title">Thread</span>`
+          : `<div class="crumb">
+               <div class="crumb-stack">
+                 <div class="crumb-line">
+                   <button class="crumb-btn channel" data-jump="${rootMsg.id}" data-close="1" type="button">#general</button>
+                   <span class="crumb-chev">›</span>
+                   ${
+                     isNested
+                       ? `<button class="crumb-btn" data-open="${rootMsg.id}" type="button">${esc(rootMsg.author)}</button>
+                          <span class="crumb-chev">›</span>`
+                       : ""
+                   }
+                   <button class="crumb-btn head" data-jump="${rootMsg.id}" type="button">
+                     ${esc(head.author)}<span class="snippet">: “${esc(snippet(head.text))}”</span>
+                   </button>
+                 </div>
+                 <div class="crumb-sub">${countReplies(head)} replies · ${head.time}</div>
+               </div>
+             </div>`;
+
+        // --- ancestry strip (idea D) ----------------------------------
+        const ancestry =
+          isNested && !before
+            ? `<button class="ancestry" data-open="${chain[chain.length - 2].id}" type="button">
+                 ${avatar(chain[chain.length - 2].author)}
+                 <span class="snip">Thread con của <b>${esc(chain[chain.length - 2].author)}</b> — “${esc(snippet(chain[chain.length - 2].text, 34))}”</span>
+                 <span class="up">↑ mở thread cha</span>
+               </button>`
+            : "";
+
+        // Direct replies only. A reply that owns a sub-thread is collapsed
+        // behind its own summary pill — same as the real panel, and the only
+        // way a nested thread is reachable by clicking.
+        const replies = (head.replies ?? [])
+          .map((reply) => {
+            const nestedCount = reply.replies ? countReplies(reply) : 0;
+            const nested = nestedCount
+              ? `<button class="summary" data-open="${reply.id}" type="button">
+                   <span class="stack">${participantsOf(reply).map((n) => avatar(n)).join("")}</span>
+                   <span>${nestedCount} replies</span>
+                   <span class="sep">·</span>
+                   <span class="last">xem thread con</span>
+                 </button>`
+              : "";
+
+            return `
+              <div class="msg">
+                ${avatar(reply.author)}
+                <div class="body">
+                  <div class="head">
+                    <span class="author">${esc(reply.author)}</span>
+                    <span class="time">${reply.time}</span>
+                  </div>
+                  <div class="text">${esc(reply.text)}</div>
+                </div>
+              </div>
+              ${nested}`;
+          })
+          .join("");
+
+        panel.innerHTML = `
+          <div class="panel-header">
+            ${header}
+            <button class="icon-btn" data-toggle-mode="1" title="Đổi split / focus" type="button">⇔</button>
+            <button class="icon-btn" data-close="1" title="Đóng thread" type="button">✕</button>
+          </div>
+          <div class="panel-body">
+            <div class="panel-inner">
+              ${ancestry}
+              <div class="msg">
+                ${avatar(head.author)}
+                <div class="body">
+                  <div class="head">
+                    <span class="author">${esc(head.author)}</span>
+                    <span class="time">${head.time}</span>
+                  </div>
+                  <div class="text">${esc(head.text)}</div>
+                </div>
+              </div>
+              <div class="panel-divider"></div>
+              ${replies}
+            </div>
+          </div>
+          <div class="panel-composer">Reply in thread to ${esc(head.author)}</div>`;
+
+        if (before) return;
+
+        const crumb = panel.querySelector(".crumb");
+        if (crumb) placeTag(panel, crumb, "A · breadcrumb (click = C)", 0, 26);
+        const strip = panel.querySelector(".ancestry");
+        if (strip) placeTag(panel, strip, "D · ancestry", 0, 0);
+      }
+
+      function render() {
+        renderTimeline();
+        renderPanel();
+      }
+
+      // ------------------------------ actions ------------------------------
+      function openThread(id) {
+        state.openThreadId = id;
+        state.flashId = null;
+        render();
+      }
+
+      function closeThread() {
+        state.openThreadId = null;
+        state.flashId = null;
+        render();
+      }
+
+      /**
+       * Idea C — breadcrumb click scrolls the channel to the thread's root and
+       * flashes it. In focus mode the channel is behind the scrim, so the same
+       * click also dismisses the drawer; otherwise the flash plays unseen.
+       */
+      function jumpToRoot(id, alsoClose) {
+        const isFocus = document.body.dataset.mode === "focus";
+        if (alsoClose || isFocus) {
+          state.openThreadId = null;
+        }
+        state.flashId = id;
+        render();
+        document
+          .getElementById(`row-${id}`)
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+        setTimeout(() => {
+          state.flashId = null;
+          render();
+        }, 2000);
+      }
+
+      document.addEventListener("click", (event) => {
+        const target = event.target.closest("[data-open],[data-jump],[data-close],[data-toggle-mode],[data-set]");
+        if (!target) return;
+
+        if (target.dataset.set) {
+          const { set, value } = target.dataset;
+          if (set === "theme") document.documentElement.dataset.theme = value;
+          else if (set === "tags")
+            document.body.classList.toggle("show-tags", value === "on");
+          else document.body.dataset[set] = value;
+
+          for (const sibling of target.parentElement.children) {
+            sibling.setAttribute(
+              "aria-pressed",
+              String(sibling === target),
+            );
+          }
+          render();
+          return;
+        }
+
+        if (target.dataset.toggleMode) {
+          document.body.dataset.mode =
+            document.body.dataset.mode === "split" ? "focus" : "split";
+          render();
+          return;
+        }
+        if (target.dataset.jump) {
+          jumpToRoot(target.dataset.jump, Boolean(target.dataset.close));
+          return;
+        }
+        if (target.dataset.open) {
+          openThread(target.dataset.open);
+          return;
+        }
+        if (target.dataset.close) closeThread();
+      });
+
+      document.getElementById("scrim").addEventListener("click", closeThread);
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeThread();
+      });
+
+      // Open the nested sub-thread on load: it is the case that shows every
+      // idea at once (breadcrumb with a middle segment, ancestry, anchor on an
+      // ancestor row two levels up).
+      openThread("m2r2");
+    </script>
+  </body>
+</html>

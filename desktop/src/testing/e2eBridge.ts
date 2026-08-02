@@ -1064,6 +1064,12 @@ declare global {
       channelName: string;
       content: string;
       parentEventId?: string | null;
+      /**
+       * Override the NIP-10 root marker. When equal to `parentEventId`, the
+       * event gets only a reply tag (rootId === parentId) — the depth ≥ 2
+       * shape produced when a sub-thread reply treats the thread head as root.
+       */
+      rootEventId?: string | null;
       pubkey?: string;
       kind?: number;
       mentionPubkeys?: string[];
@@ -4168,6 +4174,7 @@ function emitMockChannelMessage(
   createdAt?: number,
   pending?: boolean,
   id?: string,
+  rootEventIdOverride?: string | null,
 ) {
   const eventKind = kind ?? 9;
   if (!parentEventId) {
@@ -4200,7 +4207,8 @@ function emitMockChannelMessage(
         parentEventId: null,
         rootEventId: null,
       };
-  const rootEventId = parentThread.rootEventId ?? parentEventId;
+  const rootEventId =
+    rootEventIdOverride ?? parentThread.rootEventId ?? parentEventId;
   const authorPubkey = pubkey ?? DEFAULT_MOCK_IDENTITY.pubkey;
   const tags = buildReplyMessageTags(
     channelId,
@@ -9682,6 +9690,7 @@ export function maybeInstallE2eTauriMocks() {
     channelName,
     content,
     parentEventId,
+    rootEventId,
     pubkey,
     kind,
     mentionPubkeys,
@@ -9708,6 +9717,7 @@ export function maybeInstallE2eTauriMocks() {
       createdAt,
       pending,
       id,
+      rootEventId,
     );
   };
   window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__ = ({
