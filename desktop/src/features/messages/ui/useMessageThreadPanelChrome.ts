@@ -22,7 +22,7 @@ export function useMessageThreadPanelChrome(args: {
   isFocusMode: boolean;
   onClose: () => void;
   onJumpToTimelineMessage?: ((messageId: string) => boolean) | undefined;
-  profiles: UserProfileLookup;
+  profiles?: UserProfileLookup;
   threadHead: TimelineMessage | null | undefined;
   threadMessages: TimelineMessage[];
   threadTypingCount: number;

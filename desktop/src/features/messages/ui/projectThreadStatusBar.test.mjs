@@ -36,18 +36,27 @@ describe("project thread sticky status bar", () => {
   });
 
   it("suppresses composer bot activity when the open thread has project context", () => {
-    const source = readFileSync(join(here, "MessageThreadPanel.tsx"), "utf8");
-    assert.match(source, /projectThreadStickyBarOwnsAgentSignal/);
-    assert.match(source, /stickyBarOwnsAgentSignal/);
-    assert.match(source, /showComposerBotActivity/);
-    assert.match(source, /showComposerBotActivity && activityAccessoryContent/);
+    const chrome = readFileSync(
+      join(here, "useMessageThreadPanelChrome.ts"),
+      "utf8",
+    );
+    const panel = readFileSync(join(here, "MessageThreadPanel.tsx"), "utf8");
+    assert.match(chrome, /projectThreadStickyBarOwnsAgentSignal/);
+    assert.match(chrome, /stickyBarOwnsAgentSignal/);
+    assert.match(chrome, /showComposerBotActivity/);
+    assert.match(panel, /showComposerBotActivity && activityAccessoryContent/);
     // The rule must come from the shared helper, which is unit-tested against
     // the bar's real visibility. Re-deriving it inline here is how the two
     // drifted apart before: composer suppressed while the bar never rendered.
     assert.equal(
-      source.includes("parseProjectThreadContext(threadHead.body)"),
+      chrome.includes("parseProjectThreadContext(threadHead.body)"),
       false,
       "suppression must not re-derive project context inline",
+    );
+    assert.equal(
+      panel.includes("parseProjectThreadContext(threadHead.body)"),
+      false,
+      "suppression must not re-derive project context inline in the panel",
     );
   });
 
