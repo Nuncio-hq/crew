@@ -68,7 +68,10 @@ test("desktop smoke e2e runs on PRs as an advisory signal until flakes are triag
   const smokeStart = ci.indexOf("desktop-smoke-e2e:");
   assert.ok(smokeStart > 0, "desktop-smoke-e2e job must exist");
   const gateStart = ci.indexOf("\n  gate:", smokeStart);
-  const smoke = ci.slice(smokeStart, gateStart > smokeStart ? gateStart : undefined);
+  const smoke = ci.slice(
+    smokeStart,
+    gateStart > smokeStart ? gateStart : undefined,
+  );
 
   assert.match(smoke, /name:\s*Desktop Smoke E2E/);
   assert.match(smoke, /continue-on-error:\s*true/);
