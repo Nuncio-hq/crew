@@ -5,6 +5,7 @@ import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   collectProjectThreadAgentMentions,
+  parseProjectThreadContext,
   projectThreadRootAudiencePubkeys,
 } from "@/features/messages/lib/projectThreadWorkspace";
 import {
@@ -251,10 +252,14 @@ export function MessageThreadPanel({
   const threadHeadId = threadHead?.id ?? null;
   useEscapeKey(onClose, isOverlay || isSinglePanelView || isFocusMode);
   const hasConstrainedColumn = columnMaxWidthPx != null;
-  // Whether the composer dock trades its quiet-state spacer for the
-  // conditional activity accessory (agent working and/or someone typing).
+  // Project threads: sticky status bar owns the agent signal (law 2).
+  // Typing still appears under the composer; only bot activity is suppressed.
+  const stickyBarOwnsAgentSignal =
+    parseProjectThreadContext(threadHead.body) != null;
+  const showComposerBotActivity =
+    activityAccessoryVisible && !stickyBarOwnsAgentSignal;
   const hasComposerBottomActivity =
-    activityAccessoryVisible || threadTypingPubkeys.length > 0;
+    showComposerBotActivity || threadTypingPubkeys.length > 0;
 
   // Live ref so onCaptureSendContext can read reply state at submit time
   // (before any async mention-flow awaits change navigation state).
@@ -894,7 +899,7 @@ export function MessageThreadPanel({
               visible={hasComposerBottomActivity}
             >
               <div className="mx-auto flex w-full max-w-4xl items-center gap-2 overflow-visible pl-2">
-                {activityAccessoryVisible && activityAccessoryContent ? (
+                {showComposerBotActivity && activityAccessoryContent ? (
                   <div className="flex min-w-0 flex-1 overflow-visible">
                     {activityAccessoryContent}
                   </div>

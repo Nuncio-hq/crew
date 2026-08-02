@@ -419,7 +419,6 @@ export const ChannelPane = React.memo(function ChannelPane({
     activeChannel?.id,
     openThreadHeadId,
     botTypingEntries,
-    threadHeadMessage?.body,
   );
   const directMessageIntro = React.useMemo(
     () =>
@@ -909,7 +908,6 @@ export const ChannelPane = React.memo(function ChannelPane({
                     openAgentSessionPubkey={openAgentSessionPubkey}
                     openThreadHeadId={openThreadHeadId}
                     profiles={profiles}
-                    threadHeadBody={threadHeadMessage.body}
                   />
                 }
               />

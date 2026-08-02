@@ -16,7 +16,6 @@ type ThreadComposerBotActivityProps = {
   >["openAgentSessionPubkey"];
   openThreadHeadId: string | null | undefined;
   profiles: ComponentProps<typeof BotActivityComposerAction>["profiles"];
-  threadHeadBody?: string | null;
 };
 
 /** Inline bot activity for the open thread composer (conversation-scoped). */
@@ -28,7 +27,6 @@ export function ThreadComposerBotActivity({
   openAgentSessionPubkey,
   openThreadHeadId,
   profiles,
-  threadHeadBody,
 }: ThreadComposerBotActivityProps) {
   const {
     hasThreadComposerBotActivity,
@@ -38,7 +36,6 @@ export function ThreadComposerBotActivity({
     channelId,
     openThreadHeadId,
     botTypingEntries,
-    threadHeadBody,
   );
 
   if (!hasThreadComposerBotActivity) return null;
@@ -61,12 +58,10 @@ export function useThreadComposerBotActivityVisible(
   channelId: string | null | undefined,
   openThreadHeadId: string | null | undefined,
   botTypingEntries: ChannelPaneProps["botTypingEntries"],
-  threadHeadBody?: string | null,
 ) {
   return useThreadComposerBotActivity(
     channelId,
     openThreadHeadId,
     botTypingEntries,
-    threadHeadBody,
   ).hasThreadComposerBotActivity;
 }

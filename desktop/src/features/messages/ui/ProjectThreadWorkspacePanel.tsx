@@ -132,10 +132,7 @@ export function ProjectThreadWorkspacePanel({
       const profile = profiles?.[key];
       crew.push({
         pubkey,
-        name:
-          profile?.displayName ??
-          profile?.name ??
-          truncatePubkey(pubkey),
+        name: profile?.displayName ?? profile?.name ?? truncatePubkey(pubkey),
       });
     }
     for (const step of model?.steps ?? []) {
@@ -147,9 +144,7 @@ export function ProjectThreadWorkspacePanel({
       crew.push({
         pubkey: step.pubkey,
         name:
-          profile?.displayName ??
-          profile?.name ??
-          truncatePubkey(step.pubkey),
+          profile?.displayName ?? profile?.name ?? truncatePubkey(step.pubkey),
       });
     }
     return crew;

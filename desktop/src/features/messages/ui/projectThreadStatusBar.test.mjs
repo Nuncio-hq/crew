@@ -36,19 +36,14 @@ describe("project thread sticky status bar", () => {
   });
 
   it("suppresses composer bot activity when the open thread has project context", () => {
-    const hook = readFileSync(
-      join(here, "../../channels/ui/useThreadComposerBotActivity.ts"),
-      "utf8",
+    const source = readFileSync(join(here, "MessageThreadPanel.tsx"), "utf8");
+    assert.match(source, /parseProjectThreadContext/);
+    assert.match(source, /stickyBarOwnsAgentSignal/);
+    assert.match(source, /showComposerBotActivity/);
+    assert.match(
+      source,
+      /showComposerBotActivity && activityAccessoryContent/,
     );
-    assert.match(hook, /parseProjectThreadContext/);
-    assert.match(hook, /ownedByStickyBar/);
-    assert.match(hook, /mergeWorkingAgentPubkeys/);
-    const pane = readFileSync(
-      join(here, "../../channels/ui/ChannelPane.tsx"),
-      "utf8",
-    );
-    assert.match(pane, /threadHeadMessage\?\.body/);
-    assert.match(pane, /threadHeadBody=\{threadHeadMessage\.body\}/);
   });
 
   it("routes sticky-bar Stop through the shared composer cancel path", () => {
