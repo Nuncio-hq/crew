@@ -1,12 +1,16 @@
 import * as React from "react";
-import { Loader2, Octagon } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
-import { useAgentTranscript } from "@/features/agents/ui/useObserverEvents";
 import {
-  getActivityHeadline,
-  isMeaningfulItem,
-  isSpineItem,
-} from "@/features/agents/ui/agentSessionTranscriptPresentation";
+  getActiveTurnActivityBounds,
+  subscribeActiveAgentTurns,
+} from "@/features/agents/activeAgentTurnsStore";
+import {
+  ACTIVITY_SILENCE_MS,
+  ACTIVITY_STUCK_MS,
+  AGENT_ACTIVITY_CHROME,
+} from "@/features/agents/ui/agentActivityChrome";
+import { formatElapsed } from "@/features/agents/ui/agentSessionUtils";
 import { useComposerAgentStop } from "@/features/channels/ui/useComposerAgentStop";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { ManagedAgent } from "@/shared/api/types";
@@ -20,7 +24,6 @@ export type BotActivityAgent = Pick<ManagedAgent, "pubkey" | "name">;
 type BotActivityBarProps = {
   agents: BotActivityAgent[];
   channelId?: string | null;
-  /** Thread-scoped conversation; omit for channel-wide activity. */
   conversationId?: string | null;
   onOpenAgentSession: (pubkey: string, channelId?: string | null) => void;
   openAgentSessionPubkey: string | null;
@@ -31,7 +34,7 @@ type BotActivityBarProps = {
 
 const HOVER_OPEN_DELAY_MS = 150;
 const HOVER_CLOSE_DELAY_MS = 180;
-const HEADLINE_ROTATION_MS = 2200;
+const TICK_MS = 1_000;
 
 export function BotActivityComposerAction({
   agents,
@@ -44,6 +47,7 @@ export function BotActivityComposerAction({
   variant = "toolbar",
 }: BotActivityBarProps) {
   const [open, setOpen] = React.useState(false);
+  const [now, setNow] = React.useState(() => Date.now());
   const [stoppingPubkey, setStoppingPubkey] = React.useState<string | null>(
     null,
   );
@@ -65,61 +69,17 @@ export function BotActivityComposerAction({
   const singleWorkingAgent =
     workingAgents.length === 1 ? (workingAgents[0] ?? null) : null;
 
-  const handleStop = React.useCallback(
-    async (agent: BotActivityAgent, event?: React.MouseEvent) => {
-      event?.preventDefault();
-      event?.stopPropagation();
-      const key = agent.pubkey.toLowerCase();
-      setStoppingPubkey(key);
-      try {
-        await stopAgent(agent.pubkey, agent.name);
-      } finally {
-        setStoppingPubkey((current) => (current === key ? null : current));
-      }
-    },
-    [stopAgent],
+  const activityBounds = useActiveTurnActivityBounds(
+    workingBotPubkeys,
+    channelId,
+    conversationId,
   );
-  const transcript = useAgentTranscript(
-    Boolean(singleWorkingAgent),
-    singleWorkingAgent?.pubkey,
-  );
-  const activityHeadlines = React.useMemo(() => {
-    if (!singleWorkingAgent) {
-      return [];
-    }
 
-    const seen = new Set<string>();
-    const headlines: string[] = [];
-    const scopedTranscript = channelId
-      ? transcript.filter((item) => item.channelId === channelId)
-      : transcript;
-
-    // Two-tier scan: spine items first (reads recede when real work is present).
-    // If no spine headlines are found (session start / idle), fall back to all
-    // meaningful items so the bar isn't left empty.
-    const passFilter: (item: (typeof scopedTranscript)[number]) => boolean =
-      scopedTranscript.some(isSpineItem) ? isSpineItem : isMeaningfulItem;
-
-    for (let i = scopedTranscript.length - 1; i >= 0; i--) {
-      const item = scopedTranscript[i];
-      if (!passFilter(item)) {
-        continue;
-      }
-      const headline = getActivityHeadline(item);
-      if (!headline || seen.has(headline)) {
-        continue;
-      }
-
-      seen.add(headline);
-      headlines.unshift(headline);
-      if (headlines.length >= 5) {
-        break;
-      }
-    }
-
-    return headlines;
-  }, [channelId, singleWorkingAgent, transcript]);
-  const [headlineIndex, setHeadlineIndex] = React.useState(0);
+  React.useEffect(() => {
+    if (workingAgents.length === 0) return;
+    const interval = window.setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => window.clearInterval(interval);
+  }, [workingAgents.length]);
 
   const clearHoverTimer = React.useCallback(() => {
     if (hoverTimerRef.current !== null) {
@@ -150,59 +110,78 @@ export function BotActivityComposerAction({
     return () => clearHoverTimer();
   }, [clearHoverTimer]);
 
-  React.useEffect(() => {
-    if (activityHeadlines.length <= 1) {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      setHeadlineIndex((current) => (current + 1) % activityHeadlines.length);
-    }, HEADLINE_ROTATION_MS);
-
-    return () => window.clearInterval(interval);
-  }, [activityHeadlines.length]);
+  const handleStop = React.useCallback(
+    async (agent: BotActivityAgent, event?: React.MouseEvent) => {
+      event?.preventDefault();
+      event?.stopPropagation();
+      const key = agent.pubkey.toLowerCase();
+      setStoppingPubkey(key);
+      try {
+        await stopAgent(agent.pubkey, agent.name);
+      } finally {
+        setStoppingPubkey((current) => (current === key ? null : current));
+      }
+    },
+    [stopAgent],
+  );
 
   if (workingAgents.length === 0) {
     return null;
   }
 
+  const elapsedMs = activityBounds
+    ? Math.max(0, now - activityBounds.anchorAt)
+    : 0;
+  // Silence only applies to in-flight turns. Queued/held work has no bounds,
+  // so Stop stays visible during the dispatch-hold window.
+  if (activityBounds && elapsedMs < ACTIVITY_SILENCE_MS) {
+    return null;
+  }
+
+  const stuck =
+    activityBounds != null &&
+    now - activityBounds.lastActivityAt >= ACTIVITY_STUCK_MS;
   const agentAvatarUrl = (agent: BotActivityAgent) =>
     profiles?.[agent.pubkey.toLowerCase()]?.avatarUrl ?? null;
   const selectedPubkey = openAgentSessionPubkey?.toLowerCase() ?? null;
   const triggerLabel =
     workingAgents.length === 1
-      ? `${workingAgents[0]?.name ?? "Agent"} is working`
-      : `${workingAgents.length} agents working`;
+      ? `${workingAgents[0]?.name ?? "Agent"} ${AGENT_ACTIVITY_CHROME.isWorking}`
+      : AGENT_ACTIVITY_CHROME.agentsWorking(workingAgents.length);
+  const statusLabel = stuck
+    ? `${triggerLabel} · ${AGENT_ACTIVITY_CHROME.seemsStuck}`
+    : activityBounds
+      ? `${triggerLabel} · ${formatElapsed(elapsedMs)}`
+      : triggerLabel;
   const isInline = variant === "inline";
-  const visibleStatusLabel =
-    workingAgents.length === 1
-      ? `${workingAgents[0]?.name ?? "Agent"}: ${
-          activityHeadlines[headlineIndex % activityHeadlines.length] ??
-          "Working"
-        }`
-      : `${workingAgents[0]?.name ?? "Agent"} +${workingAgents.length - 1}`;
-
   const inlineStop =
     isInline &&
     singleWorkingAgent &&
     hasStoppableWork(singleWorkingAgent.pubkey) ? (
       <button
-        aria-label={`Stop ${singleWorkingAgent.name}`}
-        className="ml-1 inline-flex h-5 shrink-0 items-center gap-1 rounded-md px-1.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
-        data-testid="bot-activity-composer-stop"
+        aria-label={`${AGENT_ACTIVITY_CHROME.stop} ${singleWorkingAgent.name}`}
+        className={cn(
+          "shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50",
+          stuck && "text-amber-400 hover:text-amber-300",
+        )}
+        data-testid="bot-activity-stop"
         disabled={stoppingPubkey === singleWorkingAgent.pubkey.toLowerCase()}
         onClick={(event) => {
           void handleStop(singleWorkingAgent, event);
         }}
         type="button"
       >
-        <Octagon className="h-3 w-3" />
-        Stop
+        {AGENT_ACTIVITY_CHROME.stop}
       </button>
     ) : null;
 
   return (
-    <div className="flex min-w-0 items-center">
+    <div
+      className={cn(
+        "inline-flex min-w-0 items-center",
+        isInline ? "w-full gap-2" : "gap-1.5",
+      )}
+    >
       <Popover onOpenChange={setOpen} open={open}>
         <PopoverTrigger asChild>
           <button
@@ -210,8 +189,9 @@ export function BotActivityComposerAction({
             className={cn(
               "inline-flex items-center justify-center rounded-full border border-border/60 bg-background font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:border-primary/40 data-[state=open]:bg-primary/10 data-[state=open]:text-primary",
               isInline
-                ? "min-w-0 gap-1.5 overflow-visible border-transparent bg-transparent px-0 text-xs font-normal leading-normal shadow-none hover:border-transparent hover:bg-transparent data-[state=open]:border-transparent data-[state=open]:bg-transparent"
+                ? "min-w-0 flex-1 gap-1.5 overflow-visible border-transparent bg-transparent px-0 text-xs font-normal leading-normal shadow-none hover:border-transparent hover:bg-transparent data-[state=open]:border-transparent data-[state=open]:bg-transparent"
                 : "h-9 min-w-9 gap-1.5 px-2 text-xs",
+              stuck && "text-amber-400 hover:text-amber-300",
             )}
             data-testid="bot-activity-composer-trigger"
             onBlur={closeWithDelay}
@@ -253,10 +233,10 @@ export function BotActivityComposerAction({
             >
               {isInline ? (
                 <Shimmer className="-my-px truncate py-px">
-                  {visibleStatusLabel}
+                  {statusLabel}
                 </Shimmer>
               ) : (
-                "working"
+                AGENT_ACTIVITY_CHROME.workingFallback
               )}
             </span>
             {isInline ? null : (
@@ -274,7 +254,7 @@ export function BotActivityComposerAction({
           sideOffset={8}
         >
           <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
-            Agents working
+            {AGENT_ACTIVITY_CHROME.agentsWorkingLabel}
           </div>
           <div className="mt-1 flex flex-col gap-1">
             {workingAgents.map((agent) => {
@@ -317,13 +297,13 @@ export function BotActivityComposerAction({
                       {agent.name}
                     </span>
                     <span className="shrink-0 whitespace-nowrap text-xs font-medium opacity-80">
-                      View activity
+                      {AGENT_ACTIVITY_CHROME.viewActivity}
                     </span>
                     <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground/70" />
                   </button>
                   {canStop ? (
                     <button
-                      aria-label={`Stop ${agent.name}`}
+                      aria-label={`${AGENT_ACTIVITY_CHROME.stop} ${agent.name}`}
                       className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
                       data-testid={`bot-activity-composer-stop-${agent.pubkey}`}
                       disabled={isStopping}
@@ -332,8 +312,7 @@ export function BotActivityComposerAction({
                       }}
                       type="button"
                     >
-                      <Octagon className="h-3.5 w-3.5" />
-                      Stop
+                      {AGENT_ACTIVITY_CHROME.stop}
                     </button>
                   ) : null}
                 </div>
@@ -345,4 +324,49 @@ export function BotActivityComposerAction({
       {inlineStop}
     </div>
   );
+}
+
+function useActiveTurnActivityBounds(
+  agentPubkeys: readonly string[],
+  channelId: string | null,
+  conversationId: string | null,
+) {
+  const agentKey = agentPubkeys.map((pubkey) => pubkey.toLowerCase()).join(",");
+  const cacheRef = React.useRef<{
+    agentKey: string;
+    channelId: string | null;
+    conversationId: string | null;
+    value: { anchorAt: number; lastActivityAt: number } | null;
+  } | null>(null);
+
+  const getSnapshot = React.useCallback(() => {
+    const next = getActiveTurnActivityBounds({
+      agentPubkeys,
+      channelId,
+      conversationId,
+    });
+    const prev = cacheRef.current;
+    if (
+      prev &&
+      prev.agentKey === agentKey &&
+      prev.channelId === channelId &&
+      prev.conversationId === conversationId &&
+      ((prev.value === null && next === null) ||
+        (prev.value != null &&
+          next != null &&
+          prev.value.anchorAt === next.anchorAt &&
+          prev.value.lastActivityAt === next.lastActivityAt))
+    ) {
+      return prev.value;
+    }
+    cacheRef.current = {
+      agentKey,
+      channelId,
+      conversationId,
+      value: next,
+    };
+    return next;
+  }, [agentKey, agentPubkeys, channelId, conversationId]);
+
+  return React.useSyncExternalStore(subscribeActiveAgentTurns, getSnapshot);
 }

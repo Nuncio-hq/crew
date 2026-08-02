@@ -197,11 +197,6 @@ function recomputeKnownAgentPubkeys() {
   }
 }
 
-/** Pubkeys currently registered as agents for observer ingest. */
-export function getRegisteredObserverAgentPubkeys(): ReadonlySet<string> {
-  return knownAgentPubkeys;
-}
-
 function registerKnownAgents(
   subscriptionId: string,
   pubkeys: readonly string[],
