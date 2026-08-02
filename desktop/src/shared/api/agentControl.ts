@@ -1,6 +1,7 @@
 import { sendAgentObserverControl } from "@/shared/api/observerRelay";
 import { invokeTauri } from "@/shared/api/tauri";
 import type {
+  ProjectWorktreeRegistry,
   ThreadGitHubStatus,
   ThreadWorkspaceActionResult,
   ThreadWorkspaceLifecycle,
@@ -78,4 +79,10 @@ export function getThreadGitHubStatus(
   input: ThreadWorkspaceTarget,
 ): Promise<ThreadGitHubStatus> {
   return invokeTauri("get_thread_github_status", input);
+}
+
+export function getProjectWorktreeRegistry(
+  repositoryPath: string,
+): Promise<ProjectWorktreeRegistry> {
+  return invokeTauri("get_project_worktree_registry", { repositoryPath });
 }

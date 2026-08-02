@@ -1,4 +1,5 @@
 import type { ObserverEvent } from "./ui/agentSessionTypes";
+import { invalidateProjectWorktreeRegistry } from "./projectWorktreeRegistryStore";
 
 export type ProjectThreadWorkspaceSnapshot =
   | { status: "pending" }
@@ -13,6 +14,14 @@ export type ProjectThreadWorkspaceSnapshot =
       repositoryPath: string | null;
       remoteDefaultBranch: string | null;
       commitsBehindRemote: number | null;
+      worktreeName: string;
+      worktreePath: string;
+    }
+  | {
+      status: "derived";
+      branch: string;
+      rootEventId: string;
+      repositoryPath: string;
       worktreeName: string;
       worktreePath: string;
     }
@@ -124,6 +133,7 @@ export function ingestProjectThreadWorkspaceEvent(
       },
       watermark,
     });
+    invalidateProjectWorktreeRegistry(nonEmpty(payload.repositoryPath));
     return;
   }
 
@@ -165,6 +175,7 @@ export function ingestProjectThreadWorkspaceEvent(
     },
     watermark,
   });
+  invalidateProjectWorktreeRegistry(repositoryPath);
 }
 
 export function getProjectThreadWorkspaceSnapshot(

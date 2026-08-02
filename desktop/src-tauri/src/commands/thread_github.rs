@@ -149,7 +149,7 @@ async fn read_pull_request(
     serde_json::from_slice(&output.stdout).ok()
 }
 
-fn parse_check(value: &serde_json::Value) -> Option<ThreadPullRequestCheck> {
+pub(crate) fn parse_check(value: &serde_json::Value) -> Option<ThreadPullRequestCheck> {
     let name = value["name"]
         .as_str()
         .or_else(|| value["context"].as_str())?
