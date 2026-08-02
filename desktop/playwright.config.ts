@@ -11,6 +11,12 @@ export default defineConfig({
   reporter: [
     ["list"],
     ["html", { open: "never", outputFolder: "playwright-report" }],
+    // CI-only: summarize-flaky-tests.mjs reads this file. Without it the
+    // workflow step prints "Skipping flaky-test summary" and exits 0, so
+    // retries: 2 hide flakes with no durable record (#36 / #37).
+    ...(process.env.CI
+      ? ([["json", { outputFile: "playwright-report.json" }]] as const)
+      : []),
   ],
   use: {
     baseURL: e2eBaseUrl,

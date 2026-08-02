@@ -63,6 +63,34 @@ test("relay-native Project behavior remains an automatic conditional gate", () =
   assert.match(ci, /needs\.project-relay\.result/);
 });
 
+test("desktop smoke e2e runs on PRs as an advisory signal until flakes are triaged", () => {
+  const ci = workflow("nuncio-crew-ci.yml");
+  const smokeStart = ci.indexOf("desktop-smoke-e2e:");
+  assert.ok(smokeStart > 0, "desktop-smoke-e2e job must exist");
+  const gateStart = ci.indexOf("\n  gate:", smokeStart);
+  const smoke = ci.slice(
+    smokeStart,
+    gateStart > smokeStart ? gateStart : undefined,
+  );
+
+  assert.match(smoke, /name:\s*Desktop Smoke E2E/);
+  assert.match(smoke, /continue-on-error:\s*true/);
+  assert.match(smoke, /shard:\s*\[1,\s*2,\s*3,\s*4\]/);
+  assert.match(smoke, /pnpm -C desktop build:e2e/);
+  assert.match(
+    smoke,
+    /playwright test --project=smoke --shard=\$\{\{ matrix\.shard \}\}\/4/,
+  );
+  assert.match(smoke, /needs\.changes\.outputs\.desktop == 'true'/);
+  // Advisory: must not be registered in the merge gate while flakes remain.
+  assert.doesNotMatch(ci, /needs\.desktop-smoke-e2e\.result/);
+  const gateHelper = readFileSync(
+    resolve(repoRoot, "desktop/scripts/check-nuncio-crew-ci-results.mjs"),
+    "utf8",
+  );
+  assert.doesNotMatch(gateHelper, /desktop-smoke-e2e/);
+});
+
 test("upstream compatibility is explicit and manual", () => {
   const upstream = workflow("nuncio-crew-upstream-sync.yml");
   const trigger = upstream.slice(
