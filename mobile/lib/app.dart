@@ -7,6 +7,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'features/channels/unread_badge/unread_badge_provider.dart';
 import 'features/home/home_page.dart';
 import 'features/pairing/pairing_page.dart';
+import 'features/channels/agent_activity/active_agent_turns_provider.dart';
 import 'features/channels/agent_activity/observer_subscription.dart';
 import 'features/channels/deep_link_dispatcher.dart';
 import 'features/profile/user_status_cache_provider.dart';
@@ -53,6 +54,7 @@ class App extends HookConsumerWidget {
     if (authState.value?.status == AuthStatus.authenticated) {
       ref.watch(relaySessionProvider);
       ref.watch(observerRelayProvider);
+      ref.watch(activeAgentTurnsProvider);
       ref.watch(appLifecycleProvider);
       ref.watch(userStatusCacheProvider);
     }
