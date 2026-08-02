@@ -10,6 +10,7 @@ import {
   getBuzzToolInfo,
   normalizeToolNameText,
 } from "./agentSessionToolCatalog";
+import { parseAgentPlanTodos } from "./agentPlanProgress";
 import {
   asRecord,
   getToolString,
@@ -228,6 +229,7 @@ function classifyDeveloperHarnessTool(
 
   if (kind === "todo") {
     const preview = getTodoPreview(input.args);
+    const todos = parseAgentPlanTodos(input.args);
     return {
       renderClass: "plan",
       label: "Updated todos",
@@ -235,6 +237,7 @@ function classifyDeveloperHarnessTool(
       action: { verb: "Updated", object: preview },
       source: "harness",
       groupKey: "plan:todo",
+      todos,
     };
   }
 

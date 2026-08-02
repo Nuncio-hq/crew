@@ -67,6 +67,15 @@ export type ActiveChannelTurnSummary = {
   agentNames?: string[];
 };
 
+/** One conversation/thread with active agent work, aggregated across agents. */
+export type ActiveConversationTurnSummary = {
+  conversationId: string;
+  anchorAt: number;
+  agentCount: number;
+  agentPubkeys: string[];
+  agentNames?: string[];
+};
+
 // Module-level state: agentPubkey → turnId → ActiveTurn
 const activeTurnsByAgent = new Map<string, Map<string, ActiveTurn>>();
 const listeners = new Set<() => void>();
@@ -94,6 +103,8 @@ const cachedTurnSummaries = new Map<string, ActiveTurnSummary[]>();
 const cachedControlTargets = new Map<string, ActiveTurnControlTarget[]>();
 const cachedAgentsByConversation = new Map<string, string[]>();
 let cachedChannelTurnSummaries: ActiveChannelTurnSummary[] | null = null;
+let cachedConversationTurnSummaries: ActiveConversationTurnSummary[] | null =
+  null;
 
 // Composite watermark per agent: the newest observer event processed, by
 // (timestamp, seq) ordering. An event is processed only if it is strictly
@@ -116,6 +127,7 @@ function invalidateCache(agentKey: string) {
   cachedControlTargets.delete(agentKey);
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
+  cachedConversationTurnSummaries = null;
 }
 
 function notifyListeners() {
@@ -507,6 +519,7 @@ export function getActiveTurnControlTargetsForAgent(
 const EMPTY_TURNS: ActiveTurnSummary[] = [];
 const EMPTY_CONTROL_TARGETS: ActiveTurnControlTarget[] = [];
 const EMPTY_CHANNEL_TURNS: ActiveChannelTurnSummary[] = [];
+const EMPTY_CONVERSATION_TURNS: ActiveConversationTurnSummary[] = [];
 const EMPTY_CONVERSATION_AGENTS: string[] = [];
 
 export function getActiveAgentsForConversation(
@@ -576,6 +589,87 @@ export function getActiveTurnsByChannel(): ActiveChannelTurnSummary[] {
 }
 
 /**
+ * Returns active working conversations/threads across all tracked agents,
+ * sorted by conversationId and anchored to the earliest live turn in each.
+ */
+export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] {
+  if (cachedConversationTurnSummaries) return cachedConversationTurnSummaries;
+  if (activeTurnsByAgent.size === 0) return EMPTY_CONVERSATION_TURNS;
+
+  const summaries = new Map<
+    string,
+    { anchorAt: number; agentPubkeys: Set<string> }
+  >();
+
+  for (const [agentKey, agentTurns] of activeTurnsByAgent) {
+    if (agentTurns.size === 0) continue;
+    const offset = clockOffsetByAgent.get(agentKey) ?? 0;
+
+    for (const turn of agentTurns.values()) {
+      const conversationId = turn.conversationId;
+      if (!conversationId) continue;
+      const anchorAt = turn.startedAt + offset;
+      const summary = summaries.get(conversationId);
+      if (!summary) {
+        summaries.set(conversationId, {
+          anchorAt,
+          agentPubkeys: new Set([agentKey]),
+        });
+        continue;
+      }
+
+      summary.agentPubkeys.add(agentKey);
+      if (anchorAt < summary.anchorAt) {
+        summary.anchorAt = anchorAt;
+      }
+    }
+  }
+
+  const result = [...summaries.entries()]
+    .map(([conversationId, summary]) => ({
+      conversationId,
+      anchorAt: summary.anchorAt,
+      agentCount: summary.agentPubkeys.size,
+      agentPubkeys: [...summary.agentPubkeys].sort(),
+    }))
+    .sort((a, b) => a.conversationId.localeCompare(b.conversationId));
+  cachedConversationTurnSummaries = result;
+  return result;
+}
+
+/** Desktop-clock activity bounds for the given agents, optionally scoped. */
+export function getActiveTurnActivityBounds(options: {
+  agentPubkeys: readonly string[];
+  channelId?: string | null;
+  conversationId?: string | null;
+}): { anchorAt: number; lastActivityAt: number } | null {
+  const channelId = options.channelId?.trim() || null;
+  const conversationId = options.conversationId?.trim() || null;
+  let anchorAt = Number.POSITIVE_INFINITY;
+  let lastActivityAt = 0;
+
+  for (const pubkey of options.agentPubkeys) {
+    const key = normalizePubkey(pubkey);
+    const agentTurns = activeTurnsByAgent.get(key);
+    if (!agentTurns || agentTurns.size === 0) continue;
+    const offset = clockOffsetByAgent.get(key) ?? 0;
+
+    for (const turn of agentTurns.values()) {
+      if (channelId && turn.channelId !== channelId) continue;
+      if (conversationId && turn.conversationId !== conversationId) continue;
+      const turnAnchor = turn.startedAt + offset;
+      if (turnAnchor < anchorAt) anchorAt = turnAnchor;
+      if (turn.lastActivityAt > lastActivityAt) {
+        lastActivityAt = turn.lastActivityAt;
+      }
+    }
+  }
+
+  if (!Number.isFinite(anchorAt) || lastActivityAt === 0) return null;
+  return { anchorAt, lastActivityAt };
+}
+
+/**
  * Synchronize the active-turns store with the latest observer events for a
  * given agent.
  */
@@ -622,6 +716,13 @@ export function useActiveAgentTurnsByChannel(): ActiveChannelTurnSummary[] {
   return React.useSyncExternalStore(
     subscribeActiveAgentTurns,
     getActiveTurnsByChannel,
+  );
+}
+
+export function useActiveTurnsByConversation(): ActiveConversationTurnSummary[] {
+  return React.useSyncExternalStore(
+    subscribeActiveAgentTurns,
+    getActiveTurnsByConversation,
   );
 }
 
@@ -707,8 +808,10 @@ export function resetActiveAgentTurnsStore() {
   lastProcessed.clear();
   clockOffsetByAgent.clear();
   cachedTurnSummaries.clear();
+  cachedControlTargets.clear();
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
+  cachedConversationTurnSummaries = null;
   terminalAtByAgent.clear();
   notifyListeners();
 }
