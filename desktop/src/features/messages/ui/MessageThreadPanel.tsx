@@ -1,13 +1,6 @@
 import * as React from "react";
 import { ArrowDown } from "lucide-react";
 
-import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
-import { normalizePubkey } from "@/shared/lib/pubkey";
-import {
-  collectProjectThreadAgentMentions,
-  projectThreadRootAudiencePubkeys,
-  projectThreadStickyBarOwnsAgentSignal,
-} from "@/features/messages/lib/projectThreadWorkspace";
 import {
   buildThreadSummaryFromVisibleEntries,
   hasNestedThreadBranches,
@@ -56,6 +49,7 @@ import { TypingIndicatorRow } from "./TypingIndicatorRow";
 import { UnreadDivider } from "./UnreadDivider";
 import { useComposerHeightPadding } from "./useComposerHeightPadding";
 import { useAnchoredScroll } from "./useAnchoredScroll";
+import { useMessageThreadPanelChrome } from "./useMessageThreadPanelChrome";
 import { selectDeferredListRenderState } from "@/features/messages/lib/timelineSnapshot";
 
 type MessageThreadPanelProps = ThreadPanelLayoutProps & {
@@ -527,48 +521,24 @@ export function MessageThreadPanel({
     settleAtBottomAfterLayout,
   );
 
-  const knownAgentPubkeys = useKnownAgentPubkeys();
-  const projectThreadAgentMentions = React.useMemo(() => {
-    if (
-      !threadHead ||
-      !currentPubkey ||
-      normalizePubkey(threadHead.signerPubkey ?? threadHead.pubkey ?? "") !==
-        normalizePubkey(currentPubkey)
-    ) {
-      return [];
-    }
-    return collectProjectThreadAgentMentions({
-      knownAgentPubkeys,
-      profiles,
-      replies: threadMessages,
-      threadHead,
-    });
-  }, [currentPubkey, knownAgentPubkeys, profiles, threadHead, threadMessages]);
-  const initialAgentPubkeys = React.useMemo(
-    () => projectThreadRootAudiencePubkeys(projectThreadAgentMentions),
-    [projectThreadAgentMentions],
-  );
-
-  const handleNavigateToAnchor = React.useCallback(() => {
-    if (!breadcrumb || !onJumpToTimelineMessage) return;
-    const jumped = onJumpToTimelineMessage(breadcrumb.anchorMessageId);
-    // Focus mode: close after a successful jump so the flash is visible.
-    if (jumped && isFocusMode) onClose();
-  }, [breadcrumb, isFocusMode, onClose, onJumpToTimelineMessage]);
-
-  // Project threads: the sticky status bar owns the agent signal, so the
-  // composer drops its duplicate. Typing still shows; only bot activity is
-  // suppressed. The rule lives in projectThreadWorkspace so it stays testable
-  // and cannot drift from the bar's own visibility condition.
-  // threadHead is only narrowed below; the helper accepts a nullish body.
-  const stickyBarOwnsAgentSignal = projectThreadStickyBarOwnsAgentSignal(
-    threadHead?.body,
-    projectThreadAgentMentions.length,
-  );
-  const showComposerBotActivity =
-    activityAccessoryVisible && !stickyBarOwnsAgentSignal;
-  const hasComposerBottomActivity =
-    showComposerBotActivity || threadTypingPubkeys.length > 0;
+  const {
+    handleNavigateToAnchor,
+    hasComposerBottomActivity,
+    initialAgentPubkeys,
+    projectThreadAgentMentions,
+    showComposerBotActivity,
+  } = useMessageThreadPanelChrome({
+    activityAccessoryVisible,
+    breadcrumb,
+    currentPubkey,
+    isFocusMode,
+    onClose,
+    onJumpToTimelineMessage,
+    profiles,
+    threadHead,
+    threadMessages,
+    threadTypingCount: threadTypingPubkeys.length,
+  });
 
   if (!threadHead) {
     return null;
