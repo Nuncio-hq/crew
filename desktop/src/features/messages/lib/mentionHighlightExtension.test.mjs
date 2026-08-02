@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   buildHighlightPatterns,
   findHighlightMatches,
+  resolveAgentMentionAvatarAttrs,
 } from "./mentionHighlightExtension.ts";
+import { AGENT_MENTION_AVATAR_CLASS } from "../../../shared/ui/mentionChip.ts";
 
 // ── buildHighlightPatterns ────────────────────────────────────────────
 
@@ -163,4 +165,29 @@ test("#general should NOT match inside #generally (trailing word boundary)", () 
   const patterns = buildHighlightPatterns([], ["general"]);
   const matches = findHighlightMatches("#generally", patterns);
   assert.equal(matches.length, 0);
+});
+
+// ── Agent mention avatar decoration attrs ─────────────────────────────
+
+test("resolveAgentMentionAvatarAttrs: emits class + style when avatar exists", () => {
+  const attrs = resolveAgentMentionAvatarAttrs("@Planner", {
+    planner: "https://cdn.example/planner.png",
+  });
+  assert.equal(attrs.classSuffix, ` ${AGENT_MENTION_AVATAR_CLASS}`);
+  assert.equal(
+    attrs.style,
+    '--agent-mention-avatar:url("https://cdn.example/planner.png")',
+  );
+});
+
+test("resolveAgentMentionAvatarAttrs: no-avatar path keeps robot (empty attrs)", () => {
+  const attrs = resolveAgentMentionAvatarAttrs("@Planner", {});
+  assert.deepEqual(attrs, {});
+});
+
+test("resolveAgentMentionAvatarAttrs: lookup is case-insensitive on name", () => {
+  const attrs = resolveAgentMentionAvatarAttrs("@PLANNER", {
+    planner: "https://cdn.example/planner.png",
+  });
+  assert.ok(attrs.style?.includes("planner.png"));
 });
