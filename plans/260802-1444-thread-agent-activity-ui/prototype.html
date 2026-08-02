@@ -1,0 +1,1013 @@
+<!doctype html>
+<html lang="vi" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NuncioCrew — Agent activity trong thread (prototype v2, multi-agent)</title>
+<style>
+/* ───────────────────────────────────────────────────────────────
+   Token thật lấy từ desktop/src/shared/styles/globals/theme.css
+   (.dark = Catppuccin Macchiato + Buzz Dark content surface)
+   ─────────────────────────────────────────────────────────────── */
+:root {
+  --radius: 0.625rem;
+
+  --gradient-top: #4a4616;
+  --gradient-bottom: #0a1423;
+
+  --content-bg: hsl(0 0% 10.196%);      /* --buzz-content-dark */
+  --foreground: hsl(227 68.25% 87.65%); /* Macchiato text */
+  --muted-fg: hsl(228 39.22% 80%);      /* Macchiato subtext1 */
+  --border: hsl(231 15.61% 33.92%);     /* surface1 */
+  --surface: hsl(230 18.8% 26.08%);     /* surface0 */
+  --card: hsl(232 23.4% 18.43%);        /* base */
+  --primary: hsl(267 82.69% 79.61%);    /* mauve */
+  --destructive: hsl(351 73.91% 72.94%);/* red */
+
+  /* Tailwind amber-400 / green-400 — đúng bộ app đang dùng (ManagedAgentRow.tsx) */
+  --warn: #fbbf24;
+  --ok: #4ade80;
+
+  --chrome-fg: rgb(255 255 255 / 50%);
+  --chrome-muted: rgb(255 255 255 / 40%);
+  --chrome-active: color-mix(in srgb, #fff 16%, transparent);
+
+  --thread-split-w: 430px;
+  --focus-sliver: 72px;
+  --focus-col: 880px;
+  --rail-w: 340px;
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Inter Variable", Inter, "Avenir Next", "Segoe UI", sans-serif;
+  background: #0b0b0d;
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  padding: 18px;
+  min-height: 100vh;
+}
+
+/* ── Thanh điều khiển của bản demo (không phải UI thật) ────────── */
+.demo {
+  max-width: 1480px; margin: 0 auto 14px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  padding: 10px 14px;
+  border: 1px solid rgb(255 255 255 / 10%); border-radius: 12px;
+  background: rgb(255 255 255 / 3%);
+}
+.demo-title { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+.demo-title span { color: var(--muted-fg); font-weight: 400; }
+.demo-group { display: flex; align-items: center; gap: 6px; }
+.demo-label { font-size: 11px; color: rgb(255 255 255 / 45%); text-transform: uppercase; letter-spacing: 0.06em; }
+.seg { display: flex; background: rgb(255 255 255 / 6%); border-radius: 8px; padding: 2px; }
+.seg button {
+  font: inherit; font-size: 12px; color: var(--muted-fg);
+  background: none; border: 0; border-radius: 6px; padding: 4px 10px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--chrome-active); color: #fff; }
+.demo-hint {
+  flex-basis: 100%; font-size: 12px; color: rgb(255 255 255 / 45%);
+  border-top: 1px solid rgb(255 255 255 / 8%); padding-top: 8px; margin-top: 2px;
+}
+.demo-hint b { color: var(--primary); font-weight: 500; }
+
+/* ── Khung app ────────────────────────────────────────────────── */
+.app {
+  position: relative; max-width: 1480px; height: 860px; margin: 0 auto;
+  display: flex; border-radius: 14px; overflow: hidden;
+  background: linear-gradient(to bottom, var(--gradient-top), var(--gradient-bottom));
+  box-shadow: 0 24px 70px rgb(0 0 0 / 55%);
+  font-size: 16px;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────── */
+.sidebar { width: 232px; flex: none; padding: 0 12px 12px; display: flex; flex-direction: column; gap: 4px; }
+.traffic { display: flex; gap: 8px; padding: 14px 6px 16px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.traffic i:nth-child(1) { background: #ff5f57; }
+.traffic i:nth-child(2) { background: #febc2e; }
+.traffic i:nth-child(3) { background: #28c840; }
+.search {
+  display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 10px; margin-bottom: 12px;
+  border-radius: 9px; background: rgb(255 255 255 / 4%); color: var(--chrome-muted); font-size: 13px;
+}
+.search .kbd { margin-left: auto; font-size: 11px; opacity: 0.7; }
+.nav-item { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: 8px; color: var(--chrome-fg); font-size: 14px; }
+.nav-item .ico { width: 16px; opacity: 0.85; text-align: center; }
+.side-head { font-size: 12px; color: var(--chrome-muted); padding: 18px 10px 6px; }
+.chan { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 8px; color: var(--chrome-fg); font-size: 14px; }
+.chan.active { background: var(--chrome-active); color: #fff; font-weight: 500; }
+.chan .badge {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  background: rgb(255 255 255 / 12%); color: rgb(255 255 255 / 78%);
+}
+.chan .badge .pulse { width: 5px; height: 5px; }
+.side-foot { margin-top: auto; display: flex; align-items: center; gap: 9px; padding: 8px 6px; }
+
+/* ── Vùng nội dung ────────────────────────────────────────────── */
+.content { position: relative; flex: 1; min-width: 0; background: var(--content-bg); border-top-left-radius: 12px; overflow: hidden; }
+
+.channel {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  padding-right: var(--thread-split-w); transition: padding-right 0.3s var(--ease);
+}
+.app[data-mode="focus"] .channel { padding-right: 0; }
+
+.pane-head {
+  display: flex; align-items: center; gap: 10px; height: 52px; flex: none; padding: 0 16px;
+  border-bottom: 1px solid rgb(255 255 255 / 6%); font-size: 15px; font-weight: 600;
+}
+.pane-head .hash { color: var(--muted-fg); font-weight: 400; }
+.pane-head .spacer { margin-left: auto; }
+.pane-head .icobtn {
+  width: 28px; height: 28px; border-radius: 7px; border: 0; background: none;
+  color: var(--muted-fg); cursor: pointer; display: grid; place-items: center; font-size: 15px;
+}
+.pane-head .icobtn:hover { background: rgb(255 255 255 / 7%); color: var(--foreground); }
+
+.msgs { flex: 1; overflow: auto; padding: 12px 16px 4px; }
+.msgs::-webkit-scrollbar, .thread-scroll::-webkit-scrollbar { width: 8px; }
+.msgs::-webkit-scrollbar-thumb, .thread-scroll::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 10%); border-radius: 4px; }
+
+.msg { display: flex; gap: 10px; padding: 7px 0; }
+.av { width: 36px; height: 36px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 17px; overflow: hidden; }
+.av.oscar { background: #7a5c3e; }
+.av.opus { background: radial-gradient(circle at 50% 50%, #ff8f5e 0%, #f0603a 70%); color: #fff2ea; font-size: 19px; }
+.av.grok { background: #3f4a63; color: #cdd6f4; font-size: 11px; font-weight: 700; letter-spacing: -0.02em; }
+.av.codex { background: #2f5d52; color: #d7f0e6; font-size: 15px; }
+.av.sm { width: 22px; height: 22px; font-size: 12px; }
+.av.sm.grok { font-size: 8px; }
+.av.xs { width: 18px; height: 18px; font-size: 10px; }
+.av.xs.grok { font-size: 7px; }
+.msg-body { min-width: 0; flex: 1; }
+.msg-head { display: flex; align-items: baseline; gap: 8px; }
+.msg-name { font-size: 15px; font-weight: 600; }
+.msg-time { font-size: 12px; color: var(--muted-fg); }
+.msg-text { font-size: 16px; line-height: 1.5; margin-top: 1px; }
+.msg-text.muted { color: var(--muted-fg); }
+.pill { display: inline-flex; align-items: center; gap: 5px; background: var(--surface); border-radius: 6px; padding: 1px 7px; font-size: 15px; font-weight: 500; }
+
+/* ── Dòng tóm tắt thread trong channel (MessageThreadSummaryRow) ── */
+.replies { display: flex; align-items: center; gap: 7px; margin-top: 5px; font-size: 13px; color: var(--muted-fg); cursor: pointer; }
+.replies b { color: var(--primary); font-weight: 500; }
+.replies .sep { opacity: 0.45; }
+.replies .live { display: inline-flex; align-items: center; gap: 6px; }
+.replies .live .pulse { width: 6px; height: 6px; }
+.stack { display: flex; }
+.stack .av { margin-right: -6px; box-shadow: 0 0 0 2px var(--content-bg); }
+
+/* ── Composer ─────────────────────────────────────────────────── */
+.composer-wrap { flex: none; padding: 8px 16px 10px; position: relative; }
+.composer { border: 1px solid var(--border); border-radius: var(--radius); padding: 11px 12px 8px; background: rgb(255 255 255 / 2%); }
+.composer .ph { font-size: 15px; color: var(--muted-fg); }
+.composer .tools { display: flex; gap: 14px; margin-top: 10px; color: var(--muted-fg); font-size: 14px; }
+
+/* ── Dòng hoạt động 1 dòng ────────────────────────────────────── */
+.actline { display: flex; align-items: center; gap: 8px; padding: 7px 4px 2px; font-size: 13px; color: var(--muted-fg); min-height: 30px; }
+.actline button.rollup { font: inherit; font-size: 13px; color: var(--muted-fg); background: none; border: 0; cursor: pointer; padding: 0; display: inline-flex; align-items: center; gap: 8px; }
+.actline button.rollup:hover { color: var(--foreground); }
+.actline .stop {
+  margin-left: auto; font: inherit; font-size: 12px; background: none;
+  border: 1px solid var(--border); border-radius: 7px; color: var(--muted-fg); padding: 2px 9px; cursor: pointer;
+}
+.actline .stop:hover { color: var(--destructive); border-color: color-mix(in srgb, var(--destructive) 45%, transparent); }
+.actline .elapsed { font-variant-numeric: tabular-nums; }
+.actline.legacy .raw { color: var(--muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actline.legacy .raw em { font-style: normal; color: rgb(255 255 255 / 35%); }
+
+.pulse { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--primary); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
+
+/* ── Popover danh sách thread đang chạy ───────────────────────── */
+.pop {
+  position: absolute; bottom: 44px; left: 16px; z-index: 60; width: 340px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 55%); padding: 6px; display: none;
+}
+.pop[data-open="true"] { display: block; }
+.pop h5 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: rgb(255 255 255 / 38%); padding: 7px 8px 5px; font-weight: 600; }
+.pop-row {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  font: inherit; font-size: 13px; color: var(--foreground);
+  background: none; border: 0; border-radius: 8px; padding: 8px; cursor: pointer;
+}
+.pop-row:hover { background: rgb(255 255 255 / 6%); }
+.pop-row .t { min-width: 0; flex: 1; }
+.pop-row .t i { display: block; font-style: normal; font-size: 11.5px; color: var(--muted-fg); margin-top: 1px; }
+.pop-row .t b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop-row .clock { font-size: 11.5px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+
+/* ── Thread ───────────────────────────────────────────────────── */
+.scrim { position: absolute; inset: 0; z-index: 10; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 0.3s var(--ease); }
+.app[data-mode="focus"] .scrim { opacity: 1; pointer-events: auto; }
+
+.thread {
+  position: absolute; top: 0; bottom: 0; right: 0; z-index: 20;
+  left: calc(100% - var(--thread-split-w));
+  display: flex; flex-direction: column; background: var(--content-bg);
+  border-left: 1px solid rgb(255 255 255 / 8%);
+  transition: left 0.3s var(--ease), box-shadow 0.3s var(--ease);
+}
+.app[data-mode="focus"] .thread { left: var(--focus-sliver); box-shadow: -18px 0 50px rgb(0 0 0 / 45%); }
+.thread-scroll { flex: 1; overflow: auto; }
+.col { width: 100%; max-width: 100%; margin: 0 auto; padding: 10px 16px 4px; }
+.app[data-mode="focus"] .col { max-width: var(--focus-col); margin-inline: auto; }
+.app[data-mode="focus"] .thread .composer-wrap { padding-inline: 24px; }
+.app[data-mode="focus"] .thread .composer-wrap > .composer,
+.app[data-mode="focus"] .thread .composer-wrap > .actline { max-width: var(--focus-col); margin-inline: auto; }
+
+/* chip "thread khác đang chạy" ở header drawer */
+.otherchip {
+  display: none; align-items: center; gap: 7px; font-size: 12px; font-weight: 400;
+  color: var(--muted-fg); background: rgb(255 255 255 / 5%);
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; cursor: pointer;
+}
+.app[data-mode="focus"] .otherchip { display: inline-flex; }
+.otherchip:hover { color: var(--foreground); border-color: var(--primary); }
+.otherchip .pulse { width: 6px; height: 6px; }
+
+/* ── Thẻ công việc của THREAD (không phải của agent) ───────────── */
+.wc-slot { position: sticky; top: 0; z-index: 5; padding: 10px 16px 6px; background: linear-gradient(to bottom, var(--content-bg) 80%, transparent); }
+.app[data-mode="focus"] .wc-slot > .workcard { max-width: var(--focus-col); margin-inline: auto; }
+
+.workcard { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); overflow: hidden; }
+.wc-head { display: flex; align-items: center; gap: 9px; padding: 10px 13px; }
+.wc-name { font-size: 14px; font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 2px 9px; border-radius: 999px; border: 1px solid transparent; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+.chip.running { color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); border-color: color-mix(in srgb, var(--primary) 28%, transparent); }
+.chip.running .dot { background: var(--primary); animation: pulse 1.6s ease-in-out infinite; }
+.chip.waiting { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.chip.waiting .dot { background: var(--warn); }
+.chip.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); border-color: color-mix(in srgb, var(--ok) 28%, transparent); }
+.chip.done .dot { background: var(--ok); }
+
+.wc-head .grow { margin-left: auto; }
+.wc-time { font-size: 12px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+.wc-btn { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 7px; border: 1px solid var(--border); background: none; color: var(--muted-fg); cursor: pointer; }
+.wc-btn:hover { color: var(--foreground); background: rgb(255 255 255 / 5%); }
+.wc-btn.danger:hover { color: var(--destructive); border-color: color-mix(in srgb, var(--destructive) 45%, transparent); background: color-mix(in srgb, var(--destructive) 10%, transparent); }
+.wc-ico { width: 24px; height: 24px; border-radius: 6px; border: 0; background: none; color: var(--muted-fg); cursor: pointer; display: grid; place-items: center; font-size: 12px; }
+.wc-ico:hover { background: rgb(255 255 255 / 7%); color: var(--foreground); }
+
+.wc-bar { height: 2px; background: rgb(255 255 255 / 7%); }
+.wc-bar i { display: block; height: 100%; width: 0; background: var(--primary); transition: width 0.5s var(--ease); }
+
+/* ── Một agent = một dòng trong thẻ; mở ra mới có checklist ────── */
+.agents { border-top: 1px solid rgb(255 255 255 / 6%); }
+.arow { border-bottom: 1px solid rgb(255 255 255 / 5%); }
+.arow:last-child { border-bottom: 0; }
+.arow-head {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  font: inherit; background: none; border: 0; color: inherit; cursor: pointer;
+  padding: 9px 13px;
+}
+.arow-head:hover { background: rgb(255 255 255 / 4%); }
+.arow-name { font-size: 13.5px; font-weight: 600; flex: none; }
+.arow-what { font-size: 13px; color: var(--muted-fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arow-step { font-size: 11.5px; color: rgb(255 255 255 / 40%); flex: none; font-variant-numeric: tabular-nums; }
+.arow-head .grow { margin-left: auto; }
+.arow-head .caret { color: rgb(255 255 255 / 35%); font-size: 11px; transition: transform 0.2s var(--ease); }
+.arow[data-open="true"] .caret { transform: rotate(180deg); }
+.arow[data-open="true"] .arow-what { display: none; }
+.arow[data-open="true"] .arow-head { background: rgb(255 255 255 / 3%); }
+.arow-body { display: none; padding: 2px 13px 10px 13px; }
+.arow[data-open="true"] .arow-body { display: block; }
+.arow[data-status="waiting"] .arow-name { color: var(--warn); }
+
+.steps { list-style: none; padding-left: 30px; }
+.steps li { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; font-size: 13.5px; line-height: 1.35; color: rgb(255 255 255 / 32%); }
+.steps li .mark { width: 15px; flex: none; text-align: center; font-size: 12px; line-height: 1.5; color: rgb(255 255 255 / 25%); }
+.steps li.done { color: var(--muted-fg); }
+.steps li.done .mark { color: var(--ok); }
+.steps li.now { color: var(--foreground); font-weight: 500; }
+.steps li.now .mark { color: var(--primary); }
+.steps li.now .spin {
+  display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  border-top-color: var(--primary); animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.ask { margin: 4px 0 2px 30px; border-left: 2px solid color-mix(in srgb, var(--warn) 55%, transparent); padding: 2px 0 2px 11px; }
+.ask p { font-size: 13.5px; line-height: 1.45; margin-bottom: 8px; }
+.ask .opts { display: flex; gap: 8px; flex-wrap: wrap; }
+.ask .opt { font: inherit; font-size: 13px; padding: 4px 11px; border-radius: 8px; border: 1px solid var(--border); background: rgb(255 255 255 / 3%); color: var(--foreground); cursor: pointer; }
+.ask .opt:hover { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+
+.arow-foot { display: flex; align-items: center; gap: 12px; padding: 0 13px 9px 43px; font-size: 12px; color: var(--muted-fg); }
+.linkbtn { font: inherit; font-size: 12px; background: none; border: 0; color: var(--muted-fg); cursor: pointer; padding: 0; }
+.linkbtn:hover { color: var(--primary); text-decoration: underline; }
+.arow-foot .grow { margin-left: auto; }
+
+.wc-more { padding: 8px 13px; font-size: 12px; color: var(--muted-fg); border-top: 1px solid rgb(255 255 255 / 5%); }
+
+/* thẻ thu gọn — 1 dòng */
+.wc-mini { display: none; align-items: center; gap: 9px; padding: 9px 13px; font-size: 13px; color: var(--muted-fg); }
+.workcard[data-collapsed="true"] .wc-head,
+.workcard[data-collapsed="true"] .agents,
+.workcard[data-collapsed="true"] .wc-more { display: none; }
+.workcard[data-collapsed="true"] .wc-mini { display: flex; }
+.wc-mini .grow { margin-left: auto; }
+
+/* ── Dòng kết quả dưới câu trả lời ────────────────────────────── */
+.receipt { display: inline-flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 12px; color: var(--muted-fg); }
+.receipt .sep { opacity: 0.5; }
+.receipt .ok { color: var(--ok); }
+
+/* ── Rail chi tiết kỹ thuật ───────────────────────────────────── */
+.rail {
+  position: absolute; top: 0; right: 0; bottom: 0; width: var(--rail-w);
+  background: var(--card); border-left: 1px solid var(--border);
+  transform: translateX(100%); transition: transform 0.3s var(--ease);
+  display: flex; flex-direction: column; z-index: 6;
+}
+.app[data-rail="open"] .rail { transform: none; }
+.app[data-rail="open"][data-mode="focus"] .thread-scroll,
+.app[data-rail="open"][data-mode="focus"] .thread > .composer-wrap { padding-right: var(--rail-w); }
+.rail-head { display: flex; align-items: center; gap: 8px; flex: none; height: 44px; padding: 0 12px; border-bottom: 1px solid rgb(255 255 255 / 7%); font-size: 13px; font-weight: 600; }
+.rail-head .grow { margin-left: auto; }
+.rail-body { flex: 1; overflow: auto; padding: 10px 12px; font-size: 12px; line-height: 1.6; color: var(--muted-fg); }
+.rail-body .grp { margin-bottom: 12px; }
+.rail-body .grp h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: rgb(255 255 255 / 35%); margin-bottom: 5px; font-weight: 600; }
+.rail-body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: rgb(255 255 255 / 6%); padding: 1px 5px; border-radius: 4px; color: var(--foreground); }
+.rail-note { flex: none; border-top: 1px solid rgb(255 255 255 / 7%); padding: 9px 12px; font-size: 11px; color: rgb(255 255 255 / 38%); }
+
+.sliver-hint {
+  position: absolute; left: 0; top: 0; bottom: 0; width: var(--focus-sliver); z-index: 21;
+  display: none; align-items: center; justify-content: center;
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  font-size: 12px; color: rgb(255 255 255 / 45%); cursor: pointer;
+}
+.app[data-mode="focus"] .sliver-hint { display: flex; }
+.sliver-hint:hover { color: #fff; background: rgb(255 255 255 / 3%); }
+
+.tag {
+  position: absolute; z-index: 40; font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+  background: var(--primary); color: #1a1a1a; padding: 2px 7px; border-radius: 5px;
+  pointer-events: none; opacity: 0; transition: opacity 0.2s; white-space: nowrap;
+}
+body[data-tags="on"] .tag { opacity: 1; }
+
+.legend { max-width: 1480px; margin: 14px auto 0; font-size: 12.5px; line-height: 1.65; color: rgb(255 255 255 / 45%); }
+.legend b { color: rgb(255 255 255 / 80%); font-weight: 600; }
+.legend ol { padding-left: 20px; }
+.legend li { margin-bottom: 3px; }
+</style>
+</head>
+
+<body data-tags="off">
+
+<div class="demo">
+  <div class="demo-title">Agent activity trong thread <span>· prototype v2 · multi-agent + multi-thread</span></div>
+
+  <div class="demo-group">
+    <span class="demo-label">Thiết kế</span>
+    <div class="seg" id="segVariant">
+      <button data-v="new" aria-pressed="true">Đề xuất</button>
+      <button data-v="legacy" aria-pressed="false">Hiện tại</button>
+    </div>
+  </div>
+
+  <div class="demo-group">
+    <span class="demo-label">Thread</span>
+    <div class="seg" id="segMode">
+      <button data-m="split" aria-pressed="true">Thu gọn</button>
+      <button data-m="focus" aria-pressed="false">Mở rộng</button>
+    </div>
+  </div>
+
+  <div class="demo-group">
+    <span class="demo-label">Agent trong thread</span>
+    <div class="seg" id="segCount">
+      <button data-n="1" aria-pressed="true">1</button>
+      <button data-n="3" aria-pressed="false">3</button>
+      <button data-n="6" aria-pressed="false">6</button>
+    </div>
+  </div>
+
+  <div class="demo-group">
+    <span class="demo-label">Trạng thái</span>
+    <div class="seg" id="segState">
+      <button data-s="running" aria-pressed="true">Đang chạy</button>
+      <button data-s="waiting" aria-pressed="false">Có agent hỏi</button>
+      <button data-s="done" aria-pressed="false">Xong hết</button>
+    </div>
+  </div>
+
+  <div class="demo-group">
+    <span class="demo-label">Nhãn</span>
+    <div class="seg" id="segTags">
+      <button data-t="off" aria-pressed="true">Ẩn</button>
+      <button data-t="on" aria-pressed="false">Hiện</button>
+    </div>
+  </div>
+
+  <div class="demo-hint" id="hint"></div>
+</div>
+
+<div class="app" id="app" data-mode="split" data-variant="new" data-rail="closed">
+
+  <aside class="sidebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="search">🔍 <span>Search everything</span><span class="kbd">⌘K</span></div>
+    <div class="nav-item"><span class="ico">🗂</span> Inbox</div>
+    <div class="nav-item"><span class="ico">🧩</span> Projects</div>
+    <div class="nav-item"><span class="ico">🤖</span> Agents</div>
+    <div class="side-head">Channels</div>
+    <div class="chan active"># NuncioCr…<span class="badge" id="sideBadge"></span></div>
+    <div class="side-head">Direct messages</div>
+    <div class="chan"><span class="av opus xs">✳</span> Claude Opus</div>
+    <div class="side-foot"><span class="av oscar sm">🐶</span><span style="font-size:13px;color:var(--chrome-fg)">Oscar</span></div>
+  </aside>
+
+  <div class="content">
+
+    <!-- ── Channel ─────────────────────────────────────────────── -->
+    <section class="channel">
+      <div class="pane-head"><span class="hash">#</span> NuncioCrew project
+        <span class="spacer"></span>
+        <button class="icobtn">👥</button><button class="icobtn">🎧</button><button class="icobtn">⋯</button>
+      </div>
+
+      <div class="msgs" id="channelMsgs"></div>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <div class="ph">Message #NuncioCrew project</div>
+          <div class="tools"><span>@</span><span>📎</span><span>☺</span><span>Aa</span></div>
+        </div>
+        <div class="actline" id="chanAct"></div>
+        <div class="pop" id="chanPop" data-open="false"></div>
+      </div>
+    </section>
+
+    <div class="scrim" id="scrim"></div>
+    <div class="sliver-hint" id="sliver">‹ #NuncioCrew project</div>
+
+    <!-- ── Thread ──────────────────────────────────────────────── -->
+    <section class="thread">
+      <div class="pane-head">
+        <button class="icobtn" id="modeToggle" title="Mở rộng thread">⊞</button>
+        Thread
+        <span class="spacer"></span>
+        <button class="otherchip" id="otherChip"></button>
+        <button class="icobtn">✕</button>
+        <span class="tag" style="top:44px;left:6px">① nút mở rộng / thu gọn — đã có sẵn</span>
+      </div>
+
+      <div class="thread-scroll" id="threadScroll">
+
+        <div class="wc-slot" id="wcSlot" style="display:none">
+          <div class="workcard" id="workcard" data-collapsed="false">
+            <div class="wc-mini">
+              <span class="pulse" id="miniDot"></span>
+              <span id="miniText"></span>
+              <span class="grow"></span>
+              <span class="wc-time" id="miniTime"></span>
+              <button class="wc-ico" id="miniExpand" title="Mở rộng thẻ">⌄</button>
+            </div>
+
+            <div class="wc-head">
+              <span id="wcAvatars" class="stack"></span>
+              <span class="wc-name" id="wcTitle"></span>
+              <span class="chip running" id="wcChip"><span class="dot"></span><span id="wcChipText"></span></span>
+              <span class="grow"></span>
+              <span class="wc-time" id="wcTime"></span>
+              <button class="wc-btn danger" id="wcStop">Dừng</button>
+              <button class="wc-ico" id="wcCollapse" title="Thu gọn thẻ">⌃</button>
+            </div>
+
+            <div class="wc-bar"><i id="wcBar"></i></div>
+            <div class="agents" id="agentRows"></div>
+            <div class="wc-more" id="wcMore" style="display:none"></div>
+          </div>
+          <span class="tag" style="top:2px;left:22px">② một thẻ cho cả thread — mỗi agent một dòng</span>
+        </div>
+
+        <div class="col" id="threadMsgs"></div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <div class="ph">Reply in thread…</div>
+          <div class="tools"><span>@</span><span>📎</span><span>☺</span><span>Aa</span></div>
+        </div>
+        <div class="actline" id="threadAct"></div>
+        <div class="pop" id="threadPop" data-open="false"></div>
+      </div>
+
+      <aside class="rail">
+        <div class="rail-head">Chi tiết kỹ thuật <span class="grow"></span><button class="wc-ico" id="closeRail">✕</button></div>
+        <div class="rail-body" id="railBody"></div>
+        <div class="rail-note">Nơi <b>duy nhất</b> được hiện tên file / lệnh. Rail thuộc về <b>một agent</b> — mở từ dòng của agent đó.</div>
+      </aside>
+    </section>
+  </div>
+</div>
+
+<div class="legend">
+  <ol>
+    <li><b>Thẻ thuộc về thread, không thuộc về agent.</b> 1 agent → checklist mở sẵn. Nhiều agent → mỗi agent 1 dòng, bấm mới mở checklist, và chỉ mở được 1 dòng cùng lúc → chiều cao luôn bị chặn.</li>
+    <li><b>Thứ tự agent:</b> ai đang hỏi lên trước → ai chạy lâu nhất → ai đã xong. Trần 4 dòng, dư thì gom "+N nữa".</li>
+    <li><b>Nhiều thread:</b> dòng tóm tắt thread trong channel tự đổi <i>"last reply 2 minutes ago"</i> thành trạng thái sống. Dòng dưới composer của channel gom lại: "N agents đang chạy trong M thread" → bấm ra danh sách để nhảy thread.</li>
+    <li><b>Khi mở rộng thread</b> anh không thấy channel nữa, nên header drawer có chip "M thread khác đang chạy".</li>
+    <li>Bật <b>Nhãn → Hiện</b> để thấy tên thành phần · <b>Thiết kế → Hiện tại</b> để so sánh với headline thô hôm nay.</li>
+  </ol>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const app = document.getElementById("app");
+  const $ = (id) => document.getElementById(id);
+  const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  // ── Dữ liệu mô phỏng ──────────────────────────────────────────
+  // Mỗi agent có checklist riêng, đồng hồ riêng, trạng thái riêng.
+  const AGENT_POOL = [
+    { id: "opus", name: "Claude Opus", av: "opus", glyph: "✳", seconds: 134, step: 2,
+      steps: ["Đọc lại yêu cầu trong thread", "Tìm chỗ cần sửa trong app", "Viết lại phần hiển thị hoạt động", "Tự kiểm tra lại", "Báo cáo kết quả"] },
+    { id: "grok", name: "Cursor Grok", av: "grok", glyph: "CG", seconds: 71, step: 1,
+      steps: ["Dựng lại lỗi từ báo cáo", "Tìm nguyên nhân", "Sửa", "Chạy lại kiểm thử"] },
+    { id: "codex", name: "Codex GPT", av: "codex", glyph: "◎", seconds: 212, step: 3,
+      steps: ["Đọc thiết kế", "Rà lại phần đăng nhập", "Viết kiểm thử", "Chờ xác nhận cách xử lý", "Gửi kết quả"] },
+    { id: "rev", name: "Reviewer", av: "grok", glyph: "RV", seconds: 46, step: 0,
+      steps: ["Đọc thay đổi", "Đối chiếu quy ước", "Ghi nhận xét"] },
+    { id: "doc", name: "Doc Writer", av: "codex", glyph: "DW", seconds: 29, step: 1,
+      steps: ["Đọc thay đổi", "Cập nhật hướng dẫn"] },
+    { id: "qa", name: "QA Runner", av: "grok", glyph: "QA", seconds: 18, step: 0,
+      steps: ["Chuẩn bị môi trường", "Chạy bộ kiểm thử", "Tổng hợp"] },
+  ];
+
+  // Thread khác trong channel (để minh hoạ nhiều thread cùng chạy)
+  const OTHER_THREADS = [
+    { title: "test version 0.0.5, đọc commit/change logs", agents: ["Cursor Grok"], seconds: 48 },
+    { title: "đọc github issue 4 rồi lên plan", agents: ["Codex GPT", "Reviewer"], seconds: 165 },
+  ];
+
+  const LEGACY_HEADLINES = [
+    "This flush fallback re-dispatches cancelled batches — I need to verif…",
+    "Reading MessageThreadPanel.tsx",
+    "Ran: rg -n \"observerRelayStore\" desktop/src",
+    "Updated todos",
+    "Edited BotActivityBar.tsx (+42 −18)",
+  ];
+
+  const MAX_ROWS = 4;
+
+  const state = {
+    variant: "new", mode: "split", count: 1, scenario: "running",
+    collapsed: false, openAgent: null, popOpen: false, railAgent: null,
+    agents: [],
+  };
+
+  function buildAgents() {
+    state.agents = AGENT_POOL.slice(0, state.count).map((a) => ({ ...a, status: "running" }));
+    if (state.scenario === "waiting" && state.agents[0]) {
+      // Agent đang hỏi không nhất thiết là agent đầu danh sách — cố tình
+      // đặt ở giữa để thấy luật sắp xếp đẩy nó lên đầu.
+      const idx = Math.min(state.agents.length - 1, 1);
+      state.agents[idx].status = "waiting";
+    }
+    if (state.scenario === "done") {
+      state.agents.forEach((a) => { a.status = "done"; a.step = a.steps.length - 1; });
+    }
+    state.openAgent = null;
+  }
+
+  // Ai chặn người thì lên đầu; rồi ai chạy lâu nhất; xong thì xuống cuối.
+  const RANK = { waiting: 0, running: 1, done: 2 };
+  function ordered() {
+    return [...state.agents].sort((a, b) =>
+      RANK[a.status] - RANK[b.status] || b.seconds - a.seconds);
+  }
+
+  const liveAgents = () => state.agents.filter((a) => a.status !== "done");
+  const longest = () => Math.max(0, ...state.agents.map((a) => a.seconds));
+
+  // ── Channel: tin nhắn + dòng tóm tắt thread ───────────────────
+  function renderChannel() {
+    const isNew = state.variant === "new";
+    const live = liveAgents();
+
+    const threadRow = (label, avs, who, secondsFn, key) => `
+      <div class="replies">
+        <span class="stack">${avs}</span>
+        <b>${label}</b>
+        <span class="sep">·</span>
+        ${who
+          ? `<span class="live"><span class="pulse"></span>${who} · <span data-clock="${key}">${fmt(secondsFn())}</span></span>`
+          : `<span>last reply 1 day ago</span>`}
+      </div>`;
+
+    const avOf = (id) => {
+      const a = AGENT_POOL.find((x) => x.id === id);
+      return `<span class="av ${a.av} xs">${a.glyph}</span>`;
+    };
+
+    // Thread đang mở — trạng thái phụ thuộc số agent
+    const openLive = isNew && live.length
+      ? (live.length === 1 ? `${live[0].name} đang làm việc` : `${live.length} agents đang làm việc`)
+      : null;
+
+    $("channelMsgs").innerHTML = `
+      <div class="msg">
+        <div class="av oscar">🐶</div>
+        <div class="msg-body">
+          <div class="msg-head"><span class="msg-name">Oscar</span><span class="msg-time">2:16 PM</span></div>
+          <div class="msg-text"><span class="pill">🤖 Cursor Grok</span> mình đang test version 0.0.5, đọc commit/change logs và xem xét hành vi</div>
+          ${threadRow("28 replies", avOf("grok") + avOf("opus"),
+            isNew ? "Cursor Grok đang làm việc" : null, () => OTHER_THREADS[0].seconds, "other0")}
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="av oscar">🐶</div>
+        <div class="msg-body">
+          <div class="msg-head"><span class="msg-name">Oscar</span><span class="msg-time">2:20 PM</span></div>
+          <div class="msg-text"><span class="pill">🤖 Codex GPT 5.6</span> đọc github issue 4 sau đó lên cho mình 1 cái plan để fix</div>
+          ${threadRow("12 replies", avOf("codex") + avOf("rev"),
+            isNew ? "2 agents đang làm việc" : null, () => OTHER_THREADS[1].seconds, "other1")}
+          <span class="tag" style="margin-left:8px">③ dòng thread trong channel tự đổi thành trạng thái sống</span>
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="av oscar">🐶</div>
+        <div class="msg-body">
+          <div class="msg-head"><span class="msg-name">Oscar</span><span class="msg-time">2:44 PM</span></div>
+          <div class="msg-text"><span class="pill">🤖 Claude Opus</span> làm 1 cái interactive html đi, lúc expand thread sẽ thấy gì, minimize vào như nào</div>
+          ${threadRow(`${3 + state.count} replies`,
+            ordered().slice(0, 3).map((a) => `<span class="av ${a.av} xs">${a.glyph}</span>`).join(""),
+            openLive, longest, "open")}
+        </div>
+      </div>`;
+  }
+
+  // ── Thẻ công việc của thread ──────────────────────────────────
+  function renderCard() {
+    const rows = ordered();
+    const live = liveAgents();
+    const shown = rows.slice(0, MAX_ROWS);
+    const hidden = rows.length - shown.length;
+
+    // Header roll-up
+    $("wcAvatars").innerHTML = shown.slice(0, 3).map((a) => `<span class="av ${a.av} sm">${a.glyph}</span>`).join("");
+    const waitingCount = state.agents.filter((a) => a.status === "waiting").length;
+    const runningCount = state.agents.filter((a) => a.status === "running").length;
+
+    $("wcTitle").textContent = state.agents.length === 1 ? state.agents[0].name : `${state.agents.length} agents`;
+
+    const chipStatus = waitingCount ? "waiting" : live.length ? "running" : "done";
+    $("wcChip").className = "chip " + chipStatus;
+    $("wcChipText").textContent = waitingCount
+      ? (runningCount ? `${waitingCount} cần trả lời · ${runningCount} đang chạy` : `${waitingCount} cần trả lời`)
+      : live.length ? "đang chạy" : "xong";
+
+    $("wcTime").textContent = fmt(longest());
+    $("wcTime").dataset.clock = "longest";
+    $("miniTime").textContent = fmt(longest());
+    $("miniTime").dataset.clock = "longest";
+    $("wcStop").textContent = state.agents.length > 1 ? "Dừng tất cả" : "Dừng";
+    $("wcStop").style.display = live.length ? "" : "none";
+
+    const totalSteps = state.agents.reduce((n, a) => n + a.steps.length, 0);
+    const doneSteps = state.agents.reduce((n, a) => n + (a.status === "done" ? a.steps.length : a.step), 0);
+    $("wcBar").style.width = `${(doneSteps / totalSteps) * 100}%`;
+    $("wcBar").style.background = chipStatus === "waiting" ? "var(--warn)" : chipStatus === "done" ? "var(--ok)" : "var(--primary)";
+
+    const top = rows[0];
+    $("miniDot").style.background = waitingCount ? "var(--warn)" : "var(--primary)";
+    $("miniText").textContent = state.agents.length === 1
+      ? `${top.name} · bước ${top.step + 1}/${top.steps.length} · ${top.steps[top.step]}`
+      : `${state.agents.length} agents · ${top.name} ${top.status === "waiting" ? "đang hỏi bạn" : "đang chạy"}`;
+
+    // Một agent duy nhất → mở sẵn checklist. Nhiều agent → mở agent đầu bảng.
+    if (state.openAgent === null) state.openAgent = state.agents.length === 1 ? rows[0].id : rows[0].id;
+
+    $("agentRows").innerHTML = shown.map((a) => {
+      const isOpen = a.id === state.openAgent;
+      const stepsHtml = a.steps.map((text, i) => {
+        const isDone = a.status === "done" || i < a.step;
+        const isNow = a.status !== "done" && i === a.step;
+        const mark = isDone ? "✓" : isNow ? (a.status === "waiting" ? "?" : '<span class="spin"></span>') : "·";
+        return `<li class="${isDone ? "done" : isNow ? "now" : ""}"><span class="mark">${mark}</span><span>${text}</span></li>`;
+      }).join("");
+
+      const askHtml = a.status === "waiting" ? `
+        <div class="ask">
+          <p>Phần đăng nhập cũ có 2 cách xử lý — giữ nguyên hay đổi theo cách mới?</p>
+          <div class="opts">
+            <button class="opt" data-answer="${a.id}">Giữ nguyên</button>
+            <button class="opt" data-answer="${a.id}">Đổi theo cách mới</button>
+            <button class="opt" data-answer="${a.id}">Bạn tự quyết</button>
+          </div>
+        </div>` : "";
+
+      const statusWord = a.status === "waiting" ? "đang hỏi bạn"
+        : a.status === "done" ? "xong" : a.steps[a.step];
+
+      return `
+        <div class="arow" data-agent="${a.id}" data-open="${isOpen}" data-status="${a.status}">
+          <button class="arow-head" data-toggle="${a.id}">
+            <span class="av ${a.av} sm">${a.glyph}</span>
+            <span class="arow-name">${a.name}</span>
+            <span class="arow-what">${statusWord}</span>
+            <span class="grow"></span>
+            <span class="arow-step">${a.status === "done" ? "✓" : `${a.step + 1}/${a.steps.length}`}</span>
+            <span class="wc-time" data-clock="agent:${a.id}">${fmt(a.seconds)}</span>
+            <span class="caret">⌃</span>
+          </button>
+          <div class="arow-body">
+            ${askHtml}
+            <ol class="steps">${stepsHtml}</ol>
+            <div class="arow-foot">
+              <span class="grow"></span>
+              <button class="linkbtn" data-rail="${a.id}">Chi tiết kỹ thuật →</button>
+            </div>
+          </div>
+        </div>`;
+    }).join("");
+
+    $("wcMore").style.display = hidden > 0 ? "" : "none";
+    $("wcMore").textContent = hidden > 0 ? `+ ${hidden} agent nữa đang chạy` : "";
+
+    // Sự kiện cho các dòng vừa dựng
+    $("agentRows").querySelectorAll("[data-toggle]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const id = b.dataset.toggle;
+        state.openAgent = state.openAgent === id ? null : id;
+        render();
+      }));
+    $("agentRows").querySelectorAll("[data-rail]").forEach((b) =>
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        state.railAgent = b.dataset.rail;
+        app.dataset.rail = "open";
+        renderRail();
+      }));
+    $("agentRows").querySelectorAll("[data-answer]").forEach((b) =>
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const a = state.agents.find((x) => x.id === b.dataset.answer);
+        if (a) a.status = "running";
+        render();
+      }));
+  }
+
+  function renderRail() {
+    const a = state.agents.find((x) => x.id === state.railAgent) ?? ordered()[0];
+    if (!a) return;
+    const files = {
+      opus: ["Sửa <code>BotActivityBar.tsx</code>", "Sửa <code>MessageThreadPanel.tsx</code>", "Thêm <code>ThreadWorkCard.tsx</code>"],
+      grok: ["Đọc <code>observerRelayStore.ts</code>", "Sửa <code>useAgentObserverIngestion.ts</code>"],
+      codex: ["Đọc <code>buzz-auth/src/lib.rs</code>", "Thêm <code>e2e_auth.rs</code>"],
+      rev: ["Đọc diff 4 file"], doc: ["Sửa <code>README.md</code>"], qa: ["Chạy <code>just test-unit</code>"],
+    }[a.id] ?? [];
+    $("railBody").innerHTML = `
+      <div class="grp"><h4>${a.name} · bước ${a.step + 1} · ${a.steps[a.step]}</h4>${files.map((f) => `<div>${f}</div>`).join("")}</div>
+      <div class="grp"><h4>Bước trước</h4><div>Đọc ${6 + a.step} tin nhắn trong thread</div></div>`;
+  }
+
+  // ── Danh sách thread đang chạy (popover) ──────────────────────
+  function popHtml() {
+    const live = liveAgents();
+    const rows = [];
+    if (live.length) {
+      rows.push({ title: "làm 1 cái interactive html đi… (thread đang mở)",
+        who: live.length === 1 ? live[0].name : `${live.length} agents`, s: longest() });
+    }
+    OTHER_THREADS.forEach((t) =>
+      rows.push({ title: t.title, who: t.agents.length === 1 ? t.agents[0] : `${t.agents.length} agents`, s: t.seconds }));
+
+    return `<h5>Đang chạy trong #NuncioCrew project</h5>` + rows.map((r) => `
+      <button class="pop-row">
+        <span class="pulse"></span>
+        <span class="t"><b>${r.title}</b><i>${r.who}</i></span>
+        <span class="clock">${fmt(r.s)}</span>
+      </button>`).join("");
+  }
+
+  // ── Render tổng ───────────────────────────────────────────────
+  function render() {
+    app.dataset.mode = state.mode;
+    app.dataset.variant = state.variant;
+
+    const isNew = state.variant === "new";
+    const isFocus = state.mode === "focus";
+    const live = liveAgents();
+    const allDone = live.length === 0;
+
+    renderChannel();
+
+    $("wcSlot").style.display = isNew && isFocus && !allDone ? "" : "none";
+    $("workcard").dataset.collapsed = String(state.collapsed);
+    if (isNew && isFocus && !allDone) renderCard();
+
+    // ── Dòng 1 dòng dưới composer ───────────────────────────────
+    const oneLine = (scope) => {
+      if (!isNew) {
+        const raw = LEGACY_HEADLINES[Math.floor(Date.now() / 2200) % LEGACY_HEADLINES.length];
+        return `<span class="av opus xs">✳</span><span class="raw">Claude Opus: <em>${raw}</em></span>`;
+      }
+      if (scope === "thread") {
+        if (!live.length) return "";
+        const waiting = state.agents.filter((a) => a.status === "waiting").length;
+        const label = live.length === 1
+          ? `${live[0].name} ${waiting ? "đang chờ bạn trả lời" : "đang làm việc"}`
+          : `${live.length} agents đang làm việc${waiting ? ` · ${waiting} cần bạn trả lời` : ""}`;
+        return `<span class="pulse" ${waiting ? 'style="background:var(--warn)"' : ""}></span>` +
+          `<span>${label}</span><span class="elapsed">· ${fmt(longest())}</span>` +
+          `<button class="stop">Dừng</button>`;
+      }
+      // scope === "channel" — gom cả channel, nhiều thread
+      const threadCount = OTHER_THREADS.length + (live.length ? 1 : 0);
+      const agentCount = OTHER_THREADS.reduce((n, t) => n + t.agents.length, 0) + live.length;
+      if (!agentCount) return "";
+      return `<button class="rollup"><span class="pulse"></span>` +
+        `<span>${agentCount} agents đang chạy trong ${threadCount} thread</span>` +
+        `<span style="opacity:.5">▸</span></button>`;
+    };
+
+    const chanAct = $("chanAct");
+    chanAct.className = "actline" + (isNew ? "" : " legacy");
+    chanAct.innerHTML = oneLine("channel");
+    if (isNew) {
+      chanAct.insertAdjacentHTML("beforeend",
+        '<span class="tag" style="top:-14px;left:0">④ gom cả channel — bấm ra danh sách thread</span>');
+      const btn = chanAct.querySelector(".rollup");
+      if (btn) btn.addEventListener("click", () => {
+        state.popOpen = !state.popOpen;
+        $("chanPop").dataset.open = String(state.popOpen);
+        $("chanPop").innerHTML = popHtml();
+      });
+    }
+    $("chanPop").dataset.open = String(state.popOpen && isNew);
+    if (state.popOpen) $("chanPop").innerHTML = popHtml();
+
+    const threadAct = $("threadAct");
+    const showThreadLine = !isNew || !isFocus;
+    threadAct.className = "actline" + (isNew ? "" : " legacy");
+    threadAct.innerHTML = showThreadLine ? oneLine("thread") : "";
+    if (showThreadLine && isNew && live.length) {
+      threadAct.insertAdjacentHTML("beforeend",
+        '<span class="tag" style="top:-16px;left:0">① thread hẹp — 1 dòng cho tất cả agent</span>');
+      const stop = threadAct.querySelector(".stop");
+      if (stop) stop.addEventListener("click", () => { state.scenario = "done"; buildAgents(); syncSeg("segState", "s", "done"); render(); });
+    }
+
+    // ── Chip "thread khác đang chạy" trong drawer ───────────────
+    const chip = $("otherChip");
+    chip.innerHTML = `<span class="pulse"></span>${OTHER_THREADS.length} thread khác đang chạy`;
+    chip.style.display = isNew && isFocus ? "" : "none";
+
+    // ── Tin nhắn trong thread + dòng kết quả ───────────────────
+    // Câu trả lời là của Claude Opus, nên chỉ soi bước của chính nó —
+    // không mượn bước của agent khác trong cùng thread.
+    const self = state.agents.find((a) => a.id === "opus") ?? ordered()[0];
+    const replyText = allDone
+      ? "Xong rồi — thẻ hoạt động giờ thuộc về thread, mỗi agent một dòng, và các thread khác vẫn thấy được từ channel."
+      : self.status === "waiting" ? "Đang chờ bạn trả lời câu hỏi ở trên…" : self.steps[self.step] + "…";
+
+    $("threadMsgs").innerHTML = `
+      <div class="msg">
+        <div class="av oscar">🐶</div>
+        <div class="msg-body">
+          <div class="msg-head"><span class="msg-name">Oscar</span><span class="msg-time">2:44 PM</span></div>
+          <div class="msg-text">làm 1 cái interactive html đi, lúc expand thread sẽ thấy gì, minimize vào như nào</div>
+        </div>
+      </div>
+      <div class="msg">
+        <div class="av opus">✳</div>
+        <div class="msg-body">
+          <div class="msg-head"><span class="msg-name">Claude Opus</span><span class="msg-time">2:45 PM</span></div>
+          <div class="msg-text${allDone ? "" : " muted"}">${replyText}</div>
+          ${isNew && allDone ? `
+            <div class="receipt">
+              <span class="ok">✓</span> Xong trong ${fmt(longest())}
+              <span class="sep">·</span> ${state.agents.length} agent
+              <span class="sep">·</span> ${state.agents.reduce((n, a) => n + a.steps.length, 0)} bước
+              <span class="sep">·</span> <button class="linkbtn" id="receiptLink">Xem chi tiết</button>
+              <span class="tag" style="top:20px;left:0">⑤ dòng kết quả — ở lại vĩnh viễn</span>
+            </div>` : ""}
+        </div>
+      </div>`;
+
+    const rl = $("receiptLink");
+    if (rl) rl.addEventListener("click", () => {
+      if (state.mode !== "focus") { state.mode = "focus"; syncSeg("segMode", "m", "focus"); render(); }
+      state.railAgent = ordered()[0].id; app.dataset.rail = "open"; renderRail();
+    });
+
+    // Badge sidebar: đếm agent thay vì đồng hồ — nhiều thread thì
+    // đồng hồ của thread nào cũng sai, con số thì luôn đúng.
+    const totalAgents = OTHER_THREADS.reduce((n, t) => n + t.agents.length, 0) + live.length;
+    $("sideBadge").innerHTML = isNew
+      ? (totalAgents ? `<span class="pulse"></span>${totalAgents}` : "")
+      : fmt(longest());
+    $("sideBadge").style.display = isNew && !totalAgents ? "none" : "";
+
+    const t = $("modeToggle");
+    t.textContent = isFocus ? "⊟" : "⊞";
+    t.title = isFocus ? "Hiện thread cạnh channel" : "Mở rộng thread";
+    if (!isFocus) app.dataset.rail = "closed";
+
+    $("hint").innerHTML = !isNew
+      ? "<b>Hiện tại:</b> 1 dòng headline thô của 1 agent, xoay vòng mỗi 2.2s. Nhiều agent hay nhiều thread thì không có gì thể hiện."
+      : isFocus
+        ? `<b>Mở rộng · ${state.count} agent:</b> một thẻ cho cả thread, mỗi agent một dòng — bấm dòng để mở checklist của agent đó (chỉ 1 mở cùng lúc). Chip trên header cho biết còn thread khác đang chạy.`
+        : `<b>Thu gọn · ${state.count} agent:</b> thread hẹp gộp hết vào 1 dòng. Dòng dưới channel gom cả ${OTHER_THREADS.length + 1} thread — bấm ra danh sách để nhảy.`;
+  }
+
+  // ── Đồng hồ ───────────────────────────────────────────────────
+  // Chỉ vẽ lại đồng hồ mỗi giây. Dựng lại toàn bộ DOM mỗi giây sẽ
+  // tháo mất node ngay dưới con trỏ và nuốt cú bấm của người dùng —
+  // chỉ render đầy đủ khi cấu trúc thật sự đổi (sang bước mới).
+  function paintClocks() {
+    const byId = new Map(state.agents.map((a) => [a.id, a.seconds]));
+    document.querySelectorAll("[data-clock]").forEach((el) => {
+      const key = el.dataset.clock;
+      if (key === "open" || key === "longest") el.textContent = fmt(longest());
+      else if (key === "other0") el.textContent = fmt(OTHER_THREADS[0].seconds);
+      else if (key === "other1") el.textContent = fmt(OTHER_THREADS[1].seconds);
+      else if (key.startsWith("agent:")) {
+        const s = byId.get(key.slice(6));
+        if (s != null) el.textContent = fmt(s);
+      }
+    });
+  }
+
+  let tick = 0;
+  setInterval(() => {
+    if (state.variant === "legacy") { render(); return; }
+    OTHER_THREADS.forEach((t) => { t.seconds += 1; });
+    const live = liveAgents();
+    if (!live.length) { paintClocks(); return; }
+    tick += 1;
+    let structural = false;
+    live.forEach((a) => {
+      a.seconds += 1;
+      if (a.status === "running" && tick % 7 === 0 && a.step < a.steps.length - 1) {
+        a.step += 1;
+        structural = true;
+      }
+    });
+    if (structural) render();
+    else paintClocks();
+  }, 1000);
+
+  // ── Điều khiển ────────────────────────────────────────────────
+  function bindSeg(id, attr, apply) {
+    const seg = document.getElementById(id);
+    seg.addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      [...seg.children].forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+      apply(btn.dataset[attr]);
+      render();
+    });
+  }
+  function syncSeg(id, attr, value) {
+    const seg = document.getElementById(id);
+    [...seg.children].forEach((b) => b.setAttribute("aria-pressed", String(b.dataset[attr] === value)));
+  }
+
+  bindSeg("segVariant", "v", (v) => { state.variant = v; });
+  bindSeg("segMode", "m", (m) => { state.mode = m; state.popOpen = false; });
+  bindSeg("segCount", "n", (n) => { state.count = Number(n); state.collapsed = false; buildAgents(); });
+  bindSeg("segState", "s", (s) => { state.scenario = s; state.collapsed = false; buildAgents(); });
+  bindSeg("segTags", "t", (t) => { document.body.dataset.tags = t; });
+
+  $("modeToggle").addEventListener("click", () => {
+    state.mode = state.mode === "focus" ? "split" : "focus";
+    state.popOpen = false;
+    syncSeg("segMode", "m", state.mode);
+    render();
+  });
+  $("scrim").addEventListener("click", () => { state.mode = "split"; syncSeg("segMode", "m", "split"); render(); });
+  $("sliver").addEventListener("click", () => { state.mode = "split"; syncSeg("segMode", "m", "split"); render(); });
+  $("otherChip").addEventListener("click", () => {
+    state.popOpen = !state.popOpen;
+    $("threadPop").dataset.open = String(state.popOpen);
+    $("threadPop").innerHTML = popHtml();
+  });
+
+  $("wcCollapse").addEventListener("click", () => { state.collapsed = true; render(); });
+  $("miniExpand").addEventListener("click", () => { state.collapsed = false; render(); });
+  $("wcStop").addEventListener("click", () => {
+    state.scenario = "done"; buildAgents(); syncSeg("segState", "s", "done"); render();
+  });
+  $("closeRail").addEventListener("click", () => { app.dataset.rail = "closed"; });
+
+  buildAgents();
+  render();
+})();
+</script>
+</body>
+</html>
