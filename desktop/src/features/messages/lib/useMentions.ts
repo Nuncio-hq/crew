@@ -41,6 +41,10 @@ import { useDraftMentionRouting } from "./useDraftMentionRouting";
 import { rankMentionCandidates } from "./mentionRanking";
 import { mapMentionCandidateToSuggestion } from "./mentionSuggestionMapping";
 import {
+  buildAgentAvatarUrlsByName,
+  uniqueTrimmedNames,
+} from "./buildAgentAvatarUrlsByName";
+import {
   buildTeamMentionCandidates,
   formatTeamMention,
   globalSearchIdentityKey,
@@ -478,35 +482,24 @@ export function useMentions(
     return names;
   }, [mentionCandidatesWithTeams]);
 
-  const highlightNames = React.useMemo<string[]>(() => {
-    const names: string[] = [];
-    const seen = new Set<string>();
-
-    for (const name of selectedMentionNames) {
-      const trimmed = name.trim();
-      if (trimmed && !seen.has(trimmed.toLowerCase())) {
-        names.push(trimmed);
-        seen.add(trimmed.toLowerCase());
-      }
-    }
-
-    return names;
-  }, [selectedMentionNames]);
-
-  const agentHighlightNames = React.useMemo<string[]>(() => {
-    const names: string[] = [];
-    const seen = new Set<string>();
-
-    for (const name of selectedAgentMentionNames) {
-      const trimmed = name.trim();
-      if (trimmed && !seen.has(trimmed.toLowerCase())) {
-        names.push(trimmed);
-        seen.add(trimmed.toLowerCase());
-      }
-    }
-
-    return names;
-  }, [selectedAgentMentionNames]);
+  const highlightNames = React.useMemo(
+    () => uniqueTrimmedNames(selectedMentionNames),
+    [selectedMentionNames],
+  );
+  const agentHighlightNames = React.useMemo(
+    () => uniqueTrimmedNames(selectedAgentMentionNames),
+    [selectedAgentMentionNames],
+  );
+  const agentAvatarUrlsByName = React.useMemo(
+    () =>
+      buildAgentAvatarUrlsByName({
+        mentionCandidates: mentionCandidatesWithTeams,
+        mentionMap: mentionMapRef.current,
+        profiles,
+        selectedAgentMentionNames,
+      }),
+    [mentionCandidatesWithTeams, profiles, selectedAgentMentionNames],
+  );
 
   const searchableNamesLower = React.useMemo<string[]>(
     () => searchableNames.map((n) => n.toLowerCase()),
@@ -980,6 +973,7 @@ export function useMentions(
     insertMention,
     insertResolvedMention,
     agentKnownNames: agentHighlightNames,
+    agentAvatarUrlsByName,
     isAgentPubkey,
     isManagedAgentPubkey,
     isMentionOpen,
