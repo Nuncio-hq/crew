@@ -113,6 +113,11 @@ Component mới `features/agents/ui/ThreadWorkCard.tsx`.
 - Trần 4 dòng + "+N nữa". Thu gọn cả thẻ thành 1 dòng, nhớ lựa chọn
   (theo pattern `transcriptAnimationPreference.ts`).
 - Stop từng agent + Stop tất cả.
+- **`getAgentPlanProgress` phải lọc theo `conversationId`.** Phases 1–3 chỉ
+  lọc `channelId` + `turnId`. Một agent chạy hai thread trong cùng channel sẽ
+  lẫn checklist nếu thẻ phase 4 nhìn theo thread. Thêm `conversationId` vào
+  `options` và so với `TranscriptItem.conversationId` (đã có sẵn). `turnId`
+  vẫn hữu ích khi caller biết turn, nhưng thẻ thread không được phụ thuộc vào đó.
 
 **Quyết định layout — thẻ nằm ngoài vùng cuộn.** Mount giữa header panel và
 danh sách tin nhắn, **không** đặt `position: sticky` bên trong vùng cuộn.
