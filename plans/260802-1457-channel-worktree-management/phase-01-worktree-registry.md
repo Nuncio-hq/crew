@@ -68,7 +68,9 @@ struct ProjectWorktreeEntry {
     kind: ProjectWorktreeKind,       // main | managed | external
     root_event_id: Option<String>,
     prunable: bool,                  // porcelain reported the dir as gone
-    pull_request: Option<RegistryPullRequest>,
+    // D3: a thread branch routinely accumulates several PRs. Ranked
+    // open → draft → merged → closed, then descending number.
+    pull_requests: Vec<RegistryPullRequest>,
 }
 
 struct RegistryPullRequest {
@@ -103,13 +105,19 @@ process per worktree (and `du` on 18 GB); they are per-row lazy in Phase 3.
    Accept only 64-hex values; ignore anything else.
 5. `origin_repo_target(&repo_root)` (Phase 0.5) → `gh pr list --repo <target>
    --state all --limit 100 --json headRefName,number,state,isDraft,reviewDecision,statusCheckRollup,additions,deletions,title,url`,
-   one call for the whole repo. Map by `headRefName`; keep the open PR when a
-   branch has several, else the most recent. Reduce `statusCheckRollup` to a
-   single `RegistryChecksState` with the existing `parse_check` logic
-   (`thread_github.rs:152-170`) — extract it rather than duplicating.
+   one call for the whole repo. Group by `headRefName` and keep **every** PR on
+   the branch (D3), sorted `open` → `draft` → `merged` → `closed` then by
+   descending number, so index 0 is always the one worth showing first. Reduce
+   `statusCheckRollup` to a single `RegistryChecksState` with the existing
+   `parse_check` logic (`thread_github.rs:152-170`) — extract it rather than
+   duplicating.
 6. Any `gh` failure (missing binary, unauthenticated, no origin) →
-   `github: unavailable`, all `pull_request: None`. Never fail the command: the
-   git half must still render.
+   `github: unavailable`, every `pull_requests` empty. Never fail the command:
+   the git half must still render.
+
+`--limit 100` bounds the fetch. A repo with more than 100 PRs would silently
+drop the oldest, which only ever costs a `merged`/`closed` chip on an old
+thread; do not raise it without measuring the call.
 
 ## Frontend
 
@@ -156,7 +164,8 @@ Rust (`project_worktree_registry_parse.rs`, `#[cfg(test)]`):
 - classification: `.worktrees/crew-docs-fork-identity` → `external`;
   `.buzz-worktrees/crew-02cc85801c3d` with no config row → `managed`,
   `root_event_id: None`
-- PR mapping picks the open PR when a branch has both open and closed
+- PR grouping: a branch with open + merged + closed returns all three, open first
+- a branch with no PR returns an empty vec, not an error
 
 TS (`projectWorktreeRegistryStore.test.mjs`, following
 `projectThreadWorkspaceStore.test.mjs`): TTL hit/miss, epoch reset clears

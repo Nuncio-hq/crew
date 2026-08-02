@@ -2,7 +2,9 @@
 
 Date: 2026-08-02 · Owner: Oscar · Author: Claude Opus
 Source brainstorm: [`plans/reports/brainstorm-260802-1417-channel-worktree-management.md`](../reports/brainstorm-260802-1417-channel-worktree-management.md)
-Status: **planned, not started** (Phase 0.5 shipped)
+Status: **Phase 0.5 shipped; Phases 1–2 handed to Cursor Grok High Fast; Phase 3 queued**
+UI reference: [`ui-preview.html`](ui-preview.html) — open it in a browser; the
+controls at the bottom switch layout, naming and density.
 
 ## Outcome
 
@@ -81,11 +83,19 @@ same behaviour as today, no error state. Making PR/CI state visible to members
 who lack the checkout requires publishing it as a Nostr event (a new kind in
 `buzz-core/src/kind.rs`); that is a **v2 phase**, explicitly out of scope here.
 
-### D3 — One open PR per thread in the badge; closed count only in the drawer. ✅
+### D3 — A thread carries a **list** of pull requests. ⚠️ revised
 
-One `gh pr list --state all` call per repo, mapped by `headRefName`, replaces the
-current per-thread `gh` calls (`thread_github.rs:113-133` runs one `pr list`
-plus one `pr view` per thread).
+Original: "one open PR in the badge, closed count only in the drawer." Oscar
+corrected the premise — a thread branch routinely accumulates several PRs
+(superseded attempt, merged part, live follow-up). So the registry returns
+`pull_requests: Vec<…>` and the badge renders the two highest-ranked plus a
+`+N` overflow chip.
+
+Rank order: `open` → `draft` → `merged` → `closed`, then descending number.
+
+Cost is unchanged: still one `gh pr list --state all` per repo, mapped by
+`headRefName`, replacing the current per-thread pair of calls
+(`thread_github.rs:113-133` runs one `pr list` plus one `pr view` per thread).
 
 ### D4 — No auto-delete in v1. ✅
 
@@ -94,10 +104,44 @@ touch, and reuse the existing dirty refusal
 (`thread_workspace.rs:83-91`). Opt-in auto-prune is revisited only after the
 list has proven trustworthy in daily use.
 
-### D5 — Show disk size, computed lazily. ✅
+### D5 — Show disk size, computed lazily. ✅ (unchanged)
 
 Never inside the registry read: an 18 GB worktree makes `du` slow enough to
 stall the whole list. Size is fetched per row on demand (Phase 3).
+
+### D6 — Inline layout is **A · chips**. ✅ decided by Oscar, 2026-08-02
+
+Reviewed in [`ui-preview.html`](ui-preview.html) against B (a separate status
+line) and C (a bordered card). A keeps the timeline flat: the chips join the
+existing `N replies · last reply …` row, so a channel of project threads gains
+no vertical height at all.
+
+Consequences, both already handled below:
+
+- The overflow chip (`+N`) is what makes A survive the multi-PR case of D3.
+- A zero-reply thread has no summary row to join, so it renders nothing — see
+  the resolved question 3.
+
+### D7 — The worktree chip shows a **derived thread label**, not the branch id. ✅
+
+An ACP session title cannot name a worktree: it is composed as
+`"<agent display name> · #<channel>"` (`metadata.rs:45`, `config.rs:616-632`),
+pushed one-way into `session/new` as `_meta.sessionTitle` (`acp.rs:649-659`),
+and never read back (`acp.rs:661-664`). It is per *agent × channel*, so every
+thread in one channel would share it; and with several agents tagged there are
+several sessions, so "the first agent's title" also depends on who replies
+first. `docs/crew/STATE.md:45` already lists semantic branch renaming as out of
+scope for this slice.
+
+So identity and label are separated:
+
+| | Value | Where it lives |
+| --- | --- | --- |
+| Identity | `buzz/<12hex>` | git — load-bearing for `validate_target`, PR head refs, and the Phase 3 path guard. Never renamed. |
+| Label | first prose line of the thread root | derived at render time, stored nowhere |
+
+Derivation is per-viewer and needs no agent to have run, so it is stable across
+machines and across how many agents were tagged.
 
 ## Phases
 
@@ -138,12 +182,20 @@ Phase 2 and Phase 3 are independent of each other; both need Phase 1's command.
 - **Commit with `git commit -s`**; pre-commit `just desktop-tauri-fmt` fails in
   worktrees (gotcha #6) — run it from the main checkout.
 
-## Unresolved questions
+## Resolved questions
 
-1. Does the drawer belong in the channel only, or also in the Projects screen
-   (`desktop/src/features/projects/ui/`)? Plan assumes channel-only for v1.
-2. Idle threshold for the "Idle" bucket — plan assumes 7 days, no activity, no
-   PR, clean.
-3. Should Phase 2 badges also render for project threads with zero replies? No
-   summary row exists in that case (`threadPanel.ts:215-219` returns `null` when
-   `descendantCount === 0`), so v1 skips them.
+1. **Drawer lives in the channel only for v1.** The Projects screen
+   (`desktop/src/features/projects/ui/`) would serve a cross-channel view; that
+   is a later slice, not a blocker for anything here.
+2. **Idle = clean, no open PR, no commit for 7 days.** A threshold only gates
+   which bucket a row lands in; every removal is still an explicit click behind
+   a confirm dialog (D4), so the cost of getting the number slightly wrong is
+   cosmetic.
+3. **Zero-reply project threads render nothing.** `buildTimelineThreadSummary`
+   returns `null` when `descendantCount === 0` (`threadPanel.ts:215-219`), and
+   D6 puts the chips *inside* that row — a standalone row would be a second
+   render path for a state that barely occurs, since a worktree only exists
+   after an agent has run and an agent run produces a reply. The gap is the few
+   seconds of a first turn before its first reply lands.
+
+No open questions.
