@@ -66,6 +66,7 @@ export type MessageComposerProps = {
     content: string,
     mediaTags?: string[][],
     mentionPubkeys?: string[],
+    removedMentionPubkeys?: string[],
   ) => Promise<void>;
   /** Captures send context synchronously before awaits can change navigation. */
   onCaptureSendContext?: () => {

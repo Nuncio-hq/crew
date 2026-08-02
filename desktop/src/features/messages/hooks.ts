@@ -699,9 +699,18 @@ export function useEditMessageMutation(channel: Channel | null) {
       // Pubkeys of mentions *newly added* by this edit, diffed at the composer.
       // Only these receive a `p` tag so a typo-fix edit re-wakes nobody.
       mentionPubkeys?: string[];
+      // Pubkeys of mentions this edit *removes*. Emitted as `p-removed` so the
+      // harness can drop a still-queued request for that agent.
+      removedMentionPubkeys?: string[];
     }
   >({
-    mutationFn: async ({ eventId, content, mediaTags, mentionPubkeys }) => {
+    mutationFn: async ({
+      eventId,
+      content,
+      mediaTags,
+      mentionPubkeys,
+      removedMentionPubkeys,
+    }) => {
       if (!channel) {
         throw new Error("No channel selected.");
       }
@@ -719,6 +728,7 @@ export function useEditMessageMutation(channel: Channel | null) {
         imetaTags,
         emojiTags,
         mentionPubkeys,
+        removedMentionPubkeys,
       );
     },
     onSuccess: (_data, { eventId, content, mediaTags }) => {

@@ -9,6 +9,7 @@ import {
 } from "@/features/messages/lib/messageRowEquality";
 import type { TimelineMessage } from "@/features/messages/types";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
+import { useEditAsUndoUiState } from "@/features/agents/useEditAsUndoState";
 import { HuddleAttachment } from "@/features/huddle/components/HuddleAttachment";
 import { MessageReactions } from "@/features/messages/ui/MessageReactions";
 import { useReactionHandler } from "@/features/messages/ui/useReactionHandler";
@@ -221,6 +222,11 @@ export const MessageRow = React.memo(
 
       return Object.keys(values).length > 0 ? values : undefined;
     }, [isKnownAgentPubkey, mentionPubkeysByName]);
+    const mentionsAgent = agentMentionPubkeysByName !== undefined;
+    const editAsUndoState = useEditAsUndoUiState({
+      mentionsAgent,
+      eventId: message.id,
+    });
 
     const imetaByUrl = React.useMemo(
       () => (message.tags ? parseImetaTags(message.tags) : undefined),
@@ -516,8 +522,15 @@ export const MessageRow = React.memo(
       </div>
     );
 
+    const editAsUndoInline =
+      editAsUndoState === "too-late"
+        ? "Agent already read the original"
+        : editAsUndoState === "withdrawn"
+          ? "Request withdrawn — agent never ran"
+          : null;
+
     const statusMetadataNode =
-      message.pending || message.edited ? (
+      message.pending || message.edited || editAsUndoInline ? (
         <>
           {message.pending ? (
             <p
@@ -534,6 +547,14 @@ export const MessageRow = React.memo(
               </TooltipTrigger>
               <TooltipContent>This message has been edited</TooltipContent>
             </Tooltip>
+          ) : null}
+          {editAsUndoInline ? (
+            <p
+              className="font-normal text-muted-foreground/70"
+              data-testid="message-edit-as-undo-status"
+            >
+              {editAsUndoInline}
+            </p>
           ) : null}
         </>
       ) : null;
