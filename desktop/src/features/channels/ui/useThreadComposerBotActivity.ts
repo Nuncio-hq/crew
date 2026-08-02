@@ -3,6 +3,7 @@ import * as React from "react";
 import { useConversationWorkingAgentPubkeys } from "@/features/agents/agentWorkingSignal";
 import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
 import type { ChannelPaneProps } from "@/features/channels/ui/ChannelPane.types";
+import { parseProjectThreadContext } from "@/features/messages/lib/projectThreadWorkspace";
 
 type BotTypingEntry = ChannelPaneProps["botTypingEntries"][number];
 
@@ -11,6 +12,8 @@ export function useThreadComposerBotActivity(
   channelId: string | null | undefined,
   openThreadHeadId: string | null | undefined,
   botTypingEntries: readonly BotTypingEntry[],
+  /** When the open thread is a project thread, the sticky bar owns this signal. */
+  threadHeadBody?: string | null,
 ) {
   const threadComposerBotTypingPubkeys = React.useMemo(() => {
     if (!openThreadHeadId) return [];
@@ -35,8 +38,11 @@ export function useThreadComposerBotActivity(
     threadComposerBotTypingPubkeys,
   );
 
+  const ownedByStickyBar = parseProjectThreadContext(threadHeadBody) != null;
+
   return {
-    hasThreadComposerBotActivity: threadComposerWorkingBotPubkeys.length > 0,
+    hasThreadComposerBotActivity:
+      !ownedByStickyBar && threadComposerWorkingBotPubkeys.length > 0,
     threadComposerConversationId,
     threadComposerWorkingBotPubkeys,
   };

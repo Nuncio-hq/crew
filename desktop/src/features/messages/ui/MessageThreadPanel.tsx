@@ -607,12 +607,6 @@ export function MessageThreadPanel({
               )}
             />
           </div>
-          <ProjectThreadWorkspacePanel
-            agentMentions={projectThreadAgentMentions}
-            profiles={profiles}
-            replies={threadMessages}
-            threadHead={threadHead}
-          />
         </div>
 
         {showThreadHeadDivider ? (
@@ -956,6 +950,15 @@ export function MessageThreadPanel({
       transparentChrome={transparentChrome}
       widthPx={widthPx}
     >
+      {/* Sticky status bar lives outside the scroll region so expand/collapse
+          cannot fight useAnchoredScroll's ResizeObserver. */}
+      <ProjectThreadWorkspacePanel
+        agentMentions={projectThreadAgentMentions}
+        isFocusMode={isFocusMode}
+        profiles={profiles}
+        replies={threadMessages}
+        threadHead={threadHead}
+      />
       {threadScrollRegion}
     </AuxiliaryPanel>
   );

@@ -58,7 +58,8 @@ tiếng Việt thì đòn bẩy là **system prompt của agent**, không phải
 - [x] Phase 1 — todo array + `agentPlanProgress`
 - [x] Phase 2 — `getActiveTurnsByConversation()`
 - [x] Phase 3 — static activity line (no headline rotation)
-- [ ] Phase 4 — ThreadWorkCard (focus mode)
+- [x] Phase 4b — sticky project-thread status bar (Oscar-approved)
+- [ ] Phase 4 — ThreadWorkCard checklist (extends 4b in focus)
 - [ ] Phase 5 — multi-thread rollups
 - [ ] Phase 6 — done footer + detail rail
 
@@ -102,9 +103,24 @@ rỗng / thiếu field → `null` · shape lạ → `null` chứ không ném l�
 - 2 chỗ gọi giữ nguyên API: `ChannelComposerActivityAccessory.tsx`,
   `useThreadComposerBotActivity.ts`.
 
+## Phase 4b — Sticky project-thread status bar (Oscar-approved)
+
+Động lực: `ProjectThreadWorkspacePanel` nằm trong vùng cuộn → phải kéo lên
+mới thấy Task/Workspace/Handoff. Dữ liệu agent đã có sẵn trong panel.
+
+**Hai luật đã chốt:**
+1. `split` = chỉ 1 dòng thu gọn; lưới 3 ô + GitHub chỉ ở `focus` (expand).
+2. Project thread → thanh sticky sở hữu tín hiệu agent; tắt dòng composer
+   bot activity cho thread đó (typing vẫn hiện). Thread thường giữ composer.
+
+**Làm:** dời panel ra ngoài vùng cuộn (giữa header và message list), thu gọn
+thành 1 dòng (agent · bước · elapsed · chip chấm · Stop · expand ở focus).
+Không đụng drawer. Phase 4 checklist sẽ mở rộng thanh này, không thêm thanh thứ hai.
+
 ## Phase 4 — Thẻ công việc của thread (chỉ ở chế độ mở rộng)
 
-Component mới `features/agents/ui/ThreadWorkCard.tsx`.
+Component mới `features/agents/ui/ThreadWorkCard.tsx` — **mở rộng phase 4b**,
+không mount thêm dải trạng thái thứ hai.
 
 - Chỉ mount khi `useThreadViewMode() === "focus"` và thread có agent đang chạy.
 - **Thẻ thuộc về thread, không thuộc về agent.** 1 agent → checklist mở sẵn.
