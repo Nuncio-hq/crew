@@ -6,6 +6,7 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   collectProjectThreadAgentMentions,
   projectThreadRootAudiencePubkeys,
+  projectThreadStickyBarOwnsAgentSignal,
 } from "@/features/messages/lib/projectThreadWorkspace";
 import {
   buildThreadSummaryFromVisibleEntries,
@@ -251,10 +252,6 @@ export function MessageThreadPanel({
   const threadHeadId = threadHead?.id ?? null;
   useEscapeKey(onClose, isOverlay || isSinglePanelView || isFocusMode);
   const hasConstrainedColumn = columnMaxWidthPx != null;
-  // Whether the composer dock trades its quiet-state spacer for the
-  // conditional activity accessory (agent working and/or someone typing).
-  const hasComposerBottomActivity =
-    activityAccessoryVisible || threadTypingPubkeys.length > 0;
 
   // Live ref so onCaptureSendContext can read reply state at submit time
   // (before any async mention-flow awaits change navigation state).
@@ -537,6 +534,20 @@ export function MessageThreadPanel({
     [projectThreadAgentMentions],
   );
 
+  // Project threads: the sticky status bar owns the agent signal, so the
+  // composer drops its duplicate. Typing still shows; only bot activity is
+  // suppressed. The rule lives in projectThreadWorkspace so it stays testable
+  // and cannot drift from the bar's own visibility condition.
+  // threadHead is only narrowed below; the helper accepts a nullish body.
+  const stickyBarOwnsAgentSignal = projectThreadStickyBarOwnsAgentSignal(
+    threadHead?.body,
+    projectThreadAgentMentions.length,
+  );
+  const showComposerBotActivity =
+    activityAccessoryVisible && !stickyBarOwnsAgentSignal;
+  const hasComposerBottomActivity =
+    showComposerBotActivity || threadTypingPubkeys.length > 0;
+
   if (!threadHead) {
     return null;
   }
@@ -607,12 +618,6 @@ export function MessageThreadPanel({
               )}
             />
           </div>
-          <ProjectThreadWorkspacePanel
-            agentMentions={projectThreadAgentMentions}
-            profiles={profiles}
-            replies={threadMessages}
-            threadHead={threadHead}
-          />
         </div>
 
         {showThreadHeadDivider ? (
@@ -900,7 +905,7 @@ export function MessageThreadPanel({
               visible={hasComposerBottomActivity}
             >
               <div className="mx-auto flex w-full max-w-4xl items-center gap-2 overflow-visible pl-2">
-                {activityAccessoryVisible && activityAccessoryContent ? (
+                {showComposerBotActivity && activityAccessoryContent ? (
                   <div className="flex min-w-0 flex-1 overflow-visible">
                     {activityAccessoryContent}
                   </div>
@@ -956,6 +961,16 @@ export function MessageThreadPanel({
       transparentChrome={transparentChrome}
       widthPx={widthPx}
     >
+      {/* Sticky status bar lives outside the scroll region so expand/collapse
+          cannot fight useAnchoredScroll's ResizeObserver. */}
+      <ProjectThreadWorkspacePanel
+        agentMentions={projectThreadAgentMentions}
+        channelId={channelId}
+        isFocusMode={isFocusMode}
+        profiles={profiles}
+        replies={threadMessages}
+        threadHead={threadHead}
+      />
       {threadScrollRegion}
     </AuxiliaryPanel>
   );

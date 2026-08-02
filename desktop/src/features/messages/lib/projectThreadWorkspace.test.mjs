@@ -6,7 +6,33 @@ import {
   collectProjectThreadAgentMentions,
   parseProjectThreadContext,
   projectThreadRootAudiencePubkeys,
+  projectThreadStickyBarOwnsAgentSignal,
 } from "./projectThreadWorkspace.ts";
+
+const PROJECT_BODY =
+  "[ctx]: <buzz://project-workspace?repo=Nuncio-hq%2Fcrew&path=%2Ftmp%2Fcrew>\n\n@agent fix";
+
+test("Sticky bar owns the agent signal only when it will actually render", () => {
+  // Bar renders (context + at least one agent step) → composer drops its copy.
+  assert.equal(projectThreadStickyBarOwnsAgentSignal(PROJECT_BODY, 1), true);
+});
+
+test("Project thread without resolved mentions leaves the signal to the composer", () => {
+  // The bar needs steps to render, and steps come only from mentions. With
+  // none, the bar is invisible — so it must NOT claim the signal, or a working
+  // agent would have no indicator anywhere. Reachable while the known-agent
+  // set is still loading, and for threads the viewer did not author.
+  assert.equal(projectThreadStickyBarOwnsAgentSignal(PROJECT_BODY, 0), false);
+});
+
+test("Plain threads never hand the agent signal to the sticky bar", () => {
+  assert.equal(
+    projectThreadStickyBarOwnsAgentSignal("just a message", 2),
+    false,
+  );
+  assert.equal(projectThreadStickyBarOwnsAgentSignal(null, 2), false);
+  assert.equal(projectThreadStickyBarOwnsAgentSignal(undefined, 0), false);
+});
 
 test("Project context parses the hidden workspace URL", () => {
   const content =
