@@ -32,6 +32,27 @@ export async function cancelManagedAgentTurn(
 }
 
 /**
+ * Ask the harness to re-dispatch failed events from a failure notice.
+ *
+ * Never publish a fresh kind-9 with the same body — that duplicates the
+ * person's message and re-notifies mentions. Outcome arrives as
+ * `control_result` with `type: "retry_turn"`.
+ */
+export async function retryManagedAgentTurn(
+  pubkey: string,
+  channelId: string,
+  conversationId: string,
+  eventIds: readonly string[],
+): Promise<void> {
+  await sendAgentObserverControl(pubkey, {
+    type: "retry_turn",
+    channelId,
+    conversationId,
+    eventIds: [...eventIds],
+  });
+}
+
+/**
  * Send a live model-switch control frame to a running agent. The switch rides
  * the harness's cancel-switch-requeue path (busy turn) or invalidate-and-reapply
  * (idle); the outcome arrives asynchronously as a `control_result` observer

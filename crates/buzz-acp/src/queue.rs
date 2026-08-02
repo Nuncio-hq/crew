@@ -27,7 +27,7 @@ const MAX_PENDING_PER_CHANNEL: usize = 500;
 const MAX_BATCH_EVENTS: usize = 50;
 
 /// Maximum retry attempts before a batch is dead-lettered.
-pub(crate) const MAX_RETRIES: u32 = 10;
+pub const MAX_RETRIES: u32 = 10;
 
 /// Base retry delay in seconds (doubled each attempt).
 const BASE_RETRY_DELAY_SECS: u64 = 5;
@@ -693,6 +693,32 @@ impl EventQueue {
     #[cfg(test)]
     pub fn set_retry_count_for_test(&mut self, channel_id: Uuid, count: u32) {
         self.retry_counts.insert(channel_id, count);
+    }
+
+    /// Current automatic-retry attempt count for a conversation, if any.
+    pub fn retry_count(&self, channel_id: Uuid) -> u32 {
+        self.retry_counts.get(&channel_id).copied().unwrap_or(0)
+    }
+
+    /// Clear only the backoff throttle so a manual Retry can dispatch immediately.
+    ///
+    /// Does not touch `retry_counts` — exhaustion and auth paths already clear
+    /// that map; a mid-backoff manual retry should not invent a second reset.
+    pub fn clear_retry_after(&mut self, channel_id: Uuid) {
+        self.retry_after.remove(&channel_id);
+    }
+
+    /// Test-only: install a future `retry_after` deadline without going through
+    /// `requeue`, so callers can assert `clear_retry_after` behaviour.
+    #[cfg(test)]
+    pub fn set_retry_after_for_test(&mut self, channel_id: Uuid, deadline: Instant) {
+        self.retry_after.insert(channel_id, deadline);
+    }
+
+    /// Test-only: whether a conversation currently has a backoff throttle.
+    #[cfg(test)]
+    pub fn has_retry_after_for_test(&self, channel_id: Uuid) -> bool {
+        self.retry_after.contains_key(&channel_id)
     }
 
     /// Drop all queued (non-in-flight) events for a channel.
