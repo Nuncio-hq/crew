@@ -144,8 +144,11 @@ half explicitly:
 - Harness: own pubkey present in the removed set → `remove_event` (full undo).
   Otherwise → `patch_event`.
 
-Relay impact: none expected. Kind 40003 skips the generic membership gate and
+Relay impact: none. Kind 40003 skips the generic membership gate and
 `validate_edit_ownership` is the authority (`ingest.rs:1866-1878`); that
 validator requires only the `e` tag, same author, and same channel
-(`ingest.rs:782-822`). Searched the 40003 ingest path in `ingest.rs` only —
-confirm with a live publish before relying on it.
+(`ingest.rs:782-822`). There is no generic tag allowlist, tag-stripping, or
+global tag-count limit anywhere in `crates/buzz-relay/src/` or
+`crates/buzz-core/src/` — the only per-kind tag limits found
+(`command_executor.rs:328`, `report.rs:126-140`, `product_feedback.rs:63`) apply
+to other kinds. So `p-removed` rides through ingest and fan-out intact.
