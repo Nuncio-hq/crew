@@ -30,6 +30,26 @@ export function projectThreadRootAudiencePubkeys(
     .map((mention) => mention.pubkey);
 }
 
+/**
+ * Whether the sticky project-thread status bar owns the agent activity signal,
+ * so the composer must drop its duplicate.
+ *
+ * This has to track the bar's *actual* visibility. The bar renders only when it
+ * has both a project context and at least one agent step, and steps are derived
+ * solely from these mentions — so a project thread with no resolved mentions
+ * shows no bar. Keying suppression on the context alone would hide the composer
+ * line in exactly those cases, leaving a working agent with no indicator
+ * anywhere. When the two disagree, prefer one extra indicator over none.
+ */
+export function projectThreadStickyBarOwnsAgentSignal(
+  threadHeadBody: string | null | undefined,
+  agentMentionCount: number,
+): boolean {
+  return (
+    parseProjectThreadContext(threadHeadBody) != null && agentMentionCount > 0
+  );
+}
+
 export function parseProjectThreadContext(
   content: string | null | undefined,
 ): ProjectThreadContext | null {
