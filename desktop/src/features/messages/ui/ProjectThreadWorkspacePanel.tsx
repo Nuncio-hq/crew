@@ -3,7 +3,6 @@ import * as React from "react";
 
 import {
   getActiveTurnActivityBounds,
-  getActiveTurnControlTargetsForAgent,
   subscribeActiveAgentTurns,
 } from "@/features/agents/activeAgentTurnsStore";
 import {
@@ -11,12 +10,13 @@ import {
   AGENT_ACTIVITY_CHROME,
 } from "@/features/agents/ui/agentActivityChrome";
 import { formatElapsed } from "@/features/agents/ui/agentSessionUtils";
+import { useComposerAgentStop } from "@/features/channels/ui/useComposerAgentStop";
 import type { ProjectThreadAgentMention } from "@/features/messages/lib/projectThreadWorkspace";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
-import { cancelManagedAgentTurn } from "@/shared/api/agentControl";
 import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
 import { cn } from "@/shared/lib/cn";
+import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { ProjectThreadIntegrationCell } from "./ProjectThreadIntegrationCell";
 import {
   ProjectThreadIntegrationDrawer,
@@ -28,6 +28,7 @@ import { useProjectThreadWorkspaceModel } from "./useProjectThreadWorkspaceModel
 
 type Props = {
   agentMentions: readonly ProjectThreadAgentMention[];
+  channelId: string | null;
   /** When true, the bar may expand to the full Task/Workspace/Handoff grid. */
   isFocusMode?: boolean;
   profiles?: UserProfileLookup;
@@ -80,6 +81,7 @@ function ChipButton({
  */
 export function ProjectThreadWorkspacePanel({
   agentMentions,
+  channelId,
   isFocusMode = false,
   profiles,
   replies,
@@ -116,8 +118,45 @@ export function ProjectThreadWorkspacePanel({
 
   const workingPubkeys = model?.workingPubkeys ?? [];
   const conversationId = model?.conversationId ?? null;
+  const { hasStoppableWork, stopAgent } = useComposerAgentStop({
+    channelId,
+    conversationId,
+  });
+  const stoppableCrew = React.useMemo(() => {
+    const seen = new Set<string>();
+    const crew: Array<{ name: string; pubkey: string }> = [];
+    for (const pubkey of workingPubkeys) {
+      const key = normalizePubkey(pubkey);
+      if (seen.has(key) || !hasStoppableWork(pubkey)) continue;
+      seen.add(key);
+      const profile = profiles?.[key];
+      crew.push({
+        pubkey,
+        name:
+          profile?.displayName ??
+          profile?.name ??
+          truncatePubkey(pubkey),
+      });
+    }
+    for (const step of model?.steps ?? []) {
+      if (step.status !== "working" && step.status !== "queued") continue;
+      const key = normalizePubkey(step.pubkey);
+      if (seen.has(key) || !hasStoppableWork(step.pubkey)) continue;
+      seen.add(key);
+      const profile = profiles?.[key];
+      crew.push({
+        pubkey: step.pubkey,
+        name:
+          profile?.displayName ??
+          profile?.name ??
+          truncatePubkey(step.pubkey),
+      });
+    }
+    return crew;
+  }, [hasStoppableWork, model?.steps, profiles, workingPubkeys]);
   const activityBounds = useActiveTurnActivityBounds(
     workingPubkeys,
+    channelId,
     conversationId,
   );
 
@@ -187,22 +226,13 @@ export function ProjectThreadWorkspacePanel({
   const handleStop = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    if (stopping || !conversationId || workingPubkeys.length === 0) return;
+    if (stopping || stoppableCrew.length === 0) return;
     setStopping(true);
     try {
+      // Same cancel path as the composer activity rail (#24): in-flight turns
+      // and queued/held requests, with toast feedback per agent.
       await Promise.all(
-        workingPubkeys.flatMap((pubkey) =>
-          getActiveTurnControlTargetsForAgent(pubkey)
-            .filter((target) => target.conversationId === conversationId)
-            .map((target) =>
-              cancelManagedAgentTurn(
-                pubkey,
-                target.channelId,
-                target.conversationId,
-                target.turnId,
-              ),
-            ),
-        ),
+        stoppableCrew.map((agent) => stopAgent(agent.pubkey, agent.name)),
       );
     } finally {
       setStopping(false);
@@ -274,7 +304,7 @@ export function ProjectThreadWorkspacePanel({
           ) : null}
         </div>
 
-        {counts.working > 0 ? (
+        {stoppableCrew.length > 0 ? (
           <button
             className={cn(
               "shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
@@ -385,11 +415,13 @@ export function ProjectThreadWorkspacePanel({
 
 function useActiveTurnActivityBounds(
   agentPubkeys: readonly string[],
+  channelId: string | null,
   conversationId: string | null,
 ) {
   const agentKey = agentPubkeys.map((pubkey) => pubkey.toLowerCase()).join(",");
   const cacheRef = React.useRef<{
     agentKey: string;
+    channelId: string | null;
     conversationId: string | null;
     value: { anchorAt: number; lastActivityAt: number } | null;
   } | null>(null);
@@ -397,12 +429,14 @@ function useActiveTurnActivityBounds(
   const getSnapshot = React.useCallback(() => {
     const next = getActiveTurnActivityBounds({
       agentPubkeys,
+      channelId,
       conversationId,
     });
     const prev = cacheRef.current;
     if (
       prev &&
       prev.agentKey === agentKey &&
+      prev.channelId === channelId &&
       prev.conversationId === conversationId &&
       ((prev.value === null && next === null) ||
         (prev.value != null &&
@@ -414,11 +448,12 @@ function useActiveTurnActivityBounds(
     }
     cacheRef.current = {
       agentKey,
+      channelId,
       conversationId,
       value: next,
     };
     return next;
-  }, [agentKey, agentPubkeys, conversationId]);
+  }, [agentKey, agentPubkeys, channelId, conversationId]);
 
   return React.useSyncExternalStore(subscribeActiveAgentTurns, getSnapshot);
 }

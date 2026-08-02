@@ -26,6 +26,10 @@ use crate::filter::SubscriptionRule;
 /// Override via `--idle-timeout` / `BUZZ_ACP_IDLE_TIMEOUT`.
 pub(crate) const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 900;
 
+/// Default idle dispatch hold (ms). Human-authored events wait this long in
+/// the queue before flush when the channel is free. Zero disables.
+pub(crate) const DEFAULT_DISPATCH_HOLD_MS: u64 = 2000;
+
 /// Default absolute wall-clock cap per agent turn (2 hours).
 /// Override via `--max-turn-duration` / `BUZZ_ACP_MAX_TURN_DURATION`.
 pub(crate) const DEFAULT_MAX_TURN_DURATION_SECS: u64 = 7200;
@@ -270,6 +274,13 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_MAX_TURN_DURATION", default_value_t = DEFAULT_MAX_TURN_DURATION_SECS)]
     pub max_turn_duration: u64,
 
+    /// Milliseconds a human-authored event must sit in the queue before flush
+    /// when the channel is idle. Zero disables (legacy behaviour). Agent-authored
+    /// traffic is never held. Busy channels already wait on the in-flight turn,
+    /// so the hold only adds latency in the idle case.
+    #[arg(long, env = "BUZZ_ACP_DISPATCH_HOLD_MS", default_value_t = DEFAULT_DISPATCH_HOLD_MS)]
+    pub dispatch_hold_ms: u64,
+
     /// Deprecated: alias for --idle-timeout. If both set, --idle-timeout wins.
     #[arg(long, env = "BUZZ_ACP_TURN_TIMEOUT", hide = true)]
     pub turn_timeout: Option<u64>,
@@ -501,6 +512,8 @@ pub struct Config {
     pub mcp_command: String,
     pub idle_timeout_secs: u64,
     pub max_turn_duration_secs: u64,
+    /// Idle dispatch hold in milliseconds. Zero disables.
+    pub dispatch_hold_ms: u64,
     pub agents: u32,
     pub heartbeat_interval_secs: u64,
     /// Seconds between per-turn liveness pings. 0 = disabled. Distinct from
@@ -1067,6 +1080,7 @@ impl Config {
             mcp_command: args.mcp_command,
             idle_timeout_secs,
             max_turn_duration_secs,
+            dispatch_hold_ms: args.dispatch_hold_ms,
             agents: args.agents,
             heartbeat_interval_secs: heartbeat_interval,
             turn_liveness_secs,
@@ -1130,7 +1144,7 @@ impl Config {
             format!(" allowed_respond_to=[{}]", modes.join(","))
         };
         format!(
-            "relay={} pubkey={} agent_cmd={} {} mcp_cmd={} idle_timeout={}s max_turn={}s agents={} heartbeat={}s subscribe={:?} dedup={:?} meh={:?} ignore_self={} context_limit={} max_turns_per_session={} presence={} typing={} memory={} model={} permission_mode={} {}{}",
+            "relay={} pubkey={} agent_cmd={} {} mcp_cmd={} idle_timeout={}s max_turn={}s dispatch_hold={}ms agents={} heartbeat={}s subscribe={:?} dedup={:?} meh={:?} ignore_self={} context_limit={} max_turns_per_session={} presence={} typing={} memory={} model={} permission_mode={} {}{}",
             self.relay_url,
             self.keys.public_key().to_hex(),
             self.agent_command,
@@ -1138,6 +1152,7 @@ impl Config {
             self.mcp_command,
             self.idle_timeout_secs,
             self.max_turn_duration_secs,
+            self.dispatch_hold_ms,
             self.agents,
             self.heartbeat_interval_secs,
             self.subscribe_mode,
@@ -1450,6 +1465,7 @@ mod tests {
             mcp_command: "".into(),
             idle_timeout_secs: DEFAULT_IDLE_TIMEOUT_SECS,
             max_turn_duration_secs: DEFAULT_MAX_TURN_DURATION_SECS,
+            dispatch_hold_ms: DEFAULT_DISPATCH_HOLD_MS,
             agents: 1,
             heartbeat_interval_secs: 0,
             turn_liveness_secs: 10,
@@ -2408,6 +2424,10 @@ channels = "ALL"
         assert!(
             summary.contains(&format!("max_turn={DEFAULT_MAX_TURN_DURATION_SECS}s")),
             "summary should include max_turn: {summary}"
+        );
+        assert!(
+            summary.contains(&format!("dispatch_hold={DEFAULT_DISPATCH_HOLD_MS}ms")),
+            "summary should include dispatch_hold: {summary}"
         );
     }
 

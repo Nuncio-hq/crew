@@ -208,20 +208,34 @@ export const MessageRow = React.memo(
       (message.pubkey && isKnownAgentPubkey(message.pubkey))
         ? "bot"
         : message.role;
-    const agentMentionPubkeysByName = React.useMemo(() => {
-      if (!mentionPubkeysByName) {
-        return undefined;
-      }
-
-      const values: Record<string, string> = {};
-      for (const [name, pubkey] of Object.entries(mentionPubkeysByName)) {
-        if (isKnownAgentPubkey(pubkey)) {
-          values[name] = pubkey;
+    const { agentMentionPubkeysByName, agentMentionAvatarsByName } =
+      React.useMemo(() => {
+        if (!mentionPubkeysByName) {
+          return {
+            agentMentionPubkeysByName: undefined,
+            agentMentionAvatarsByName: undefined,
+          };
         }
-      }
 
-      return Object.keys(values).length > 0 ? values : undefined;
-    }, [isKnownAgentPubkey, mentionPubkeysByName]);
+        const values: Record<string, string> = {};
+        const avatars: Record<string, string> = {};
+        for (const [name, pubkey] of Object.entries(mentionPubkeysByName)) {
+          if (isKnownAgentPubkey(pubkey)) {
+            values[name] = pubkey;
+            const avatarUrl = profiles?.[normalizePubkey(pubkey)]?.avatarUrl;
+            if (avatarUrl) {
+              avatars[name] = avatarUrl;
+            }
+          }
+        }
+
+        return {
+          agentMentionPubkeysByName:
+            Object.keys(values).length > 0 ? values : undefined,
+          agentMentionAvatarsByName:
+            Object.keys(avatars).length > 0 ? avatars : undefined,
+        };
+      }, [isKnownAgentPubkey, mentionPubkeysByName, profiles]);
     const mentionsAgent = agentMentionPubkeysByName !== undefined;
     const editAsUndoState = useEditAsUndoUiState({
       mentionsAgent,
@@ -379,6 +393,7 @@ export const MessageRow = React.memo(
               customEmoji={customEmoji}
               imetaByUrl={imetaByUrl}
               agentMentionPubkeysByName={agentMentionPubkeysByName}
+              agentMentionAvatarsByName={agentMentionAvatarsByName}
               mentionNames={mentionNames}
               mentionPubkeysByName={mentionPubkeysByName}
               searchQuery={searchQuery}

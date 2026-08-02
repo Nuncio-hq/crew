@@ -228,7 +228,6 @@ function MessageComposerImpl({
       scrollElement.scrollTop = scrollElement.scrollHeight;
     });
   }, []);
-
   const computedPlaceholder = editTarget
     ? "Edit your message"
     : (placeholder ??
@@ -241,6 +240,7 @@ function MessageComposerImpl({
     editable: !disabled,
     mentionNames: mentions.knownNames,
     agentMentionNames: mentions.agentKnownNames,
+    agentAvatarUrlsByName: mentions.agentAvatarUrlsByName,
     channelNames: channelLinks.knownChannelNames,
     customEmoji,
     onSubmit: () => submitMessageRef.current(),

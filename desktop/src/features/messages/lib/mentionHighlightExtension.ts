@@ -2,7 +2,16 @@ import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey, type Transaction } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
+import { agentMentionAvatarDecoration } from "@/shared/ui/agentMentionAvatar";
+
 export const mentionHighlightKey = new PluginKey("mentionHighlight");
+
+type MentionHighlightStorage = {
+  names: string[];
+  agentNames: string[];
+  agentAvatarsByName: Record<string, string>;
+  channelNames: string[];
+};
 
 /**
  * TipTap extension that applies inline `mention-chip` decorations
@@ -18,8 +27,9 @@ export const MentionHighlightExtension = Extension.create({
     return {
       names: [] as string[],
       agentNames: [] as string[],
+      agentAvatarsByName: {} as Record<string, string>,
       channelNames: [] as string[],
-    };
+    } satisfies MentionHighlightStorage;
   },
 
   addProseMirrorPlugins() {
@@ -35,6 +45,7 @@ export const MentionHighlightExtension = Extension.create({
               extension.storage.names,
               extension.storage.agentNames,
               extension.storage.channelNames,
+              extension.storage.agentAvatarsByName,
             );
           },
           apply(tr, oldDecorations) {
@@ -45,6 +56,7 @@ export const MentionHighlightExtension = Extension.create({
                 extension.storage.names,
                 extension.storage.agentNames,
                 extension.storage.channelNames,
+                extension.storage.agentAvatarsByName,
               );
             }
 
@@ -63,6 +75,7 @@ export const MentionHighlightExtension = Extension.create({
                 extension.storage.names,
                 extension.storage.agentNames,
                 extension.storage.channelNames,
+                extension.storage.agentAvatarsByName,
               );
             }
 
@@ -74,6 +87,7 @@ export const MentionHighlightExtension = Extension.create({
                 extension.storage.names,
                 extension.storage.agentNames,
                 extension.storage.channelNames,
+                extension.storage.agentAvatarsByName,
               );
             }
 
@@ -240,6 +254,7 @@ function buildDecorations(
   names: string[],
   agentNames: string[],
   channelNames: string[],
+  agentAvatarsByName: Record<string, string> = {},
 ): DecorationSet {
   if (
     names.length === 0 &&
@@ -275,7 +290,11 @@ function buildDecorations(
       pos,
       agentMentionPatterns,
       "mention-chip agent-mention-highlight",
-      { hideMentionPrefix: true },
+      {
+        hideMentionPrefix: true,
+        resolveAttrs: (matchedText) =>
+          resolveAgentMentionAvatarAttrs(matchedText, agentAvatarsByName),
+      },
     );
     addMatchesForPatterns(
       decorations,
@@ -289,13 +308,41 @@ function buildDecorations(
   return DecorationSet.create(doc, decorations);
 }
 
+/**
+ * Resolve per-match avatar decoration attrs for an agent `@Name` match.
+ * Exported for unit tests.
+ */
+export function resolveAgentMentionAvatarAttrs(
+  matchedText: string,
+  agentAvatarsByName: Record<string, string>,
+): { classSuffix?: string; style?: string } {
+  const name = matchedText.replace(/^@/, "").trim().toLowerCase();
+  if (!name) {
+    return {};
+  }
+  const decoration = agentMentionAvatarDecoration(agentAvatarsByName[name]);
+  if (!decoration) {
+    return {};
+  }
+  return {
+    classSuffix: ` ${decoration.className}`,
+    style: decoration.style,
+  };
+}
+
 function addMatchesForPatterns(
   decorations: Decoration[],
   text: string,
   position: number,
   patterns: RegExp[],
   className: string,
-  options?: { hideMentionPrefix?: boolean },
+  options?: {
+    hideMentionPrefix?: boolean;
+    resolveAttrs?: (matchedText: string) => {
+      classSuffix?: string;
+      style?: string;
+    };
+  },
 ) {
   for (const pattern of patterns) {
     pattern.lastIndex = 0;
@@ -303,6 +350,15 @@ function addMatchesForPatterns(
     while (match !== null) {
       const from = position + match.index;
       const to = from + match[0].length;
+      const attrs = options?.resolveAttrs?.(match[0]) ?? {};
+      const resolvedClass = `${className}${attrs.classSuffix ?? ""}`;
+      const chipAttrs: { class: string; spellcheck: string; style?: string } = {
+        class: resolvedClass,
+        spellcheck: "false",
+      };
+      if (attrs.style) {
+        chipAttrs.style = attrs.style;
+      }
       if (options?.hideMentionPrefix && match[0].startsWith("@")) {
         decorations.push(
           Decoration.inline(from, from + 1, {
@@ -310,19 +366,9 @@ function addMatchesForPatterns(
             spellcheck: "false",
           }),
         );
-        decorations.push(
-          Decoration.inline(from + 1, to, {
-            class: className,
-            spellcheck: "false",
-          }),
-        );
+        decorations.push(Decoration.inline(from + 1, to, chipAttrs));
       } else {
-        decorations.push(
-          Decoration.inline(from, to, {
-            class: className,
-            spellcheck: "false",
-          }),
-        );
+        decorations.push(Decoration.inline(from, to, chipAttrs));
       }
       match = pattern.exec(text);
     }

@@ -954,6 +954,7 @@ export function MessageThreadPanel({
           cannot fight useAnchoredScroll's ResizeObserver. */}
       <ProjectThreadWorkspacePanel
         agentMentions={projectThreadAgentMentions}
+        channelId={channelId}
         isFocusMode={isFocusMode}
         profiles={profiles}
         replies={threadMessages}

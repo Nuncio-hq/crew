@@ -42,11 +42,26 @@ describe("project thread sticky status bar", () => {
     );
     assert.match(hook, /parseProjectThreadContext/);
     assert.match(hook, /ownedByStickyBar/);
+    assert.match(hook, /mergeWorkingAgentPubkeys/);
     const pane = readFileSync(
       join(here, "../../channels/ui/ChannelPane.tsx"),
       "utf8",
     );
     assert.match(pane, /threadHeadMessage\?\.body/);
     assert.match(pane, /threadHeadBody=\{threadHeadMessage\.body\}/);
+  });
+
+  it("routes sticky-bar Stop through the shared composer cancel path", () => {
+    const panel = readFileSync(
+      join(here, "ProjectThreadWorkspacePanel.tsx"),
+      "utf8",
+    );
+    const threadPanel = readFileSync(
+      join(here, "MessageThreadPanel.tsx"),
+      "utf8",
+    );
+    assert.match(panel, /useComposerAgentStop/);
+    assert.match(threadPanel, /channelId=\{channelId\}/);
+    assert.equal(panel.includes("cancelManagedAgentTurn"), false);
   });
 });

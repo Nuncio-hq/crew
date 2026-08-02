@@ -26,7 +26,9 @@ import {
   processTranscriptEvent,
 } from "./ui/agentSessionTranscript";
 import {
+  clearPendingAgentRequestsForConversation,
   ingestObserverFrameForEditAsUndo,
+  prunePendingAgentRequests,
   resetDispatchedEventIdsStore,
 } from "./dispatchedEventIds";
 import {
@@ -288,6 +290,9 @@ function appendAgentEvent(agentPubkey: string, event: ObserverEvent) {
   }
 
   ingestObserverFrameForEditAsUndo(event);
+  if (event.kind === "turn_started") {
+    prunePendingAgentRequests(collectTriggeringEventIds());
+  }
   invalidateSnapshot(key);
 
   notifyListeners();
@@ -585,6 +590,14 @@ function isControlResultFrame(payload: unknown): payload is ControlResultFrame {
 function dispatchControlResult(agentPubkey: string, payload: unknown) {
   if (!isControlResultFrame(payload)) {
     return;
+  }
+  if (
+    payload.type === "cancel_turn" &&
+    payload.status === "cancelled_queued" &&
+    typeof payload.conversationId === "string" &&
+    payload.conversationId.length > 0
+  ) {
+    clearPendingAgentRequestsForConversation(payload.conversationId);
   }
   const subscribers = controlResultListeners.get(normalizePubkey(agentPubkey));
   if (!subscribers) {

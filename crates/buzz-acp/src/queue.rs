@@ -53,6 +53,9 @@ pub struct QueuedEvent {
     /// was dispatched. The signed `event` is never mutated: its signature must
     /// stay verifiable, and the relay is the authority on edit ownership.
     pub edited_content: Option<String>,
+    /// When true, skip the idle dispatch hold (agent-authored traffic, or an
+    /// event that already waited / was requeued after a turn).
+    pub hold_exempt: bool,
 }
 
 /// A single event inside a [`FlushBatch`].
@@ -189,6 +192,9 @@ pub struct EventQueue {
     /// Must be strictly greater than `max_turn_duration` so a turn running to
     /// the hard cap returns via `mark_complete` before the backstop fires.
     in_flight_deadline: Duration,
+    /// Minimum time a non-exempt event must sit in the queue before flush.
+    /// Zero disables the hold (test default and `--dispatch-hold-ms 0`).
+    dispatch_hold: Duration,
 }
 
 impl EventQueue {
@@ -210,6 +216,7 @@ impl EventQueue {
             cancel_reasons: HashMap::new(),
             withheld_native_steer: HashMap::new(),
             in_flight_deadline: Duration::from_secs(DEFAULT_IN_FLIGHT_DEADLINE_SECS),
+            dispatch_hold: Duration::ZERO,
         }
     }
 
@@ -219,6 +226,48 @@ impl EventQueue {
         self.in_flight_deadline =
             Duration::from_secs(max_turn_duration_secs + IN_FLIGHT_DEADLINE_BUFFER_SECS);
         self
+    }
+
+    /// Set the idle dispatch hold. Human-authored events younger than this
+    /// are skipped by [`flush_next`] / [`has_flushable_work`]. Zero disables.
+    pub fn with_dispatch_hold(mut self, hold: Duration) -> Self {
+        self.dispatch_hold = hold;
+        self
+    }
+
+    /// Whether the head of `q` is past the idle dispatch hold (or exempt).
+    fn head_past_dispatch_hold(head: &QueuedEvent, hold: Duration, now: Instant) -> bool {
+        head.hold_exempt || hold.is_zero() || head.received_at + hold <= now
+    }
+
+    /// Earliest instant at which a currently held head becomes flushable.
+    ///
+    /// `None` when the hold is disabled or every eligible channel is already
+    /// past the hold. Used by the main loop to sleep until the hold expires
+    /// without polling (and without treating held work as flushable, which
+    /// would busy-spin).
+    pub fn next_hold_ready_at(&self) -> Option<Instant> {
+        if self.dispatch_hold.is_zero() {
+            return None;
+        }
+        let now = Instant::now();
+        let hold = self.dispatch_hold;
+        self.queues
+            .iter()
+            .filter(|(id, q)| {
+                !q.is_empty()
+                    && !self.in_flight_channels.contains(id)
+                    && self.retry_after.get(id).is_none_or(|&t| t <= now)
+            })
+            .filter_map(|(_, q)| {
+                let head = q.front()?;
+                if Self::head_past_dispatch_hold(head, hold, now) {
+                    None
+                } else {
+                    Some(head.received_at + hold)
+                }
+            })
+            .min()
     }
 
     /// Monotonically extend an existing in-flight deadline for `channel_id`.
@@ -308,7 +357,10 @@ impl EventQueue {
         }
 
         // Find the channel whose head event has the oldest received_at,
-        // excluding in-flight channels and throttled channels.
+        // excluding in-flight channels, throttled channels, and heads still
+        // inside the idle dispatch hold. Busy channels are already blocked by
+        // the in-flight check, so the hold only costs latency when idle.
+        let hold = self.dispatch_hold;
         let channel_id = self
             .queues
             .iter()
@@ -316,6 +368,8 @@ impl EventQueue {
                 !q.is_empty()
                     && !self.in_flight_channels.contains(id)
                     && self.retry_after.get(id).is_none_or(|&t| t <= now)
+                    && q.front()
+                        .is_none_or(|qe| Self::head_past_dispatch_hold(qe, hold, now))
             })
             .min_by_key(|(_, q)| q.front().unwrap().received_at)
             .map(|(id, _)| *id);
@@ -503,6 +557,8 @@ impl EventQueue {
                 prompt_tag: be.prompt_tag,
                 received_at: be.received_at, // preserve original timestamp (#46)
                 edited_content: be.edited_content,
+                // Already waited (and possibly ran); never re-apply the hold.
+                hold_exempt: true,
             });
         }
         // Enforce per-channel cap: trim oldest (back) events if requeue pushed
@@ -539,6 +595,7 @@ impl EventQueue {
                 prompt_tag: be.prompt_tag,
                 received_at: be.received_at,
                 edited_content: be.edited_content,
+                hold_exempt: true,
             });
         }
         // Enforce per-channel cap: trim newest (back) events if over limit.
@@ -604,10 +661,13 @@ impl EventQueue {
             self.recover_withheld_for_expired_channel(id);
         }
 
+        let hold = self.dispatch_hold;
         self.queues.iter().any(|(id, q)| {
             !q.is_empty()
                 && !self.in_flight_channels.contains(id)
                 && self.retry_after.get(id).is_none_or(|&t| t <= now)
+                && q.front()
+                    .is_none_or(|qe| Self::head_past_dispatch_hold(qe, hold, now))
         }) || self
             .cancelled_batches
             .keys()
@@ -1813,6 +1873,7 @@ mod tests {
             received_at: Instant::now(),
             prompt_tag: "test".into(),
             edited_content: None,
+            hold_exempt: false,
         }
     }
 
@@ -1824,6 +1885,7 @@ mod tests {
             received_at: Instant::now() - age,
             prompt_tag: "test".into(),
             edited_content: None,
+            hold_exempt: false,
         }
     }
 
@@ -1845,6 +1907,7 @@ mod tests {
             received_at: Instant::now(),
             prompt_tag: "test".into(),
             edited_content: None,
+            hold_exempt: false,
         }
     }
 
@@ -2869,6 +2932,7 @@ mod tests {
             received_at: old_time,
             prompt_tag: "test".into(),
             edited_content: None,
+            hold_exempt: false,
         });
 
         let batch = q.flush_next().expect("flush");
@@ -5039,5 +5103,107 @@ mod tests {
             after_second >= after_first,
             "second extend must not move deadline backward (monotonic)"
         );
+    }
+
+    // ── Idle dispatch hold ───────────────────────────────────────────────────
+
+    #[test]
+    fn held_event_skips_flush_until_hold_elapses() {
+        let hold = Duration::from_secs(2);
+        let mut q = EventQueue::new(DedupMode::Queue).with_dispatch_hold(hold);
+        let ch = Uuid::new_v4();
+
+        q.push(make_queued(ch, "fresh"));
+        assert!(
+            q.flush_next().is_none(),
+            "fresh event must stay held for the dispatch hold"
+        );
+
+        q.push(make_queued_at(ch, "aged", hold + Duration::from_millis(50)));
+        // Head is still the fresh event (pushed first), so still held.
+        // Drain and push only the aged one.
+        let _ = q.drain_channel(ch);
+        q.push(make_queued_at(ch, "aged", hold + Duration::from_millis(50)));
+        let batch = q
+            .flush_next()
+            .expect("event older than the hold must flush");
+        assert_eq!(batch.events[0].event.content, "aged");
+    }
+
+    #[test]
+    fn held_event_agrees_between_has_flushable_work_and_flush_next() {
+        let hold = Duration::from_secs(2);
+        let mut q = EventQueue::new(DedupMode::Queue).with_dispatch_hold(hold);
+        let ch = Uuid::new_v4();
+
+        q.push(make_queued(ch, "fresh"));
+        assert!(
+            !q.has_flushable_work(),
+            "held work must not report as flushable (avoids spin)"
+        );
+        assert!(
+            q.flush_next().is_none(),
+            "held work must not flush while has_flushable_work is false"
+        );
+        assert!(
+            q.next_hold_ready_at().is_some(),
+            "held head must expose a wake deadline"
+        );
+    }
+
+    #[test]
+    fn zero_hold_matches_legacy_immediate_flush() {
+        let mut q = EventQueue::new(DedupMode::Queue).with_dispatch_hold(Duration::ZERO);
+        let ch = Uuid::new_v4();
+        q.push(make_queued(ch, "fresh"));
+        assert!(q.has_flushable_work());
+        assert!(q.flush_next().is_some());
+        assert!(q.next_hold_ready_at().is_none());
+    }
+
+    #[test]
+    fn hold_exempt_event_flushes_immediately() {
+        let hold = Duration::from_secs(2);
+        let mut q = EventQueue::new(DedupMode::Queue).with_dispatch_hold(hold);
+        let ch = Uuid::new_v4();
+        let mut event = make_queued(ch, "from-agent");
+        event.hold_exempt = true;
+        q.push(event);
+        assert!(q.has_flushable_work());
+        assert!(q.flush_next().is_some());
+    }
+
+    #[test]
+    fn hold_adds_no_latency_after_busy_turn() {
+        let hold = Duration::from_secs(2);
+        let mut q = EventQueue::new(DedupMode::Queue).with_dispatch_hold(hold);
+        let ch = Uuid::new_v4();
+
+        // Start a turn with an already-aged event.
+        q.push(make_queued_at(
+            ch,
+            "first",
+            hold + Duration::from_millis(50),
+        ));
+        let first = q.flush_next().expect("first turn");
+        assert_eq!(first.events[0].event.content, "first");
+
+        // Queue a follow-up while busy. Age it to the hold so that when the
+        // turn completes the hold has already elapsed — no extra wait.
+        q.push(make_queued_at(
+            ch,
+            "second",
+            hold + Duration::from_millis(50),
+        ));
+        assert!(
+            q.flush_next().is_none(),
+            "busy channel must not flush the follow-up"
+        );
+
+        q.mark_complete(ch);
+        let second = q
+            .flush_next()
+            .expect("follow-up past hold must flush as soon as the channel frees");
+        assert_eq!(second.events[0].event.content, "second");
     }
 }
