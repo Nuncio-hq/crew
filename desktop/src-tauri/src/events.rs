@@ -971,8 +971,7 @@ mod tests {
             EventId::from_hex("d24da132115ca0a46233cf4c2ad8338fbf914250cbcaa9181a6dd59533cb5ac1")
                 .unwrap();
         let builder =
-            build_message_edit(channel, target, "hi @alice", &[], &[], mentions, removed)
-                .unwrap();
+            build_message_edit(channel, target, "hi @alice", &[], &[], mentions, removed).unwrap();
         let secret = nostr::SecretKey::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000003",
         )
@@ -1045,7 +1044,11 @@ mod tests {
             .iter()
             .filter(|t| t.first().map(String::as_str) == Some("p-removed"))
             .collect();
-        assert_eq!(removed.len(), 2, "duplicate removed must collapse, got {removed:?}");
+        assert_eq!(
+            removed.len(),
+            2,
+            "duplicate removed must collapse, got {removed:?}"
+        );
         assert_eq!(
             removed[0],
             &vec!["p-removed".to_string(), ALICE_HEX.to_string()]
