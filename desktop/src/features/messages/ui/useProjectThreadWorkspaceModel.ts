@@ -22,7 +22,7 @@ export type ProjectThreadWorkspaceModel = {
   conversationId: string | null;
   counts: { done: number; queued: number; working: number };
   pullRequest: ThreadPullRequest | null;
-  refreshGitHub: () => Promise<void> | void;
+  refreshGitHub: () => Promise<void>;
   steps: ProjectThreadAgentStep[];
   target: {
     branch: string;

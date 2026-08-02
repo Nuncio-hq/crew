@@ -538,8 +538,9 @@ export function MessageThreadPanel({
   // composer drops its duplicate. Typing still shows; only bot activity is
   // suppressed. The rule lives in projectThreadWorkspace so it stays testable
   // and cannot drift from the bar's own visibility condition.
+  // threadHead is only narrowed below; the helper accepts a nullish body.
   const stickyBarOwnsAgentSignal = projectThreadStickyBarOwnsAgentSignal(
-    threadHead.body,
+    threadHead?.body,
     projectThreadAgentMentions.length,
   );
   const showComposerBotActivity =
