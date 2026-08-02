@@ -26,6 +26,10 @@ import {
   processTranscriptEvent,
 } from "./ui/agentSessionTranscript";
 import {
+  ingestObserverFrameForEditAsUndo,
+  resetDispatchedEventIdsStore,
+} from "./dispatchedEventIds";
+import {
   ingestProjectThreadWorkspaceEvent,
   resetProjectThreadWorkspaceStore,
 } from "./projectThreadWorkspaceStore";
@@ -283,9 +287,29 @@ function appendAgentEvent(agentPubkey: string, event: ObserverEvent) {
     transcriptByAgent.set(key, buildTranscriptState(final));
   }
 
+  ingestObserverFrameForEditAsUndo(event);
   invalidateSnapshot(key);
 
   notifyListeners();
+}
+
+/**
+ * Flatten every `turn_started.triggeringEventIds` across agent transcripts.
+ * Used by the channel timeline to know which messages the agent has already
+ * read (edit-as-undo window closed).
+ */
+export function collectTriggeringEventIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const state of transcriptByAgent.values()) {
+    for (const turnIds of state.triggeringEventIdsByTurn.values()) {
+      for (const id of turnIds) {
+        if (/^[0-9a-fA-F]{64}$/.test(id)) {
+          ids.add(id.toLowerCase());
+        }
+      }
+    }
+  }
+  return ids;
 }
 
 /**
@@ -815,6 +839,7 @@ export function resetAgentObserverStore() {
   snapshotByAgent.clear();
   archiveEventsByChannel.clear();
   resetProjectThreadWorkspaceStore();
+  resetDispatchedEventIdsStore();
   knownAgentPubkeys.clear();
   knownAgentsBySubscription.clear();
   pendingUnknownAgentFrames.length = 0;

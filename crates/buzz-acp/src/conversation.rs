@@ -111,6 +111,7 @@ mod tests {
                 event,
                 received_at: Instant::now(),
                 prompt_tag: "mention".to_string(),
+                edited_content: None,
             }));
         }
 

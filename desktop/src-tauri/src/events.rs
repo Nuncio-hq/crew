@@ -76,6 +76,22 @@ fn mention_tags(mentions: &[&str]) -> Result<Vec<Tag>, String> {
     Ok(tags)
 }
 
+fn removed_mention_tags(mentions: &[&str]) -> Result<Vec<Tag>, String> {
+    if mentions.len() > MAX_MENTIONS {
+        return Err(format!("too many removed mentions (max {MAX_MENTIONS})"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut tags = Vec::new();
+    for &hex in mentions {
+        check_pubkey(hex)?;
+        let lower = hex.to_ascii_lowercase();
+        if seen.insert(lower.clone()) {
+            tags.push(tag(vec!["p-removed", &lower])?);
+        }
+    }
+    Ok(tags)
+}
+
 fn mention_reference_tags(mentions: &[Vec<String>], tags: &mut Vec<Tag>) -> Result<(), String> {
     for mention in mentions {
         if mention.first().map(String::as_str) != Some("mention") {
@@ -408,6 +424,10 @@ pub fn build_forum_comment(
 /// edit that leaves the mention set unchanged emits no `p` tags and never
 /// re-wakes anyone. This mirrors the send path's `mention_tags` (dedup +
 /// lowercase); the receiver overlays these onto the original event's audience.
+///
+/// `removed_mentions` is the complementary set — mentions the edit drops —
+/// emitted as `["p-removed", <hex>]` so the agent harness can undo a still-
+/// queued request without reading the body.
 pub fn build_message_edit(
     channel_id: Uuid,
     target_event_id: EventId,
@@ -415,6 +435,7 @@ pub fn build_message_edit(
     media_tags: &[Vec<String>],
     custom_emoji_tags: &[Vec<String>],
     mentions: &[&str],
+    removed_mentions: &[&str],
 ) -> Result<EventBuilder, String> {
     check_content(content)?;
     let mut tags = vec![
@@ -422,6 +443,7 @@ pub fn build_message_edit(
         tag(vec!["e", &target_event_id.to_hex()])?,
     ];
     tags.extend(mention_tags(mentions)?);
+    tags.extend(removed_mention_tags(removed_mentions)?);
     imeta_tags(media_tags, &mut tags)?;
     emoji_tags(custom_emoji_tags, &mut tags)?;
     Ok(EventBuilder::new(Kind::Custom(40003), content).tags(tags))
@@ -943,12 +965,14 @@ mod tests {
     const ALICE_HEX: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
     const BOB_HEX: &str = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 
-    fn edit_tags(mentions: &[&str]) -> Vec<Vec<String>> {
+    fn edit_tags(mentions: &[&str], removed: &[&str]) -> Vec<Vec<String>> {
         let channel = Uuid::parse_str(CH_ID).unwrap();
         let target =
             EventId::from_hex("d24da132115ca0a46233cf4c2ad8338fbf914250cbcaa9181a6dd59533cb5ac1")
                 .unwrap();
-        let builder = build_message_edit(channel, target, "hi @alice", &[], &[], mentions).unwrap();
+        let builder =
+            build_message_edit(channel, target, "hi @alice", &[], &[], mentions, removed)
+                .unwrap();
         let secret = nostr::SecretKey::from_hex(
             "0000000000000000000000000000000000000000000000000000000000000003",
         )
@@ -959,7 +983,7 @@ mod tests {
 
     #[test]
     fn edit_with_added_mention_emits_p_tag() {
-        let tags = edit_tags(&[ALICE_HEX]);
+        let tags = edit_tags(&[ALICE_HEX], &[]);
         assert_eq!(tags[0][0], "h");
         assert_eq!(tags[1][0], "e");
         // The `p` tag rides right after the `e` tag (insertion order).
@@ -970,7 +994,7 @@ mod tests {
     fn edit_with_no_added_mentions_emits_no_p_tag() {
         // Typo-fix edit: mention set unchanged, so the composer passes `&[]`.
         // The edit event must carry no `p` tag and re-wake nobody.
-        let tags = edit_tags(&[]);
+        let tags = edit_tags(&[], &[]);
         assert!(
             !tags
                 .iter()
@@ -982,7 +1006,7 @@ mod tests {
     #[test]
     fn edit_mentions_are_deduped_and_lowercased() {
         let alice_upper = ALICE_HEX.to_ascii_uppercase();
-        let tags = edit_tags(&[ALICE_HEX, &alice_upper, BOB_HEX]);
+        let tags = edit_tags(&[ALICE_HEX, &alice_upper, BOB_HEX], &[]);
         let p_tags: Vec<&Vec<String>> = tags
             .iter()
             .filter(|t| t.first().map(String::as_str) == Some("p"))
@@ -995,5 +1019,40 @@ mod tests {
         );
         assert_eq!(p_tags[0], &vec!["p".to_string(), ALICE_HEX.to_string()]);
         assert_eq!(p_tags[1], &vec!["p".to_string(), BOB_HEX.to_string()]);
+    }
+
+    #[test]
+    fn edit_with_removed_mention_emits_p_removed_tag() {
+        let tags = edit_tags(&[], &[ALICE_HEX]);
+        assert!(
+            tags.iter()
+                .any(|t| t.as_slice() == ["p-removed", ALICE_HEX]),
+            "removed mention must emit p-removed, got {tags:?}"
+        );
+        assert!(
+            !tags
+                .iter()
+                .any(|t| t.first().map(String::as_str) == Some("p")),
+            "removal-only edit must not emit `p` tags, got {tags:?}"
+        );
+    }
+
+    #[test]
+    fn edit_removed_mentions_are_deduped_and_lowercased() {
+        let alice_upper = ALICE_HEX.to_ascii_uppercase();
+        let tags = edit_tags(&[], &[ALICE_HEX, &alice_upper, BOB_HEX]);
+        let removed: Vec<&Vec<String>> = tags
+            .iter()
+            .filter(|t| t.first().map(String::as_str) == Some("p-removed"))
+            .collect();
+        assert_eq!(removed.len(), 2, "duplicate removed must collapse, got {removed:?}");
+        assert_eq!(
+            removed[0],
+            &vec!["p-removed".to_string(), ALICE_HEX.to_string()]
+        );
+        assert_eq!(
+            removed[1],
+            &vec!["p-removed".to_string(), BOB_HEX.to_string()]
+        );
     }
 }

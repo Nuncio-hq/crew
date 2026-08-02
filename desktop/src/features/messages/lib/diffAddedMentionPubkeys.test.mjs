@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { diffAddedMentionPubkeys } from "./threading.ts";
+import {
+  diffAddedMentionPubkeys,
+  diffRemovedMentionPubkeys,
+} from "./threading.ts";
 
 const ALICE = "a".repeat(64);
 const BOB = "b".repeat(64);
@@ -43,4 +46,38 @@ test("duplicate added mention collapses to one", () => {
 test("re-adding a removed mention counts as newly added", () => {
   // Original had no Bob (he was removed in a prior state); this edit adds him.
   assert.deepEqual(diffAddedMentionPubkeys([ALICE], [ALICE, BOB], SELF), [BOB]);
+});
+
+test("returns mentions the edit removes", () => {
+  assert.deepEqual(
+    diffRemovedMentionPubkeys([ALICE, BOB], [ALICE], SELF),
+    [BOB],
+  );
+});
+
+test("typo-fix edit with unchanged mentions removes nobody", () => {
+  assert.deepEqual(diffRemovedMentionPubkeys([ALICE], [ALICE], SELF), []);
+});
+
+test("removed-set is the complement of the added-set over the same inputs", () => {
+  const original = [ALICE];
+  const edited = [BOB];
+  const added = diffAddedMentionPubkeys(original, edited, SELF);
+  const removed = diffRemovedMentionPubkeys(original, edited, SELF);
+  assert.deepEqual(added, [BOB]);
+  assert.deepEqual(removed, [ALICE]);
+  // Self never appears in either set.
+  assert.ok(!added.includes(SELF));
+  assert.ok(!removed.includes(SELF));
+});
+
+test("self-pubkey never appears in the removed set", () => {
+  assert.deepEqual(diffRemovedMentionPubkeys([ALICE, SELF], [ALICE], SELF), []);
+});
+
+test("case-only difference is not treated as removed", () => {
+  assert.deepEqual(
+    diffRemovedMentionPubkeys([ALICE.toUpperCase()], [ALICE], SELF),
+    [],
+  );
 });

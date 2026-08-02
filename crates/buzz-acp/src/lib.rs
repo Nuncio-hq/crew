@@ -27,7 +27,8 @@ use acp::{AcpClient, EnvVar, McpServer};
 use anyhow::Result;
 use buzz_core::kind::{
     KIND_AGENT_USER_INPUT_ANSWER, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
-    KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
+    KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_REMINDER,
+    KIND_WORKFLOW_APPROVAL_REQUESTED,
 };
 use buzz_core::observer::{
     decrypt_observer_payload, encrypt_observer_payload, OBSERVER_FRAME_TELEMETRY,
@@ -1502,6 +1503,7 @@ async fn tokio_main() -> Result<()> {
                 kinds: config.kinds_override.clone().unwrap_or_else(|| {
                     vec![
                         KIND_STREAM_MESSAGE,
+                        KIND_STREAM_MESSAGE_EDIT,
                         KIND_WORKFLOW_APPROVAL_REQUESTED,
                         KIND_STREAM_REMINDER,
                         KIND_AGENT_USER_INPUT_ANSWER,
@@ -2219,6 +2221,24 @@ async fn tokio_main() -> Result<()> {
                                 // Not from owner — fall through to normal prompt handling.
                             }
 
+                            // Kind 40003 message edit — patch a still-queued
+                            // target, or drop it when the edit carries
+                            // `p-removed` for this agent. Must run before
+                            // `filter::match_event`: edits carry no `p` tag
+                            // unless a *new* mention was added, so
+                            // `require_mention` would drop the common typo-fix
+                            // case. Never `queue.push` — edits are not turns.
+                            if kind_u32 == KIND_STREAM_MESSAGE_EDIT {
+                                handle_queued_message_edit(
+                                    &buzz_event.event,
+                                    buzz_event.channel_id,
+                                    &mut queue,
+                                    &pubkey_hex,
+                                    observer.as_ref(),
+                                );
+                                continue;
+                            }
+
                             // Coarse security policy: drop events from disallowed
                             // authors before they reach subscription rules or the
                             // agent. Must be AFTER !shutdown (owner can always
@@ -2287,6 +2307,7 @@ async fn tokio_main() -> Result<()> {
                                 event: buzz_event.event,
                                 received_at: std::time::Instant::now(),
                                 prompt_tag,
+                                edited_content: None,
                             });
                             // 👀 — immediate "seen" reaction, only if the event
                             // was actually queued (not dropped by DedupMode::Drop).
@@ -2844,6 +2865,91 @@ fn event_mentions_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
     })
 }
 
+/// Extract the 64-hex `e` tag target from a kind:40003 edit event.
+fn edit_target_event_id(event: &nostr::Event) -> Option<String> {
+    event.tags.iter().find_map(|t| {
+        let parts = t.as_slice();
+        if parts.first().map(String::as_str) != Some("e") {
+            return None;
+        }
+        let id = parts.get(1)?;
+        if id.len() == 64 && id.chars().all(|c| c.is_ascii_hexdigit()) {
+            Some(id.to_ascii_lowercase())
+        } else {
+            None
+        }
+    })
+}
+
+/// Whether a kind:40003 edit explicitly removes this agent's mention.
+///
+/// Desktop emits `["p-removed", "<hex>"]` for mentions the composer dropped.
+/// Decision reads **only** this tag — never body/`@Name` matching. A false
+/// positive here silently discards a real request.
+fn edit_removes_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
+    event.tags.iter().any(|t| {
+        let parts = t.as_slice();
+        parts.first().map(String::as_str) == Some("p-removed")
+            && parts
+                .get(1)
+                .is_some_and(|hex| hex.eq_ignore_ascii_case(agent_pubkey_hex))
+    })
+}
+
+/// Apply a kind:40003 edit to a still-queued event, or report too-late.
+///
+/// Product rules (Oscar 2026-08-02 / Claude Opus protocol):
+/// - `p-removed` contains this agent → drop from queue (full undo)
+/// - otherwise → patch effective body
+/// - not queued → `applied: false` (agent already read the original)
+fn handle_queued_message_edit(
+    event: &nostr::Event,
+    routing_channel_id: Uuid,
+    queue: &mut EventQueue,
+    agent_pubkey_hex: &str,
+    observer: Option<&observer::ObserverHandle>,
+) {
+    let Some(target_id) = edit_target_event_id(event) else {
+        tracing::warn!(
+            channel_id = %routing_channel_id,
+            "message edit missing valid 64-hex e-tag target — ignoring"
+        );
+        return;
+    };
+
+    let (outcome, applied) = if edit_removes_agent(event, agent_pubkey_hex) {
+        ("dropped", queue.remove_event_by_id(&target_id))
+    } else {
+        ("patched", queue.patch_event(&target_id, event.content.clone()))
+    };
+
+    tracing::info!(
+        channel_id = %routing_channel_id,
+        target_event_id = %target_id,
+        outcome,
+        applied,
+        "message edit against queued event"
+    );
+
+    if let Some(observer) = observer {
+        observer.emit(
+            "message_edit_applied",
+            None,
+            &observer::context_for_conversation(
+                Some(routing_channel_id),
+                None,
+                None,
+                None,
+            ),
+            serde_json::json!({
+                "targetEventId": target_id,
+                "outcome": outcome,
+                "applied": applied,
+            }),
+        );
+    }
+}
+
 fn is_owner_control_command(
     event: &nostr::Event,
     kind_u32: u32,
@@ -2853,6 +2959,119 @@ fn is_owner_control_command(
     kind_u32 == KIND_STREAM_MESSAGE
         && event.content.trim() == command
         && event_mentions_agent(event, agent_pubkey_hex)
+}
+
+#[cfg(test)]
+mod message_edit_applied_tests {
+    use std::time::Instant;
+
+    use nostr::{EventBuilder, Keys, Kind, Tag};
+    use uuid::Uuid;
+
+    use super::{edit_removes_agent, handle_queued_message_edit};
+    use crate::config::DedupMode;
+    use crate::observer::ObserverHandle;
+    use crate::queue::{EventQueue, QueuedEvent};
+
+    const AGENT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const OTHER: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn queued(content: &str) -> QueuedEvent {
+        let event = EventBuilder::new(Kind::Custom(9), content)
+            .tags([Tag::parse(["p", AGENT]).expect("p tag")])
+            .sign_with_keys(&Keys::generate())
+            .expect("sign");
+        QueuedEvent {
+            channel_id: Uuid::new_v4(),
+            event,
+            received_at: Instant::now(),
+            prompt_tag: "@mention".into(),
+            edited_content: None,
+        }
+    }
+
+    fn edit_event(target_id: &str, content: &str, removed: &[&str]) -> nostr::Event {
+        let mut tags = vec![Tag::parse(["e", target_id]).expect("e tag")];
+        for hex in removed {
+            tags.push(Tag::parse(["p-removed", *hex]).expect("p-removed tag"));
+        }
+        EventBuilder::new(Kind::Custom(40003), content)
+            .tags(tags)
+            .sign_with_keys(&Keys::generate())
+            .expect("sign edit")
+    }
+
+    #[test]
+    fn p_removed_for_this_agent_drops_queued_event() {
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let qe = queued("@Agent please do the thing");
+        let target = qe.event.id.to_hex();
+        queue.push(qe);
+        let edit = edit_event(&target, "never mind", &[AGENT]);
+        assert!(edit_removes_agent(&edit, AGENT));
+
+        let observer = ObserverHandle::in_process();
+        handle_queued_message_edit(&edit, Uuid::new_v4(), &mut queue, AGENT, Some(&observer));
+
+        assert!(queue.flush_next().is_none(), "event must leave the queue");
+        let frame = observer
+            .snapshot()
+            .into_iter()
+            .find(|e| e.kind == "message_edit_applied")
+            .expect("outcome frame");
+        assert_eq!(frame.payload["outcome"], "dropped");
+        assert_eq!(frame.payload["applied"], true);
+        assert_eq!(frame.payload["targetEventId"], target);
+    }
+
+    #[test]
+    fn p_removed_for_other_agent_patches_not_drops() {
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let qe = queued("@Agent please do the thing");
+        let target = qe.event.id.to_hex();
+        let original_sig = qe.event.sig.to_string();
+        queue.push(qe);
+        let edit = edit_event(&target, "@Agent please do the other thing", &[OTHER]);
+        assert!(!edit_removes_agent(&edit, AGENT));
+
+        handle_queued_message_edit(&edit, Uuid::new_v4(), &mut queue, AGENT, None);
+
+        let batch = queue.flush_next().expect("still queued after patch");
+        assert_eq!(batch.events.len(), 1);
+        assert_eq!(
+            batch.events[0].edited_content.as_deref(),
+            Some("@Agent please do the other thing")
+        );
+        assert_eq!(batch.events[0].event.sig.to_string(), original_sig);
+    }
+
+    #[test]
+    fn body_clears_agent_name_without_p_removed_still_patches() {
+        // Guards the text-matching regression: absent `@Name` in the body is
+        // not a drop signal. Without `p-removed`, the edit must patch.
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let qe = queued("@Agent please do the thing");
+        let target = qe.event.id.to_hex();
+        queue.push(qe);
+        let edit = edit_event(&target, "never mind, ignore that", &[]);
+        assert!(!edit_removes_agent(&edit, AGENT));
+
+        let observer = ObserverHandle::in_process();
+        handle_queued_message_edit(&edit, Uuid::new_v4(), &mut queue, AGENT, Some(&observer));
+
+        let batch = queue.flush_next().expect("must not drop without p-removed");
+        assert_eq!(
+            batch.events[0].edited_content.as_deref(),
+            Some("never mind, ignore that")
+        );
+        let frame = observer
+            .snapshot()
+            .into_iter()
+            .find(|e| e.kind == "message_edit_applied")
+            .expect("outcome frame");
+        assert_eq!(frame.payload["outcome"], "patched");
+        assert_eq!(frame.payload["applied"], true);
+    }
 }
 
 // ── signal_in_flight_task ─────────────────────────────────────────────────────
@@ -2994,6 +3213,7 @@ fn try_native_steer(
         event,
         prompt_tag: prompt_tag.clone(),
         received_at: std::time::Instant::now(),
+        edited_content: None,
     };
     let event_block = queue::format_event_block(routing_channel_id, None, &be, None);
     let body = format!("{header}\n\n[Buzz event: {prompt_tag}]\n{event_block}\n\n{closing}");
@@ -5872,6 +6092,7 @@ mod error_outcome_emission_tests {
                     event,
                     prompt_tag: "test".into(),
                     received_at: std::time::Instant::now(),
+                    edited_content: None,
                 }],
                 cancelled_events: vec![],
                 cancel_reason: None,
@@ -5979,6 +6200,7 @@ mod error_outcome_emission_tests {
                     event,
                     prompt_tag: "test".into(),
                     received_at: std::time::Instant::now(),
+                    edited_content: None,
                 }],
                 cancelled_events: vec![],
                 cancel_reason: None,
@@ -6099,6 +6321,7 @@ mod error_outcome_emission_tests {
                     .unwrap(),
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -6193,6 +6416,7 @@ mod error_outcome_emission_tests {
                     .unwrap(),
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -6271,6 +6495,7 @@ mod error_outcome_emission_tests {
                 event: original_event.clone(),
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: Some(CancelReason::Steer),
@@ -6301,6 +6526,7 @@ mod error_outcome_emission_tests {
             event: new_event.clone(),
             received_at: std::time::Instant::now(),
             prompt_tag: "test".into(),
+            edited_content: None,
         });
         let config = test_config();
         let mut heartbeat_in_flight = false;
@@ -6594,6 +6820,7 @@ mod error_outcome_emission_tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -6680,6 +6907,7 @@ mod error_outcome_emission_tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,

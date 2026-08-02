@@ -23,9 +23,15 @@ import {
 import { useAttachmentEditing } from "@/features/messages/lib/useAttachmentEditing";
 import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
 import { useMentions } from "@/features/messages/lib/useMentions";
-import { diffAddedMentionPubkeys } from "@/features/messages/lib/threading";
+import {
+  diffAddedMentionPubkeys,
+  diffRemovedMentionPubkeys,
+} from "@/features/messages/lib/threading";
 import { getPersistentAgentAudienceScope } from "@/features/messages/lib/persistentAgentAudience";
+import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
+import { useEditAsUndoUiState } from "@/features/agents/useEditAsUndoState";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   hasMentionClipboardHtml,
   normalizeMentionClipboardHtml,
@@ -132,6 +138,20 @@ function MessageComposerImpl({
   } | null>(null);
   const mentions = useMentions(channelId, undefined, profiles, {
     channelType,
+  });
+  const knownAgentPubkeys = useKnownAgentPubkeys();
+  const editMentionsAgent = React.useMemo(() => {
+    if (!editTarget) {
+      return false;
+    }
+    const mentionPubkeys = mentions.extractMentionPubkeys(editTarget.body);
+    return mentionPubkeys.some((pubkey) =>
+      knownAgentPubkeys.has(normalizePubkey(pubkey)),
+    );
+  }, [editTarget, knownAgentPubkeys, mentions.extractMentionPubkeys]);
+  const editAsUndoState = useEditAsUndoUiState({
+    mentionsAgent: editMentionsAgent,
+    eventId: editTarget?.id,
   });
   const channelLinks = useChannelLinks();
   const customEmoji = useCustomEmoji();
@@ -540,12 +560,24 @@ function MessageComposerImpl({
 
       // Notify only mentions this edit *newly adds* (see
       // diffAddedMentionPubkeys): a typo-fix edit that leaves the mention set
-      // unchanged emits no `p` tags and re-wakes nobody. Computed before the
-      // composer state is cleared below.
+      // unchanged emits no `p` tags and re-wakes nobody. Removals ride as
+      // `p-removed` so the harness can drop a still-queued request. Computed
+      // before the composer state is cleared below.
+      const originalMentionPubkeys = extractMentionPubkeysRef.current(
+        editTargetRef.current.body,
+      );
+      const editedMentionPubkeys =
+        extractMentionPubkeysRef.current(finalContent);
+      const selfPubkey = ownerPubkeyRef.current ?? "";
       const addedMentionPubkeys = diffAddedMentionPubkeys(
-        extractMentionPubkeysRef.current(editTargetRef.current.body),
-        extractMentionPubkeysRef.current(finalContent),
-        ownerPubkeyRef.current ?? "",
+        originalMentionPubkeys,
+        editedMentionPubkeys,
+        selfPubkey,
+      );
+      const removedMentionPubkeys = diffRemovedMentionPubkeys(
+        originalMentionPubkeys,
+        editedMentionPubkeys,
+        selfPubkey,
       );
 
       const savedContent = trimmed;
@@ -565,6 +597,7 @@ function MessageComposerImpl({
           finalContent,
           outgoingTags,
           addedMentionPubkeys,
+          removedMentionPubkeys,
         );
       } catch {
         setComposerContent(savedContent);
@@ -893,6 +926,7 @@ function MessageComposerImpl({
         <div className="relative flex w-full flex-col gap-0">
           <ComposerReplyEditBanner
             isEditing={editTarget != null}
+            isUndo={editAsUndoState === "queued"}
             replyTarget={replyTarget}
             onCancelEdit={onCancelEdit}
             onCancelReply={onCancelReply}

@@ -49,6 +49,10 @@ pub struct QueuedEvent {
     pub received_at: Instant,
     /// Tag identifying which rule (or mode) matched this event.
     pub prompt_tag: String,
+    /// Replacement body from a kind:40003 edit that arrived before this event
+    /// was dispatched. The signed `event` is never mutated: its signature must
+    /// stay verifiable, and the relay is the authority on edit ownership.
+    pub edited_content: Option<String>,
 }
 
 /// A single event inside a [`FlushBatch`].
@@ -57,6 +61,8 @@ pub struct BatchEvent {
     pub event: Event,
     pub prompt_tag: String,
     pub received_at: Instant,
+    /// See [`QueuedEvent::edited_content`].
+    pub edited_content: Option<String>,
 }
 
 /// Why a batch's prior turn was cancelled — controls how `format_prompt`
@@ -356,6 +362,7 @@ impl EventQueue {
                 event: qe.event,
                 prompt_tag: qe.prompt_tag,
                 received_at: qe.received_at,
+                edited_content: qe.edited_content,
             })
             .collect();
         // Relay replay delivers stored events newest-first (`ORDER BY
@@ -495,6 +502,7 @@ impl EventQueue {
                 event: be.event,
                 prompt_tag: be.prompt_tag,
                 received_at: be.received_at, // preserve original timestamp (#46)
+                edited_content: be.edited_content,
             });
         }
         // Enforce per-channel cap: trim oldest (back) events if requeue pushed
@@ -530,6 +538,7 @@ impl EventQueue {
                 event: be.event,
                 prompt_tag: be.prompt_tag,
                 received_at: be.received_at,
+                edited_content: be.edited_content,
             });
         }
         // Enforce per-channel cap: trim newest (back) events if over limit.
@@ -784,20 +793,105 @@ impl EventQueue {
     ///
     /// Called on `SteerAck::Success` — the agent received the steer, so the
     /// event has been "delivered" via the non-cancelling path and must not
-    /// be redelivered via normal dispatch. Idempotent across both stores.
-    pub fn remove_event(&mut self, channel_id: Uuid, event_id: &str) {
+    /// be redelivered via normal dispatch. Also used when a pre-dispatch edit
+    /// carries `p-removed` for this agent (full undo). Returns `true` when an
+    /// entry was found and removed. Idempotent across both stores.
+    pub fn remove_event(&mut self, channel_id: Uuid, event_id: &str) -> bool {
+        let mut removed = false;
         if let Some(entries) = self.withheld_native_steer.get_mut(&channel_id) {
+            let before = entries.len();
             entries.retain(|qe| qe.event.id.to_hex() != event_id);
+            if entries.len() != before {
+                removed = true;
+            }
             if entries.is_empty() {
                 self.withheld_native_steer.remove(&channel_id);
             }
         }
         if let Some(q) = self.queues.get_mut(&channel_id) {
+            let before = q.len();
             q.retain(|qe| qe.event.id.to_hex() != event_id);
+            if q.len() != before {
+                removed = true;
+            }
             if q.is_empty() {
                 self.queues.remove(&channel_id);
             }
         }
+        removed
+    }
+
+    /// Drop a queued event by id across every conversation queue and the
+    /// withheld-steer set.
+    ///
+    /// Used by pre-dispatch message edits: kind:40003 only carries an `e` tag
+    /// to the target, not the thread markers needed to re-derive the
+    /// conversation key, so the edit path must search by event id.
+    pub fn remove_event_by_id(&mut self, event_id: &str) -> bool {
+        let mut removed = false;
+
+        let mut empty_withheld = Vec::new();
+        for (channel_id, entries) in &mut self.withheld_native_steer {
+            let before = entries.len();
+            entries.retain(|qe| qe.event.id.to_hex() != event_id);
+            if entries.len() != before {
+                removed = true;
+            }
+            if entries.is_empty() {
+                empty_withheld.push(*channel_id);
+            }
+        }
+        for channel_id in empty_withheld {
+            self.withheld_native_steer.remove(&channel_id);
+        }
+
+        let mut empty_queues = Vec::new();
+        for (channel_id, queue) in &mut self.queues {
+            let before = queue.len();
+            queue.retain(|qe| qe.event.id.to_hex() != event_id);
+            if queue.len() != before {
+                removed = true;
+            }
+            if queue.is_empty() {
+                empty_queues.push(*channel_id);
+            }
+        }
+        for channel_id in empty_queues {
+            self.queues.remove(&channel_id);
+        }
+
+        removed
+    }
+
+    /// Replace the effective body of a still-queued event.
+    ///
+    /// Searches every conversation queue and withheld-steer set by event id
+    /// (edits do not carry thread markers, so the conversation key is unknown).
+    /// Returns `false` when the event is not queued — already dispatched,
+    /// already cancelled-and-merged, or never queued at all. Callers must
+    /// treat `false` as "the agent has already read the original" and report
+    /// it, never as a silent success.
+    ///
+    /// Deliberately **not** covered: `cancelled_batches`. Those events were
+    /// already delivered to the agent, so patching them would rewrite history
+    /// the agent has seen.
+    pub fn patch_event(&mut self, event_id: &str, content: String) -> bool {
+        for entries in self.withheld_native_steer.values_mut() {
+            if let Some(qe) = entries
+                .iter_mut()
+                .find(|qe| qe.event.id.to_hex() == event_id)
+            {
+                qe.edited_content = Some(content);
+                return true;
+            }
+        }
+        for queue in self.queues.values_mut() {
+            if let Some(qe) = queue.iter_mut().find(|qe| qe.event.id.to_hex() == event_id) {
+                qe.edited_content = Some(content);
+                return true;
+            }
+        }
+        false
     }
 
     /// Bulk-release every withheld event for `channel_id` back to the queue
@@ -1155,7 +1249,7 @@ pub(crate) fn format_event_block(
             Some(label) => format!("{label} (npub: {npub}, hex: {hex})"),
             None => format!("{npub} (hex: {hex})"),
         },
-        be.event.content,
+        be.edited_content.as_deref().unwrap_or(&be.event.content),
     );
 
     // Always include tags — they carry structural information.
@@ -1718,6 +1812,7 @@ mod tests {
             event: make_event(content),
             received_at: Instant::now(),
             prompt_tag: "test".into(),
+            edited_content: None,
         }
     }
 
@@ -1728,6 +1823,7 @@ mod tests {
             event: make_event(content),
             received_at: Instant::now() - age,
             prompt_tag: "test".into(),
+            edited_content: None,
         }
     }
 
@@ -1748,6 +1844,7 @@ mod tests {
             event,
             received_at: Instant::now(),
             prompt_tag: "test".into(),
+            edited_content: None,
         }
     }
 
@@ -1943,6 +2040,7 @@ mod tests {
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -1973,11 +2071,13 @@ mod tests {
                 event: make_event("the new message"),
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![BatchEvent {
                 event: make_event("the original task"),
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancel_reason: reason,
         }
@@ -2105,17 +2205,20 @@ mod tests {
                     event: make_event("new one"),
                     prompt_tag: "@mention".into(),
                     received_at: Instant::now(),
+                    edited_content: None,
                 },
                 BatchEvent {
                     event: make_event("new two"),
                     prompt_tag: "@mention".into(),
                     received_at: Instant::now(),
+                    edited_content: None,
                 },
             ],
             cancelled_events: vec![BatchEvent {
                 event: make_event("original"),
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancel_reason: Some(CancelReason::Steer),
         };
@@ -2161,11 +2264,13 @@ mod tests {
                 event: steering,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![BatchEvent {
                 event: original,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancel_reason: Some(CancelReason::Steer),
         };
@@ -2254,16 +2359,19 @@ mod tests {
                     event: e1,
                     prompt_tag: "tag-a".into(),
                     received_at: Instant::now(),
+                    edited_content: None,
                 },
                 BatchEvent {
                     event: e2,
                     prompt_tag: "tag-b".into(),
                     received_at: Instant::now(),
+                    edited_content: None,
                 },
                 BatchEvent {
                     event: e3,
                     prompt_tag: "tag-c".into(),
                     received_at: Instant::now(),
+                    edited_content: None,
                 },
             ],
             cancelled_events: vec![],
@@ -2293,6 +2401,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -2316,6 +2425,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -2348,6 +2458,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -2378,6 +2489,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -2405,6 +2517,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -2429,6 +2542,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -2485,6 +2599,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -2523,6 +2638,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -2752,6 +2868,7 @@ mod tests {
             event: make_event("old-msg"),
             received_at: old_time,
             prompt_tag: "test".into(),
+            edited_content: None,
         });
 
         let batch = q.flush_next().expect("flush");
@@ -3040,6 +3157,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3071,6 +3189,7 @@ mod tests {
                 event,
                 prompt_tag: "dm".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3109,6 +3228,7 @@ mod tests {
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3137,6 +3257,7 @@ mod tests {
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3181,6 +3302,7 @@ mod tests {
                 event,
                 prompt_tag: "dm".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3230,6 +3352,7 @@ mod tests {
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3437,6 +3560,7 @@ mod tests {
                 event,
                 prompt_tag: "dm".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3494,6 +3618,7 @@ mod tests {
                 event,
                 prompt_tag: "dm".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3534,6 +3659,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3558,6 +3684,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3581,6 +3708,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3947,6 +4075,7 @@ mod tests {
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -3989,6 +4118,7 @@ mod tests {
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -4023,6 +4153,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -4052,6 +4183,7 @@ mod tests {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -4094,6 +4226,7 @@ mod tests {
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -4130,6 +4263,7 @@ mod tests {
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -4166,11 +4300,13 @@ mod tests {
                     event: plain,
                     prompt_tag: "test".into(),
                     received_at: Instant::now(),
+                    edited_content: None,
                 },
                 BatchEvent {
                     event: threaded,
                     prompt_tag: "@mention".into(),
                     received_at: Instant::now(),
+                    edited_content: None,
                 },
             ],
             cancelled_events: vec![],
@@ -4203,11 +4339,13 @@ mod tests {
                     event: threaded,
                     prompt_tag: "@mention".into(),
                     received_at: Instant::now(),
+                    edited_content: None,
                 },
                 BatchEvent {
                     event: plain,
                     prompt_tag: "test".into(),
                     received_at: Instant::now(),
+                    edited_content: None,
                 },
             ],
             cancelled_events: vec![],
@@ -4235,6 +4373,7 @@ mod tests {
                 event: make_event(content),
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -4312,6 +4451,7 @@ mod tests {
             event: make_event("another message"),
             prompt_tag: "test".into(),
             received_at: Instant::now(),
+            edited_content: None,
         });
         assert_eq!(slash_command_for_batch(&multi, &[]), None);
 
@@ -4321,6 +4461,7 @@ mod tests {
             event: make_event("interrupted"),
             prompt_tag: "test".into(),
             received_at: Instant::now(),
+            edited_content: None,
         });
         assert_eq!(slash_command_for_batch(&cancelled, &[]), None);
 
@@ -4329,6 +4470,72 @@ mod tests {
             slash_command_for_batch(&make_single_batch("@Eva hello"), &[]),
             None
         );
+    }
+
+    // ── Message edit patch (kind:40003) ─────────────────────────────────────
+
+    #[test]
+    fn test_patch_event_updates_queued_body_without_mutating_signed_content() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let qe = make_queued(ch, "original body");
+        let event_id = qe.event.id.to_hex();
+        let original_sig = qe.event.sig.to_string();
+        let original_content = qe.event.content.clone();
+        q.push(qe);
+
+        assert!(q.patch_event(&event_id, "edited body".into()));
+
+        let batch = q.flush_next().expect("patched event still flushes");
+        assert_eq!(batch.events.len(), 1);
+        assert_eq!(batch.events[0].edited_content.as_deref(), Some("edited body"));
+        assert_eq!(batch.events[0].event.content, original_content);
+        assert_eq!(batch.events[0].event.sig.to_string(), original_sig);
+
+        let block = format_event_block(ch, None, &batch.events[0], None);
+        assert!(block.contains("Content: edited body"));
+        assert!(!block.contains("Content: original body"));
+    }
+
+    #[test]
+    fn test_patch_event_hits_withheld_native_steer() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let qe = make_queued(ch, "original");
+        let event_id = qe.event.id.to_hex();
+        q.push(qe);
+        assert!(q.mark_native_steer_pending(ch, &event_id));
+        assert!(q.patch_event(&event_id, "patched while withheld".into()));
+        q.release_native_steer(ch, &event_id);
+        let batch = q.flush_next().expect("released event flushes");
+        assert_eq!(
+            batch.events[0].edited_content.as_deref(),
+            Some("patched while withheld")
+        );
+    }
+
+    #[test]
+    fn test_patch_event_unknown_or_dispatched_returns_false() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let qe = make_queued(ch, "once");
+        let event_id = qe.event.id.to_hex();
+        q.push(qe);
+        let _ = q.flush_next().expect("dispatch");
+        assert!(!q.patch_event(&event_id, "too late".into()));
+        assert!(!q.patch_event(&"0".repeat(64), "never queued".into()));
+    }
+
+    #[test]
+    fn test_remove_event_by_id_drops_queued() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let qe = make_queued(ch, "@Agent please");
+        let event_id = qe.event.id.to_hex();
+        q.push(qe);
+        assert!(q.remove_event_by_id(&event_id));
+        assert!(q.flush_next().is_none());
+        assert!(!q.remove_event_by_id(&event_id));
     }
 
     // ── Goose-native steer withhold tests ───────────────────────────────────
@@ -4529,6 +4736,7 @@ mod tests {
                 event: make_event("hi"),
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -4558,6 +4766,7 @@ mod tests {
                 event: make_event("hi"),
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -4586,6 +4795,7 @@ mod tests {
                 event: make_event("hi"),
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edited_content: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,

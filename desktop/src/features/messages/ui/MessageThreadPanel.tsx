@@ -79,6 +79,7 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
     content: string,
     mediaTags?: string[][],
     mentionPubkeys?: string[],
+    removedMentionPubkeys?: string[],
   ) => Promise<void>;
   onMarkUnread?: (message: TimelineMessage) => void;
   onMarkRead?: (message: TimelineMessage) => void;

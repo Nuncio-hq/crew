@@ -8919,12 +8919,27 @@ async function handleEditMessage(
     content: string;
     mediaTags?: string[][] | null;
     emojiTags?: string[][] | null;
+    mentionPubkeys?: string[] | null;
+    removedMentionPubkeys?: string[] | null;
   },
   config: E2eConfig | undefined,
 ): Promise<void> {
   const mediaTags = args.mediaTags ?? [];
   const emojiTags = args.emojiTags ?? [];
-  const extraTags = [...mediaTags, ...emojiTags];
+  const mentionTags = (args.mentionPubkeys ?? []).map((pk) => [
+    "p",
+    pk.toLowerCase(),
+  ]);
+  const removedTags = (args.removedMentionPubkeys ?? []).map((pk) => [
+    "p-removed",
+    pk.toLowerCase(),
+  ]);
+  const extraTags = [
+    ...mentionTags,
+    ...removedTags,
+    ...mediaTags,
+    ...emojiTags,
+  ];
   const tags = [["h", args.channelId], ["e", args.eventId], ...extraTags];
   const content = args.content.trim();
   const identity = getIdentity(config);
