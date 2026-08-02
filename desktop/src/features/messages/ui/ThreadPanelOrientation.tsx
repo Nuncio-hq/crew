@@ -37,6 +37,17 @@ export function useThreadPanelBreadcrumb({
   }, [channelName, orientationLookupMessages, threadHead, threadReplies]);
 }
 
+/** e2e-only: force the <h2> "Thread" fallback so #31 cannot regress. */
+function forceThreadTitleFallback(): boolean {
+  return Boolean(
+    (
+      window as Window & {
+        __BUZZ_E2E__?: { forceThreadTitleFallback?: boolean };
+      }
+    ).__BUZZ_E2E__?.forceThreadTitleFallback,
+  );
+}
+
 /** Header title: clickable breadcrumb, or the legacy "Thread" fallback. */
 export function ThreadPanelOrientationTitle({
   breadcrumb,
@@ -45,8 +56,9 @@ export function ThreadPanelOrientationTitle({
   breadcrumb: ReturnType<typeof useThreadPanelBreadcrumb>;
   onNavigate?: () => void;
 }) {
-  if (breadcrumb && onNavigate) {
-    return <ThreadBreadcrumb breadcrumb={breadcrumb} onNavigate={onNavigate} />;
+  const navigate = forceThreadTitleFallback() ? undefined : onNavigate;
+  if (breadcrumb && navigate) {
+    return <ThreadBreadcrumb breadcrumb={breadcrumb} onNavigate={navigate} />;
   }
   return <AuxiliaryPanelTitle>Thread</AuxiliaryPanelTitle>;
 }

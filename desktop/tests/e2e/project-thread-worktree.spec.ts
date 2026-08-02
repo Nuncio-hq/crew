@@ -237,6 +237,19 @@ async function seedWorkspaceError(
   );
 }
 
+async function countGitHubStatusInvokes(page: Page) {
+  return page.evaluate(
+    () =>
+      (
+        window as Window & {
+          __BUZZ_E2E_COMMAND_LOG__?: Array<{ command: string }>;
+        }
+      ).__BUZZ_E2E_COMMAND_LOG__?.filter(
+        (entry) => entry.command === "get_thread_github_status",
+      ).length ?? 0,
+  );
+}
+
 test("Project threads show truthful isolated workspace and agent handoff", async ({
   page,
 }) => {
@@ -269,11 +282,31 @@ test("Project threads show truthful isolated workspace and agent handoff", async
   );
   await expect(panel.getByText("Ready", { exact: true })).toBeVisible();
   await expect(panel).toContainText("buzz/aaaaaaaaaaaa");
-  // Sticky bar exposes PR as a short chip. Opening the PR drawer via that chip
-  // wedges page JS in this suite on main tip too (CDP click / evaluate hang) —
-  // assert chip presence instead of drawer contents until that sticky-bar debt
-  // is fixed separately.
-  await expect(panel.getByRole("button", { name: /^PR$/ })).toBeVisible();
+
+  const githubInvokesBeforePr = await countGitHubStatusInvokes(page);
+  await panel.getByRole("button", { name: /^PR$/ }).click();
+  await expect(panel).toContainText("Pull request");
+  await expect(panel).toContainText(
+    "Keep the 2×3 layout and existing app colors.",
+  );
+  await expect(panel).toContainText("#9 Thread integration strip");
+  // #34: opening the PR drawer must not start an unbounded refresh loop.
+  await expect
+    .poll(() => countGitHubStatusInvokes(page))
+    .toBeLessThanOrEqual(githubInvokesBeforePr + 2);
+  const githubInvokesAfterPr = await countGitHubStatusInvokes(page);
+  await page.evaluate(() => {
+    // Force a parent re-render without closing the drawer.
+    window.dispatchEvent(new Event("resize"));
+  });
+  await expect
+    .poll(() => countGitHubStatusInvokes(page))
+    .toBe(githubInvokesAfterPr);
+
+  await waitForAnimations(page);
+  await panel.screenshot({
+    path: "test-results/thread-worktree/02-pr-history.png",
+  });
   await panel.getByRole("button", { name: "Close details" }).click();
   await emitReplyMention(page, ROOT_A);
   await panel.getByRole("button", { name: /Handoff/ }).click();
@@ -319,6 +352,33 @@ test("Project threads show truthful isolated workspace and agent handoff", async
   await expect(panel.getByRole("button", { name: /^PR$/ })).toHaveCount(0);
 });
 
+test("Docked <h2> title fallback does not steal Workspace clicks (#31)", async ({
+  page,
+}) => {
+  await installMockBridge(page, { managedAgents: agents });
+  await page.goto("/");
+  // Set after bridge init — it replaces window.__BUZZ_E2E__ on boot.
+  await page.evaluate(() => {
+    const w = window as Window & {
+      __BUZZ_E2E__?: { forceThreadTitleFallback?: boolean };
+    };
+    w.__BUZZ_E2E__ = { ...w.__BUZZ_E2E__, forceThreadTitleFallback: true };
+  });
+  await page.getByTestId("channel-general").click();
+  await waitForLiveChannel(page);
+
+  await emitProjectRoot(page, ROOT_A, "h2 title hit target");
+  const panel = await openThread(page, "h2 title hit target");
+  await expect(panel.getByTestId("thread-breadcrumb")).toHaveCount(0);
+  await expect(panel.getByRole("heading", { name: "Thread" })).toBeVisible();
+
+  // Plain click — no force. If the docked <h2> overlap returns, this fails.
+  await panel.getByRole("button", { name: /Workspace/ }).click();
+  await expect(
+    panel.getByTestId("project-thread-workspace-panel"),
+  ).toContainText("The harness is preparing this isolated worktree");
+});
+
 test("Project workspace errors render failed truth without preparing affordances", async ({
   page,
 }) => {
@@ -336,10 +396,21 @@ test("Project workspace errors render failed truth without preparing affordances
     "branch already checked out",
   );
 
+  // Docked sticky bar opens the drawer (error message only). "Setup failed"
+  // lives in the focus-mode expanded grid — assert it there (option a).
   await panel.getByRole("button", { name: /Workspace/ }).click();
-  // Docked sticky bar opens the drawer (error message only). "Setup failed" is
-  // the focus-mode expanded grid detail, not the drawer copy.
   await expect(panel).toContainText("branch already checked out");
   await expect(panel).not.toContainText("Preparing");
   await expect(panel).not.toContainText("preparing this isolated worktree");
+  await panel.getByRole("button", { name: "Close details" }).click();
+
+  await page.getByRole("button", { name: "Expand thread" }).click();
+  const focusDrawer = page.getByTestId("focus-thread-drawer");
+  await expect(focusDrawer).toBeVisible();
+  await focusDrawer.getByTestId("project-thread-status-expand").click();
+  // Option (a): "Setup failed" only lives in the focus-mode expanded grid cell.
+  // The error message itself was already asserted on the docked drawer above.
+  await expect(
+    focusDrawer.getByTestId("project-thread-status-expanded"),
+  ).toContainText("Setup failed");
 });

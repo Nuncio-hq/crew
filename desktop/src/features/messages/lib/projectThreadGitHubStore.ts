@@ -9,6 +9,8 @@ type Target = {
   rootEventId: string;
 };
 
+type GitHubStatusFetcher = (input: Target) => Promise<ThreadGitHubStatus>;
+
 export type ProjectThreadGitHubSnapshot =
   | { status: "pending" }
   | { status: "ready"; value: ThreadGitHubStatus };
@@ -25,6 +27,14 @@ const entries = new Map<
 >();
 const listeners = new Set<() => void>();
 let cacheEpoch = 0;
+let statusFetcher: GitHubStatusFetcher = getThreadGitHubStatus;
+
+/** Test-only seam — ESM named exports are not redefinable via mock.method. */
+export function setProjectThreadGitHubFetcherForTests(
+  fetcher: GitHubStatusFetcher | null,
+): void {
+  statusFetcher = fetcher ?? getThreadGitHubStatus;
+}
 
 function cacheKey(target: Target): string {
   return `${target.repositoryPath}\u0000${target.branch}`;
@@ -45,7 +55,7 @@ async function load(target: Target, force: boolean): Promise<void> {
   if (!force && stored && stored.expiresAt > Date.now()) return;
   if (stored?.promise) return stored.promise;
   const epoch = cacheEpoch;
-  const promise = getThreadGitHubStatus(target)
+  const promise = statusFetcher(target)
     .then((value) => {
       if (cacheEpoch !== epoch) return;
       entries.set(key, {
@@ -93,5 +103,6 @@ export function useProjectThreadGitHub(target: Target | null) {
 export function resetProjectThreadGitHubStore(): void {
   cacheEpoch += 1;
   entries.clear();
+  statusFetcher = getThreadGitHubStatus;
   notify();
 }
