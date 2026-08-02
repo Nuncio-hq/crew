@@ -49,10 +49,9 @@ test("re-adding a removed mention counts as newly added", () => {
 });
 
 test("returns mentions the edit removes", () => {
-  assert.deepEqual(
-    diffRemovedMentionPubkeys([ALICE, BOB], [ALICE], SELF),
-    [BOB],
-  );
+  assert.deepEqual(diffRemovedMentionPubkeys([ALICE, BOB], [ALICE], SELF), [
+    BOB,
+  ]);
 });
 
 test("typo-fix edit with unchanged mentions removes nobody", () => {
