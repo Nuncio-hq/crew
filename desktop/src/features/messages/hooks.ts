@@ -7,6 +7,8 @@ import {
   channelWindowKey,
   threadRepliesKey,
 } from "@/features/messages/lib/messageQueryKeys";
+import { deriveAgentConversationId } from "@/features/agents/conversationId";
+import { recordPendingAgentRequest } from "@/features/agents/dispatchedEventIds";
 import {
   buildReplyTags,
   getThreadReference,
@@ -606,7 +608,7 @@ export function useSendMessageMutation(
         context.previousWindow,
       );
     },
-    onSuccess: (message, _variables, context) => {
+    onSuccess: (message, variables, context) => {
       // An accepted send proves the write-block is lifted; clear any recorded
       // timeout so the chip and disable state fall away immediately.
       clearTimeoutState();
@@ -630,6 +632,41 @@ export function useSendMessageMutation(
       });
       queryClient.setQueryData(windowKey, next);
       projectChannelWindowMessages(queryClient, context.channelId);
+
+      const mentionPubkeys = variables.mentionPubkeys ?? [];
+      if (mentionPubkeys.length > 0) {
+        try {
+          const sendChannel = resolveSendChannel(
+            variables.targetChannel,
+            variables.channelId,
+            queryClient.getQueryData<Channel[]>(channelsQueryKey),
+            channel,
+          );
+          const conversationId =
+            sendChannel?.channelType === "dm"
+              ? context.channelId
+              : deriveAgentConversationId(
+                  context.channelId,
+                  variables.parentEventId
+                    ? (resolveReplyRootId(
+                        variables.parentEventId,
+                        queryClient.getQueryData<RelayEvent[]>(
+                          channelMessagesKey(context.channelId),
+                        ) ?? [],
+                      ) ?? message.id)
+                    : message.id,
+                );
+          recordPendingAgentRequest({
+            eventId: message.id,
+            channelId: context.channelId,
+            conversationId,
+            agentPubkeys: mentionPubkeys,
+          });
+        } catch {
+          // Invalid channel/root — skip pending tracking; Stop still works
+          // once a turn_started frame arrives.
+        }
+      }
     },
   });
 }

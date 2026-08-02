@@ -1,25 +1,34 @@
 import { sendAgentObserverControl } from "@/shared/api/observerRelay";
 import { invokeTauri } from "@/shared/api/tauri";
 import type {
+  ProjectWorktreeDetails,
+  ProjectWorktreeRegistry,
   ThreadGitHubStatus,
   ThreadWorkspaceActionResult,
   ThreadWorkspaceLifecycle,
 } from "@/shared/api/thread-workspace-types";
-import type { CancelManagedAgentTurnResult } from "@/shared/api/types";
 
+/**
+ * Ask the harness to stop work for a conversation.
+ *
+ * `turnId` is optional: omit it (or pass null) during the dispatch-hold window
+ * when nothing is in flight yet — Phase 1 drains the queued batch and reports
+ * `cancelled_queued` via a `control_result` observer frame. The sync return
+ * here only means the control event was published; listen for `control_result`
+ * for the real outcome.
+ */
 export async function cancelManagedAgentTurn(
   pubkey: string,
   channelId: string,
   conversationId: string,
-  turnId: string,
-): Promise<CancelManagedAgentTurnResult> {
+  turnId?: string | null,
+): Promise<void> {
   await sendAgentObserverControl(pubkey, {
     type: "cancel_turn",
     channelId,
     conversationId,
-    turnId,
+    ...(turnId ? { turnId } : {}),
   });
-  return { status: "sent" };
 }
 
 /**
@@ -78,4 +87,36 @@ export function getThreadGitHubStatus(
   input: ThreadWorkspaceTarget,
 ): Promise<ThreadGitHubStatus> {
   return invokeTauri("get_thread_github_status", input);
+}
+
+export function getProjectWorktreeRegistry(
+  repositoryPath: string,
+): Promise<ProjectWorktreeRegistry> {
+  return invokeTauri("get_project_worktree_registry", { repositoryPath });
+}
+
+export function getProjectWorktreeDetails(
+  repositoryPath: string,
+  worktreePath: string,
+): Promise<ProjectWorktreeDetails> {
+  return invokeTauri("get_project_worktree_details", {
+    repositoryPath,
+    worktreePath,
+  });
+}
+
+export function removeProjectWorktree(
+  repositoryPath: string,
+  worktreePath: string,
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("remove_project_worktree", {
+    repositoryPath,
+    worktreePath,
+  });
+}
+
+export function pruneProjectWorktrees(
+  repositoryPath: string,
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("prune_project_worktrees", { repositoryPath });
 }

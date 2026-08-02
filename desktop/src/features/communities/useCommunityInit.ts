@@ -20,6 +20,8 @@ import {
 } from "@/features/messages/lib/useDrafts";
 import { resetRenderScopedReactionHydration } from "@/features/messages/lib/renderScopedReactions";
 import { resetProjectThreadGitHubStore } from "@/features/messages/lib/projectThreadGitHubStore";
+import { resetProjectWorktreeDetailsStore } from "@/features/agents/projectWorktreeDetailsStore";
+import { resetProjectWorktreeRegistryStore } from "@/features/agents/projectWorktreeRegistryStore";
 import {
   resetActiveAgentTurnsStore,
   saveActiveAgentTurnsForCommunity,
@@ -73,6 +75,8 @@ function resetCommunityState({
   resetVideoPlayerState();
   resetRenderScopedReactionHydration();
   resetProjectThreadGitHubStore();
+  resetProjectWorktreeRegistryStore();
+  resetProjectWorktreeDetailsStore();
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
 }

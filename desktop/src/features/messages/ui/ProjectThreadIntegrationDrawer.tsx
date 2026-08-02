@@ -72,6 +72,14 @@ export function ProjectThreadIntegrationDrawer({
     content =
       workspace.status === "ready" ? (
         <ProjectThreadWorkspaceDetails workspace={workspace} />
+      ) : workspace.status === "derived" ? (
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p className="font-mono text-foreground">{workspace.branch}</p>
+          <p className="truncate font-mono" title={workspace.worktreePath}>
+            {workspace.worktreePath}
+          </p>
+          <p>Restored from disk</p>
+        </div>
       ) : workspace.status === "error" ? (
         <p className="flex items-center gap-2 text-xs text-destructive">
           <TriangleAlert className="h-4 w-4" /> {workspace.message}

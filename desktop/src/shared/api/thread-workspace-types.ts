@@ -51,3 +51,47 @@ export type ThreadGitHubStatus = {
   availability: "available" | "unavailable";
   pullRequest: ThreadPullRequest | null;
 };
+
+export type RegistryChecksState = "passing" | "failing" | "pending" | "none";
+
+export type RegistryPullRequest = {
+  number: number;
+  state: string;
+  isDraft: boolean;
+  reviewDecision: string;
+  checks: RegistryChecksState;
+  additions: number;
+  deletions: number;
+  title: string;
+  url: string;
+};
+
+export type ProjectWorktreeKind = "main" | "managed" | "external";
+
+export type ProjectWorktreeEntry = {
+  worktreePath: string;
+  worktreeName: string;
+  branch: string | null;
+  head: string;
+  kind: ProjectWorktreeKind;
+  rootEventId: string | null;
+  prunable: boolean;
+  pullRequests: RegistryPullRequest[];
+};
+
+export type ProjectWorktreeRegistry = {
+  repositoryPath: string;
+  managedRoot: string;
+  github: "available" | "unavailable";
+  entries: ProjectWorktreeEntry[];
+};
+
+export type ProjectWorktreeDetails = {
+  worktreePath: string;
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  /** Unix seconds of the tip commit, when available. */
+  lastCommitAt: number | null;
+  diskBytes: number;
+};
