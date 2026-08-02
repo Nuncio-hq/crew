@@ -23,15 +23,9 @@ import {
 import { useAttachmentEditing } from "@/features/messages/lib/useAttachmentEditing";
 import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
 import { useMentions } from "@/features/messages/lib/useMentions";
-import {
-  diffAddedMentionPubkeys,
-  diffRemovedMentionPubkeys,
-} from "@/features/messages/lib/threading";
 import { getPersistentAgentAudienceScope } from "@/features/messages/lib/persistentAgentAudience";
-import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
-import { useEditAsUndoUiState } from "@/features/agents/useEditAsUndoState";
 import { useIdentityQuery } from "@/shared/api/hooks";
-import { normalizePubkey } from "@/shared/lib/pubkey";
+import { useComposerEditAsUndo } from "./useComposerEditAsUndo";
 import {
   hasMentionClipboardHtml,
   normalizeMentionClipboardHtml,
@@ -139,19 +133,9 @@ function MessageComposerImpl({
   const mentions = useMentions(channelId, undefined, profiles, {
     channelType,
   });
-  const knownAgentPubkeys = useKnownAgentPubkeys();
-  const editMentionsAgent = React.useMemo(() => {
-    if (!editTarget) {
-      return false;
-    }
-    const mentionPubkeys = mentions.extractMentionPubkeys(editTarget.body);
-    return mentionPubkeys.some((pubkey) =>
-      knownAgentPubkeys.has(normalizePubkey(pubkey)),
-    );
-  }, [editTarget, knownAgentPubkeys, mentions.extractMentionPubkeys]);
-  const editAsUndoState = useEditAsUndoUiState({
-    mentionsAgent: editMentionsAgent,
-    eventId: editTarget?.id,
+  const { editAsUndoState, computeEditMentionDiffs } = useComposerEditAsUndo({
+    editTarget,
+    extractMentionPubkeys: mentions.extractMentionPubkeys,
   });
   const channelLinks = useChannelLinks();
   const customEmoji = useCustomEmoji();
@@ -207,7 +191,6 @@ function MessageComposerImpl({
   const onEditSaveRef = React.useRef(onEditSave);
   const onEditLastOwnMessageRef = React.useRef(onEditLastOwnMessage);
   const editTargetRef = React.useRef(editTarget);
-  const extractMentionPubkeysRef = React.useRef(mentions.extractMentionPubkeys);
   const ownerPubkeyRef = React.useRef(ownerPubkey);
   disabledRef.current = disabled;
   isSendingRef.current = isSending;
@@ -216,7 +199,6 @@ function MessageComposerImpl({
   onEditSaveRef.current = onEditSave;
   onEditLastOwnMessageRef.current = onEditLastOwnMessage;
   editTargetRef.current = editTarget;
-  extractMentionPubkeysRef.current = mentions.extractMentionPubkeys;
   ownerPubkeyRef.current = ownerPubkey;
 
   const isAutocompleteOpenRef = React.useRef(false);
@@ -558,28 +540,12 @@ function MessageComposerImpl({
           buildCustomEmojiTags(finalContent, customEmoji),
         ) ?? [];
 
-      // Notify only mentions this edit *newly adds* (see
-      // diffAddedMentionPubkeys): a typo-fix edit that leaves the mention set
-      // unchanged emits no `p` tags and re-wakes nobody. Removals ride as
-      // `p-removed` so the harness can drop a still-queued request. Computed
-      // before the composer state is cleared below.
-      const originalMentionPubkeys = extractMentionPubkeysRef.current(
-        editTargetRef.current.body,
-      );
-      const editedMentionPubkeys =
-        extractMentionPubkeysRef.current(finalContent);
-      const selfPubkey = ownerPubkeyRef.current ?? "";
-      const addedMentionPubkeys = diffAddedMentionPubkeys(
-        originalMentionPubkeys,
-        editedMentionPubkeys,
-        selfPubkey,
-      );
-      const removedMentionPubkeys = diffRemovedMentionPubkeys(
-        originalMentionPubkeys,
-        editedMentionPubkeys,
-        selfPubkey,
-      );
-
+      const { addedMentionPubkeys, removedMentionPubkeys } =
+        computeEditMentionDiffs(
+          editTargetRef.current.body,
+          finalContent,
+          ownerPubkeyRef.current ?? "",
+        );
       const savedContent = trimmed;
       const savedImeta = [...currentPendingImeta];
       const savedSpoileredAttachmentUrls = new Set(spoileredAttachmentUrls);
@@ -591,7 +557,6 @@ function MessageComposerImpl({
       channelLinks.clearChannels();
       emojiAutocomplete.clearEmojis();
       setIsEmojiPickerOpen(false);
-
       try {
         await onEditSaveRef.current(
           finalContent,
@@ -652,6 +617,7 @@ function MessageComposerImpl({
   }, [
     channelId,
     channelLinks.clearChannels,
+    computeEditMentionDiffs,
     customEmoji,
     drafts.loadDraft,
     emojiAutocomplete.clearEmojis,

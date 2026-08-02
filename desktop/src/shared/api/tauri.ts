@@ -640,7 +640,6 @@ export async function deleteMessage(
 ): Promise<void> {
   await invokeTauri("delete_message", { channelId, eventId });
 }
-
 export async function addReaction(
   eventId: string,
   emoji: string,
@@ -648,7 +647,6 @@ export async function addReaction(
 ): Promise<void> {
   await invokeTauri("add_reaction", { eventId, emoji, emojiUrl });
 }
-
 export async function removeReaction(
   eventId: string,
   emoji: string,
