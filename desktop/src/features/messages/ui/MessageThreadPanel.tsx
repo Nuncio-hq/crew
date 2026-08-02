@@ -5,8 +5,8 @@ import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   collectProjectThreadAgentMentions,
-  parseProjectThreadContext,
   projectThreadRootAudiencePubkeys,
+  projectThreadStickyBarOwnsAgentSignal,
 } from "@/features/messages/lib/projectThreadWorkspace";
 import {
   buildThreadSummaryFromVisibleEntries,
@@ -252,14 +252,6 @@ export function MessageThreadPanel({
   const threadHeadId = threadHead?.id ?? null;
   useEscapeKey(onClose, isOverlay || isSinglePanelView || isFocusMode);
   const hasConstrainedColumn = columnMaxWidthPx != null;
-  // Project threads: sticky status bar owns the agent signal (law 2).
-  // Typing still appears under the composer; only bot activity is suppressed.
-  const stickyBarOwnsAgentSignal =
-    parseProjectThreadContext(threadHead.body) != null;
-  const showComposerBotActivity =
-    activityAccessoryVisible && !stickyBarOwnsAgentSignal;
-  const hasComposerBottomActivity =
-    showComposerBotActivity || threadTypingPubkeys.length > 0;
 
   // Live ref so onCaptureSendContext can read reply state at submit time
   // (before any async mention-flow awaits change navigation state).
@@ -541,6 +533,19 @@ export function MessageThreadPanel({
     () => projectThreadRootAudiencePubkeys(projectThreadAgentMentions),
     [projectThreadAgentMentions],
   );
+
+  // Project threads: the sticky status bar owns the agent signal, so the
+  // composer drops its duplicate. Typing still shows; only bot activity is
+  // suppressed. The rule lives in projectThreadWorkspace so it stays testable
+  // and cannot drift from the bar's own visibility condition.
+  const stickyBarOwnsAgentSignal = projectThreadStickyBarOwnsAgentSignal(
+    threadHead.body,
+    projectThreadAgentMentions.length,
+  );
+  const showComposerBotActivity =
+    activityAccessoryVisible && !stickyBarOwnsAgentSignal;
+  const hasComposerBottomActivity =
+    showComposerBotActivity || threadTypingPubkeys.length > 0;
 
   if (!threadHead) {
     return null;
