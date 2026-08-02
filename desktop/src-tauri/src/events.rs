@@ -9,7 +9,11 @@
 //! Each function validates inputs and returns a nostr::EventBuilder.
 //! Signing and submission happen in relay::submit_event.
 
+#[path = "event_mention_tags.rs"]
+mod event_mention_tags;
+
 use buzz_core_pkg::kind::{KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST};
+use event_mention_tags::{mention_reference_tags, mention_tags, removed_mention_tags};
 use nostr::{EventBuilder, EventId, Kind, Tag};
 use uuid::Uuid;
 
@@ -18,15 +22,12 @@ use uuid::Uuid;
 /// Maximum content size — matches buzz-sdk (64 KiB).
 const MAX_CONTENT_BYTES: usize = 64 * 1024;
 
-/// Maximum mention count — matches buzz-sdk.
-const MAX_MENTIONS: usize = 50;
-
 /// Maximum emoji length in characters — matches buzz-sdk.
 const MAX_EMOJI_CHARS: usize = 64;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn tag(parts: Vec<&str>) -> Result<Tag, String> {
+pub(crate) fn tag(parts: Vec<&str>) -> Result<Tag, String> {
     Tag::parse(parts).map_err(|e| format!("invalid tag: {e}"))
 }
 
@@ -58,39 +59,6 @@ fn thread_tags(tr: &ThreadRef) -> Result<Vec<Tag>, String> {
             tag(vec!["e", &parent, "", "reply"])?,
         ])
     }
-}
-
-fn mention_tags(mentions: &[&str]) -> Result<Vec<Tag>, String> {
-    if mentions.len() > MAX_MENTIONS {
-        return Err(format!("too many mentions (max {MAX_MENTIONS})"));
-    }
-    let mut seen = std::collections::HashSet::new();
-    let mut tags = Vec::new();
-    for &hex in mentions {
-        check_pubkey(hex)?;
-        let lower = hex.to_ascii_lowercase();
-        if seen.insert(lower.clone()) {
-            tags.push(tag(vec!["p", &lower])?);
-        }
-    }
-    Ok(tags)
-}
-
-fn mention_reference_tags(mentions: &[Vec<String>], tags: &mut Vec<Tag>) -> Result<(), String> {
-    for mention in mentions {
-        if mention.first().map(String::as_str) != Some("mention") {
-            return Err(format!(
-                "mention reference tags must use 'mention' prefix (got {:?})",
-                mention.first()
-            ));
-        }
-        let Some(pubkey) = mention.get(1) else {
-            return Err("mention reference tag missing pubkey".into());
-        };
-        check_pubkey(pubkey)?;
-        tags.push(tag(vec!["mention", &pubkey.to_ascii_lowercase()])?);
-    }
-    Ok(())
 }
 
 /// Validate and append imeta tags. Rejects any tag whose first element is not "imeta"
@@ -127,7 +95,7 @@ fn emoji_tags(emoji_tags: &[Vec<String>], tags: &mut Vec<Tag>) -> Result<(), Str
 }
 
 /// Validate a hex pubkey is exactly 64 hex characters.
-fn check_pubkey(pubkey: &str) -> Result<(), String> {
+pub(crate) fn check_pubkey(pubkey: &str) -> Result<(), String> {
     if pubkey.len() != 64 || !pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!(
             "pubkey must be a 64-character hex string (got {} chars)",
@@ -408,6 +376,10 @@ pub fn build_forum_comment(
 /// edit that leaves the mention set unchanged emits no `p` tags and never
 /// re-wakes anyone. This mirrors the send path's `mention_tags` (dedup +
 /// lowercase); the receiver overlays these onto the original event's audience.
+///
+/// `removed_mentions` is the complementary set — mentions the edit drops —
+/// emitted as `["p-removed", <hex>]` so the agent harness can undo a still-
+/// queued request without reading the body.
 pub fn build_message_edit(
     channel_id: Uuid,
     target_event_id: EventId,
@@ -415,6 +387,7 @@ pub fn build_message_edit(
     media_tags: &[Vec<String>],
     custom_emoji_tags: &[Vec<String>],
     mentions: &[&str],
+    removed_mentions: &[&str],
 ) -> Result<EventBuilder, String> {
     check_content(content)?;
     let mut tags = vec![
@@ -422,6 +395,7 @@ pub fn build_message_edit(
         tag(vec!["e", &target_event_id.to_hex()])?,
     ];
     tags.extend(mention_tags(mentions)?);
+    tags.extend(removed_mention_tags(removed_mentions)?);
     imeta_tags(media_tags, &mut tags)?;
     emoji_tags(custom_emoji_tags, &mut tags)?;
     Ok(EventBuilder::new(Kind::Custom(40003), content).tags(tags))
@@ -929,71 +903,5 @@ mod tests {
         assert_eq!(tags[2], vec!["reason", "returned"]);
         assert_eq!(tags.len(), 3, "self unarchive must not carry auth tag");
         assert_eq!(event.pubkey.to_hex(), TARGET_HEX);
-    }
-
-    // ── build_message_edit `p`-tag emission (lane 8ace8eed) ──────────────
-    //
-    // The composer diffs the edited body's mentions against the original and
-    // hands `build_message_edit` only the *newly added* pubkeys. These tests
-    // pin the builder's contract given that contract: emit a `p` per added
-    // mention (deduped, lowercased), and none when the added set is empty
-    // (typo-fix edit) — so an unchanged mention set re-wakes nobody.
-
-    const CH_ID: &str = "11111111-1111-4111-8111-111111111111";
-    const ALICE_HEX: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-    const BOB_HEX: &str = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
-
-    fn edit_tags(mentions: &[&str]) -> Vec<Vec<String>> {
-        let channel = Uuid::parse_str(CH_ID).unwrap();
-        let target =
-            EventId::from_hex("d24da132115ca0a46233cf4c2ad8338fbf914250cbcaa9181a6dd59533cb5ac1")
-                .unwrap();
-        let builder = build_message_edit(channel, target, "hi @alice", &[], &[], mentions).unwrap();
-        let secret = nostr::SecretKey::from_hex(
-            "0000000000000000000000000000000000000000000000000000000000000003",
-        )
-        .unwrap();
-        let event = builder.sign_with_keys(&Keys::new(secret)).unwrap();
-        event.tags.iter().map(|t| t.as_slice().to_vec()).collect()
-    }
-
-    #[test]
-    fn edit_with_added_mention_emits_p_tag() {
-        let tags = edit_tags(&[ALICE_HEX]);
-        assert_eq!(tags[0][0], "h");
-        assert_eq!(tags[1][0], "e");
-        // The `p` tag rides right after the `e` tag (insertion order).
-        assert_eq!(tags[2], vec!["p".to_string(), ALICE_HEX.to_string()]);
-    }
-
-    #[test]
-    fn edit_with_no_added_mentions_emits_no_p_tag() {
-        // Typo-fix edit: mention set unchanged, so the composer passes `&[]`.
-        // The edit event must carry no `p` tag and re-wake nobody.
-        let tags = edit_tags(&[]);
-        assert!(
-            !tags
-                .iter()
-                .any(|t| t.first().map(String::as_str) == Some("p")),
-            "unchanged-mention edit must not emit any `p` tag, got {tags:?}"
-        );
-    }
-
-    #[test]
-    fn edit_mentions_are_deduped_and_lowercased() {
-        let alice_upper = ALICE_HEX.to_ascii_uppercase();
-        let tags = edit_tags(&[ALICE_HEX, &alice_upper, BOB_HEX]);
-        let p_tags: Vec<&Vec<String>> = tags
-            .iter()
-            .filter(|t| t.first().map(String::as_str) == Some("p"))
-            .collect();
-        // ALICE appears twice (mixed case) but collapses to one lowercase tag.
-        assert_eq!(
-            p_tags.len(),
-            2,
-            "duplicate mention must collapse, got {p_tags:?}"
-        );
-        assert_eq!(p_tags[0], &vec!["p".to_string(), ALICE_HEX.to_string()]);
-        assert_eq!(p_tags[1], &vec!["p".to_string(), BOB_HEX.to_string()]);
     }
 }

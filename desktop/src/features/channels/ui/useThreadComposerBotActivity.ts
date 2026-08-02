@@ -37,6 +37,7 @@ export function useThreadComposerBotActivity(
 
   return {
     hasThreadComposerBotActivity: threadComposerWorkingBotPubkeys.length > 0,
+    threadComposerConversationId,
     threadComposerWorkingBotPubkeys,
   };
 }

@@ -25,6 +25,8 @@ import '../profile/user_profile.dart';
 import '../forum/forum_posts_view.dart';
 import 'channel.dart';
 import 'channel_link_navigation.dart';
+import 'agent_activity/agent_activity_line.dart';
+import 'agent_activity/conversation_id.dart';
 import 'agent_activity/working_bots_provider.dart';
 import 'channel_management_provider.dart';
 import 'channel_messages_provider.dart';
@@ -383,7 +385,13 @@ class ChannelDetailPage extends HookConsumerWidget {
             ),
           if (!resolvedChannel.isForum &&
               resolvedChannel.isMember &&
-              !resolvedChannel.isArchived)
+              !resolvedChannel.isArchived) ...[
+            AgentActivityLine(
+              channelId: channel.id,
+              conversationId: resolvedChannel.isDm
+                  ? conversationIdForSurface(channelId: channel.id, isDm: true)
+                  : null,
+            ),
             ComposeBar(
               channelId: channel.id,
               channelName: resolvedChannel.isDm ? '' : resolvedChannel.name,
@@ -400,8 +408,8 @@ class ChannelDetailPage extends HookConsumerWidget {
                         mentionPubkeys: mentionPubkeys,
                         mediaTags: mediaTags,
                       ),
-            )
-          else if (!resolvedChannel.isDm &&
+            ),
+          ] else if (!resolvedChannel.isDm &&
               (!resolvedChannel.isMember || resolvedChannel.isArchived))
             _ReadOnlyNotice(channel: resolvedChannel),
         ],

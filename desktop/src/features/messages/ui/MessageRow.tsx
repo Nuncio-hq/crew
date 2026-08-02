@@ -9,6 +9,7 @@ import {
 } from "@/features/messages/lib/messageRowEquality";
 import type { TimelineMessage } from "@/features/messages/types";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
+import { useEditAsUndoUiState } from "@/features/agents/useEditAsUndoState";
 import { HuddleAttachment } from "@/features/huddle/components/HuddleAttachment";
 import { MessageReactions } from "@/features/messages/ui/MessageReactions";
 import { useReactionHandler } from "@/features/messages/ui/useReactionHandler";
@@ -207,20 +208,39 @@ export const MessageRow = React.memo(
       (message.pubkey && isKnownAgentPubkey(message.pubkey))
         ? "bot"
         : message.role;
-    const agentMentionPubkeysByName = React.useMemo(() => {
-      if (!mentionPubkeysByName) {
-        return undefined;
-      }
-
-      const values: Record<string, string> = {};
-      for (const [name, pubkey] of Object.entries(mentionPubkeysByName)) {
-        if (isKnownAgentPubkey(pubkey)) {
-          values[name] = pubkey;
+    const { agentMentionPubkeysByName, agentMentionAvatarsByName } =
+      React.useMemo(() => {
+        if (!mentionPubkeysByName) {
+          return {
+            agentMentionPubkeysByName: undefined,
+            agentMentionAvatarsByName: undefined,
+          };
         }
-      }
 
-      return Object.keys(values).length > 0 ? values : undefined;
-    }, [isKnownAgentPubkey, mentionPubkeysByName]);
+        const values: Record<string, string> = {};
+        const avatars: Record<string, string> = {};
+        for (const [name, pubkey] of Object.entries(mentionPubkeysByName)) {
+          if (isKnownAgentPubkey(pubkey)) {
+            values[name] = pubkey;
+            const avatarUrl = profiles?.[normalizePubkey(pubkey)]?.avatarUrl;
+            if (avatarUrl) {
+              avatars[name] = avatarUrl;
+            }
+          }
+        }
+
+        return {
+          agentMentionPubkeysByName:
+            Object.keys(values).length > 0 ? values : undefined,
+          agentMentionAvatarsByName:
+            Object.keys(avatars).length > 0 ? avatars : undefined,
+        };
+      }, [isKnownAgentPubkey, mentionPubkeysByName, profiles]);
+    const mentionsAgent = agentMentionPubkeysByName !== undefined;
+    const editAsUndoState = useEditAsUndoUiState({
+      mentionsAgent,
+      eventId: message.id,
+    });
 
     const imetaByUrl = React.useMemo(
       () => (message.tags ? parseImetaTags(message.tags) : undefined),
@@ -373,6 +393,7 @@ export const MessageRow = React.memo(
               customEmoji={customEmoji}
               imetaByUrl={imetaByUrl}
               agentMentionPubkeysByName={agentMentionPubkeysByName}
+              agentMentionAvatarsByName={agentMentionAvatarsByName}
               mentionNames={mentionNames}
               mentionPubkeysByName={mentionPubkeysByName}
               searchQuery={searchQuery}
@@ -516,8 +537,15 @@ export const MessageRow = React.memo(
       </div>
     );
 
+    const editAsUndoInline =
+      editAsUndoState === "too-late"
+        ? "Agent already read the original"
+        : editAsUndoState === "withdrawn"
+          ? "Request withdrawn — agent never ran"
+          : null;
+
     const statusMetadataNode =
-      message.pending || message.edited ? (
+      message.pending || message.edited || editAsUndoInline ? (
         <>
           {message.pending ? (
             <p
@@ -534,6 +562,14 @@ export const MessageRow = React.memo(
               </TooltipTrigger>
               <TooltipContent>This message has been edited</TooltipContent>
             </Tooltip>
+          ) : null}
+          {editAsUndoInline ? (
+            <p
+              className="font-normal text-muted-foreground/70"
+              data-testid="message-edit-as-undo-status"
+            >
+              {editAsUndoInline}
+            </p>
           ) : null}
         </>
       ) : null;

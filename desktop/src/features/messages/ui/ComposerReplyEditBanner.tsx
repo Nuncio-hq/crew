@@ -14,11 +14,14 @@ const BANNER_CLASS =
  */
 export function ComposerReplyEditBanner({
   isEditing,
+  isUndo = false,
   replyTarget,
   onCancelEdit,
   onCancelReply,
 }: {
   isEditing: boolean;
+  /** True when the edit still rewrites a queued agent request (pre-dispatch). */
+  isUndo?: boolean;
   replyTarget?: { author: string; body: string; id: string } | null;
   onCancelEdit?: () => void;
   onCancelReply?: () => void;
@@ -28,11 +31,12 @@ export function ComposerReplyEditBanner({
       <div
         className={cn(BANNER_CLASS, "items-center")}
         data-testid="edit-target"
+        data-edit-as-undo={isUndo ? "true" : undefined}
       >
         <Pencil aria-hidden className="h-4 w-4 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium text-foreground">
-            Editing message
+            {isUndo ? "Undoing request" : "Editing message"}
           </p>
         </div>
         {onCancelEdit ? (

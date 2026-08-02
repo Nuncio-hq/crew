@@ -23,9 +23,9 @@ import {
 import { useAttachmentEditing } from "@/features/messages/lib/useAttachmentEditing";
 import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
 import { useMentions } from "@/features/messages/lib/useMentions";
-import { diffAddedMentionPubkeys } from "@/features/messages/lib/threading";
 import { getPersistentAgentAudienceScope } from "@/features/messages/lib/persistentAgentAudience";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { useComposerEditAsUndo } from "./useComposerEditAsUndo";
 import {
   hasMentionClipboardHtml,
   normalizeMentionClipboardHtml,
@@ -133,6 +133,10 @@ function MessageComposerImpl({
   const mentions = useMentions(channelId, undefined, profiles, {
     channelType,
   });
+  const { editAsUndoState, computeEditMentionDiffs } = useComposerEditAsUndo({
+    editTarget,
+    extractMentionPubkeys: mentions.extractMentionPubkeys,
+  });
   const channelLinks = useChannelLinks();
   const customEmoji = useCustomEmoji();
   const emojiAutocomplete = useEmojiAutocomplete(customEmoji);
@@ -187,7 +191,6 @@ function MessageComposerImpl({
   const onEditSaveRef = React.useRef(onEditSave);
   const onEditLastOwnMessageRef = React.useRef(onEditLastOwnMessage);
   const editTargetRef = React.useRef(editTarget);
-  const extractMentionPubkeysRef = React.useRef(mentions.extractMentionPubkeys);
   const ownerPubkeyRef = React.useRef(ownerPubkey);
   disabledRef.current = disabled;
   isSendingRef.current = isSending;
@@ -196,7 +199,6 @@ function MessageComposerImpl({
   onEditSaveRef.current = onEditSave;
   onEditLastOwnMessageRef.current = onEditLastOwnMessage;
   editTargetRef.current = editTarget;
-  extractMentionPubkeysRef.current = mentions.extractMentionPubkeys;
   ownerPubkeyRef.current = ownerPubkey;
 
   const isAutocompleteOpenRef = React.useRef(false);
@@ -226,7 +228,6 @@ function MessageComposerImpl({
       scrollElement.scrollTop = scrollElement.scrollHeight;
     });
   }, []);
-
   const computedPlaceholder = editTarget
     ? "Edit your message"
     : (placeholder ??
@@ -239,6 +240,7 @@ function MessageComposerImpl({
     editable: !disabled,
     mentionNames: mentions.knownNames,
     agentMentionNames: mentions.agentKnownNames,
+    agentAvatarUrlsByName: mentions.agentAvatarUrlsByName,
     channelNames: channelLinks.knownChannelNames,
     customEmoji,
     onSubmit: () => submitMessageRef.current(),
@@ -538,16 +540,12 @@ function MessageComposerImpl({
           buildCustomEmojiTags(finalContent, customEmoji),
         ) ?? [];
 
-      // Notify only mentions this edit *newly adds* (see
-      // diffAddedMentionPubkeys): a typo-fix edit that leaves the mention set
-      // unchanged emits no `p` tags and re-wakes nobody. Computed before the
-      // composer state is cleared below.
-      const addedMentionPubkeys = diffAddedMentionPubkeys(
-        extractMentionPubkeysRef.current(editTargetRef.current.body),
-        extractMentionPubkeysRef.current(finalContent),
-        ownerPubkeyRef.current ?? "",
-      );
-
+      const { addedMentionPubkeys, removedMentionPubkeys } =
+        computeEditMentionDiffs(
+          editTargetRef.current.body,
+          finalContent,
+          ownerPubkeyRef.current ?? "",
+        );
       const savedContent = trimmed;
       const savedImeta = [...currentPendingImeta];
       const savedSpoileredAttachmentUrls = new Set(spoileredAttachmentUrls);
@@ -559,12 +557,12 @@ function MessageComposerImpl({
       channelLinks.clearChannels();
       emojiAutocomplete.clearEmojis();
       setIsEmojiPickerOpen(false);
-
       try {
         await onEditSaveRef.current(
           finalContent,
           outgoingTags,
           addedMentionPubkeys,
+          removedMentionPubkeys,
         );
       } catch {
         setComposerContent(savedContent);
@@ -619,6 +617,7 @@ function MessageComposerImpl({
   }, [
     channelId,
     channelLinks.clearChannels,
+    computeEditMentionDiffs,
     customEmoji,
     drafts.loadDraft,
     emojiAutocomplete.clearEmojis,
@@ -893,6 +892,7 @@ function MessageComposerImpl({
         <div className="relative flex w-full flex-col gap-0">
           <ComposerReplyEditBanner
             isEditing={editTarget != null}
+            isUndo={editAsUndoState === "queued"}
             replyTarget={replyTarget}
             onCancelEdit={onCancelEdit}
             onCancelReply={onCancelReply}

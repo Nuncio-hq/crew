@@ -46,6 +46,12 @@ export type AgentActivityAction = {
   object?: string | null;
 };
 
+/** Structured todo step from the harness `todo` tool (`{text, done}`). */
+export type AgentPlanTodo = {
+  text: string;
+  done: boolean;
+};
+
 export type AgentActivityDescriptor = {
   renderClass: AgentActivityRenderClass;
   label: string;
@@ -57,6 +63,8 @@ export type AgentActivityDescriptor = {
   source?: "mcp" | "shell" | "acp" | "harness" | "fallback";
   groupKey?: string;
   reason?: string;
+  /** Full todo array when the tool carried one; null/omitted means unavailable. */
+  todos?: AgentPlanTodo[] | null;
 };
 
 /** Observer/ACP wire label for dev-only transcript debugging. */
@@ -100,6 +108,8 @@ export type TranscriptItem =
       timestamp: string;
       isUpdate?: boolean;
       targetId?: string;
+      /** Structured steps when sourced from a todo tool; omit for markdown plans. */
+      todos?: AgentPlanTodo[] | null;
       acpSource?: TranscriptAcpSource;
     } & TranscriptItemIdentity)
   | ({
