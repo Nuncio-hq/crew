@@ -14,7 +14,14 @@ agent), xong việc = 1 dòng kết quả ở lại vĩnh viễn. Chi tiết k�
 - Không thêm i18n framework trong scope này (xem "Ngôn ngữ" bên dưới).
 - Không dịch nội dung do agent viết ra.
 - Không đổi giao thức observer, không thêm event kind mới.
-- Không đụng mobile trong 6 phase đầu.
+- Không ép ngôn ngữ agent bằng system prompt cấp crew (xem "Quyết định" bên dưới).
+
+## Quyết định (Oscar, 2026-08-02)
+
+1. **Không** đặt mặc định "agent viết plan bằng tiếng Việt" ở system prompt cấp
+   crew. Việc lái ngôn ngữ agent thuộc về `AGENTS.md` / `CLAUDE.md` của từng
+   repo — can thiệp sâu và theo ngữ cảnh, không phải một cờ toàn cục.
+2. **Mobile nằm trong scope.** Xem phase M bên dưới.
 
 ## Ngôn ngữ: chrome vs content
 
@@ -61,6 +68,9 @@ tiếng Việt thì đòn bẩy là **system prompt của agent**, không phải
 - [ ] Phase 4 — ThreadWorkCard (focus mode)
 - [ ] Phase 5 — multi-thread rollups
 - [ ] Phase 6 — done footer + detail rail
+- [x] Phase M1 — mobile: turn store (+ `conversationId` parse + derive helper)
+- [x] Phase M2 — mobile: dòng hoạt động inline (ngang phase 3)
+- [ ] Phase M3 — mobile: thẻ công việc (ngang phase 4)
 
 ## Phase 1 — Giữ lại mảng todo, suy ra bước hiện tại
 
@@ -145,6 +155,71 @@ Prototype đặt sticky trong vùng cuộn — chỗ này bản thật phải l�
   thay thế pane thread. Ở focus mode cột chữ chỉ 880px
   (`threadFocusLayout.ts`) nên còn dư chỗ.
 - Rail thuộc về **1 agent** — mở từ dòng agent nào thì hiện việc agent đó.
+
+## Phase M — Mobile (Flutter)
+
+**Mobile không phải "desktop trên màn nhỏ".** Bệnh của nó ngược lại: desktop bị
+**ồn** (headline xoay vòng), mobile bị **vô hình** — trong luồng chat không có
+tín hiệu agent nào, và transcript thì chôn hai lớp sâu
+(`members_sheet.dart:57` → `AgentActivitySheet`). Không ai tìm ra.
+
+### Đã có sẵn trong `mobile/`
+
+| Thứ | Ở đâu |
+|-----|-------|
+| Nhận frame observer 24200 | `features/channels/agent_activity/observer_subscription.dart:136` |
+| Model frame đã giải mã | `agent_activity/observer_models.dart` |
+| Dựng transcript | `agent_activity/transcript_builder.dart` (714 dòng) |
+| Sheet transcript | `agent_activity/agent_activity_sheet.dart` |
+| Kind constants | `shared/relay/nostr_models.dart:18` |
+
+### Cái mobile **không** có (khác desktop, đây là phần tốn)
+
+- **Không có `activeAgentTurnsStore` tương đương.**
+  `agent_activity/working_bots_provider.dart` suy ra "đang làm việc" **chỉ từ
+  typing indicator**, không từ turn của observer. Desktop có
+  `agentWorkingSignal.ts` với observer là chính, typing chỉ là dự phòng.
+- Hệ quả: mobile hiện **không có** `anchorAt` (nên không đếm được elapsed),
+  không có `lastActivityAt` (nên không phát hiện kẹt), và không gom theo
+  conversation (nên không tách được thread).
+- `transcript_builder.dart:701` có nhận `updateType == 'plan'` nhưng chỉ gắn
+  nhãn — vứt mảng todo y như desktop trước phase 1.
+
+**Nên phase M2 không phải port phase 3.** Phải dựng nền turn store trước, nếu
+không thì dòng hoạt động không có đồng hồ và không biết kẹt.
+
+### M1 — Turn store (nền)
+
+Dart tương đương `activeAgentTurnsStore.ts`: theo dõi turn đang chạy theo
+(agent, channel, conversation), giữ `startedAt` / `lastActivityAt`, bù lệch
+đồng hồ, tự dọn khi turn kết thúc. Nguồn: frame observer đã có.
+
+### M2 — Dòng hoạt động inline (ngang phase 3)
+
+Một dòng tĩnh trong `channel_detail_page` và `thread_detail_page`: pulse +
+`<tên> is working` / `N agents working` + đồng hồ + Stop. Ngưỡng im lặng 3s,
+kẹt 90s → amber. Dùng lại đúng chuỗi chrome tiếng Anh của desktop.
+
+### M3 — Thẻ công việc (ngang phase 4)
+
+Mobile luôn một panel = luôn "expanded", nên thẻ hiện thẳng, không cần điều
+kiện `focus`. Luật giống desktop: thẻ thuộc về thread, mỗi agent một dòng,
+accordion 1 dòng mở, trần 4 dòng.
+
+### Ràng buộc mobile (CLAUDE.md)
+
+- **Không `StatefulWidget`.** `HookConsumerWidget` / `ConsumerWidget` + Riverpod.
+- **Trần 1000 dòng/file**, gác bởi `mobile/scripts/check-file-sizes.mjs` qua
+  `just mobile-check`. `thread_detail_page.dart` đang **845 dòng** — thêm thẻ
+  vào thẳng file đó là gần chạm trần. Đẩy sub-widget sang thư mục part như
+  `channel_detail_page/` đang làm (`app_bar.dart`, `banners.dart`, …).
+  **Chạm trần thì tách file, không được nâng giới hạn.**
+- Feature module không import feature module khác — chỉ `shared/`.
+- Dùng `context.colors` / `context.textTheme`, `Grid` cho spacing, `Radii` cho bo góc.
+- Kind phải khớp `desktop/src/shared/constants/kinds.ts`.
+- Agent chỉ được chạy `flutter test`, `flutter analyze`, `dart format` —
+  **không** `flutter run` / `build` / `clean` / `upgrade`.
+- Ưu tiên **widget test** hơn unit test; fake notifier extends notifier thật.
 
 ## Rủi ro
 
