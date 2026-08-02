@@ -49,7 +49,14 @@ export function useProjectThreadWorkspaceModel({
     () => parseProjectThreadContext(threadHead.body),
     [threadHead.body],
   );
-  const workspace = useProjectThreadWorkspace(threadHead.id);
+  // The repository path is what lets the hook fall back to the worktree
+  // registry and report `derived`. It is an optional parameter, so omitting it
+  // still compiles and still passes tests — it just silently disables that
+  // fallback entirely. Keep it wired.
+  const workspace = useProjectThreadWorkspace(
+    threadHead.id,
+    context?.localPath ?? null,
+  );
   const conversationId =
     workspace.status === "ready" || workspace.status === "error"
       ? workspace.conversationId
@@ -66,7 +73,8 @@ export function useProjectThreadWorkspaceModel({
   );
   const target = React.useMemo(
     () =>
-      workspace.status === "ready" && workspace.repositoryPath
+      (workspace.status === "ready" || workspace.status === "derived") &&
+      workspace.repositoryPath
         ? {
             branch: workspace.branch,
             repositoryPath: workspace.repositoryPath,

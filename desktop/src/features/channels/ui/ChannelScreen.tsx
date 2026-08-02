@@ -755,45 +755,28 @@ export function ChannelScreen({
     [],
   );
 
-  const channelHeader = React.useMemo(
-    () => (
-      <ChannelScreenHeader
-        activeChannel={activeChannel}
-        activeChannelEphemeralDisplay={activeChannelEphemeralDisplay}
-        activeChannelTitle={activeChannelTitle}
-        actionsVariant={shouldCompactHeaderActions ? "compact" : "inline"}
-        activeDmAvatarUrl={activeDmAvatarUrl}
-        activeDmHeaderParticipants={activeDmHeaderParticipants}
-        activeDmPresenceStatus={activeDmPresenceStatus}
-        chromeWrapperRef={channelHeaderChromeRef}
-        currentPubkey={currentPubkey}
-        isAddBotOpen={isAddBotOpen}
-        isJoining={joinChannelMutation.isPending}
-        onAddBotOpenChange={setIsAddBotOpen}
-        onJoinChannel={joinChannelMutation.mutateAsync}
-        onManageChannel={handleManageChannel}
-        onToggleMembers={handleToggleMembers}
-        showHeaderContent={!isSinglePanelView}
-        transparentChrome={activeChannel?.channelType !== "forum"}
-      />
-    ),
-    [
-      activeChannel,
-      activeChannelEphemeralDisplay,
-      activeChannelTitle,
-      shouldCompactHeaderActions,
-      activeDmAvatarUrl,
-      activeDmHeaderParticipants,
-      activeDmPresenceStatus,
-      channelHeaderChromeRef,
-      currentPubkey,
-      isAddBotOpen,
-      joinChannelMutation.isPending,
-      joinChannelMutation.mutateAsync,
-      handleManageChannel,
-      handleToggleMembers,
-      isSinglePanelView,
-    ],
+  const channelHeader = (
+    <ChannelScreenHeader
+      activeChannel={activeChannel}
+      activeChannelEphemeralDisplay={activeChannelEphemeralDisplay}
+      activeChannelTitle={activeChannelTitle}
+      actionsVariant={shouldCompactHeaderActions ? "compact" : "inline"}
+      activeDmAvatarUrl={activeDmAvatarUrl}
+      activeDmHeaderParticipants={activeDmHeaderParticipants}
+      activeDmPresenceStatus={activeDmPresenceStatus}
+      chromeWrapperRef={channelHeaderChromeRef}
+      currentPubkey={currentPubkey}
+      isAddBotOpen={isAddBotOpen}
+      isJoining={joinChannelMutation.isPending}
+      onAddBotOpenChange={setIsAddBotOpen}
+      onJoinChannel={joinChannelMutation.mutateAsync}
+      onManageChannel={handleManageChannel}
+      onOpenThread={handleOpenThreadAndCloseAgentSession}
+      onToggleMembers={handleToggleMembers}
+      showHeaderContent={!isSinglePanelView}
+      timelineMessages={timelineMessages}
+      transparentChrome={activeChannel?.channelType !== "forum"}
+    />
   );
   return (
     <AgentSessionProvider onOpenAgentSession={handleOpenAgentSession}>

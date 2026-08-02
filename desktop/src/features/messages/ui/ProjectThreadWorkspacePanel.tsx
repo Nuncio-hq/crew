@@ -356,15 +356,17 @@ export function ProjectThreadWorkspacePanel({
                       ? `${workspace.commitsBehindRemote} behind origin/${workspace.remoteDefaultBranch ?? "default"}`
                       : "Remote tip · ready"
                     : "Local fallback · remote unavailable"
-                  : workspace.status === "error"
-                    ? "Setup failed"
-                    : "Preparing"
+                  : workspace.status === "derived"
+                    ? "Restored from disk"
+                    : workspace.status === "error"
+                      ? "Setup failed"
+                      : "Preparing"
               }
               icon={<GitBranch className="h-3.5 w-3.5" />}
               label="Workspace"
               onClick={() => toggle("workspace")}
               title={
-                workspace.status === "ready"
+                workspace.status === "ready" || workspace.status === "derived"
                   ? workspace.branch
                   : "Shared worktree"
               }

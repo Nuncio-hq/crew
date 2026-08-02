@@ -1,5 +1,5 @@
 import { LogIn } from "lucide-react";
-import type * as React from "react";
+import * as React from "react";
 
 import { ChatHeader } from "@/features/chat/ui/ChatHeader";
 import type { EphemeralChannelDisplay } from "@/features/channels/lib/ephemeralChannel";
@@ -9,6 +9,11 @@ import { getDmParticipantPreview } from "@/features/channels/lib/dmParticipantDi
 import { ChannelHeaderStatusBadge } from "@/features/channels/ui/ChannelHeaderStatusBadge";
 import { ChannelMembersBar } from "@/features/channels/ui/ChannelMembersBar";
 import {
+  ChannelScreenWorktrees,
+  useProjectChannelRepositoryPath,
+} from "@/features/channels/ui/ChannelScreenWorktrees";
+import { ChannelWorktreesPill } from "@/features/channels/ui/ChannelWorktreesPill";
+import {
   DEFAULT_HOVER_PROFILE_STATUS_GEOMETRY,
   ProfileAvatarWithStatus,
   scaleProfileAvatarStatusGeometry,
@@ -16,6 +21,7 @@ import {
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import { Button } from "@/shared/ui/button";
 import type { Channel, PresenceStatus } from "@/shared/api/types";
+import type { TimelineMessage } from "@/features/messages/types";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
 
 const DM_HEADER_AVATAR_SIZE = 32;
@@ -42,6 +48,8 @@ type ChannelScreenHeaderProps = {
   onJoinChannel?: () => Promise<void>;
   onManageChannel: () => void;
   onToggleMembers: () => void;
+  timelineMessages?: readonly TimelineMessage[];
+  onOpenThread?: (message: TimelineMessage) => void;
 };
 
 export function ChannelScreenHeader({
@@ -62,7 +70,12 @@ export function ChannelScreenHeader({
   onJoinChannel,
   onManageChannel,
   onToggleMembers,
+  timelineMessages = [],
+  onOpenThread,
 }: ChannelScreenHeaderProps) {
+  const [isWorktreesOpen, setIsWorktreesOpen] = React.useState(false);
+  const projectRepositoryPath =
+    useProjectChannelRepositoryPath(timelineMessages);
   const isGroupDm =
     activeChannel?.channelType === "dm" &&
     activeDmHeaderParticipants.length > 1;
@@ -103,24 +116,39 @@ export function ChannelScreenHeader({
   }
 
   return (
-    <ChatHeader
-      belowSystemChrome
-      chromeWrapperRef={chromeWrapperRef}
-      actions={actions}
-      channelType={activeChannel?.channelType}
-      description={getChannelDescription(activeChannel)}
-      leadingContent={
-        activeChannel?.channelType === "dm" ? (
-          isGroupDm ? (
-            <DmHeaderParticipantStack
-              participants={activeDmHeaderParticipants}
-            />
-          ) : activeDmParticipant ? (
-            <UserProfilePopover
-              pubkey={activeDmParticipant.pubkey}
-              triggerAriaLabel={`Open profile for ${activeChannelTitle}`}
-              triggerElement="span"
-            >
+    <>
+      <ChatHeader
+        belowSystemChrome
+        chromeWrapperRef={chromeWrapperRef}
+        actions={actions}
+        channelType={activeChannel?.channelType}
+        description={getChannelDescription(activeChannel)}
+        leadingContent={
+          activeChannel?.channelType === "dm" ? (
+            isGroupDm ? (
+              <DmHeaderParticipantStack
+                participants={activeDmHeaderParticipants}
+              />
+            ) : activeDmParticipant ? (
+              <UserProfilePopover
+                pubkey={activeDmParticipant.pubkey}
+                triggerAriaLabel={`Open profile for ${activeChannelTitle}`}
+                triggerElement="span"
+              >
+                <ProfileAvatarWithStatus
+                  avatarClassName="text-xs"
+                  avatarUrl={activeDmAvatarUrl}
+                  className="mr-1.5 h-8 w-8"
+                  geometry={DM_HEADER_AVATAR_STATUS_GEOMETRY}
+                  iconClassName="h-4 w-4"
+                  label={activeChannelTitle}
+                  size={DM_HEADER_AVATAR_SIZE}
+                  status={activeDmPresenceStatus ?? "offline"}
+                  statusTestId="chat-presence-badge"
+                  testId="chat-header-dm-avatar"
+                />
+              </UserProfilePopover>
+            ) : (
               <ProfileAvatarWithStatus
                 avatarClassName="text-xs"
                 avatarUrl={activeDmAvatarUrl}
@@ -133,32 +161,33 @@ export function ChannelScreenHeader({
                 statusTestId="chat-presence-badge"
                 testId="chat-header-dm-avatar"
               />
-            </UserProfilePopover>
-          ) : (
-            <ProfileAvatarWithStatus
-              avatarClassName="text-xs"
-              avatarUrl={activeDmAvatarUrl}
-              className="mr-1.5 h-8 w-8"
-              geometry={DM_HEADER_AVATAR_STATUS_GEOMETRY}
-              iconClassName="h-4 w-4"
-              label={activeChannelTitle}
-              size={DM_HEADER_AVATAR_SIZE}
-              status={activeDmPresenceStatus ?? "offline"}
-              statusTestId="chat-presence-badge"
-              testId="chat-header-dm-avatar"
+            )
+          ) : undefined
+        }
+        statusBadge={
+          <>
+            <ChannelWorktreesPill
+              onOpen={() => setIsWorktreesOpen(true)}
+              repositoryPath={projectRepositoryPath}
             />
-          )
-        ) : undefined
-      }
-      statusBadge={
-        <ChannelHeaderStatusBadge
-          ephemeralDisplay={activeChannelEphemeralDisplay}
+            <ChannelHeaderStatusBadge
+              ephemeralDisplay={activeChannelEphemeralDisplay}
+            />
+          </>
+        }
+        title={activeChannelTitle}
+        transparentChrome={transparentChrome}
+        visibility={activeChannel?.visibility}
+      />
+      {onOpenThread ? (
+        <ChannelScreenWorktrees
+          onOpenChange={setIsWorktreesOpen}
+          onOpenThread={onOpenThread}
+          open={isWorktreesOpen}
+          timelineMessages={timelineMessages}
         />
-      }
-      title={activeChannelTitle}
-      transparentChrome={transparentChrome}
-      visibility={activeChannel?.visibility}
-    />
+      ) : null}
+    </>
   );
 }
 
