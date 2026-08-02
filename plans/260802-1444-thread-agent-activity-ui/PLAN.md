@@ -53,6 +53,15 @@ tiếng Việt thì đòn bẩy là **system prompt của agent**, không phải
 | Transcript đầy đủ | `AgentSessionThreadPanel.tsx` |
 | Hợp đồng tool todo | `crates/buzz-dev-mcp/src/lib.rs:87` — mảng `{text, done}` |
 
+## Progress
+
+- [x] Phase 1 — todo array + `agentPlanProgress`
+- [x] Phase 2 — `getActiveTurnsByConversation()`
+- [x] Phase 3 — static activity line (no headline rotation)
+- [ ] Phase 4 — ThreadWorkCard (focus mode)
+- [ ] Phase 5 — multi-thread rollups
+- [ ] Phase 6 — done footer + detail rail
+
 ## Phase 1 — Giữ lại mảng todo, suy ra bước hiện tại
 
 **Vấn đề:** `agentSessionToolClassifier.ts:629` (`getTodoPreview`) nhận đủ mảng
