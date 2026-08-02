@@ -35,12 +35,14 @@ import { getThreadPanelLayout } from "@/features/channels/lib/threadPanelLayout"
 import { useThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 import { useThreadViewModeSwitch } from "@/features/channels/ui/useThreadViewModeSwitch";
 import { useFocusDrawerPresence } from "@/features/channels/ui/useFocusDrawerPresence";
-import { useChannelWorkingAgentPubkeys } from "@/features/agents/agentWorkingSignal";
-import { BotActivityComposerAction } from "@/features/channels/ui/BotActivityBar";
 import { ChannelComposerActivityAccessory } from "@/features/channels/ui/ChannelComposerActivityAccessory";
 import { ChannelUserInputStack } from "@/features/channels/ui/ChannelUserInputStack";
 import { useChannelUserInput } from "@/features/channels/hooks/useChannelUserInput";
-import { useThreadComposerBotActivity } from "@/features/channels/ui/useThreadComposerBotActivity";
+import { useChannelComposerBotActivity } from "@/features/channels/ui/useChannelComposerBotActivity";
+import {
+  ThreadComposerBotActivity,
+  useThreadComposerBotActivityVisible,
+} from "@/features/channels/ui/ThreadComposerBotActivity";
 import {
   containsWelcomePersonaMention,
   WelcomeComposerBanner,
@@ -408,17 +410,16 @@ export const ChannelPane = React.memo(function ChannelPane({
   // bot typing fallback (both folded together by agentWorkingSignal). This is
   // what makes the bar show for an agent whose observer stream is live but
   // whose typing signal never arrives — and vice versa.
-  const composerWorkingBotPubkeys = useChannelWorkingAgentPubkeys(
+  const composerWorkingBotPubkeys = useChannelComposerBotActivity(
     activeChannel?.id ?? null,
   );
   const hasComposerBotActivity = composerWorkingBotPubkeys.length > 0;
   const hasComposerBottomActivity = hasComposerBotActivity || hasTypingActivity;
-  const { hasThreadComposerBotActivity, threadComposerWorkingBotPubkeys } =
-    useThreadComposerBotActivity(
-      activeChannel?.id,
-      openThreadHeadId,
-      botTypingEntries,
-    );
+  const hasThreadComposerBotActivity = useThreadComposerBotActivityVisible(
+    activeChannel?.id,
+    openThreadHeadId,
+    botTypingEntries,
+  );
   const directMessageIntro = React.useMemo(
     () =>
       buildDirectMessageIntro({
@@ -899,17 +900,15 @@ export const ChannelPane = React.memo(function ChannelPane({
                 threadTypingPubkeys={threadTypingPubkeys}
                 activityAccessoryVisible={hasThreadComposerBotActivity}
                 activityAccessoryContent={
-                  hasThreadComposerBotActivity ? (
-                    <BotActivityComposerAction
-                      agents={activityAgents}
-                      channelId={activeChannel?.id ?? null}
-                      onOpenAgentSession={onOpenAgentSession}
-                      openAgentSessionPubkey={openAgentSessionPubkey}
-                      profiles={profiles}
-                      workingBotPubkeys={threadComposerWorkingBotPubkeys}
-                      variant="inline"
-                    />
-                  ) : null
+                  <ThreadComposerBotActivity
+                    agents={activityAgents}
+                    botTypingEntries={botTypingEntries}
+                    channelId={activeChannel?.id}
+                    onOpenAgentSession={onOpenAgentSession}
+                    openAgentSessionPubkey={openAgentSessionPubkey}
+                    openThreadHeadId={openThreadHeadId}
+                    profiles={profiles}
+                  />
                 }
               />
             );

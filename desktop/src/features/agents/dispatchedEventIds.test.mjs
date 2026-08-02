@@ -2,15 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  conversationHasStoppableWork,
   deriveEditAsUndoUiState,
+  getPendingAgentPubkeysForConversation,
   ingestObserverFrameForEditAsUndo,
+  prunePendingAgentRequests,
   recordMessageEditApplied,
+  recordPendingAgentRequest,
   resetDispatchedEventIdsStore,
   getMessageEditAppliedResult,
 } from "./dispatchedEventIds.ts";
 
 const EVENT = "a".repeat(64);
 const OTHER = "b".repeat(64);
+const AGENT = "c".repeat(64);
+const CHANNEL = "11111111-1111-1111-1111-111111111111";
+const CONVERSATION = "22222222-2222-2222-2222-222222222222";
 
 test.beforeEach(() => {
   resetDispatchedEventIdsStore();
@@ -95,4 +102,66 @@ test("ingest message_edit_applied records outcome", () => {
 test("record ignores non-hex ids", () => {
   recordMessageEditApplied("not-an-id", "patched", true);
   assert.equal(getMessageEditAppliedResult("not-an-id"), null);
+});
+
+test("queued request with no turn reports stoppable work", () => {
+  recordPendingAgentRequest({
+    eventId: EVENT,
+    channelId: CHANNEL,
+    conversationId: CONVERSATION,
+    agentPubkeys: [AGENT],
+  });
+  assert.deepEqual(getPendingAgentPubkeysForConversation(CONVERSATION), [
+    AGENT,
+  ]);
+  assert.equal(
+    conversationHasStoppableWork({
+      hasRunningTurn: false,
+      pendingRequests: [
+        {
+          eventId: EVENT,
+          channelId: CHANNEL,
+          conversationId: CONVERSATION,
+          agentPubkeys: [AGENT],
+        },
+      ],
+    }),
+    true,
+  );
+});
+
+test("running turn alone is stoppable even with empty pending", () => {
+  assert.equal(
+    conversationHasStoppableWork({
+      hasRunningTurn: true,
+      pendingRequests: [],
+    }),
+    true,
+  );
+});
+
+test("pending clears once the event is in turn_started", () => {
+  recordPendingAgentRequest({
+    eventId: EVENT,
+    channelId: CHANNEL,
+    conversationId: CONVERSATION,
+    agentPubkeys: [AGENT],
+  });
+  prunePendingAgentRequests(new Set([EVENT]));
+  assert.deepEqual(getPendingAgentPubkeysForConversation(CONVERSATION), []);
+});
+
+test("pending pubkey list is reference-stable across unrelated edits", () => {
+  recordPendingAgentRequest({
+    eventId: EVENT,
+    channelId: CHANNEL,
+    conversationId: CONVERSATION,
+    agentPubkeys: [AGENT],
+  });
+  const first = getPendingAgentPubkeysForConversation(CONVERSATION);
+  const second = getPendingAgentPubkeysForConversation(CONVERSATION);
+  assert.equal(first, second);
+  recordMessageEditApplied(OTHER, "patched", true);
+  const third = getPendingAgentPubkeysForConversation(CONVERSATION);
+  assert.equal(first, third);
 });

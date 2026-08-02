@@ -1,12 +1,27 @@
 import * as React from "react";
 
-import { useConversationWorkingAgentPubkeys } from "@/features/agents/agentWorkingSignal";
+import {
+  mergeWorkingAgentPubkeys,
+  useConversationWorkingAgentPubkeys,
+} from "@/features/agents/agentWorkingSignal";
 import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
+import {
+  getPendingAgentPubkeysForConversation,
+  subscribeMessageEditApplied,
+} from "@/features/agents/dispatchedEventIds";
+import { getRegisteredObserverAgentPubkeys } from "@/features/agents/observerRelayStore";
 import type { ChannelPaneProps } from "@/features/channels/ui/ChannelPane.types";
+import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
+
+function agentOnlyPendingPubkeys(pending: readonly string[]): string[] {
+  const known = getRegisteredObserverAgentPubkeys();
+  if (known.size === 0) return [...pending];
+  return pending.filter((pubkey) => known.has(pubkey));
+}
 
 type BotTypingEntry = ChannelPaneProps["botTypingEntries"][number];
 
-/** Working bot pubkeys for the open thread composer (typing + observer turns). */
+/** Working bot pubkeys for the open thread composer (typing + observer + queued). */
 export function useThreadComposerBotActivity(
   channelId: string | null | undefined,
   openThreadHeadId: string | null | undefined,
@@ -35,8 +50,34 @@ export function useThreadComposerBotActivity(
     threadComposerBotTypingPubkeys,
   );
 
+  const [pendingVersion, setPendingVersion] = React.useState(0);
+  React.useEffect(() => {
+    return subscribeMessageEditApplied(() => {
+      setPendingVersion((current) => current + 1);
+    });
+  }, []);
+
+  const pendingPubkeys = React.useMemo(() => {
+    void pendingVersion;
+    return agentOnlyPendingPubkeys(
+      getPendingAgentPubkeysForConversation(threadComposerConversationId),
+    );
+  }, [pendingVersion, threadComposerConversationId]);
+
+  const mergedWorkingBotPubkeys = useStableArrayShallow(
+    React.useMemo(
+      () =>
+        mergeWorkingAgentPubkeys(
+          threadComposerWorkingBotPubkeys,
+          pendingPubkeys,
+        ),
+      [pendingPubkeys, threadComposerWorkingBotPubkeys],
+    ),
+  );
+
   return {
-    hasThreadComposerBotActivity: threadComposerWorkingBotPubkeys.length > 0,
-    threadComposerWorkingBotPubkeys,
+    hasThreadComposerBotActivity: mergedWorkingBotPubkeys.length > 0,
+    threadComposerConversationId,
+    threadComposerWorkingBotPubkeys: mergedWorkingBotPubkeys,
   };
 }

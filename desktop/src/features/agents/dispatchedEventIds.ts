@@ -5,6 +5,9 @@
  * `message_edit_applied` over the observer feed. This module holds the
  * edit-outcome side and pure selectors; live dispatch membership is read from
  * `collectTriggeringEventIds()` in observerRelayStore (no reverse import).
+ *
+ * Pending agent requests (sent, not yet in any `turn_started`) live here too
+ * so Stop can appear during the dispatch-hold window before a turn exists.
  */
 
 export type MessageEditAppliedOutcome = "patched" | "dropped";
@@ -14,10 +17,35 @@ export type MessageEditAppliedResult = {
   applied: boolean;
 };
 
+/** A user-authored mention that is still waiting to be dispatched. */
+export type PendingAgentRequest = {
+  eventId: string;
+  channelId: string;
+  conversationId: string;
+  agentPubkeys: string[];
+};
+
 const editOutcomesByEventId = new Map<string, MessageEditAppliedResult>();
+const pendingByEventId = new Map<string, PendingAgentRequest>();
 const outcomeListeners = new Set<() => void>();
 
-function notifyOutcomeListeners() {
+const EMPTY_PUBKEYS: string[] = [];
+const EMPTY_PENDING: PendingAgentRequest[] = [];
+const pendingPubkeysByConversationCache = new Map<string, string[]>();
+const pendingPubkeysByChannelCache = new Map<string, string[]>();
+const pendingRequestsByConversationCache = new Map<
+  string,
+  PendingAgentRequest[]
+>();
+const pendingRequestsByChannelCache = new Map<string, PendingAgentRequest[]>();
+
+function notifyOutcomeListeners(options?: { pendingChanged?: boolean }) {
+  if (options?.pendingChanged) {
+    pendingPubkeysByConversationCache.clear();
+    pendingPubkeysByChannelCache.clear();
+    pendingRequestsByConversationCache.clear();
+    pendingRequestsByChannelCache.clear();
+  }
   for (const listener of outcomeListeners) {
     listener();
   }
@@ -56,7 +84,177 @@ export function recordMessageEditApplied(
     return;
   }
   editOutcomesByEventId.set(key, { outcome, applied });
-  notifyOutcomeListeners();
+  let pendingChanged = false;
+  if (applied && outcome === "dropped" && pendingByEventId.delete(key)) {
+    pendingChanged = true;
+  }
+  notifyOutcomeListeners({ pendingChanged });
+}
+
+/**
+ * Record that a just-sent message mentioned agents and may still be held in
+ * the harness queue. Cleared when the event is dispatched, withdrawn, or the
+ * conversation is drained by Stop.
+ */
+export function recordPendingAgentRequest(input: {
+  eventId: string;
+  channelId: string;
+  conversationId: string;
+  agentPubkeys: readonly string[];
+}): void {
+  if (!/^[0-9a-fA-F]{64}$/.test(input.eventId)) {
+    return;
+  }
+  const agentPubkeys = [
+    ...new Set(
+      input.agentPubkeys
+        .map((pubkey) => pubkey.trim().toLowerCase())
+        .filter((pubkey) => /^[0-9a-f]{64}$/.test(pubkey)),
+    ),
+  ].sort();
+  if (agentPubkeys.length === 0) {
+    return;
+  }
+  const key = normalizeEventId(input.eventId);
+  pendingByEventId.set(key, {
+    eventId: key,
+    channelId: input.channelId,
+    conversationId: input.conversationId,
+    agentPubkeys,
+  });
+  notifyOutcomeListeners({ pendingChanged: true });
+}
+
+/** Drop pending entries whose event ids appear in any `turn_started`. */
+export function prunePendingAgentRequests(
+  dispatchedIds: ReadonlySet<string>,
+): void {
+  if (pendingByEventId.size === 0 || dispatchedIds.size === 0) {
+    return;
+  }
+  let changed = false;
+  for (const eventId of pendingByEventId.keys()) {
+    if (dispatchedIds.has(eventId)) {
+      pendingByEventId.delete(eventId);
+      changed = true;
+    }
+  }
+  if (changed) {
+    notifyOutcomeListeners({ pendingChanged: true });
+  }
+}
+
+export function clearPendingAgentRequestsForConversation(
+  conversationId: string,
+): void {
+  let changed = false;
+  for (const [eventId, pending] of pendingByEventId) {
+    if (pending.conversationId === conversationId) {
+      pendingByEventId.delete(eventId);
+      changed = true;
+    }
+  }
+  if (changed) {
+    notifyOutcomeListeners({ pendingChanged: true });
+  }
+}
+
+function listPendingRequests(): PendingAgentRequest[] {
+  if (pendingByEventId.size === 0) {
+    return EMPTY_PENDING;
+  }
+  return [...pendingByEventId.values()];
+}
+
+export function getPendingAgentRequestsForConversation(
+  conversationId: string | null | undefined,
+): PendingAgentRequest[] {
+  if (!conversationId) {
+    return EMPTY_PENDING;
+  }
+  const cached = pendingRequestsByConversationCache.get(conversationId);
+  if (cached) {
+    return cached;
+  }
+  const result = listPendingRequests().filter(
+    (pending) => pending.conversationId === conversationId,
+  );
+  const stable = result.length === 0 ? EMPTY_PENDING : result;
+  pendingRequestsByConversationCache.set(conversationId, stable);
+  return stable;
+}
+
+export function getPendingAgentRequestsForChannel(
+  channelId: string | null | undefined,
+): PendingAgentRequest[] {
+  if (!channelId) {
+    return EMPTY_PENDING;
+  }
+  const cached = pendingRequestsByChannelCache.get(channelId);
+  if (cached) {
+    return cached;
+  }
+  const result = listPendingRequests().filter(
+    (pending) => pending.channelId === channelId,
+  );
+  const stable = result.length === 0 ? EMPTY_PENDING : result;
+  pendingRequestsByChannelCache.set(channelId, stable);
+  return stable;
+}
+
+export function getPendingAgentPubkeysForConversation(
+  conversationId: string | null | undefined,
+): string[] {
+  if (!conversationId) {
+    return EMPTY_PUBKEYS;
+  }
+  const cached = pendingPubkeysByConversationCache.get(conversationId);
+  if (cached) {
+    return cached;
+  }
+  const merged = new Set<string>();
+  for (const pending of getPendingAgentRequestsForConversation(
+    conversationId,
+  )) {
+    for (const pubkey of pending.agentPubkeys) {
+      merged.add(pubkey);
+    }
+  }
+  const result = merged.size === 0 ? EMPTY_PUBKEYS : [...merged].sort();
+  pendingPubkeysByConversationCache.set(conversationId, result);
+  return result;
+}
+
+export function getPendingAgentPubkeysForChannel(
+  channelId: string | null | undefined,
+): string[] {
+  if (!channelId) {
+    return EMPTY_PUBKEYS;
+  }
+  const cached = pendingPubkeysByChannelCache.get(channelId);
+  if (cached) {
+    return cached;
+  }
+  const merged = new Set<string>();
+  for (const pending of getPendingAgentRequestsForChannel(channelId)) {
+    for (const pubkey of pending.agentPubkeys) {
+      merged.add(pubkey);
+    }
+  }
+  const result = merged.size === 0 ? EMPTY_PUBKEYS : [...merged].sort();
+  pendingPubkeysByChannelCache.set(channelId, result);
+  return result;
+}
+
+/**
+ * True when the conversation has a queued (not-yet-dispatched) request and/or
+ * the caller already knows there is a running turn.
+ */
+export function conversationHasStoppableWork(args: {
+  hasRunningTurn: boolean;
+  pendingRequests: readonly PendingAgentRequest[];
+}): boolean {
+  return args.hasRunningTurn || args.pendingRequests.length > 0;
 }
 
 export function subscribeMessageEditApplied(listener: () => void): () => void {
@@ -67,11 +265,12 @@ export function subscribeMessageEditApplied(listener: () => void): () => void {
 }
 
 export function resetDispatchedEventIdsStore(): void {
-  if (editOutcomesByEventId.size === 0) {
+  if (editOutcomesByEventId.size === 0 && pendingByEventId.size === 0) {
     return;
   }
   editOutcomesByEventId.clear();
-  notifyOutcomeListeners();
+  pendingByEventId.clear();
+  notifyOutcomeListeners({ pendingChanged: true });
 }
 
 function parseMessageEditAppliedPayload(payload: unknown): {
@@ -162,4 +361,9 @@ export function deriveEditAsUndoUiState(args: {
 /** @internal test helper */
 export function _testEditOutcomeCount(): number {
   return editOutcomesByEventId.size;
+}
+
+/** @internal test helper */
+export function _testPendingRequestCount(): number {
+  return pendingByEventId.size;
 }
