@@ -59,6 +59,7 @@ export function MessageThreadSummaryRow({
   depth = 0,
   depthGuideDepths,
   highlightThreadLineDepths,
+  isActive = false,
   message,
   onCollapseDepthGuide,
   onCollapseDepthGuideHoverChange,
@@ -72,6 +73,8 @@ export function MessageThreadSummaryRow({
   depth?: number;
   depthGuideDepths?: ReadonlyArray<number>;
   highlightThreadLineDepths?: ReadonlyArray<number>;
+  /** True when this summary's root is the open thread's timeline anchor. */
+  isActive?: boolean;
   message: TimelineMessage;
   onCollapseDepthGuide?: (message: TimelineMessage) => void;
   onCollapseDepthGuideHoverChange?: (
@@ -95,9 +98,13 @@ export function MessageThreadSummaryRow({
     THREAD_SUMMARY_SURFACE_AVATAR_INSET_REM,
   )})`;
   const replyLabel = summary.replyCount === 1 ? "reply" : "replies";
-  const summaryAriaLabel = summary.lastReplyAt
-    ? `View thread with ${summary.replyCount} ${replyLabel}, last reply ${formatThreadSummaryLastReplyTime(summary.lastReplyAt)}`
-    : `View thread with ${summary.replyCount} ${replyLabel}`;
+  const summaryAriaLabel = isActive
+    ? summary.lastReplyAt
+      ? `Viewing thread with ${summary.replyCount} ${replyLabel}, last reply ${formatThreadSummaryLastReplyTime(summary.lastReplyAt)}`
+      : `Viewing thread with ${summary.replyCount} ${replyLabel}`
+    : summary.lastReplyAt
+      ? `View thread with ${summary.replyCount} ${replyLabel}, last reply ${formatThreadSummaryLastReplyTime(summary.lastReplyAt)}`
+      : `View thread with ${summary.replyCount} ${replyLabel}`;
   const guideDepths = depthGuideDepths
     ? [...depthGuideDepths]
     : Array.from({ length: Math.max(0, depth - 1) }, (_, index) => index + 1);
@@ -210,7 +217,12 @@ export function MessageThreadSummaryRow({
 
       <button
         aria-label={summaryAriaLabel}
-        className="group relative isolate inline-flex h-[1.875rem] w-fit max-w-full cursor-pointer items-center gap-1.5 rounded-full py-0 pr-3 text-left text-xs font-medium text-muted-foreground transition-[color,opacity] hover:text-foreground hover:opacity-90 focus-visible:outline-hidden"
+        className={cn(
+          "group relative isolate inline-flex h-[1.875rem] w-fit max-w-full cursor-pointer items-center gap-1.5 rounded-full py-0 pr-3 text-left text-xs font-medium transition-[color,opacity] focus-visible:outline-hidden",
+          isActive
+            ? "text-foreground"
+            : "text-muted-foreground hover:text-foreground hover:opacity-90",
+        )}
         data-thread-head-id={message.id}
         data-testid="message-thread-summary"
         onClick={() => onOpenThread(message)}
@@ -223,7 +235,12 @@ export function MessageThreadSummaryRow({
       >
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute bottom-[-0.125rem] top-[-0.125rem] rounded-full opacity-0 ring-border/70 transition-[background-color,box-shadow,opacity] group-hover:bg-background/95 group-hover:opacity-100 group-hover:ring-1 group-focus-visible:bg-background/95 group-focus-visible:opacity-100 group-focus-visible:ring-1 group-focus-visible:ring-ring"
+          className={cn(
+            "pointer-events-none absolute bottom-[-0.125rem] top-[-0.125rem] rounded-full ring-border/70 transition-[background-color,box-shadow,opacity]",
+            isActive
+              ? "bg-background/95 opacity-100 ring-1"
+              : "opacity-0 group-hover:bg-background/95 group-hover:opacity-100 group-hover:ring-1 group-focus-visible:bg-background/95 group-focus-visible:opacity-100 group-focus-visible:ring-1 group-focus-visible:ring-ring",
+          )}
           data-testid="message-thread-summary-surface"
           style={{
             left: surfaceInsetStart,
@@ -242,7 +259,12 @@ export function MessageThreadSummaryRow({
         </div>
         <div className="relative z-10 min-w-0">
           <div>
-            <span className="font-medium transition-colors group-hover:text-foreground">
+            <span
+              className={cn(
+                "font-medium transition-colors",
+                !isActive && "group-hover:text-foreground",
+              )}
+            >
               {summary.replyCount} {replyLabel}
             </span>
             {unreadCount != null && unreadCount > 0 ? (
@@ -255,20 +277,41 @@ export function MessageThreadSummaryRow({
                 <span className="mx-1 font-normal text-muted-foreground/50">
                   ·
                 </span>
-                <span className="inline-grid font-normal text-muted-foreground/70">
+                {isActive ? (
                   <span
-                    className="col-start-1 row-start-1 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
-                    data-testid="message-thread-summary-last-reply"
-                  >
-                    last reply{" "}
-                    {formatThreadSummaryLastReplyTime(summary.lastReplyAt)}
-                  </span>
-                  <span
-                    className="col-start-1 row-start-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                    className="font-normal text-muted-foreground/70"
                     data-testid="message-thread-summary-hover-action"
                   >
-                    View thread
+                    Viewing thread
                   </span>
+                ) : (
+                  <span className="inline-grid font-normal text-muted-foreground/70">
+                    <span
+                      className="col-start-1 row-start-1 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
+                      data-testid="message-thread-summary-last-reply"
+                    >
+                      last reply{" "}
+                      {formatThreadSummaryLastReplyTime(summary.lastReplyAt)}
+                    </span>
+                    <span
+                      className="col-start-1 row-start-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                      data-testid="message-thread-summary-hover-action"
+                    >
+                      View thread
+                    </span>
+                  </span>
+                )}
+              </>
+            ) : isActive ? (
+              <>
+                <span className="mx-1 font-normal text-muted-foreground/50">
+                  ·
+                </span>
+                <span
+                  className="font-normal text-muted-foreground/70"
+                  data-testid="message-thread-summary-hover-action"
+                >
+                  Viewing thread
                 </span>
               </>
             ) : null}

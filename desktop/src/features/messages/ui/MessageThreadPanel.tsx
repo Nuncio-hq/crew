@@ -30,7 +30,6 @@ import { AuxiliaryPanelBody } from "@/shared/layout/AuxiliaryPanel";
 import {
   AuxiliaryPanelHeader,
   AuxiliaryPanelHeaderGroup,
-  AuxiliaryPanelTitle,
 } from "@/shared/layout/AuxiliaryPanel";
 import {
   THREAD_PANEL_COLUMN_CLASS,
@@ -47,6 +46,11 @@ import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
 import { ProjectThreadWorkspacePanel } from "./ProjectThreadWorkspacePanel";
+import {
+  ThreadPanelAncestry,
+  ThreadPanelOrientationTitle,
+  useThreadPanelBreadcrumb,
+} from "./ThreadPanelOrientation";
 import { TypingIndicatorRow } from "./TypingIndicatorRow";
 import { UnreadDivider } from "./UnreadDivider";
 import { useComposerHeightPadding } from "./useComposerHeightPadding";
@@ -62,6 +66,11 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
   firstUnreadReplyId?: string | null;
   huddleMemberPubkeys?: readonly string[];
   huddleMemberPubkeysPending?: boolean;
+  /**
+   * Extra messages (e.g. channel window + threadAllMessages) used to resolve
+   * ancestor segments for the orientation breadcrumb / ancestry strip.
+   */
+  orientationLookupMessages?: readonly TimelineMessage[];
   editTarget?: {
     author: string;
     body: string;
@@ -84,6 +93,9 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
   onMarkUnread?: (message: TimelineMessage) => void;
   onMarkRead?: (message: TimelineMessage) => void;
   onExpandReplies: (message: TimelineMessage) => void;
+  /** Scroll the channel timeline to a message; returns whether the row was found. */
+  onJumpToTimelineMessage?: (messageId: string) => boolean;
+  onOpenAncestorThread?: (message: TimelineMessage) => void;
   onScrollTargetResolved: () => void;
   onScrollTargetSettled?: (messageId: string) => void;
   scrollTargetHighlights?: boolean;
@@ -214,12 +226,15 @@ export function MessageThreadPanel({
   onMarkUnread,
   onMarkRead,
   onExpandReplies,
+  onJumpToTimelineMessage,
+  onOpenAncestorThread,
   onScrollTargetResolved,
   onScrollTargetSettled,
   onSelectReplyTarget,
   onSend,
   onToggleReaction,
   onUnfollowThread,
+  orientationLookupMessages,
   profiles,
   replyTargetMessage,
   scrollTargetId,
@@ -251,13 +266,10 @@ export function MessageThreadPanel({
   const threadHeadId = threadHead?.id ?? null;
   useEscapeKey(onClose, isOverlay || isSinglePanelView || isFocusMode);
   const hasConstrainedColumn = columnMaxWidthPx != null;
-  // Whether the composer dock trades its quiet-state spacer for the
-  // conditional activity accessory (agent working and/or someone typing).
   const hasComposerBottomActivity =
     activityAccessoryVisible || threadTypingPubkeys.length > 0;
 
-  // Live ref so onCaptureSendContext can read reply state at submit time
-  // (before any async mention-flow awaits change navigation state).
+  // Live ref for reply state at submit time.
   const replyTargetMessageRef = React.useRef(replyTargetMessage);
   replyTargetMessageRef.current = replyTargetMessage;
 
@@ -537,6 +549,20 @@ export function MessageThreadPanel({
     [projectThreadAgentMentions],
   );
 
+  const breadcrumb = useThreadPanelBreadcrumb({
+    channelName,
+    orientationLookupMessages,
+    threadHead,
+    threadReplies,
+  });
+
+  const handleNavigateToAnchor = React.useCallback(() => {
+    if (!breadcrumb || !onJumpToTimelineMessage) return;
+    const jumped = onJumpToTimelineMessage(breadcrumb.anchorMessageId);
+    // Focus mode: close after a successful jump so the flash is visible.
+    if (jumped && isFocusMode) onClose();
+  }, [breadcrumb, isFocusMode, onClose, onJumpToTimelineMessage]);
+
   if (!threadHead) {
     return null;
   }
@@ -557,6 +583,10 @@ export function MessageThreadPanel({
           hasConstrainedColumn ? { maxWidth: columnMaxWidthPx } : undefined
         }
       >
+        <ThreadPanelAncestry
+          breadcrumb={breadcrumb}
+          onOpenAncestorThread={onOpenAncestorThread}
+        />
         <div
           className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-1 pt-0")}
           data-testid="message-thread-head"
@@ -935,7 +965,12 @@ export function MessageThreadPanel({
         leading={headerLeading}
         onBack={isSinglePanelView && !isFocusMode ? onClose : undefined}
       >
-        <AuxiliaryPanelTitle>Thread</AuxiliaryPanelTitle>
+        <ThreadPanelOrientationTitle
+          breadcrumb={breadcrumb}
+          onNavigate={
+            onJumpToTimelineMessage ? handleNavigateToAnchor : undefined
+          }
+        />
       </AuxiliaryPanelHeaderGroup>
     </>
   );

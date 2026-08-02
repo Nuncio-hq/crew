@@ -196,13 +196,7 @@ export const ChannelPane = React.memo(function ChannelPane({
       channelPaneMountedRef.current = false;
     };
   }, []);
-  // Clear the ?autoSend search param once the auto-submit fires so
-  // back-navigation cannot re-trigger the send.
-  // When `onAutoSendComplete` is provided it does a surgical single-key clear
-  // that preserves `?thread` and all other panel search state (required for
-  // the thread-draft send path so the thread panel does not unmount before the
-  // deferred setTimeout(0) submit fires). The goChannel fallback is kept for
-  // callers that do not supply the prop (e.g. isolated tests / older wrappers).
+  // Clear ?autoSend after auto-submit (surgical clear preserves ?thread).
   const handleAutoSubmitComplete = React.useCallback(() => {
     if (onAutoSendComplete) {
       onAutoSendComplete();
@@ -690,6 +684,9 @@ export const ChannelPane = React.memo(function ChannelPane({
               !useFocusThreadDrawer &&
               Boolean(openThreadHeadId)
             }
+            openThreadAnchorId={
+              threadHeadMessage?.rootId ?? threadHeadMessage?.id ?? null
+            }
             threadUnreadCounts={threadUnreadCounts}
           />
           {isNonMemberView ? (
@@ -876,6 +873,17 @@ export const ChannelPane = React.memo(function ChannelPane({
                 onMarkUnread={onMarkUnread}
                 onMarkRead={onMarkRead}
                 onExpandReplies={onExpandThreadReplies}
+                onJumpToTimelineMessage={(id) =>
+                  messageTimelineRef.current?.jumpToMessage(id) ?? false
+                }
+                onOpenAncestorThread={
+                  activeChannel?.archivedAt ? undefined : onOpenThread
+                }
+                orientationLookupMessages={
+                  messages.length
+                    ? messages.concat(threadAllMessages)
+                    : threadAllMessages
+                }
                 onSelectReplyTarget={onSelectThreadReplyTarget}
                 onSend={onSendThreadReply}
                 onScrollTargetResolved={() => resolveScrollTarget()}
@@ -915,22 +923,15 @@ export const ChannelPane = React.memo(function ChannelPane({
             return wrapThreadPanel(panel);
           })()
         ) : shouldShowThreadSkeleton ? (
-          (() => {
-            const panel = (
-              <MessageThreadPanelSkeleton
-                {...threadLayoutProps}
-                onClose={onCloseThread}
-                widthPx={threadPanelWidthPx}
-              />
-            );
-            return wrapThreadPanel(panel);
-          })()
+          wrapThreadPanel(
+            <MessageThreadPanelSkeleton
+              {...threadLayoutProps}
+              onClose={onCloseThread}
+              widthPx={threadPanelWidthPx}
+            />,
+          )
         ) : activeChannel && selectedAgent ? (
           (() => {
-            // When the panel was opened from a different channel than the
-            // currently active one, re-scope it to the active channel so
-            // that both the content/header AND channel-backed actions (e.g.
-            // Stop current turn) operate on the same channel object.
             const effectiveAgentSessionChannelId =
               openAgentSessionChannelId &&
               activeChannel.id !== openAgentSessionChannelId
