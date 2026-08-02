@@ -1,0 +1,65 @@
+import * as React from "react";
+
+import type { ProjectThreadBadge } from "@/features/messages/lib/projectThreadBadge";
+import { projectThreadStatusClassName } from "@/features/messages/ui/projectThreadGitHubStatus";
+import { cn } from "@/shared/lib/cn";
+
+export function ProjectThreadBadgeChips({
+  badge,
+}: {
+  badge: ProjectThreadBadge;
+}) {
+  const branchText = badge.label ?? badge.shortBranch;
+  return (
+    <span
+      className="inline-flex min-w-0 flex-wrap items-center text-2xs font-normal text-muted-foreground/70"
+      data-testid="project-thread-badge-chips"
+    >
+      <span className="mx-1 text-muted-foreground/50">·</span>
+      <span
+        className={cn(
+          "inline-flex max-w-60 min-w-0 items-center gap-0.5 truncate",
+          badge.mono && "font-mono",
+        )}
+        title={badge.branch}
+      >
+        <span aria-hidden="true">⎇</span>
+        <span className="truncate">{branchText}</span>
+      </span>
+      {badge.pullRequests.map((pr) => (
+        <React.Fragment key={pr.number}>
+          <span className="mx-1 text-muted-foreground/50">·</span>
+          <span
+            className={cn(
+              "inline-flex items-center gap-0.5 tabular-nums",
+              projectThreadStatusClassName(pr.tone),
+            )}
+            title={pr.title}
+          >
+            #{pr.number}
+            {pr.checkGlyph ? (
+              <span aria-hidden="true">{pr.checkGlyph}</span>
+            ) : null}
+          </span>
+        </React.Fragment>
+      ))}
+      {badge.overflow > 0 ? (
+        <>
+          <span className="mx-1 text-muted-foreground/50">·</span>
+          <span className="tabular-nums">+{badge.overflow}</span>
+        </>
+      ) : null}
+      {badge.diff ? (
+        <>
+          <span className="mx-1 text-muted-foreground/50">·</span>
+          <span className="tabular-nums">
+            <span className="text-emerald-600 dark:text-emerald-400">
+              +{badge.diff.additions}
+            </span>{" "}
+            <span className="text-destructive">−{badge.diff.deletions}</span>
+          </span>
+        </>
+      ) : null}
+    </span>
+  );
+}
