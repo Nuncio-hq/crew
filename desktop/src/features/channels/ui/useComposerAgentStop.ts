@@ -85,10 +85,15 @@ function targetsForAgent(args: {
       }
       return true;
     })
-    .map((pending) => ({
-      channelId: pending.channelId,
-      conversationId: pending.conversationId,
-    }));
+    // Queued work has no turn yet, so `turnId` stays absent — that is what
+    // routes the cancel to the harness drain path rather than an in-flight
+    // signal. Annotated so the merged array below is uniformly typed.
+    .map(
+      (pending): ComposerStopTarget => ({
+        channelId: pending.channelId,
+        conversationId: pending.conversationId,
+      }),
+    );
 
   const seen = new Set<string>();
   const merged: ComposerStopTarget[] = [];
