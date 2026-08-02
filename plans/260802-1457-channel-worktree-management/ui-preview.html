@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark" data-buzz-sidebar data-variant="hybrid" data-density="comfortable">
+<html lang="en" class="dark" data-buzz-sidebar data-variant="hybrid" data-density="comfortable" data-naming="label">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -325,6 +325,21 @@
         background: hsl(var(--muted) / 0.55);
         color: var(--subtext);
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      }
+
+      /* A derived label is prose, not an identifier — drop the mono face and
+         cap the width so a long thread title cannot push the PR chips off. */
+      .chip-branch.named {
+        font-family: inherit;
+      }
+
+      .chip-branch.named span {
+        display: inline-block;
+        max-width: 15rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        vertical-align: bottom;
       }
 
       .chip-pr {
@@ -854,6 +869,11 @@
           <button data-variant="hybrid" aria-pressed="true">B · status line</button>
           <button data-variant="card">C · card</button>
         </div>
+        <span class="controls-label" style="margin-left: 0.5rem">Branch chip</span>
+        <div class="seg" id="naming-seg">
+          <button data-naming="label" aria-pressed="true">Label</button>
+          <button data-naming="id">Branch id</button>
+        </div>
         <span class="controls-label" style="margin-left: 0.5rem">Density</span>
         <div class="seg" id="density-seg">
           <button data-density="comfortable" aria-pressed="true">Comfortable</button>
@@ -865,6 +885,9 @@
       <div class="note">
         Mock data. Click a PR chip for its checks, the branch chip for worktree
         detail, the status line caret to expand, the header pill for the drawer.
+        <strong>Branch chip</strong> switches between the label derived from the
+        thread root and the raw branch id — the last thread has no usable prose
+        in its root, so it keeps the id either way.
       </div>
     </div>
 
@@ -903,6 +926,9 @@
           workspace: {
             branch: "buzz/eb791333c0ee",
             short: "eb791333",
+            // Derived from the thread root: project-context line and leading
+            // mentions stripped, then truncated.
+            label: "đọc github issue 4 và lên plan fix dứt điểm",
             dirty: false,
             sizeLabel: "18 GB",
             path: ".buzz-worktrees/crew-eb791333c0ee",
@@ -927,6 +953,7 @@
           workspace: {
             branch: "buzz/649566de51d6",
             short: "649566de",
+            label: "brainstorm quản lí worktree trong 1 channel",
             dirty: true,
             sizeLabel: "72 MB",
             path: ".buzz-worktrees/crew-649566de51d6",
@@ -950,6 +977,7 @@
           workspace: {
             branch: "buzz/cd2e8ed73d4b",
             short: "cd2e8ed7",
+            label: "brainstorm UI/UX bên trong thread",
             dirty: false,
             sizeLabel: "72 MB",
             path: ".buzz-worktrees/crew-cd2e8ed73d4b",
@@ -965,13 +993,16 @@
           author: "Oscar",
           avatar: "oscar",
           time: "10:43 AM",
-          body: '<span class="mention">@Claude Opus</span> mình đang test version 0.0.4, đọc commit/change logs và xem xét hành vi này đúng không',
+          body: '<span class="mention">@Claude Opus</span> <span class="system-note">[screenshot]</span>',
           replies: 1,
           lastReply: "2 days ago",
           participants: ["claude"],
           workspace: {
             branch: "buzz/0efbf738ca7b",
             short: "0efbf738",
+            // Fallback case: the root is an image with no usable prose, so the
+            // chip keeps the branch short id.
+            label: null,
             dirty: false,
             sizeLabel: "72 MB",
             path: ".buzz-worktrees/crew-0efbf738ca7b",
@@ -1024,9 +1055,21 @@
         return pr.review || "open";
       }
 
+      /**
+       * Thread label, derived from the thread-root message at render time.
+       *
+       * Falls back to the branch short id when the root carries no usable text
+       * (image-only post, or a body that is nothing but mentions).
+       */
+      function threadLabel(ws) {
+        return ws.label ?? ws.short;
+      }
+
       function branchChip(ws) {
-        return `<button class="chip chip-branch" data-pop="worktree" data-id="${ws.branch}">
-          ${svg(ICON.branch)}<span>${ws.short}</span>
+        const named =
+          document.documentElement.dataset.naming !== "id" && ws.label;
+        return `<button class="chip chip-branch ${named ? "named" : ""}" data-pop="worktree" data-id="${ws.branch}" title="${ws.branch}">
+          ${svg(ICON.branch)}<span>${named ? ws.label : ws.short}</span>
         </button>`;
       }
 
@@ -1138,7 +1181,8 @@
         return `<div class="workspace-card">
             <div class="card-head">
               <span style="color:var(--subtext)">${svg(ICON.branch, "")}</span>
-              <span class="card-branch">${ws.branch}</span>
+              <span class="card-branch">${threadLabel(ws)}</span>
+              ${ws.label ? `<span class="card-meta" style="font-family:ui-monospace,Menlo,monospace">${ws.branch}</span>` : ""}
               ${stateChips(ws)}
               <span class="card-meta">${ws.sizeLabel} · on this Mac</span>
             </div>
@@ -1162,9 +1206,12 @@
           </div>`;
       }
 
-      document.getElementById("timeline").innerHTML =
-        `<div class="day-divider"><span>Today</span></div>` +
-        MOCK.map(messageHtml).join("");
+      function renderTimeline() {
+        document.getElementById("timeline").innerHTML =
+          `<div class="day-divider"><span>Today</span></div>` +
+          MOCK.map(messageHtml).join("");
+      }
+      renderTimeline();
 
       /* --------------------------------------------------------- drawer */
       const BUCKETS = [
@@ -1173,13 +1220,13 @@
           hint: "agent running, or PR open",
           items: [
             {
-              name: "crew-649566de51d6",
+              name: "brainstorm quản lí worktree trong 1 channel",
               size: "72 MB",
               sub: "buzz/649566de51d6 · uncommitted changes · PR #21, #22 · Claude Opus working",
               actions: ["Open thread", "Open PR"],
             },
             {
-              name: "crew-cd2e8ed73d4b",
+              name: "brainstorm UI/UX bên trong thread",
               size: "72 MB",
               sub: "buzz/cd2e8ed73d4b · clean · PR #19 checks failing",
               actions: ["Open thread", "Open PR"],
@@ -1191,7 +1238,7 @@
           hint: "approved + checks green",
           items: [
             {
-              name: "crew-eb791333c0ee",
+              name: "đọc github issue 4 và lên plan fix dứt điểm",
               size: "18 GB",
               sub: "buzz/eb791333c0ee · clean · PR #18 approved · 2 closed PRs",
               actions: ["Open PR"],
@@ -1204,6 +1251,7 @@
           hint: "clean · no open PR · quiet 7 days",
           items: [
             {
+              // No label: the thread root was an image with no usable prose.
               name: "crew-0efbf738ca7b",
               size: "72 MB",
               sub: "buzz/0efbf738ca7b · clean · no PR · last commit 8 days ago",
@@ -1294,7 +1342,7 @@
       document.getElementById("drawer-close").addEventListener("click", closeDrawer);
       document.getElementById("scrim").addEventListener("click", closeDrawer);
 
-      function segment(id, attr) {
+      function segment(id, attr, after) {
         const root = document.getElementById(id);
         root.addEventListener("click", (event) => {
           const button = event.target.closest("button");
@@ -1303,10 +1351,14 @@
             other.setAttribute("aria-pressed", String(other === button));
           document.documentElement.dataset[attr] = button.dataset[attr];
           hidePopover();
+          after?.();
         });
       }
       segment("variant-seg", "variant");
       segment("density-seg", "density");
+      // The branch chip is the only surface whose text changes, so re-render
+      // the timeline rather than styling both spellings into the DOM at once.
+      segment("naming-seg", "naming", renderTimeline);
 
       // ?variant=chips|hybrid|card & ?density=… & ?drawer=open — lets a specific
       // state be linked or screenshotted without clicking through.
@@ -1314,6 +1366,7 @@
       for (const [key, seg] of [
         ["variant", "variant-seg"],
         ["density", "density-seg"],
+        ["naming", "naming-seg"],
       ]) {
         const value = params.get(key);
         if (!value) continue;
@@ -1324,6 +1377,7 @@
             String(button.dataset[key] === value),
           );
       }
+      if (params.get("naming")) renderTimeline();
       if (params.get("drawer") === "open") body.dataset.drawer = "open";
       if (params.get("expanded") === "1")
         for (const m of document.querySelectorAll(".msg"))
@@ -1345,7 +1399,8 @@
         const all = MOCK.filter((m) => m.workspace);
         if (kind === "worktree") {
           const ws = all.find((m) => m.workspace.branch === id).workspace;
-          return `<div class="pop-title">${ws.branch}</div>
+          return `<div class="pop-title">${threadLabel(ws)}</div>
+            <div class="pop-line"><span class="name" style="font-family:ui-monospace,Menlo,monospace">${ws.branch}</span></div>
             <div class="pop-line"><span class="name">${ws.path}</span></div>
             <div class="pop-line">${svg(ICON.disk)}<span>${ws.sizeLabel} on disk</span><span class="st">${ws.dirty ? '<span style="color:var(--yellow)">uncommitted changes</span>' : "clean"}</span></div>
             <div class="pop-line"><span>${ws.agent ? ws.agent.name + " working now" : "no agent running"}</span></div>
