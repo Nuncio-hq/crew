@@ -56,6 +56,7 @@ mod social;
 mod team_snapshot;
 mod teams;
 mod thread_github;
+mod thread_github_target;
 mod thread_workspace;
 mod thread_workspace_git;
 #[cfg(test)]
