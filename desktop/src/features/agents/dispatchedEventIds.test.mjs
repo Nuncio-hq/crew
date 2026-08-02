@@ -4,8 +4,11 @@ import test from "node:test";
 import {
   conversationHasStoppableWork,
   deriveEditAsUndoUiState,
+  filterPendingToKnownAgents,
   getPendingAgentPubkeysForConversation,
+  getPendingAgentRequestsForConversation,
   ingestObserverFrameForEditAsUndo,
+  PENDING_AGENT_REQUEST_MAX_AGE_MS,
   prunePendingAgentRequests,
   recordMessageEditApplied,
   recordPendingAgentRequest,
@@ -16,6 +19,7 @@ import {
 const EVENT = "a".repeat(64);
 const OTHER = "b".repeat(64);
 const AGENT = "c".repeat(64);
+const HUMAN = "d".repeat(64);
 const CHANNEL = "11111111-1111-1111-1111-111111111111";
 const CONVERSATION = "22222222-2222-2222-2222-222222222222";
 
@@ -105,11 +109,13 @@ test("record ignores non-hex ids", () => {
 });
 
 test("queued request with no turn reports stoppable work", () => {
+  const sentAt = Date.now();
   recordPendingAgentRequest({
     eventId: EVENT,
     channelId: CHANNEL,
     conversationId: CONVERSATION,
     agentPubkeys: [AGENT],
+    sentAt,
   });
   assert.deepEqual(getPendingAgentPubkeysForConversation(CONVERSATION), [
     AGENT,
@@ -123,6 +129,7 @@ test("queued request with no turn reports stoppable work", () => {
           channelId: CHANNEL,
           conversationId: CONVERSATION,
           agentPubkeys: [AGENT],
+          sentAt,
         },
       ],
     }),
@@ -164,4 +171,37 @@ test("pending pubkey list is reference-stable across unrelated edits", () => {
   recordMessageEditApplied(OTHER, "patched", true);
   const third = getPendingAgentPubkeysForConversation(CONVERSATION);
   assert.equal(first, third);
+});
+
+test("human mention never surfaces as stoppable even when known agents are populated", () => {
+  // Identity source is useKnownAgentPubkeys (community agents), not observer
+  // liveness — a full known set must still drop humans.
+  const known = new Set([AGENT, "e".repeat(64)]);
+  assert.deepEqual(filterPendingToKnownAgents([HUMAN], known), []);
+  assert.deepEqual(filterPendingToKnownAgents([HUMAN, AGENT], known), [AGENT]);
+});
+
+test("empty known-agent set surfaces no pending stoppable agents", () => {
+  assert.deepEqual(filterPendingToKnownAgents([HUMAN, AGENT], new Set()), []);
+});
+
+test("stale pending disappears from selectors without turn_started", () => {
+  // Agent is known but never gets turn_started — age prune drops Stop.
+  const sentAt = Date.now() - PENDING_AGENT_REQUEST_MAX_AGE_MS - 1;
+  recordPendingAgentRequest({
+    eventId: EVENT,
+    channelId: CHANNEL,
+    conversationId: CONVERSATION,
+    agentPubkeys: [AGENT],
+    sentAt,
+  });
+  assert.deepEqual(getPendingAgentRequestsForConversation(CONVERSATION), []);
+  assert.deepEqual(getPendingAgentPubkeysForConversation(CONVERSATION), []);
+  assert.deepEqual(
+    filterPendingToKnownAgents(
+      getPendingAgentPubkeysForConversation(CONVERSATION),
+      new Set([AGENT]),
+    ),
+    [],
+  );
 });

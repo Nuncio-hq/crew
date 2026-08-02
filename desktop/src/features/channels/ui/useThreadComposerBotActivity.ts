@@ -6,18 +6,13 @@ import {
 } from "@/features/agents/agentWorkingSignal";
 import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
 import {
+  filterPendingToKnownAgents,
   getPendingAgentPubkeysForConversation,
   subscribeMessageEditApplied,
 } from "@/features/agents/dispatchedEventIds";
-import { getRegisteredObserverAgentPubkeys } from "@/features/agents/observerRelayStore";
+import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import type { ChannelPaneProps } from "@/features/channels/ui/ChannelPane.types";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
-
-function agentOnlyPendingPubkeys(pending: readonly string[]): string[] {
-  const known = getRegisteredObserverAgentPubkeys();
-  if (known.size === 0) return [...pending];
-  return pending.filter((pubkey) => known.has(pubkey));
-}
 
 type BotTypingEntry = ChannelPaneProps["botTypingEntries"][number];
 
@@ -27,6 +22,8 @@ export function useThreadComposerBotActivity(
   openThreadHeadId: string | null | undefined,
   botTypingEntries: readonly BotTypingEntry[],
 ) {
+  const knownAgentPubkeys = useKnownAgentPubkeys();
+
   const threadComposerBotTypingPubkeys = React.useMemo(() => {
     if (!openThreadHeadId) return [];
     return botTypingEntries
@@ -57,12 +54,15 @@ export function useThreadComposerBotActivity(
     });
   }, []);
 
+  // Identity filter (community known agents), not observer liveness — humans
+  // never surface as stoppable even when the observer registry is populated.
   const pendingPubkeys = React.useMemo(() => {
     void pendingVersion;
-    return agentOnlyPendingPubkeys(
+    return filterPendingToKnownAgents(
       getPendingAgentPubkeysForConversation(threadComposerConversationId),
+      knownAgentPubkeys,
     );
-  }, [pendingVersion, threadComposerConversationId]);
+  }, [knownAgentPubkeys, pendingVersion, threadComposerConversationId]);
 
   const mergedWorkingBotPubkeys = useStableArrayShallow(
     React.useMemo(

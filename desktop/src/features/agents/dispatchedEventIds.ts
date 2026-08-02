@@ -17,12 +17,21 @@ export type MessageEditAppliedResult = {
   applied: boolean;
 };
 
+/**
+ * Pending entries older than this are treated as never-dispatched and dropped
+ * on read. Hold is ~2s and idle dispatch is near-instant, so anything still
+ * queued after 30s will not become a turn.
+ */
+export const PENDING_AGENT_REQUEST_MAX_AGE_MS = 30_000;
+
 /** A user-authored mention that is still waiting to be dispatched. */
 export type PendingAgentRequest = {
   eventId: string;
   channelId: string;
   conversationId: string;
   agentPubkeys: string[];
+  /** Wall-clock ms when the send was recorded locally. */
+  sentAt: number;
 };
 
 const editOutcomesByEventId = new Map<string, MessageEditAppliedResult>();
@@ -101,6 +110,8 @@ export function recordPendingAgentRequest(input: {
   channelId: string;
   conversationId: string;
   agentPubkeys: readonly string[];
+  /** Optional override for tests; defaults to Date.now(). */
+  sentAt?: number;
 }): void {
   if (!/^[0-9a-fA-F]{64}$/.test(input.eventId)) {
     return;
@@ -121,6 +132,7 @@ export function recordPendingAgentRequest(input: {
     channelId: input.channelId,
     conversationId: input.conversationId,
     agentPubkeys,
+    sentAt: input.sentAt ?? Date.now(),
   });
   notifyOutcomeListeners({ pendingChanged: true });
 }
@@ -159,7 +171,46 @@ export function clearPendingAgentRequestsForConversation(
   }
 }
 
-function listPendingRequests(): PendingAgentRequest[] {
+/**
+ * Drop pending entries past {@link PENDING_AGENT_REQUEST_MAX_AGE_MS}.
+ * Prune-on-read only — no timer. Returns whether anything was removed.
+ */
+export function pruneStalePendingAgentRequests(now = Date.now()): boolean {
+  if (pendingByEventId.size === 0) {
+    return false;
+  }
+  let changed = false;
+  for (const [eventId, pending] of pendingByEventId) {
+    if (now - pending.sentAt > PENDING_AGENT_REQUEST_MAX_AGE_MS) {
+      pendingByEventId.delete(eventId);
+      changed = true;
+    }
+  }
+  if (changed) {
+    notifyOutcomeListeners({ pendingChanged: true });
+  }
+  return changed;
+}
+
+/**
+ * Keep only pubkeys that are known community agents (managed ∪ relay).
+ *
+ * Pass the set from `useKnownAgentPubkeys` — identity, not observer liveness.
+ * Humans are never in that set, so a human-only mention cannot light Stop
+ * even when the observer registry is populated. Empty known set → [].
+ */
+export function filterPendingToKnownAgents(
+  pending: readonly string[],
+  knownAgents: ReadonlySet<string>,
+): string[] {
+  if (knownAgents.size === 0) {
+    return [];
+  }
+  return pending.filter((pubkey) => knownAgents.has(pubkey));
+}
+
+function listPendingRequests(now = Date.now()): PendingAgentRequest[] {
+  pruneStalePendingAgentRequests(now);
   if (pendingByEventId.size === 0) {
     return EMPTY_PENDING;
   }
@@ -172,6 +223,8 @@ export function getPendingAgentRequestsForConversation(
   if (!conversationId) {
     return EMPTY_PENDING;
   }
+  // Prune before cache lookup so age expiry cannot stick behind a hit.
+  pruneStalePendingAgentRequests();
   const cached = pendingRequestsByConversationCache.get(conversationId);
   if (cached) {
     return cached;
@@ -190,6 +243,7 @@ export function getPendingAgentRequestsForChannel(
   if (!channelId) {
     return EMPTY_PENDING;
   }
+  pruneStalePendingAgentRequests();
   const cached = pendingRequestsByChannelCache.get(channelId);
   if (cached) {
     return cached;
@@ -208,6 +262,7 @@ export function getPendingAgentPubkeysForConversation(
   if (!conversationId) {
     return EMPTY_PUBKEYS;
   }
+  pruneStalePendingAgentRequests();
   const cached = pendingPubkeysByConversationCache.get(conversationId);
   if (cached) {
     return cached;
@@ -231,6 +286,7 @@ export function getPendingAgentPubkeysForChannel(
   if (!channelId) {
     return EMPTY_PUBKEYS;
   }
+  pruneStalePendingAgentRequests();
   const cached = pendingPubkeysByChannelCache.get(channelId);
   if (cached) {
     return cached;
