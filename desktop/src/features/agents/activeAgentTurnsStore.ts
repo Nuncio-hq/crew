@@ -5,6 +5,10 @@ import {
   getAgentObserverSnapshot,
   compareObserverEvents,
 } from "@/features/agents/observerRelayStore";
+import {
+  clearTurnRetrying,
+  recordTurnRetrying,
+} from "@/features/agents/retryingTurnsStore";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import type { ObserverEvent } from "./ui/agentSessionTypes";
 
@@ -380,6 +384,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
   switch (event.kind) {
     case "turn_started":
       if (event.channelId) {
+        clearTurnRetrying(event.conversationId ?? event.channelId);
         startTurn(
           agentPubkey,
           event.channelId,
@@ -391,9 +396,40 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
         return;
       }
       break;
+    case "turn_retrying": {
+      const payload = event.payload as {
+        attempt?: unknown;
+        maxAttempts?: unknown;
+      } | null;
+      const attempt =
+        typeof payload?.attempt === "number" ? payload.attempt : null;
+      const maxAttempts =
+        typeof payload?.maxAttempts === "number" ? payload.maxAttempts : null;
+      if (
+        event.channelId &&
+        (event.conversationId || event.channelId) &&
+        attempt != null &&
+        maxAttempts != null
+      ) {
+        recordTurnRetrying({
+          agentPubkey,
+          channelId: event.channelId,
+          conversationId: event.conversationId ?? event.channelId,
+          attempt,
+          maxAttempts,
+        });
+        notifyListeners();
+        return;
+      }
+      break;
+    }
     case "turn_completed":
     case "turn_error":
     case "agent_panic":
+      // Do not clear retrying here: automatic requeue emits `turn_retrying`
+      // in the same failure path, and clearing on turn_error would wipe it.
+      // Retrying state clears on the next `turn_started` (or a later
+      // turn_retrying overwrite).
       endTurn(
         agentPubkey,
         event.turnId ?? null,
