@@ -1,0 +1,1451 @@
+<!doctype html>
+<html lang="en" class="dark" data-buzz-sidebar data-variant="hybrid" data-density="comfortable">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NuncioCrew — inline worktree / PR / status preview</title>
+    <style>
+      /* ------------------------------------------------------------------
+         Tokens copied verbatim from desktop/src/shared/styles/globals/theme.css
+         (.dark = Catppuccin Macchiato) plus the content-surface override
+         (--buzz-content-dark). Anything built from these translates 1:1 to the
+         real Tailwind classes.
+      ------------------------------------------------------------------ */
+      :root {
+        --radius: 0.625rem;
+        --background: 0 0% 10.196%; /* --buzz-content-dark */
+        --shell: 234 22.75% 17.25%; /* --sidebar */
+        --foreground: 227 68.25% 87.65%;
+        --muted: 230 18.8% 26.08%;
+        --muted-foreground: 228 39.22% 80%;
+        --border: 231 15.61% 33.92%;
+        --primary: 267 82.69% 79.61%;
+        --accent: 230 18.8% 26.08%;
+
+        /* Catppuccin Macchiato state colours (same family the app already uses) */
+        --green: #a6da95;
+        --red: #ed8796;
+        --yellow: #eed49f;
+        --blue: #8aadf4;
+        --mauve: #c6a0f6;
+        --teal: #8bd5ca;
+        --peach: #f5a97f;
+        --subtext: #a5adcb;
+        --overlay: #6e738d;
+
+        /* Chat body text is the base size — CLAUDE.md: chat === text-base */
+        font-size: 16px;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: hsl(var(--shell));
+        color: hsl(var(--foreground));
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui,
+          sans-serif;
+        font-size: 1rem;
+        height: 100vh;
+        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button {
+        background: none;
+        border: 0;
+        color: inherit;
+        cursor: pointer;
+        font: inherit;
+      }
+
+      /* Icons never own layout: fixed box everywhere unless overridden. */
+      svg {
+        flex: none;
+        height: 0.875rem;
+        width: 0.875rem;
+      }
+
+      /* ---------------------------------------------------------------- app */
+      .app {
+        display: grid;
+        grid-template-columns: 15rem minmax(0, 1fr);
+        height: 100vh;
+      }
+
+      .sidebar {
+        border-right: 1px solid hsl(var(--border) / 0.5);
+        display: flex;
+        flex-direction: column;
+        gap: 0.125rem;
+        padding: 0.75rem 0.5rem;
+      }
+
+      .sidebar-title {
+        color: var(--subtext);
+        font-size: 0.6875rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        padding: 0.75rem 0.5rem 0.25rem;
+        text-transform: uppercase;
+      }
+
+      .sidebar-item {
+        align-items: center;
+        border-radius: 0.5rem;
+        color: hsl(var(--foreground) / 0.8);
+        display: flex;
+        font-size: 0.875rem;
+        gap: 0.5rem;
+        padding: 0.375rem 0.5rem;
+      }
+
+      .sidebar-item.active {
+        background: hsl(var(--primary));
+        color: hsl(232 23.4% 18.43%);
+        font-weight: 600;
+      }
+
+      .content {
+        background: hsl(var(--background));
+        border-radius: 0.75rem 0 0 0.75rem;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        overflow: hidden;
+      }
+
+      /* ------------------------------------------------------------- header */
+      .channel-header {
+        align-items: center;
+        border-bottom: 1px solid hsl(var(--border) / 0.45);
+        display: flex;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+      }
+
+      .channel-name {
+        font-size: 0.9375rem;
+        font-weight: 600;
+      }
+
+      .header-spacer {
+        flex: 1;
+      }
+
+      /* The new channel-level pill (Phase 3). */
+      .worktree-pill {
+        align-items: center;
+        background: hsl(var(--muted) / 0.5);
+        border: 1px solid hsl(var(--border) / 0.6);
+        border-radius: 999px;
+        display: inline-flex;
+        font-size: 0.6875rem; /* text-2xs */
+        gap: 0.4375rem;
+        padding: 0.25rem 0.625rem;
+        transition: background 120ms ease;
+      }
+
+      .worktree-pill:hover {
+        background: hsl(var(--muted) / 0.85);
+      }
+
+      .worktree-pill .sep {
+        color: var(--overlay);
+      }
+
+      /* ----------------------------------------------------------- timeline */
+      .timeline {
+        overflow-y: auto;
+        padding: 1rem 0 1.5rem;
+      }
+
+      .day-divider {
+        align-items: center;
+        display: flex;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+      }
+
+      .day-divider::before,
+      .day-divider::after {
+        background: hsl(var(--border) / 0.4);
+        content: "";
+        flex: 1;
+        height: 1px;
+      }
+
+      .day-divider span {
+        border: 1px solid hsl(var(--border) / 0.5);
+        border-radius: 999px;
+        color: var(--subtext);
+        font-size: 0.6875rem;
+        padding: 0.125rem 0.625rem;
+      }
+
+      .msg {
+        display: grid;
+        grid-template-columns: 2.25rem minmax(0, 1fr);
+        gap: 0.625rem;
+        padding: 0.375rem 1rem;
+        position: relative;
+      }
+
+      .msg:hover {
+        background: hsl(var(--muted) / 0.18);
+      }
+
+      .avatar {
+        align-items: center;
+        border-radius: 999px;
+        display: flex;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        height: 2.25rem;
+        justify-content: center;
+        overflow: hidden;
+        width: 2.25rem;
+      }
+
+      .avatar.sm {
+        font-size: 0.5rem;
+        height: 1.5rem;
+        width: 1.5rem;
+      }
+
+      .avatar.oscar {
+        background: linear-gradient(140deg, #b5936b, #6d5238);
+        color: #21212a;
+      }
+      .avatar.claude {
+        background: linear-gradient(140deg, #f5a97f, #e06c3f);
+        color: #2b1a11;
+      }
+      .avatar.cursor {
+        background: #3a3f52;
+        color: var(--subtext);
+      }
+      .avatar.codex {
+        background: #2f3b46;
+        color: var(--teal);
+      }
+
+      .msg-head {
+        align-items: baseline;
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      .author {
+        font-size: 1rem;
+        font-weight: 600;
+      }
+
+      .time {
+        color: var(--overlay);
+        font-size: 0.6875rem;
+      }
+
+      .body {
+        font-size: 1rem;
+        line-height: 1.45;
+      }
+
+      .mention {
+        background: hsl(var(--muted) / 0.85);
+        border-radius: 0.3125rem;
+        padding: 0.0625rem 0.3125rem;
+        white-space: nowrap;
+      }
+
+      .system-note {
+        color: var(--subtext);
+        font-size: 0.875rem;
+      }
+
+      /* ------------------------------------------------- thread summary row */
+      .thread-summary {
+        align-items: center;
+        border-radius: 999px;
+        color: var(--subtext);
+        display: inline-flex;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        gap: 0.375rem;
+        margin-top: 0.25rem;
+        padding: 0.1875rem 0.625rem 0.1875rem 0.25rem;
+        transition: background 120ms ease;
+        width: fit-content;
+      }
+
+      .thread-summary:hover {
+        background: hsl(var(--muted) / 0.4);
+        color: hsl(var(--foreground));
+      }
+
+      .stack {
+        display: flex;
+      }
+
+      .stack .avatar.sm + .avatar.sm {
+        margin-left: -0.3125rem;
+      }
+
+      .dot {
+        color: hsl(var(--foreground) / 0.28);
+      }
+
+      .faded {
+        color: hsl(var(--muted-foreground) / 0.62);
+        font-weight: 400;
+      }
+
+      /* --------------------------------------------------------- the chips */
+      .chip {
+        align-items: center;
+        border-radius: 999px;
+        display: inline-flex;
+        font-size: 0.6875rem; /* text-2xs — the meta ramp */
+        font-weight: 500;
+        gap: 0.25rem;
+        line-height: 1;
+        padding: 0.1875rem 0.4375rem;
+        white-space: nowrap;
+      }
+
+      .chip svg {
+        height: 0.75rem;
+        width: 0.75rem;
+      }
+
+      .chip-branch {
+        background: hsl(var(--muted) / 0.55);
+        color: var(--subtext);
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      }
+
+      .chip-pr {
+        background: hsl(var(--muted) / 0.55);
+        color: var(--subtext);
+      }
+      .chip-pr.open {
+        color: var(--green);
+      }
+      .chip-pr.draft {
+        color: var(--overlay);
+      }
+      .chip-pr.merged {
+        color: var(--mauve);
+      }
+      .chip-pr.closed {
+        color: var(--red);
+      }
+
+      .chip-diff .add {
+        color: var(--green);
+      }
+      .chip-diff .del {
+        color: var(--red);
+      }
+
+      .chip-dirty {
+        background: hsl(38 60% 30% / 0.45);
+        color: var(--yellow);
+      }
+
+      .chip-working {
+        background: hsl(267 40% 40% / 0.35);
+        color: var(--mauve);
+      }
+
+      .chip button,
+      button.chip {
+        cursor: pointer;
+      }
+
+      button.chip:hover {
+        background: hsl(var(--muted) / 0.9);
+      }
+
+      .pulse {
+        animation: pulse 1.4s ease-in-out infinite;
+        background: currentColor;
+        border-radius: 999px;
+        height: 0.375rem;
+        width: 0.375rem;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.25;
+        }
+      }
+
+      .spin {
+        animation: spin 1.1s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* -------------------------------------------------- variant switching */
+      /* Variant A: chips inline on the reply row. */
+      .inline-chips {
+        align-items: center;
+        display: none;
+        gap: 0.375rem;
+      }
+
+      html[data-variant="chips"] .inline-chips {
+        display: inline-flex;
+      }
+
+      /* Variant B: bordered workspace card under the message. */
+      .workspace-card {
+        border: 1px solid hsl(var(--border) / 0.55);
+        border-radius: 0.625rem;
+        display: none;
+        margin-top: 0.375rem;
+        max-width: 34rem;
+        overflow: hidden;
+      }
+
+      html[data-variant="card"] .workspace-card {
+        display: block;
+      }
+
+      .card-head {
+        align-items: center;
+        background: hsl(var(--muted) / 0.25);
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.4375rem 0.625rem;
+      }
+
+      .card-branch {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 0.75rem;
+      }
+
+      .card-meta {
+        color: var(--overlay);
+        font-size: 0.6875rem;
+        margin-left: auto;
+      }
+
+      .pr-row {
+        align-items: center;
+        border-top: 1px solid hsl(var(--border) / 0.35);
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.4375rem 0.625rem;
+        text-align: left;
+        width: 100%;
+      }
+
+      .pr-row:hover {
+        background: hsl(var(--muted) / 0.25);
+      }
+
+      .pr-num {
+        color: var(--subtext);
+        font-size: 0.75rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .pr-title {
+        font-size: 0.8125rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .pr-state {
+        font-size: 0.6875rem;
+        margin-left: auto;
+        white-space: nowrap;
+      }
+
+      /* Variant C (default): one status line, expandable PR list. */
+      .hybrid-line {
+        align-items: center;
+        display: none;
+        flex-wrap: wrap;
+        gap: 0.375rem;
+        margin-top: 0.25rem;
+        padding-left: 0.25rem;
+      }
+
+      html[data-variant="hybrid"] .hybrid-line {
+        display: flex;
+      }
+
+      .expand {
+        border: 1px solid hsl(var(--border) / 0.5);
+        border-radius: 0.5rem;
+        display: none;
+        margin-top: 0.375rem;
+        max-width: 32rem;
+        overflow: hidden;
+      }
+
+      .msg[data-expanded="true"] .expand {
+        display: block;
+      }
+
+      .caret {
+        transition: transform 140ms ease;
+      }
+
+      .msg[data-expanded="true"] .caret {
+        transform: rotate(180deg);
+      }
+
+      /* Density toggle mirrors how tight the real timeline can get. */
+      html[data-density="compact"] .msg {
+        padding-bottom: 0.125rem;
+        padding-top: 0.125rem;
+      }
+      html[data-density="compact"] .body {
+        font-size: 0.9375rem;
+      }
+
+      /* --------------------------------------------------------- composer */
+      .composer {
+        border-top: 1px solid hsl(var(--border) / 0.45);
+        /* bottom room so the floating control bar never covers the composer */
+        padding: 0.75rem 1rem 5.5rem;
+      }
+
+      .composer-box {
+        border: 1px solid hsl(var(--border) / 0.6);
+        border-radius: 0.75rem;
+        color: var(--overlay);
+        font-size: 0.875rem;
+        padding: 0.75rem 0.875rem;
+      }
+
+      /* ---------------------------------------------------------- drawer */
+      .drawer {
+        background: hsl(var(--background));
+        border-left: 1px solid hsl(var(--border) / 0.6);
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        right: 0;
+        top: 0;
+        transform: translateX(100%);
+        transition: transform 180ms ease;
+        width: 27rem;
+        z-index: 70;
+      }
+
+      body[data-drawer="open"] .drawer {
+        transform: translateX(0);
+      }
+
+      .drawer-head {
+        align-items: center;
+        border-bottom: 1px solid hsl(var(--border) / 0.5);
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.875rem 1rem;
+      }
+
+      .drawer-title {
+        font-size: 0.9375rem;
+        font-weight: 600;
+      }
+
+      .drawer-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0.5rem 0 1rem;
+      }
+
+      .bucket {
+        padding: 0.75rem 1rem 0.25rem;
+      }
+
+      .bucket-label {
+        align-items: center;
+        color: var(--subtext);
+        display: flex;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        gap: 0.375rem;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+
+      .bucket-hint {
+        color: var(--overlay);
+        font-size: 0.6875rem;
+        font-weight: 400;
+        letter-spacing: 0;
+        text-transform: none;
+      }
+
+      .wt {
+        border: 1px solid hsl(var(--border) / 0.45);
+        border-radius: 0.625rem;
+        margin-top: 0.5rem;
+        padding: 0.625rem 0.75rem;
+      }
+
+      .wt.readonly {
+        border-style: dashed;
+        opacity: 0.65;
+      }
+
+      .wt-top {
+        align-items: center;
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      .wt-name {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 0.75rem;
+      }
+
+      .wt-size {
+        color: var(--overlay);
+        font-size: 0.6875rem;
+        margin-left: auto;
+      }
+
+      .wt-sub {
+        color: var(--subtext);
+        font-size: 0.6875rem;
+        margin-top: 0.25rem;
+      }
+
+      .wt-actions {
+        display: flex;
+        gap: 0.375rem;
+        margin-top: 0.5rem;
+      }
+
+      .btn {
+        border: 1px solid hsl(var(--border) / 0.7);
+        border-radius: 0.4375rem;
+        font-size: 0.6875rem;
+        padding: 0.25rem 0.5rem;
+      }
+
+      .btn:hover {
+        background: hsl(var(--muted) / 0.6);
+      }
+
+      .btn.danger {
+        border-color: hsl(351 40% 45% / 0.7);
+        color: var(--red);
+      }
+
+      .btn.danger:hover {
+        background: hsl(351 40% 45% / 0.22);
+      }
+
+      .btn.primary {
+        background: hsl(var(--primary));
+        border-color: transparent;
+        color: hsl(232 23.4% 18.43%);
+        font-weight: 600;
+      }
+
+      .drawer-foot {
+        border-top: 1px solid hsl(var(--border) / 0.5);
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.75rem 1rem;
+      }
+
+      .scrim {
+        background: rgb(0 0 0 / 0.45);
+        inset: 0;
+        opacity: 0;
+        pointer-events: none;
+        position: fixed;
+        transition: opacity 180ms ease;
+        z-index: 65;
+      }
+
+      body[data-drawer="open"] .scrim {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      /* --------------------------------------------------------- popover */
+      .popover {
+        background: hsl(232 23.4% 18.43%);
+        border: 1px solid hsl(var(--border) / 0.8);
+        border-radius: 0.625rem;
+        box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 0.55);
+        display: none;
+        max-width: 24rem;
+        padding: 0.75rem;
+        position: absolute;
+        width: 22rem;
+        z-index: 50;
+      }
+
+      .popover.show {
+        display: block;
+      }
+
+      .pop-title {
+        font-size: 0.8125rem;
+        font-weight: 600;
+      }
+
+      .pop-line {
+        align-items: center;
+        color: var(--subtext);
+        display: flex;
+        font-size: 0.6875rem;
+        gap: 0.375rem;
+        margin-top: 0.375rem;
+      }
+
+      .pop-line .name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .pop-line .st {
+        margin-left: auto;
+      }
+
+      /* ------------------------------------------------------- control bar */
+      .controls {
+        background: hsl(232 23.4% 18.43% / 0.96);
+        border: 1px solid hsl(var(--border) / 0.8);
+        border-radius: 0.75rem;
+        bottom: 1rem;
+        box-shadow: 0 1rem 2rem rgb(0 0 0 / 0.5);
+        left: 50%;
+        padding: 0.625rem 0.75rem;
+        position: fixed;
+        transform: translateX(-50%);
+        z-index: 60;
+      }
+
+      .controls-row {
+        align-items: center;
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      .controls-label {
+        color: var(--overlay);
+        font-size: 0.625rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .seg {
+        background: hsl(var(--muted) / 0.4);
+        border-radius: 0.5rem;
+        display: flex;
+        gap: 0.125rem;
+        padding: 0.125rem;
+      }
+
+      .seg button {
+        border-radius: 0.375rem;
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+      }
+
+      .seg button[aria-pressed="true"] {
+        background: hsl(var(--primary));
+        color: hsl(232 23.4% 18.43%);
+        font-weight: 600;
+      }
+
+      .note {
+        color: var(--overlay);
+        font-size: 0.625rem;
+        margin-top: 0.5rem;
+        max-width: 44rem;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body data-drawer="closed">
+    <div class="app">
+      <!-- ------------------------------------------------------- sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-item">Search everything</div>
+        <div class="sidebar-item">Inbox</div>
+        <div class="sidebar-item">Projects</div>
+        <div class="sidebar-item">Agents</div>
+        <div class="sidebar-title">Channels</div>
+        <div class="sidebar-item active"># NuncioCrew project</div>
+        <div class="sidebar-title">Direct messages</div>
+        <div class="sidebar-item">Claude Opus</div>
+      </aside>
+
+      <!-- ------------------------------------------------------- content -->
+      <main class="content">
+        <header class="channel-header">
+          <span class="channel-name"># NuncioCrew project</span>
+          <span class="header-spacer"></span>
+
+          <!-- Phase 3 — channel-level pill. Disk total deliberately absent:
+               it would force a du() on every render. -->
+          <button class="worktree-pill" id="pill">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="height:0.75rem;width:0.75rem">
+              <line x1="6" x2="6" y1="3" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+            <span>5 worktrees</span>
+            <span class="sep">·</span>
+            <span style="color: var(--green)">3 PRs open</span>
+            <span class="sep">·</span>
+            <span style="color: var(--yellow)">1 orphan</span>
+          </button>
+        </header>
+
+        <div class="timeline" id="timeline"></div>
+
+        <div class="composer">
+          <div class="composer-box">Message #NuncioCrew project</div>
+        </div>
+      </main>
+    </div>
+
+    <!-- --------------------------------------------------------- drawer -->
+    <div class="scrim" id="scrim"></div>
+    <aside class="drawer" aria-label="Worktrees">
+      <div class="drawer-head">
+        <span class="drawer-title">Worktrees</span>
+        <span class="wt-size" style="margin-left: 0">crew · 19.1 GB across 5</span>
+        <span class="header-spacer"></span>
+        <button class="btn" id="drawer-close">Close</button>
+      </div>
+      <div class="drawer-body" id="drawer-body"></div>
+      <div class="drawer-foot">
+        <button class="btn">Prune broken</button>
+        <button class="btn danger">Remove 2 clean worktrees · frees 131 MB</button>
+      </div>
+    </aside>
+
+    <div class="popover" id="popover"></div>
+
+    <!-- ------------------------------------------------------- controls -->
+    <div class="controls">
+      <div class="controls-row">
+        <span class="controls-label">Inline layout</span>
+        <div class="seg" id="variant-seg">
+          <button data-variant="chips">A · chips</button>
+          <button data-variant="hybrid" aria-pressed="true">B · status line</button>
+          <button data-variant="card">C · card</button>
+        </div>
+        <span class="controls-label" style="margin-left: 0.5rem">Density</span>
+        <div class="seg" id="density-seg">
+          <button data-density="comfortable" aria-pressed="true">Comfortable</button>
+          <button data-density="compact">Compact</button>
+        </div>
+        <button class="btn" id="expand-all" style="margin-left: 0.5rem">Expand all</button>
+        <button class="btn primary" id="open-drawer">Open drawer</button>
+      </div>
+      <div class="note">
+        Mock data. Click a PR chip for its checks, the branch chip for worktree
+        detail, the status line caret to expand, the header pill for the drawer.
+      </div>
+    </div>
+
+    <script>
+      /* ==================================================================
+         Mock data — shaped exactly like the planned
+         get_project_worktree_registry() response, so the real wiring is a
+         drop-in replacement for MOCK below.
+         ================================================================== */
+      const ICON = {
+        branch:
+          '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+        pr: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/>',
+        check: '<path d="M20 6 9 17l-5-5"/>',
+        cross: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+        clock:
+          '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+        disk: '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/>',
+        dot: '<circle cx="12" cy="12" r="4"/>',
+      };
+
+      function svg(path, cls = "") {
+        return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+      }
+
+      const MOCK = [
+        {
+          id: "t1",
+          author: "Oscar",
+          avatar: "oscar",
+          time: "11:45 PM",
+          body: '<span class="mention">@Claude Opus</span> đọc github issue 4 sau đó lên cho mình 1 cái plan để fix dứt điểm sau đó giao cho <span class="mention">@Cursor Grok High Fast</span> làm và <span class="mention">@Codex GPT 5.6</span> review',
+          replies: 38,
+          lastReply: "2 days ago",
+          participants: ["codex", "cursor", "claude"],
+          workspace: {
+            branch: "buzz/eb791333c0ee",
+            short: "eb791333",
+            dirty: false,
+            sizeLabel: "18 GB",
+            path: ".buzz-worktrees/crew-eb791333c0ee",
+            agent: null,
+            diff: null,
+            prs: [
+              { n: 12, state: "merged", title: "Agent question cards in channel", checks: "passed" },
+              { n: 9, state: "closed", title: "First attempt — superseded", checks: "none" },
+              { n: 18, state: "open", title: "Relay reconnect backoff", checks: "passed", review: "approved", add: 214, del: 18 },
+            ],
+          },
+        },
+        {
+          id: "t2",
+          author: "Oscar",
+          avatar: "oscar",
+          time: "2:16 PM",
+          body: '<span class="mention">@Claude Opus</span> bây giờ hãy giúp mình brainstorm, để chúng ta có thể quản lí được worktree trong 1 channel — mình cần hiển thị nhiều info hơn ở phần chat',
+          replies: 7,
+          lastReply: "1 minute ago",
+          participants: ["oscar", "claude"],
+          workspace: {
+            branch: "buzz/649566de51d6",
+            short: "649566de",
+            dirty: true,
+            sizeLabel: "72 MB",
+            path: ".buzz-worktrees/crew-649566de51d6",
+            agent: { name: "Claude Opus", since: "2m" },
+            diff: { add: 486, del: 12 },
+            prs: [
+              { n: 21, state: "open", title: "Pin thread GitHub commands to origin", checks: "running", review: "review required", add: 214, del: 18 },
+              { n: 22, state: "draft", title: "Worktree registry command", checks: "none" },
+            ],
+          },
+        },
+        {
+          id: "t3",
+          author: "Oscar",
+          avatar: "oscar",
+          time: "2:32 PM",
+          body: '<span class="mention">@Claude Opus</span> brainstorm về 1 cái UI/UX bên trong thread, mình muốn thấy agent trong đó chạy, đang làm gì',
+          replies: 7,
+          lastReply: "3 minutes ago",
+          participants: ["claude", "oscar"],
+          workspace: {
+            branch: "buzz/cd2e8ed73d4b",
+            short: "cd2e8ed7",
+            dirty: false,
+            sizeLabel: "72 MB",
+            path: ".buzz-worktrees/crew-cd2e8ed73d4b",
+            agent: null,
+            diff: { add: 61, del: 4 },
+            prs: [
+              { n: 19, state: "open", title: "Merge open PRs", checks: "failed", review: "changes requested", add: 61, del: 4 },
+            ],
+          },
+        },
+        {
+          id: "t4",
+          author: "Oscar",
+          avatar: "oscar",
+          time: "10:43 AM",
+          body: '<span class="mention">@Claude Opus</span> mình đang test version 0.0.4, đọc commit/change logs và xem xét hành vi này đúng không',
+          replies: 1,
+          lastReply: "2 days ago",
+          participants: ["claude"],
+          workspace: {
+            branch: "buzz/0efbf738ca7b",
+            short: "0efbf738",
+            dirty: false,
+            sizeLabel: "72 MB",
+            path: ".buzz-worktrees/crew-0efbf738ca7b",
+            agent: null,
+            diff: null,
+            prs: [],
+          },
+        },
+        {
+          id: "t5",
+          author: "Cursor Grok High Fast",
+          avatar: "cursor",
+          time: "11:45 PM",
+          body: '<span class="system-note">added by you</span>',
+          replies: 0,
+          lastReply: null,
+          participants: [],
+          workspace: null, // control case: a normal message keeps today's layout
+        },
+      ];
+
+      /* ------------------------------------------------------- rendering */
+      function prColour(state) {
+        return state === "merged"
+          ? "merged"
+          : state === "closed"
+            ? "closed"
+            : state === "draft"
+              ? "draft"
+              : "open";
+      }
+
+      function checkGlyph(checks) {
+        if (checks === "passed")
+          return `<span style="color:var(--green)">${svg(ICON.check)}</span>`;
+        if (checks === "failed")
+          return `<span style="color:var(--red)">${svg(ICON.cross)}</span>`;
+        if (checks === "running")
+          return `<span style="color:var(--yellow)" class="spin">${svg(ICON.clock)}</span>`;
+        return "";
+      }
+
+      function stateWord(pr) {
+        if (pr.state === "merged") return "merged";
+        if (pr.state === "closed") return "closed";
+        if (pr.state === "draft") return "draft";
+        if (pr.checks === "failed") return "checks failing";
+        if (pr.checks === "running") return "checks running";
+        if (pr.review === "approved") return "approved";
+        return pr.review || "open";
+      }
+
+      function branchChip(ws) {
+        return `<button class="chip chip-branch" data-pop="worktree" data-id="${ws.branch}">
+          ${svg(ICON.branch)}<span>${ws.short}</span>
+        </button>`;
+      }
+
+      function prChips(ws) {
+        // D3 revisited: a thread can carry several PRs. Show the two most
+        // relevant, overflow the rest behind a counter.
+        const ranked = [...ws.prs].sort(
+          (a, b) =>
+            rank(a) - rank(b) || b.n - a.n,
+        );
+        const shown = ranked.slice(0, 2);
+        const rest = ranked.length - shown.length;
+        let html = shown
+          .map(
+            (pr) =>
+              `<button class="chip chip-pr ${prColour(pr.state)}" data-pop="pr" data-id="${pr.n}">
+                 ${svg(ICON.pr)}<span>#${pr.n}</span>${checkGlyph(pr.checks)}
+               </button>`,
+          )
+          .join("");
+        if (rest > 0)
+          html += `<button class="chip chip-pr" data-pop="prs" data-id="${ws.branch}">+${rest}</button>`;
+        return html;
+      }
+
+      function rank(pr) {
+        if (pr.state === "open") return 0;
+        if (pr.state === "draft") return 1;
+        if (pr.state === "merged") return 2;
+        return 3;
+      }
+
+      function diffChip(ws) {
+        if (!ws.diff) return "";
+        return `<span class="chip chip-diff"><span class="add">+${ws.diff.add}</span><span class="del">−${ws.diff.del}</span></span>`;
+      }
+
+      function stateChips(ws) {
+        let html = "";
+        if (ws.agent)
+          html += `<span class="chip chip-working"><span class="pulse"></span>${ws.agent.name} · ${ws.agent.since}</span>`;
+        if (ws.dirty)
+          html += `<span class="chip chip-dirty">uncommitted</span>`;
+        return html;
+      }
+
+      function summaryRow(m) {
+        const avatars = m.participants
+          .map((p) => `<span class="avatar sm ${p}">${p[0].toUpperCase()}</span>`)
+          .join("");
+        const chipsA = m.workspace
+          ? `<span class="inline-chips"><span class="dot">·</span>${stateChips(m.workspace)}${branchChip(m.workspace)}${prChips(m.workspace)}${diffChip(m.workspace)}</span>`
+          : "";
+        return `<div class="thread-summary">
+            <span class="stack">${avatars}</span>
+            <span>${m.replies} ${m.replies === 1 ? "reply" : "replies"}</span>
+            <span class="dot">·</span>
+            <span class="faded">last reply ${m.lastReply}</span>
+            ${chipsA}
+          </div>`;
+      }
+
+      function hybridLine(m) {
+        const ws = m.workspace;
+        if (!ws) return "";
+        const caret = ws.prs.length
+          ? `<button class="chip chip-pr" data-toggle="1">${ws.prs.length} PR${ws.prs.length > 1 ? "s" : ""} <span class="caret">▾</span></button>`
+          : "";
+        return `<div class="hybrid-line">
+            ${stateChips(ws)}
+            ${branchChip(ws)}
+            ${ws.prs.length ? prChips(ws) : ""}
+            ${caret}
+            ${diffChip(ws)}
+          </div>
+          ${expandBlock(ws)}`;
+      }
+
+      function expandBlock(ws) {
+        if (!ws.prs.length) return "";
+        const rows = ws.prs
+          .map(
+            (pr) => `<button class="pr-row">
+              <span class="chip chip-pr ${prColour(pr.state)}" style="background:none;padding:0">${svg(ICON.pr)}</span>
+              <span class="pr-num">#${pr.n}</span>
+              <span class="pr-title">${pr.title}</span>
+              <span class="pr-state" style="color:${pr.checks === "failed" ? "var(--red)" : pr.state === "merged" ? "var(--mauve)" : pr.review === "approved" ? "var(--green)" : "var(--subtext)"}">${stateWord(pr)}</span>
+            </button>`,
+          )
+          .join("");
+        return `<div class="expand">${rows}</div>`;
+      }
+
+      function workspaceCard(m) {
+        const ws = m.workspace;
+        if (!ws) return "";
+        const rows = ws.prs.length
+          ? ws.prs
+              .map(
+                (pr) => `<button class="pr-row">
+                  <span class="chip chip-pr ${prColour(pr.state)}" style="background:none;padding:0">${svg(ICON.pr)}</span>
+                  <span class="pr-num">#${pr.n}</span>
+                  <span class="pr-title">${pr.title}</span>
+                  <span class="pr-state" style="color:${pr.checks === "failed" ? "var(--red)" : pr.state === "merged" ? "var(--mauve)" : pr.review === "approved" ? "var(--green)" : "var(--subtext)"}">${stateWord(pr)}</span>
+                </button>`,
+              )
+              .join("")
+          : `<div class="pr-row" style="color:var(--overlay);font-size:0.75rem">No pull request yet</div>`;
+        return `<div class="workspace-card">
+            <div class="card-head">
+              <span style="color:var(--subtext)">${svg(ICON.branch, "")}</span>
+              <span class="card-branch">${ws.branch}</span>
+              ${stateChips(ws)}
+              <span class="card-meta">${ws.sizeLabel} · on this Mac</span>
+            </div>
+            ${rows}
+          </div>`;
+      }
+
+      function messageHtml(m) {
+        return `<div class="msg" data-id="${m.id}" data-expanded="false">
+            <span class="avatar ${m.avatar}">${m.author[0]}</span>
+            <div>
+              <div class="msg-head">
+                <span class="author">${m.author}</span>
+                <span class="time">${m.time}</span>
+              </div>
+              <div class="body">${m.body}</div>
+              ${m.workspace ? workspaceCard(m) : ""}
+              ${m.replies ? summaryRow(m) : ""}
+              ${m.workspace ? hybridLine(m) : ""}
+            </div>
+          </div>`;
+      }
+
+      document.getElementById("timeline").innerHTML =
+        `<div class="day-divider"><span>Today</span></div>` +
+        MOCK.map(messageHtml).join("");
+
+      /* --------------------------------------------------------- drawer */
+      const BUCKETS = [
+        {
+          label: "Active",
+          hint: "agent running, or PR open",
+          items: [
+            {
+              name: "crew-649566de51d6",
+              size: "72 MB",
+              sub: "buzz/649566de51d6 · uncommitted changes · PR #21, #22 · Claude Opus working",
+              actions: ["Open thread", "Open PR"],
+            },
+            {
+              name: "crew-cd2e8ed73d4b",
+              size: "72 MB",
+              sub: "buzz/cd2e8ed73d4b · clean · PR #19 checks failing",
+              actions: ["Open thread", "Open PR"],
+            },
+          ],
+        },
+        {
+          label: "Ready to merge",
+          hint: "approved + checks green",
+          items: [
+            {
+              name: "crew-eb791333c0ee",
+              size: "18 GB",
+              sub: "buzz/eb791333c0ee · clean · PR #18 approved · 2 closed PRs",
+              actions: ["Open PR"],
+              warn: "18 GB of build artifacts",
+            },
+          ],
+        },
+        {
+          label: "Idle",
+          hint: "clean · no open PR · quiet 7 days",
+          items: [
+            {
+              name: "crew-0efbf738ca7b",
+              size: "72 MB",
+              sub: "buzz/0efbf738ca7b · clean · no PR · last commit 8 days ago",
+              actions: ["Open thread"],
+              danger: "Remove worktree",
+            },
+          ],
+        },
+        {
+          label: "Orphan",
+          hint: "no thread-root record",
+          items: [
+            {
+              name: "crew-02cc85801c3d",
+              size: "59 MB",
+              sub: "buzz/02cc85801c3d · clean · no buzzThreadRoot · branch kept",
+              actions: [],
+              danger: "Remove worktree",
+            },
+          ],
+        },
+        {
+          label: "Other checkouts",
+          hint: "read-only — never touched by bulk actions",
+          readonly: true,
+          items: [
+            { name: "crew (main)", size: "—", sub: "main worktree", actions: [] },
+            {
+              name: ".worktrees/crew-docs-fork-identity",
+              size: "—",
+              sub: "docs/nunciocrew-fork-identity · created by you, not by Buzz",
+              actions: [],
+            },
+            {
+              name: ".worktrees/crew-managed-node-tools-arch-scoping",
+              size: "—",
+              sub: "created by you, not by Buzz",
+              actions: [],
+            },
+          ],
+        },
+      ];
+
+      document.getElementById("drawer-body").innerHTML = BUCKETS.map(
+        (b) => `<section class="bucket">
+          <div class="bucket-label">${b.label} <span style="color:var(--overlay)">${b.items.length}</span> <span class="bucket-hint">${b.hint}</span></div>
+          ${b.items
+            .map(
+              (i) => `<div class="wt ${b.readonly ? "readonly" : ""}">
+                <div class="wt-top">
+                  <span style="color:var(--subtext)">${svg(ICON.branch, "")}</span>
+                  <span class="wt-name">${i.name}</span>
+                  <span class="wt-size">${i.size}</span>
+                </div>
+                <div class="wt-sub">${i.sub}</div>
+                ${
+                  i.warn
+                    ? `<div class="wt-sub" style="color:var(--yellow)">${i.warn}</div>`
+                    : ""
+                }
+                ${
+                  i.actions.length || i.danger
+                    ? `<div class="wt-actions">
+                        ${i.actions.map((a) => `<button class="btn">${a}</button>`).join("")}
+                        ${i.danger ? `<button class="btn danger">${i.danger}</button>` : ""}
+                      </div>`
+                    : ""
+                }
+              </div>`,
+            )
+            .join("")}
+        </section>`,
+      ).join("");
+
+      /* --------------------------------------------------- interactions */
+      const body = document.body;
+      const popover = document.getElementById("popover");
+
+      function openDrawer() {
+        body.dataset.drawer = "open";
+      }
+      function closeDrawer() {
+        body.dataset.drawer = "closed";
+      }
+
+      document.getElementById("pill").addEventListener("click", openDrawer);
+      document.getElementById("open-drawer").addEventListener("click", openDrawer);
+      document.getElementById("drawer-close").addEventListener("click", closeDrawer);
+      document.getElementById("scrim").addEventListener("click", closeDrawer);
+
+      function segment(id, attr) {
+        const root = document.getElementById(id);
+        root.addEventListener("click", (event) => {
+          const button = event.target.closest("button");
+          if (!button) return;
+          for (const other of root.querySelectorAll("button"))
+            other.setAttribute("aria-pressed", String(other === button));
+          document.documentElement.dataset[attr] = button.dataset[attr];
+          hidePopover();
+        });
+      }
+      segment("variant-seg", "variant");
+      segment("density-seg", "density");
+
+      // ?variant=chips|hybrid|card & ?density=… & ?drawer=open — lets a specific
+      // state be linked or screenshotted without clicking through.
+      const params = new URLSearchParams(location.search);
+      for (const [key, seg] of [
+        ["variant", "variant-seg"],
+        ["density", "density-seg"],
+      ]) {
+        const value = params.get(key);
+        if (!value) continue;
+        document.documentElement.dataset[key] = value;
+        for (const button of document.querySelectorAll(`#${seg} button`))
+          button.setAttribute(
+            "aria-pressed",
+            String(button.dataset[key] === value),
+          );
+      }
+      if (params.get("drawer") === "open") body.dataset.drawer = "open";
+      if (params.get("expanded") === "1")
+        for (const m of document.querySelectorAll(".msg"))
+          if (m.querySelector(".expand")) m.dataset.expanded = "true";
+
+      document.getElementById("expand-all").addEventListener("click", () => {
+        const anyClosed = [...document.querySelectorAll(".msg")].some(
+          (m) => m.dataset.expanded === "false" && m.querySelector(".expand"),
+        );
+        for (const m of document.querySelectorAll(".msg"))
+          if (m.querySelector(".expand")) m.dataset.expanded = String(anyClosed);
+      });
+
+      function hidePopover() {
+        popover.classList.remove("show");
+      }
+
+      function popContent(kind, id) {
+        const all = MOCK.filter((m) => m.workspace);
+        if (kind === "worktree") {
+          const ws = all.find((m) => m.workspace.branch === id).workspace;
+          return `<div class="pop-title">${ws.branch}</div>
+            <div class="pop-line"><span class="name">${ws.path}</span></div>
+            <div class="pop-line">${svg(ICON.disk)}<span>${ws.sizeLabel} on disk</span><span class="st">${ws.dirty ? '<span style="color:var(--yellow)">uncommitted changes</span>' : "clean"}</span></div>
+            <div class="pop-line"><span>${ws.agent ? ws.agent.name + " working now" : "no agent running"}</span></div>
+            <div class="wt-actions">
+              <button class="btn">Open in Finder</button>
+              <button class="btn">Open terminal</button>
+              <button class="btn danger" ${ws.dirty ? "disabled style='opacity:.45'" : ""}>Remove worktree</button>
+            </div>
+            <div class="pop-line" style="color:var(--overlay)">${ws.dirty ? "Remove is refused while files have uncommitted changes." : "Machine-local truth — shown only on this Mac."}</div>`;
+        }
+        if (kind === "prs") {
+          const ws = all.find((m) => m.workspace.branch === id).workspace;
+          return (
+            `<div class="pop-title">${ws.prs.length} pull requests on this branch</div>` +
+            ws.prs
+              .map(
+                (pr) =>
+                  `<div class="pop-line"><span class="chip chip-pr ${prColour(pr.state)}" style="background:none;padding:0">${svg(ICON.pr)}</span><span>#${pr.n}</span><span class="name">${pr.title}</span><span class="st">${stateWord(pr)}</span></div>`,
+              )
+              .join("")
+          );
+        }
+        const pr = all
+          .flatMap((m) => m.workspace.prs)
+          .find((p) => String(p.n) === String(id));
+        const checks =
+          pr.checks === "none"
+            ? [["no checks yet", "muted"]]
+            : pr.checks === "failed"
+              ? [
+                  ["Rust CI", "ok"],
+                  ["Desktop E2E", "bad"],
+                  ["DCO Check", "ok"],
+                ]
+              : pr.checks === "running"
+                ? [
+                    ["Rust CI", "ok"],
+                    ["Desktop build", "run"],
+                    ["DCO Check", "ok"],
+                  ]
+                : [
+                    ["Rust CI", "ok"],
+                    ["Desktop E2E", "ok"],
+                    ["DCO Check", "ok"],
+                  ];
+        return `<div class="pop-title">#${pr.n} · ${pr.title}</div>
+          <div class="pop-line"><span>${stateWord(pr)}</span>${pr.add ? `<span class="st"><span style="color:var(--green)">+${pr.add}</span> <span style="color:var(--red)">−${pr.del}</span></span>` : ""}</div>
+          ${checks
+            .map(
+              ([name, kind]) =>
+                `<div class="pop-line">${kind === "ok" ? `<span style="color:var(--green)">${svg(ICON.check)}</span>` : kind === "bad" ? `<span style="color:var(--red)">${svg(ICON.cross)}</span>` : kind === "run" ? `<span style="color:var(--yellow)" class="spin">${svg(ICON.clock)}</span>` : ""}<span class="name">${name}</span></div>`,
+            )
+            .join("")}
+          <div class="wt-actions"><button class="btn">Open on GitHub</button><button class="btn">Copy link</button></div>`;
+      }
+
+      document.addEventListener("click", (event) => {
+        const toggle = event.target.closest("[data-toggle]");
+        if (toggle) {
+          const msg = toggle.closest(".msg");
+          msg.dataset.expanded =
+            msg.dataset.expanded === "true" ? "false" : "true";
+          hidePopover();
+          return;
+        }
+
+        const trigger = event.target.closest("[data-pop]");
+        if (!trigger) {
+          if (!event.target.closest("#popover")) hidePopover();
+          return;
+        }
+        const rect = trigger.getBoundingClientRect();
+        popover.innerHTML = popContent(trigger.dataset.pop, trigger.dataset.id);
+        popover.classList.add("show");
+        const top = Math.min(rect.bottom + 6, window.innerHeight - 260);
+        popover.style.top = `${top}px`;
+        popover.style.left = `${Math.min(rect.left, window.innerWidth - 380)}px`;
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        hidePopover();
+        closeDrawer();
+      });
+
+      // ?pop=pr:21 / ?pop=worktree:buzz/649566de51d6 — open a popover on load.
+      // Runs last: it replays a real click, so the handler above must exist.
+      const popParam = params.get("pop");
+      if (popParam) {
+        const [kind, id] = popParam.split(/:(.*)/);
+        // Chips exist twice in the DOM (one copy per layout variant); only the
+        // visible copy has a usable bounding box to anchor the popover to.
+        [
+          ...document.querySelectorAll(
+            `[data-pop="${kind}"][data-id="${CSS.escape(id)}"]`,
+          ),
+        ]
+          .find((node) => node.offsetParent !== null)
+          ?.click();
+      }
+    </script>
+  </body>
+</html>
