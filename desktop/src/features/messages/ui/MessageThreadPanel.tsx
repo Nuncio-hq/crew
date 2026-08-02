@@ -46,10 +46,10 @@ import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
 import { ProjectThreadWorkspacePanel } from "./ProjectThreadWorkspacePanel";
+import type { ThreadBreadcrumb } from "@/features/messages/lib/threadOrientation";
 import {
   ThreadPanelAncestry,
   ThreadPanelOrientationTitle,
-  useThreadPanelBreadcrumb,
 } from "./ThreadPanelOrientation";
 import { TypingIndicatorRow } from "./TypingIndicatorRow";
 import { UnreadDivider } from "./UnreadDivider";
@@ -67,10 +67,10 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
   huddleMemberPubkeys?: readonly string[];
   huddleMemberPubkeysPending?: boolean;
   /**
-   * Extra messages (e.g. channel window + threadAllMessages) used to resolve
-   * ancestor segments for the orientation breadcrumb / ancestry strip.
+   * Orientation breadcrumb owned by ChannelPane so the timeline anchor and
+   * panel title share one source of truth (anchorMessageId).
    */
-  orientationLookupMessages?: readonly TimelineMessage[];
+  breadcrumb?: ThreadBreadcrumb | null;
   editTarget?: {
     author: string;
     body: string;
@@ -226,6 +226,7 @@ export function MessageThreadPanel({
   onMarkUnread,
   onMarkRead,
   onExpandReplies,
+  breadcrumb = null,
   onJumpToTimelineMessage,
   onOpenAncestorThread,
   onScrollTargetResolved,
@@ -234,7 +235,6 @@ export function MessageThreadPanel({
   onSend,
   onToggleReaction,
   onUnfollowThread,
-  orientationLookupMessages,
   profiles,
   replyTargetMessage,
   scrollTargetId,
@@ -266,10 +266,13 @@ export function MessageThreadPanel({
   const threadHeadId = threadHead?.id ?? null;
   useEscapeKey(onClose, isOverlay || isSinglePanelView || isFocusMode);
   const hasConstrainedColumn = columnMaxWidthPx != null;
+  // Whether the composer dock trades its quiet-state spacer for the
+  // conditional activity accessory (agent working and/or someone typing).
   const hasComposerBottomActivity =
     activityAccessoryVisible || threadTypingPubkeys.length > 0;
 
-  // Live ref for reply state at submit time.
+  // Live ref so onCaptureSendContext can read reply state at submit time
+  // (before any async mention-flow awaits change navigation state).
   const replyTargetMessageRef = React.useRef(replyTargetMessage);
   replyTargetMessageRef.current = replyTargetMessage;
 
@@ -548,13 +551,6 @@ export function MessageThreadPanel({
     () => projectThreadRootAudiencePubkeys(projectThreadAgentMentions),
     [projectThreadAgentMentions],
   );
-
-  const breadcrumb = useThreadPanelBreadcrumb({
-    channelName,
-    orientationLookupMessages,
-    threadHead,
-    threadReplies,
-  });
 
   const handleNavigateToAnchor = React.useCallback(() => {
     if (!breadcrumb || !onJumpToTimelineMessage) return;

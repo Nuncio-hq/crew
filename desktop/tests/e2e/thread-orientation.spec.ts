@@ -39,18 +39,21 @@ async function emitMockMessage(
   content: string,
   options?: {
     parentEventId?: string;
+    /** Force NIP-10 root; pass parent id to get rootId === parentId. */
+    rootEventId?: string;
     pubkey?: string;
     createdAt?: number;
   },
 ): Promise<MockMessageEvent> {
   const event = await page.evaluate(
-    ({ ch, msg, parentEventId, pubkey, ts }) => {
+    ({ ch, msg, parentEventId, rootEventId, pubkey, ts }) => {
       return (
         window as Window & {
           __BUZZ_E2E_EMIT_MOCK_MESSAGE__?: (input: {
             channelName: string;
             content: string;
             parentEventId?: string | null;
+            rootEventId?: string | null;
             pubkey?: string;
             createdAt?: number;
           }) => { id: string; created_at: number; pubkey: string };
@@ -59,6 +62,7 @@ async function emitMockMessage(
         channelName: ch,
         content: msg,
         parentEventId: parentEventId ?? undefined,
+        rootEventId: rootEventId ?? undefined,
         pubkey: pubkey ?? undefined,
         createdAt: ts,
       });
@@ -67,6 +71,7 @@ async function emitMockMessage(
       ch: channelName,
       msg: content,
       parentEventId: options?.parentEventId ?? null,
+      rootEventId: options?.rootEventId ?? null,
       pubkey: options?.pubkey ?? TEST_IDENTITIES.alice.pubkey,
       ts: options?.createdAt,
     },
@@ -232,5 +237,56 @@ test.describe("thread orientation", () => {
         .getByTestId("message-thread-head")
         .locator('[data-message-id="mock-general-welcome"]'),
     ).toBeVisible();
+  });
+
+  test("04-depth-2-rootId-equals-parentId-still-anchors-top-level", async ({
+    page,
+  }) => {
+    await installMockBridge(page);
+    await page.goto("/");
+
+    await page.getByTestId("channel-general").click();
+    await expect(page.getByTestId("chat-title")).toHaveText("general");
+    await waitForMockLiveSubscription(page, "general");
+
+    const past = Math.floor(Date.now() / 1000) - 60;
+    const mid = await emitMockMessage(page, "general", "Depth2 mid parent", {
+      parentEventId: "mock-general-welcome",
+      pubkey: TEST_IDENTITIES.alice.pubkey,
+      createdAt: past,
+    });
+    // Sub-thread reply shape: only a reply tag to MID (rootId === parentId).
+    // Old ChannelPane used rootId and would miss the timeline row entirely.
+    const leaf = await emitMockMessage(page, "general", "Depth2 leaf head", {
+      parentEventId: mid.id,
+      rootEventId: mid.id,
+      pubkey: TEST_IDENTITIES.bob.pubkey,
+      createdAt: past + 1,
+    });
+
+    // Same prelude as test 03: open the top-level thread first so the channel
+    // window + thread reply caches are warm before the nested deep-link.
+    const rootSummary = page.getByTestId("message-thread-summary").first();
+    await expect(rootSummary).toBeVisible();
+    await rootSummary.click();
+    await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+
+    await page.goto(`/#/channels/${GENERAL_CHANNEL_ID}?thread=${leaf.id}`);
+    // Wait for the real breadcrumb — skeleton shares message-thread-panel.
+    await expect(page.getByTestId("thread-breadcrumb")).toContainText(
+      "#general",
+    );
+    await waitForAnimations(page);
+    await expect(page.getByTestId("thread-ancestry-strip")).toBeVisible();
+
+    const anchor = page.locator('[data-thread-anchor="true"]');
+    await expect(anchor).toHaveCount(1);
+    await expect(
+      anchor.locator('[data-message-id="mock-general-welcome"]'),
+    ).toBeVisible();
+    // Must not silently drop the anchor (old rootId===MID path).
+    await expect(
+      page.locator(`[data-thread-anchor="true"] [data-message-id="${mid.id}"]`),
+    ).toHaveCount(0);
   });
 });

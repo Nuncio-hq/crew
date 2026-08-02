@@ -145,6 +145,41 @@ test("normalized nested head (depth 0 + parentId) still walks to the root", () =
   assert.equal(result.segments[0].author, "Alice");
 });
 
+test("depth-2 head with rootId===parentId still anchors at walked top-level", () => {
+  // Sub-thread reply shape: only a reply tag to MID, so rootId falls back to
+  // MID. ChannelPane must NOT use rootId alone — that points at a non-row.
+  const top = message({ id: "top", author: "Alice", body: "Top" });
+  const mid = message({
+    id: "mid",
+    author: "Bob",
+    body: "Mid",
+    parentId: "top",
+    rootId: "top",
+    depth: 1,
+  });
+  const head = message({
+    id: "leaf",
+    author: "Carol",
+    body: "Leaf",
+    parentId: "mid",
+    rootId: "mid",
+    depth: 0,
+  });
+  const result = buildThreadBreadcrumb({
+    channelName: "general",
+    threadHead: head,
+    messageById: new Map([
+      [top.id, top],
+      [mid.id, mid],
+      [head.id, head],
+    ]),
+  });
+  assert.ok(result);
+  assert.equal(result.anchorMessageId, "top");
+  assert.notEqual(result.anchorMessageId, head.rootId);
+  assert.equal(result.segments.length, 3);
+});
+
 test("chain of 5 → segments.length === 3, truncated, first is still top-level", () => {
   const ids = ["a", "b", "c", "d", "e"];
   const chain = ids.map((id, index) =>

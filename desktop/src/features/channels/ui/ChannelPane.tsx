@@ -12,6 +12,9 @@ import { useRelaySelfQuery } from "@/features/moderation/hooks";
 import { DropZoneOverlay } from "@/features/messages/ui/ComposerAttachments";
 import { MessageThreadPanel } from "@/features/messages/ui/MessageThreadPanel";
 import { MessageThreadPanelSkeleton } from "@/features/messages/ui/MessageThreadPanelSkeleton";
+import { resolveAgentSessionChannelBinding } from "@/features/channels/ui/resolveAgentSessionChannelId";
+import { useChannelAutoSendComplete } from "@/features/channels/ui/useChannelAutoSendComplete";
+import { useChannelThreadOrientation } from "@/features/channels/ui/useChannelThreadOrientation";
 import {
   MessageTimeline,
   type MessageTimelineHandle,
@@ -196,14 +199,11 @@ export const ChannelPane = React.memo(function ChannelPane({
       channelPaneMountedRef.current = false;
     };
   }, []);
-  // Clear ?autoSend after auto-submit (surgical clear preserves ?thread).
-  const handleAutoSubmitComplete = React.useCallback(() => {
-    if (onAutoSendComplete) {
-      onAutoSendComplete();
-    } else if (activeChannelId) {
-      void goChannel(activeChannelId, { replace: true });
-    }
-  }, [activeChannelId, goChannel, onAutoSendComplete]);
+  const handleAutoSubmitComplete = useChannelAutoSendComplete({
+    activeChannelId,
+    goChannel,
+    onAutoSendComplete,
+  });
   const huddleMemberPubkeys = React.useMemo(
     () => getDmHuddleMemberPubkeys(activeChannel, agentPubkeys, currentPubkey),
     [activeChannel, agentPubkeys, currentPubkey],
@@ -496,6 +496,14 @@ export const ChannelPane = React.memo(function ChannelPane({
     threadHeadMessage,
   ]);
 
+  const threadOrientationBreadcrumb = useChannelThreadOrientation({
+    channelName: activeChannel?.name ?? "",
+    messages,
+    threadAllMessages,
+    threadHeadMessage,
+    threadMessages,
+  });
+
   const isOverlay = useIsThreadPanelOverlay();
   const useSplitAuxiliaryPane = !isSinglePanelView && !isOverlay;
   const threadViewMode = useThreadViewMode();
@@ -685,7 +693,7 @@ export const ChannelPane = React.memo(function ChannelPane({
               Boolean(openThreadHeadId)
             }
             openThreadAnchorId={
-              threadHeadMessage?.rootId ?? threadHeadMessage?.id ?? null
+              threadOrientationBreadcrumb?.anchorMessageId ?? null
             }
             threadUnreadCounts={threadUnreadCounts}
           />
@@ -873,16 +881,12 @@ export const ChannelPane = React.memo(function ChannelPane({
                 onMarkUnread={onMarkUnread}
                 onMarkRead={onMarkRead}
                 onExpandReplies={onExpandThreadReplies}
+                breadcrumb={threadOrientationBreadcrumb}
                 onJumpToTimelineMessage={(id) =>
                   messageTimelineRef.current?.jumpToMessage(id) ?? false
                 }
                 onOpenAncestorThread={
                   activeChannel?.archivedAt ? undefined : onOpenThread
-                }
-                orientationLookupMessages={
-                  messages.length
-                    ? messages.concat(threadAllMessages)
-                    : threadAllMessages
                 }
                 onSelectReplyTarget={onSelectThreadReplyTarget}
                 onSend={onSendThreadReply}
@@ -932,28 +936,21 @@ export const ChannelPane = React.memo(function ChannelPane({
           )
         ) : activeChannel && selectedAgent ? (
           (() => {
-            const effectiveAgentSessionChannelId =
-              openAgentSessionChannelId &&
-              activeChannel.id !== openAgentSessionChannelId
-                ? activeChannelId
-                : openAgentSessionChannelId;
-            const panel = (
+            const { channel, channelId } = resolveAgentSessionChannelBinding({
+              activeChannel,
+              activeChannelId,
+              activityAgents,
+              isAgentInActivityList:
+                agentSessionSelection.isAgentInActivityList,
+              openAgentSessionChannelId,
+              selectedAgent,
+            });
+            return wrapAux(
               <AgentSessionThreadPanel
                 agent={selectedAgent}
                 canInterruptTurn={selectedAgent.canInterruptTurn}
-                channel={
-                  effectiveAgentSessionChannelId
-                    ? effectiveAgentSessionChannelId === activeChannel.id
-                      ? activeChannel
-                      : null
-                    : agentSessionSelection.isAgentInActivityList({
-                          activityAgents,
-                          selectedAgent,
-                        })
-                      ? activeChannel
-                      : null
-                }
-                channelId={effectiveAgentSessionChannelId}
+                channel={channel}
+                channelId={channelId}
                 isSinglePanelView={
                   useSplitAuxiliaryPane ? false : isSinglePanelView
                 }
@@ -963,35 +960,33 @@ export const ChannelPane = React.memo(function ChannelPane({
                 onBack={onBackFromAgentSession}
                 onClose={onCloseAgentSession}
                 widthPx={threadPanelWidthPx}
-              />
+              />,
+              "agent-session-thread-panel",
             );
-            return wrapAux(panel, "agent-session-thread-panel");
           })()
         ) : profilePanelPubkey ? (
-          (() => {
-            const panel = (
-              <UserProfilePanel
-                currentPubkey={currentPubkey}
-                callerChannelId={activeChannelId}
-                isSinglePanelView={
-                  useSplitAuxiliaryPane ? false : isSinglePanelView
-                }
-                layout={useSplitAuxiliaryPane ? "split" : "standalone"}
-                transparentChrome={useSplitAuxiliaryPane}
-                onClose={onCloseProfilePanel}
-                onOpenDm={onOpenDm}
-                onOpenProfile={onOpenProfilePanel}
-                onTabChange={onProfilePanelTabChange}
-                onViewChange={onProfilePanelViewChange}
-                pubkey={profilePanelPubkey}
-                splitPaneClamp
-                tab={profilePanelTab}
-                view={profilePanelView}
-                widthPx={threadPanelWidthPx}
-              />
-            );
-            return wrapAux(panel, "user-profile-panel");
-          })()
+          wrapAux(
+            <UserProfilePanel
+              currentPubkey={currentPubkey}
+              callerChannelId={activeChannelId}
+              isSinglePanelView={
+                useSplitAuxiliaryPane ? false : isSinglePanelView
+              }
+              layout={useSplitAuxiliaryPane ? "split" : "standalone"}
+              transparentChrome={useSplitAuxiliaryPane}
+              onClose={onCloseProfilePanel}
+              onOpenDm={onOpenDm}
+              onOpenProfile={onOpenProfilePanel}
+              onTabChange={onProfilePanelTabChange}
+              onViewChange={onProfilePanelViewChange}
+              pubkey={profilePanelPubkey}
+              splitPaneClamp
+              tab={profilePanelTab}
+              view={profilePanelView}
+              widthPx={threadPanelWidthPx}
+            />,
+            "user-profile-panel",
+          )
         ) : null}
       </AnimatePresence>
     </div>
