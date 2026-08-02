@@ -76,3 +76,24 @@ function setsEqual<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
   }
   return true;
 }
+
+/**
+ * Preserve the previous reference when `JSON.stringify` of the value is
+ * unchanged. Use for small derived objects (e.g. timeline badges) that are
+ * rebuilt on every store tick but rarely change content.
+ */
+export function useStableJsonValue<T>(next: T): T {
+  const ref = React.useRef(next);
+  const prev = ref.current;
+  if (prev !== next) {
+    try {
+      if (JSON.stringify(prev) === JSON.stringify(next)) {
+        return prev;
+      }
+    } catch {
+      // non-serializable — fall through and take the new reference
+    }
+  }
+  ref.current = next;
+  return next;
+}

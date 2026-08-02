@@ -666,6 +666,7 @@ pub fn run() {
             close_thread_pull_request,
             get_thread_workspace_lifecycle,
             get_thread_github_status,
+            get_project_worktree_registry,
             push_project_local_repository,
             pull_project_local_repository,
             sign_project_pull_request_status,

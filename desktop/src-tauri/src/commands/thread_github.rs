@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+use super::thread_github_target::origin_repo_target;
 use super::thread_workspace_git::{command_output, validate_target};
 
 #[derive(Debug, Serialize)]
@@ -79,7 +80,10 @@ pub async fn get_thread_github_status(
     root_event_id: String,
 ) -> Result<ThreadGitHubStatus, String> {
     let target = validate_target(&repository_path, &branch, &root_event_id).await?;
-    let Some(number) = find_pull_request_number(&target.repository_path, &branch).await else {
+    let repo = origin_repo_target(&target.repository_path).await;
+    let Some(number) =
+        find_pull_request_number(&target.repository_path, repo.as_deref(), &branch).await
+    else {
         return Ok(unavailable());
     };
     if number == 0 {
@@ -88,7 +92,9 @@ pub async fn get_thread_github_status(
             pull_request: None,
         });
     }
-    let Some(mut pull_request) = read_pull_request(&target.repository_path, number).await else {
+    let Some(mut pull_request) =
+        read_pull_request(&target.repository_path, repo.as_deref(), number).await
+    else {
         return Ok(unavailable());
     };
     pull_request.checks = pull_request
@@ -104,15 +110,20 @@ pub async fn get_thread_github_status(
     })
 }
 
-async fn find_pull_request_number(repository: &std::path::Path, branch: &str) -> Option<u64> {
-    let output = command_output(
-        Command::new("gh")
-            .args(["pr", "list", "--state", "all", "--head", branch])
-            .args(["--json", "number", "--limit", "1"])
-            .current_dir(repository),
-    )
-    .await
-    .ok()?;
+async fn find_pull_request_number(
+    repository: &std::path::Path,
+    repo: Option<&str>,
+    branch: &str,
+) -> Option<u64> {
+    let mut command = Command::new("gh");
+    command
+        .args(["pr", "list", "--state", "all", "--head", branch])
+        .args(["--json", "number", "--limit", "1"])
+        .current_dir(repository);
+    if let Some(repo) = repo {
+        command.args(["--repo", repo]);
+    }
+    let output = command_output(&mut command).await.ok()?;
     let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).ok()?;
     Some(
         rows.first()
@@ -121,19 +132,24 @@ async fn find_pull_request_number(repository: &std::path::Path, branch: &str) ->
     )
 }
 
-async fn read_pull_request(repository: &std::path::Path, number: u64) -> Option<ThreadPullRequest> {
+async fn read_pull_request(
+    repository: &std::path::Path,
+    repo: Option<&str>,
+    number: u64,
+) -> Option<ThreadPullRequest> {
     let fields = "number,title,state,url,headRefName,baseRefName,isDraft,mergeStateStatus,reviewDecision,additions,deletions,changedFiles,comments,closingIssuesReferences,statusCheckRollup";
-    let output = command_output(
-        Command::new("gh")
-            .args(["pr", "view", &number.to_string(), "--json", fields])
-            .current_dir(repository),
-    )
-    .await
-    .ok()?;
+    let mut command = Command::new("gh");
+    command
+        .args(["pr", "view", &number.to_string(), "--json", fields])
+        .current_dir(repository);
+    if let Some(repo) = repo {
+        command.args(["--repo", repo]);
+    }
+    let output = command_output(&mut command).await.ok()?;
     serde_json::from_slice(&output.stdout).ok()
 }
 
-fn parse_check(value: &serde_json::Value) -> Option<ThreadPullRequestCheck> {
+pub(crate) fn parse_check(value: &serde_json::Value) -> Option<ThreadPullRequestCheck> {
     let name = value["name"]
         .as_str()
         .or_else(|| value["context"].as_str())?

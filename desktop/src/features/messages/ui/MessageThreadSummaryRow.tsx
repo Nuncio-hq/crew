@@ -4,6 +4,8 @@ import type {
   TimelineThreadSummary,
   TimelineThreadSummaryParticipant,
 } from "@/features/messages/lib/threadPanel";
+import type { ProjectThreadBadge } from "@/features/messages/lib/projectThreadBadge";
+import { useProjectThreadBadge } from "@/features/messages/lib/useProjectThreadBadge";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { ThreadDepthGuideAction } from "@/features/messages/ui/MessageRow";
 import { formatThreadSummaryLastReplyTime } from "@/features/messages/lib/dateFormatters";
@@ -15,6 +17,7 @@ import {
   THREAD_REPLY_LINE_WIDTH_REM,
   THREAD_REPLY_ROW_MARGIN_INLINE_REM,
 } from "@/features/messages/lib/threadTreeLayout";
+import { ProjectThreadBadgeChips } from "@/features/messages/ui/ProjectThreadBadgeChips";
 import { cn } from "@/shared/lib/cn";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
 
@@ -55,6 +58,7 @@ function ParticipantAvatar({
 }
 
 export function MessageThreadSummaryRow({
+  badge: badgeProp,
   collapseDepthGuideActions,
   depth = 0,
   depthGuideDepths,
@@ -68,6 +72,7 @@ export function MessageThreadSummaryRow({
   summaryIndentOffsetRem = 0,
   unreadCount,
 }: {
+  badge?: ProjectThreadBadge | null;
   collapseDepthGuideActions?: ReadonlyArray<ThreadDepthGuideAction>;
   depth?: number;
   depthGuideDepths?: ReadonlyArray<number>;
@@ -84,6 +89,10 @@ export function MessageThreadSummaryRow({
   summaryIndentOffsetRem?: number;
   unreadCount?: number;
 }) {
+  const derivedBadge = useProjectThreadBadge(
+    badgeProp === undefined ? message : null,
+  );
+  const badge = badgeProp === undefined ? derivedBadge : badgeProp;
   const indentRem = getThreadReplyIndentRem(depth);
   const hoverLeftRem =
     indentRem + THREAD_REPLY_ROW_MARGIN_INLINE_REM + summaryIndentOffsetRem;
@@ -272,6 +281,7 @@ export function MessageThreadSummaryRow({
                 </span>
               </>
             ) : null}
+            {badge ? <ProjectThreadBadgeChips badge={badge} /> : null}
           </div>
         </div>
       </button>
