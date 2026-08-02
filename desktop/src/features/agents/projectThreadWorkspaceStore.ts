@@ -1,4 +1,5 @@
 import type { ObserverEvent } from "./ui/agentSessionTypes";
+import { invalidateProjectWorktreeDetails } from "./projectWorktreeDetailsStore";
 import { invalidateProjectWorktreeRegistry } from "./projectWorktreeRegistryStore";
 
 export type ProjectThreadWorkspaceSnapshot =
@@ -133,7 +134,9 @@ export function ingestProjectThreadWorkspaceEvent(
       },
       watermark,
     });
-    invalidateProjectWorktreeRegistry(nonEmpty(payload.repositoryPath));
+    const erroredRepo = nonEmpty(payload.repositoryPath);
+    invalidateProjectWorktreeRegistry(erroredRepo);
+    invalidateProjectWorktreeDetails(erroredRepo);
     return;
   }
 
@@ -176,6 +179,7 @@ export function ingestProjectThreadWorkspaceEvent(
     watermark,
   });
   invalidateProjectWorktreeRegistry(repositoryPath);
+  invalidateProjectWorktreeDetails(repositoryPath);
 }
 
 export function getProjectThreadWorkspaceSnapshot(

@@ -85,3 +85,13 @@ export type ProjectWorktreeRegistry = {
   github: "available" | "unavailable";
   entries: ProjectWorktreeEntry[];
 };
+
+export type ProjectWorktreeDetails = {
+  worktreePath: string;
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  /** Unix seconds of the tip commit, when available. */
+  lastCommitAt: number | null;
+  diskBytes: number;
+};
