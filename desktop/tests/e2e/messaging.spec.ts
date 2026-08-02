@@ -814,6 +814,9 @@ test("opens a single-level thread panel with inline expansion", async ({
 
   await threadPanel.getByTestId("auxiliary-panel-close").click();
   await expect(threadPanel).toBeHidden();
+  // Park the pointer off the summary so resting opacity asserts group-hover
+  // off-state, not leftover :hover after the close-button click reflow.
+  await page.mouse.move(0, 0);
 
   const summaryWidthBeforeHover = await rootSummaryRow.evaluate((row) =>
     Math.round(row.getBoundingClientRect().width),
