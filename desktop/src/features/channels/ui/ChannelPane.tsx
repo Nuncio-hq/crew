@@ -35,10 +35,10 @@ import { getThreadPanelLayout } from "@/features/channels/lib/threadPanelLayout"
 import { useThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 import { useThreadViewModeSwitch } from "@/features/channels/ui/useThreadViewModeSwitch";
 import { useFocusDrawerPresence } from "@/features/channels/ui/useFocusDrawerPresence";
-import { useChannelWorkingAgentPubkeys } from "@/features/agents/agentWorkingSignal";
 import { ChannelComposerActivityAccessory } from "@/features/channels/ui/ChannelComposerActivityAccessory";
 import { ChannelUserInputStack } from "@/features/channels/ui/ChannelUserInputStack";
 import { useChannelUserInput } from "@/features/channels/hooks/useChannelUserInput";
+import { useChannelComposerBotActivity } from "@/features/channels/ui/useChannelComposerBotActivity";
 import {
   ThreadComposerBotActivity,
   useThreadComposerBotActivityVisible,
@@ -410,7 +410,7 @@ export const ChannelPane = React.memo(function ChannelPane({
   // bot typing fallback (both folded together by agentWorkingSignal). This is
   // what makes the bar show for an agent whose observer stream is live but
   // whose typing signal never arrives — and vice versa.
-  const composerWorkingBotPubkeys = useChannelWorkingAgentPubkeys(
+  const composerWorkingBotPubkeys = useChannelComposerBotActivity(
     activeChannel?.id ?? null,
   );
   const hasComposerBotActivity = composerWorkingBotPubkeys.length > 0;

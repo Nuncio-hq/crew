@@ -4350,10 +4350,11 @@ async fn react_working(rest: &crate::relay::RestClient, event_ids: &[String]) {
     }
 }
 
-/// Fire-and-forget: remove both 👀 and 💬 from all events. Spawned on turn complete.
-/// Capped at `REACTION_CONCURRENCY` concurrent requests per chunk to avoid
-/// unbounded HTTP fan-out on large batches.
-async fn clear_reactions(rest: crate::relay::RestClient, event_ids: Vec<String>) {
+/// Fire-and-forget: remove both 👀 and 💬 from all events. Spawned on turn
+/// complete and when a queued batch is drained by Stop/`cancel_turn` before
+/// dispatch. Capped at `REACTION_CONCURRENCY` concurrent requests per chunk to
+/// avoid unbounded HTTP fan-out on large batches.
+pub(crate) async fn clear_reactions(rest: crate::relay::RestClient, event_ids: Vec<String>) {
     // Each event needs two removals (👀 and 💬); pair them and chunk by
     // REACTION_CONCURRENCY pairs so the total concurrent requests stay bounded.
     for chunk in event_ids.chunks(REACTION_CONCURRENCY) {
