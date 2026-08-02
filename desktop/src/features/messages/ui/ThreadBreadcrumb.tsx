@@ -36,7 +36,10 @@ export function ThreadBreadcrumb({
     <button
       aria-label={`Go to the original message in #${channelName}`}
       className={cn(
-        "group flex min-w-0 flex-1 items-center gap-1 text-left text-base font-semibold leading-6 tracking-tight",
+        // No flex-1: the docked header's negative-margin overlap sits over the
+        // sticky project-thread status bar. Growing this button to fill the
+        // header row steals Workspace clicks from that bar.
+        "group flex min-w-0 max-w-full items-center gap-1 text-left text-base font-semibold leading-6 tracking-tight",
         "text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
         "rounded-sm",
       )}

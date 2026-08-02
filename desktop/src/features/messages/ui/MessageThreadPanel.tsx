@@ -24,6 +24,8 @@ import { AuxiliaryPanelBody } from "@/shared/layout/AuxiliaryPanel";
 import {
   AuxiliaryPanelHeader,
   AuxiliaryPanelHeaderGroup,
+  getAuxiliaryPanelBodyClass,
+  getAuxiliaryPanelMode,
 } from "@/shared/layout/AuxiliaryPanel";
 import {
   THREAD_PANEL_COLUMN_CLASS,
@@ -544,9 +546,17 @@ export function MessageThreadPanel({
     return null;
   }
 
+  // Docked header uses negative margin + matching body padding. Put sticky bar
+  // and scroll body as siblings in that padded column so Workspace stays below
+  // the header hit target — without putting sticky inside the scroll region.
+  const panelChromeMode = getAuxiliaryPanelMode(
+    layout === "split",
+    isOverlay && !isSinglePanelView,
+  );
+
   const threadScrollRegion = (
     <AuxiliaryPanelBody
-      className="overflow-y-auto overflow-x-hidden overscroll-contain pb-24"
+      className="overflow-y-auto overflow-x-hidden overscroll-contain pb-24 pt-0"
       data-buzz-conversation-scroll
       data-testid="message-thread-body"
       onScroll={onScroll}
@@ -963,16 +973,24 @@ export function MessageThreadPanel({
       widthPx={widthPx}
     >
       {/* Sticky status bar lives outside the scroll region so expand/collapse
-          cannot fight useAnchoredScroll's ResizeObserver. */}
-      <ProjectThreadWorkspacePanel
-        agentMentions={projectThreadAgentMentions}
-        channelId={channelId}
-        isFocusMode={isFocusMode}
-        profiles={profiles}
-        replies={threadMessages}
-        threadHead={threadHead}
-      />
-      {threadScrollRegion}
+          cannot fight useAnchoredScroll's ResizeObserver. Sibling padded
+          column keeps docked header chrome from stealing Workspace clicks. */}
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col",
+          getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
+        )}
+      >
+        <ProjectThreadWorkspacePanel
+          agentMentions={projectThreadAgentMentions}
+          channelId={channelId}
+          isFocusMode={isFocusMode}
+          profiles={profiles}
+          replies={threadMessages}
+          threadHead={threadHead}
+        />
+        {threadScrollRegion}
+      </div>
     </AuxiliaryPanel>
   );
 }
