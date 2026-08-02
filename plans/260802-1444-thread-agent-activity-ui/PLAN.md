@@ -68,8 +68,8 @@ tiếng Việt thì đòn bẩy là **system prompt của agent**, không phải
 - [ ] Phase 4 — ThreadWorkCard (focus mode)
 - [ ] Phase 5 — multi-thread rollups
 - [ ] Phase 6 — done footer + detail rail
-- [ ] Phase M1 — mobile: turn store (nền, chưa có gì)
-- [ ] Phase M2 — mobile: dòng hoạt động inline (ngang phase 3)
+- [x] Phase M1 — mobile: turn store (+ `conversationId` parse + derive helper)
+- [x] Phase M2 — mobile: dòng hoạt động inline (ngang phase 3)
 - [ ] Phase M3 — mobile: thẻ công việc (ngang phase 4)
 
 ## Phase 1 — Giữ lại mảng todo, suy ra bước hiện tại
