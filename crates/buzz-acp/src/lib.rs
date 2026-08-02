@@ -2920,7 +2920,10 @@ fn handle_queued_message_edit(
     let (outcome, applied) = if edit_removes_agent(event, agent_pubkey_hex) {
         ("dropped", queue.remove_event_by_id(&target_id))
     } else {
-        ("patched", queue.patch_event(&target_id, event.content.clone()))
+        (
+            "patched",
+            queue.patch_event(&target_id, event.content.clone()),
+        )
     };
 
     tracing::info!(
@@ -2935,12 +2938,7 @@ fn handle_queued_message_edit(
         observer.emit(
             "message_edit_applied",
             None,
-            &observer::context_for_conversation(
-                Some(routing_channel_id),
-                None,
-                None,
-                None,
-            ),
+            &observer::context_for_conversation(Some(routing_channel_id), None, None, None),
             serde_json::json!({
                 "targetEventId": target_id,
                 "outcome": outcome,

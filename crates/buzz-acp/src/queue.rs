@@ -4488,7 +4488,10 @@ mod tests {
 
         let batch = q.flush_next().expect("patched event still flushes");
         assert_eq!(batch.events.len(), 1);
-        assert_eq!(batch.events[0].edited_content.as_deref(), Some("edited body"));
+        assert_eq!(
+            batch.events[0].edited_content.as_deref(),
+            Some("edited body")
+        );
         assert_eq!(batch.events[0].event.content, original_content);
         assert_eq!(batch.events[0].event.sig.to_string(), original_sig);
 
