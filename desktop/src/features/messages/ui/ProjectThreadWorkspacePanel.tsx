@@ -56,22 +56,33 @@ function StatusDot({ tone }: { tone: ChipTone }) {
 function ChipButton({
   label,
   onClick,
+  title,
   tone,
 }: {
   label: string;
   onClick: () => void;
+  title?: string;
   tone: ChipTone;
 }) {
   return (
     <button
       className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
       onClick={onClick}
+      title={title}
       type="button"
     >
       <StatusDot tone={tone} />
       {label}
     </button>
   );
+}
+
+function githubDegradedTitle(
+  availability: "cli-missing" | "cli-failed",
+): string {
+  return availability === "cli-missing"
+    ? "GitHub CLI (gh) not found"
+    : "GitHub CLI could not read this repo";
 }
 
 /**
@@ -164,8 +175,16 @@ export function ProjectThreadWorkspacePanel({
 
   if (!model) return null;
 
-  const { activeName, context, counts, pullRequest, steps, target, workspace } =
-    model;
+  const {
+    activeName,
+    context,
+    counts,
+    githubAvailability,
+    pullRequest,
+    steps,
+    target,
+    workspace,
+  } = model;
   const showExpanded = isFocusMode && expanded;
   const elapsedMs = activityBounds
     ? Math.max(0, now - activityBounds.anchorAt)
@@ -284,7 +303,15 @@ export function ProjectThreadWorkspacePanel({
             onClick={() => toggle("handoff")}
             tone={handoffTone}
           />
-          {pullRequest ? (
+          {githubAvailability === "cli-missing" ||
+          githubAvailability === "cli-failed" ? (
+            <ChipButton
+              label="GitHub"
+              onClick={() => undefined}
+              title={githubDegradedTitle(githubAvailability)}
+              tone="idle"
+            />
+          ) : pullRequest ? (
             <>
               <ChipButton
                 label="PR"

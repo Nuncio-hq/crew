@@ -1,6 +1,6 @@
 use serde::Serialize;
-use tokio::process::Command;
 
+use super::gh_cli::gh_command;
 use super::thread_github_target::origin_repo_target;
 use super::thread_workspace_git::{
     branch_is_checked_out, command_output, git_output_at, git_output_dir, git_success_at,
@@ -154,7 +154,9 @@ pub async fn close_thread_pull_request(
     // Both calls pin the same repository so the close cannot land on a
     // same-named branch in the checkout's upstream remote.
     let repo = origin_repo_target(&target.repository_path).await;
-    let mut list = Command::new("gh");
+    let mut list = gh_command()
+        .await
+        .map_err(|_| "GitHub CLI (gh) was not found.".to_string())?;
     list.arg("pr")
         .arg("list")
         .args(["--state", "open", "--head", branch.as_str()])
@@ -172,7 +174,9 @@ pub async fn close_thread_pull_request(
     else {
         return Ok(not_found("No open pull request exists for this branch."));
     };
-    let mut close = Command::new("gh");
+    let mut close = gh_command()
+        .await
+        .map_err(|_| "GitHub CLI (gh) was not found.".to_string())?;
     close
         .arg("pr")
         .arg("close")

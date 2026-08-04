@@ -14,6 +14,7 @@ import {
 import {
   bucketWorktrees,
   countManagedWorktrees,
+  githubAvailabilityNotice,
 } from "@/features/channels/lib/worktreeBuckets";
 import { formatDiskBytes } from "@/features/channels/lib/worktreeDiskFormat";
 import { ChannelWorktreesDrawerBuckets } from "@/features/channels/ui/ChannelWorktreesDrawerBuckets";
@@ -138,6 +139,11 @@ export function ChannelWorktreesDrawer({
 
   if (!repositoryPath) return null;
 
+  const githubNotice =
+    snapshot.status === "ready"
+      ? githubAvailabilityNotice(snapshot.value.github)
+      : null;
+
   return (
     <>
       <ChannelWorktreesDrawerShell
@@ -154,6 +160,14 @@ export function ChannelWorktreesDrawer({
         ) : null}
         {snapshot.status === "error" ? (
           <p className="text-sm text-destructive">{snapshot.message}</p>
+        ) : null}
+        {githubNotice ? (
+          <p
+            className="mb-2 text-sm text-muted-foreground"
+            data-testid="channel-worktrees-github-notice"
+          >
+            {githubNotice}
+          </p>
         ) : null}
         <ChannelWorktreesDrawerBuckets
           buckets={buckets}

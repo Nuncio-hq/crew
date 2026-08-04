@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   IDLE_QUIET_MS,
   bucketWorktrees,
+  channelWorktreesPillLabel,
   countManagedWorktrees,
   countOpenPullRequests,
+  githubAvailabilityNotice,
 } from "./worktreeBuckets.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -181,4 +183,36 @@ test("counts managed and open PRs", () => {
   ];
   assert.equal(countManagedWorktrees(entries), 2);
   assert.equal(countOpenPullRequests(entries), 2);
+});
+
+test("channel worktrees pill label distinguishes degraded GitHub from zero PRs", () => {
+  assert.equal(channelWorktreesPillLabel(2, 0, "available"), "2 worktrees");
+  assert.equal(
+    channelWorktreesPillLabel(2, 1, "available"),
+    "2 worktrees · 1 PR open",
+  );
+  assert.equal(
+    channelWorktreesPillLabel(3, 2, "available"),
+    "3 worktrees · 2 PRs open",
+  );
+  assert.equal(
+    channelWorktreesPillLabel(2, 0, "cli-missing"),
+    "2 worktrees · PRs unavailable",
+  );
+  assert.equal(
+    channelWorktreesPillLabel(2, 0, "cli-failed"),
+    "2 worktrees · PRs unavailable",
+  );
+});
+
+test("github availability notice names the cause", () => {
+  assert.equal(githubAvailabilityNotice("available"), null);
+  assert.match(
+    githubAvailabilityNotice("cli-missing") ?? "",
+    /GitHub CLI \(gh\) not found/,
+  );
+  assert.match(
+    githubAvailabilityNotice("cli-failed") ?? "",
+    /could not read this repo/,
+  );
 });

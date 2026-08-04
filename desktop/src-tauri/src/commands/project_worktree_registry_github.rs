@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
+use super::gh_cli::{gh_command, GhUnavailable};
 use super::thread_github::parse_check;
 use super::thread_github_target::origin_repo_target;
 use super::thread_workspace_git::command_output;
@@ -50,14 +50,28 @@ struct GhPullRequestRow {
     status_check_rollup: Vec<serde_json::Value>,
 }
 
+/// Why a registry-wide `gh pr list` could not produce results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchPullRequestsError {
+    CliMissing,
+    CliFailed,
+}
+
+impl From<GhUnavailable> for FetchPullRequestsError {
+    fn from(_: GhUnavailable) -> Self {
+        Self::CliMissing
+    }
+}
+
 /// One `gh pr list --state all` for the whole repo, grouped by head branch.
-/// Failure → `None` so the caller can mark GitHub unavailable without failing.
+/// Failure carries the cause so the caller can mark GitHub degraded without
+/// failing the whole registry load.
 pub async fn fetch_pull_requests_by_branch(
     repository: &Path,
-) -> Option<HashMap<String, Vec<RegistryPullRequest>>> {
+) -> Result<HashMap<String, Vec<RegistryPullRequest>>, FetchPullRequestsError> {
     let repo = origin_repo_target(repository).await;
     let fields = "headRefName,number,state,isDraft,reviewDecision,statusCheckRollup,additions,deletions,title,url";
-    let mut command = Command::new("gh");
+    let mut command = gh_command().await?;
     command
         .args([
             "pr", "list", "--state", "all", "--limit", "100", "--json", fields,
@@ -66,9 +80,12 @@ pub async fn fetch_pull_requests_by_branch(
     if let Some(repo) = repo.as_deref() {
         command.args(["--repo", repo]);
     }
-    let output = command_output(&mut command).await.ok()?;
-    let rows: Vec<GhPullRequestRow> = serde_json::from_slice(&output.stdout).ok()?;
-    Some(group_pull_requests(rows))
+    let output = command_output(&mut command)
+        .await
+        .map_err(|_| FetchPullRequestsError::CliFailed)?;
+    let rows: Vec<GhPullRequestRow> =
+        serde_json::from_slice(&output.stdout).map_err(|_| FetchPullRequestsError::CliFailed)?;
+    Ok(group_pull_requests(rows))
 }
 
 fn group_pull_requests(rows: Vec<GhPullRequestRow>) -> HashMap<String, Vec<RegistryPullRequest>> {

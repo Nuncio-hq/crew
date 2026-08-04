@@ -2,6 +2,7 @@ import { GitBranch } from "lucide-react";
 
 import { useProjectWorktreeRegistry } from "@/features/agents/projectWorktreeRegistryStore";
 import {
+  channelWorktreesPillLabel,
   countManagedWorktrees,
   countOpenPullRequests,
 } from "@/features/channels/lib/worktreeBuckets";
@@ -22,10 +23,11 @@ export function ChannelWorktreesPill({
   const managed = countManagedWorktrees(snapshot.value.entries);
   if (managed === 0) return null;
   const openPrs = countOpenPullRequests(snapshot.value.entries);
-  const label =
-    openPrs > 0
-      ? `${managed} worktrees · ${openPrs} PR${openPrs === 1 ? "" : "s"} open`
-      : `${managed} worktrees`;
+  const label = channelWorktreesPillLabel(
+    managed,
+    openPrs,
+    snapshot.value.github,
+  );
 
   return (
     <Button

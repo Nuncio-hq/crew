@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use super::project_worktree_registry_github::{fetch_pull_requests_by_branch, RegistryPullRequest};
+use super::project_worktree_registry_github::{
+    fetch_pull_requests_by_branch, FetchPullRequestsError, RegistryPullRequest,
+};
 use super::project_worktree_registry_parse::{
     classify_worktree, managed_root_for, parse_buzz_thread_roots, parse_worktree_porcelain,
     worktree_name, ProjectWorktreeKind,
@@ -23,7 +25,8 @@ pub struct ProjectWorktreeRegistry {
 #[serde(rename_all = "kebab-case")]
 pub enum GithubAvailability {
     Available,
-    Unavailable,
+    CliMissing,
+    CliFailed,
 }
 
 #[derive(Debug, Serialize)]
@@ -68,8 +71,9 @@ pub async fn get_project_worktree_registry(
         parse_buzz_thread_roots(&roots_text).into_iter().collect();
 
     let (github, prs_by_branch) = match fetch_pull_requests_by_branch(&repo_root).await {
-        Some(map) => (GithubAvailability::Available, map),
-        None => (GithubAvailability::Unavailable, HashMap::new()),
+        Ok(map) => (GithubAvailability::Available, map),
+        Err(FetchPullRequestsError::CliMissing) => (GithubAvailability::CliMissing, HashMap::new()),
+        Err(FetchPullRequestsError::CliFailed) => (GithubAvailability::CliFailed, HashMap::new()),
     };
 
     let primary_path = worktrees.first().map(|entry| entry.worktree_path.clone());

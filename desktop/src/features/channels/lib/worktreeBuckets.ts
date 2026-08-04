@@ -1,4 +1,5 @@
 import type {
+  GithubAvailability,
   ProjectWorktreeDetails,
   ProjectWorktreeEntry,
   RegistryPullRequest,
@@ -191,6 +192,33 @@ export function countOpenPullRequests(
     }
   }
   return seen.size;
+}
+
+/** Channel-header pill label; degraded GitHub stays distinguishable from 0 PRs. */
+export function channelWorktreesPillLabel(
+  managed: number,
+  openPrs: number,
+  github: GithubAvailability,
+): string {
+  if (github !== "available") {
+    return `${managed} worktrees · PRs unavailable`;
+  }
+  if (openPrs > 0) {
+    return `${managed} worktrees · ${openPrs} PR${openPrs === 1 ? "" : "s"} open`;
+  }
+  return `${managed} worktrees`;
+}
+
+export function githubAvailabilityNotice(
+  github: GithubAvailability,
+): string | null {
+  if (github === "cli-missing") {
+    return "GitHub CLI (gh) not found — PR status unavailable.";
+  }
+  if (github === "cli-failed") {
+    return "GitHub CLI could not read this repo — PR status unavailable.";
+  }
+  return null;
 }
 
 export { formatDiskBytes } from "./worktreeDiskFormat";
