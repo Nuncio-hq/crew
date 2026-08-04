@@ -352,6 +352,42 @@ test("Project threads show truthful isolated workspace and agent handoff", async
   await expect(panel.getByRole("button", { name: /^PR$/ })).toHaveCount(0);
 });
 
+test("Degraded GitHub availability shows a muted chip, not silent empty", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    managedAgents: agents,
+    threadGitHubByBranch: {
+      "buzz/aaaaaaaaaaaa": {
+        availability: "cli-missing",
+        pullRequest: null,
+      },
+    },
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await waitForLiveChannel(page);
+
+  await emitProjectRoot(page, ROOT_A, "diagnose missing gh");
+  const panel = await openThread(page, "diagnose missing gh");
+  await seedWorkspace(
+    page,
+    ROOT_A,
+    "conversation-degraded-gh",
+    "buzz/aaaaaaaaaaaa",
+    "/tmp/.buzz-worktrees/crew-aaaaaaaaaaaa",
+  );
+
+  const githubChip = panel.getByRole("button", { name: /^GitHub$/ });
+  await expect(githubChip).toBeVisible();
+  await expect(githubChip).toHaveAttribute(
+    "title",
+    "GitHub CLI (gh) not found",
+  );
+  await expect(panel.getByRole("button", { name: /^PR$/ })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: /^CI$/ })).toHaveCount(0);
+});
+
 test("Docked <h2> title fallback does not steal Workspace clicks (#31)", async ({
   page,
 }) => {

@@ -47,8 +47,13 @@ export type ThreadPullRequest = {
   url: string;
 };
 
+export type ThreadGitHubAvailability =
+  | "available"
+  | "cli-missing"
+  | "cli-failed";
+
 export type ThreadGitHubStatus = {
-  availability: "available" | "unavailable";
+  availability: ThreadGitHubAvailability;
   pullRequest: ThreadPullRequest | null;
 };
 
@@ -79,10 +84,12 @@ export type ProjectWorktreeEntry = {
   pullRequests: RegistryPullRequest[];
 };
 
+export type GithubAvailability = "available" | "cli-missing" | "cli-failed";
+
 export type ProjectWorktreeRegistry = {
   repositoryPath: string;
   managedRoot: string;
-  github: "available" | "unavailable";
+  github: GithubAvailability;
   entries: ProjectWorktreeEntry[];
 };
 

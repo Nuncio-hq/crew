@@ -18,6 +18,7 @@ mod clipboard;
 mod dms;
 mod engrams;
 mod export_util;
+mod gh_cli;
 mod global_agent_config;
 mod identity;
 mod identity_archive;

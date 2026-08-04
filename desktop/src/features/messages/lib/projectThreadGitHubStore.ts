@@ -66,11 +66,13 @@ async function load(target: Target, force: boolean): Promise<void> {
     })
     .catch(() => {
       if (cacheEpoch !== epoch) return;
+      // Invoke/IPC threw — not a gh binary miss. Treat as a failed probe so
+      // the UI can show a degraded affordance instead of silently vanishing.
       entries.set(key, {
         expiresAt: Date.now() + CACHE_TTL_MS,
         snapshot: {
           status: "ready",
-          value: { availability: "unavailable", pullRequest: null },
+          value: { availability: "cli-failed", pullRequest: null },
         },
       });
       notify();

@@ -13,7 +13,10 @@ import {
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
-import type { ThreadPullRequest } from "@/shared/api/thread-workspace-types";
+import type {
+  ThreadGitHubAvailability,
+  ThreadPullRequest,
+} from "@/shared/api/thread-workspace-types";
 import type { ProjectThreadWorkspaceSnapshot } from "@/features/agents/projectThreadWorkspaceStore";
 
 export type ProjectThreadWorkspaceModel = {
@@ -21,6 +24,7 @@ export type ProjectThreadWorkspaceModel = {
   context: ProjectThreadContext;
   conversationId: string | null;
   counts: { done: number; queued: number; working: number };
+  githubAvailability: ThreadGitHubAvailability | null;
   pullRequest: ThreadPullRequest | null;
   refreshGitHub: () => Promise<void>;
   steps: ProjectThreadAgentStep[];
@@ -113,6 +117,10 @@ export function useProjectThreadWorkspaceModel({
   );
   const pullRequest =
     githubSnapshot.status === "ready" ? githubSnapshot.value.pullRequest : null;
+  const githubAvailability =
+    githubSnapshot.status === "ready"
+      ? githubSnapshot.value.availability
+      : null;
 
   // Fresh `{}` each render defeats every effect keyed on `model` (CLAUDE.md
   // gotcha #7). Memoize over the real inputs so drawer refresh effects stay
@@ -124,6 +132,7 @@ export function useProjectThreadWorkspaceModel({
       context,
       conversationId,
       counts,
+      githubAvailability,
       pullRequest,
       refreshGitHub,
       steps,
@@ -137,6 +146,7 @@ export function useProjectThreadWorkspaceModel({
     context,
     conversationId,
     counts,
+    githubAvailability,
     pullRequest,
     refreshGitHub,
     steps,
