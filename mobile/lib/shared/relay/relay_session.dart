@@ -422,12 +422,23 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     _backgroundGraceTimer?.cancel();
     _backgroundGraceTimer = null;
 
-    final backgroundedLongEnoughToRequireReconnect =
+    // A suspended isolate may not run the grace timer. Preserve a very short
+    // app switch only when the connected socket saw a recent data frame;
+    // otherwise replace it so a half-open socket cannot remain "connected".
+    // Crew half-open check layered onto upstream v0.5.5 grace-period resume.
+    final briefBackground =
         backgroundedAt != null &&
-        _now().difference(backgroundedAt) >= _backgroundGraceDuration;
-    if (!backgroundedLongEnoughToRequireReconnect &&
-        state.status == SessionStatus.connected) {
-      return;
+        _now().difference(backgroundedAt) < _backgroundGraceDuration;
+    if (briefBackground && state.status == SessionStatus.connected) {
+      final lastInbound = _socket?.lastInboundAt;
+      // null lastInboundAt: brand-new connection with no frames yet — keep
+      // upstream's grace behavior rather than forcing a reconnect.
+      final hasRecentInbound =
+          lastInbound == null ||
+          _now().difference(lastInbound) <= _backgroundGraceDuration;
+      if (hasRecentInbound) {
+        return;
+      }
     }
 
     // Cancel any in-flight reconnect backoff timer so we reconnect immediately

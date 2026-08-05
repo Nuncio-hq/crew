@@ -48,9 +48,15 @@ class RelaySocket {
   SocketState _state = SocketState.disconnected;
   Completer<void>? _authCompleter;
   Timer? _authTimeout;
+  DateTime? _lastInboundAt;
   String? _pendingAuthEventId;
 
   SocketState get state => _state;
+
+  /// Timestamp of the most recent inbound data frame (not WebSocket pings).
+  /// Used by [RelaySessionNotifier] to detect half-open sockets after a short
+  /// background pause.
+  DateTime? get lastInboundAt => _lastInboundAt;
 
   RelaySocket({
     required String wsUrl,
@@ -153,6 +159,7 @@ class RelaySocket {
     _subscription = null;
     _authTimeout?.cancel();
     _authTimeout = null;
+    _lastInboundAt = null;
     _pendingAuthEventId = null;
   }
 
@@ -163,6 +170,7 @@ class RelaySocket {
   }
 
   void _handleRawMessage(dynamic raw) {
+    _lastInboundAt = DateTime.now();
     final String text;
     if (raw is String) {
       text = raw;

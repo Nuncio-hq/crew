@@ -13,6 +13,8 @@ import '../../shared/widgets/keyboard_dismiss_on_drag.dart';
 import '../../shared/widgets/message_author_meta.dart';
 import '../profile/user_cache_provider.dart';
 import '../profile/user_profile.dart';
+import 'agent_activity/agent_activity_line.dart';
+import 'agent_activity/conversation_id.dart';
 import 'channel_link_navigation.dart';
 import 'channel_messages_provider.dart';
 import 'channel_typing_provider.dart';
@@ -523,6 +525,15 @@ class ThreadDetailPage extends HookConsumerWidget {
                       child: threadTyping.isEmpty
                           ? const SizedBox.shrink()
                           : ChannelTypingIndicator(entries: threadTyping),
+                    ),
+                    AgentActivityLine(
+                      channelId: channelId,
+                      conversationId: conversationIdForSurface(
+                        channelId: channelId,
+                        isDm: false,
+                        rootEventId: effectiveRootId,
+                      ),
+                      threadHeadId: threadHead.id,
                     ),
                     ComposeBar(
                       channelId: channelId,

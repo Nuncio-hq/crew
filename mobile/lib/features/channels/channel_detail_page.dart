@@ -27,6 +27,8 @@ import '../forum/forum_posts_view.dart';
 import 'channel.dart';
 import 'channel_actions_sheet.dart';
 import 'channel_link_navigation.dart';
+import 'agent_activity/agent_activity_line.dart';
+import 'agent_activity/conversation_id.dart';
 import 'agent_activity/working_bots_provider.dart';
 import 'channel_management_provider.dart';
 import 'channel_sections/channel_sections_provider.dart';
@@ -507,6 +509,15 @@ class ChannelDetailPage extends HookConsumerWidget {
                       child: typingEntries.isEmpty
                           ? const SizedBox.shrink()
                           : ChannelTypingIndicator(entries: typingEntries),
+                    ),
+                    AgentActivityLine(
+                      channelId: channel.id,
+                      conversationId: resolvedChannel.isDm
+                          ? conversationIdForSurface(
+                              channelId: channel.id,
+                              isDm: true,
+                            )
+                          : null,
                     ),
                     ComposeBar(
                       channelId: channel.id,
