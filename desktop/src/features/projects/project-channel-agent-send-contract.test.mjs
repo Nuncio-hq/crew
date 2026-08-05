@@ -135,25 +135,28 @@ test("the send hook returns before clearing a draft when context resolution fail
     new URL("../messages/ui/useMentionSendFlow.ts", import.meta.url),
     "utf8",
   );
-  const integration = source.slice(
-    source.indexOf("let finalContent = draft.finalContent"),
-    source.indexOf(
-      "await onSendRef.current(",
-      source.indexOf("let finalContent"),
-    ),
-  );
-  const resolverIndex = integration.indexOf(
+  const resolverIndex = source.indexOf(
     "await resolveCurrentProjectChannelAgentMessage",
   );
-  const failureReturnIndex = integration.indexOf(
-    "return;",
-    integration.indexOf("Could not resolve Project workspace"),
+  const failureMessageIndex = source.indexOf(
+    "Could not resolve Project workspace",
   );
-  const clearComposerIndex = integration.indexOf("clearComposer(");
+  const failureThrowIndex = source.indexOf("throw error", failureMessageIndex);
+  // No-upload path awaits finishSend (which resolves) before clearComposer.
+  const finishBeforeClear = source.indexOf(
+    "await finishSend([]);",
+    failureThrowIndex,
+  );
+  const clearComposerIndex = source.indexOf(
+    "clearComposer(",
+    finishBeforeClear,
+  );
 
   assert.ok(resolverIndex >= 0);
-  assert.ok(failureReturnIndex > resolverIndex);
-  assert.ok(clearComposerIndex > failureReturnIndex);
+  assert.ok(failureMessageIndex > resolverIndex);
+  assert.ok(failureThrowIndex > failureMessageIndex);
+  assert.ok(finishBeforeClear > failureThrowIndex);
+  assert.ok(clearComposerIndex > finishBeforeClear);
 });
 
 test("fresh fetch is scoped to the current identity and ignores other owners", async () => {

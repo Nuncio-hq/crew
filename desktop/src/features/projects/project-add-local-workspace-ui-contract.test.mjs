@@ -53,7 +53,7 @@ test("a local-only Project cannot fall through to Clone and open Terminal", asyn
   assert.match(cards, /canOpenTerminal\s*\?\s*\(/);
   assert.ok(
     snapshots.indexOf("readProjectLocalRepoSnapshot") <
-      snapshots.indexOf("if (project.localWorkspacePath) return null"),
+      snapshots.indexOf("if (repository.localWorkspacePath) return null"),
   );
   const localSnapshotHook = hooks.slice(
     hooks.indexOf("export function useProjectLocalRepoSnapshotQuery"),
@@ -81,7 +81,8 @@ test("a local-only Project cannot fall through to Clone and open Terminal", asyn
   assert.match(syncHooks, /!project\?\.localWorkspacePath/);
   assert.match(syncHooks, /project\?\.localWorkspacePath \?\? "managed"/);
   assert.match(syncHooks, /Linked workspaces are read-only/);
-  assert.match(detail, /!isLinkedWorkspace && Boolean\(hasLocalCheckout/);
+  assert.match(detail, /!isLinkedWorkspace &&/);
+  assert.match(detail, /Boolean\(hasLocalCheckout \|\| firstCloneUrl\(repository\)\)/);
   assert.match(detail, /canPush:\s*!isLinkedWorkspace/);
   assert.match(detail, /canPull:\s*!isLinkedWorkspace/);
   assert.match(detail, /onFetch: isLinkedWorkspace\s*\?\s*undefined/);
@@ -96,7 +97,10 @@ test("a local-only Project cannot fall through to Clone and open Terminal", asyn
   assert.match(reviewCard, /!project\.localWorkspacePath/);
   assert.match(reviewCard, /project\.localWorkspaceStatus !== "invalid"/);
   assert.match(pullRequestMutations, /Linked workspaces are read-only/);
-  assert.match(snapshots, /project\.localWorkspacePath \?\? "managed"/);
+  assert.match(
+    snapshots,
+    /repository\?\.localWorkspacePath \?\? "managed"/,
+  );
 });
 
 test("Crew uses one folder-first callback and removes the standalone workspace strip", async () => {

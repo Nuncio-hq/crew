@@ -565,11 +565,21 @@ export function useMentionSendFlow({
           if (signal?.aborted) return;
           let finalContent = builtContent;
           if (effectiveExplicitAgentPubkeys.length > 0) {
-            finalContent = await resolveCurrentProjectChannelAgentMessage({
-              channelId: sendChannelId ?? draft.capturedChannelId ?? "",
-              content: finalContent,
-              explicitAgentPubkeys: effectiveExplicitAgentPubkeys,
-            });
+            try {
+              finalContent = await resolveCurrentProjectChannelAgentMessage({
+                channelId: sendChannelId ?? draft.capturedChannelId ?? "",
+                content: finalContent,
+                explicitAgentPubkeys: effectiveExplicitAgentPubkeys,
+              });
+            } catch (error) {
+              const message = `Could not resolve Project workspace: ${getErrorMessage(
+                error,
+                "relay lookup failed",
+              )}`;
+              setNonMemberPromptError(message);
+              toast.error(message);
+              throw error instanceof Error ? error : new Error(message);
+            }
           }
           const taskRouting = resolveProjectThreadAgentRouting({
             content: finalContent,
@@ -634,23 +644,32 @@ export function useMentionSendFlow({
           }
         }
 
-        // Replace the sent body directly with its final post-send state before
-        // the async network send starts. This avoids an intermediate blank frame
-        // for persistent audiences while preserving the ordinary empty state.
-        if (
-          draft.capturedChannelId === channelIdRef.current ||
-          channelIdRef.current === null
-        ) {
-          clearComposer(
-            resolvePostSendContent?.(effectiveExplicitAgentPubkeys),
-          );
-        }
-
-        if (!preparedUpload) {
+        if (preparedUpload) {
+          // Uploads clear optimistically; finishSend restores on failure.
+          if (
+            draft.capturedChannelId === channelIdRef.current ||
+            channelIdRef.current === null
+          ) {
+            clearComposer(
+              resolvePostSendContent?.(effectiveExplicitAgentPubkeys),
+            );
+          }
+        } else {
+          // Resolve Project workspace inside finishSend before clearing so a
+          // failed lookup never wipes the draft (Crew agent-send contract).
           try {
             await finishSend([]);
           } catch {
             restoreComposerAfterFailure();
+            return;
+          }
+          if (
+            draft.capturedChannelId === channelIdRef.current ||
+            channelIdRef.current === null
+          ) {
+            clearComposer(
+              resolvePostSendContent?.(effectiveExplicitAgentPubkeys),
+            );
           }
         }
       } finally {

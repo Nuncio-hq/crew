@@ -50,3 +50,17 @@ export function effectiveCloneUrls(
   const derived = deriveRelayCloneUrl(relayOrigin, owner, dtag);
   return derived ? [derived] : [];
 }
+
+/** First advertised clone URL for a repository-shaped value, if any. */
+export function firstCloneUrl(
+  repository: { cloneUrls: readonly string[] } | null | undefined,
+): string | undefined {
+  return repository?.cloneUrls[0];
+}
+
+/** All advertised clone URLs for a repository-shaped value. */
+export function cloneUrlList(
+  repository: { cloneUrls: readonly string[] } | null | undefined,
+): string[] {
+  return repository ? [...repository.cloneUrls] : [];
+}

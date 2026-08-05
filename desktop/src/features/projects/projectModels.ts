@@ -3,7 +3,7 @@ import {
   KIND_PROJECT_ANNOUNCEMENT,
   KIND_REPO_ANNOUNCEMENT,
 } from "@/shared/constants/kinds";
-import { effectiveCloneUrls } from "./lib/projectCloneUrl";
+import { projectWorkspaceReadFields } from "./lib/project-read-model";
 
 export type Repository = {
   id: string;
@@ -11,6 +11,8 @@ export type Repository = {
   name: string;
   description: string;
   cloneUrls: string[];
+  localWorkspacePath: string | null;
+  localWorkspaceStatus: "invalid" | "linked" | "unlinked";
   webUrl: string | null;
   owner: string;
   contributors: string[];
@@ -73,11 +75,6 @@ function getAllTagValues(event: RelayEvent, name: string): string[] {
     .filter((tag) => tag[0] === name)
     .flatMap((tag) => tag.slice(1))
     .filter((value) => value.length > 0);
-}
-
-function getCloneUrls(event: RelayEvent): string[] {
-  const tag = event.tags.find((candidate) => candidate[0] === "clone");
-  return tag?.slice(1).filter((value) => value.length > 0) ?? [];
 }
 
 function isValidDTag(value: string): boolean {
@@ -258,18 +255,29 @@ export function eventToRepository(
 
   const owner = event.pubkey.toLowerCase();
   const setupUsers = getAllTags(event, "auth");
-  const channel = getTag(event, "buzz-channel");
+  const {
+    localWorkspacePath,
+    localWorkspaceStatus,
+    cloneUrls,
+    canonicalChannel,
+  } = projectWorkspaceReadFields(event, relayOrigin);
+  const channelId =
+    canonicalChannel.status === "ready"
+      ? canonicalChannel.channelId
+      : canonicalChannel.status === "absent"
+        ? (() => {
+            const channel = getTag(event, "buzz-channel");
+            return channel && isValidProjectChannelId(channel) ? channel : null;
+          })()
+        : null;
   return {
     id: `${owner}:${dtag}`,
     dtag,
     name: getTag(event, "name") ?? dtag,
     description: getTag(event, "description") ?? event.content ?? "",
-    cloneUrls: effectiveCloneUrls(
-      getCloneUrls(event),
-      relayOrigin,
-      owner,
-      dtag,
-    ),
+    cloneUrls,
+    localWorkspacePath,
+    localWorkspaceStatus,
     webUrl: getTag(event, "web") ?? null,
     owner,
     contributors: [...new Set([...getAllTags(event, "p"), ...setupUsers])],
@@ -277,7 +285,7 @@ export function eventToRepository(
     status: getTag(event, "status") ?? "active",
     defaultBranch: getTag(event, "default-branch") ?? "main",
     repoAddress: `${KIND_REPO_ANNOUNCEMENT}:${owner}:${dtag}`,
-    channelId: channel && isValidProjectChannelId(channel) ? channel : null,
+    channelId,
     eventContent: event.content,
     eventTags: event.tags.map((tag) => [...tag]),
     maintainers: getAllTagValues(event, "maintainers")
@@ -365,7 +373,8 @@ export function eventToExplicitProject(
   };
 }
 
-function repositoryToLegacyProject(repository: Repository): Project {
+/** Wraps a bare kind:30617 repository as a `legacy: true` NIP-MP project. */
+export function repositoryToLegacyProject(repository: Repository): Project {
   return {
     id: repository.repoAddress,
     dtag: repository.dtag,

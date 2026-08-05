@@ -27,6 +27,7 @@ import {
   AlertDialogTitle,
 } from "@/shared/ui/alert-dialog";
 import { Button } from "@/shared/ui/button";
+import { firstCloneUrl } from "@/features/projects/lib/projectCloneUrl";
 
 export type OpenMergeRecoveryTerminal = (input: {
   expectedCommit: string;
@@ -125,7 +126,7 @@ export function MergePullRequestButton({
       : [];
 
   const handleOpenRecoveryTerminal = React.useCallback(async () => {
-    const sourceCloneUrl = pullRequest.cloneUrls[0] ?? project.cloneUrls[0];
+    const sourceCloneUrl = pullRequest.cloneUrls[0] ?? firstCloneUrl(project);
     if (!conflictRecovery || !pullRequest.commit || !sourceCloneUrl) return;
     setIsPreparingRecovery(true);
     try {
@@ -154,7 +155,7 @@ export function MergePullRequestButton({
   }, [
     conflictRecovery,
     onOpenTerminal,
-    project.cloneUrls,
+    project,
     pullRequest.cloneUrls,
     pullRequest.commit,
     pullRequest.id,

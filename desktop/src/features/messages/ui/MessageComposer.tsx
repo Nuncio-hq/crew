@@ -614,6 +614,7 @@ function MessageComposerImpl({
     mentionSendFlow.isPreparingMentionSend,
     mentionSendFlow.sendMessageWithMentionFlow,
     mentions.clearMentions,
+    mentions.extractMentionPubkeys,
     richText.clearContent,
     richText.setContent,
     setComposerContent,

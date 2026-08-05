@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { Repository } from "@/features/projects/hooks";
 import { projectCloneErrorPresentation } from "@/features/projects/lib/projectGitError";
 import { openProjectTerminal } from "@/shared/api/projectGit";
+import { firstCloneUrl } from "@/features/projects/lib/projectCloneUrl";
 
 export function projectTerminalLabel(hasLocalCheckout: boolean) {
   return hasLocalCheckout ? "Open in Terminal" : "Clone & open in Terminal";
@@ -30,7 +31,7 @@ export function useOpenProjectTerminal(reposDir?: string | null) {
         const result = await openProjectTerminal({
           reposDir,
           projectDtag: project.dtag,
-          cloneUrl: project.cloneUrls[0] ?? null,
+          cloneUrl: firstCloneUrl(project) ?? null,
           defaultBranch: options.branch ?? project.defaultBranch ?? null,
         });
         if (result.cloned) {
@@ -49,7 +50,7 @@ export function useOpenProjectTerminal(reposDir?: string | null) {
               description:
                 "Buzz could not open this checkout in your configured terminal.",
             }
-          : projectCloneErrorPresentation(error, project.cloneUrls[0]);
+          : projectCloneErrorPresentation(error, firstCloneUrl(project));
         toast.error(presentation.title, {
           description: presentation.description,
           id: toastId,

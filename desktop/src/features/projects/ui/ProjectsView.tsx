@@ -122,7 +122,11 @@ const ISSUE_SCOPE_OPTIONS: Array<{
   { label: "My Issues", value: "mine" },
 ];
 
-export function ProjectsView() {
+export function ProjectsView({
+  onCreateRepository,
+}: {
+  onCreateRepository?: () => void;
+} = {}) {
   const { goProject } = useAppNavigation();
   const { activeCommunity } = useCommunities();
   const relayOrigin = useRelayOrigin();
@@ -597,10 +601,6 @@ export function ProjectsView() {
     );
   }
 
-  if (projects.length === 0) {
-    return <EmptyState />;
-  }
-
   const projectItems =
     visibleProjects.length === 0 ? (
       <EmptyFilteredState />
@@ -616,6 +616,7 @@ export function ProjectsView() {
           return (
             <ProjectGridCard
               canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
+              canOpenTerminal={false}
               deleteDisabled={deleteProjectMutation.isPending}
               hasLocal={hasLocalCheckout(project, localRepoNames)}
               key={project.id}
@@ -643,6 +644,7 @@ export function ProjectsView() {
           return (
             <ProjectListRow
               canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
+              canOpenTerminal={false}
               deleteDisabled={deleteProjectMutation.isPending}
               hasLocal={hasLocalCheckout(project, localRepoNames)}
               key={project.id}
@@ -761,7 +763,13 @@ export function ProjectsView() {
   const createMenu = (
     <ProjectsCreateMenu
       onCreateIssue={() => setCreateIssueOpen(true)}
-      onCreateProject={() => setCreateProjectOpen(true)}
+      onCreateProject={() => {
+        if (onCreateRepository) {
+          onCreateRepository?.();
+          return;
+        }
+        setCreateProjectOpen(true);
+      }}
       onCreatePullRequest={() => setCreatePullRequestOpen(true)}
     />
   );
@@ -859,7 +867,9 @@ export function ProjectsView() {
           </div>
           <div className="mx-auto w-full max-w-6xl">
             <div className="w-full min-w-0 pb-4 pt-4">
-              {filter === "all" ? (
+              {projects.length === 0 ? (
+                <EmptyState />
+              ) : filter === "all" ? (
                 <ProjectsOverviewPanel
                   metadata={
                     <ProjectsOverviewRail

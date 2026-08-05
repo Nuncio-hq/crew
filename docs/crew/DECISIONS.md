@@ -272,3 +272,18 @@ A new multi-agent Project task notifies only the first explicitly ordered
 agent. Later agents remain visible through non-notifying reference tags and
 are woken by explicit mentions in subsequent thread replies. Ordinary chat,
 single-agent prompts, DMs, and non-Project channels keep existing routing.
+
+## D-019 — Keep Crew local workspace fields on upstream `Repository`
+
+- **Status:** Accepted
+- **Date:** 2026-08-05
+
+Under NIP-MP, kind `30617` is a repository (`Repository`) and kind `30621` is
+a project (`Project`). Crew's `buzz-location` tag and the derived
+`localWorkspacePath` / `localWorkspaceStatus` fields live on `Repository` in
+upstream's `projectModels.ts` — an intentional Crew edit of an upstream file,
+recorded here rather than hidden behind a parallel type.
+
+When a Project has several repositories, a Crew thread worktree binds to
+`primaryRepositoryAddress`, falling back to `repositories[0]` for
+`legacy: true` projects. Selection uses `selectProjectRepository()`.

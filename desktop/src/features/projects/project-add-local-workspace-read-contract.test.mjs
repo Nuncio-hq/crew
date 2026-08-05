@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { eventToProject } from "./hooks.ts";
-import { hasLocalCheckout, isProjectLocal } from "./lib/projectLocalRepos.ts";
+import {
+  hasLocalRepositoryCheckout,
+  isProjectLocal,
+} from "./lib/projectLocalRepos.ts";
 
 const OWNER = "a".repeat(64);
 const CHANNEL_ID = "018f30b4-57c0-7f10-a3f8-9f7d8e6c5b4a";
@@ -20,8 +23,8 @@ function projectEvent(tags) {
   };
 }
 
-test("the Project read model retains canonical channel and local path without synthesizing clone metadata", () => {
-  const project = eventToProject(
+test("the Repository read model retains canonical channel and local path without synthesizing clone metadata", () => {
+  const repository = eventToProject(
     projectEvent([
       ["d", "nuncio-crew"],
       ["name", "Nuncio Crew"],
@@ -31,16 +34,19 @@ test("the Project read model retains canonical channel and local path without sy
     "https://relay.example",
   );
 
-  assert.equal(project.localWorkspacePath, LOCAL_PATH);
-  assert.equal(project.localWorkspaceStatus, "linked");
-  assert.equal(project.projectChannelId, CHANNEL_ID);
-  assert.deepEqual(project.cloneUrls, []);
-  assert.equal(isProjectLocal(project, new Set()), true);
-  assert.equal(hasLocalCheckout(project, new Set(["nuncio-crew"])), false);
+  assert.equal(repository.localWorkspacePath, LOCAL_PATH);
+  assert.equal(repository.localWorkspaceStatus, "linked");
+  assert.equal(repository.channelId, CHANNEL_ID);
+  assert.deepEqual(repository.cloneUrls, []);
+  assert.equal(isProjectLocal(repository, new Set()), true);
+  assert.equal(
+    hasLocalRepositoryCheckout(repository, new Set(["nuncio-crew"])),
+    false,
+  );
 });
 
-test("invalid duplicate Crew metadata fails closed on the Project read model", () => {
-  const project = eventToProject(
+test("invalid duplicate Crew metadata fails closed on the Repository read model", () => {
+  const repository = eventToProject(
     projectEvent([
       ["d", "nuncio-crew"],
       ["buzz-channel", CHANNEL_ID],
@@ -52,10 +58,13 @@ test("invalid duplicate Crew metadata fails closed on the Project read model", (
     "https://relay.example",
   );
 
-  assert.equal(project.localWorkspacePath, null);
-  assert.equal(project.localWorkspaceStatus, "invalid");
-  assert.equal(project.projectChannelId, null);
-  assert.deepEqual(project.cloneUrls, []);
-  assert.equal(hasLocalCheckout(project, new Set(["nuncio-crew"])), false);
-  assert.equal(isProjectLocal(project, new Set(["nuncio-crew"])), false);
+  assert.equal(repository.localWorkspacePath, null);
+  assert.equal(repository.localWorkspaceStatus, "invalid");
+  assert.equal(repository.channelId, null);
+  assert.deepEqual(repository.cloneUrls, []);
+  assert.equal(
+    hasLocalRepositoryCheckout(repository, new Set(["nuncio-crew"])),
+    false,
+  );
+  assert.equal(isProjectLocal(repository, new Set(["nuncio-crew"])), false);
 });

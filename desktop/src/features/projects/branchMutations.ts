@@ -3,6 +3,7 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import type { Repository as Project } from "@/features/projects/hooks";
+import { firstCloneUrl } from "@/features/projects/lib/projectCloneUrl";
 import {
   createProjectRemoteBranch,
   deleteProjectRemoteBranch,
@@ -19,9 +20,10 @@ export function useCreateProjectRemoteBranchMutation(
       expectedCommit: string;
       newBranch: string;
     }) => {
-      if (!project?.cloneUrls[0]) throw new Error("No project selected.");
+      const cloneUrl = firstCloneUrl(project);
+      if (!cloneUrl) throw new Error("No project selected.");
       return createProjectRemoteBranch({
-        cloneUrl: project.cloneUrls[0],
+        cloneUrl,
         ...input,
       });
     },
@@ -39,9 +41,10 @@ export function useDeleteProjectRemoteBranchMutation(
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { branch: string; expectedCommit: string }) => {
-      if (!project?.cloneUrls[0]) throw new Error("No project selected.");
+      const cloneUrl = firstCloneUrl(project);
+      if (!cloneUrl) throw new Error("No project selected.");
       return deleteProjectRemoteBranch({
-        cloneUrl: project.cloneUrls[0],
+        cloneUrl,
         ...input,
       });
     },

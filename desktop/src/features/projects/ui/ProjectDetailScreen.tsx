@@ -59,6 +59,11 @@ import {
   projectBranchOptionsFromSync,
   resolveProjectDefaultBranch,
 } from "@/features/projects/lib/projectBranches";
+import { localWorkspaceSourceState } from "@/features/projects/lib/project-exact-local-workspace";
+import {
+  cloneUrlList,
+  firstCloneUrl,
+} from "@/features/projects/lib/projectCloneUrl";
 import { normalizeRepositoryUrl } from "@/features/projects/lib/projectsViewHelpers";
 import { selectProjectRepository } from "@/features/projects/projectModels";
 import { KIND_REPO_ANNOUNCEMENT } from "@/shared/constants/kinds";
@@ -129,6 +134,9 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     return projectId.slice(kindStr.length);
   }, [projectId, repositoryId]);
   const repository = selectProjectRepository(project, routeRepositoryId);
+  const isLinkedWorkspace =
+    Boolean(repository?.localWorkspacePath) ||
+    repository?.localWorkspaceStatus === "invalid";
   const repoRemote = useProjectRepoPresentation(repository);
   const { applyPatch: applyRepositorySearch } = useHistorySearchState(
     PROJECT_REPOSITORY_SEARCH_KEYS,
@@ -208,7 +216,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const issuesQuery = useProjectIssuesQuery(repository);
   const selectedBranchPullRequest = React.useMemo(() => {
     const projectRepositories = new Set(
-      (repository?.cloneUrls ?? []).map(normalizeRepositoryUrl),
+      cloneUrlList(repository).map(normalizeRepositoryUrl),
     );
     const matches =
       pullRequestsQuery.data?.filter(
@@ -219,7 +227,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
           ),
       ) ?? [];
     return matches.length === 1 ? matches[0] : null;
-  }, [activeBranch, pullRequestsQuery.data, repository?.cloneUrls]);
+  }, [activeBranch, pullRequestsQuery.data, repository]);
   const openBranchPullRequest =
     selectedBranchPullRequest?.status === "Open" ||
     selectedBranchPullRequest?.status === "Draft"
@@ -231,6 +239,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const [repoSource, setRepoSource] = React.useState<"remote" | "local">(
     "remote",
   );
+  const effectiveRepoSource = isLinkedWorkspace ? "local" : repoSource;
   const repoSnapshotQuery = useProjectRepoSnapshotQuery(
     repository,
     activeBranch,
@@ -242,19 +251,19 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     repository,
     activeBranch,
     activeRepoPullRequest,
-    repoSource === "remote",
+    effectiveRepoSource === "remote",
   );
   const localRepoDiffQuery = useProjectLocalRepoDiffQuery(
     repository,
     activeCommunity?.reposDir,
     activeBranch,
     activeRepoPullRequest,
-    repoSource === "local" && Boolean(activeRepoPullRequest),
+    effectiveRepoSource === "local" && Boolean(activeRepoPullRequest),
   );
   const commitDiffQuery = useProjectCommitDiffQuery(
     repository,
     selectedCommitHash,
-    repoSource,
+    effectiveRepoSource,
     activeCommunity?.reposDir,
   );
   const localRepoSnapshotQuery = useProjectLocalRepoSnapshotQuery(
@@ -290,13 +299,26 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const hasLocalCheckout = Boolean(
     localRepoSnapshotQuery.data || repoSyncStatusQuery.data?.localPath,
   );
+  const canOpenTerminal =
+    !isLinkedWorkspace &&
+    Boolean(hasLocalCheckout || firstCloneUrl(repository));
+  const localSource = localWorkspaceSourceState({
+    hasSnapshot: hasLocalCheckout,
+    isError: localRepoSnapshotQuery.isError,
+    isLinked: isLinkedWorkspace,
+    isLoading: localRepoSnapshotQuery.isLoading,
+  });
   const hasRemoteSnapshot = snapshotHasContent(repoSnapshotQuery.data);
   const displayedRepoDiff =
-    repoSource === "local" ? localRepoDiffQuery.data : repoDiffQuery.data;
+    effectiveRepoSource === "local"
+      ? localRepoDiffQuery.data
+      : repoDiffQuery.data;
   const displayedRepoDiffError =
-    repoSource === "local" ? localRepoDiffQuery.error : repoDiffQuery.error;
+    effectiveRepoSource === "local"
+      ? localRepoDiffQuery.error
+      : repoDiffQuery.error;
   const displayedRepoDiffLoading =
-    repoSource === "local"
+    effectiveRepoSource === "local"
       ? localRepoDiffQuery.isLoading
       : repoDiffQuery.isLoading;
   const branchOptionsWithLocal = projectBranchOptionsFromSync(
@@ -322,13 +344,19 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
       selectBranch(branch);
       if (
         branch &&
-        repoSource === "local" &&
+        effectiveRepoSource === "local" &&
+        !isLinkedWorkspace &&
         branch !== repoSyncStatusQuery.data?.localBranch
       ) {
         setRepoSource("remote");
       }
     },
-    [repoSource, repoSyncStatusQuery.data?.localBranch, selectBranch],
+    [
+      isLinkedWorkspace,
+      effectiveRepoSource,
+      repoSyncStatusQuery.data?.localBranch,
+      selectBranch,
+    ],
   );
   const handleTagChange = React.useCallback(
     (tag: string) => {
@@ -378,52 +406,61 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     selectedTag,
     tagOptions: repoStateQuery.data?.tags ?? [],
     onBranchChange: handleBranchChange,
-    onTagChange: handleTagChange,
-    onCreateBranch: () => branchActions.setCreateOpen(true),
+    onTagChange: isLinkedWorkspace ? undefined : handleTagChange,
+    onCreateBranch: isLinkedWorkspace
+      ? undefined
+      : () => branchActions.setCreateOpen(true),
     createBranchDisabled: branchActions.createPending || !activeBranchCommit,
     createBranchTitle: createBranchReason ?? "Create a remote branch",
-    onDeleteBranch: () => branchActions.setDeleteOpen(true),
+    onDeleteBranch: isLinkedWorkspace
+      ? undefined
+      : () => branchActions.setDeleteOpen(true),
     deleteBranchDisabled:
       branchActions.deletePending || Boolean(deleteBranchReason),
     deleteBranchTitle: deleteBranchReason ?? "Delete this remote branch",
-    source: selectedTag ? "remote" : repoSource,
-    onSourceChange: setRepoSource,
-    localDisabled:
-      Boolean(selectedTag) ||
-      (!repoSyncStatusQuery.data?.localPath &&
-        !localRepoSnapshotQuery.data &&
-        !localRepoSnapshotQuery.isLoading),
-    localLabel: localRepoSnapshotQuery.isLoading
-      ? "Local checking"
-      : repoSyncStatusQuery.data?.localPath || localRepoSnapshotQuery.data
-        ? "Local"
-        : "Local missing",
+    source: isLinkedWorkspace ? "local" : selectedTag ? "remote" : repoSource,
+    onSourceChange: isLinkedWorkspace
+      ? () => setRepoSource("local")
+      : setRepoSource,
+    localDisabled: Boolean(selectedTag) || localSource.disabled,
+    localLabel: localSource.label,
     ...repoRemote.controls,
     onCloneLocal:
-      !selectedTag && repository?.cloneUrls[0] && repoRemote.canCloneLocally
+      !selectedTag &&
+      !isLinkedWorkspace &&
+      firstCloneUrl(repository) &&
+      repoRemote.canCloneLocally
         ? () => {
             void handleCloneRepo();
           }
         : undefined,
     clonePending: cloneRepoMutation.isPending,
-    canPush: !selectedTag && (repoSyncStatusQuery.data?.canPush ?? false),
-    onPush: selectedTag
-      ? undefined
-      : () => {
-          void handlePushLocalRepo();
-        },
+    canPush:
+      !isLinkedWorkspace &&
+      !selectedTag &&
+      Boolean(repoSyncStatusQuery.data?.canPush),
+    onPush:
+      selectedTag || isLinkedWorkspace
+        ? undefined
+        : () => {
+            void handlePushLocalRepo();
+          },
     pushDisabled:
       pushLocalRepoMutation.isPending || !repoSyncStatusQuery.data?.canPush,
     pushPending: pushLocalRepoMutation.isPending,
     pushTitle:
       repoSyncStatusQuery.data?.pushBlockReason ??
       pushPullTitle("Push", repoSyncStatusQuery.data?.aheadCount, "local"),
-    canPull: !selectedTag && (repoSyncStatusQuery.data?.canPull ?? false),
-    onPull: selectedTag
-      ? undefined
-      : () => {
-          void handlePullLocalRepo();
-        },
+    canPull:
+      !isLinkedWorkspace &&
+      !selectedTag &&
+      Boolean(repoSyncStatusQuery.data?.canPull),
+    onPull:
+      selectedTag || isLinkedWorkspace
+        ? undefined
+        : () => {
+            void handlePullLocalRepo();
+          },
     pullDisabled:
       pullLocalRepoMutation.isPending || !repoSyncStatusQuery.data?.canPull,
     pullPending: pullLocalRepoMutation.isPending,
@@ -432,9 +469,11 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
       pushPullTitle("Pull", repoSyncStatusQuery.data?.behindCount, "remote"),
     aheadCount: repoSyncStatusQuery.data?.aheadCount ?? null,
     behindCount: repoSyncStatusQuery.data?.behindCount ?? null,
-    onFetch: () => {
-      void handleFetchRepo();
-    },
+    onFetch: isLinkedWorkspace
+      ? undefined
+      : () => {
+          void handleFetchRepo();
+        },
     fetchPending:
       repoSnapshotQuery.isFetching ||
       repoStateQuery.isFetching ||
@@ -691,9 +730,9 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
       sourceCloneUrl: string;
       targetBranch: string;
     }) => {
-      const targetCloneUrl = repository?.cloneUrls[0];
-      if (!repository || !targetCloneUrl) {
-        throw new Error("No project selected.");
+      const targetCloneUrl = firstCloneUrl(repository);
+      if (!repository || !targetCloneUrl || isLinkedWorkspace) {
+        throw new Error("No mutable managed checkout is available.");
       }
       return openProjectMergeRecoveryTerminal({
         ...input,
@@ -702,7 +741,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
         targetCloneUrl,
       });
     },
-    [activeCommunity?.reposDir, repository],
+    [activeCommunity?.reposDir, isLinkedWorkspace, repository],
   );
 
   if (projectQuery.isLoading) {
@@ -775,7 +814,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const selectedIssue =
     issuesQuery.data?.find((item) => item.id === selectedIssueId) ?? null;
   const displayedSnapshotCommits =
-    repoSource === "local"
+    effectiveRepoSource === "local"
       ? (localRepoSnapshotQuery.data?.snapshot.commits ?? [])
       : (repoSnapshotQuery.data?.commits ?? []);
   const selectedCommit = selectedCommitHash
@@ -910,12 +949,17 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
                   onCreate: handleCreateIssue,
                   pending: createIssueMutation.isPending,
                 }}
-                createPullRequestAction={{
-                  onCreated: handlePullRequestCreated,
-                  projects: projectsQuery.data ?? [project],
-                  reposDir: activeCommunity?.reposDir,
-                }}
+                createPullRequestAction={
+                  isLinkedWorkspace
+                    ? undefined
+                    : {
+                        onCreated: handlePullRequestCreated,
+                        projects: projectsQuery.data ?? [project],
+                        reposDir: activeCommunity?.reposDir,
+                      }
+                }
                 updatePullRequestAction={
+                  !isLinkedWorkspace &&
                   openBranchPullRequest &&
                   repoSyncStatusQuery.data?.remoteHead &&
                   repoSyncStatusQuery.data.remoteHead !==
@@ -932,10 +976,14 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
                 localSnapshotError={localRepoSnapshotQuery.error}
                 localSnapshotLoading={localRepoSnapshotQuery.isLoading}
                 onBranchChange={handleBranchChange}
-                onOpenMergeRecoveryTerminal={handleOpenMergeRecoveryTerminal}
-                onOpenTerminal={() => {
-                  void handleOpenTerminal();
-                }}
+                onOpenMergeRecoveryTerminal={
+                  isLinkedWorkspace
+                    ? undefined
+                    : handleOpenMergeRecoveryTerminal
+                }
+                onOpenTerminal={
+                  canOpenTerminal ? () => void handleOpenTerminal() : undefined
+                }
                 terminalTitle={projectTerminalLabel(hasLocalCheckout)}
                 onSelectedCommitHashChange={handleSelectedCommitHashChange}
                 onSelectedIssueIdChange={handleSelectedIssueIdChange}
@@ -954,7 +1002,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
                 pullRequestsLoading={pullRequestsQuery.isLoading}
                 repoContributors={repoContributors}
                 repoHost={repoRemote.host}
-                repoSource={repoSource}
+                repoSource={effectiveRepoSource}
                 selectedCommitHash={selectedCommitHash}
                 selectedIssueId={selectedIssueId}
                 selectedPullRequestId={selectedPullRequestId}

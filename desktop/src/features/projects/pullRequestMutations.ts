@@ -15,6 +15,7 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 import type { ProjectPullRequest, Repository as Project } from "./hooks";
 import { nextProjectPullRequestStatusCreatedAt } from "./projectPullRequests.mjs";
 import { useProjectPullRequestWriteInvalidation } from "./pullRequestReviews";
+import { cloneUrlList, firstCloneUrl } from "./lib/projectCloneUrl";
 
 type CreateProjectPullRequestInput = {
   title: string;
@@ -42,7 +43,7 @@ export function projectPullRequestTags(
     ]),
     ["subject", input.title],
     ["c", input.commit],
-    ["clone", ...project.cloneUrls],
+    ["clone", ...cloneUrlList(project)],
     ["branch-name", input.branch],
     ["target-branch", input.targetBranch],
   ];
@@ -69,7 +70,7 @@ export function projectPullRequestUpdateTags(
       "clone",
       ...(pullRequest.cloneUrls.length > 0
         ? pullRequest.cloneUrls
-        : project.cloneUrls),
+        : cloneUrlList(project)),
     ],
   ];
   if (mergeBase) tags.push(["merge-base", mergeBase]);
@@ -115,7 +116,7 @@ async function publishProjectPullRequest(
   if (title.length > 256) {
     throw new Error("Pull request title must be 256 characters or fewer.");
   }
-  if (project.cloneUrls.length === 0) {
+  if (cloneUrlList(project).length === 0) {
     throw new Error("This project has no clone URL.");
   }
   if (input.branch === input.targetBranch) {
@@ -238,13 +239,16 @@ export function useMergeProjectPullRequestMutation(
       ) {
         throw new Error("Linked workspaces are read-only.");
       }
-      if (!project?.cloneUrls[0]) throw new Error("No project selected.");
+      const targetCloneUrl = firstCloneUrl(project);
+      if (!project || !targetCloneUrl) {
+        throw new Error("No project selected.");
+      }
       if (!pullRequest.branchName || !pullRequest.commit) {
         throw new Error("Pull request branch information is incomplete.");
       }
       const result = await mergeProjectPullRequest({
-        targetCloneUrl: project.cloneUrls[0],
-        sourceCloneUrl: pullRequest.cloneUrls[0] ?? project.cloneUrls[0],
+        targetCloneUrl,
+        sourceCloneUrl: pullRequest.cloneUrls[0] ?? targetCloneUrl,
         targetOwner: project.owner,
         repoAddress: project.repoAddress,
         pullRequestId: pullRequest.id,

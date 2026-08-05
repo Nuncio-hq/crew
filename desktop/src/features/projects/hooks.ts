@@ -9,10 +9,10 @@ import { getIdentity } from "@/shared/api/tauriIdentity";
 import {
   getProjectLocalRepoDiff,
   getProjectRepoDiff,
-  getProjectLocalRepoSnapshot,
   getProjectRepoSnapshot,
   listProjectLocalRepositories,
 } from "@/shared/api/projectGit";
+import { readProjectLocalRepoSnapshot } from "./lib/project-exact-local-workspace";
 import {
   KIND_DELETION,
   KIND_GIT_ISSUE,
@@ -65,6 +65,7 @@ import {
   fetchProjectEventsExhaustively,
 } from "./projectEnumeration";
 import { projectMatchesRouteId } from "./projectRoutes";
+import { firstCloneUrl } from "./lib/projectCloneUrl";
 
 export type {
   Project,
@@ -432,7 +433,7 @@ async function fetchProjectRepoSnapshot(
   pullRequest?: ProjectPullRequest | null,
   tag?: { name: string; commit: string } | null,
 ): Promise<ProjectRepoSnapshot | null> {
-  const cloneUrl = pullRequest?.cloneUrls[0] ?? project.cloneUrls[0];
+  const cloneUrl = pullRequest?.cloneUrls[0] ?? firstCloneUrl(project);
   if (!cloneUrl) return null;
 
   return getProjectRepoSnapshot({
@@ -453,7 +454,7 @@ async function fetchProjectRepoDiff(
   branchName?: string | null,
   pullRequest?: ProjectPullRequest | null,
 ): Promise<ProjectRepoDiff | null> {
-  const cloneUrl = pullRequest?.cloneUrls[0] ?? project.cloneUrls[0];
+  const cloneUrl = pullRequest?.cloneUrls[0] ?? firstCloneUrl(project);
   if (!cloneUrl) return null;
 
   return getProjectRepoDiff({
@@ -474,7 +475,7 @@ async function fetchProjectLocalRepoDiff(
   return getProjectLocalRepoDiff({
     reposDir,
     projectDtag: project.dtag,
-    cloneUrl: project.cloneUrls[0] ?? null,
+    cloneUrl: firstCloneUrl(project) ?? null,
     defaultBranch: branchName ?? project.defaultBranch,
     baseBranch: project.defaultBranch,
     baseCommit:
@@ -491,10 +492,12 @@ async function fetchProjectLocalRepoSnapshot(
   reposDir?: string | null,
   branchName?: string | null,
 ): Promise<ProjectLocalRepoSnapshot | null> {
-  return getProjectLocalRepoSnapshot({
+  return readProjectLocalRepoSnapshot({
+    cloneUrl: firstCloneUrl(project) ?? null,
+    localWorkspacePath: project.localWorkspacePath,
+    localWorkspaceStatus: project.localWorkspaceStatus,
     reposDir,
     projectDtag: project.dtag,
-    cloneUrl: project.cloneUrls[0] ?? null,
     defaultBranch: branchName ?? project.defaultBranch,
     baseBranch: project.defaultBranch,
   });
@@ -662,11 +665,14 @@ export function useProjectRepoSnapshotQuery(
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
 
   return useQuery({
-    enabled: Boolean(enabled && project?.cloneUrls[0]),
+    enabled: Boolean(
+      enabled && firstCloneUrl(project) && !project?.localWorkspacePath,
+    ),
     queryKey: [
       "project",
       project?.id ?? "none",
       "repo-snapshot",
+      project?.localWorkspacePath ?? "managed",
       selectedBranch ?? "default",
       pullRequest?.id ?? "none",
       pullRequest?.commit ?? "none",
@@ -696,11 +702,17 @@ export function useProjectRepoDiffQuery(
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
 
   return useQuery({
-    enabled: Boolean(enabled && project?.cloneUrls[0] && pullRequest),
+    enabled: Boolean(
+      enabled &&
+        firstCloneUrl(project) &&
+        !project?.localWorkspacePath &&
+        pullRequest,
+    ),
     queryKey: [
       "project",
       project?.id ?? "none",
       "repo-diff",
+      project?.localWorkspacePath ?? "managed",
       selectedBranch ?? "default",
       pullRequest?.id ?? "none",
       pullRequest?.commit ?? "none",
@@ -724,18 +736,26 @@ export function useProjectLocalRepoDiffQuery(
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
 
   return useQuery({
-    enabled: Boolean(enabled && project),
+    enabled: Boolean(
+      enabled &&
+        project &&
+        !project.localWorkspacePath &&
+        project.localWorkspaceStatus !== "invalid",
+    ),
     queryKey: [
       "project",
       project?.id ?? "none",
       "local-repo-diff",
+      project?.localWorkspaceStatus ?? "unlinked",
       reposDir ?? "default",
       selectedBranch ?? "default",
       pullRequest?.initialCommit ?? "none",
       pullRequest?.commit ?? "none",
     ],
     queryFn: () => {
-      if (!project) throw new Error("No project selected.");
+      if (!project || project.localWorkspaceStatus === "invalid") {
+        throw new Error("No readable local workspace is available.");
+      }
       return fetchProjectLocalRepoDiff(
         project,
         reposDir,
@@ -756,11 +776,13 @@ export function useProjectLocalRepoSnapshotQuery(
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
 
   return useQuery({
-    enabled: Boolean(project),
+    enabled: Boolean(project && project?.localWorkspaceStatus !== "invalid"),
     queryKey: [
       "project",
       project?.id ?? "none",
       "local-repo-snapshot",
+      project?.localWorkspacePath ?? "managed",
+      project?.localWorkspaceStatus ?? "unlinked",
       reposDir ?? "default",
       selectedBranch ?? "default",
     ],
