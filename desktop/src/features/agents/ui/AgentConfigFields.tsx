@@ -24,9 +24,11 @@ import {
   deriveAgentConfigFieldModel,
   getRenderableEffortField,
   hasRenderableAgentConfigField,
+  isModelOwnedByProfile,
   structuredEnvKeys,
   filterBakedGenericRows,
 } from "@/features/agents/lib/agentConfigCore";
+import { ProfileOwnedModelRow } from "./HermesProfileBindingFields";
 import {
   getBakedProviderInheritLabel,
   getGlobalModelFallback,
@@ -286,13 +288,9 @@ export function AgentConfigFields({
   const modelField = fieldModel.fields.find(
     (field) => field.kind === "model" && field.render === "control",
   );
-  // CLI-login harnesses apply this setting through ACP rather than an env var
-  // and provide their own default when no model override is persisted.
+  const modelOwnedByProfile = isModelOwnedByProfile(fieldModel);
   const modelIsOptional = modelField?.targetApplication.kind === "acpNative";
-  const modelIsValid =
-    modelIsOptional ||
-    (config.model?.trim().length ?? 0) > 0 ||
-    fallbackModel !== null;
+  const modelIsValid = modelOwnedByProfile || modelIsOptional || (config.model?.trim().length ?? 0) > 0 || fallbackModel !== null;
   const bakedEffort = React.useMemo(
     () =>
       bakedEnv.find((e) => e.key === BUZZ_AGENT_THINKING_EFFORT)?.value ?? null,
@@ -370,18 +368,16 @@ export function AgentConfigFields({
     provider: providerForDiscovery,
     selectedRuntime,
   });
-  const modelControlVisible = shouldRenderModelControl({
-    discoveredModelOptions: dependentFieldsDisabled
-      ? null
-      : discoveredModelOptions,
-    modelDiscoveryLoading: dependentFieldsDisabled
-      ? false
-      : modelDiscoveryLoading,
-    modelDiscoverySuccessfulEmpty:
-      !dependentFieldsDisabled && modelDiscoverySuccessfulEmpty,
-    modelIsOptional,
-    showCustomModelOption,
-  });
+  const modelControlVisible =
+    !modelOwnedByProfile &&
+    shouldRenderModelControl({
+      discoveredModelOptions: dependentFieldsDisabled ? null : discoveredModelOptions,
+      modelDiscoveryLoading: dependentFieldsDisabled ? false : modelDiscoveryLoading,
+      modelDiscoverySuccessfulEmpty:
+        !dependentFieldsDisabled && modelDiscoverySuccessfulEmpty,
+      modelIsOptional,
+      showCustomModelOption,
+    });
 
   // Mount-time healing policy: onboarding page 4 edits the root config during
   // first-run (no higher layers to inherit from), so acting on open is safe
@@ -793,8 +789,9 @@ export function AgentConfigFields({
         </div>
       ) : null}
 
-      {/* Model field — omitted only after confirmed successful empty discovery */}
-      {modelControlVisible ? (
+      {modelOwnedByProfile ? (
+        <ProfileOwnedModelRow className={fieldClassName} />
+      ) : modelControlVisible ? (
         <div className={showDescriptions ? fieldClassName : undefined}>
           <AgentModelField
             allowDefaultModel={fallbackModel !== null}

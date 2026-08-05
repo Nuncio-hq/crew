@@ -179,6 +179,7 @@ export function useAgentManagement() {
     input: CreatePersonaInput | UpdatePersonaInput,
     intent: AgentCreateIntent,
     backendIntent: BackendIntent | null,
+    options?: { hermesProfile?: string | null },
   ): Promise<boolean> {
     if (request?.action !== "create" || "id" in input) {
       return false;
@@ -205,14 +206,16 @@ export function useAgentManagement() {
       });
 
       if (intent === "definition_start") {
-        const created = await createAgentMutation.mutateAsync(
-          await buildInstanceInputForDefinition(
-            persona,
-            runtime,
-            undefined,
-            backendIntent ?? undefined,
-          ),
+        const agentInput = await buildInstanceInputForDefinition(
+          persona,
+          runtime,
+          undefined,
+          backendIntent ?? undefined,
         );
+        if (options?.hermesProfile) {
+          agentInput.hermesProfile = options.hermesProfile;
+        }
+        const created = await createAgentMutation.mutateAsync(agentInput);
         if (created.spawnError) throw new Error(created.spawnError);
         const targetChannel = (channelsQuery.data ?? []).find(
           (channel) => channel.id === request.request.channelId,

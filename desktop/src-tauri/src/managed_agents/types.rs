@@ -507,8 +507,8 @@ pub struct ManagedAgentSummary {
     /// concrete pin (`agent_command` above is the resolved/effective command).
     pub agent_command_override: Option<String>,
     pub agent_args: Vec<String>,
-    /// Catalog-derived from the effective harness (not the record's stored
-    /// field), so the UI always shows what a spawn would actually use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hermes_profile: Option<String>, // D-019; catalog-derived mcp below
     pub mcp_command: String,
     /// Deprecated passthrough of the stored record value; the harness ignores
     /// it. Kept for wire compatibility.
@@ -667,12 +667,12 @@ pub struct AcpRuntimeCatalogEntry {
     /// back and the user doesn't silently lose env vars when saving.  Always
     /// empty for `builtin` and `preset` entries (those env values come from the
     /// runtime metadata path, not user-editable JSON).
-    ///
     /// Skipped in serialization when empty to keep the catalog payload compact.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub definition_env: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_arg: Option<String>, // KnownAcpRuntime::profile_arg (Hermes: "-p")
+    #[serde(default)] pub provider_locked: bool,
 }
 
 /// Result of a single install step (CLI or adapter).

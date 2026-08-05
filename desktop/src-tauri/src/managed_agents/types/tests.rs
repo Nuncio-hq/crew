@@ -711,6 +711,7 @@ fn summary_fixture(
         agent_command: "goose".into(),
         agent_command_override: None,
         agent_args: Vec::new(),
+        hermes_profile: None,
         mcp_command: String::new(),
         turn_timeout_seconds: 320,
         idle_timeout_seconds: None,

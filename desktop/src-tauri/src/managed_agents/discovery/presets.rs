@@ -83,6 +83,7 @@ pub(super) fn preset_catalog_entry(
         source: HarnessSource::Preset,
         definition_env: Default::default(),
         profile_arg: None,
+        provider_locked: false,
     }
 }
 

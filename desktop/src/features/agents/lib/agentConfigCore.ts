@@ -3,6 +3,10 @@ import type {
   GlobalAgentConfig,
 } from "@/shared/api/types";
 import { BUZZ_AGENT_THINKING_EFFORT } from "../ui/buzzAgentConfig";
+import {
+  runtimeOffersProfileBinding,
+  runtimeOwnsModelViaProfile,
+} from "./hermesProfileBinding";
 
 /**
  * Lifecycle status of the ACP runtime catalog query on a per-agent surface.
@@ -67,6 +71,13 @@ export type AgentConfigFieldDescriptor =
       value: string | null;
     }
   | {
+      kind: "hermesProfile";
+      persistence: { kind: "recordField"; field: "hermesProfile" };
+      targetApplication: { kind: "recordField"; field: "hermesProfile" };
+      render: "control";
+      value: string | null;
+    }
+  | {
       kind: "effort";
       optionSource:
         | "buzzAgentCatalog"
@@ -90,10 +101,15 @@ export type AgentConfigFieldDescriptor =
       value: string | null;
     };
 
-export type AgentConfigOmission = {
-  kind: "effort";
-  reason: "ownedByModelId" | "unsupportedByHarness";
-};
+export type AgentConfigOmission =
+  | {
+      kind: "effort";
+      reason: "ownedByModelId" | "unsupportedByHarness";
+    }
+  | {
+      kind: "model";
+      reason: "ownedByProfile";
+    };
 
 /**
  * A numeric tuning descriptor: one of the three env-var-backed number fields
@@ -173,10 +189,13 @@ export function deriveAgentConfigFieldModel({
   config,
   runtime,
   scope,
+  hermesProfile = null,
 }: {
   config: GlobalAgentConfig;
   runtime: AcpRuntimeCatalogEntry | undefined;
   scope: AgentConfigScope;
+  /** Instance/definition binding value; ignored for global/onboarding scopes. */
+  hermesProfile?: string | null;
 }): AgentConfigFieldModel {
   const fields: AgentConfigFieldDescriptor[] = [];
   const omissions: AgentConfigOmission[] = [];
@@ -192,16 +211,38 @@ export function deriveAgentConfigFieldModel({
     });
   }
 
-  fields.push({
-    kind: "model",
-    optionSource: "acpModels",
-    persistence: { kind: "normalizedField", field: "model" },
-    targetApplication: runtime?.modelEnvVar
-      ? { kind: "envVar", key: runtime.modelEnvVar }
-      : { kind: "acpNative" },
-    render: "control",
-    value: config.model,
-  });
+  // Profile-owned model (C-04): omit the editable control; surfaces render an
+  // informational row from the named omission. Capability check only — never
+  // `runtime.id === "hermes"`.
+  if (runtimeOwnsModelViaProfile(runtime)) {
+    omissions.push({ kind: "model", reason: "ownedByProfile" });
+  } else {
+    fields.push({
+      kind: "model",
+      optionSource: "acpModels",
+      persistence: { kind: "normalizedField", field: "model" },
+      targetApplication: runtime?.modelEnvVar
+        ? { kind: "envVar", key: runtime.modelEnvVar }
+        : { kind: "acpNative" },
+      render: "control",
+      value: config.model,
+    });
+  }
+
+  // Profile binding is instance/definition-scoped (ManagedAgentRecord), not
+  // global defaults / onboarding.
+  if (
+    (scope === "definition" || scope === "instance") &&
+    runtimeOffersProfileBinding(runtime)
+  ) {
+    fields.push({
+      kind: "hermesProfile",
+      persistence: { kind: "recordField", field: "hermesProfile" },
+      targetApplication: { kind: "recordField", field: "hermesProfile" },
+      render: "control",
+      value: hermesProfile?.trim() || null,
+    });
+  }
 
   if (runtime?.thinkingEnvVar) {
     fields.push({
@@ -266,6 +307,27 @@ export function hasRenderableAgentConfigField(
 ) {
   return model.fields.some(
     (field) => field.kind === kind && field.render === "control",
+  );
+}
+
+/** True when the model control is omitted because a Hermes profile owns it. */
+export function isModelOwnedByProfile(model: AgentConfigFieldModel): boolean {
+  return model.omissions.some(
+    (omission) =>
+      omission.kind === "model" && omission.reason === "ownedByProfile",
+  );
+}
+
+export function getRenderableHermesProfileField(
+  model: AgentConfigFieldModel,
+): Extract<AgentConfigFieldDescriptor, { kind: "hermesProfile" }> | undefined {
+  return model.fields.find(
+    (
+      field,
+    ): field is Extract<
+      AgentConfigFieldDescriptor,
+      { kind: "hermesProfile" }
+    > => field.kind === "hermesProfile" && field.render === "control",
   );
 }
 

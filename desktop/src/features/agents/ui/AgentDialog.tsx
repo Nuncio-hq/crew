@@ -39,6 +39,7 @@ type AgentDialogCreateProps = {
     input: CreatePersonaInput | UpdatePersonaInput,
     intent: AgentCreateIntent,
     backendIntent: BackendIntent | null,
+    options?: { hermesProfile?: string | null },
   ) => Promise<boolean>;
 };
 
@@ -154,11 +155,12 @@ function AgentCreateDialogRouter({
         initialValues={initialValues}
         isPending={isDefinitionPending}
         onOpenChange={onOpenChange}
-        onSubmit={async (input) => {
+        onSubmit={async (input, options) => {
           const submitted = await onSubmitDefinition(
             input,
             "definition_start",
             resolveBackendIntent(runDraft),
+            { hermesProfile: options.hermesProfile },
           );
           if (submitted) {
             onOpenChange(false);

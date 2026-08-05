@@ -98,6 +98,8 @@ export type MockManagedAgentSeed = {
   respondToAllowlist?: string[];
   /** Per-agent env vars seeded into the mock store. */
   envVars?: Record<string, string>;
+  /** Hermes profile binding (D-019). */
+  hermesProfile?: string | null;
 };
 
 type MockManagedAgentRuntimeSeed = {
@@ -832,6 +834,8 @@ type RawManagedAgent = {
   backend_agent_id: string | null;
   respond_to: "owner-only" | "allowlist" | "anyone";
   respond_to_allowlist: string[];
+  /** D-019 Hermes profile binding; null when unbound. */
+  hermes_profile?: string | null;
 };
 
 type RawCreateManagedAgentResponse = {
@@ -1678,6 +1682,7 @@ function cloneManagedAgent(agent: MockManagedAgent): RawManagedAgent {
     respond_to_allowlist: agent.respond_to_allowlist
       ? [...agent.respond_to_allowlist]
       : [],
+    hermes_profile: agent.hermes_profile ?? null,
   };
 }
 
@@ -2185,6 +2190,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     "buzz-agent": { command: "buzz-agent", args: [] },
     claude: { command: "claude", args: [] },
     codex: { command: "codex", args: [] },
+    hermes: { command: "hermes", args: ["acp"] },
   };
   const catalogEntry = seed.runtime
     ? DEFAULT_RUNTIME_COMMAND[seed.runtime]
@@ -2230,6 +2236,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     backend_agent_id: null,
     respond_to: seed.respondTo ?? "owner-only",
     respond_to_allowlist: seed.respondToAllowlist ?? [],
+    hermes_profile: seed.hermesProfile ?? null,
     private_key_nsec: `nsec1mock${seed.pubkey.slice(0, 20)}`,
     log_lines: [
       `buzz-acp starting: relay=${DEFAULT_RELAY_WS_URL} agent_pubkey=${seed.pubkey} parallelism=1`,
@@ -7422,6 +7429,16 @@ function withMockRuntimeConfigMetadata(
         : runtime.id === "buzz-agent"
           ? "BUZZ_AGENT_MAX_ROUNDS"
           : null,
+    profile_arg:
+      "profile_arg" in runtime
+        ? runtime.profile_arg
+        : runtime.id === "hermes"
+          ? "-p"
+          : null,
+    provider_locked:
+      "provider_locked" in runtime
+        ? (runtime.provider_locked ?? false)
+        : runtime.id === "hermes" || runtime.id === "claude",
   };
 }
 
@@ -7551,6 +7568,29 @@ async function handleDiscoverAcpRuntimes(
       auth_status: { status: "not_applicable" },
       source: "builtin",
       login_hint: undefined,
+    },
+    {
+      id: "hermes",
+      label: "Hermes Agent",
+      avatar_url: "",
+      availability: "available",
+      command: "hermes",
+      binary_path: "/usr/local/bin/hermes",
+      default_args: ["acp"],
+      mcp_command: "buzz-dev-mcp",
+      install_hint: "Buzz talks to Hermes Agent through the Hermes CLI.",
+      install_instructions_url: "https://hermes-agent.nousresearch.com",
+      can_auto_install: false,
+      requires_external_cli: false,
+      underlying_cli_path: null,
+      node_required: false,
+      auth_status: { status: "unknown" },
+      source: "builtin",
+      login_hint: undefined,
+      profile_arg: "-p",
+      provider_locked: true,
+      model_env_var: null,
+      provider_env_var: null,
     },
   ];
   return mergeMockCustomHarnesses(
@@ -8313,6 +8353,7 @@ async function handleCreateManagedAgent(
         | { type: "provider"; id: string; config: Record<string, unknown> };
       respondTo?: "owner-only" | "allowlist" | "anyone";
       respondToAllowlist?: string[];
+      hermesProfile?: string;
     };
   },
   config: E2eConfig | undefined,
@@ -8351,6 +8392,29 @@ async function handleCreateManagedAgent(
           ?.avatar_url ?? null);
   const avatarUrl = args.input.avatarUrl?.trim() || personaAvatarUrl;
   const name = args.input.name.trim();
+  const hermesProfile = args.input.hermesProfile?.trim() || null;
+  if (hermesProfile === "default") {
+    throw new Error(
+      "hermes profile 'default' cannot be bound to a Crew agent (manager personal profile)",
+    );
+  }
+  if (
+    hermesProfile &&
+    mockManagedAgents.some(
+      (other) =>
+        other.hermes_profile === hermesProfile &&
+        other.relay_url === (args.input.relayUrl ?? DEFAULT_RELAY_WS_URL),
+    )
+  ) {
+    const other = mockManagedAgents.find(
+      (candidate) =>
+        candidate.hermes_profile === hermesProfile &&
+        candidate.relay_url === (args.input.relayUrl ?? DEFAULT_RELAY_WS_URL),
+    );
+    throw new Error(
+      `hermes profile '${hermesProfile}' is already bound to agent '${other?.name}' (${other?.pubkey})`,
+    );
+  }
   const now = new Date().toISOString();
   const pubkey = crypto
     .randomUUID()
@@ -8400,6 +8464,7 @@ async function handleCreateManagedAgent(
     backend_agent_id: null,
     respond_to: mintRespondTo,
     respond_to_allowlist: [...mintRespondToAllowlist],
+    hermes_profile: hermesProfile,
     private_key_nsec: `nsec1mock${pubkey.slice(0, 20)}`,
     log_lines: [
       `buzz-acp starting: relay=${args.input.relayUrl ?? DEFAULT_RELAY_WS_URL} agent_pubkey=${pubkey} parallelism=${mintParallelism}`,
@@ -8646,6 +8711,7 @@ async function handleUpdateManagedAgent(args: {
     envVars?: Record<string, string>;
     respondTo?: "owner-only" | "allowlist" | "anyone";
     respondToAllowlist?: string[];
+    hermesProfile?: string | null;
   };
 }): Promise<{ agent: RawManagedAgent; profile_sync_error: string | null }> {
   const agent = getMockManagedAgent(args.input.pubkey);
@@ -8666,6 +8732,34 @@ async function handleUpdateManagedAgent(args: {
   }
   if (args.input.respondToAllowlist !== undefined) {
     agent.respond_to_allowlist = args.input.respondToAllowlist;
+  }
+  if (args.input.hermesProfile !== undefined) {
+    const profile = args.input.hermesProfile?.trim() || null;
+    if (profile === "default") {
+      throw new Error(
+        "hermes profile 'default' cannot be bound to a Crew agent (manager personal profile)",
+      );
+    }
+    if (
+      profile &&
+      mockManagedAgents.some(
+        (other) =>
+          other.pubkey !== agent.pubkey &&
+          other.hermes_profile === profile &&
+          other.relay_url === agent.relay_url,
+      )
+    ) {
+      const other = mockManagedAgents.find(
+        (candidate) =>
+          candidate.pubkey !== agent.pubkey &&
+          candidate.hermes_profile === profile &&
+          candidate.relay_url === agent.relay_url,
+      );
+      throw new Error(
+        `hermes profile '${profile}' is already bound to agent '${other?.name}' (${other?.pubkey})`,
+      );
+    }
+    agent.hermes_profile = profile;
   }
   agent.updated_at = new Date().toISOString();
   return { agent: cloneManagedAgent(agent), profile_sync_error: null };
