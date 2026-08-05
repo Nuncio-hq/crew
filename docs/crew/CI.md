@@ -17,6 +17,7 @@ unchanged.
 | `CI Policy` | Always | Workflow contract and relevant-path classification |
 | `Desktop Fast` | Desktop, Tauri, Rust, or dependency paths change | Desktop lint, tests, and production frontend build |
 | `Desktop Rust` | `desktop/src-tauri/**`, `crates/**`, root `Cargo.toml`/`Cargo.lock`, `rust-toolchain.toml`, `Justfile`, or this workflow change | Tauri crate Clippy + unit tests (`cargo test`), including regressions from path deps in `crates/` |
+| `buzz-acp` | `crates/buzz-acp/**`, root `Cargo.toml`/`Cargo.lock`, `rust-toolchain.toml`, `Justfile`, or this workflow change | ACP harness lib tests (`cargo test -p buzz-acp --lib`). Not covered by Desktop Rust — `desktop/src-tauri` does not depend on this crate |
 | `macOS ARM Package` | Same desktop boundary as Desktop Fast | Unsigned `aarch64-apple-darwin` Tauri package with Nuncio identity |
 | `Project Relay` | Project, relay, schema, or Nostr paths change | Kind `30617` local-path lifecycle against an isolated real relay |
 

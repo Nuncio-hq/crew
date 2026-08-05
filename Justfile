@@ -277,6 +277,12 @@ ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri
 test:
     ./scripts/run-tests.sh all
 
+# ACP harness lib tests (no infra). Used by the path-gated `buzz-acp` CI job.
+# Unset BUZZ_ACP_* first when running from an agent session — clap reads those
+# env vars and will flip defaults_* tests (see mem/desktop-verify-gate).
+buzz-acp-test:
+    cargo test -p buzz-acp --lib
+
 # Run unit tests only (no infra needed)
 test-unit:
     #!/usr/bin/env bash

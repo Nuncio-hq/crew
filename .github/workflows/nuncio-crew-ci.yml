@@ -26,6 +26,7 @@ jobs:
       desktop: ${{ steps.filter.outputs.desktop }}
       desktop-rust: ${{ steps.filter.outputs.desktop-rust }}
       relay: ${{ steps.filter.outputs.relay }}
+      acp: ${{ steps.filter.outputs.acp }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
@@ -66,6 +67,13 @@ jobs:
               - 'Justfile'
               - '.github/workflows/nuncio-crew-ci.yml'
               - 'scripts/run-nuncio-crew-project-relay-ci.sh'
+            acp:
+              - 'crates/buzz-acp/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'Justfile'
+              - '.github/workflows/nuncio-crew-ci.yml'
       - name: Verify Crew workflow contracts
         run: node --test desktop/src/testing/nuncio-crew-*.test.mjs
 
@@ -214,6 +222,28 @@ jobs:
           path: /tmp/nuncio-crew-relay.log
           if-no-files-found: ignore
 
+  # Desktop Rust only exercises desktop/src-tauri. buzz-acp is a separate crate
+  # with no Tauri dependency edge, so a green Desktop Rust run can hide a red
+  # harness (issue #49). Gate this lane whenever the ACP crate or workspace pins
+  # move. Relevance key is `acp` (filter output); job result key is `buzz-acp`.
+  buzz-acp:
+    name: buzz-acp
+    needs: changes
+    if: needs.changes.outputs.acp == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: nuncio-buzz-acp
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Test buzz-acp
+        run: just buzz-acp-test
+
   # Advisory only until the smoke suite's ~5 moving failures per green run are
   # attributed and quarantined (#37). continue-on-error keeps the signal visible
   # without red-walling every desktop PR. Do not add this job to `gate.needs` or
@@ -286,7 +316,7 @@ jobs:
   gate:
     name: NuncioCrew Gate
     if: ${{ always() }}
-    needs: [changes, desktop-fast, desktop-rust, macos-arm, project-relay]
+    needs: [changes, desktop-fast, desktop-rust, macos-arm, project-relay, buzz-acp]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -295,4 +325,4 @@ jobs:
       - name: Require all relevant Crew checks
         run: |
           node desktop/scripts/check-nuncio-crew-ci-results.mjs \
-            '{"ci-policy":"${{ needs.changes.result }}","desktop":"${{ needs.changes.outputs.desktop }}","desktop-rust-changed":"${{ needs.changes.outputs.desktop-rust }}","relay":"${{ needs.changes.outputs.relay }}","desktop-fast":"${{ needs.desktop-fast.result }}","desktop-rust":"${{ needs.desktop-rust.result }}","macos-arm":"${{ needs.macos-arm.result }}","project-relay":"${{ needs.project-relay.result }}"}'
+            '{"ci-policy":"${{ needs.changes.result }}","desktop":"${{ needs.changes.outputs.desktop }}","desktop-rust-changed":"${{ needs.changes.outputs.desktop-rust }}","relay":"${{ needs.changes.outputs.relay }}","acp":"${{ needs.changes.outputs.acp }}","desktop-fast":"${{ needs.desktop-fast.result }}","desktop-rust":"${{ needs.desktop-rust.result }}","macos-arm":"${{ needs.macos-arm.result }}","project-relay":"${{ needs.project-relay.result }}","buzz-acp":"${{ needs.buzz-acp.result }}"}'

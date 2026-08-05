@@ -30,6 +30,7 @@ test("Crew CI exposes one stable merge gate", () => {
     "desktop-rust",
     "macos-arm",
     "project-relay",
+    "buzz-acp",
   ]) {
     assert.match(ci, new RegExp(`needs\\.${job}\\.result`));
   }
@@ -67,6 +68,26 @@ test("relay-native Project behavior remains an automatic conditional gate", () =
   assert.match(ci, /- 'scripts\/attach-schema-partitions\.sql'/);
   assert.match(ci, /CREW_LIVE_RELAY_URL:\s*ws:\/\/localhost:3000/);
   assert.match(ci, /needs\.project-relay\.result/);
+});
+
+test("buzz-acp is path-gated and registered in the merge gate", () => {
+  const ci = workflow("nuncio-crew-ci.yml");
+  const acpStart = ci.indexOf("\n  buzz-acp:");
+  assert.ok(acpStart > 0, "buzz-acp job must exist");
+  const nextJob = ci.indexOf("\n  desktop-smoke-e2e:", acpStart);
+  const acp = ci.slice(acpStart, nextJob > acpStart ? nextJob : undefined);
+
+  assert.match(acp, /name:\s*buzz-acp/);
+  assert.match(acp, /needs\.changes\.outputs\.acp == 'true'/);
+  assert.match(
+    ci,
+    /acp:\s*\n(?:\s+- '[^']+'\n)*\s+- 'crates\/buzz-acp\/\*\*'/,
+  );
+  assert.match(acp, /just buzz-acp-test/);
+  assert.match(ci, /needs\.buzz-acp\.result/);
+
+  const gateHelper = readFileSync(gateHelperPath, "utf8");
+  assert.match(gateHelper, /"buzz-acp":\s*"acp"/);
 });
 
 test("desktop rust is path-gated and registered in the merge gate", () => {
@@ -162,10 +183,12 @@ test("merge gate accepts deliberately skipped conditional work", async () => {
       desktop: "true",
       "desktop-rust-changed": "false",
       relay: "false",
+      acp: "false",
       "desktop-fast": "success",
       "desktop-rust": "skipped",
       "macos-arm": "success",
       "project-relay": "skipped",
+      "buzz-acp": "skipped",
     }),
   );
 });
@@ -184,10 +207,33 @@ test("merge gate rejects a skipped Desktop Rust job when rust paths changed", as
       desktop: "true",
       "desktop-rust-changed": "true",
       relay: "false",
+      acp: "false",
       "desktop-fast": "success",
       "desktop-rust": "skipped",
       "macos-arm": "success",
       "project-relay": "skipped",
+      "buzz-acp": "skipped",
+    }),
+  );
+});
+
+test("merge gate rejects a skipped buzz-acp job when acp paths changed", async () => {
+  const { assertNuncioCrewCiResults } = await import(
+    pathToFileURL(gateHelperPath).href
+  );
+
+  assert.throws(() =>
+    assertNuncioCrewCiResults({
+      "ci-policy": "success",
+      desktop: "true",
+      "desktop-rust-changed": "true",
+      relay: "false",
+      acp: "true",
+      "desktop-fast": "success",
+      "desktop-rust": "success",
+      "macos-arm": "success",
+      "project-relay": "skipped",
+      "buzz-acp": "skipped",
     }),
   );
 });
@@ -204,10 +250,12 @@ test("merge gate rejects failed, cancelled, or missing dependencies", async () =
         desktop: "true",
         "desktop-rust-changed": "true",
         relay: "true",
+        acp: "true",
         "desktop-fast": "success",
         "desktop-rust": "success",
         "macos-arm": result,
         "project-relay": "success",
+        "buzz-acp": "success",
       }),
     );
   }
@@ -217,10 +265,12 @@ test("merge gate rejects failed, cancelled, or missing dependencies", async () =
       desktop: "false",
       "desktop-rust-changed": "false",
       relay: "false",
+      acp: "false",
       "desktop-fast": "skipped",
       "desktop-rust": "skipped",
       "macos-arm": "skipped",
       "project-relay": "skipped",
+      "buzz-acp": "skipped",
     }),
   );
 });
@@ -236,10 +286,12 @@ test("merge gate rejects a skipped relevant job or a run for irrelevant paths", 
       desktop: "true",
       "desktop-rust-changed": "false",
       relay: "false",
+      acp: "false",
       "desktop-fast": "success",
       "desktop-rust": "skipped",
       "macos-arm": "skipped",
       "project-relay": "skipped",
+      "buzz-acp": "skipped",
     }),
   );
   assert.throws(() =>
@@ -248,10 +300,12 @@ test("merge gate rejects a skipped relevant job or a run for irrelevant paths", 
       desktop: "false",
       "desktop-rust-changed": "false",
       relay: "false",
+      acp: "false",
       "desktop-fast": "success",
       "desktop-rust": "skipped",
       "macos-arm": "skipped",
       "project-relay": "skipped",
+      "buzz-acp": "skipped",
     }),
   );
 });
