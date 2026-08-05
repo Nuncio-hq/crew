@@ -122,5 +122,16 @@ mod tests {
         );
         assert!(codex.adapter_install_instructions_url.contains("codex-acp"));
         assert!(codex.cli_install_hint.contains("Codex CLI"));
+
+        let hermes = known_acp_runtime_exact("hermes").unwrap();
+        assert_eq!(
+            hermes.cli_install_instructions_url,
+            "https://hermes-agent.nousresearch.com"
+        );
+        assert!(hermes.adapter_install_instructions_url.is_empty());
+        assert_eq!(hermes.mcp_command, Some("buzz-dev-mcp"));
+        assert!(hermes.provider_locked);
+        assert!(hermes.cli_install_commands.is_empty());
+        assert!(hermes.auth_probe_args.is_none());
     }
 }

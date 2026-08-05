@@ -1541,7 +1541,7 @@ pub async fn run_prompt_task(
                             "thread_workspace_error",
                             thread_workspace_error_payload(&workspace_error.root_event_id),
                         );
-                        THREAD_WORKSPACE_ERROR_MESSAGE.to_string()
+                        workspace_error.protocol_message()
                     } else {
                         error.to_string()
                     };
@@ -2789,6 +2789,17 @@ const THREAD_WORKSPACE_ERROR_MESSAGE: &str = "Could not prepare the isolated Pro
 struct ThreadWorkspaceProvisionError {
     root_event_id: String,
     source: anyhow::Error,
+}
+
+impl ThreadWorkspaceProvisionError {
+    fn protocol_message(&self) -> String {
+        self.source
+            .downcast_ref::<crate::thread_workspace::ThreadWorkspaceBranchConflict>()
+            .map_or_else(
+                || THREAD_WORKSPACE_ERROR_MESSAGE.to_string(),
+                |error| format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {error}"),
+            )
+    }
 }
 
 struct VerifiedThreadRoot {

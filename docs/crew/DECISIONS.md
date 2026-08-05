@@ -305,7 +305,32 @@ Adopted from
    showed fresh profiles read the manager's pooled credentials through a
    global-root fallback.
 
-## D-020 — Keep Crew local workspace fields on upstream `Repository`
+## D-020 — Hermes tier-1 promotion lands in Crew, not upstream
+
+- **Status:** Accepted; supersedes D-019 item 4
+- **Date:** 2026-08-05
+
+The manager decided no pull request will be opened against `block/buzz`
+for this feature (or, by default, for any Crew work). The Hermes tier-1
+`KnownAcpRuntime` entry, the `default_agent_args` mapping, and the
+preset removal are implemented directly in Crew on a branch cut from
+Crew `main`, merged through the normal `NuncioCrew Gate`.
+
+Consequences:
+
+- Crew accepts a permanent fork delta in
+  `desktop/src-tauri/src/managed_agents/discovery.rs` (and the sibling
+  files the entry touches). Every upstream sync must re-verify this
+  delta; conflicts there are expected and owned by Crew.
+- The thin-fork budget in `UPSTREAM-SYNC.md` still applies to *how* the
+  edit is made (smallest possible, no restyling, no drive-by changes),
+  but "contribute upstream instead" is no longer the escape hatch.
+- If upstream later ships its own Hermes tier-1 entry, the sync
+  resolves in favor of upstream's shape and Crew's delta is retired.
+- Feature 0001 documents (P-4, §7.2, Slice 3) are historical as written;
+  this decision governs.
+
+## D-021 — Keep Crew local workspace fields on upstream `Repository`
 
 - **Status:** Accepted
 - **Date:** 2026-08-05
@@ -319,3 +344,17 @@ recorded here rather than hidden behind a parallel type.
 When a Project has several repositories, a Crew thread worktree binds to
 `primaryRepositoryAddress`, falling back to `repositories[0]` for
 `legacy: true` projects. Selection uses `selectProjectRepository()`.
+
+## D-022 — Extract Crew deltas when sync trips the file-size ratchet
+
+- **Status:** Accepted
+- **Date:** 2026-08-05
+
+When an upstream sync merge makes a shared file exceed the Desktop file-size
+ratchet, extract the Crew-owned additions into new Crew-only files so the
+shared file returns to at or below the upstream line count. Do not grant a
+sync-only exception, do not raise `MAX_LINES`, and do not restructure
+upstream's own code just to pass the guard.
+
+This shrinks future conflict surface instead of freezing oversized shared
+blobs. Record the extracted files in the sync PR body.
