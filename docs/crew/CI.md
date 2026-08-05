@@ -16,7 +16,7 @@ unchanged.
 | --- | --- | --- |
 | `CI Policy` | Always | Workflow contract and relevant-path classification |
 | `Desktop Fast` | Desktop, Tauri, Rust, or dependency paths change | Desktop lint, tests, and production frontend build |
-| `Desktop Rust` | `desktop/src-tauri/**`, `rust-toolchain.toml`, `Justfile`, or this workflow change | Tauri crate Clippy + unit tests (`cargo test`) |
+| `Desktop Rust` | `desktop/src-tauri/**`, `crates/**`, root `Cargo.toml`/`Cargo.lock`, `rust-toolchain.toml`, `Justfile`, or this workflow change | Tauri crate Clippy + unit tests (`cargo test`), including regressions from path deps in `crates/` |
 | `macOS ARM Package` | Same desktop boundary as Desktop Fast | Unsigned `aarch64-apple-darwin` Tauri package with Nuncio identity |
 | `Project Relay` | Project, relay, schema, or Nostr paths change | Kind `30617` local-path lifecycle against an isolated real relay |
 
@@ -46,7 +46,8 @@ dependency policy for the **root** workspace (and the heavier desktop Tauri
 checks such as `desktop-tauri-test-compiled-flags`) without putting those root
 checks on every Crew feature PR. Desktop Tauri Clippy + unit tests now also run
 automatically on feature PRs via the path-gated `Desktop Rust` job when
-`desktop/src-tauri/**` (or the toolchain / Justfile / this workflow) changes.
+`desktop/src-tauri/**`, `crates/**`, root Cargo manifests, the toolchain,
+`Justfile`, or this workflow change.
 Upstream Sync does not run the inherited integration or cross-platform matrices.
 
 Cut over in this order:

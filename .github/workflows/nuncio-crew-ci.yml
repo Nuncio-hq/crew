@@ -47,6 +47,9 @@ jobs:
               - '.github/workflows/nuncio-crew-ci.yml'
             desktop-rust:
               - 'desktop/src-tauri/**'
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'Justfile'
               - '.github/workflows/nuncio-crew-ci.yml'

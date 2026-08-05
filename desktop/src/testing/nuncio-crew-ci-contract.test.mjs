@@ -78,7 +78,16 @@ test("desktop rust is path-gated and registered in the merge gate", () => {
 
   assert.match(rust, /name:\s*Desktop Rust/);
   assert.match(rust, /needs\.changes\.outputs\.desktop-rust == 'true'/);
-  assert.match(ci, /desktop-rust:\s*\n\s+- 'desktop\/src-tauri\/\*\*'/);
+  // Filter must cover Tauri path deps in crates/ — otherwise a crates-only PR
+  // skips Desktop Rust while macOS ARM only catches compile, not clippy/tests.
+  assert.match(
+    ci,
+    /desktop-rust:\s*\n(?:\s+- '[^']+'\n)*\s+- 'desktop\/src-tauri\/\*\*'\n(?:\s+- '[^']+'\n)*\s+- 'crates\/\*\*'/,
+  );
+  assert.match(
+    ci,
+    /desktop-rust:\s*\n(?:\s+- '[^']+'\n)*\s+- 'Cargo\.toml'\n\s+- 'Cargo\.lock'/,
+  );
   assert.match(rust, /workspaces:\s*desktop\/src-tauri/);
   assert.match(rust, /libwebkit2gtk-4\.1-dev/);
   assert.match(rust, /DPkg::Lock::Timeout=120/);
@@ -161,25 +170,14 @@ test("merge gate accepts deliberately skipped conditional work", async () => {
   );
 });
 
-test("merge gate accepts a skipped Desktop Rust job when only TS desktop paths change", async () => {
+test("merge gate rejects a skipped Desktop Rust job when rust paths changed", async () => {
   const { assertNuncioCrewCiResults } = await import(
     pathToFileURL(gateHelperPath).href
   );
 
-  // Sole proof that path-gating can skip: this PR always touches the workflow,
-  // so CI itself cannot demonstrate the false branch by running.
-  assert.doesNotThrow(() =>
-    assertNuncioCrewCiResults({
-      "ci-policy": "success",
-      desktop: "true",
-      "desktop-rust-changed": "false",
-      relay: "false",
-      "desktop-fast": "success",
-      "desktop-rust": "skipped",
-      "macos-arm": "success",
-      "project-relay": "skipped",
-    }),
-  );
+  // Skip acceptance lives in "deliberately skipped conditional work" above.
+  // This PR always touches the workflow, so CI cannot prove the false branch
+  // by running — the true+skipped reject is the complementary lock.
   assert.throws(() =>
     assertNuncioCrewCiResults({
       "ci-policy": "success",
