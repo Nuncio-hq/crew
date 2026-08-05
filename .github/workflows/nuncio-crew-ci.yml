@@ -166,7 +166,7 @@ jobs:
       - name: Create package-only sidecars
         run: |
           mkdir -p desktop/src-tauri/binaries
-          for binary in buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr buzz; do
+          for binary in buzz-acp buzz-agent buzz-backend-kubernetes buzz-dev-mcp git-credential-nostr buzz; do
             touch "desktop/src-tauri/binaries/${binary}-${TARGET}"
           done
       - name: Build unsigned NuncioCrew package
