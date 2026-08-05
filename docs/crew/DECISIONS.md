@@ -358,3 +358,18 @@ upstream's own code just to pass the guard.
 
 This shrinks future conflict surface instead of freezing oversized shared
 blobs. Record the extracted files in the sync PR body.
+
+## D-023 — Crew-created Hermes profiles keep bundled skills
+
+- **Status:** Accepted (Slice 4 / Phase 03 of feature 0001)
+- **Date:** 2026-08-05
+
+When Crew runs `hermes profile create <name> --no-alias` from the
+create-in-place affordance, it does **not** pass `--no-skills`. Fresh
+profiles receive Hermes' bundled skill set (~70 skills), matching the
+CLI default observed in spike 0011.
+
+Rationale: agents benefit from the standard skill set on day one; an
+empty profile is a power-user CLI flow (`hermes profile create … --no-skills`)
+rather than the Crew hiring path. Revisit only if managers ask for a
+Crew toggle.

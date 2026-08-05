@@ -60,6 +60,14 @@ export type ConfigNudgeRequirement =
       surface: "missing_binary";
       /** The command name that was not found (e.g. "my-acp-agent"). */
       command: string;
+    }
+  | {
+      /**
+       * Hermes agent is bound to a profile whose directory is missing
+       * (orphan — deleted/renamed outside Crew). Offer recreate / rebind.
+       */
+      surface: "hermes_profile_directory_missing";
+      profile: string;
     };
 
 /**

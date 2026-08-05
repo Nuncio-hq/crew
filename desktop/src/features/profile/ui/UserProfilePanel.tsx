@@ -34,6 +34,10 @@ import {
 } from "@/features/agents/lib/instanceInputForDefinition";
 import { describeLogFile } from "@/features/agents/ui/agentUi";
 import { AgentDialog } from "@/features/agents/ui/AgentDialog";
+import {
+  hermesProfilesForPersona,
+  useProfileHermesAwareDeletes,
+} from "@/features/profile/ui/useProfileHermesAwareDeletes";
 import { useAgentLifecycleActions } from "@/features/profile/ui/useAgentLifecycleActions";
 import {
   consumePendingOpenEditAgent,
@@ -502,21 +506,15 @@ export function UserProfilePanel({
     }
   }, [managedAgent, startOnLaunchMutation.mutateAsync]);
 
-  const handleDeleteAgent = React.useCallback(async () => {
-    if (!managedAgent) return;
-
-    try {
-      const result = await deleteManagedAgentRecord(managedAgent);
-      if (result.cancelled) return;
-
-      toast.success(`Deleted ${managedAgent.name}.`);
-      onClose();
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete agent.",
-      );
-    }
-  }, [deleteManagedAgentRecord, managedAgent, onClose]);
+  const { handleDeleteAgent, handleConfirmDeletePersona } =
+    useProfileHermesAwareDeletes({
+      managedAgent,
+      managedAgents: managedAgentsQuery.data ?? [],
+      deleteManagedAgentRecord,
+      deletePersona: deletePersonaMutation.mutateAsync,
+      onClose,
+      setPersonaToDelete,
+    });
 
   const handleSubmitPersona = React.useCallback(
     async (input: CreatePersonaInput | UpdatePersonaInput) => {
@@ -599,28 +597,6 @@ export function UserProfilePanel({
     setPersonaActiveMutation.mutateAsync,
   ]);
 
-  const handleConfirmDeletePersona = React.useCallback(
-    async (personaToConfirm: AgentPersona) => {
-      if (personaToConfirm.sourceTeam) {
-        toast.error("This agent is managed by a team.");
-        setPersonaToDelete(null);
-        return;
-      }
-
-      try {
-        await deletePersonaMutation.mutateAsync(personaToConfirm.id);
-        toast.success(`Deleted ${personaToConfirm.displayName}.`);
-        setPersonaToDelete(null);
-        onClose();
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Failed to delete agent.",
-        );
-      }
-    },
-    [deletePersonaMutation.mutateAsync, onClose],
-  );
-
   // Count of managed-agent instances backed by the persona being deleted.
   // Shown in the confirm dialog so the user knows what will be cascade-deleted.
   const personaDeleteInstanceCount = React.useMemo(
@@ -631,6 +607,15 @@ export function UserProfilePanel({
           ).length
         : 0,
     [managedAgentsQuery.data, personaToDelete],
+  );
+
+  const personaDeleteHermesProfiles = React.useMemo(
+    () =>
+      hermesProfilesForPersona(
+        managedAgentsQuery.data ?? [],
+        personaToDelete?.id,
+      ),
+    [managedAgentsQuery.data, personaToDelete?.id],
   );
 
   const handleAddedToChannel = React.useCallback(
@@ -945,6 +930,7 @@ export function UserProfilePanel({
             : null
         }
         instanceCount={personaDeleteInstanceCount}
+        hermesProfiles={personaDeleteHermesProfiles}
         isPending={
           createPersonaMutation.isPending ||
           updatePersonaMutation.isPending ||
@@ -968,8 +954,8 @@ export function UserProfilePanel({
         onCloseDelete={() => setPersonaToDelete(null)}
         onCloseDialog={() => setPersonaDialogState(null)}
         onCloseExportSnapshot={() => setPersonaToExportSnapshot(null)}
-        onConfirmDelete={(selectedPersona) => {
-          void handleConfirmDeletePersona(selectedPersona);
+        onConfirmDelete={(selectedPersona, options) => {
+          void handleConfirmDeletePersona(selectedPersona, options);
         }}
         onExportSnapshot={setPersonaToExportSnapshot}
         onSubmit={handleSubmitPersona}

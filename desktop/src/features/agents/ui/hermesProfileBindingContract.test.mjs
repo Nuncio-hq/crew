@@ -70,6 +70,29 @@ test("profileOwnedModelLabel formats C-04 copy", () => {
   assert.equal(profileOwnedModelLabel(null, null), "Model: decided by profile");
 });
 
+test("isNonOwnerOnlyRespondTo flags public respond-to modes", async () => {
+  const { isNonOwnerOnlyRespondTo } = await import(
+    "./HermesProfileCreateAffordance.tsx"
+  );
+  assert.equal(isNonOwnerOnlyRespondTo("anyone"), true);
+  assert.equal(isNonOwnerOnlyRespondTo("allowlist"), true);
+  assert.equal(isNonOwnerOnlyRespondTo("owner-only"), false);
+  assert.equal(isNonOwnerOnlyRespondTo(null), false);
+});
+
+test("hermes profile command lines are auditable", async () => {
+  const { hermesProfileCreateCommandLine, hermesProfileDeleteCommandLine } =
+    await import("../../../shared/api/hermesProfiles.ts");
+  assert.equal(
+    hermesProfileCreateCommandLine("scout"),
+    "hermes profile create scout --no-alias",
+  );
+  assert.equal(
+    hermesProfileDeleteCommandLine("scout"),
+    "hermes profile delete scout -y",
+  );
+});
+
 test("isModelOwnedByProfile reads the named omission", () => {
   const model = deriveAgentConfigFieldModel({
     config: {

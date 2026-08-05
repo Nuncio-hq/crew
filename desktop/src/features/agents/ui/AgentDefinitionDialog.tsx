@@ -1,7 +1,6 @@
 import * as React from "react";
 import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-
 import type {
   AcpRuntimeCatalogEntry,
   CreatePersonaInput,
@@ -909,6 +908,7 @@ export function AgentDefinitionDialog({
                 showCustomModelInput={showCustomModelInput}
                 showCustomProviderInput={showCustomProviderInput}
                 showHermesProfileField={showHermesProfileField}
+                respondTo={behaviorDraft.respondTo}
                 topLevelSecretEnvVar={topLevelSecretEnvVar}
                 transition={advancedFieldsTransition}
               />

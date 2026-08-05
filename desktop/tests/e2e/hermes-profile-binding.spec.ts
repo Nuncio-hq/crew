@@ -202,4 +202,71 @@ test.describe("hermes profile binding", () => {
     );
     await expect(page.getByTestId("edit-agent-dialog")).toBeVisible();
   });
+
+  test("create: create-in-place button appears for a new valid profile name", async ({
+    page,
+  }) => {
+    await installMockBridge(page);
+    const dialog = await openCreateCustomize(page);
+
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await waitForAnimations(page);
+
+    const profileInput = dialog.locator("#persona-hermes-profile");
+    await profileInput.fill("builder");
+    await expect(
+      page.getByTestId("hermes-profile-create-affordance"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("hermes-profile-create-button"),
+    ).toContainText("Create profile 'builder'");
+    await expect(
+      page.getByTestId("hermes-profile-create-affordance"),
+    ).toContainText("hermes profile create builder --no-alias");
+  });
+
+  test("delete: bound Hermes agent shows keep/delete choice defaulting to keep", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      managedAgents: [
+        {
+          pubkey: HERMES_AGENT_PUBKEY,
+          name: "Hermes Scout",
+          status: "stopped",
+          channelNames: ["agents"],
+          runtime: "hermes",
+          hermesProfile: "scout",
+          respondTo: "owner-only",
+        },
+      ],
+    });
+
+    await page.goto("/");
+    await page.getByTestId("open-agents-view").click();
+    const agentButton = page.getByRole("button", {
+      name: "Hermes Scout agent profile",
+    });
+    await expect(agentButton).toBeVisible({ timeout: 10_000 });
+    await agentButton.click();
+    await expect(page.getByTestId("user-profile-panel")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    await page.getByTestId("user-profile-settings-menu-trigger").click();
+    await page.getByRole("menuitem", { name: /Delete agent/i }).click();
+    await waitForAnimations(page);
+
+    const dialog = page.getByTestId("agent-delete-confirm-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(
+      page.getByTestId("hermes-profile-offboard-choice"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("hermes-profile-offboard-keep"),
+    ).toBeChecked();
+    await expect(
+      page.getByTestId("hermes-profile-offboard-delete"),
+    ).not.toBeChecked();
+  });
 });

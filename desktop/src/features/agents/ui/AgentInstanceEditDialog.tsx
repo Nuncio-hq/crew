@@ -2,7 +2,6 @@ import * as React from "react";
 import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
-
 import {
   useAcpRuntimesQuery,
   useAgentConfigSurface,
@@ -1122,6 +1121,7 @@ export function AgentInstanceEditDialog({
               onCustomModelChange={setModel}
               onHermesProfileChange={setHermesProfile}
               onModelValueChange={handleModelDropdownChange}
+              respondTo={respondTo}
               showCustomModelInput={showCustomModelInput}
               showProfileField={showHermesProfileField}
             />

@@ -308,7 +308,8 @@ pub fn build_managed_agent_summary(
         acp_command: record.acp_command.clone(),
         agent_command: descriptor.command,
         agent_command_override: record.agent_command_override.clone(),
-        agent_args: descriptor.args, hermes_profile: record.hermes_profile.clone(),
+        agent_args: descriptor.args,
+        hermes_profile: record.hermes_profile.clone(),
         mcp_command: effective_mcp_command,
         turn_timeout_seconds: record.turn_timeout_seconds,
         idle_timeout_seconds: record.idle_timeout_seconds,
@@ -608,7 +609,7 @@ pub fn spawn_agent_child(
     let spawned_setup_mode;
     {
         use crate::managed_agents::readiness::EffectiveAgentEnv;
-        use crate::managed_agents::{agent_readiness, AgentReadiness, Requirement};
+        use crate::managed_agents::{agent_readiness, AgentReadiness};
 
         // Construct EffectiveAgentEnv from the descriptor (no second resolve).
         let effective = EffectiveAgentEnv {
@@ -622,43 +623,7 @@ pub fn spawn_agent_child(
             if let AgentReadiness::NotReady { requirements } = agent_readiness(&effective) {
                 let reqs: Vec<serde_json::Value> = requirements
                     .into_iter()
-                    .map(|r| match r {
-                        Requirement::NormalizedField { field } => serde_json::json!({
-                            "surface": "normalized_field",
-                            "field": field,
-                        }),
-                        Requirement::EnvKey { key } => serde_json::json!({
-                            "surface": "env_key",
-                            "key": key,
-                        }),
-                        Requirement::CliLogin {
-                            probe_args,
-                            setup_copy,
-                            availability,
-                        } => serde_json::json!({
-                            "surface": "cli_login",
-                            "probe_args": probe_args,
-                            "setup_copy": setup_copy,
-                            "availability": availability,
-                        }),
-                        Requirement::CliConfigInvalid {
-                            probe_args,
-                            setup_copy,
-                            diagnostic,
-                        } => serde_json::json!({
-                            "surface": "cli_config_invalid",
-                            "probe_args": probe_args,
-                            "setup_copy": setup_copy,
-                            "diagnostic": diagnostic,
-                        }),
-                        Requirement::GitBash => serde_json::json!({
-                            "surface": "git_bash",
-                        }),
-                        Requirement::MissingBinary { command } => serde_json::json!({
-                            "surface": "missing_binary",
-                            "command": command,
-                        }),
-                    })
+                    .map(crate::managed_agents::requirement_setup_json::requirement_to_setup_json)
                     .collect();
                 let payload = serde_json::json!({
                     "agent_name": record.name,

@@ -44,6 +44,7 @@ export function AgentDefinitionCustomAiFields({
   showCustomModelInput,
   showCustomProviderInput,
   showHermesProfileField,
+  respondTo,
   topLevelSecretEnvVar,
   apiKeyInheritedLabel,
   apiKeyIsInherited,
@@ -78,6 +79,7 @@ export function AgentDefinitionCustomAiFields({
   showCustomModelInput: boolean;
   showCustomProviderInput: boolean;
   showHermesProfileField: boolean;
+  respondTo?: string | null;
   topLevelSecretEnvVar: string | null;
   apiKeyInheritedLabel: string | null;
   apiKeyIsInherited: boolean;
@@ -172,6 +174,7 @@ export function AgentDefinitionCustomAiFields({
         hermesProfile={hermesProfile}
         modelOwnedByProfile={modelOwnedByProfile}
         onHermesProfileChange={onHermesProfileChange}
+        respondTo={respondTo}
         showProfileField={showHermesProfileField}
       />
     </>

@@ -31,6 +31,11 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { Switch } from "@/shared/ui/switch";
+import {
+  HermesProfileOffboardFields,
+  type HermesProfileOffboardChoice,
+} from "@/features/agents/ui/HermesProfileOffboardFields";
+import { isNonOwnerOnlyRespondTo } from "@/features/agents/ui/HermesProfileCreateAffordance";
 
 export function UserProfileAgentSettingsMenu({
   archiveActions,
@@ -47,7 +52,7 @@ export function UserProfileAgentSettingsMenu({
   isPending: boolean;
   isBot?: boolean;
   managedAgent?: ManagedAgent;
-  onDelete?: () => void;
+  onDelete?: (options?: { deleteHermesProfile?: boolean }) => void;
   onDuplicatePersona?: () => void;
   onExportPersona?: () => void;
   onToggleAutoStart?: () => void;
@@ -202,9 +207,9 @@ export function UserProfileAgentSettingsMenu({
         <AgentDeleteConfirmDialog
           agent={managedAgent}
           isPending={isPending}
-          onConfirm={() => {
+          onConfirm={(options) => {
             setDeleteConfirmOpen(false);
-            onDelete();
+            onDelete(options);
           }}
           onOpenChange={setDeleteConfirmOpen}
           open={deleteConfirmOpen}
@@ -237,7 +242,7 @@ export function UserProfileAgentSettingsMenuSlot({
   isAgentActionPending: boolean;
   isBot: boolean;
   managedAgent?: ManagedAgent;
-  onDeleteAgent: () => void;
+  onDeleteAgent: (options?: { deleteHermesProfile?: boolean }) => void;
   onDeletePersona: () => void;
   onDuplicatePersona: () => void;
   onExportPersona: () => void;
@@ -300,11 +305,20 @@ function AgentDeleteConfirmDialog({
 }: {
   agent: ManagedAgent;
   isPending: boolean;
-  onConfirm: () => void;
+  onConfirm: (options?: { deleteHermesProfile?: boolean }) => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
 }) {
   const isProviderAgent = agent.backend.type === "provider";
+  const hermesProfile = agent.hermesProfile?.trim() || null;
+  const [profileChoice, setProfileChoice] =
+    React.useState<HermesProfileOffboardChoice>("keep");
+
+  React.useEffect(() => {
+    if (open) {
+      setProfileChoice("keep");
+    }
+  }, [open]);
 
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
@@ -328,6 +342,14 @@ function AgentDeleteConfirmDialog({
               : "Stops any local agent process before deleting the record"}
           </li>
         </ul>
+        {hermesProfile ? (
+          <HermesProfileOffboardFields
+            choice={profileChoice}
+            onChoiceChange={setProfileChoice}
+            profileName={hermesProfile}
+            showPublicAgentWarning={isNonOwnerOnlyRespondTo(agent.respondTo)}
+          />
+        ) : null}
         <p className="text-sm text-muted-foreground">
           You can also archive this agent from the profile settings menu if you
           want to hide the agent instead of removing it.
@@ -342,7 +364,13 @@ function AgentDeleteConfirmDialog({
             className={buttonVariants({ variant: "destructive" })}
             data-testid="agent-delete-confirm-action"
             disabled={isPending}
-            onClick={onConfirm}
+            onClick={() =>
+              onConfirm(
+                hermesProfile
+                  ? { deleteHermesProfile: profileChoice === "delete" }
+                  : undefined,
+              )
+            }
           >
             {isPending ? "Deleting..." : "Delete agent"}
           </AlertDialogAction>

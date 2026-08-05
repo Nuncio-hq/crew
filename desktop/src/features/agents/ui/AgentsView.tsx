@@ -410,13 +410,26 @@ export function AgentsView() {
       ) : null}
       {personas.personaToDelete ? (
         <PersonaDeleteDialog
+          hermesProfiles={
+            (agents.managedAgents ?? [])
+              .filter((a) => a.personaId === personas.personaToDelete?.id)
+              .map((a) => a.hermesProfile)
+              .filter((p): p is string => Boolean(p?.trim())) as string[]
+          }
           instanceCount={
             (agents.managedAgents ?? []).filter(
               (a) => a.personaId === personas.personaToDelete?.id,
             ).length
           }
-          onConfirm={(persona) => {
-            void personas.handleDelete(persona);
+          onConfirm={(persona, options) => {
+            const hermesProfiles = (agents.managedAgents ?? [])
+              .filter((a) => a.personaId === persona.id)
+              .map((a) => a.hermesProfile)
+              .filter((p): p is string => Boolean(p?.trim())) as string[];
+            void personas.handleDelete(persona, {
+              ...options,
+              hermesProfiles,
+            });
           }}
           onOpenChange={(open) => {
             if (!open) {

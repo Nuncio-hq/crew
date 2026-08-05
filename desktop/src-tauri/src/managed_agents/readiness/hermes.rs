@@ -3,11 +3,12 @@
 use super::{EffectiveAgentEnv, Requirement};
 use crate::managed_agents::custom_harnesses::HarnessDefinition;
 use crate::managed_agents::discovery::KnownAcpRuntime;
+use crate::managed_agents::hermes_profile_lifecycle::hermes_profile_directory_exists;
 use crate::managed_agents::normalize_agent_args;
 use crate::managed_agents::types::ManagedAgentRecord;
 
-/// Binary on PATH + bound profile name. Profile-directory existence and auth
-/// probing are deferred (no truthful Hermes probe yet — spike 0010).
+/// Binary on PATH + bound profile name + profile directory on disk.
+/// Auth probing remains deferred (no truthful Hermes probe yet — spike 0010).
 pub(super) fn hermes_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirement> {
     let mut missing = Vec::new();
     if crate::managed_agents::resolve_command(&effective.effective_command).is_none() {
@@ -15,16 +16,23 @@ pub(super) fn hermes_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirem
             command: effective.effective_command.clone(),
         });
     }
-    if effective
+    match effective
         .hermes_profile
         .as_deref()
         .map(str::trim)
         .filter(|n| !n.is_empty())
-        .is_none()
     {
-        missing.push(Requirement::NormalizedField {
-            field: "hermesProfile".to_string(),
-        });
+        None => {
+            missing.push(Requirement::NormalizedField {
+                field: "hermesProfile".to_string(),
+            });
+        }
+        Some(profile) if !hermes_profile_directory_exists(profile) => {
+            missing.push(Requirement::HermesProfileDirectoryMissing {
+                profile: profile.to_string(),
+            });
+        }
+        Some(_) => {}
     }
     missing
 }
@@ -84,6 +92,14 @@ mod tests {
 
     #[test]
     fn hermes_with_profile_binding_does_not_require_hermes_profile_field() {
+        // Isolate HERMES_HOME so the orphan check sees a present directory.
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = temp.path().join("hermes-home");
+        std::fs::create_dir_all(hermes_home.join("profiles/scout")).expect("scout dir");
+        let original = std::env::var("HERMES_HOME").ok();
+        std::env::set_var("HERMES_HOME", &hermes_home);
+
         let env = EffectiveAgentEnv {
             env: BTreeMap::new(),
             config_file_path: None,
@@ -98,5 +114,49 @@ mod tests {
             }),
             "bound profile must clear hermesProfile requirement; got {reqs:?}"
         );
+        assert!(
+            !reqs
+                .iter()
+                .any(|r| matches!(r, Requirement::HermesProfileDirectoryMissing { .. })),
+            "present directory must not mark orphan; got {reqs:?}"
+        );
+
+        match original {
+            Some(h) => std::env::set_var("HERMES_HOME", h),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
+    }
+
+    #[test]
+    fn hermes_bound_but_directory_missing_is_orphan_requirement() {
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = temp.path().join("hermes-home");
+        std::fs::create_dir_all(hermes_home.join("profiles")).expect("profiles");
+        let original = std::env::var("HERMES_HOME").ok();
+        std::env::set_var("HERMES_HOME", &hermes_home);
+
+        let env = EffectiveAgentEnv {
+            env: BTreeMap::new(),
+            config_file_path: None,
+            effective_command: "hermes".to_string(),
+            hermes_profile: Some("ghost".to_string()),
+        };
+        let readiness = agent_readiness(&env);
+        assert!(!readiness.is_ready());
+        assert!(
+            readiness
+                .requirements()
+                .contains(&Requirement::HermesProfileDirectoryMissing {
+                    profile: "ghost".to_string(),
+                }),
+            "expected orphan requirement; got {:?}",
+            readiness.requirements()
+        );
+
+        match original {
+            Some(h) => std::env::set_var("HERMES_HOME", h),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
     }
 }

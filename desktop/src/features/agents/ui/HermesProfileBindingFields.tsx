@@ -15,6 +15,10 @@ import {
   PERSONA_FIELD_SHELL_CLASS,
 } from "./agentConfigOptions";
 import { RequiredFieldLabel } from "./agentConfigControls";
+import {
+  HermesProfileCreateAffordance,
+  isNonOwnerOnlyRespondTo,
+} from "./HermesProfileCreateAffordance";
 
 export function ProfileOwnedModelRow({
   profileName,
@@ -46,6 +50,8 @@ export function HermesProfileField({
   required = true,
   id = "hermes-profile",
   showValidation = true,
+  enableCreateInPlace = true,
+  respondTo,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -54,10 +60,15 @@ export function HermesProfileField({
   id?: string;
   /** When false, skip inline error (e.g. while typing before blur). */
   showValidation?: boolean;
+  /** Phase 03: explicit create button (never silent on save). */
+  enableCreateInPlace?: boolean;
+  /** When set and not owner-only, show credential-fallback warning. */
+  respondTo?: string | null;
 }) {
   const error = showValidation
     ? hermesProfileBindingError(value, required)
     : null;
+  const showPublicWarning = isNonOwnerOnlyRespondTo(respondTo);
 
   return (
     <div className="space-y-1.5" data-testid="hermes-profile-field">
@@ -84,14 +95,27 @@ export function HermesProfileField({
       <p className="text-xs text-muted-foreground">
         Bind this agent to a named Hermes profile (
         <code className="font-mono text-2xs">hermes -p &lt;name&gt;</code>
-        ). Create one with{" "}
-        <code className="font-mono text-2xs">
-          hermes profile create &lt;name&gt;
-        </code>
-        . The manager&apos;s personal{" "}
+        ). The manager&apos;s personal{" "}
         <code className="font-mono text-2xs">default</code> profile cannot be
         bound — see docs/crew/HERMES.md.
       </p>
+      {enableCreateInPlace ? (
+        <HermesProfileCreateAffordance
+          disabled={disabled}
+          onCreated={onChange}
+          profileName={value}
+          showPublicAgentWarning={showPublicWarning}
+        />
+      ) : null}
+      {!enableCreateInPlace && showPublicWarning ? (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="hermes-public-agent-credential-warning"
+        >
+          Hermes profiles currently read the manager&apos;s pooled provider
+          credentials (see docs/crew/HERMES.md).
+        </p>
+      ) : null}
       {error ? (
         <p
           className="text-sm text-destructive"
