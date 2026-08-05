@@ -476,12 +476,18 @@ function MessageComposerImpl({
         queuedAttachments: media.queuedAttachmentsRef.current,
         spoileredAttachmentUrls,
         extractMentionPubkeys: mentions.extractMentionPubkeys,
-        save: async (content, mediaTags, mentionPubkeys, eventId) =>
+        save: async (
+          content,
+          mediaTags,
+          mentionPubkeys,
+          removedMentionPubkeys,
+          eventId,
+        ) =>
           onEditSaveRef.current?.(
             content,
             mediaTags,
             mentionPubkeys,
-            undefined,
+            removedMentionPubkeys,
             eventId,
           ),
         clearComposer: () => {

@@ -21,13 +21,25 @@ const AGENT_C =
 
 const NOW = Date.parse("2026-07-31T00:05:00.000Z");
 
-test("buildThreadAgentStatusChipView returns null with no agents", () => {
-  assert.equal(buildThreadAgentStatusChipView([], undefined, NOW), null);
+const PROFILE_A = {
+  [AGENT_A]: {
+    displayName: "Claude Opus",
+    name: "claude",
+    avatarUrl: null,
+    nip05Handle: null,
+    isAgent: true,
+    ownerPubkey: null,
+  },
+};
+
+test("buildThreadAgentStatusChipView returns null with no agents or outcome", () => {
+  assert.equal(buildThreadAgentStatusChipView([], null, undefined, NOW), null);
 });
 
 test("buildThreadAgentStatusChipView labels a single agent by display name", () => {
   const view = buildThreadAgentStatusChipView(
     [{ agentPubkey: AGENT_A, anchorAt: NOW - 45_000 }],
+    null,
     {
       [AGENT_A]: {
         displayName: "Claude",
@@ -41,6 +53,7 @@ test("buildThreadAgentStatusChipView labels a single agent by display name", () 
     NOW,
   );
   assert.ok(view);
+  assert.equal(view.state, "running");
   assert.equal(view.label, "Claude");
   assert.equal(view.elapsedLabel, "45s");
   assert.equal(view.displayAgents.length, 1);
@@ -54,6 +67,7 @@ test("buildThreadAgentStatusChipView aggregates multiple agents", () => {
       { agentPubkey: AGENT_B, anchorAt: NOW - 30_000 },
       { agentPubkey: AGENT_C, anchorAt: NOW - 10_000 },
     ],
+    null,
     {
       [AGENT_A]: {
         displayName: "Claude",
@@ -83,11 +97,67 @@ test("buildThreadAgentStatusChipView aggregates multiple agents", () => {
     NOW,
   );
   assert.ok(view);
+  assert.equal(view.state, "running");
   assert.equal(view.label, "3 agents");
   assert.equal(view.elapsedLabel, "1m 30s");
   assert.equal(view.displayAgents.length, 2);
   assert.equal(view.displayAgents[0].displayName, "Claude");
   assert.equal(view.displayAgents[1].displayName, "Codex");
+});
+
+test("buildThreadAgentStatusChipView prefers running over failed/done", () => {
+  const view = buildThreadAgentStatusChipView(
+    [{ agentPubkey: AGENT_A, anchorAt: NOW - 10_000 }],
+    {
+      outcome: "error",
+      agentPubkey: AGENT_B,
+      endedAt: NOW - 60_000,
+      channelId: "chan-1",
+    },
+    PROFILE_A,
+    NOW,
+  );
+  assert.ok(view);
+  assert.equal(view.state, "running");
+});
+
+test("buildThreadAgentStatusChipView builds done view model", () => {
+  const view = buildThreadAgentStatusChipView(
+    [],
+    {
+      outcome: "completed",
+      agentPubkey: AGENT_A,
+      endedAt: NOW - 12 * 60_000,
+      channelId: "chan-1",
+    },
+    PROFILE_A,
+    NOW,
+  );
+  assert.ok(view);
+  assert.equal(view.state, "done");
+  assert.equal(view.label, "Done");
+  assert.equal(view.elapsedLabel, "12m ago");
+  assert.equal(view.title, "Claude Opus finished 12m ago");
+  assert.equal(view.displayAgents.length, 1);
+});
+
+test("buildThreadAgentStatusChipView builds failed view model", () => {
+  const view = buildThreadAgentStatusChipView(
+    [],
+    {
+      outcome: "error",
+      agentPubkey: AGENT_A,
+      endedAt: NOW - 45_000,
+      channelId: "chan-1",
+    },
+    PROFILE_A,
+    NOW,
+  );
+  assert.ok(view);
+  assert.equal(view.state, "failed");
+  assert.equal(view.label, "Failed");
+  assert.equal(view.elapsedLabel, "45s ago");
+  assert.equal(view.title, "Claude Opus failed 45s ago");
 });
 
 test("ThreadAgentStatusChip renders nothing when conversation has no agents", () => {
@@ -132,6 +202,7 @@ test("ThreadAgentStatusChip renders chip for a single active agent", () => {
     }),
   );
   assert.match(html, /data-testid="thread-agent-status-chip"/);
+  assert.match(html, /data-state="running"/);
   assert.match(html, /Claude/);
 });
 
@@ -170,5 +241,130 @@ test("ThreadAgentStatusChip renders N agents label for multiple", () => {
     }),
   );
   assert.match(html, /data-testid="thread-agent-status-chip"/);
+  assert.match(html, /data-state="running"/);
   assert.match(html, /2 agents/);
+});
+
+test("ThreadAgentStatusChip renders done after turn_completed", () => {
+  resetActiveAgentTurnsStore();
+  syncAgentTurnsFromEvents(AGENT_A, [
+    {
+      seq: 1,
+      timestamp: "2026-07-31T00:00:00.000Z",
+      kind: "turn_started",
+      agentIndex: 0,
+      channelId: "channel-a",
+      conversationId: "thread-a",
+      sessionId: null,
+      turnId: "turn-a",
+      payload: {},
+    },
+    {
+      seq: 2,
+      timestamp: "2026-07-31T00:01:00.000Z",
+      kind: "turn_completed",
+      agentIndex: 0,
+      channelId: "channel-a",
+      conversationId: "thread-a",
+      sessionId: null,
+      turnId: "turn-a",
+      payload: {},
+    },
+  ]);
+
+  const html = renderToStaticMarkup(
+    React.createElement(ThreadAgentStatusChip, {
+      conversationId: "thread-a",
+      profiles: PROFILE_A,
+    }),
+  );
+  assert.match(html, /data-testid="thread-agent-status-chip"/);
+  assert.match(html, /data-state="done"/);
+  assert.match(html, /Done/);
+});
+
+test("ThreadAgentStatusChip renders failed after turn_error", () => {
+  resetActiveAgentTurnsStore();
+  syncAgentTurnsFromEvents(AGENT_A, [
+    {
+      seq: 1,
+      timestamp: "2026-07-31T00:00:00.000Z",
+      kind: "turn_started",
+      agentIndex: 0,
+      channelId: "channel-a",
+      conversationId: "thread-a",
+      sessionId: null,
+      turnId: "turn-a",
+      payload: {},
+    },
+    {
+      seq: 2,
+      timestamp: "2026-07-31T00:01:00.000Z",
+      kind: "turn_error",
+      agentIndex: 0,
+      channelId: "channel-a",
+      conversationId: "thread-a",
+      sessionId: null,
+      turnId: "turn-a",
+      payload: {},
+    },
+  ]);
+
+  const html = renderToStaticMarkup(
+    React.createElement(ThreadAgentStatusChip, {
+      conversationId: "thread-a",
+      profiles: PROFILE_A,
+    }),
+  );
+  assert.match(html, /data-state="failed"/);
+  assert.match(html, /Failed/);
+});
+
+test("ThreadAgentStatusChip stays running when a sibling agent is still active", () => {
+  resetActiveAgentTurnsStore();
+  syncAgentTurnsFromEvents(AGENT_A, [
+    {
+      seq: 1,
+      timestamp: "2026-07-31T00:00:00.000Z",
+      kind: "turn_started",
+      agentIndex: 0,
+      channelId: "channel-a",
+      conversationId: "thread-a",
+      sessionId: null,
+      turnId: "turn-a",
+      payload: {},
+    },
+    {
+      seq: 2,
+      timestamp: "2026-07-31T00:01:00.000Z",
+      kind: "turn_completed",
+      agentIndex: 0,
+      channelId: "channel-a",
+      conversationId: "thread-a",
+      sessionId: null,
+      turnId: "turn-a",
+      payload: {},
+    },
+  ]);
+  syncAgentTurnsFromEvents(AGENT_B, [
+    {
+      seq: 1,
+      timestamp: "2026-07-31T00:00:30.000Z",
+      kind: "turn_started",
+      agentIndex: 0,
+      channelId: "channel-a",
+      conversationId: "thread-a",
+      sessionId: null,
+      turnId: "turn-b",
+      payload: {},
+    },
+  ]);
+
+  const html = renderToStaticMarkup(
+    React.createElement(ThreadAgentStatusChip, {
+      conversationId: "thread-a",
+    }),
+  );
+  assert.match(html, /data-state="running"/);
+  assert.doesNotMatch(html, /data-state="done"/);
 });
