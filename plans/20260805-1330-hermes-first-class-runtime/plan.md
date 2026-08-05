@@ -1,9 +1,9 @@
 # Hermes first-class runtime (profile-per-agent)
 
-- **Status:** In progress — Slices 0–1 delivered; Slice 3 next
+- **Status:** In progress — Slices 0–1 + Phase 01 (tier-1) delivered; Phase 02 next
 - **Date:** 2026-08-05
 - **Feature:** [`docs/crew/features/0001-hermes-first-class-runtime.md`](../../docs/crew/features/0001-hermes-first-class-runtime.md)
-- **Decision:** D-019
+- **Decision:** D-019 / D-020
 - **Branch:** `feat/hermes-first-class-runtime`
 
 ## Goal
@@ -20,15 +20,15 @@ identity, placement, and scheduling.
    ([verification 0006](../../docs/crew/verification/0006-hermes-slice1-live-roundtrip.md)):
    C-02 relay round-trip and strict C-07 model-change-without-respawn.
    Docs-only; runbook [`docs/crew/HERMES.md`](../../docs/crew/HERMES.md).
-3. [ ] [Phase 01 — upstream tier-1 PR to block/buzz (Slice 3)](phase-01-upstream-tier1-pr.md)
+3. [x] [Phase 01 — Hermes tier-1 runtime entry in Crew](phase-01-upstream-tier1-pr.md)
+   — landed via [PR #54](https://github.com/Nuncio-hq/crew/pull/54)
+   (D-020: Crew, not block/buzz).
 4. [ ] [Phase 02 — Crew UI: binding, readiness, no-model guard (Slice 2)](phase-02-crew-binding-ui.md)
 5. [ ] [Phase 03 — profile lifecycle completion (Slice 4)](phase-03-profile-lifecycle.md)
 
-Phase 01 is deliberately ordered before Phase 02: the tier-1 entry
-removes manual steps (bare-`hermes` probe, automatic `buzz-dev-mcp`,
-declarative env guard) that Phase 02 would otherwise have to shim, and
-its review timeline is outside our control — start it first, build the
-UI while it is in flight.
+Phase 01 preceded Phase 02 so the tier-1 entry could remove manual
+steps (bare-`hermes` probe, automatic `buzz-dev-mcp`, declarative env
+guard) before the binding UI.
 
 ## Locked boundaries (D-019)
 
