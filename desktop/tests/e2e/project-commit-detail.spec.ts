@@ -6,6 +6,14 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 const SHOTS = "test-results/project-commit-detail";
 const ALIGNMENT_TOLERANCE_PX = 2;
 
+// NuncioCrew routes Projects → Create → Project through CrewAddProjectFlow
+// (local folder picker via ProjectsView.onCreateRepository). That short-circuits
+// upstream CreateProjectDialog, so create-project-name never mounts. Keep these
+// upstream multi-repo create cases skipped until Crew exposes that dialog again
+// (or dual-paths create). See crew-projects-screen.tsx + ProjectsView.tsx.
+const CREW_SKIPS_UPSTREAM_CREATE_PROJECT_DIALOG =
+  "NuncioCrew create menu opens CrewAddProjectFlow (local folder), not CreateProjectDialog";
+
 // The projects surface is a preview feature — opt in before the app mounts.
 // Must run before installMockBridge so React reads the override on mount.
 async function enableProjectsFeature(page: import("@playwright/test").Page) {
@@ -208,6 +216,7 @@ test("top-level project lists align dates and overflow actions", async ({
 test("creating a project publishes its initial repository grouping", async ({
   page,
 }) => {
+  test.skip(true, CREW_SKIPS_UPSTREAM_CREATE_PROJECT_DIALOG);
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -275,6 +284,7 @@ test("creating a project publishes its initial repository grouping", async ({
 test("unsupported relays keep the initial repository accessible", async ({
   page,
 }) => {
+  test.skip(true, CREW_SKIPS_UPSTREAM_CREATE_PROJECT_DIALOG);
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
     window.__BUZZ_E2E_UNSUPPORTED_PROJECT_ANNOUNCEMENTS__ = true;
@@ -323,6 +333,7 @@ test("unsupported relays keep the initial repository accessible", async ({
 test("project creation can retry after its repository publication fails", async ({
   page,
 }) => {
+  test.skip(true, CREW_SKIPS_UPSTREAM_CREATE_PROJECT_DIALOG);
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
     window.__BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__ = [30621];
@@ -352,6 +363,7 @@ test("project creation can retry after its repository publication fails", async 
 test("project creation is idempotent after a lost publish acknowledgement", async ({
   page,
 }) => {
+  test.skip(true, CREW_SKIPS_UPSTREAM_CREATE_PROJECT_DIALOG);
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
     window.__BUZZ_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__ = [30621];
