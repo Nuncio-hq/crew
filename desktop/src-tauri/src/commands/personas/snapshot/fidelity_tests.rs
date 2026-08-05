@@ -24,6 +24,7 @@ fn make_definition(slug: &str) -> ManagedAgentRecord {
         agent_command: String::new(),
         agent_command_override: None,
         agent_args: vec![],
+        hermes_profile: None,
         mcp_command: String::new(),
         turn_timeout_seconds: 0,
         idle_timeout_seconds: None,

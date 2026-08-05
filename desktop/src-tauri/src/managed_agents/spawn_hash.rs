@@ -101,7 +101,13 @@ pub(crate) fn spawn_config_hash(
 
     // Effective env layering (baked floor → runtime metadata → definition env
     // → global → persona → agent). BTreeMap iteration is ordered, deterministic.
-    descriptor.env.hash(&mut hasher);
+    // For Hermes, hash the post-guard view (BUZZ_ACP_MODEL stripped) so the
+    // restart badge cannot disagree with spawn (spike 0013).
+    crate::managed_agents::hermes_profile::env_without_suppressed_model_for_runtime(
+        &descriptor.command,
+        &descriptor.env,
+    )
+    .hash(&mut hasher);
 
     // Record fields the spawn env writes read directly. The relay is hashed
     // resolved: every record spawns on the workspace relay (legacy pins
@@ -123,7 +129,15 @@ pub(crate) fn spawn_config_hash(
             EffectiveConfigResult::OrphanedInstance { .. } => (None, None, None),
         };
     resolved_prompt.hash(&mut hasher);
-    resolved_model.hash(&mut hasher);
+    // Hermes profile owns the model — spawn strips BUZZ_ACP_MODEL, so the hash
+    // must ignore resolved_model or a global-default edit would false-badge.
+    let hash_model =
+        if crate::managed_agents::hermes_profile::is_hermes_runtime(&descriptor.command) {
+            None
+        } else {
+            resolved_model
+        };
+    hash_model.hash(&mut hasher);
     resolved_provider.hash(&mut hasher);
     // Session title: the same resolve `spawn_agent_child` performs for its env
     // write, so a rename raises the restart badge. Skipped when a user env

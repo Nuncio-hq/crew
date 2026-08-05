@@ -584,6 +584,20 @@ pub async fn create_managed_agent(
     }
     crate::managed_agents::validate_user_env_keys(&input.env_vars)?;
 
+    // Hermes profile binding (D-019): validate name + reject duplicates on this relay.
+    let hermes_profile = match input
+        .hermes_profile
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(name) => {
+            crate::managed_agents::hermes_profile::validate_hermes_profile_name(name)?;
+            Some(name.to_string())
+        }
+        None => None,
+    };
+
     // Validate & normalize the respond-to allowlist BEFORE any side effects.
     // The harness has its own validator (buzz-acp/src/config.rs) but we want
     // to catch malformed input at the boundary so the agent never tries to
@@ -701,6 +715,21 @@ pub async fn create_managed_agent(
         // (extremely unlikely but safe to check).
         if records.iter().any(|record| record.pubkey == pubkey) {
             return Err(format!("agent {pubkey} already exists"));
+        }
+        if let Some(profile) = hermes_profile.as_deref() {
+            if let Some(other) =
+                crate::managed_agents::hermes_profile::find_duplicate_hermes_profile_binding(
+                    &records,
+                    profile,
+                    &resolved_relay_url,
+                    None,
+                )
+            {
+                return Err(format!(
+                    "hermes profile '{profile}' is already bound to agent '{}' ({})",
+                    other.name, other.pubkey
+                ));
+            }
         }
         // Provider config was already validated in Pre-Phase 2; cache the discovered binary path for deploy_to_provider.
         let provider_binary_path = if let BackendKind::Provider { ref id, .. } = input.backend {
@@ -848,6 +877,7 @@ pub async fn create_managed_agent(
             agent_command,
             agent_command_override,
             agent_args,
+            hermes_profile: hermes_profile.clone(),
             mcp_command,
             // BUZZ_ACP_TURN_TIMEOUT is deprecated and ignored by the harness;
             // store the schema default only. Use idle_timeout_seconds or

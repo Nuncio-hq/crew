@@ -830,6 +830,49 @@ pub async fn update_managed_agent(
             state.clear_agent_session_caches(pubkey);
         }
 
+        // Validate hermes_profile before taking a mutable record borrow so the
+        // duplicate-binding scan can read the full store (C-10).
+        let hermes_profile_update = match &input.hermes_profile {
+            None => None,
+            Some(None) => Some(None),
+            Some(Some(name)) => {
+                let trimmed = name.trim();
+                if trimmed.is_empty() {
+                    Some(None)
+                } else {
+                    crate::managed_agents::hermes_profile::validate_hermes_profile_name(trimmed)?;
+                    let relay_for_dup = records
+                        .iter()
+                        .find(|r| r.pubkey == input.pubkey)
+                        .map(|r| {
+                            input
+                                .relay_url
+                                .as_deref()
+                                .map(str::trim)
+                                .unwrap_or(r.relay_url.as_str())
+                                .to_string()
+                        })
+                        .unwrap_or_else(|| {
+                            input.relay_url.as_deref().unwrap_or("").trim().to_string()
+                        });
+                    if let Some(other) =
+                        crate::managed_agents::hermes_profile::find_duplicate_hermes_profile_binding(
+                            &records,
+                            trimmed,
+                            &relay_for_dup,
+                            Some(&input.pubkey),
+                        )
+                    {
+                        return Err(format!(
+                            "hermes profile '{trimmed}' is already bound to agent '{}' ({})",
+                            other.name, other.pubkey
+                        ));
+                    }
+                    Some(Some(trimmed.to_string()))
+                }
+            }
+        };
+
         let record = find_managed_agent_mut(&mut records, &input.pubkey)?;
         let previous_record = record.clone();
 
@@ -882,6 +925,9 @@ pub async fn update_managed_agent(
         }
         if let Some(agent_args) = input.agent_args {
             record.agent_args = agent_args;
+        }
+        if let Some(profile_update) = hermes_profile_update {
+            record.hermes_profile = profile_update;
         }
         // mcp_command is intentionally not applied here — the effective MCP
         // command is always catalog-derived (known_acp_runtime at spawn time)

@@ -204,6 +204,8 @@ export type RawAcpRuntimeCatalogEntry = {
    * Omitted/absent for builtin and preset — skipped in Rust serialization when empty.
    */
   definition_env?: Record<string, string>;
+  /** CLI profile-selection flag from Rust `profile_arg` (Hermes: `"-p"`). */
+  profile_arg?: string | null;
 };
 
 export type {
@@ -761,6 +763,7 @@ export function fromRawAcpRuntimeCatalogEntry(
     // Map definition_env (snake_case from Rust) to definitionEnv (camelCase).
     // Absent when empty (Rust serialization skips empty BTreeMap) — default to {}.
     definitionEnv: entry.definition_env ?? {},
+    profileArg: entry.profile_arg ?? null,
   };
 }
 

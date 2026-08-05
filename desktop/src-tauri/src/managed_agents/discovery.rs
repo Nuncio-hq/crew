@@ -1297,6 +1297,7 @@ fn discover_acp_runtime_phase1(runtime: &'static KnownAcpRuntime) -> PartialEntr
             source: HarnessSource::Builtin,
             // Builtin entries have no user-editable env; definition_env is empty.
             definition_env: Default::default(),
+            profile_arg: runtime.profile_arg.map(str::to_string),
         },
     }
 }
@@ -1457,6 +1458,7 @@ pub fn discover_acp_runtimes_from(
                 // Carry definition env into the catalog so the edit form can
                 // read it back — prevents silently erasing env on save.
                 definition_env: def.env.clone(),
+                profile_arg: None,
             });
         }
     }

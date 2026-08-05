@@ -626,6 +626,7 @@ pub fn spawn_agent_child(
             env: descriptor.env.clone(),
             config_file_path: runtime_meta.and_then(|r| r.config_file_path),
             effective_command: descriptor.command.clone(),
+            hermes_profile: record.hermes_profile.clone(),
         };
         // Compute the optional payload before touching the command.
         let setup_payload_json =
@@ -860,6 +861,14 @@ pub fn spawn_agent_child(
         command.env(key, value);
     }
     configure_runtime_cli(&mut command, runtime_meta);
+
+    // Hermes model-env guard (spike 0013 / C-05 / C-06): last-write strip of
+    // BUZZ_ACP_MODEL after every path that could set it (field resolution +
+    // user env maps). Must stay after the descriptor.env loop above.
+    crate::managed_agents::hermes_profile::strip_model_env_for_profile_locked_runtime(
+        &mut command,
+        effective_command,
+    );
 
     // Buzz shared compute is stored as a native provider; derive the OpenAI-compatible
     // transport at spawn time and scrub any unrelated ambient OpenAI key.

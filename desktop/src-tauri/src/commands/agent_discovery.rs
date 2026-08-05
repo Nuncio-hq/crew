@@ -137,6 +137,7 @@ pub async fn save_custom_harness(
         source: HarnessSource::Custom,
         // Carry definition env back so the edit form can read and preserve it.
         definition_env: definition.env,
+        profile_arg: None,
     })
 }
 

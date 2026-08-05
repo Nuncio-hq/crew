@@ -15,6 +15,7 @@ fn record() -> ManagedAgentRecord {
         agent_command: "goose".into(),
         agent_command_override: None,
         agent_args: vec![],
+        hermes_profile: None,
         mcp_command: String::new(),
         turn_timeout_seconds: 320,
         idle_timeout_seconds: None,
@@ -763,5 +764,93 @@ fn spawn_hash_instance_args_win_over_definition_args() {
     assert_ne!(
         h_instance, h_no_instance,
         "instance args and definition args must produce different hashes"
+    );
+}
+
+// ── Hermes profile-binding / model-guard hash invariants (C-05 / spike 0013) ─
+
+#[test]
+fn hermes_spawn_hash_ignores_resolved_model_changes() {
+    let mut rec = record();
+    rec.agent_command = "hermes".into();
+    rec.runtime = Some("hermes".into());
+    rec.hermes_profile = Some("scout".into());
+    rec.model = Some("model-a".into());
+
+    let global_a = crate::managed_agents::GlobalAgentConfig {
+        model: Some("model-a".into()),
+        ..Default::default()
+    };
+    let global_b = crate::managed_agents::GlobalAgentConfig {
+        model: Some("model-b".into()),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        spawn_config_hash(&rec, &[], &[], "wss://ws.example", &global_a),
+        spawn_config_hash(&rec, &[], &[], "wss://ws.example", &global_b),
+        "Hermes post-guard spawn ignores BUZZ_ACP_MODEL — hash must not false-badge on model edits"
+    );
+}
+
+#[test]
+fn hermes_spawn_hash_ignores_buzz_acp_model_in_user_env() {
+    let mut without = record();
+    without.agent_command = "hermes".into();
+    without.runtime = Some("hermes".into());
+    without.hermes_profile = Some("scout".into());
+
+    let mut with_model_env = without.clone();
+    with_model_env
+        .env_vars
+        .insert("BUZZ_ACP_MODEL".into(), "leaky-model".into());
+
+    assert_eq!(
+        spawn_config_hash(&without, &[], &[], "wss://ws.example", &Default::default()),
+        spawn_config_hash(
+            &with_model_env,
+            &[],
+            &[],
+            "wss://ws.example",
+            &Default::default()
+        ),
+        "Hermes strips BUZZ_ACP_MODEL from user env — hash must match post-guard reality"
+    );
+}
+
+#[test]
+fn hermes_spawn_hash_changes_when_profile_binding_changes() {
+    let mut a = record();
+    a.agent_command = "hermes".into();
+    a.runtime = Some("hermes".into());
+    a.hermes_profile = Some("scout".into());
+
+    let mut b = a.clone();
+    b.hermes_profile = Some("builder".into());
+
+    assert_ne!(
+        spawn_config_hash(&a, &[], &[], "wss://ws.example", &Default::default()),
+        spawn_config_hash(&b, &[], &[], "wss://ws.example", &Default::default()),
+        "profile binding is injected into spawn args and must affect the hash"
+    );
+}
+
+#[test]
+fn goose_spawn_hash_still_tracks_model_changes() {
+    let mut rec = record();
+    rec.agent_command = "goose".into();
+    rec.runtime = Some("goose".into());
+    rec.model = Some("model-a".into());
+    rec.provider = Some("openai".into());
+
+    // Definition-less goose: record.model is authoritative unless global overrides
+    // via resolve — use record field edits for a clearer signal.
+    let mut edited = rec.clone();
+    edited.model = Some("model-b".into());
+
+    assert_ne!(
+        spawn_config_hash(&rec, &[], &[], "wss://ws.example", &Default::default()),
+        spawn_config_hash(&edited, &[], &[], "wss://ws.example", &Default::default()),
+        "non-Hermes runtimes must still badge on model edits (C-15)"
     );
 }

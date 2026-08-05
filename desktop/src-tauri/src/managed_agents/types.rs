@@ -110,6 +110,7 @@ impl AgentDefinition {
             agent_command: String::new(),
             agent_command_override: None,
             agent_args: Vec::new(),
+            hermes_profile: None,
             mcp_command: String::new(),
             turn_timeout_seconds: DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
             idle_timeout_seconds: None,
@@ -255,6 +256,11 @@ pub struct ManagedAgentRecord {
     #[serde(default)]
     pub agent_command_override: Option<String>,
     pub agent_args: Vec<String>,
+    /// Hermes profile name bound 1:1 to this agent (D-019). `None` for
+    /// non-Hermes runtimes and for legacy records. When `Some`, must pass
+    /// [`crate::managed_agents::hermes_profile::validate_hermes_profile_name`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hermes_profile: Option<String>,
     /// Create-time snapshot of the catalog MCP command. Never read at spawn —
     /// the effective MCP command is always re-derived from the runtime catalog
     /// (`known_acp_runtime`) — and no longer written by updates. Kept for
@@ -673,6 +679,10 @@ pub struct AcpRuntimeCatalogEntry {
     /// Skipped in serialization when empty to keep the catalog payload compact.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub definition_env: BTreeMap<String, String>,
+    /// CLI flag for selecting a named profile, when the runtime supports it
+    /// (Hermes: `"-p"`). Projected from `KnownAcpRuntime::profile_arg`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_arg: Option<String>,
 }
 
 /// Result of a single install step (CLI or adapter).

@@ -40,6 +40,7 @@ pub(super) const KNOWN_ACP_RUNTIMES: &[KnownAcpRuntime] = &[
         required_normalized_fields: &["model", "provider"],
         login_hint: None,
         auth_probe_args: None,
+        profile_arg: None,
     },
     KnownAcpRuntime {
         id: "claude",
@@ -72,6 +73,7 @@ pub(super) const KNOWN_ACP_RUNTIMES: &[KnownAcpRuntime] = &[
         required_normalized_fields: &[],
         login_hint: Some("Run the Claude CLI to complete authentication."),
         auth_probe_args: Some(&["claude", "auth", "status"]),
+        profile_arg: None,
     },
     KnownAcpRuntime {
         id: "codex",
@@ -105,6 +107,7 @@ pub(super) const KNOWN_ACP_RUNTIMES: &[KnownAcpRuntime] = &[
         login_hint: Some("Run `codex login` to authenticate."),
         // Verified: `codex login status` exits 0 when logged in, non-zero otherwise.
         auth_probe_args: Some(&["codex", "login", "status"]),
+        profile_arg: None,
     },
     KnownAcpRuntime {
         id: "buzz-agent",
@@ -137,6 +140,7 @@ pub(super) const KNOWN_ACP_RUNTIMES: &[KnownAcpRuntime] = &[
         required_normalized_fields: &["model", "provider"],
         login_hint: None,
         auth_probe_args: None,
+        profile_arg: None,
     },
     KnownAcpRuntime {
         id: "hermes",
@@ -177,5 +181,7 @@ pub(super) const KNOWN_ACP_RUNTIMES: &[KnownAcpRuntime] = &[
         ),
         // No exit-code-truthful probe in Hermes v0.20.0 (spike 0010).
         auth_probe_args: None,
+        // Named profiles selected via `hermes -p <name>` (D-019 / verification 0006).
+        profile_arg: Some("-p"),
     },
 ];

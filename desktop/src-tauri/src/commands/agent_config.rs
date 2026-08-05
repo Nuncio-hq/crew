@@ -637,6 +637,7 @@ mod tests {
             required_normalized_fields: &["model", "provider"],
             login_hint: None,
             auth_probe_args: None,
+            profile_arg: None,
         }
     }
 
@@ -652,6 +653,7 @@ mod tests {
             acp_command: "buzz-acp".to_string(),
             agent_command: "goose".to_string(),
             agent_args: vec![],
+            hermes_profile: None,
             mcp_command: "".to_string(),
             turn_timeout_seconds: 300,
             idle_timeout_seconds: None,
