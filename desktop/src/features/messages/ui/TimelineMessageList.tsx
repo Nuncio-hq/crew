@@ -813,10 +813,12 @@ function MessageRowItem({
           videoReviewContext={videoReviewContext}
         />
         <MessageThreadSummaryRow
+          channelId={channelId}
           depth={message.depth}
           isActive={isThreadAnchor}
           message={message}
           onOpenThread={onReply}
+          profiles={profiles}
           showDepthGuides={false}
           summary={summary}
           summaryIndentOffsetRem={-THREAD_REPLY_ROW_MARGIN_INLINE_REM}
