@@ -583,9 +583,6 @@ pub async fn create_managed_agent(
         }
     }
     crate::managed_agents::validate_user_env_keys(&input.env_vars)?;
-    let hermes_profile = crate::managed_agents::hermes_profile::parse_optional_hermes_profile(
-        input.hermes_profile.as_deref(),
-    )?;
 
     // Validate respond-to allowlist before side effects; mode pairing at mint.
     let respond_to_allowlist =
@@ -699,11 +696,10 @@ pub async fn create_managed_agent(
         if records.iter().any(|record| record.pubkey == pubkey) {
             return Err(format!("agent {pubkey} already exists"));
         }
-        crate::managed_agents::hermes_profile::reject_duplicate_hermes_profile_if_set(
+        let hermes_profile = crate::managed_agents::hermes_profile::bind_hermes_profile_on_create(
+            input.hermes_profile.as_deref(),
             &records,
-            hermes_profile.as_deref(),
             &resolved_relay_url,
-            None,
         )?;
         // Provider config was already validated in Pre-Phase 2; cache the discovered binary path for deploy_to_provider.
         let provider_binary_path = if let BackendKind::Provider { ref id, .. } = input.backend {

@@ -137,6 +137,17 @@ pub fn parse_optional_hermes_profile(raw: Option<&str>) -> Result<Option<String>
     }
 }
 
+/// Parse + duplicate-check for create-time binding (call under the records lock).
+pub fn bind_hermes_profile_on_create(
+    raw: Option<&str>,
+    records: &[ManagedAgentRecord],
+    relay_url: &str,
+) -> Result<Option<String>, String> {
+    let profile = parse_optional_hermes_profile(raw)?;
+    reject_duplicate_hermes_profile_if_set(records, profile.as_deref(), relay_url, None)?;
+    Ok(profile)
+}
+
 /// Reject when `profile` is already bound on `relay_url` (C-10).
 pub fn reject_duplicate_hermes_profile(
     records: &[ManagedAgentRecord],

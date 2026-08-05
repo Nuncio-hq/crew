@@ -789,8 +789,7 @@ pub async fn update_managed_agent(
         if let Some(acp_command) = input.acp_command {
             record.acp_command = acp_command;
         }
-        // Harness edit: persona runtime is authoritative; override persists only
-        // when the user picks a divergent command. Empty/"Inherit" clears the pin.
+        // Harness edit: persona runtime is authoritative; override only when divergent.
         // See apply_agent_command_update / update_time_agent_command_override.
         if let Some(agent_command) = input.agent_command {
             let personas = load_personas(&app).unwrap_or_default();

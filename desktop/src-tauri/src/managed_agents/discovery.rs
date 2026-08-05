@@ -1271,7 +1271,6 @@ fn discover_acp_runtime_phase1(runtime: &'static KnownAcpRuntime) -> PartialEntr
             auth_status: AuthStatus::Unknown,
             login_hint: None,
             source: HarnessSource::Builtin,
-            // Builtin entries have no user-editable env; definition_env is empty.
             definition_env: Default::default(),
             profile_arg: runtime.profile_arg.map(str::to_string),
         },
@@ -1434,8 +1433,7 @@ pub fn discover_acp_runtimes_from(
                 auth_status: AuthStatus::NotApplicable,
                 login_hint: None,
                 source: HarnessSource::Custom,
-                // Carry definition env into the catalog so the edit form can
-                // read it back — prevents silently erasing env on save.
+                // Carry definition env so the edit form can preserve it on save.
                 definition_env: def.env.clone(),
                 profile_arg: None,
             });

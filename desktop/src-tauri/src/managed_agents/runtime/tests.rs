@@ -120,8 +120,7 @@ fn unknown_command_returns_none() {
 use super::build_respond_to_env;
 use crate::managed_agents::types::{ManagedAgentRecord, RespondTo};
 
-/// Construct a minimal record fixture for env-building tests. Only the
-/// fields read by `build_respond_to_env` matter here.
+/// Minimal record fixture for `build_respond_to_env` tests.
 fn fixture(
     respond_to: RespondTo,
     allowlist: Vec<String>,

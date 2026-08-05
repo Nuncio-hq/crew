@@ -80,17 +80,10 @@ pub(crate) struct EffectiveAgentEnv {
 }
 
 // ── Typed effective-harness descriptor ───────────────────────────────────────
-//
-// A single owned type that fully describes what a spawn would run.  Produced
-// by `resolve_effective_harness_descriptor` and consumed by spawn_agent_child,
-// spawn_snapshot, build_managed_agent_summary, get_agent_models, and
-// agent_readiness — so the harness-definition lookup and arg/env resolution
-// happen exactly once, in one place.
+// Produced by resolve_effective_harness_descriptor; consumed by spawn,
+// spawn_snapshot, summaries, get_agent_models, and readiness.
 
-/// The complete effective description of a harness spawn: resolved command,
-/// args, and layered env.  This is the single source of truth for what will
-/// actually run — computed once and shared across every consumer that needs
-/// the effective values.
+/// Complete effective harness spawn description: command, args, and layered env.
 #[derive(Debug, Clone)]
 pub(crate) struct EffectiveHarnessDescriptor {
     /// The raw effective command string (e.g. `"buzz-agent"`, `"my-acp-agent"`).

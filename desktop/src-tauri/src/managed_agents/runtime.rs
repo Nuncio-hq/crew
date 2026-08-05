@@ -610,8 +610,7 @@ pub fn spawn_agent_child(
         use crate::managed_agents::readiness::EffectiveAgentEnv;
         use crate::managed_agents::{agent_readiness, AgentReadiness, Requirement};
 
-        // Construct EffectiveAgentEnv from the descriptor computed above — no second
-        // resolver call; the descriptor's env is already the fully layered result.
+        // Construct EffectiveAgentEnv from the descriptor (no second resolve).
         let effective = EffectiveAgentEnv {
             env: descriptor.env.clone(),
             config_file_path: runtime_meta.and_then(|r| r.config_file_path),
@@ -855,11 +854,8 @@ pub fn spawn_agent_child(
         &mut command,
         effective_command,
     );
-    // Buzz shared compute is stored as a native provider; derive the OpenAI-compatible
-    // transport at spawn time and scrub any unrelated ambient OpenAI key.
-    // Gate on `mesh_model_id` (derived from `effective_cfg.relay_mesh_model_id()`
-    // above) — not on `effective_provider` directly — so the mesh gate here
-    // uses the same trim semantics as the preflight callers.
+    // Buzz shared compute: derive OpenAI-compatible transport; scrub ambient key.
+    // Gate on `mesh_model_id` (same trim as preflight callers).
     #[cfg(feature = "mesh-llm")]
     if let Some(ref mesh_model_id) = mesh_model_id {
         let mesh_env = super::relay_mesh_process_env(&descriptor.env, mesh_model_id);

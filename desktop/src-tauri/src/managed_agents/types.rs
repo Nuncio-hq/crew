@@ -246,9 +246,8 @@ pub struct ManagedAgentRecord {
     pub avatar_url: Option<String>,
     pub acp_command: String,
     pub agent_command: String,
-    /// Explicit per-instance harness pin. `None` inherits the persona `runtime`.
-    /// `Some` only when the user picks a harness that diverges. Resolved via
-    /// `effective_agent_command`; `agent_command` is a create-time snapshot.
+    /// Explicit per-instance harness pin. `None` inherits the persona `runtime`;
+    /// `Some` only when divergent. Resolved via `effective_agent_command`.
     #[serde(default)]
     pub agent_command_override: Option<String>,
     pub agent_args: Vec<String>,
