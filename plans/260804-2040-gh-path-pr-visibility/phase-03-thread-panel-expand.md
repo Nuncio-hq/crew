@@ -1,6 +1,6 @@
 # Phase 3 — Reach worktree detail outside focus mode
 
-Status: **In progress** · D3 decided 2026-08-05 (Oscar): compact default, expand for detail · Depends on: —
+Status: **Merged** (#42 → `6669062af`) · D3 decided 2026-08-05 (Oscar): compact default, expand for detail · Packaged Finder verify still pending on v0.0.8
 
 ## Problem
 

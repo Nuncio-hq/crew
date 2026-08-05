@@ -1,8 +1,12 @@
 import { pathToFileURL } from "node:url";
 
+// Job result keys and relevance keys share one flat object — they must never
+// collide. The path-filter output is `desktop-rust`; the payload renames it to
+// `desktop-rust-changed` so it cannot overwrite the `desktop-rust` job result.
 const JOB_RELEVANCE = {
   "desktop-fast": "desktop",
   "macos-arm": "desktop",
+  "desktop-rust": "desktop-rust-changed",
   "project-relay": "relay",
 };
 
