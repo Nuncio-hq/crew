@@ -5,7 +5,14 @@ import {
   type ActiveConversationAgentTurnSummary,
   useActiveTurnSummariesForConversation,
 } from "@/features/agents/activeConversationAgentTurnSummaries";
-import { formatElapsed } from "@/features/agents/ui/agentSessionUtils";
+import {
+  type RecentConversationOutcome,
+  useRecentOutcomeForConversation,
+} from "@/features/agents/recentConversationOutcomes";
+import {
+  formatCompactAgo,
+  formatElapsed,
+} from "@/features/agents/ui/agentSessionUtils";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { cn } from "@/shared/lib/cn";
@@ -56,7 +63,10 @@ function useSharedNowWhen(enabled: boolean): number {
   );
 }
 
+export type ThreadAgentStatusChipState = "running" | "done" | "failed";
+
 export type ThreadAgentStatusChipView = {
+  state: ThreadAgentStatusChipState;
   displayAgents: ReadonlyArray<{
     pubkey: string;
     displayName: string;
@@ -75,42 +85,102 @@ function agentDisplayName(
   return profile?.displayName ?? profile?.name ?? truncatePubkey(pubkey);
 }
 
+function buildAgentSlots(
+  pubkeys: readonly string[],
+  profiles: UserProfileLookup | undefined,
+) {
+  const names = pubkeys.map((pubkey) => agentDisplayName(pubkey, profiles));
+  const displayAgents = pubkeys.slice(0, MAX_CHIP_AVATARS).map((pubkey) => {
+    const displayName = agentDisplayName(pubkey, profiles);
+    return {
+      pubkey,
+      displayName,
+      avatarUrl: profiles?.[normalizePubkey(pubkey)]?.avatarUrl ?? null,
+    };
+  });
+  return { names, displayAgents };
+}
+
 /** Pure view model for the chip — unit-tested without a React tree. */
 export function buildThreadAgentStatusChipView(
   summaries: readonly ActiveConversationAgentTurnSummary[],
+  outcome: RecentConversationOutcome | null,
   profiles: UserProfileLookup | undefined,
   now: number,
 ): ThreadAgentStatusChipView | null {
-  if (summaries.length === 0) return null;
-
-  let earliestAnchorAt = Number.POSITIVE_INFINITY;
-  for (const summary of summaries) {
-    if (summary.anchorAt < earliestAnchorAt) {
-      earliestAnchorAt = summary.anchorAt;
+  // Priority: running > failed > done.
+  if (summaries.length > 0) {
+    let earliestAnchorAt = Number.POSITIVE_INFINITY;
+    for (const summary of summaries) {
+      if (summary.anchorAt < earliestAnchorAt) {
+        earliestAnchorAt = summary.anchorAt;
+      }
     }
+    const { names, displayAgents } = buildAgentSlots(
+      summaries.map((summary) => summary.agentPubkey),
+      profiles,
+    );
+    const label =
+      summaries.length === 1
+        ? (names[0] ?? "Agent")
+        : `${summaries.length} agents`;
+    const elapsedLabel = formatElapsed(Math.max(0, now - earliestAnchorAt));
+    const title = `${names.join(", ")} working · ${elapsedLabel}`;
+    return {
+      state: "running",
+      displayAgents,
+      label,
+      elapsedLabel,
+      title,
+    };
   }
 
-  const names = summaries.map((summary) =>
-    agentDisplayName(summary.agentPubkey, profiles),
-  );
-  const displayAgents = summaries.slice(0, MAX_CHIP_AVATARS).map((summary) => {
-    const displayName = agentDisplayName(summary.agentPubkey, profiles);
-    return {
-      pubkey: summary.agentPubkey,
-      displayName,
-      avatarUrl:
-        profiles?.[normalizePubkey(summary.agentPubkey)]?.avatarUrl ?? null,
-    };
-  });
-  const label =
-    summaries.length === 1
-      ? (names[0] ?? "Agent")
-      : `${summaries.length} agents`;
-  const elapsedLabel = formatElapsed(Math.max(0, now - earliestAnchorAt));
-  const title = `${names.join(", ")} working · ${elapsedLabel}`;
+  if (!outcome) return null;
 
-  return { displayAgents, label, elapsedLabel, title };
+  const { names, displayAgents } = buildAgentSlots(
+    [outcome.agentPubkey],
+    profiles,
+  );
+  const name = names[0] ?? "Agent";
+  const ago = formatCompactAgo(Math.max(0, now - outcome.endedAt));
+
+  if (outcome.outcome === "error") {
+    return {
+      state: "failed",
+      displayAgents,
+      label: "Failed",
+      elapsedLabel: ago,
+      title: `${name} failed ${ago}`,
+    };
+  }
+
+  return {
+    state: "done",
+    displayAgents,
+    label: "Done",
+    elapsedLabel: ago,
+    title: `${name} finished ${ago}`,
+  };
 }
+
+const STATE_CHROME: Record<
+  ThreadAgentStatusChipState,
+  { className: string; glyph: string }
+> = {
+  running: {
+    className: "border-primary/25 bg-primary/10 text-primary",
+    glyph: "",
+  },
+  done: {
+    className:
+      "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    glyph: "✓",
+  },
+  failed: {
+    className: "border-destructive/25 bg-destructive/10 text-destructive",
+    glyph: "✕",
+  },
+};
 
 export function ThreadAgentStatusChip({
   conversationId,
@@ -120,22 +190,41 @@ export function ThreadAgentStatusChip({
   profiles?: UserProfileLookup;
 }) {
   const summaries = useActiveTurnSummariesForConversation(conversationId);
-  const now = useSharedNowWhen(summaries.length > 0);
-  const view = buildThreadAgentStatusChipView(summaries, profiles, now);
+  const outcome = useRecentOutcomeForConversation(conversationId);
+  const enabled = summaries.length > 0 || outcome !== null;
+  const now = useSharedNowWhen(enabled);
+  const view = buildThreadAgentStatusChipView(
+    summaries,
+    outcome,
+    profiles,
+    now,
+  );
   if (!view) return null;
+
+  const chrome = STATE_CHROME[view.state];
 
   return (
     <span
       aria-label={view.title}
-      className="ml-1 inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/25 bg-primary/10 px-1.5 py-0.5 text-2xs font-semibold text-primary tabular-nums"
+      className={cn(
+        "ml-1 inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-2xs font-semibold tabular-nums",
+        chrome.className,
+      )}
+      data-state={view.state}
       data-testid="thread-agent-status-chip"
       role="status"
       title={view.title}
     >
-      <Loader2
-        aria-hidden
-        className="h-3 w-3 shrink-0 animate-spin opacity-80"
-      />
+      {view.state === "running" ? (
+        <Loader2
+          aria-hidden
+          className="h-3 w-3 shrink-0 animate-spin opacity-80"
+        />
+      ) : (
+        <span aria-hidden className="shrink-0 text-2xs leading-none">
+          {chrome.glyph}
+        </span>
+      )}
       <span className="flex items-center -space-x-1">
         {view.displayAgents.map((agent) => (
           <UserAvatar

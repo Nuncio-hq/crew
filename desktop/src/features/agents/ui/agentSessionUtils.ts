@@ -306,3 +306,18 @@ export function formatElapsed(ms: number): string {
   const hours = Math.floor(totalMinutes / 60);
   return `${hours}h ${minutes}m ${seconds}s`;
 }
+
+/**
+ * Compact relative age for terminal chip / digest times — minute-level is
+ * enough (driven by a shared 1s tick while surfaces are mounted).
+ */
+export function formatCompactAgo(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s ago`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m ago`;
+  const hours = Math.floor(totalMinutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
