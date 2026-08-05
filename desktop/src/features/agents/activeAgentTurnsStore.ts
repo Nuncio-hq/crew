@@ -109,6 +109,8 @@ const cachedAgentsByConversation = new Map<string, string[]>();
 let cachedChannelTurnSummaries: ActiveChannelTurnSummary[] | null = null;
 let cachedConversationTurnSummaries: ActiveConversationTurnSummary[] | null =
   null;
+/** Bumps on every turn-map mutation so conversation-scoped caches can drop. */
+let activeTurnsGeneration = 0;
 
 // Composite watermark per agent: the newest observer event processed, by
 // (timestamp, seq) ordering. An event is processed only if it is strictly
@@ -132,6 +134,7 @@ function invalidateCache(agentKey: string) {
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
   cachedConversationTurnSummaries = null;
+  activeTurnsGeneration += 1;
 }
 
 function notifyListeners() {
@@ -558,6 +561,24 @@ const EMPTY_CHANNEL_TURNS: ActiveChannelTurnSummary[] = [];
 const EMPTY_CONVERSATION_TURNS: ActiveConversationTurnSummary[] = [];
 const EMPTY_CONVERSATION_AGENTS: string[] = [];
 
+/** Walk every live turn with its agent clock offset (desktop-clock anchors). */
+export function walkActiveAgentTurns(
+  visit: (agentKey: string, turn: ActiveTurn, offset: number) => void,
+): void {
+  for (const [agentKey, agentTurns] of activeTurnsByAgent) {
+    if (agentTurns.size === 0) continue;
+    const offset = clockOffsetByAgent.get(agentKey) ?? 0;
+    for (const turn of agentTurns.values()) {
+      visit(agentKey, turn, offset);
+    }
+  }
+}
+
+/** Generation counter for conversation-scoped derived caches. */
+export function getActiveTurnsGeneration(): number {
+  return activeTurnsGeneration;
+}
+
 export function getActiveAgentsForConversation(
   conversationId: string | null | undefined,
 ): string[] {
@@ -848,6 +869,7 @@ export function resetActiveAgentTurnsStore() {
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
   cachedConversationTurnSummaries = null;
+  activeTurnsGeneration += 1;
   terminalAtByAgent.clear();
   notifyListeners();
 }
@@ -957,7 +979,11 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
   }
 
   cachedTurnSummaries.clear();
+  cachedControlTargets.clear();
+  cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
+  cachedConversationTurnSummaries = null;
+  activeTurnsGeneration += 1;
   notifyListeners();
 }
 
