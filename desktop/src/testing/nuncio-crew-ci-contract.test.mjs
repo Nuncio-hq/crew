@@ -79,9 +79,11 @@ test("buzz-acp is path-gated and registered in the merge gate", () => {
 
   assert.match(acp, /name:\s*buzz-acp/);
   assert.match(acp, /needs\.changes\.outputs\.acp == 'true'/);
+  assert.match(ci, /acp:\s*\n(?:\s+- '[^']+'\n)*\s+- 'crates\/buzz-acp\/\*\*'/);
+  // Path dep of buzz-acp — source edits here do not touch Cargo.lock.
   assert.match(
     ci,
-    /acp:\s*\n(?:\s+- '[^']+'\n)*\s+- 'crates\/buzz-acp\/\*\*'/,
+    /acp:\s*\n(?:\s+- '[^']+'\n)*\s+- 'crates\/buzz-persona\/\*\*'/,
   );
   assert.match(acp, /just buzz-acp-test/);
   assert.match(ci, /needs\.buzz-acp\.result/);

@@ -69,6 +69,7 @@ jobs:
               - 'scripts/run-nuncio-crew-project-relay-ci.sh'
             acp:
               - 'crates/buzz-acp/**'
+              - 'crates/buzz-persona/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
