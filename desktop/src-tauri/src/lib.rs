@@ -537,7 +537,7 @@ pub fn run() {
             if restore_agents && !recovery_mode {
                 state
                     .managed_agent_restore_pending
-                    .store(true, Ordering::Release);
+                    .store(true, std::sync::atomic::Ordering::Release);
             }
 
             // Periodic sweep: reap orphaned agents from dead instances every 60s.

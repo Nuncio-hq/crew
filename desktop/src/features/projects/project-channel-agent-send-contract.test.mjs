@@ -131,8 +131,10 @@ test("invalid Project workspace metadata blocks an explicit-agent send", async (
 });
 
 test("the send hook returns before clearing a draft when context resolution fails", async () => {
+  // Resolve/clear ordering lives in the Crew-extracted complete-send helper
+  // (D-022); the flow hook only wires it in.
   const source = await readFile(
-    new URL("../messages/ui/useMentionSendFlow.ts", import.meta.url),
+    new URL("../messages/ui/useMentionSendComplete.ts", import.meta.url),
     "utf8",
   );
   const resolverIndex = source.indexOf(
