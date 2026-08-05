@@ -38,6 +38,7 @@ import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import { ComposerActivityAccessory } from "./ComposerActivityAccessory";
 import { ComposerDockBackdrop } from "./ComposerDockBackdrop";
 import { MessageComposer } from "./MessageComposer";
+import { MessageThreadPanelHead } from "./message-thread-panel-head";
 import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
@@ -68,6 +69,8 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
    * panel title share one source of truth (anchorMessageId).
    */
   breadcrumb?: ThreadBreadcrumb | null;
+  /** Present the huddle's parent-channel thread as a dedicated live chat. */
+  isHuddleTranscript?: boolean;
   editTarget?: {
     author: string;
     body: string;
@@ -204,6 +207,7 @@ export function MessageThreadPanel({
   firstUnreadReplyId,
   huddleMemberPubkeys,
   huddleMemberPubkeysPending = false,
+  isHuddleTranscript = false,
   layout = "standalone",
   editTarget,
   headerLeading,
@@ -261,7 +265,10 @@ export function MessageThreadPanel({
   >(null);
   const isOverlay = useIsThreadPanelOverlay();
   const threadHeadId = threadHead?.id ?? null;
-  useEscapeKey(onClose, isOverlay || isSinglePanelView || isFocusMode);
+  useEscapeKey(
+    onClose,
+    !isHuddleTranscript && (isOverlay || isSinglePanelView || isFocusMode),
+  );
   const hasConstrainedColumn = columnMaxWidthPx != null;
 
   // Live ref so onCaptureSendContext can read reply state at submit time
@@ -371,7 +378,9 @@ export function MessageThreadPanel({
   // card and the streaming-in `pending` state would both leave a rule hanging
   // over an empty region or a placeholder.
   const showThreadHeadDivider =
-    isFocusMode && (threadRepliesPending || repliesRenderState === "list");
+    !isHuddleTranscript &&
+    isFocusMode &&
+    (threadRepliesPending || repliesRenderState === "list");
 
   const threadMessages = React.useMemo(
     () => deferredThreadReplies.map((entry) => entry.message),
@@ -467,6 +476,7 @@ export function MessageThreadPanel({
       const startsUnreadSection =
         index > 0 && entry.message.id === firstUnreadReplyId;
       const isContinuation =
+        !isHuddleTranscript &&
         !startsUnreadSection &&
         entry.summary === null &&
         hasSameMessageAuthor(previousGroupMessage, entry.message) &&
@@ -494,6 +504,7 @@ export function MessageThreadPanel({
     deferredThreadReplies,
     firstUnreadReplyId,
     hoveredCollapseBranchId,
+    isHuddleTranscript,
     threadHead,
   ]);
 
@@ -559,6 +570,7 @@ export function MessageThreadPanel({
       className="overflow-y-auto overflow-x-hidden overscroll-contain pb-24 pt-0"
       data-buzz-conversation-scroll
       data-testid="message-thread-body"
+      mode={isHuddleTranscript ? "panel" : undefined}
       onScroll={onScroll}
       tabIndex={-1}
       ref={threadBodyRef}
@@ -574,57 +586,28 @@ export function MessageThreadPanel({
           breadcrumb={breadcrumb}
           onOpenAncestorThread={onOpenAncestorThread}
         />
-        <div
-          className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-1 pt-0")}
-          data-testid="message-thread-head"
-        >
-          <div className="rounded-2xl">
-            <MessageRow
-              actionBarPlacement="inside"
-              channelId={channelId}
-              huddleMemberPubkeys={huddleMemberPubkeys}
-              huddleMemberPubkeysPending={huddleMemberPubkeysPending}
-              isFollowingThread={isFollowingThread}
-              isUnread={isMessageUnreadById?.(threadHead.id)}
-              layoutVariant="thread-reply"
-              message={threadHead}
-              onDelete={
-                onDelete &&
-                canManageMessageForCurrentUser(
-                  threadHead,
-                  currentPubkey,
-                  profiles,
-                )
-                  ? onDelete
-                  : undefined
-              }
-              onEdit={
-                onEdit &&
-                canManageMessageForCurrentUser(
-                  threadHead,
-                  currentPubkey,
-                  profiles,
-                )
-                  ? onEdit
-                  : undefined
-              }
-              onFollowThread={
-                onFollowThread ? (_msg) => onFollowThread() : undefined
-              }
-              onMarkUnread={onMarkUnread}
-              onMarkRead={onMarkRead}
-              onToggleReaction={onToggleReaction}
-              onUnfollowThread={
-                onUnfollowThread ? (_msg) => onUnfollowThread() : undefined
-              }
-              profiles={profiles}
-              showDepthGuides={shouldShowThreadBranchGuides}
-              videoReviewContext={videoReviewContextsByMessageId?.get(
-                threadHead.id,
-              )}
-            />
-          </div>
-        </div>
+        <MessageThreadPanelHead
+          channelId={channelId}
+          currentPubkey={currentPubkey}
+          huddleMemberPubkeys={huddleMemberPubkeys}
+          huddleMemberPubkeysPending={huddleMemberPubkeysPending}
+          isFollowingThread={isFollowingThread}
+          isHuddleTranscript={isHuddleTranscript}
+          isMessageUnreadById={isMessageUnreadById}
+          onDelete={onDelete}
+          onEdit={onEdit}
+          onFollowThread={onFollowThread}
+          onMarkRead={onMarkRead}
+          onMarkUnread={onMarkUnread}
+          onToggleReaction={onToggleReaction}
+          onUnfollowThread={onUnfollowThread}
+          profiles={profiles}
+          shouldShowThreadBranchGuides={shouldShowThreadBranchGuides}
+          threadHead={threadHead}
+          videoReviewContext={videoReviewContextsByMessageId?.get(
+            threadHead.id,
+          )}
+        />
 
         {showThreadHeadDivider ? (
           <div
@@ -639,7 +622,7 @@ export function MessageThreadPanel({
           className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-3 pt-0")}
           data-testid="message-thread-replies"
         >
-          {threadRepliesPending ? (
+          {threadRepliesPending && !isHuddleTranscript ? (
             <div
               className="space-y-2.5 pt-1"
               data-testid="message-thread-replies-loading"
@@ -814,7 +797,7 @@ export function MessageThreadPanel({
                 })}
               </div>
             )
-          ) : repliesRenderState === "empty" ? (
+          ) : repliesRenderState === "empty" && !isHuddleTranscript ? (
             // Only show the empty state when the thread is GENUINELY empty.
             // Keying off `deferredThreadReplies` would flash "No replies" for a
             // frame while a non-empty list streams in on the deferred commit.
@@ -899,7 +882,11 @@ export function MessageThreadPanel({
               onEditLastOwnMessage={onEditLastOwnMessage}
               onEditSave={onEditSave}
               onSend={onSend}
-              placeholder={`Reply in thread to ${threadHead.author}`}
+              placeholder={
+                isHuddleTranscript
+                  ? "Message the huddle"
+                  : `Reply in thread to ${threadHead.author}`
+              }
               profiles={profiles}
               replyTarget={composerReplyTarget}
               typingParentEventId={threadHead.id}
@@ -965,7 +952,9 @@ export function MessageThreadPanel({
       enterMotion={!isFocusMode}
       footer={threadFooter}
       header={
-        <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
+        isHuddleTranscript ? undefined : (
+          <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
+        )
       }
       isSinglePanelView={isSinglePanelView}
       layout={layout}

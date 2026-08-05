@@ -9,6 +9,7 @@ use crate::{
     nostr_convert,
     relay::query_relay,
 };
+mod git_bash_prerequisite;
 mod install_capture;
 mod install_exec;
 mod install_report;
@@ -16,6 +17,7 @@ mod install_runtime;
 mod managed_adapter_install;
 mod managed_node;
 mod post_install_verification;
+pub use git_bash_prerequisite::discover_git_bash_prerequisite;
 use install_runtime::install_acp_runtime_blocking;
 #[tauri::command]
 pub async fn discover_acp_providers(
@@ -126,6 +128,9 @@ pub async fn save_custom_harness(
         model_env_var: None,
         provider_env_var: None,
         thinking_env_var: None,
+        max_tokens_env_var: None,
+        context_limit_env_var: None,
+        max_rounds_env_var: None,
         install_hint: definition.install_hint,
         install_instructions_url: definition.install_instructions_url,
         can_auto_install: false,
@@ -1430,7 +1435,7 @@ mod tests {
     #[test]
     fn test_powershell_command_argv_exact() {
         // Catalog format: body wrapped in one outer double-quote pair (Bash-layer serialization).
-        let body = "irm https://chatgpt.com/codex/install.ps1 | iex";
+        let body = "$ErrorActionPreference='Stop'; $installer=Join-Path $env:TEMP 'buzz-install-codex.ps1'; Invoke-RestMethod https://chatgpt.com/codex/install.ps1 -OutFile $installer; & $installer; exit $LASTEXITCODE";
         let cmd = super::install_powershell_command(&format!(
             r#"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "{body}""#
         ));
@@ -1460,12 +1465,12 @@ mod tests {
         );
     }
 
-    /// Claude Code catalog command (discovery.rs:107) must dequote to the bare pipeline.
+    /// Claude Code catalog command must dequote to the two-step download-then-execute body.
     #[cfg(windows)]
     #[test]
     fn test_powershell_command_claude_catalog_dequoted() {
         let cmd = super::install_powershell_command(
-            r#"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex""#,
+            r#"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $installer=Join-Path $env:TEMP 'buzz-install-claude.ps1'; Invoke-RestMethod https://claude.ai/install.ps1 -OutFile $installer; & $installer; exit $LASTEXITCODE""#,
         );
         assert_eq!(
             cmd.get_args()
@@ -1476,22 +1481,22 @@ mod tests {
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                "irm https://claude.ai/install.ps1 | iex",
+                "$ErrorActionPreference='Stop'; $installer=Join-Path $env:TEMP 'buzz-install-claude.ps1'; Invoke-RestMethod https://claude.ai/install.ps1 -OutFile $installer; & $installer; exit $LASTEXITCODE",
             ],
             "Claude catalog command must be dequoted correctly"
         );
     }
 
-    /// Goose Windows catalog command (discovery.rs:78) must dequote to a bare pipeline
-    /// with a literal `$env:` prefix — no backslash before the dollar sign.
-    /// This proves the `\$` → `$` escape fix: post-#2750 the spawn is native and
+    /// Goose Windows catalog command must dequote to the two-step download-then-execute body
+    /// with the `$env:CONFIGURE` prefix intact — no backslash before the dollar sign.
+    /// This proves the `\$` → `$` contract: post-#2750 the spawn is native and
     /// PowerShell receives the body verbatim, so a residual `\` would produce
     /// `\$env:CONFIGURE='false'` which is a malformed statement.
     #[cfg(windows)]
     #[test]
     fn test_powershell_command_goose_catalog_dequoted() {
         let cmd = super::install_powershell_command(
-            r#"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$env:CONFIGURE='false'; irm https://raw.githubusercontent.com/aaif-goose/goose/main/download_cli.ps1 | iex""#,
+            r#"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$env:CONFIGURE='false'; $ErrorActionPreference='Stop'; $installer=Join-Path $env:TEMP 'buzz-install-goose.ps1'; Invoke-RestMethod https://raw.githubusercontent.com/aaif-goose/goose/main/download_cli.ps1 -OutFile $installer; & $installer; exit $LASTEXITCODE""#,
         );
         assert_eq!(
             cmd.get_args()
@@ -1502,19 +1507,10 @@ mod tests {
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                "$env:CONFIGURE='false'; irm https://raw.githubusercontent.com/aaif-goose/goose/main/download_cli.ps1 | iex",
+                "$env:CONFIGURE='false'; $ErrorActionPreference='Stop'; $installer=Join-Path $env:TEMP 'buzz-install-goose.ps1'; Invoke-RestMethod https://raw.githubusercontent.com/aaif-goose/goose/main/download_cli.ps1 -OutFile $installer; & $installer; exit $LASTEXITCODE",
             ],
             "Goose catalog command must dequote with bare $env: (no backslash before $)"
         );
     }
 }
 
-/// Returns the Windows-only Git Bash prerequisite used by buzz-agent's shell MCP.
-/// `None` on other platforms keeps the shared Doctor surfaces platform-neutral.
-#[tauri::command]
-pub async fn discover_git_bash_prerequisite(
-) -> Result<Option<crate::managed_agents::GitBashPrerequisite>, String> {
-    tokio::task::spawn_blocking(crate::managed_agents::discover_git_bash)
-        .await
-        .map_err(|e| format!("spawn_blocking failed: {e}"))
-}

@@ -1,4 +1,5 @@
-import type { Project } from "@/features/projects/hooks";
+import type { Project, Repository } from "@/features/projects/hooks";
+import { firstCloneUrl } from "@/features/projects/lib/projectCloneUrl";
 
 function localRepoNameCandidate(value: string | null | undefined) {
   const trimmed = value?.trim().replace(/\.git$/i, "") ?? "";
@@ -26,10 +27,10 @@ function cloneUrlRepoName(cloneUrl: string | undefined) {
   }
 }
 
-function localRepoCandidates(project: Project) {
+function localRepoCandidates(repository: Repository) {
   return [
-    localRepoNameCandidate(project.dtag),
-    cloneUrlRepoName(project.cloneUrls[0]),
+    localRepoNameCandidate(repository.dtag),
+    cloneUrlRepoName(firstCloneUrl(repository)),
   ].filter((candidate, index, candidates): candidate is string =>
     Boolean(candidate && candidates.indexOf(candidate) === index),
   );
@@ -39,20 +40,32 @@ export function hasLocalCheckout(
   project: Project,
   localRepoNames: Set<string>,
 ) {
+  return project.repositories.some((repository) =>
+    hasLocalRepositoryCheckout(repository, localRepoNames),
+  );
+}
+
+export function hasLocalRepositoryCheckout(
+  repository: Repository,
+  localRepoNames: Set<string>,
+) {
   if (
-    project.localWorkspacePath ||
-    project.localWorkspaceStatus === "invalid"
+    repository.localWorkspacePath ||
+    repository.localWorkspaceStatus === "invalid"
   ) {
     return false;
   }
-  return localRepoCandidates(project).some((candidate) =>
+  return localRepoCandidates(repository).some((candidate) =>
     localRepoNames.has(candidate),
   );
 }
 
-export function isProjectLocal(project: Project, localRepoNames: Set<string>) {
+export function isProjectLocal(
+  repository: Repository,
+  localRepoNames: Set<string>,
+) {
   return (
-    Boolean(project.localWorkspacePath) ||
-    hasLocalCheckout(project, localRepoNames)
+    Boolean(repository.localWorkspacePath) ||
+    hasLocalRepositoryCheckout(repository, localRepoNames)
   );
 }
