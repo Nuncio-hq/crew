@@ -8,6 +8,7 @@ const JOB_RELEVANCE = {
   "macos-arm": "desktop",
   "desktop-rust": "desktop-rust-changed",
   "project-relay": "relay",
+  "buzz-acp": "acp",
 };
 
 export function assertNuncioCrewCiResults(results) {
