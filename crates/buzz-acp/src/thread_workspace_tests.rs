@@ -247,7 +247,11 @@ async fn reachable_clean_detached_head_recovers() {
     let created = ensure_thread_worktree(&workspace, &root)
         .await
         .expect("initial create succeeds");
+    let expected_commit =
+        git_output(&created.worktree_path, &["rev-parse", "buzz/888888888888"]).await;
+    let feature_commit = checkout_feature_with_commit(&created.worktree_path).await;
     let detached_commit = detach_head(&created.worktree_path).await;
+    assert_eq!(detached_commit, feature_commit);
     assert!(
         !named_refs_containing(&created.worktree_path, &detached_commit)
             .await
@@ -266,7 +270,12 @@ async fn reachable_clean_detached_head_recovers() {
     );
     assert_eq!(
         git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await,
-        detached_commit
+        expected_commit
+    );
+    assert_eq!(
+        git_output(&created.worktree_path, &["rev-parse", "feature"]).await,
+        detached_commit,
+        "recovery must preserve the detached commit through its named ref"
     );
     fs::remove_dir_all(&fixture).expect("fixture cleanup");
 }
@@ -311,6 +320,11 @@ async fn unreachable_detached_commit_refuses_recovery_and_names_commit() {
     assert!(
         error.to_string().contains("detached"),
         "error must identify detached HEAD: {error}"
+    );
+    assert!(
+        error.to_string().contains("not reachable")
+            && error.to_string().contains("preserve it with a branch"),
+        "error must explain how to preserve the detached commit: {error}"
     );
     assert_eq!(
         git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await,
