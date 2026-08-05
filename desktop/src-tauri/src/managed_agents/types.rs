@@ -110,6 +110,7 @@ impl AgentDefinition {
             agent_command: String::new(),
             agent_command_override: None,
             agent_args: Vec::new(),
+            hermes_profile: None,
             mcp_command: String::new(),
             turn_timeout_seconds: DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
             idle_timeout_seconds: None,
@@ -245,16 +246,13 @@ pub struct ManagedAgentRecord {
     pub avatar_url: Option<String>,
     pub acp_command: String,
     pub agent_command: String,
-    /// Explicit per-instance harness pin. `None` (the default) means inherit
-    /// the harness from the linked persona's `runtime`, so persona harness
-    /// edits propagate on the next spawn — mirroring the opt-in `model`
-    /// override. `Some` is set only when the user deliberately picks a harness
-    /// that diverges from the persona. Resolved via `effective_agent_command`;
-    /// `agent_command` above is the create-time snapshot kept for avatar/legacy
-    /// derivations and is not authoritative for spawn.
+    /// Explicit per-instance harness pin. `None` inherits the persona `runtime`;
+    /// `Some` only when divergent. Resolved via `effective_agent_command`.
     #[serde(default)]
     pub agent_command_override: Option<String>,
     pub agent_args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hermes_profile: Option<String>, // D-019; validate_hermes_profile_name
     /// Create-time snapshot of the catalog MCP command. Never read at spawn —
     /// the effective MCP command is always re-derived from the runtime catalog
     /// (`known_acp_runtime`) — and no longer written by updates. Kept for
@@ -673,6 +671,8 @@ pub struct AcpRuntimeCatalogEntry {
     /// Skipped in serialization when empty to keep the catalog payload compact.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub definition_env: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_arg: Option<String>, // KnownAcpRuntime::profile_arg (Hermes: "-p")
 }
 
 /// Result of a single install step (CLI or adapter).

@@ -222,8 +222,7 @@ fn effective_agent_command_explicit_override_wins() {
     );
 }
 
-/// Minimal record for `record_agent_command` tests. Only the resolution
-/// inputs (runtime / persona_id / agent_command_override) vary.
+/// Minimal record for `record_agent_command` tests.
 fn record_with(
     runtime: Option<&str>,
     persona_id: Option<&str>,
@@ -241,6 +240,7 @@ fn record_with(
         agent_command: String::new(),
         agent_command_override: override_cmd.map(str::to_string),
         agent_args: vec![],
+        hermes_profile: None,
         mcp_command: String::new(),
         turn_timeout_seconds: 0,
         idle_timeout_seconds: None,

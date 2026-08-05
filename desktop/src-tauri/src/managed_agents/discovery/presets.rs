@@ -82,6 +82,7 @@ pub(super) fn preset_catalog_entry(
         login_hint: None,
         source: HarnessSource::Preset,
         definition_env: Default::default(),
+        profile_arg: None,
     }
 }
 
