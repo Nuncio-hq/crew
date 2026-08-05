@@ -1,4 +1,3 @@
-import { ArrowLeft, ExternalLink, FolderGit2 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 
@@ -47,8 +46,7 @@ import { useMeasuredCssVariable } from "@/shared/layout/useMeasuredCssVariable";
 import { ProfilePanelProvider } from "@/shared/context/ProfilePanelContext";
 import { useHistorySearchState } from "@/shared/hooks/useHistorySearchState";
 import { useThreadPanelWidth } from "@/shared/hooks/useThreadPanelWidth";
-import { Button } from "@/shared/ui/button";
-import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
+
 import { useCommunities } from "@/features/communities/useCommunities";
 import { useProjectCommitDiffQuery } from "@/features/projects/useProjectCommitDiff";
 import { useGitIdentityQuery } from "@/features/projects/useGitIdentity";
@@ -78,8 +76,16 @@ import {
 import type { CreateIssueDialogInput } from "./CreateIssueDialog";
 import { ProjectBranchActionDialogs } from "./ProjectBranchActionDialogs";
 import { ProjectDetailChrome } from "./ProjectDetailChrome";
-import { ProjectRepositoryManagement } from "./ProjectRepositoryManagement";
-import { UnavailableProjectRepositories } from "./UnavailableProjectRepositories";
+import {
+  buildProjectDetailWorkItemCrumb,
+  ProjectDetailRepositoryHeader,
+} from "./project-detail-navigation";
+import {
+  ProjectDetailScreenError,
+  ProjectDetailScreenLoading,
+  ProjectDetailScreenNoRepository,
+  ProjectDetailScreenNotFound,
+} from "./project-detail-screen-states";
 import {
   PROJECT_TAB_CRUMB_LABELS,
   projectPeople,
@@ -745,66 +751,31 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   );
 
   if (projectQuery.isLoading) {
-    return <ViewLoadingFallback kind="projects" />;
+    return <ProjectDetailScreenLoading />;
   }
   if (projectQuery.isError) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-16 text-center">
-        <FolderGit2 className="h-10 w-10 text-muted-foreground/40" />
-        <p className="text-sm text-red-400">Failed to load project</p>
-        <div className="flex items-center gap-2">
-          <Button
-            onClick={() => void projectQuery.refetch()}
-            size="sm"
-            variant="outline"
-          >
-            Retry
-          </Button>
-          <Button
-            onClick={() => {
-              void goProjects();
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            <ArrowLeft className="mr-1.5 h-4 w-4" />
-            Back to Projects
-          </Button>
-        </div>
-      </div>
+      <ProjectDetailScreenError
+        onGoProjects={() => {
+          void goProjects();
+        }}
+        onRetry={() => {
+          void projectQuery.refetch();
+        }}
+      />
     );
   }
   if (!project) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-16 text-center">
-        <FolderGit2 className="h-10 w-10 text-muted-foreground/40" />
-        <p className="text-sm text-muted-foreground">
-          This project could not be found.
-        </p>
-        <Button
-          onClick={() => {
-            void goProjects();
-          }}
-          size="sm"
-          variant="outline"
-        >
-          <ArrowLeft className="mr-1.5 h-4 w-4" />
-          Back to Projects
-        </Button>
-      </div>
+      <ProjectDetailScreenNotFound
+        onGoProjects={() => {
+          void goProjects();
+        }}
+      />
     );
   }
   if (!repository) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-16 text-center">
-        <FolderGit2 className="h-10 w-10 text-muted-foreground/40" />
-        <p className="text-sm font-medium text-foreground">{project.name}</p>
-        <p className="text-sm text-muted-foreground">
-          This project does not have any available repositories yet.
-        </p>
-        <UnavailableProjectRepositories project={project} />
-      </div>
-    );
+    return <ProjectDetailScreenNoRepository project={project} />;
   }
 
   const repoContributors = repoSnapshotQuery.data?.contributors ?? [];
@@ -817,34 +788,15 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     effectiveRepoSource === "local"
       ? (localRepoSnapshotQuery.data?.snapshot.commits ?? [])
       : (repoSnapshotQuery.data?.commits ?? []);
-  const selectedCommit = selectedCommitHash
-    ? (displayedSnapshotCommits.find(
-        (commit) => commit.hash === selectedCommitHash,
-      ) ?? null)
-    : null;
-
-  // The active work item drives the breadcrumb trail: Projects › project ›
-  // sub-tab › title. `clear` steps back to the item's list tab. Categories
-  // match the workspace tab labels.
-  const activeWorkItemCrumb = selectedPullRequest
-    ? {
-        category: "Pull Request",
-        title: selectedPullRequest.title,
-        clear: () => setSelectedPullRequestId(null),
-      }
-    : selectedIssue
-      ? {
-          category: "Issues",
-          title: selectedIssue.title,
-          clear: () => setSelectedIssueId(null),
-        }
-      : selectedCommitHash
-        ? {
-            category: "Commits",
-            title: selectedCommit?.subject ?? selectedCommitHash.slice(0, 7),
-            clear: () => setSelectedCommitHash(null),
-          }
-        : null;
+  const activeWorkItemCrumb = buildProjectDetailWorkItemCrumb({
+    selectedCommitHash,
+    selectedIssue,
+    selectedPullRequest,
+    snapshotCommits: displayedSnapshotCommits,
+    setSelectedCommitHash,
+    setSelectedIssueId,
+    setSelectedPullRequestId,
+  });
   // Sub-tab crumb when no work item is open. Overview (readme) is home.
   const activeTabCrumb = activeWorkItemCrumb
     ? null
@@ -897,48 +849,15 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto px-4 pb-4">
             <div className="w-full space-y-3 pt-[calc(var(--buzz-channel-content-top-padding,5.75rem)_+_1px)]">
-              <section className="space-y-3">
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1 space-y-0.5">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <h2 className="truncate text-xl font-semibold tracking-tight">
-                        {project.name}
-                      </h2>
-                      {repoRemote.webUrl &&
-                      (repoRemote.host.kind !== "external" ||
-                        repoSource === "local") ? (
-                        <Button
-                          asChild
-                          aria-label="Open project web page"
-                          className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
-                          size="icon-xs"
-                          variant="ghost"
-                        >
-                          <a
-                            href={repoRemote.webUrl}
-                            rel="noopener noreferrer"
-                            target="_blank"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </a>
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
-                      Repository
-                    </span>
-                    <ProjectRepositoryManagement
-                      identityPubkey={identityQuery.data?.pubkey}
-                      onChange={handleRepositoryChange}
-                      project={project}
-                      projects={projectsQuery.data ?? []}
-                      repository={repository}
-                    />
-                  </div>
-                </div>
-              </section>
+              <ProjectDetailRepositoryHeader
+                identityPubkey={identityQuery.data?.pubkey}
+                onRepositoryChange={handleRepositoryChange}
+                project={project}
+                projects={projectsQuery.data ?? []}
+                repoRemote={repoRemote}
+                repoSource={repoSource}
+                repository={repository}
+              />
 
               <WorkspaceTabs
                 key={`${project.id}:${repository.id}:${tabsResetKey}`}

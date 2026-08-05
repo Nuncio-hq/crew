@@ -9,6 +9,7 @@ use crate::{
     nostr_convert,
     relay::query_relay,
 };
+mod git_bash_prerequisite;
 mod install_capture;
 mod install_exec;
 mod install_report;
@@ -16,6 +17,7 @@ mod install_runtime;
 mod managed_adapter_install;
 mod managed_node;
 mod post_install_verification;
+pub use git_bash_prerequisite::discover_git_bash_prerequisite;
 use install_runtime::install_acp_runtime_blocking;
 #[tauri::command]
 pub async fn discover_acp_providers(
@@ -1512,12 +1514,3 @@ mod tests {
     }
 }
 
-/// Returns the Windows-only Git Bash prerequisite used by buzz-agent's shell MCP.
-/// `None` on other platforms keeps the shared Doctor surfaces platform-neutral.
-#[tauri::command]
-pub async fn discover_git_bash_prerequisite(
-) -> Result<Option<crate::managed_agents::GitBashPrerequisite>, String> {
-    tokio::task::spawn_blocking(crate::managed_agents::discover_git_bash)
-        .await
-        .map_err(|e| format!("spawn_blocking failed: {e}"))
-}

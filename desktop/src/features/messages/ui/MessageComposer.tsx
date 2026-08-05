@@ -9,12 +9,7 @@ import { resolveSentDraftKey } from "@/features/messages/ui/draftSubmitKey";
 import { useEmojiAutocomplete } from "@/features/messages/lib/useEmojiAutocomplete";
 import type { EmojiSuggestion } from "@/features/messages/lib/useEmojiAutocomplete";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
-import {
-  findSpoileredImetaMediaUrls,
-  type ImetaMedia,
-  restoreImetaMediaDisplayLabels,
-  stripImetaMediaLines,
-} from "@/features/messages/lib/imetaMediaMarkdown";
+import { type ImetaMedia } from "@/features/messages/lib/imetaMediaMarkdown";
 import { useAttachmentEditing } from "@/features/messages/lib/useAttachmentEditing";
 import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
 import {
@@ -58,6 +53,7 @@ import { usePersistentAgentMentionHydration } from "./usePersistentAgentMentionH
 import { useComposerContentState } from "./useComposerContentState";
 import { useDraftPersistLifecycle } from "./useDraftPersistSnapshot";
 import { submitMessageEdit } from "./submitMessageEdit";
+import { useComposerEditTargetLifecycle } from "./use-composer-edit-target-lifecycle";
 import type { MessageComposerProps } from "./MessageComposer.types";
 function MessageComposerImpl({
   audienceContext = null,
@@ -331,59 +327,16 @@ function MessageComposerImpl({
     onDeferredEditPendingChange?.(isDeferredEditPending);
     return () => onDeferredEditPendingChange?.(false);
   }, [isDeferredEditPending, onDeferredEditPendingChange]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: editTarget?.id is the trigger
-  React.useEffect(() => {
-    if (editTarget) {
-      // Preserve the user's in-flight draft while editing another message.
-      preEditSnapshotRef.current = {
-        content: syncComposerContentFromEditor(),
-        pendingImeta: [...media.pendingImetaRef.current],
-        queuedAttachments: [...media.queuedAttachmentsRef.current],
-        spoileredAttachmentUrls: new Set(spoileredAttachmentUrls),
-      };
-      // Strip the trailing `![image|video](url)` lines that correspond to
-      // imeta attachments — the user manages those via the attachments row,
-      // not via raw markdown in the editor.
-      const editableImeta = restoreImetaMediaDisplayLabels(
-        editTarget.body,
-        editTarget.imetaMedia ?? [],
-      );
-      const editableBody = stripImetaMediaLines(editTarget.body, editableImeta);
-      setComposerContent(editableBody);
-      richText.setContent(editableBody);
-      // Seed the composer's pending-imeta state with the original event's
-      // attachments so they show up in `ComposerAttachments` and the user
-      // can remove existing ones / add new ones before saving.
-      media.setPendingImeta(editableImeta);
-      media.clearQueuedAttachments();
-      setSpoileredAttachmentUrls(
-        findSpoileredImetaMediaUrls(editTarget.body, editableImeta),
-      );
-      // Defer focus to the next frame so it runs after any focus-
-      // restoration the trigger UI (e.g. the message-row context menu)
-      // fires on close. Without this, Radix-style focus-restoration races
-      // our call and leaves DOM focus on the message row — global keybinds
-      // like Delete then fire there instead of in the editor. `focusEnd`
-      // also lands the caret at end of the loaded content.
-      const rafId = requestAnimationFrame(() => richText.focusEnd());
-      return () => cancelAnimationFrame(rafId);
-    } else if (preEditSnapshotRef.current !== null) {
-      const {
-        content: restoredContent,
-        pendingImeta: restoredImeta,
-        queuedAttachments: restoredQueuedAttachments,
-        spoileredAttachmentUrls: restoredSpoileredAttachmentUrls,
-      } = preEditSnapshotRef.current;
-      preEditSnapshotRef.current = null;
-      setComposerContent(restoredContent);
-      restoredContent
-        ? richText.setContent(restoredContent)
-        : richText.clearContent();
-      media.setPendingImeta(restoredImeta);
-      media.restoreQueuedAttachments(restoredQueuedAttachments);
-      setSpoileredAttachmentUrls(restoredSpoileredAttachmentUrls);
-    }
-  }, [editTarget?.id]);
+  useComposerEditTargetLifecycle({
+    editTarget,
+    media,
+    preEditSnapshotRef,
+    richText,
+    setComposerContent,
+    setSpoileredAttachmentUrls,
+    spoileredAttachmentUrls,
+    syncComposerContentFromEditor,
+  });
   // ── Focus on reply ──────────────────────────────────────────────────
   // Use focusPreserve so that re-renders (e.g. new messages arriving in
   // a thread) don't yank the cursor to the end while the user is editing.

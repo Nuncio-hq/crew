@@ -1,5 +1,4 @@
 import * as React from "react";
-import { Hash, LogIn } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
@@ -64,7 +63,8 @@ import type { ChannelPaneProps } from "@/features/channels/ui/ChannelPane.types"
 import * as agentSessionSelection from "@/features/channels/ui/agentSessionSelection";
 import { usePrepareDmSendChannel } from "@/features/channels/ui/usePrepareDmSendChannel";
 import { useChannelPaneMessages } from "@/features/channels/ui/useChannelPaneMessages";
-import { Button } from "@/shared/ui/button";
+import { ChannelJoinBanner } from "@/features/channels/ui/channel-join-banner";
+import { HUDDLE_TRANSCRIPT_ROOT_STYLE } from "@/features/channels/ui/channel-pane-huddle-styles";
 import { useRenderScopedReactionHydration } from "@/features/messages/lib/useRenderScopedReactionHydration";
 import type { TimelineMessage } from "@/features/messages/types";
 import { isWelcomeExperienceChannel as isWelcomeExperience } from "@/features/onboarding/welcome";
@@ -72,10 +72,6 @@ import { KIND_SYSTEM_MESSAGE } from "@/shared/constants/kinds";
 import { useIsThreadPanelOverlay } from "@/shared/hooks/use-mobile";
 import { channelChrome } from "@/shared/layout/chromeLayout";
 import { cn } from "@/shared/lib/cn";
-const HUDDLE_TRANSCRIPT_ROOT_STYLE = {
-  "--buzz-channel-content-top-padding": "0rem",
-  "--channel-top-chrome-height": "0.25rem",
-} as React.CSSProperties;
 export const ChannelPane = React.memo(function ChannelPane({
   activeChannel,
   agentPubkeys,
@@ -706,31 +702,11 @@ export const ChannelPane = React.memo(function ChannelPane({
             threadUnreadCounts={threadUnreadCounts}
           />
           {isNonMemberView ? (
-            <div
-              data-testid="join-banner"
-              className="flex items-center gap-3 border-t border-border/80 bg-card/50 px-5 py-3"
-            >
-              <div className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted-foreground">
-                <Hash className="h-4 w-4 shrink-0" />
-                <span className="truncate">
-                  Viewing{" "}
-                  <span className="font-medium text-foreground">
-                    #{activeChannel?.name}
-                  </span>
-                </span>
-              </div>
-              <Button
-                disabled={isJoining}
-                onClick={() => {
-                  void onJoinChannel?.();
-                }}
-                size="sm"
-                variant="default"
-              >
-                <LogIn className="mr-1.5 h-4 w-4" />
-                {isJoining ? "Joining..." : "Join to participate"}
-              </Button>
-            </div>
+            <ChannelJoinBanner
+              activeChannel={activeChannel!}
+              isJoining={isJoining}
+              onJoinChannel={onJoinChannel}
+            />
           ) : (
             <div
               className="pointer-events-none absolute inset-x-0 bottom-0 z-40 isolate before:absolute before:inset-x-0 before:bottom-0 before:-z-10 before:h-24 before:bg-gradient-to-b before:from-transparent before:to-background before:content-[''] after:absolute after:inset-x-0 after:bottom-0 after:-z-10 after:h-12 after:bg-background after:content-['']"

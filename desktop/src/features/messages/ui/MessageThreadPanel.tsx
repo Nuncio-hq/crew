@@ -1,7 +1,6 @@
 import * as React from "react";
 import { ArrowDown } from "lucide-react";
 
-import { HuddleTranscriptIntro } from "@/features/huddle/components/HuddleTranscriptIntro";
 import {
   buildThreadSummaryFromVisibleEntries,
   hasNestedThreadBranches,
@@ -39,6 +38,7 @@ import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import { ComposerActivityAccessory } from "./ComposerActivityAccessory";
 import { ComposerDockBackdrop } from "./ComposerDockBackdrop";
 import { MessageComposer } from "./MessageComposer";
+import { MessageThreadPanelHead } from "./message-thread-panel-head";
 import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
@@ -586,63 +586,28 @@ export function MessageThreadPanel({
           breadcrumb={breadcrumb}
           onOpenAncestorThread={onOpenAncestorThread}
         />
-        {isHuddleTranscript ? (
-          <div className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-2 pt-4")}>
-            <HuddleTranscriptIntro />
-          </div>
-        ) : (
-          <div
-            className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-1 pt-0")}
-            data-testid="message-thread-head"
-          >
-            <div className="rounded-2xl">
-              <MessageRow
-                actionBarPlacement="inside"
-                channelId={channelId}
-                huddleMemberPubkeys={huddleMemberPubkeys}
-                huddleMemberPubkeysPending={huddleMemberPubkeysPending}
-                isFollowingThread={isFollowingThread}
-                isUnread={isMessageUnreadById?.(threadHead.id)}
-                layoutVariant="thread-reply"
-                message={threadHead}
-                onDelete={
-                  onDelete &&
-                  canManageMessageForCurrentUser(
-                    threadHead,
-                    currentPubkey,
-                    profiles,
-                  )
-                    ? onDelete
-                    : undefined
-                }
-                onEdit={
-                  onEdit &&
-                  canManageMessageForCurrentUser(
-                    threadHead,
-                    currentPubkey,
-                    profiles,
-                  )
-                    ? onEdit
-                    : undefined
-                }
-                onFollowThread={
-                  onFollowThread ? (_msg) => onFollowThread() : undefined
-                }
-                onMarkUnread={onMarkUnread}
-                onMarkRead={onMarkRead}
-                onToggleReaction={onToggleReaction}
-                onUnfollowThread={
-                  onUnfollowThread ? (_msg) => onUnfollowThread() : undefined
-                }
-                profiles={profiles}
-                showDepthGuides={shouldShowThreadBranchGuides}
-                videoReviewContext={videoReviewContextsByMessageId?.get(
-                  threadHead.id,
-                )}
-              />
-            </div>
-          </div>
-        )}
+        <MessageThreadPanelHead
+          channelId={channelId}
+          currentPubkey={currentPubkey}
+          huddleMemberPubkeys={huddleMemberPubkeys}
+          huddleMemberPubkeysPending={huddleMemberPubkeysPending}
+          isFollowingThread={isFollowingThread}
+          isHuddleTranscript={isHuddleTranscript}
+          isMessageUnreadById={isMessageUnreadById}
+          onDelete={onDelete}
+          onEdit={onEdit}
+          onFollowThread={onFollowThread}
+          onMarkRead={onMarkRead}
+          onMarkUnread={onMarkUnread}
+          onToggleReaction={onToggleReaction}
+          onUnfollowThread={onUnfollowThread}
+          profiles={profiles}
+          shouldShowThreadBranchGuides={shouldShowThreadBranchGuides}
+          threadHead={threadHead}
+          videoReviewContext={videoReviewContextsByMessageId?.get(
+            threadHead.id,
+          )}
+        />
 
         {showThreadHeadDivider ? (
           <div

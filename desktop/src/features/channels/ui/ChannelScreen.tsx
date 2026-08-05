@@ -16,7 +16,6 @@ import {
   THREAD_PREFIX,
 } from "@/features/channels/readState/readStateFormat";
 import { ChannelScreenEmptyState } from "@/features/channels/ui/ChannelScreenEmptyState";
-import { ChannelScreenHeader } from "@/features/channels/ui/ChannelScreenHeader";
 import { ChannelPane } from "@/features/channels/ui/ChannelScreenLazyViews";
 import { WelcomeAgentCreateDialog } from "@/features/channels/ui/WelcomeAgentCreateDialog";
 import { ForumChannelContent } from "@/features/channels/ui/ForumChannelContent";
@@ -82,10 +81,13 @@ import { useChannelPanelHistoryState } from "./useChannelPanelHistoryState";
 import { useChannelProfilePanel } from "./useChannelProfilePanel";
 import { useChannelRouteTarget } from "./useChannelRouteTarget";
 import { useChannelOpenReadState } from "./useChannelOpenReadState";
+import { useChannelScreenHeader } from "./use-channel-screen-header";
 import { useChannelUnreadState } from "./useChannelUnreadState";
 import type { ChannelScreenProps } from "./ChannelScreen.types";
-const HEADER_ACTIONS_COMPACT_BREAKPOINT_PX = 760,
-  EMPTY_RELAY_EVENTS: RelayEvent[] = [];
+import {
+  EMPTY_RELAY_EVENTS,
+  HEADER_ACTIONS_COMPACT_BREAKPOINT_PX,
+} from "./channel-screen-constants";
 export function ChannelScreen({
   activeChannel,
   autoSendDraftKey,
@@ -749,51 +751,26 @@ export function ChannelScreen({
     () => setIsMembersSidebarOpen((prev) => !prev),
     [],
   );
-  const channelHeader = React.useMemo(
-    () => (
-      <ChannelScreenHeader
-        activeChannel={activeChannel}
-        activeChannelEphemeralDisplay={activeChannelEphemeralDisplay}
-        activeChannelTitle={activeChannelTitle}
-        actionsVariant={shouldCompactHeaderActions ? "compact" : "inline"}
-        activeDmAvatarUrl={activeDmAvatarUrl}
-        activeDmHeaderParticipants={activeDmHeaderParticipants}
-        activeDmPresenceStatus={activeDmPresenceStatus}
-        chromeWrapperRef={channelHeaderChromeRef}
-        currentPubkey={currentPubkey}
-        isAddBotOpen={isAddBotOpen}
-        isJoining={joinChannelMutation.isPending}
-        onAddBotOpenChange={setIsAddBotOpen}
-        onJoinChannel={joinChannelMutation.mutateAsync}
-        onManageChannel={handleManageChannel}
-        onOpenThread={handleOpenThreadAndCloseAgentSession}
-        onToggleMembers={handleToggleMembers}
-        showHeaderContent={!isSinglePanelView && !isHuddleTranscript}
-        timelineMessages={timelineMessages}
-        transparentChrome={activeChannel?.channelType !== "forum"}
-      />
-    ),
-    [
-      activeChannel,
-      activeChannelEphemeralDisplay,
-      activeChannelTitle,
-      shouldCompactHeaderActions,
-      activeDmAvatarUrl,
-      activeDmHeaderParticipants,
-      activeDmPresenceStatus,
-      channelHeaderChromeRef,
-      currentPubkey,
-      isAddBotOpen,
-      joinChannelMutation.isPending,
-      joinChannelMutation.mutateAsync,
-      handleManageChannel,
-      handleOpenThreadAndCloseAgentSession,
-      handleToggleMembers,
-      isSinglePanelView,
-      isHuddleTranscript,
-      timelineMessages,
-    ],
-  );
+  const channelHeader = useChannelScreenHeader({
+    activeChannel,
+    activeChannelEphemeralDisplay,
+    activeChannelTitle,
+    activeDmAvatarUrl,
+    activeDmHeaderParticipants,
+    activeDmPresenceStatus,
+    channelHeaderChromeRef,
+    currentPubkey,
+    handleManageChannel,
+    handleOpenThreadAndCloseAgentSession,
+    handleToggleMembers,
+    isAddBotOpen,
+    isHuddleTranscript,
+    isSinglePanelView,
+    joinChannelMutation,
+    setIsAddBotOpen,
+    shouldCompactHeaderActions,
+    timelineMessages,
+  });
   return (
     <AgentSessionProvider onOpenAgentSession={handleOpenAgentSession}>
       <ProfilePanelProvider onOpenProfilePanel={handleOpenProfilePanel}>
