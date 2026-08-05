@@ -6,6 +6,8 @@ import { useProjectWorktreeDetails } from "@/features/agents/projectWorktreeDeta
 import type { WorktreeBucketItem } from "@/features/channels/lib/worktreeBuckets";
 import { formatDiskBytes } from "@/features/channels/lib/worktreeDiskFormat";
 import { projectThreadLabel } from "@/features/messages/lib/projectThreadLabel";
+import { projectThreadStatusClassName } from "@/features/messages/ui/projectThreadGitHubStatus";
+import type { RegistryPullRequest } from "@/shared/api/thread-workspace-types";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
@@ -106,6 +108,59 @@ export function ChannelWorktreeRow({
               ? " · uncommitted changes"
               : ""}
           </p>
+          {entry.pullRequests.length > 0 ? (
+            <ul
+              className="mt-1.5 space-y-0.5"
+              data-testid="channel-worktree-pr-list"
+            >
+              {entry.pullRequests.map((pr) => (
+                <li key={pr.number}>
+                  <button
+                    className={cn(
+                      "inline-flex max-w-full items-center gap-1 truncate text-left text-2xs tabular-nums",
+                      projectThreadStatusClassName(drawerPrTone(pr)),
+                    )}
+                    onClick={() => void openUrl(pr.url)}
+                    title={pr.title}
+                    type="button"
+                  >
+                    <span>#{pr.number}</span>
+                    <span className="truncate font-normal text-muted-foreground">
+                      {pr.title}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {(entry.linkedIssues ?? []).length > 0 ? (
+            <ul
+              className="mt-1 space-y-0.5"
+              data-testid="channel-worktree-issue-list"
+            >
+              {entry.linkedIssues.map((issue) => (
+                <li key={issue.number}>
+                  <button
+                    className={cn(
+                      "inline-flex max-w-full items-center gap-1 truncate text-left text-2xs tabular-nums",
+                      issue.state.toLowerCase() === "open"
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-muted-foreground",
+                    )}
+                    onClick={() => void openUrl(issue.url)}
+                    title={issue.title}
+                    type="button"
+                  >
+                    <span aria-hidden="true">◉</span>
+                    <span>#{issue.number}</span>
+                    <span className="truncate font-normal text-muted-foreground">
+                      {issue.title}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {expanded ? (
             <div className="mt-2 space-y-1 text-2xs text-muted-foreground">
               <code className="block break-all rounded bg-muted/60 px-1.5 py-1">
@@ -176,4 +231,14 @@ export function ChannelWorktreeRow({
       </div>
     </div>
   );
+}
+
+function drawerPrTone(
+  pr: RegistryPullRequest,
+): "open" | "draft" | "merged" | "closed" {
+  const state = pr.state.toUpperCase();
+  if (state === "MERGED") return "merged";
+  if (state === "CLOSED") return "closed";
+  if (pr.isDraft) return "draft";
+  return "open";
 }

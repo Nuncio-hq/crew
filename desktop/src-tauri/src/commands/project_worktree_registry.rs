@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use super::project_worktree_registry_github::{
-    fetch_pull_requests_by_branch, FetchPullRequestsError, RegistryPullRequest,
+    fetch_issues_by_number, fetch_pull_requests_by_branch, resolve_linked_issues,
+    FetchPullRequestsError, RegistryIssue, RegistryPullRequest,
 };
 use super::project_worktree_registry_parse::{
     classify_worktree, managed_root_for, parse_buzz_thread_roots, parse_worktree_porcelain,
@@ -40,6 +41,7 @@ pub struct ProjectWorktreeEntry {
     pub root_event_id: Option<String>,
     pub prunable: bool,
     pub pull_requests: Vec<RegistryPullRequest>,
+    pub linked_issues: Vec<RegistryIssue>,
 }
 
 #[tauri::command]
@@ -70,10 +72,37 @@ pub async fn get_project_worktree_registry(
     let root_by_branch: HashMap<String, String> =
         parse_buzz_thread_roots(&roots_text).into_iter().collect();
 
-    let (github, prs_by_branch) = match fetch_pull_requests_by_branch(&repo_root).await {
-        Ok(map) => (GithubAvailability::Available, map),
-        Err(FetchPullRequestsError::CliMissing) => (GithubAvailability::CliMissing, HashMap::new()),
-        Err(FetchPullRequestsError::CliFailed) => (GithubAvailability::CliFailed, HashMap::new()),
+    let (pr_result, issues_result) = tokio::join!(
+        fetch_pull_requests_by_branch(&repo_root),
+        fetch_issues_by_number(&repo_root),
+    );
+
+    let mut github = GithubAvailability::Available;
+    let (prs_by_branch, linked_nums_by_branch) = match pr_result {
+        Ok(fetched) => (fetched.by_branch, fetched.linked_issue_numbers_by_branch),
+        Err(FetchPullRequestsError::CliMissing) => {
+            github = GithubAvailability::CliMissing;
+            (HashMap::new(), HashMap::new())
+        }
+        Err(FetchPullRequestsError::CliFailed) => {
+            github = GithubAvailability::CliFailed;
+            (HashMap::new(), HashMap::new())
+        }
+    };
+    let issues_by_number = match issues_result {
+        Ok(map) => map,
+        Err(FetchPullRequestsError::CliMissing) => {
+            if matches!(github, GithubAvailability::Available) {
+                github = GithubAvailability::CliMissing;
+            }
+            HashMap::new()
+        }
+        Err(FetchPullRequestsError::CliFailed) => {
+            if matches!(github, GithubAvailability::Available) {
+                github = GithubAvailability::CliFailed;
+            }
+            HashMap::new()
+        }
     };
 
     let primary_path = worktrees.first().map(|entry| entry.worktree_path.clone());
@@ -98,6 +127,17 @@ pub async fn get_project_worktree_registry(
             .as_ref()
             .and_then(|branch| prs_by_branch.get(branch).cloned())
             .unwrap_or_default();
+        let linked_issues = entry
+            .branch
+            .as_ref()
+            .map(|branch| {
+                let numbers = linked_nums_by_branch
+                    .get(branch)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                resolve_linked_issues(numbers, &issues_by_number)
+            })
+            .unwrap_or_default();
         entries.push(ProjectWorktreeEntry {
             worktree_path: path_text(&entry.worktree_path)?.to_string(),
             worktree_name: worktree_name(&entry.worktree_path),
@@ -107,6 +147,7 @@ pub async fn get_project_worktree_registry(
             root_event_id,
             prunable: entry.prunable,
             pull_requests,
+            linked_issues,
         });
     }
 

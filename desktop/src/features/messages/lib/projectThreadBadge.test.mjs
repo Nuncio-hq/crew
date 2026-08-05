@@ -13,6 +13,7 @@ function entry(overrides = {}) {
     rootEventId: "a".repeat(64),
     prunable: false,
     pullRequests: [],
+    linkedIssues: [],
     ...overrides,
   };
 }
@@ -32,11 +33,21 @@ function pr(number, state, extras = {}) {
   };
 }
 
+function issue(number, state, title = `Issue ${number}`) {
+  return {
+    number,
+    state,
+    title,
+    url: `https://example.test/issues/${number}`,
+  };
+}
+
 test("entry without PR → worktree chip only", () => {
   const badge = buildProjectThreadBadge(entry(), "brainstorm worktrees");
   assert.equal(badge.pullRequests.length, 0);
   assert.equal(badge.overflow, 0);
   assert.equal(badge.diff, null);
+  assert.equal(badge.openIssues, null);
   assert.equal(badge.label, "brainstorm worktrees");
   assert.equal(badge.mono, false);
 });
@@ -92,6 +103,30 @@ test("empty pull list (github unavailable) → worktree only", () => {
   const badge = buildProjectThreadBadge(entry({ pullRequests: [] }), "x");
   assert.equal(badge.pullRequests.length, 0);
   assert.equal(badge.diff, null);
+  assert.equal(badge.openIssues, null);
+});
+
+test("open linked issues → ◉ count chip with tooltip titles", () => {
+  const badge = buildProjectThreadBadge(
+    entry({
+      linkedIssues: [
+        issue(5, "open", "Wire rollup"),
+        issue(6, "closed", "Done"),
+        issue(7, "open", "Counts"),
+      ],
+    }),
+    "x",
+  );
+  assert.equal(badge.openIssues?.openCount, 2);
+  assert.equal(badge.openIssues?.title, "#5 Wire rollup\n#7 Counts");
+});
+
+test("zero open issues → no issue chip", () => {
+  const badge = buildProjectThreadBadge(
+    entry({ linkedIssues: [issue(1, "closed")] }),
+    "x",
+  );
+  assert.equal(badge.openIssues, null);
 });
 
 test("non-managed entry returns null", () => {
