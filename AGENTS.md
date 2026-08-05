@@ -9,6 +9,13 @@
 > [`docs/crew/IDENTITY.md`](docs/crew/IDENTITY.md) and the
 > [`docs/crew/`](docs/crew/README.md) index **before** planning or opening PRs.
 > Do not treat issues/PRs as belonging to `block/buzz`.
+>
+> **All PRs target Nuncio-hq/crew — never block/buzz (D-020).** Even for
+> changes to upstream-owned files (e.g. `discovery.rs` runtime entries),
+> cut branches from Crew `main` and merge through `NuncioCrew Gate`.
+> Do not propose, draft, or open pull requests against `block/buzz`;
+> the upstream remote's push URL is disabled on purpose. Crew accepts
+> the resulting fork delta and re-verifies it on each upstream sync.
 
 This guide is for AI agents contributing to the Buzz codebase. It covers
 agent-specific context and conventions. For general contributor info (setup,
