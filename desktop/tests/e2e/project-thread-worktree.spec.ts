@@ -352,6 +352,32 @@ test("Project threads show truthful isolated workspace and agent handoff", async
   await expect(panel.getByRole("button", { name: /^PR$/ })).toHaveCount(0);
 });
 
+test("Docked thread panel can expand to show worktree branch detail", async ({
+  page,
+}) => {
+  await installMockBridge(page, { managedAgents: agents });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await waitForLiveChannel(page);
+
+  await emitProjectRoot(page, ROOT_A, "expand docked workspace detail");
+  const panel = await openThread(page, "expand docked workspace detail");
+  await seedWorkspace(
+    page,
+    ROOT_A,
+    "conversation-docked-expand",
+    "buzz/aaaaaaaaaaaa",
+    "/tmp/.buzz-worktrees/crew-aaaaaaaaaaaa",
+  );
+
+  // Side panel is not focus mode — expand must still reveal the grid.
+  await expect(page.getByTestId("focus-thread-drawer")).toHaveCount(0);
+  await panel.getByTestId("project-thread-status-expand").click();
+  const expanded = panel.getByTestId("project-thread-status-expanded");
+  await expect(expanded).toBeVisible();
+  await expect(expanded).toContainText("buzz/aaaaaaaaaaaa");
+});
+
 test("Degraded GitHub availability shows a muted chip, not silent empty", async ({
   page,
 }) => {
@@ -433,20 +459,15 @@ test("Project workspace errors render failed truth without preparing affordances
   );
 
   // Docked sticky bar opens the drawer (error message only). "Setup failed"
-  // lives in the focus-mode expanded grid — assert it there (option a).
+  // lives in the expanded grid — reachable from the side panel now.
   await panel.getByRole("button", { name: /Workspace/ }).click();
   await expect(panel).toContainText("branch already checked out");
   await expect(panel).not.toContainText("Preparing");
   await expect(panel).not.toContainText("preparing this isolated worktree");
   await panel.getByRole("button", { name: "Close details" }).click();
 
-  await page.getByRole("button", { name: "Expand thread" }).click();
-  const focusDrawer = page.getByTestId("focus-thread-drawer");
-  await expect(focusDrawer).toBeVisible();
-  await focusDrawer.getByTestId("project-thread-status-expand").click();
-  // Option (a): "Setup failed" only lives in the focus-mode expanded grid cell.
-  // The error message itself was already asserted on the docked drawer above.
+  await panel.getByTestId("project-thread-status-expand").click();
   await expect(
-    focusDrawer.getByTestId("project-thread-status-expanded"),
+    panel.getByTestId("project-thread-status-expanded"),
   ).toContainText("Setup failed");
 });
