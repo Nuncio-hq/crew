@@ -88,7 +88,7 @@ export function ChannelWorktreesDrawerShell({
                 type="button"
                 variant="destructive"
               >
-                Remove selected
+                Free local space
               </Button>
             </div>
           ) : null}

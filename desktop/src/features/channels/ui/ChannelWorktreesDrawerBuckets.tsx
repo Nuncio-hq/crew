@@ -4,23 +4,29 @@ import { ChannelWorktreeRow } from "@/features/channels/ui/ChannelWorktreeRow";
 type ChannelWorktreesDrawerBucketsProps = {
   buckets: WorktreeBucket[];
   repositoryPath: string;
+  channelId?: string | null;
   rootBodiesById: ReadonlyMap<string, string>;
   selected: ReadonlySet<string>;
+  activeRootIds: ReadonlySet<string>;
   onToggleSelect: (path: string) => void;
   onOpenThread?: (rootEventId: string) => void;
   onRemove: (path: string) => void;
   onPrune: () => void;
+  onCacheCleared?: () => void;
 };
 
 export function ChannelWorktreesDrawerBuckets({
   buckets,
   repositoryPath,
+  channelId = null,
   rootBodiesById,
   selected,
+  activeRootIds,
   onToggleSelect,
   onOpenThread,
   onRemove,
   onPrune,
+  onCacheCleared,
 }: ChannelWorktreesDrawerBucketsProps) {
   return (
     <>
@@ -39,9 +45,12 @@ export function ChannelWorktreesDrawerBuckets({
             {bucket.items.map((item) => (
               <ChannelWorktreeRow
                 key={item.entry.worktreePath}
+                activeRootIds={activeRootIds}
+                channelId={channelId}
                 item={item}
                 onOpenThread={onOpenThread}
                 onPrune={bucket.id === "broken" ? () => onPrune() : undefined}
+                onCacheCleared={onCacheCleared}
                 onRemove={onRemove}
                 onToggleSelect={onToggleSelect}
                 readonly={bucket.readonly}

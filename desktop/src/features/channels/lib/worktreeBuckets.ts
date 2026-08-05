@@ -14,13 +14,19 @@ export type WorktreeBucketId =
   | "idle"
   | "orphan"
   | "broken"
+  | "other-channel"
+  | "channel-unknown"
+  | "conflict"
   | "other";
 
 export type WorktreeBucketItem = {
   entry: ProjectWorktreeEntry;
   bucket: WorktreeBucketId;
-  /** Root exists but belongs to another channel. */
-  orphanReason?: "unknown" | "other-channel";
+  /**
+   * Legacy no-root orphan, or channel identity not yet durable / not this
+   * channel. Never sufficient for destructive authorization.
+   */
+  orphanReason?: "unknown" | "channel-unknown";
 };
 
 export type WorktreeBucket = {
@@ -33,10 +39,16 @@ export type WorktreeBucket = {
 
 export type BucketWorktreesInput = {
   entries: readonly ProjectWorktreeEntry[];
-  /** Thread root event ids that belong to this channel. */
+  /**
+   * Thread root event ids currently visible for this channel.
+   * Used only as a Phase-1 fallback when durable routing is absent.
+   * Never proves another-channel ownership by itself.
+   */
   channelRootIds: ReadonlySet<string>;
-  /** Conversation/thread roots with a live agent turn. */
+  /** Conversation/thread roots with a live agent turn (presentation only). */
   activeRootIds: ReadonlySet<string>;
+  /** Current channel id for durable routing matches (Phase 3+). */
+  channelId?: string | null;
   detailsByPath?: ReadonlyMap<string, ProjectWorktreeDetails>;
   nowMs?: number;
 };
@@ -72,13 +84,28 @@ const BUCKET_META: Record<
   },
   orphan: {
     label: "Orphan",
-    hint: "no thread-root record",
-    readonly: false,
+    hint: "no thread-root record — read-only until adopted",
+    readonly: true,
   },
   broken: {
     label: "Broken",
     hint: "directory gone — prune",
     readonly: false,
+  },
+  "other-channel": {
+    label: "Other channels",
+    hint: "read-only — owned by another channel",
+    readonly: true,
+  },
+  "channel-unknown": {
+    label: "Legacy / channel unknown",
+    hint: "read-only — durable channel identity missing",
+    readonly: true,
+  },
+  conflict: {
+    label: "Needs attention",
+    hint: "read-only — lifecycle record conflict",
+    readonly: true,
   },
   other: {
     label: "Other checkouts",
@@ -93,6 +120,9 @@ const ORDER: WorktreeBucketId[] = [
   "idle",
   "orphan",
   "broken",
+  "other-channel",
+  "channel-unknown",
+  "conflict",
   "other",
 ];
 
@@ -118,6 +148,111 @@ export function bucketWorktrees(input: BucketWorktreesInput): WorktreeBucket[] {
   }).filter((bucket) => bucket.items.length > 0);
 }
 
+/**
+ * Central actionability helper so row and bulk selection cannot drift.
+ * Frontend checks are presentation only — Rust revalidates before mutation.
+ */
+export function canReclaimWorktree(
+  item: WorktreeBucketItem,
+  options?: { activeRootIds?: ReadonlySet<string> },
+): boolean {
+  if (!isChannelScopedManaged(item)) return false;
+  if (
+    item.bucket === "broken" ||
+    item.bucket === "active" ||
+    item.bucket === "ready-to-merge"
+  ) {
+    return false;
+  }
+  if (item.bucket !== "idle") return false;
+
+  const root = item.entry.rootEventId?.toLowerCase() ?? null;
+  if (root && options?.activeRootIds) {
+    const active = [...options.activeRootIds].some(
+      (id) => id.toLowerCase() === root,
+    );
+    if (active) return false;
+  }
+  return true;
+}
+
+/**
+ * Cache clear is allowed on dirty verified/same-channel rows; active turns and
+ * unknown/other-channel identities remain read-only. Backend still authorizes.
+ */
+export function canClearCacheWorktree(
+  item: WorktreeBucketItem,
+  options?: { activeRootIds?: ReadonlySet<string> },
+): boolean {
+  if (!isChannelScopedManaged(item)) return false;
+  if (item.bucket === "broken") return false;
+  const root = item.entry.rootEventId?.toLowerCase() ?? null;
+  if (root && options?.activeRootIds) {
+    const active = [...options.activeRootIds].some(
+      (id) => id.toLowerCase() === root,
+    );
+    if (active) return false;
+  }
+  // Ready-to-merge / active-with-PR can still clear cache (no exclusive agent
+  // lease from presentation alone); backend refuses if busy.
+  return (
+    item.bucket === "idle" ||
+    item.bucket === "active" ||
+    item.bucket === "ready-to-merge"
+  );
+}
+
+function isChannelScopedManaged(item: WorktreeBucketItem): boolean {
+  if (item.entry.kind === "main" || item.entry.kind === "external") {
+    return false;
+  }
+  if (item.entry.prunable) return false;
+  if (
+    item.bucket === "other" ||
+    item.bucket === "other-channel" ||
+    item.bucket === "channel-unknown" ||
+    item.bucket === "conflict" ||
+    item.bucket === "orphan"
+  ) {
+    return false;
+  }
+  if (
+    item.orphanReason === "unknown" ||
+    item.orphanReason === "channel-unknown"
+  ) {
+    return false;
+  }
+  const identity = item.entry.lifecycleIdentity ?? null;
+  if (identity === "legacy" || identity === "conflict") {
+    return false;
+  }
+  if (identity != null && identity !== "verified") {
+    return false;
+  }
+  return true;
+}
+
+/** Paths that remain selectable after a registry/bucket refresh. */
+export function pruneSelectedWorktreePaths(
+  selected: ReadonlySet<string>,
+  buckets: readonly WorktreeBucket[],
+  options?: { activeRootIds?: ReadonlySet<string> },
+): Set<string> {
+  const actionable = new Set<string>();
+  for (const bucket of buckets) {
+    for (const item of bucket.items) {
+      if (canReclaimWorktree(item, options)) {
+        actionable.add(item.entry.worktreePath);
+      }
+    }
+  }
+  const next = new Set<string>();
+  for (const path of selected) {
+    if (actionable.has(path)) next.add(path);
+  }
+  return next;
+}
+
 function classifyEntry(
   entry: ProjectWorktreeEntry,
   input: BucketWorktreesInput,
@@ -130,12 +265,41 @@ function classifyEntry(
     return { entry, bucket: "broken" };
   }
 
+  const identity = entry.lifecycleIdentity ?? null;
+  if (identity === "conflict") {
+    return { entry, bucket: "conflict" };
+  }
+
   const root = entry.rootEventId?.toLowerCase() ?? null;
   if (!root) {
     return { entry, bucket: "orphan", orphanReason: "unknown" };
   }
-  if (![...input.channelRootIds].some((id) => id.toLowerCase() === root)) {
-    return { entry, bucket: "orphan", orphanReason: "other-channel" };
+
+  // Durable routing (Phase 3): prefer verified channel identity over the
+  // paginated timeline window.
+  if (identity === "verified" && entry.routingChannelId && input.channelId) {
+    if (entry.routingChannelId !== input.channelId) {
+      return { entry, bucket: "other-channel" };
+    }
+  } else if (identity === "legacy") {
+    return {
+      entry,
+      bucket: "channel-unknown",
+      orphanReason: "channel-unknown",
+    };
+  } else {
+    // No durable identity yet (Phase 1): absence from the loaded timeline
+    // never proves other-channel ownership and is not actionable.
+    const inVisibleChannel = [...input.channelRootIds].some(
+      (id) => id.toLowerCase() === root,
+    );
+    if (!inVisibleChannel) {
+      return {
+        entry,
+        bucket: "channel-unknown",
+        orphanReason: "channel-unknown",
+      };
+    }
   }
 
   const openPrs = openPullRequests(entry.pullRequests);
@@ -150,8 +314,7 @@ function classifyEntry(
     return { entry, bucket: "active" };
   }
 
-  const details = input.detailsByPath?.get(entry.worktreePath);
-  if (details && isIdle(details, nowMs)) {
+  if (isIdleEntry(entry, input.detailsByPath?.get(entry.worktreePath), nowMs)) {
     return { entry, bucket: "idle" };
   }
 
@@ -178,11 +341,28 @@ function isReadyToMerge(openPrs: readonly RegistryPullRequest[]): boolean {
   );
 }
 
-function isIdle(details: ProjectWorktreeDetails, nowMs: number): boolean {
-  if (details.dirty) return false;
-  if (details.lastCommitAt == null) return false;
-  const ageMs = nowMs - details.lastCommitAt * 1000;
-  return ageMs >= IDLE_QUIET_MS;
+/**
+ * Prefer durable ACP `lastUsedAt` when present (Phase 3+).
+ * Missing `lastUsedAt` never means idle once a verified identity exists;
+ * Phase 1 may still fall back to commit age for pre-metadata rows.
+ */
+function isIdleEntry(
+  entry: ProjectWorktreeEntry,
+  details: ProjectWorktreeDetails | undefined,
+  nowMs: number,
+): boolean {
+  if (details?.dirty) return false;
+  // Ignored/local state is never "safely idle" for eviction presentation.
+  if (details?.hasIgnoredLocalState) return false;
+  if (entry.lastUsedAt != null) {
+    return nowMs - entry.lastUsedAt * 1000 >= IDLE_QUIET_MS;
+  }
+  if (entry.lifecycleIdentity === "verified") {
+    // Verified rows without lastUsedAt are never idle.
+    return false;
+  }
+  if (details?.lastCommitAt == null) return false;
+  return nowMs - details.lastCommitAt * 1000 >= IDLE_QUIET_MS;
 }
 
 export function countManagedWorktrees(

@@ -4,7 +4,10 @@ use tokio::process::Command;
 use uuid::Uuid;
 
 use crate::thread_workspace::BaseSource;
-use crate::thread_workspace::{ensure_thread_worktree, parse_project_workspace, ProjectWorkspace};
+use crate::thread_workspace::{
+    ensure_planned_thread_worktree, ensure_thread_worktree, parse_project_workspace,
+    plan_thread_worktree, EnsureKind, ProjectWorkspace,
+};
 
 #[test]
 fn parses_encoded_project_workspace_context() {
@@ -20,6 +23,37 @@ fn parses_encoded_project_workspace_context() {
 fn rejects_relative_workspace_path() {
     let content = "buzz://project-workspace?repo=acme%2Fapp&path=relative";
     assert!(parse_project_workspace(content).is_err());
+}
+
+#[tokio::test]
+async fn plan_thread_worktree_resolves_identity_without_creating_checkout() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "c".repeat(64);
+
+    let plan = plan_thread_worktree(&workspace, &root)
+        .await
+        .expect("plan succeeds");
+
+    assert_eq!(plan.root_event_id, root);
+    assert_eq!(plan.branch, "buzz/cccccccccccc");
+    assert!(
+        !plan.worktree_path.exists(),
+        "plan must not create the managed checkout"
+    );
+    assert!(plan.common_git.is_dir(), "common git dir must resolve");
+
+    let (ensured, kind) = ensure_planned_thread_worktree(&plan)
+        .await
+        .expect("ensure under caller-held lease");
+    assert_eq!(kind, EnsureKind::Created);
+    assert!(ensured.worktree_path.is_dir());
+
+    let (_, reuse_kind) = ensure_planned_thread_worktree(&plan)
+        .await
+        .expect("idempotent ensure");
+    assert_eq!(reuse_kind, EnsureKind::AlreadyPresent);
+
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
 }
 
 #[tokio::test]

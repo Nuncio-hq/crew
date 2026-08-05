@@ -21,9 +21,11 @@
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use buzz_worktree::SharedLease;
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
@@ -83,6 +85,29 @@ pub struct AgentModelCapabilities {
     pub available_models_raw: Option<serde_json::Value>,
 }
 
+/// Verified Project-thread worktree binding for one conversation, revalidated
+/// before every prompt (issue #59 Phase 2/3).
+///
+/// Backs the cached-session self-heal loop: a later prompt compares the
+/// freshly-resolved workspace against this binding and invalidates the ACP
+/// session when the checkout, branch, common Git directory, or eviction
+/// generation no longer match, instead of trusting a stale cached cwd.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceBinding {
+    /// Full 64-hex thread root event id that owns this workspace.
+    pub root_event_id: String,
+    /// Canonical worktree checkout path last verified for this conversation.
+    pub worktree_path: PathBuf,
+    /// Deterministic managed branch name (`buzz/<root-prefix>`).
+    pub branch: String,
+    /// Canonical common Git directory the lease/lifecycle record live under.
+    pub common_git: PathBuf,
+    /// Eviction generation observed the last time this binding was verified.
+    pub eviction_generation: u64,
+    /// Real NIP-29 routing channel for this conversation.
+    pub routing_channel_id: Uuid,
+}
+
 /// Per-channel session IDs and turn counters.
 ///
 /// Separated from `OwnedAgent` so the state machine is testable without
@@ -109,6 +134,10 @@ pub struct SessionState {
     pub canvas_sections: HashMap<Uuid, String>,
     /// Conversation identity → real NIP-29 channel.
     pub routing_channels: HashMap<Uuid, Uuid>,
+    /// Conversation identity → last verified Project workspace binding.
+    /// Cleared alongside the session on every invalidation path so a removed
+    /// or generation-changed checkout cannot be silently reused.
+    pub workspace_bindings: HashMap<Uuid, WorkspaceBinding>,
 }
 
 impl SessionState {
@@ -132,6 +161,7 @@ impl SessionState {
         self.core_sections.remove(channel_id);
         self.canvas_sections.remove(channel_id);
         self.routing_channels.remove(channel_id);
+        self.workspace_bindings.remove(channel_id);
         self.sessions.remove(channel_id).is_some()
     }
 
@@ -159,6 +189,7 @@ impl SessionState {
         self.core_sections.clear();
         self.canvas_sections.clear();
         self.routing_channels.clear();
+        self.workspace_bindings.clear();
     }
 
     #[cfg(test)]
@@ -168,6 +199,7 @@ impl SessionState {
             || self.core_sections.contains_key(channel_id)
             || self.canvas_sections.contains_key(channel_id)
             || self.routing_channels.contains_key(channel_id)
+            || self.workspace_bindings.contains_key(channel_id)
     }
 }
 
@@ -909,6 +941,7 @@ async fn resolve_new_session_channel_context(
 /// On error from `session_new_full()`, returns the `AcpError` — caller handles
 /// error reporting. Model-switch failures are logged and gracefully ignored
 /// (the agent proceeds with its default model).
+#[allow(clippy::too_many_arguments)]
 async fn create_session_and_apply_model(
     agent: &mut OwnedAgent,
     ctx: &PromptContext,
@@ -1516,17 +1549,28 @@ pub async fn run_prompt_task(
         .unwrap_or_default();
     let _reaction_guard = ReactionGuard::new(ctx.rest_client.clone(), reaction_ids.clone());
 
+    // Holds the shared active-turn lease for a verified Project-thread
+    // workspace (issue #59 Phase 2/3) for the rest of this prompt task.
+    // Declared here so it releases on every exit path below, including the
+    // early returns in this block and every later `send_prompt_result` +
+    // `return` on error.
+    let mut _workspace_lease: Option<SharedLease> = None;
     let session_cwd = match (&source, &batch) {
-        (PromptSource::Channel(cid), Some(batch)) if !agent.state.sessions.contains_key(cid) => {
-            match resolve_thread_session_workspace(batch, &ctx).await {
-                Ok(Some(workspace)) => {
+        (PromptSource::Channel(cid), Some(batch)) => {
+            match resolve_and_bind_channel_workspace(cid, batch, &ctx, &mut agent.state).await {
+                Ok(ChannelWorkspace::Bound {
+                    workspace,
+                    session_cwd,
+                    lease,
+                }) => {
                     agent.acp.observe(
                         "thread_workspace_ready",
                         thread_workspace_ready_payload(&workspace),
                     );
-                    workspace.worktree_path.to_string_lossy().into_owned()
+                    _workspace_lease = Some(lease);
+                    session_cwd
                 }
-                Ok(None) => ctx.cwd.clone(),
+                Ok(ChannelWorkspace::NotProject) => ctx.cwd.clone(),
                 Err(error) => {
                     let protocol_error = if let Some(workspace_error) =
                         error.downcast_ref::<ThreadWorkspaceProvisionError>()
@@ -1535,7 +1579,7 @@ pub async fn run_prompt_task(
                             channel = %batch.routing_channel_id(),
                             root = %workspace_error.root_event_id,
                             error = %workspace_error.source,
-                            "failed to provision isolated thread worktree"
+                            "failed to provision or lease isolated thread worktree"
                         );
                         agent.acp.observe(
                             "thread_workspace_error",
@@ -2787,12 +2831,48 @@ struct ThreadWorkspaceProvisionError {
 
 impl ThreadWorkspaceProvisionError {
     fn protocol_message(&self) -> String {
-        self.source
+        if let Some(error) = self
+            .source
             .downcast_ref::<crate::thread_workspace::ThreadWorkspaceBranchConflict>()
-            .map_or_else(
-                || THREAD_WORKSPACE_ERROR_MESSAGE.to_string(),
-                |error| format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {error}"),
-            )
+        {
+            return format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {error}");
+        }
+        if let Some(error) = self.source.downcast_ref::<buzz_worktree::LeaseError>() {
+            return format!(
+                "{THREAD_WORKSPACE_ERROR_MESSAGE} {}",
+                lease_error_message(error)
+            );
+        }
+        if let Some(error) = self.source.downcast_ref::<buzz_worktree::RecordError>() {
+            return format!(
+                "{THREAD_WORKSPACE_ERROR_MESSAGE} {}",
+                record_error_message(error)
+            );
+        }
+        THREAD_WORKSPACE_ERROR_MESSAGE.to_string()
+    }
+}
+
+/// Fail-closed protocol message for a lease acquisition failure. `Busy`
+/// gets clear, agent-facing copy; other variants fall back to their
+/// `Display` (I/O paths, invalid identity, unsupported version).
+fn lease_error_message(error: &buzz_worktree::LeaseError) -> String {
+    match error {
+        buzz_worktree::LeaseError::Busy => {
+            "another turn is actively using this Project workspace.".to_string()
+        }
+        other => other.to_string(),
+    }
+}
+
+/// Fail-closed protocol message for a lifecycle-record failure. `Conflict`
+/// gets clear, agent-facing copy; other variants fall back to `Display`.
+fn record_error_message(error: &buzz_worktree::RecordError) -> String {
+    match error {
+        buzz_worktree::RecordError::Conflict(detail) => {
+            format!("worktree lifecycle record conflict: {detail}")
+        }
+        other => other.to_string(),
     }
 }
 
@@ -2856,10 +2936,10 @@ fn thread_workspace_provision_error(
     }
 }
 
-async fn resolve_thread_session_workspace(
+async fn resolve_thread_workspace_plan(
     batch: &FlushBatch,
     ctx: &PromptContext,
-) -> anyhow::Result<Option<crate::thread_workspace::ThreadWorkspace>> {
+) -> anyhow::Result<Option<crate::thread_workspace::ThreadWorkspacePlan>> {
     let Some(last_event) = batch.events.last() else {
         return Ok(None);
     };
@@ -2910,16 +2990,162 @@ async fn resolve_thread_session_workspace(
     else {
         return Ok(None);
     };
-    let worktree = crate::thread_workspace::ensure_thread_worktree(&workspace, &root_event_id)
+    // Discovery only — lease acquisition and ensure/reattach happen in
+    // `resolve_and_bind_channel_workspace` (issue #59 BLOCKER 4).
+    let plan = crate::thread_workspace::plan_thread_worktree(&workspace, &root_event_id)
         .await
         .map_err(|source| thread_workspace_provision_error(&root_event_id, source))?;
+    Ok(Some(plan))
+}
+
+/// Outcome of resolving and (for Project threads) leasing/binding the
+/// workspace for one channel prompt.
+#[derive(Debug)]
+enum ChannelWorkspace {
+    /// Not a Project thread. No worktree lease is required; the caller keeps
+    /// its existing `ctx.cwd` behavior.
+    NotProject,
+    /// A verified, leased Project workspace. `session_cwd` is only consumed
+    /// if this turn ends up creating a new ACP session; an active,
+    /// non-mismatched cached session ignores it.
+    Bound {
+        workspace: Box<crate::thread_workspace::ThreadWorkspace>,
+        session_cwd: String,
+        lease: SharedLease,
+    },
+}
+
+/// Resolve, cross-process lease, and durably bind a Project-thread workspace
+/// for `cid` before *every* prompt — not only when creating a new session —
+/// so a cached ACP session self-heals after its checkout was evicted or
+/// relinked (issue #59 Phase 2/3).
+///
+/// On a verified Project workspace this:
+/// 1. plans the trusted root workspace (paths + common Git dir) without
+///    create/reattach mutation;
+/// 2. acquires a non-blocking shared active-turn lease, failing closed on
+///    `Busy` or any lease I/O error — *before* any worktree ensure;
+/// 3. ensures/reattaches the checkout under the lease, then revalidates;
+/// 4. adopts or creates the durable lifecycle record for the thread root,
+///    failing closed on any conflict;
+/// 5. monotonically bumps `last_used_at`;
+/// 6. compares the previously bound `WorkspaceBinding` (if any) against the
+///    freshly verified path/branch/common-Git-dir/eviction-generation and
+///    invalidates the cached session on any mismatch *or* when ensure
+///    created/reattached the checkout (BLOCKER 5 — generation write can fail);
+/// 7. stores the fresh binding.
+///
+/// The returned lease must be held by the caller for the rest of the prompt
+/// task — it is not held internally so one RAII guard covers both this
+/// resolution step and the turn that follows it.
+async fn resolve_and_bind_channel_workspace(
+    cid: &Uuid,
+    batch: &FlushBatch,
+    ctx: &PromptContext,
+    state: &mut SessionState,
+) -> anyhow::Result<ChannelWorkspace> {
+    let Some(plan) = resolve_thread_workspace_plan(batch, ctx).await? else {
+        return Ok(ChannelWorkspace::NotProject);
+    };
+    let root_event_id = plan.root_event_id.clone();
+    let wrap = |source: anyhow::Error| thread_workspace_provision_error(&root_event_id, source);
+
+    // Shared lease before any create/reattach mutation (BLOCKER 4).
+    let lease = buzz_worktree::try_acquire_shared(&plan.common_git, &root_event_id)
+        .map_err(|source| wrap(source.into()))?;
+
+    let (workspace, ensure_kind) = crate::thread_workspace::ensure_planned_thread_worktree(&plan)
+        .await
+        .map_err(&wrap)?;
     tracing::info!(
         channel = %batch.routing_channel_id(),
         root = %root_event_id,
-        cwd = %worktree.worktree_path.display(),
+        cwd = %workspace.worktree_path.display(),
+        ensure_kind = ?ensure_kind,
         "resolved isolated thread worktree"
     );
-    Ok(Some(worktree))
+
+    let routing_channel_id = batch.routing_channel_id();
+    let worktree_path_str = workspace.worktree_path.to_string_lossy().into_owned();
+    buzz_worktree::adopt_or_create_record(
+        &workspace.common_git,
+        &root_event_id,
+        &routing_channel_id.to_string(),
+        None,
+        &workspace.branch,
+        &worktree_path_str,
+    )
+    .map_err(|source| wrap(source.into()))?;
+    let record =
+        buzz_worktree::touch_last_used_at(&workspace.common_git, &root_event_id, unix_now())
+            .map_err(|source| wrap(source.into()))?;
+
+    let checkout_exists = workspace.worktree_path.is_dir();
+    let mismatch = workspace_binding_mismatch(
+        state.workspace_bindings.get(cid),
+        &workspace.worktree_path,
+        &workspace.branch,
+        &workspace.common_git,
+        record.eviction_generation,
+        checkout_exists,
+        ensure_kind.mutated_checkout(),
+    );
+    if mismatch {
+        state.invalidate_channel(cid);
+    }
+    state.workspace_bindings.insert(
+        *cid,
+        WorkspaceBinding {
+            root_event_id,
+            worktree_path: workspace.worktree_path.clone(),
+            branch: workspace.branch.clone(),
+            common_git: workspace.common_git.clone(),
+            eviction_generation: record.eviction_generation,
+            routing_channel_id,
+        },
+    );
+
+    Ok(ChannelWorkspace::Bound {
+        workspace: Box::new(workspace),
+        session_cwd: worktree_path_str,
+        lease,
+    })
+}
+
+/// True when the previously verified binding no longer matches the freshly
+/// resolved workspace, the checkout has disappeared from disk, or ensure
+/// had to create/reattach the checkout (`checkout_mutated`). `None` (no
+/// prior binding) always counts as a mismatch — there is nothing to safely
+/// reuse.
+fn workspace_binding_mismatch(
+    existing: Option<&WorkspaceBinding>,
+    worktree_path: &Path,
+    branch: &str,
+    common_git: &Path,
+    eviction_generation: u64,
+    checkout_exists: bool,
+    checkout_mutated: bool,
+) -> bool {
+    if !checkout_exists || checkout_mutated {
+        return true;
+    }
+    match existing {
+        None => true,
+        Some(binding) => {
+            binding.worktree_path.as_path() != worktree_path
+                || binding.branch != branch
+                || binding.common_git.as_path() != common_git
+                || binding.eviction_generation != eviction_generation
+        }
+    }
+}
+
+/// Unix seconds, clamped to 0 on a pre-epoch clock rather than panicking.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn trusted_fetched_root_content<'a>(
@@ -3086,6 +3312,7 @@ mod thread_session_cwd_tests {
             base_source: crate::thread_workspace::BaseSource::Remote,
             remote_default_branch: Some("main".into()),
             commits_behind_remote: Some(0),
+            common_git: PathBuf::from("/private/project/.git"),
         };
 
         let ready = thread_workspace_ready_payload(&workspace);
@@ -4607,7 +4834,7 @@ mod tests {
             auth_tag_json: None,
         };
 
-        let error = resolve_thread_session_workspace(&batch, &ctx)
+        let error = resolve_thread_workspace_plan(&batch, &ctx)
             .await
             .expect_err("a reply-only response must fail before workspace provisioning");
         let provision_error = error
@@ -6025,6 +6252,265 @@ mod tests {
         assert_eq!(s.core_sections.get(&ch_b).unwrap(), "core-b");
     }
 
+    // ── WorkspaceBinding lifecycle (issue #59 Phase 2/3) ─────────────────────
+
+    fn test_binding(root: char) -> WorkspaceBinding {
+        WorkspaceBinding {
+            root_event_id: root.to_string().repeat(64),
+            worktree_path: PathBuf::from(format!("/tmp/.buzz-worktrees/repo-{root}")),
+            branch: format!("buzz/{}", root.to_string().repeat(12)),
+            common_git: PathBuf::from("/tmp/repo/.git"),
+            eviction_generation: 0,
+            routing_channel_id: Uuid::new_v4(),
+        }
+    }
+
+    #[test]
+    fn test_invalidate_channel_clears_workspace_binding() {
+        let (mut s, ch_a, ch_b) = make_state();
+        s.workspace_bindings.insert(ch_a, test_binding('a'));
+        s.workspace_bindings.insert(ch_b, test_binding('b'));
+
+        assert!(s.invalidate_channel(&ch_a));
+
+        assert!(!s.workspace_bindings.contains_key(&ch_a));
+        assert!(!s.has_channel_state(&ch_a));
+        // ch_b's binding is untouched — invalidation is channel-scoped.
+        assert!(s.workspace_bindings.contains_key(&ch_b));
+    }
+
+    #[test]
+    fn test_invalidate_all_clears_every_workspace_binding() {
+        let (mut s, ch_a, ch_b) = make_state();
+        s.workspace_bindings.insert(ch_a, test_binding('a'));
+        s.workspace_bindings.insert(ch_b, test_binding('b'));
+
+        s.invalidate_all();
+
+        assert!(s.workspace_bindings.is_empty());
+    }
+
+    #[test]
+    fn test_invalidate_routing_channel_clears_bindings_for_every_matching_conversation() {
+        let (mut s, ch_a, ch_b) = make_state();
+        let routing_channel = Uuid::new_v4();
+        s.routing_channels.insert(ch_a, routing_channel);
+        s.routing_channels.insert(ch_b, routing_channel);
+        s.workspace_bindings.insert(ch_a, test_binding('a'));
+        s.workspace_bindings.insert(ch_b, test_binding('b'));
+
+        let cleared = s.invalidate_routing_channel(routing_channel);
+
+        assert_eq!(
+            cleared, 2,
+            "both conversations route through the same channel"
+        );
+        assert!(s.workspace_bindings.is_empty());
+    }
+
+    #[test]
+    fn test_invalidate_routing_channel_leaves_other_channels_bound() {
+        let (mut s, ch_a, ch_b) = make_state();
+        let routing_a = Uuid::new_v4();
+        let routing_b = Uuid::new_v4();
+        s.routing_channels.insert(ch_a, routing_a);
+        s.routing_channels.insert(ch_b, routing_b);
+        s.workspace_bindings.insert(ch_a, test_binding('a'));
+        s.workspace_bindings.insert(ch_b, test_binding('b'));
+
+        let cleared = s.invalidate_routing_channel(routing_a);
+
+        assert_eq!(cleared, 1);
+        assert!(!s.workspace_bindings.contains_key(&ch_a));
+        assert!(
+            s.workspace_bindings.contains_key(&ch_b),
+            "a different routing channel's binding must survive"
+        );
+    }
+
+    // ── workspace_binding_mismatch ────────────────────────────────────────────
+
+    #[test]
+    fn test_workspace_binding_mismatch_true_when_no_prior_binding() {
+        let path = PathBuf::from("/tmp/.buzz-worktrees/repo-a");
+        let common_git = PathBuf::from("/tmp/repo/.git");
+        assert!(workspace_binding_mismatch(
+            None,
+            &path,
+            "buzz/aaaaaaaaaaaa",
+            &common_git,
+            0,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_workspace_binding_mismatch_false_when_everything_matches() {
+        let binding = test_binding('a');
+        let path = binding.worktree_path.clone();
+        let common_git = binding.common_git.clone();
+        assert!(!workspace_binding_mismatch(
+            Some(&binding),
+            &path,
+            &binding.branch,
+            &common_git,
+            binding.eviction_generation,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_workspace_binding_mismatch_true_on_generation_advance() {
+        let binding = test_binding('a');
+        let path = binding.worktree_path.clone();
+        let common_git = binding.common_git.clone();
+        assert!(
+            workspace_binding_mismatch(
+                Some(&binding),
+                &path,
+                &binding.branch,
+                &common_git,
+                binding.eviction_generation + 1,
+                true,
+                false,
+            ),
+            "an advanced eviction generation must invalidate the cached binding"
+        );
+    }
+
+    #[test]
+    fn test_workspace_binding_mismatch_true_on_path_change() {
+        let binding = test_binding('a');
+        let new_path = PathBuf::from("/tmp/.buzz-worktrees/repo-a-reattached");
+        let common_git = binding.common_git.clone();
+        assert!(workspace_binding_mismatch(
+            Some(&binding),
+            &new_path,
+            &binding.branch,
+            &common_git,
+            binding.eviction_generation,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_workspace_binding_mismatch_true_on_branch_change() {
+        let binding = test_binding('a');
+        let path = binding.worktree_path.clone();
+        let common_git = binding.common_git.clone();
+        assert!(workspace_binding_mismatch(
+            Some(&binding),
+            &path,
+            "buzz/different0000",
+            &common_git,
+            binding.eviction_generation,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_workspace_binding_mismatch_true_on_common_git_change() {
+        let binding = test_binding('a');
+        let path = binding.worktree_path.clone();
+        let other_common_git = PathBuf::from("/tmp/other-repo/.git");
+        assert!(workspace_binding_mismatch(
+            Some(&binding),
+            &path,
+            &binding.branch,
+            &other_common_git,
+            binding.eviction_generation,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn test_workspace_binding_mismatch_true_when_checkout_missing() {
+        let binding = test_binding('a');
+        let path = binding.worktree_path.clone();
+        let common_git = binding.common_git.clone();
+        assert!(
+            workspace_binding_mismatch(
+                Some(&binding),
+                &path,
+                &binding.branch,
+                &common_git,
+                binding.eviction_generation,
+                false,
+                false,
+            ),
+            "a checkout that vanished from disk must never be trusted, even if metadata matches"
+        );
+    }
+
+    #[test]
+    fn test_workspace_binding_mismatch_true_when_checkout_was_mutated() {
+        let binding = test_binding('a');
+        let path = binding.worktree_path.clone();
+        let common_git = binding.common_git.clone();
+        assert!(
+            workspace_binding_mismatch(
+                Some(&binding),
+                &path,
+                &binding.branch,
+                &common_git,
+                binding.eviction_generation,
+                true,
+                true,
+            ),
+            "create/reattach must invalidate even when path/branch/generation strings match"
+        );
+    }
+
+    // ── lease/record error → protocol message mapping ────────────────────────
+
+    #[test]
+    fn test_lease_error_message_busy_is_agent_facing_and_actionable() {
+        let message = lease_error_message(&buzz_worktree::LeaseError::Busy);
+        assert_eq!(
+            message,
+            "another turn is actively using this Project workspace."
+        );
+    }
+
+    #[test]
+    fn test_lease_error_message_other_variants_fall_back_to_display() {
+        let error = buzz_worktree::LeaseError::InvalidIdentity("bad root".into());
+        assert_eq!(lease_error_message(&error), error.to_string());
+    }
+
+    #[test]
+    fn test_record_error_message_conflict_is_agent_facing_and_actionable() {
+        let error = buzz_worktree::RecordError::Conflict("branch mismatch".into());
+        let message = record_error_message(&error);
+        assert!(message.contains("branch mismatch"));
+        assert!(message.contains("conflict"));
+    }
+
+    #[test]
+    fn test_record_error_message_other_variants_fall_back_to_display() {
+        let error = buzz_worktree::RecordError::UnsupportedVersion {
+            found: 99,
+            supported: 1,
+        };
+        assert_eq!(record_error_message(&error), error.to_string());
+    }
+
+    #[test]
+    fn test_thread_workspace_provision_error_surfaces_busy_lease_copy() {
+        let error = thread_workspace_provision_error(
+            &"a".repeat(64),
+            buzz_worktree::LeaseError::Busy.into(),
+        );
+        let message = error.protocol_message();
+        assert!(message.contains("Could not prepare the isolated Project workspace."));
+        assert!(message.contains("actively using this Project workspace"));
+    }
+
     // ── ControlSignal::SwitchModel (Phase 3a, Option ii) ─────────────────────
 
     #[test]
@@ -7140,6 +7626,475 @@ mod tests {
             relay_url: "ws://127.0.0.1:3000".to_string(),
             user_input_runtime: None,
         }
+    }
+
+    // ── resolve_and_bind_channel_workspace (issue #59 Phase 2/3) ─────────────
+    //
+    // These exercise the real `buzz-worktree` lease/record crate against a
+    // disposable local fixture repo (no remote, no network) — never a real
+    // worktree. Each test creates and tears down its own fixture directory.
+
+    /// A bare local git repo with one commit and no remote, plus its parent
+    /// fixture directory (so `.buzz-worktrees` created alongside it is
+    /// cleaned up together). No network calls: `resolve_workspace_base` falls
+    /// back to `LocalFallback` when `git fetch origin` has no remote to hit.
+    fn init_git_fixture() -> (PathBuf, PathBuf) {
+        let fixture = std::env::temp_dir().join(format!("buzz-acp-pool-test-{}", Uuid::new_v4()));
+        let repo = fixture.join("project");
+        std::fs::create_dir_all(&repo).expect("fixture directory");
+        let run = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .status()
+                .expect("git starts");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        run(&["init", "-b", "main"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "Test"]);
+        std::fs::write(repo.join("README.md"), "fixture").expect("fixture file");
+        run(&["add", "README.md"]);
+        run(&["commit", "-m", "fixture"]);
+        (fixture, repo)
+    }
+
+    fn project_workspace_content(repo_path: &Path) -> String {
+        let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+        serializer.append_pair("repo", "fixture/project");
+        serializer.append_pair("path", &repo_path.to_string_lossy());
+        format!("buzz://project-workspace?{}", serializer.finish())
+    }
+
+    /// An owner-authored, non-reply batch pointing at `repo_path`. Non-reply
+    /// content is trusted directly (no relay fetch), so this needs no network
+    /// — see `select_trusted_workspace_content`. The signed event's own id
+    /// becomes the thread root, since it carries no NIP-10 root tag.
+    fn owner_project_workspace_batch(
+        channel_id: Uuid,
+        owner_keys: &Keys,
+        repo_path: &Path,
+    ) -> FlushBatch {
+        let event = EventBuilder::new(Kind::Custom(9), project_workspace_content(repo_path))
+            .sign_with_keys(owner_keys)
+            .expect("event signs");
+        FlushBatch {
+            channel_id,
+            events: vec![crate::queue::BatchEvent {
+                event,
+                prompt_tag: "test".into(),
+                received_at: std::time::Instant::now(),
+                edited_content: None,
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_and_bind_returns_not_project_and_takes_no_lease_without_an_owner() {
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_no_owner();
+        let cid = Uuid::new_v4();
+        // No owner configured — never touches git, so an unresolvable path is fine.
+        let batch = owner_project_workspace_batch(
+            Uuid::new_v4(),
+            &Keys::generate(),
+            Path::new("/nonexistent"),
+        );
+        let mut state = SessionState::default();
+
+        let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("non-owner content resolves without error");
+
+        assert!(matches!(outcome, ChannelWorkspace::NotProject));
+        assert!(
+            state.workspace_bindings.is_empty(),
+            "no lease or binding for a non-Project prompt"
+        );
+        let _ = agent_keys;
+    }
+
+    #[tokio::test]
+    async fn resolve_and_bind_creates_lease_and_binding_for_a_verified_project_thread() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch(Uuid::new_v4(), &owner_keys, &repo);
+        let expected_root = batch.events[0].event.id.to_hex();
+        let mut state = SessionState::default();
+
+        let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("verified Project workspace resolves");
+        let ChannelWorkspace::Bound {
+            workspace, lease, ..
+        } = outcome
+        else {
+            panic!("owner-authored Project content must bind a workspace");
+        };
+        assert_eq!(workspace.root_event_id, expected_root);
+        assert!(lease.path().exists(), "lease lockfile must be created");
+
+        let binding = state
+            .workspace_bindings
+            .get(&cid)
+            .expect("binding recorded after first resolution");
+        assert_eq!(binding.root_event_id, expected_root);
+        assert_eq!(binding.eviction_generation, 0);
+        assert_eq!(binding.common_git, workspace.common_git);
+
+        let record = buzz_worktree::read_lifecycle_record(&workspace.common_git, &expected_root)
+            .expect("record readable")
+            .expect("record was adopted");
+        assert_eq!(record.eviction_generation, 0);
+
+        drop(lease);
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    #[tokio::test]
+    async fn resolve_and_bind_reuses_the_session_when_nothing_changed() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch(Uuid::new_v4(), &owner_keys, &repo);
+        let mut state = SessionState::default();
+
+        resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("first resolution succeeds");
+
+        // Simulate a cached ACP session for this conversation.
+        state.sessions.insert(cid, "cached-session".into());
+
+        resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("second resolution succeeds");
+
+        assert_eq!(
+            state.sessions.get(&cid).map(String::as_str),
+            Some("cached-session"),
+            "an unchanged workspace must not invalidate the cached session"
+        );
+
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    #[tokio::test]
+    async fn resolve_and_bind_self_heals_a_cached_session_after_eviction_generation_advances() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch(Uuid::new_v4(), &owner_keys, &repo);
+        let mut state = SessionState::default();
+
+        let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("first resolution succeeds");
+        let ChannelWorkspace::Bound { workspace, .. } = outcome else {
+            panic!("expected a bound Project workspace");
+        };
+        let root_event_id = workspace.root_event_id.clone();
+        let common_git = workspace.common_git.clone();
+
+        // Model cleanup advancing the eviction generation after this turn's
+        // lease was released (Phase 4 cleanup flow — exercised here directly
+        // against the shared crate, since Phase 4 is out of scope).
+        buzz_worktree::advance_eviction_generation(&common_git, &root_event_id)
+            .expect("generation advances");
+
+        state.sessions.insert(cid, "stale-cached-session".into());
+
+        resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("third resolution succeeds");
+
+        assert!(
+            !state.sessions.contains_key(&cid),
+            "a generation change must invalidate the stale cached session"
+        );
+        assert_eq!(
+            state
+                .workspace_bindings
+                .get(&cid)
+                .expect("binding still present")
+                .eviction_generation,
+            1,
+            "the binding must observe the advanced generation"
+        );
+
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    #[tokio::test]
+    async fn resolve_and_bind_fails_closed_when_an_exclusive_eviction_lease_is_held() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch(Uuid::new_v4(), &owner_keys, &repo);
+        let mut state = SessionState::default();
+
+        // Prime the worktree/branch/record, then drop the shared lease before
+        // simulating exclusive cleanup. Binding the outcome and dropping it
+        // explicitly avoids any temporary-lifetime ambiguity under parallel
+        // tokio tests.
+        let primed = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("priming resolution succeeds");
+        let root_event_id = state
+            .workspace_bindings
+            .get(&cid)
+            .unwrap()
+            .root_event_id
+            .clone();
+        let common_git = state
+            .workspace_bindings
+            .get(&cid)
+            .unwrap()
+            .common_git
+            .clone();
+        drop(primed);
+
+        let exclusive = buzz_worktree::try_acquire_exclusive(&common_git, &root_event_id)
+            .expect("simulated cleanup holds the exclusive eviction lease");
+
+        let error = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect_err("a held exclusive lease must fail the turn closed");
+        let provision_error = error
+            .downcast_ref::<ThreadWorkspaceProvisionError>()
+            .expect("lease failures are wrapped as ThreadWorkspaceProvisionError");
+        assert!(
+            provision_error
+                .protocol_message()
+                .contains("actively using this Project workspace"),
+            "the protocol error must be clear and agent-facing: {}",
+            provision_error.protocol_message()
+        );
+
+        drop(exclusive);
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    /// BLOCKER 4: exclusive lease held *before* any ensure must refuse without
+    /// creating the managed checkout.
+    #[tokio::test]
+    async fn resolve_and_bind_exclusive_lease_before_prompt_prevents_ensure_mutation() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch(Uuid::new_v4(), &owner_keys, &repo);
+        let expected_root = batch.events[0].event.id.to_hex();
+        let mut state = SessionState::default();
+
+        let content = project_workspace_content(&repo);
+        let project = crate::thread_workspace::parse_project_workspace(&content)
+            .expect("parse")
+            .expect("present");
+        let plan = crate::thread_workspace::plan_thread_worktree(&project, &expected_root)
+            .await
+            .expect("plan discovery must not mutate");
+        assert!(
+            !plan.worktree_path.exists(),
+            "fixture must start without a managed checkout"
+        );
+
+        let exclusive = buzz_worktree::try_acquire_exclusive(&plan.common_git, &expected_root)
+            .expect("cleanup holds exclusive before any prompt starts");
+
+        let error = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect_err("exclusive lease must refuse before ensure");
+        let provision_error = error
+            .downcast_ref::<ThreadWorkspaceProvisionError>()
+            .expect("Busy is wrapped as ThreadWorkspaceProvisionError");
+        assert!(
+            provision_error
+                .protocol_message()
+                .contains("actively using this Project workspace"),
+            "protocol error must be Busy-shaped: {}",
+            provision_error.protocol_message()
+        );
+        assert!(
+            !plan.worktree_path.exists(),
+            "ensure must not create the worktree while exclusive is held"
+        );
+        assert!(
+            state.workspace_bindings.is_empty(),
+            "refused turns must not record a binding"
+        );
+
+        drop(exclusive);
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    /// Competing start/remove: while exclusive owns the workspace, start
+    /// refuses; after exclusive removes the checkout and releases, start
+    /// reattaches to a real cwd — never binds a missing path.
+    #[tokio::test]
+    async fn resolve_and_bind_start_remove_race_refuses_or_reattaches_never_missing_cwd() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch(Uuid::new_v4(), &owner_keys, &repo);
+        let expected_root = batch.events[0].event.id.to_hex();
+        let mut state = SessionState::default();
+
+        // Seed the checkout without holding an ACP shared lease, so exclusive
+        // acquisition below is deterministic under parallel test threads.
+        let content = project_workspace_content(&repo);
+        let project = crate::thread_workspace::parse_project_workspace(&content)
+            .expect("parse")
+            .expect("present");
+        let plan = crate::thread_workspace::plan_thread_worktree(&project, &expected_root)
+            .await
+            .expect("plan");
+        let (seeded, ensure_kind) = crate::thread_workspace::ensure_planned_thread_worktree(&plan)
+            .await
+            .expect("seed ensure");
+        assert_eq!(ensure_kind, crate::thread_workspace::EnsureKind::Created);
+        let worktree_path = seeded.worktree_path.clone();
+        let common_git = seeded.common_git.clone();
+        let repo_root = seeded.repository_path.clone();
+        drop(seeded);
+
+        // Phase A — exclusive held: start must Busy-refuse (no missing-cwd bind).
+        let exclusive = buzz_worktree::try_acquire_exclusive(&common_git, &expected_root)
+            .expect("cleanup exclusive while no shared holder");
+        let refused = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect_err("start must refuse while exclusive is held");
+        assert!(
+            refused
+                .downcast_ref::<ThreadWorkspaceProvisionError>()
+                .is_some(),
+            "refusal must be a provision error, not a Bound missing cwd"
+        );
+        assert!(
+            worktree_path.is_dir(),
+            "checkout must still exist while exclusive blocks start without remove"
+        );
+
+        // Phase B — remove under exclusive (branch retained), release, then start reattaches.
+        let remove = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .args(["worktree", "remove", "--force"])
+            .arg(&worktree_path)
+            .status()
+            .expect("git worktree remove starts");
+        assert!(remove.success(), "fixture remove must succeed");
+        assert!(
+            !worktree_path.exists(),
+            "checkout removed under exclusive ownership"
+        );
+        // Simulate incomplete cleanup: do NOT advance eviction generation.
+        drop(exclusive);
+
+        state.sessions.insert(cid, "stale-after-remove".into());
+        let recovered = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("start after remove must reattach, not bind a missing cwd");
+        let ChannelWorkspace::Bound {
+            workspace: recovered_ws,
+            session_cwd,
+            ..
+        } = recovered
+        else {
+            panic!("expected Bound after reattach");
+        };
+        assert!(
+            Path::new(&session_cwd).is_dir(),
+            "bound session_cwd must exist on disk after reattach"
+        );
+        assert!(
+            recovered_ws.worktree_path.is_dir(),
+            "reattached worktree path must exist"
+        );
+        assert!(
+            !state.sessions.contains_key(&cid),
+            "reattach must invalidate the stale cached session even without generation advance"
+        );
+
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    /// BLOCKER 5: ensure reattach/recreate forces session invalidation even when
+    /// path/branch/eviction_generation strings still match (generation write failed).
+    #[tokio::test]
+    async fn resolve_and_bind_invalidates_session_after_reattach_even_when_generation_matches() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch(Uuid::new_v4(), &owner_keys, &repo);
+        let mut state = SessionState::default();
+
+        let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("first resolution succeeds");
+        let ChannelWorkspace::Bound { workspace, .. } = outcome else {
+            panic!("expected a bound Project workspace");
+        };
+        let worktree_path = workspace.worktree_path.clone();
+        let repo_root = workspace.repository_path.clone();
+        let generation_before = state
+            .workspace_bindings
+            .get(&cid)
+            .expect("binding")
+            .eviction_generation;
+
+        // Evict checkout while retaining the branch; skip generation advance to
+        // model a failed write after remove.
+        let remove = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .args(["worktree", "remove", "--force"])
+            .arg(&worktree_path)
+            .status()
+            .expect("git worktree remove starts");
+        assert!(remove.success(), "fixture remove must succeed");
+
+        state.sessions.insert(cid, "cached-despite-eviction".into());
+
+        resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("reattach under shared lease succeeds");
+
+        assert!(
+            !state.sessions.contains_key(&cid),
+            "EnsureKind::Reattached must force session invalidation"
+        );
+        let binding = state
+            .workspace_bindings
+            .get(&cid)
+            .expect("binding refreshed after reattach");
+        assert_eq!(
+            binding.eviction_generation, generation_before,
+            "generation string still matches — invalidation must come from EnsureKind"
+        );
+        assert!(
+            binding.worktree_path.is_dir(),
+            "reattached checkout must exist"
+        );
+
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
     }
 
     // ── render_canvas_section ────────────────────────────────────────────────

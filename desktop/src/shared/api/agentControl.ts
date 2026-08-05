@@ -1,7 +1,9 @@
 import { sendAgentObserverControl } from "@/shared/api/observerRelay";
 import { invokeTauri } from "@/shared/api/tauri";
 import type {
+  ClearProjectWorktreeCacheResult,
   ProjectWorktreeDetails,
+  ProjectWorktreeReclaimPreview,
   ProjectWorktreeRegistry,
   ThreadGitHubStatus,
   ThreadWorkspaceActionResult,
@@ -126,13 +128,53 @@ export function getProjectWorktreeDetails(
   });
 }
 
+export function previewProjectWorktreeReclaim(
+  repositoryPath: string,
+  worktreePath: string,
+  expectedRoutingChannelId?: string | null,
+): Promise<ProjectWorktreeReclaimPreview> {
+  return invokeTauri("preview_project_worktree_reclaim", {
+    repositoryPath,
+    worktreePath,
+    expectedRoutingChannelId: expectedRoutingChannelId ?? null,
+  });
+}
+
+export function clearProjectWorktreeCache(
+  repositoryPath: string,
+  worktreePath: string,
+  categoryIds: string[],
+  expectedRoutingChannelId: string,
+): Promise<ClearProjectWorktreeCacheResult> {
+  return invokeTauri("clear_project_worktree_cache", {
+    repositoryPath,
+    worktreePath,
+    categoryIds,
+    expectedRoutingChannelId,
+  });
+}
+
 export function removeProjectWorktree(
   repositoryPath: string,
   worktreePath: string,
+  expectedRoutingChannelId: string,
 ): Promise<ThreadWorkspaceActionResult> {
   return invokeTauri("remove_project_worktree", {
     repositoryPath,
     worktreePath,
+    expectedRoutingChannelId,
+  });
+}
+
+export function evictProjectWorktree(
+  repositoryPath: string,
+  worktreePath: string,
+  expectedRoutingChannelId: string,
+): Promise<ThreadWorkspaceActionResult> {
+  return invokeTauri("evict_project_worktree", {
+    repositoryPath,
+    worktreePath,
+    expectedRoutingChannelId,
   });
 }
 

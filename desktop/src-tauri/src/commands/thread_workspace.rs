@@ -27,6 +27,8 @@ pub struct ThreadWorkspaceLifecycle {
     pub branch_checked_out: bool,
     pub branch_exists: bool,
     pub dirty: Option<bool>,
+    /// True when ignored/local entries exist. Presence only — never paths.
+    pub has_ignored_local_state: Option<bool>,
     pub worktree_exists: bool,
 }
 
@@ -49,22 +51,25 @@ pub async fn get_thread_workspace_lifecycle(
     )
     .await?;
     let worktree = std::fs::canonicalize(worktree_path).ok();
-    let dirty = match worktree.as_deref() {
+    let (dirty, has_ignored_local_state) = match worktree.as_deref() {
         Some(path) => {
             validate_checked_out_worktree(&target, path).await?;
-            Some(
-                !git_output_at(path, ["status", "--porcelain"])
-                    .await?
-                    .trim()
-                    .is_empty(),
-            )
+            let dirty = !git_output_at(path, ["status", "--porcelain"])
+                .await?
+                .trim()
+                .is_empty();
+            // Detection errors fail closed via `?` — never treat unknown as clean.
+            let has_ignored =
+                super::project_worktree_details::has_ignored_local_state(path).await?;
+            (Some(dirty), Some(has_ignored))
         }
-        None => None,
+        None => (None, None),
     };
     Ok(ThreadWorkspaceLifecycle {
         branch_checked_out: branch_is_checked_out(&target).await?,
         branch_exists,
         dirty,
+        has_ignored_local_state,
         worktree_exists: worktree.is_some(),
     })
 }
@@ -76,6 +81,8 @@ pub async fn remove_thread_worktree(
     branch: String,
     root_event_id: String,
 ) -> Result<ThreadWorkspaceActionResult, String> {
+    use buzz_worktree::{advance_eviction_generation, try_acquire_exclusive, LeaseError};
+
     let target = validate_target(&repository_path, &branch, &root_event_id).await?;
     let worktree = std::fs::canonicalize(worktree_path)
         .map_err(|error| format!("Thread worktree is not accessible: {error}"))?;
@@ -86,16 +93,80 @@ pub async fn remove_thread_worktree(
         .is_empty()
     {
         return Ok(refused(
-            "Remove worktree is unavailable while files have uncommitted changes.",
+            "Free local space is unavailable while files have uncommitted changes.",
         ));
     }
+    if super::project_worktree_details::has_ignored_local_state(&worktree).await? {
+        return Ok(refused(
+            super::project_worktree_auth::IGNORED_LOCAL_EVICTION_REFUSAL,
+        ));
+    }
+
+    let lease = match try_acquire_exclusive(&target.common_git, &root_event_id) {
+        Ok(lease) => lease,
+        Err(LeaseError::Busy) => {
+            return Ok(refused(
+                "Free local space is unavailable while an agent is using this worktree.",
+            ));
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not acquire worktree eviction lease: {error}"
+            ));
+        }
+    };
+
+    // Revalidate under the exclusive lease before mutation.
+    let revalidated = validate_target(&repository_path, &branch, &root_event_id).await?;
+    if revalidated.common_git != target.common_git
+        || revalidated.repository_path != target.repository_path
+    {
+        return Ok(refused(
+            "Worktree changed during eviction authorization; try again.",
+        ));
+    }
+    let worktree = std::fs::canonicalize(&worktree)
+        .map_err(|error| format!("Thread worktree is not accessible: {error}"))?;
+    validate_checked_out_worktree(&revalidated, &worktree).await?;
+    if !git_output_at(&worktree, ["status", "--porcelain"])
+        .await?
+        .trim()
+        .is_empty()
+    {
+        return Ok(refused(
+            "Free local space is unavailable while files have uncommitted changes.",
+        ));
+    }
+    // Detection errors fail closed via `?` — never treat unknown as clean.
+    if super::project_worktree_details::has_ignored_local_state(&worktree).await? {
+        return Ok(refused(
+            super::project_worktree_auth::IGNORED_LOCAL_EVICTION_REFUSAL,
+        ));
+    }
+
     git_output_dir(
-        &target.common_git,
+        &revalidated.common_git,
         ["worktree", "remove", "--", path_text(&worktree)?],
     )
     .await?;
-    git_output_dir(&target.common_git, ["worktree", "prune"]).await?;
-    Ok(completed("Removed the thread worktree."))
+    git_output_dir(&revalidated.common_git, ["worktree", "prune"]).await?;
+
+    // Advance generation only when a durable record exists. Thread panel can
+    // run before the first ACP adopt; missing records must not block
+    // branch-retaining eviction. Other persistence failures fail closed.
+    if buzz_worktree::read_lifecycle_record(&revalidated.common_git, &root_event_id)
+        .map_err(|error| format!("Could not read lifecycle record: {error}"))?
+        .is_some()
+    {
+        advance_eviction_generation(&revalidated.common_git, &root_event_id).map_err(|error| {
+            format!("Worktree removed but eviction generation could not be persisted: {error}")
+        })?;
+    }
+    drop(lease);
+
+    Ok(completed(
+        "Freed local space. The branch is kept and will reattach on the next agent turn.",
+    ))
 }
 
 #[tauri::command]

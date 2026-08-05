@@ -30,6 +30,15 @@ pub enum GithubAvailability {
     CliFailed,
 }
 
+/// How the registry treats local lifecycle identity for a managed worktree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LifecycleIdentity {
+    Verified,
+    Legacy,
+    Conflict,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectWorktreeEntry {
@@ -42,6 +51,10 @@ pub struct ProjectWorktreeEntry {
     pub prunable: bool,
     pub pull_requests: Vec<RegistryPullRequest>,
     pub linked_issues: Vec<RegistryIssue>,
+    pub routing_channel_id: Option<String>,
+    pub created_at: Option<i64>,
+    pub last_used_at: Option<i64>,
+    pub lifecycle_identity: LifecycleIdentity,
 }
 
 #[tauri::command]
@@ -138,8 +151,16 @@ pub async fn get_project_worktree_registry(
                 resolve_linked_issues(numbers, &issues_by_number)
             })
             .unwrap_or_default();
+        let worktree_path = path_text(&entry.worktree_path)?.to_string();
+        let lifecycle = project_lifecycle(
+            &common_git,
+            kind,
+            root_event_id.as_deref(),
+            entry.branch.as_deref(),
+            &worktree_path,
+        );
         entries.push(ProjectWorktreeEntry {
-            worktree_path: path_text(&entry.worktree_path)?.to_string(),
+            worktree_path,
             worktree_name: worktree_name(&entry.worktree_path),
             branch: entry.branch,
             head: entry.head,
@@ -148,6 +169,10 @@ pub async fn get_project_worktree_registry(
             prunable: entry.prunable,
             pull_requests,
             linked_issues,
+            routing_channel_id: lifecycle.routing_channel_id,
+            created_at: lifecycle.created_at,
+            last_used_at: lifecycle.last_used_at,
+            lifecycle_identity: lifecycle.identity,
         });
     }
 
@@ -157,6 +182,71 @@ pub async fn get_project_worktree_registry(
         github,
         entries,
     })
+}
+
+struct LifecycleProjection {
+    identity: LifecycleIdentity,
+    routing_channel_id: Option<String>,
+    created_at: Option<i64>,
+    last_used_at: Option<i64>,
+}
+
+fn project_lifecycle(
+    common_git: &Path,
+    kind: ProjectWorktreeKind,
+    root_event_id: Option<&str>,
+    branch: Option<&str>,
+    worktree_path: &str,
+) -> LifecycleProjection {
+    if kind != ProjectWorktreeKind::Managed {
+        return LifecycleProjection {
+            identity: LifecycleIdentity::Legacy,
+            routing_channel_id: None,
+            created_at: None,
+            last_used_at: None,
+        };
+    }
+    let Some(root) = root_event_id else {
+        return LifecycleProjection {
+            identity: LifecycleIdentity::Legacy,
+            routing_channel_id: None,
+            created_at: None,
+            last_used_at: None,
+        };
+    };
+    match buzz_worktree::read_lifecycle_record(common_git, root) {
+        Ok(Some(record)) => {
+            let path_mismatch = Path::new(&record.worktree_path) != Path::new(worktree_path);
+            let branch_mismatch = branch.is_some_and(|b| b != record.branch);
+            if path_mismatch || branch_mismatch {
+                LifecycleProjection {
+                    identity: LifecycleIdentity::Conflict,
+                    routing_channel_id: Some(record.routing_channel_id),
+                    created_at: Some(record.created_at),
+                    last_used_at: Some(record.last_used_at),
+                }
+            } else {
+                LifecycleProjection {
+                    identity: LifecycleIdentity::Verified,
+                    routing_channel_id: Some(record.routing_channel_id),
+                    created_at: Some(record.created_at),
+                    last_used_at: Some(record.last_used_at),
+                }
+            }
+        }
+        Ok(None) => LifecycleProjection {
+            identity: LifecycleIdentity::Legacy,
+            routing_channel_id: None,
+            created_at: None,
+            last_used_at: None,
+        },
+        Err(_) => LifecycleProjection {
+            identity: LifecycleIdentity::Conflict,
+            routing_channel_id: None,
+            created_at: None,
+            last_used_at: None,
+        },
+    }
 }
 
 fn canonical_git_path(repo_root: &Path, git_path: &str) -> Result<PathBuf, String> {

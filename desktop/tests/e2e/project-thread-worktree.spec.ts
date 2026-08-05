@@ -322,7 +322,7 @@ test("Project threads show truthful isolated workspace and agent handoff", async
   });
   await panel.getByRole("button", { name: /Workspace/ }).click();
   await expect(
-    panel.getByRole("button", { name: "Remove worktree" }),
+    panel.getByRole("button", { name: "Free local space" }),
   ).toBeDisabled();
   await expect(panel.getByRole("button", { name: /^PR$/ })).toBeVisible();
   await waitForAnimations(page);

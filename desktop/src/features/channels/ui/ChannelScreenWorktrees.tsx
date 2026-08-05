@@ -7,6 +7,7 @@ import type { TimelineMessage } from "@/features/messages/types";
 type ChannelScreenWorktreesProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  channelId: string | null;
   timelineMessages: readonly TimelineMessage[];
   onOpenThread: (message: TimelineMessage) => void;
 };
@@ -14,6 +15,7 @@ type ChannelScreenWorktreesProps = {
 export function ChannelScreenWorktrees({
   open,
   onOpenChange,
+  channelId,
   timelineMessages,
   onOpenThread,
 }: ChannelScreenWorktreesProps) {
@@ -23,6 +25,7 @@ export function ChannelScreenWorktrees({
   );
   return (
     <ChannelWorktreesDrawer
+      channelId={channelId}
       channelRootIds={workspace.channelRootIds}
       onOpenChange={onOpenChange}
       onOpenThread={(rootEventId) => {

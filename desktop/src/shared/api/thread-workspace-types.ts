@@ -9,6 +9,8 @@ export type ThreadWorkspaceLifecycle = {
   branchCheckedOut: boolean;
   branchExists: boolean;
   dirty: boolean | null;
+  /** True when ignored/local entries exist. Presence only — never paths. */
+  hasIgnoredLocalState?: boolean | null;
   worktreeExists: boolean;
 };
 
@@ -82,6 +84,9 @@ export type RegistryIssue = {
 
 export type ProjectWorktreeKind = "main" | "managed" | "external";
 
+/** Local lifecycle projection joined from durable records (Phase 3+). */
+export type LifecycleIdentity = "verified" | "legacy" | "conflict";
+
 export type ProjectWorktreeEntry = {
   worktreePath: string;
   worktreeName: string;
@@ -92,6 +97,14 @@ export type ProjectWorktreeEntry = {
   prunable: boolean;
   pullRequests: RegistryPullRequest[];
   linkedIssues: RegistryIssue[];
+  /** Durable routing channel when a verified lifecycle record exists. */
+  routingChannelId?: string | null;
+  /** Unix seconds; durable ACP creation time when known. */
+  createdAt?: number | null;
+  /** Unix seconds; durable ACP last-used time when known. */
+  lastUsedAt?: number | null;
+  /** How the registry treats local lifecycle identity. */
+  lifecycleIdentity?: LifecycleIdentity | null;
 };
 
 export type GithubAvailability = "available" | "cli-missing" | "cli-failed";
@@ -111,4 +124,48 @@ export type ProjectWorktreeDetails = {
   /** Unix seconds of the tip commit, when available. */
   lastCommitAt: number | null;
   diskBytes: number;
+  /**
+   * True when `git status --ignored` reports ignored/local entries.
+   * Presence only — never includes paths or file contents.
+   */
+  hasIgnoredLocalState?: boolean;
+};
+
+export type CacheCategoryPreview = {
+  id: string;
+  label: string;
+  bytes: number;
+  present: boolean;
+};
+
+export type ProjectWorktreeReclaimPreview = {
+  worktreePath: string;
+  /** @deprecated Prefer canClearCache / canEvict — preview is not authorization. */
+  actionable: boolean;
+  refusalReason: string | null;
+  canClearCache: boolean;
+  canEvict: boolean;
+  clearCacheRefusal: string | null;
+  evictionRefusal: string | null;
+  dirty: boolean;
+  busy: boolean;
+  branchRetained: boolean;
+  diskBytes: number;
+  cacheCategories: CacheCategoryPreview[];
+  hasIgnoredLocalState: boolean;
+  lifecycleIdentity: LifecycleIdentity;
+  lastUsedAt: number | null;
+  routingChannelId: string | null;
+};
+
+export type CacheCategoryClearResult = {
+  id: string;
+  status: ThreadWorkspaceActionStatus;
+  message: string;
+  bytesRemoved: number;
+};
+
+export type ClearProjectWorktreeCacheResult = {
+  worktreePath: string;
+  results: CacheCategoryClearResult[];
 };
