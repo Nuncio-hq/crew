@@ -1,5 +1,6 @@
 import type {
   ProjectWorktreeEntry,
+  RegistryIssue,
   RegistryPullRequest,
 } from "@/shared/api/thread-workspace-types";
 import type { ProjectThreadStatusTone } from "@/features/messages/ui/projectThreadGitHubStatus";
@@ -11,6 +12,12 @@ export type ProjectThreadBadgePr = {
   title: string;
 };
 
+export type ProjectThreadBadgeIssues = {
+  openCount: number;
+  /** Tooltip lines: `#num title` per open issue. */
+  title: string;
+};
+
 export type ProjectThreadBadge = {
   label: string | null;
   branch: string;
@@ -19,6 +26,8 @@ export type ProjectThreadBadge = {
   pullRequests: ProjectThreadBadgePr[];
   overflow: number;
   diff: { additions: number; deletions: number } | null;
+  /** Open linked issues only; null when count is zero. */
+  openIssues: ProjectThreadBadgeIssues | null;
 };
 
 export function buildProjectThreadBadge(
@@ -32,6 +41,7 @@ export function buildProjectThreadBadge(
   const overflow = Math.max(0, ranked.length - visible.length);
   const pullRequests = visible.map(toBadgePr);
   const diff = sumDiff(ranked);
+  const openIssues = openIssuesBadge(entry.linkedIssues ?? []);
   return {
     label,
     branch: entry.branch,
@@ -40,6 +50,7 @@ export function buildProjectThreadBadge(
     pullRequests,
     overflow,
     diff,
+    openIssues,
   };
 }
 
@@ -54,6 +65,17 @@ function toBadgePr(pr: RegistryPullRequest): ProjectThreadBadgePr {
     tone: prTone(pr),
     checkGlyph: checkGlyph(pr),
     title: pr.title,
+  };
+}
+
+function openIssuesBadge(
+  issues: readonly RegistryIssue[],
+): ProjectThreadBadgeIssues | null {
+  const open = issues.filter((issue) => issue.state.toLowerCase() === "open");
+  if (open.length === 0) return null;
+  return {
+    openCount: open.length,
+    title: open.map((issue) => `#${issue.number} ${issue.title}`).join("\n"),
   };
 }
 
