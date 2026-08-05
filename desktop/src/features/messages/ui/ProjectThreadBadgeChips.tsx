@@ -59,6 +59,19 @@ export function ProjectThreadBadgeChips({
           <span className="tabular-nums">+{badge.overflow}</span>
         </>
       ) : null}
+      {badge.openIssues ? (
+        <>
+          <span className="mx-1 text-muted-foreground/50">·</span>
+          <span
+            className="inline-flex items-center gap-0.5 tabular-nums text-emerald-600 dark:text-emerald-400"
+            data-testid="project-thread-badge-open-issues"
+            title={badge.openIssues.title}
+          >
+            <span aria-hidden="true">◉</span>
+            {badge.openIssues.openCount}
+          </span>
+        </>
+      ) : null}
       {badge.diff ? (
         <span
           className="[@container(max-width:659.9px)]:hidden"

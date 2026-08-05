@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   IDLE_QUIET_MS,
+  aggregateGithubRollup,
   bucketWorktrees,
   channelWorktreesPillLabel,
   countManagedWorktrees,
@@ -22,6 +23,7 @@ function entry(overrides = {}) {
     rootEventId: "a".repeat(64),
     prunable: false,
     pullRequests: [],
+    linkedIssues: [],
     ...overrides,
   };
 }
@@ -214,5 +216,74 @@ test("github availability notice names the cause", () => {
   assert.match(
     githubAvailabilityNotice("cli-failed") ?? "",
     /could not read this repo/,
+  );
+});
+
+test("aggregateGithubRollup mixed states and dedupes", () => {
+  const counts = aggregateGithubRollup([
+    entry({
+      pullRequests: [
+        pr({ number: 1, state: "OPEN" }),
+        pr({ number: 2, state: "OPEN", isDraft: true }),
+        pr({ number: 3, state: "MERGED" }),
+        pr({ number: 4, state: "CLOSED" }),
+      ],
+      linkedIssues: [
+        { number: 10, state: "open", title: "a", url: "https://x/10" },
+        { number: 11, state: "closed", title: "b", url: "https://x/11" },
+      ],
+    }),
+    entry({
+      worktreePath: "/m2",
+      pullRequests: [
+        pr({ number: 1, state: "OPEN" }),
+        pr({ number: 5, state: "MERGED" }),
+      ],
+      linkedIssues: [
+        { number: 10, state: "open", title: "a", url: "https://x/10" },
+        { number: 12, state: "open", title: "c", url: "https://x/12" },
+      ],
+    }),
+    entry({
+      kind: "external",
+      worktreePath: "/ext",
+      pullRequests: [pr({ number: 99 })],
+      linkedIssues: [
+        { number: 99, state: "open", title: "x", url: "https://x/99" },
+      ],
+    }),
+  ]);
+  assert.deepEqual(counts, {
+    prOpen: 1,
+    prDraft: 1,
+    prMerged: 2,
+    prClosed: 1,
+    issuesOpen: 2,
+    issuesClosed: 1,
+  });
+});
+
+test("aggregateGithubRollup empty registry", () => {
+  assert.deepEqual(aggregateGithubRollup([]), {
+    prOpen: 0,
+    prDraft: 0,
+    prMerged: 0,
+    prClosed: 0,
+    issuesOpen: 0,
+    issuesClosed: 0,
+  });
+});
+
+test("aggregateGithubRollup entries with no PRs or issues", () => {
+  assert.deepEqual(
+    aggregateGithubRollup([entry(), entry({ worktreePath: "/m2" })]),
+    {
+      prOpen: 0,
+      prDraft: 0,
+      prMerged: 0,
+      prClosed: 0,
+      issuesOpen: 0,
+      issuesClosed: 0,
+    },
   );
 });
