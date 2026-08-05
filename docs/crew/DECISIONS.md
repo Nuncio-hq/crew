@@ -304,3 +304,28 @@ Adopted from
    agents additionally require a credential-isolation step: spike 0010
    showed fresh profiles read the manager's pooled credentials through a
    global-root fallback.
+
+## D-020 — Hermes tier-1 promotion lands in Crew, not upstream
+
+- **Status:** Accepted; supersedes D-019 item 4
+- **Date:** 2026-08-05
+
+The manager decided no pull request will be opened against `block/buzz`
+for this feature (or, by default, for any Crew work). The Hermes tier-1
+`KnownAcpRuntime` entry, the `default_agent_args` mapping, and the
+preset removal are implemented directly in Crew on a branch cut from
+Crew `main`, merged through the normal `NuncioCrew Gate`.
+
+Consequences:
+
+- Crew accepts a permanent fork delta in
+  `desktop/src-tauri/src/managed_agents/discovery.rs` (and the sibling
+  files the entry touches). Every upstream sync must re-verify this
+  delta; conflicts there are expected and owned by Crew.
+- The thin-fork budget in `UPSTREAM-SYNC.md` still applies to *how* the
+  edit is made (smallest possible, no restyling, no drive-by changes),
+  but "contribute upstream instead" is no longer the escape hatch.
+- If upstream later ships its own Hermes tier-1 entry, the sync
+  resolves in favor of upstream's shape and Crew's delta is retired.
+- Feature 0001 documents (P-4, §7.2, Slice 3) are historical as written;
+  this decision governs.

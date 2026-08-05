@@ -17,7 +17,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { RUNTIME_MARKS } from "./HarnessMarks.tsx";
-import { PRESET_LOGOS } from "./RuntimeIcon.tsx";
+import { PRESET_LOGOS, RUNTIME_LOGOS } from "./RuntimeIcon.tsx";
 
 const desktopRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -29,10 +29,26 @@ const presetsRs = readFileSync(
   "utf8",
 );
 
+const knownRuntimesRs = readFileSync(
+  path.join(
+    desktopRoot,
+    "src-tauri/src/managed_agents/discovery/known_runtimes.rs",
+  ),
+  "utf8",
+);
+
 const presetBlock = presetsRs.match(
   /const PRESET_HARNESSES: &\[PresetHarness\] = &\[([\s\S]*?)\n\];/,
 );
 assert.ok(presetBlock, "could not locate PRESET_HARNESSES in presets.rs");
+
+const knownRuntimesBlock = knownRuntimesRs.match(
+  /const KNOWN_ACP_RUNTIMES: &\[KnownAcpRuntime\] = &\[([\s\S]*?)\n\];/,
+);
+assert.ok(
+  knownRuntimesBlock,
+  "could not locate KNOWN_ACP_RUNTIMES in known_runtimes.rs",
+);
 
 const presetEntries = [
   ...[...presetBlock[1].matchAll(/\bpreset\(\s*"([^"]+)"/g)].map((match) => ({
@@ -46,12 +62,16 @@ const presetEntries = [
 ].sort((left, right) => left.index - right.index);
 const presetIds = [...new Set(presetEntries.map((entry) => entry.id))];
 
+const tier1Ids = [
+  ...knownRuntimesBlock[1].matchAll(/^\s+id: "([^"]+)",$/gm),
+].map((match) => match[1]);
+
 test("PRESET_HARNESSES parse found the preset ids", () => {
   // Guards the regex itself: a struct-field rename would otherwise silently
   // yield zero ids and make every assertion below vacuously pass.
   assert.ok(
-    presetIds.length >= 8,
-    `expected at least 8 preset ids, parsed ${presetIds.length}`,
+    presetIds.length >= 7,
+    `expected at least 7 preset ids, parsed ${presetIds.length}`,
   );
 });
 
@@ -86,6 +106,28 @@ test("PRESET_LOGOS has no entries for unknown presets", () => {
     unknown,
     [],
     `PRESET_LOGOS maps ids the backend does not emit as presets: ${unknown.join(", ")}`,
+  );
+});
+
+test("hermes is a tier-1 runtime with a bundled logo (not a preset)", () => {
+  assert.ok(
+    tier1Ids.includes("hermes"),
+    "hermes must appear in KNOWN_ACP_RUNTIMES after the tier-1 promotion",
+  );
+  assert.ok(
+    !presetIds.includes("hermes"),
+    "hermes must not remain in PRESET_HARNESSES after the tier-1 promotion",
+  );
+  assert.equal(
+    PRESET_LOGOS.hermes,
+    undefined,
+    "hermes logo must live in RUNTIME_LOGOS, not PRESET_LOGOS",
+  );
+  const logoPath = RUNTIME_LOGOS.hermes;
+  assert.ok(logoPath, "hermes must have a RUNTIME_LOGOS entry");
+  assert.ok(
+    existsSync(path.join(desktopRoot, "public", logoPath)),
+    `RUNTIME_LOGOS.hermes points at ${logoPath}, which is missing from desktop/public`,
   );
 });
 
