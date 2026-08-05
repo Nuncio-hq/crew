@@ -21,6 +21,7 @@ export function UserProfilePersonaDialogs({
   cardMintTarget,
   createError,
   instanceCount,
+  hermesProfiles = [],
   isPending,
   linkedAgentPubkey,
   personaDialogState,
@@ -43,6 +44,7 @@ export function UserProfilePersonaDialogs({
   createError: Error | null;
   /** Number of managed-agent instances backed by the persona being deleted. */
   instanceCount: number;
+  hermesProfiles?: string[];
   isPending: boolean;
   linkedAgentPubkey: string | null;
   personaDialogState: PersonaDialogState | null;
@@ -57,7 +59,10 @@ export function UserProfilePersonaDialogs({
   onCloseDelete: () => void;
   onCloseDialog: () => void;
   onCloseExportSnapshot: () => void;
-  onConfirmDelete: (persona: AgentPersona) => void;
+  onConfirmDelete: (
+    persona: AgentPersona,
+    options?: { deleteHermesProfiles?: boolean },
+  ) => void;
   onExportSnapshot: (persona: AgentPersona) => void;
   onSubmit: (input: CreatePersonaInput | UpdatePersonaInput) => Promise<void>;
 }) {
@@ -87,6 +92,7 @@ export function UserProfilePersonaDialogs({
         title={personaDialogState?.title ?? "Agent"}
       />
       <PersonaDeleteDialog
+        hermesProfiles={hermesProfiles}
         instanceCount={instanceCount}
         onConfirm={onConfirmDelete}
         onOpenChange={(open) => {

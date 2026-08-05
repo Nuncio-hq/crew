@@ -190,8 +190,12 @@ with a TypeScript lookup table or an id comparison in a component.
   restoration, zero-write Skip, Next save failure/retry, navigation, and
   successful-empty vs failed optional-model discovery.
 - `desktop/tests/e2e/hermes-profile-binding.spec.ts` — create/edit binding
-  field visibility, validation, profile-owned model row, duplicate-bind error.
+  field visibility, validation, profile-owned model row, duplicate-bind error,
+  create-in-place button, delete keep/delete choice (defaults to keep).
 - Rust: `runtime_metadata_env_vars` tests pin spawn-time key application.
+- Rust: `hermes_profile_lifecycle` tests pin create/delete against a fake
+  `hermes` + temp `HERMES_HOME` (including the spike 0011 exit-0-but-present
+  trap).
 - Rust: persona sharing/retention tests pin relay+owner scoping, durable
   enqueue errors, relay rejection/unavailability, and accepted publication.
 

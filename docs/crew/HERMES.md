@@ -1,11 +1,10 @@
-# Hermes agents in Crew — Slice 1+2 runbook
+# Hermes agents in Crew — runbook
 
 - **Feature:** [`features/0001-hermes-first-class-runtime.md`](features/0001-hermes-first-class-runtime.md)
-- **Decision:** [`DECISIONS.md`](DECISIONS.md) D-019
-- **Status of this flow:** tier-1 runtime on main (PR #54); Phase 02A
-  (Rust binding + spawn guard + readiness) and Phase 02B (desktop binding
-  UI + profile-owned model display) are on main. Profile lifecycle UI is
-  still Phase 03.
+- **Decision:** [`DECISIONS.md`](DECISIONS.md) D-019, D-020, D-023
+- **Status of this flow:** tier-1 runtime on main; Phase 02 binding UI on
+  main; Phase 03 profile lifecycle (create-in-place, keep/delete
+  offboarding, orphan repair) on main.
 
 ## The model in one sentence
 
@@ -38,7 +37,16 @@ placement, scheduling, and display.
 
 Example: an agent called `scout`.
 
-### 1. Create the profile
+### 1. Create the profile (CLI or create-in-place)
+
+**Preferred (Phase 03):** in Crew, pick runtime **Hermes Agent**, type
+the profile name in the **Hermes profile** field, then click
+**Create profile '\<name\>'**. Crew runs
+`hermes profile create <name> --no-alias` (command line shown in the
+UI) and binds on success. Bundled skills are kept (D-023); there is no
+`--no-skills` from Crew.
+
+**CLI fallback:**
 
 ```bash
 hermes profile create scout --no-alias --description "Research agent for Crew"
@@ -47,20 +55,20 @@ hermes -p scout config set model.default <model-id>
 ```
 
 Names must match `[a-z0-9][a-z0-9_-]{0,63}`. `--no-alias` because Crew
-binds by name, not by wrapper script. Add `--no-skills` for an empty
-profile (default bundles ~70 skills).
+binds by name, not by wrapper script. Add `--no-skills` only when you
+want an empty profile from the CLI (Crew does not offer this).
 
-### 2. Create the Crew agent (binding field)
+### 2. Create / bind the Crew agent
 
-In Crew, create or edit the agent with runtime **Hermes Agent**. Fill
-the **Hermes profile** field with the profile name (`scout`). Leave
+Fill the **Hermes profile** field with the profile name (`scout`). Leave
 model blank — the UI replaces the model control with
 "decided by profile scout". Binding `default` is rejected (client and
 server). Binding a profile already used by another agent on the same
 relay is rejected with an inline save error (C-10).
 
-Readiness / Doctor surfaces a `hermesProfile` requirement with the
-hint `hermes profile create <name>` when the binding is missing.
+Readiness / Doctor surfaces a `hermesProfile` requirement when the
+binding is missing, and a recreate/rebind repair when the bound
+profile directory is absent (orphan).
 
 ### Legacy: tier-3 custom harness JSON (optional)
 
@@ -84,9 +92,18 @@ need them; new agents should not add more.
 
 ## Offboarding
 
+Deleting a Hermes agent in Crew asks:
+
+- **Keep profile '\<name\>' (memory + skills)** — default. Record gone;
+  profile intact and re-attachable (C-13).
+- **Also delete the profile** — runs
+  `hermes profile delete <name> -y` and verifies by directory absence
+  (C-14 / spike 0011). Never preselected.
+
+**CLI fallback** (if you deleted the Crew record already and kept the
+profile, or need to clean up outside Crew):
+
 ```bash
-# keep the profile (re-hire later): just delete the Crew agent record.
-# delete everything:
 hermes profile delete scout -y
 ```
 
@@ -98,8 +115,9 @@ code 0** (spike 0011) — verify by directory absence, not exit code.
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
 | Runtime shows unavailable / MissingBinary | `hermes` not on PATH for the desktop app | Install Hermes; check PATH the app sees |
-| Config nudge: bind Hermes profile | No `hermes_profile` on the record | Edit Agent → Hermes profile; or `hermes profile create <name>` first |
-| Spawn exits immediately, log shows `Profile 'x' does not exist. Create it with: hermes profile create x` | Profile deleted/renamed outside Crew | Recreate the profile or rebind the agent |
+| Config nudge: bind Hermes profile | No `hermes_profile` on the record | Edit Agent → Hermes profile; or create-in-place |
+| Config nudge: profile missing on disk | Profile deleted/renamed outside Crew | Recreate profile / Change binding in the nudge |
+| Spawn exits immediately, log shows `Profile 'x' does not exist…` | Same orphan class | Same repair path |
 | Agent replies with `auth error: BUZZ_PRIVATE_KEY is required` | Reply path missing `buzz-dev-mcp` (Hermes sandbox strips `BUZZ_*`) | Use the tier-1 **Hermes Agent** runtime (attaches MCP automatically); ensure `buzz-dev-mcp` is on PATH the app sees |
 | Agent replies with `model: String should have at least 1 character` | Profile has no model configured | `hermes -p <name> config set model.default …` |
 | Agent replies with a provider billing/auth error | Profile's provider unauthenticated or out of credit | `hermes -p <name> …` auth flow for that provider |
@@ -118,7 +136,9 @@ Hermes-side ask lands.
   spend the manager's provider credit. Acceptable for owner-only agents
   on a one-manager machine; **not acceptable for public agents** until a
   per-profile isolation switch exists. Do not set `respond-to anyone` on
-  a Hermes agent bound to a fallback-enabled profile.
+  a Hermes agent bound to a fallback-enabled profile. Crew shows a
+  one-line warning on create-in-place and offboarding when respond-to is
+  not owner-only.
 - Fresh profiles contain no gateway config and no cron jobs — personal
   messaging surfaces stay out of agent profiles as long as you never
   bind `~/.hermes` itself.
@@ -127,7 +147,9 @@ Hermes-side ask lands.
 
 - UI binding field + profile-owned model display — **done (Phase 02B)**.
 - `BUZZ_ACP_MODEL` spawn guard + duplicate-bind reject — **done (Phase 02A)**.
-- Profile listing / create-from-UI lifecycle — Phase 03.
+- Profile listing / create-from-UI lifecycle + keep/delete offboarding +
+  orphan repair — **done (Phase 03)**.
 - Auth badge — blocked on Hermes-side probe (spike 0010 / feature §7.3).
 - Live session model in the "decided by profile" row — optional follow-up
   when a clean ACP session-catalog read path exists from create/edit.
+- Credential isolation for public agents — blocked on Hermes-side ask.

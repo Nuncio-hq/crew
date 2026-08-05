@@ -31,6 +31,7 @@ export function EditAgentModelAndProfileSection({
   model,
   onCustomModelChange,
   modelStatusMessage,
+  respondTo,
 }: {
   showProfileField: boolean;
   hermesProfile: string;
@@ -46,6 +47,7 @@ export function EditAgentModelAndProfileSection({
   model: string;
   onCustomModelChange: (next: string) => void;
   modelStatusMessage: string | null;
+  respondTo?: string | null;
 }) {
   return (
     <>
@@ -54,6 +56,7 @@ export function EditAgentModelAndProfileSection({
           disabled={disabled}
           id="edit-agent-hermes-profile"
           onChange={onHermesProfileChange}
+          respondTo={respondTo}
           value={hermesProfile}
         />
       ) : null}

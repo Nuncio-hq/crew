@@ -1468,6 +1468,8 @@ const mockAgentPubkeys = new Set([
   PROFILE_ONLY_AGENT_PUBKEY,
   OWNED_RELAY_AGENT_PUBKEY,
 ]);
+/** In-memory Hermes profiles for Phase 03 lifecycle IPC mocks. */
+const mockHermesProfiles = new Set<string>();
 // Kind-0 `name` aliases, distinct from the display name, for exercising the
 // alias-tolerant mention resolution path (e.g. a message that says "@bobby"
 // while bob's display name is "bob").
@@ -2277,6 +2279,7 @@ function resetMockRelayAgents(config?: E2eConfig) {
 
 function resetMockManagedAgents(config?: E2eConfig) {
   mockManagedAgents = [];
+  mockHermesProfiles.clear();
   mockManagedAgentRuntimes = (config?.mock?.managedAgentRuntimes ?? []).map(
     (seed) => ({
       pubkey: seed.pubkey,
@@ -2291,6 +2294,9 @@ function resetMockManagedAgents(config?: E2eConfig) {
 
   for (const seed of config?.mock?.managedAgents ?? []) {
     mockManagedAgents.push(buildSeededManagedAgent(seed));
+    if (seed.hermesProfile?.trim()) {
+      mockHermesProfiles.add(seed.hermesProfile.trim());
+    }
     applyMockDisplayName(seed.pubkey, seed.name);
     mockAgentPubkeys.add(seed.pubkey);
     mockProfiles.set(seed.pubkey, {
@@ -12256,6 +12262,45 @@ export function maybeInstallE2eTauriMocks() {
           payload as Parameters<typeof handleCreateManagedAgent>[0],
           activeConfig,
         );
+      case "list_hermes_profiles":
+        return [...mockHermesProfiles].sort();
+      case "create_hermes_profile": {
+        const { name } = payload as { name: string };
+        const trimmed = name?.trim() ?? "";
+        if (!trimmed || trimmed === "default" || /[^a-z0-9_-]/.test(trimmed)) {
+          return {
+            status: "invalid_name",
+            name: trimmed,
+            message: `Invalid profile name '${trimmed}'`,
+          };
+        }
+        if (mockHermesProfiles.has(trimmed)) {
+          return {
+            status: "already_exists",
+            name: trimmed,
+            message: `Profile '${trimmed}' already exists`,
+          };
+        }
+        mockHermesProfiles.add(trimmed);
+        return { status: "ok", name: trimmed };
+      }
+      case "delete_hermes_profile": {
+        const { name } = payload as { name: string };
+        const trimmed = name?.trim() ?? "";
+        if (!trimmed || trimmed === "default") {
+          return {
+            status: "invalid_name",
+            name: trimmed,
+            message:
+              "Crew never deletes the manager's 'default' Hermes profile",
+          };
+        }
+        if (!mockHermesProfiles.has(trimmed)) {
+          return { status: "already_gone", name: trimmed };
+        }
+        mockHermesProfiles.delete(trimmed);
+        return { status: "ok", name: trimmed };
+      }
       case "start_managed_agent":
         return handleStartManagedAgent(
           payload as Parameters<typeof handleStartManagedAgent>[0],

@@ -1,3 +1,5 @@
+import * as React from "react";
+
 import type { AgentPersona } from "@/shared/api/types";
 import {
   AlertDialog,
@@ -10,13 +12,23 @@ import {
   AlertDialogTitle,
 } from "@/shared/ui/alert-dialog";
 import { Button } from "@/shared/ui/button";
+import {
+  HermesProfileOffboardFields,
+  type HermesProfileOffboardChoice,
+} from "./HermesProfileOffboardFields";
+import { isNonOwnerOnlyRespondTo } from "./HermesProfileCreateAffordance";
 
 type PersonaDeleteDialogProps = {
   open: boolean;
   persona: AgentPersona | null;
   /** Number of managed-agent instances backed by this persona. Omit or pass 0 to suppress the instance-count sentence. */
   instanceCount?: number;
-  onConfirm: (persona: AgentPersona) => void;
+  /** Unique Hermes profile names bound on cascade-deleted instances. */
+  hermesProfiles?: string[];
+  onConfirm: (
+    persona: AgentPersona,
+    options?: { deleteHermesProfiles?: boolean },
+  ) => void;
   onOpenChange: (open: boolean) => void;
 };
 
@@ -48,9 +60,27 @@ export function PersonaDeleteDialog({
   open,
   persona,
   instanceCount = 0,
+  hermesProfiles = [],
   onConfirm,
   onOpenChange,
 }: PersonaDeleteDialogProps) {
+  const uniqueProfiles = React.useMemo(
+    () =>
+      [...new Set(hermesProfiles.map((p) => p.trim()).filter(Boolean))].sort(),
+    [hermesProfiles],
+  );
+  const [profileChoice, setProfileChoice] =
+    React.useState<HermesProfileOffboardChoice>("keep");
+
+  React.useEffect(() => {
+    if (open) {
+      setProfileChoice("keep");
+    }
+  }, [open]);
+
+  const primaryProfile = uniqueProfiles[0] ?? null;
+  const showPublicWarning = isNonOwnerOnlyRespondTo(persona?.respondTo);
+
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
       <AlertDialogContent>
@@ -60,6 +90,21 @@ export function PersonaDeleteDialog({
             {personaDeleteDescription(persona, instanceCount)}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {primaryProfile ? (
+          <div className="space-y-2">
+            <HermesProfileOffboardFields
+              choice={profileChoice}
+              onChoiceChange={setProfileChoice}
+              profileName={primaryProfile}
+              showPublicAgentWarning={showPublicWarning}
+            />
+            {uniqueProfiles.length > 1 ? (
+              <p className="text-xs text-muted-foreground">
+                Also applies to: {uniqueProfiles.slice(1).join(", ")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel asChild>
             <Button type="button" variant="outline">
@@ -70,7 +115,12 @@ export function PersonaDeleteDialog({
             <Button
               onClick={() => {
                 if (persona) {
-                  onConfirm(persona);
+                  onConfirm(
+                    persona,
+                    primaryProfile
+                      ? { deleteHermesProfiles: profileChoice === "delete" }
+                      : undefined,
+                  );
                 }
               }}
               type="button"

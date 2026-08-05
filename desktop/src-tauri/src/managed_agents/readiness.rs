@@ -324,16 +324,14 @@ pub enum Requirement {
     /// Git for Windows is missing, so buzz-agent cannot launch buzz-dev-mcp's
     /// Bash-based shell tool. Doctor owns installation and re-checking.
     GitBash,
-    /// A custom harness command that cannot be resolved in the current PATH.
-    /// Displayed as a PATH badge in the harness card and a nudge in the agent
-    /// message stream.  No in-app action can fix this — the user must install
-    /// the binary or update their PATH.
+    /// Custom harness command missing from PATH (nudge only; no in-app fix).
     MissingBinary {
         /// The command name that was not found (e.g. `\"my-acp-agent\"`).
         command: String,
     },
+    /// Bound Hermes profile directory missing on disk (orphan; C-03 repair).
+    HermesProfileDirectoryMissing { profile: String },
 }
-
 // ── AgentReadiness ────────────────────────────────────────────────────────────
 
 /// Whether a managed agent has all required configuration to start.

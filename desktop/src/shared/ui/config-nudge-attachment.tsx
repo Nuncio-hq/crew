@@ -16,6 +16,7 @@ import {
   AttachmentTitle,
   AttachmentTrigger,
 } from "@/shared/ui/attachment";
+import { HermesProfileOrphanRepairRow } from "@/shared/ui/HermesProfileOrphanRepairRow";
 
 /**
  * Stable key for a requirement row. The combination of surface + primary
@@ -39,6 +40,8 @@ function requirementKey(
       return `git_bash:${index}`;
     case "missing_binary":
       return `missing_binary:${req.command}:${index}`;
+    case "hermes_profile_directory_missing":
+      return `hermes_profile_directory_missing:${req.profile}:${index}`;
   }
 }
 
@@ -133,6 +136,9 @@ function firstFocusTarget(
     if (req.surface === "normalized_field") {
       return { type: "normalized_field", field: req.field };
     }
+    if (req.surface === "hermes_profile_directory_missing") {
+      return { type: "normalized_field", field: "hermesProfile" };
+    }
   }
   return undefined;
 }
@@ -152,6 +158,9 @@ export function focusTargetForRequirement(
   }
   if (req.surface === "normalized_field") {
     return { type: "normalized_field", field: req.field };
+  }
+  if (req.surface === "hermes_profile_directory_missing") {
+    return { type: "normalized_field", field: "hermesProfile" };
   }
   return undefined;
 }
@@ -409,6 +418,13 @@ function RequirementRow({
         </div>
       );
     }
+    case "hermes_profile_directory_missing":
+      return (
+        <HermesProfileOrphanRepairRow
+          onOpenEditAgent={onOpenEditAgent}
+          profile={requirement.profile}
+        />
+      );
     case "cli_config_invalid": {
       // Config-invalid rows are purely informational — the user must edit an
       // external file. No Agent runtimes CTA (Buzz can't repair ~/.codex/config.toml)

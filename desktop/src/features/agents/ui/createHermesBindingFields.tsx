@@ -51,12 +51,14 @@ export function CreateHermesBindingFields({
   onHermesProfileChange,
   modelOwnedByProfile,
   showProfileField,
+  respondTo,
 }: {
   disabled?: boolean;
   hermesProfile: string;
   onHermesProfileChange: (next: string) => void;
   modelOwnedByProfile: boolean;
   showProfileField: boolean;
+  respondTo?: string | null;
 }) {
   if (!showProfileField && !modelOwnedByProfile) return null;
   return (
@@ -66,6 +68,7 @@ export function CreateHermesBindingFields({
           disabled={disabled}
           id="persona-hermes-profile"
           onChange={onHermesProfileChange}
+          respondTo={respondTo}
           value={hermesProfile}
         />
       ) : null}
