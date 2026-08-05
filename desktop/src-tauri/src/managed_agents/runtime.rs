@@ -861,15 +861,10 @@ pub fn spawn_agent_child(
         command.env(key, value);
     }
     configure_runtime_cli(&mut command, runtime_meta);
-
-    // Hermes model-env guard (spike 0013 / C-05 / C-06): last-write strip of
-    // BUZZ_ACP_MODEL after every path that could set it (field resolution +
-    // user env maps). Must stay after the descriptor.env loop above.
     crate::managed_agents::hermes_profile::strip_model_env_for_profile_locked_runtime(
         &mut command,
         effective_command,
     );
-
     // Buzz shared compute is stored as a native provider; derive the OpenAI-compatible
     // transport at spawn time and scrub any unrelated ambient OpenAI key.
     // Gate on `mesh_model_id` (derived from `effective_cfg.relay_mesh_model_id()`

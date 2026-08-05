@@ -47,12 +47,12 @@ use crate::managed_agents::{
     discovery::{known_acp_runtime, KnownAcpRuntime},
     env_vars::merged_user_env,
     global_config::GlobalAgentConfig,
-    normalize_agent_args,
     types::{AcpAvailabilityStatus, AgentDefinition, ManagedAgentRecord},
 };
 
 mod cli_login;
 pub(crate) mod cli_probe;
+mod hermes;
 
 // ── EffectiveAgentEnv ─────────────────────────────────────────────────────────
 
@@ -76,8 +76,7 @@ pub(crate) struct EffectiveAgentEnv {
     pub config_file_path: Option<&'static str>,
     /// The resolved harness binary name (e.g. `"buzz-agent"`, `"goose"`).
     pub effective_command: String,
-    /// Hermes profile binding from the record (D-019). Used by readiness only.
-    pub hermes_profile: Option<String>,
+    pub hermes_profile: Option<String>, // D-019; readiness only
 }
 
 // ── Typed effective-harness descriptor ───────────────────────────────────────
@@ -150,23 +149,13 @@ pub(crate) fn resolve_effective_harness_descriptor(
         crate::managed_agents::custom_harnesses::lookup_loaded_harness_by_id(runtime_id)
     };
 
-    // Args: explicit non-empty instance args win; otherwise use definition args.
-    let args = {
-        let record_args = record.agent_args.clone();
-        let instance_has_args = record_args.iter().any(|a| !a.trim().is_empty());
-        let base = if instance_has_args {
-            normalize_agent_args(&effective_command, record_args)
-        } else if let Some(ref def) = harness_def {
-            normalize_agent_args(&effective_command, def.args.clone())
-        } else {
-            normalize_agent_args(&effective_command, record_args)
-        };
-        crate::managed_agents::hermes_profile::inject_profile_binding_args(
-            runtime_meta,
-            record.hermes_profile.as_deref(),
-            base,
-        )
-    };
+    // Args: instance args win when non-empty; else definition; then Hermes `-p`.
+    let args = hermes::resolve_agent_args_with_profile(
+        &effective_command,
+        record,
+        harness_def.as_deref(),
+        runtime_meta,
+    );
 
     // Env: full layered resolution (same as resolve_effective_agent_env).
     // Pass harness_def directly to avoid a second lookup.
@@ -449,34 +438,9 @@ fn collect_missing_requirements(
             rt,
         ),
         "codex" => cli_login::requirements(&["codex", "login", "status"], "run `codex login`", rt),
-        "hermes" => hermes_requirements(effective),
+        "hermes" => hermes::hermes_requirements(effective),
         _ => vec![],
     }
-}
-
-/// Hermes readiness (C-03 / C-12 degraded — spike 0010): binary on PATH and a
-/// bound profile name. Profile-directory existence is a follow-up (no shared
-/// home-dir probe pattern beyond Goose's config-file reader). Auth probing is
-/// unavailable until Hermes ships an exit-code-truthful probe.
-fn hermes_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirement> {
-    let mut missing = Vec::new();
-    if crate::managed_agents::resolve_command(&effective.effective_command).is_none() {
-        missing.push(Requirement::MissingBinary {
-            command: effective.effective_command.clone(),
-        });
-    }
-    if effective
-        .hermes_profile
-        .as_deref()
-        .map(str::trim)
-        .filter(|n| !n.is_empty())
-        .is_none()
-    {
-        missing.push(Requirement::NormalizedField {
-            field: "hermesProfile".to_string(),
-        });
-    }
-    missing
 }
 
 /// Requirements for buzz-agent (provider + model + provider-specific creds).
@@ -1434,50 +1398,6 @@ mod tests {
         assert!(
             matches!(&reqs[0], Requirement::MissingBinary { command } if command == "my-custom-harness-that-does-not-exist"),
             "should surface MissingBinary requirement"
-        );
-    }
-
-    // ── Hermes profile binding readiness (C-03 / C-12 degraded) ────────────
-
-    #[test]
-    fn hermes_without_profile_binding_requires_hermes_profile_field() {
-        let env = EffectiveAgentEnv {
-            env: BTreeMap::new(),
-            config_file_path: None,
-            effective_command: "hermes".to_string(),
-            hermes_profile: None,
-        };
-        let readiness = agent_readiness(&env);
-        assert!(
-            !readiness.is_ready(),
-            "unbound Hermes agent must be NotReady"
-        );
-        assert!(
-            readiness
-                .requirements()
-                .contains(&Requirement::NormalizedField {
-                    field: "hermesProfile".to_string(),
-                }),
-            "expected hermesProfile requirement; got {:?}",
-            readiness.requirements()
-        );
-    }
-
-    #[test]
-    fn hermes_with_profile_binding_does_not_require_hermes_profile_field() {
-        let env = EffectiveAgentEnv {
-            env: BTreeMap::new(),
-            config_file_path: None,
-            effective_command: "hermes".to_string(),
-            hermes_profile: Some("scout".to_string()),
-        };
-        let readiness = agent_readiness(&env);
-        let reqs = readiness.requirements();
-        assert!(
-            !reqs.contains(&Requirement::NormalizedField {
-                field: "hermesProfile".to_string(),
-            }),
-            "bound profile must clear hermesProfile requirement; got {reqs:?}"
         );
     }
 

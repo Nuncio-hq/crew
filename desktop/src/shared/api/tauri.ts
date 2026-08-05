@@ -204,7 +204,6 @@ export type RawAcpRuntimeCatalogEntry = {
    * Omitted/absent for builtin and preset — skipped in Rust serialization when empty.
    */
   definition_env?: Record<string, string>;
-  /** CLI profile-selection flag from Rust `profile_arg` (Hermes: `"-p"`). */
   profile_arg?: string | null;
 };
 

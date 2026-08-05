@@ -538,12 +538,7 @@ export type AcpRuntimeCatalogEntry = {
    * for `builtin` and `preset` entries.
    */
   definitionEnv?: Record<string, string>;
-  /**
-   * CLI flag for selecting a named profile when the runtime supports it
-   * (Hermes: `"-p"`). Projected from Rust `KnownAcpRuntime.profile_arg`.
-   * Absent/null when the runtime has no profile-binding concept.
-   */
-  profileArg?: string | null;
+  profileArg?: string | null; // Rust profile_arg
 };
 
 /** An AcpRuntimeCatalogEntry that is confirmed available — command and binaryPath are non-null. */

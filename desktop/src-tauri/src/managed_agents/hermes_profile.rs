@@ -126,6 +126,80 @@ pub fn find_duplicate_hermes_profile_binding<'a>(
     })
 }
 
+/// Parse create-time `hermes_profile` input (trim empty → None; validate when Some).
+pub fn parse_optional_hermes_profile(raw: Option<&str>) -> Result<Option<String>, String> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(name) => {
+            validate_hermes_profile_name(name)?;
+            Ok(Some(name.to_string()))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Reject when `profile` is already bound on `relay_url` (C-10).
+pub fn reject_duplicate_hermes_profile(
+    records: &[ManagedAgentRecord],
+    profile: &str,
+    relay_url: &str,
+    exclude_pubkey: Option<&str>,
+) -> Result<(), String> {
+    if let Some(other) =
+        find_duplicate_hermes_profile_binding(records, profile, relay_url, exclude_pubkey)
+    {
+        return Err(format!(
+            "hermes profile '{profile}' is already bound to agent '{}' ({})",
+            other.name, other.pubkey
+        ));
+    }
+    Ok(())
+}
+
+/// No-op when `profile` is `None`; otherwise [`reject_duplicate_hermes_profile`].
+pub fn reject_duplicate_hermes_profile_if_set(
+    records: &[ManagedAgentRecord],
+    profile: Option<&str>,
+    relay_url: &str,
+    exclude_pubkey: Option<&str>,
+) -> Result<(), String> {
+    match profile {
+        Some(p) => reject_duplicate_hermes_profile(records, p, relay_url, exclude_pubkey),
+        None => Ok(()),
+    }
+}
+
+/// Resolve a patch update for `hermes_profile` (`None` = don't touch).
+pub fn resolve_hermes_profile_update(
+    update: &Option<Option<String>>,
+    records: &[ManagedAgentRecord],
+    pubkey: &str,
+    relay_url_override: Option<&str>,
+) -> Result<Option<Option<String>>, String> {
+    match update {
+        None => Ok(None),
+        Some(None) => Ok(Some(None)),
+        Some(Some(name)) => {
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                return Ok(Some(None));
+            }
+            validate_hermes_profile_name(trimmed)?;
+            let relay = records
+                .iter()
+                .find(|r| r.pubkey == pubkey)
+                .map(|r| {
+                    relay_url_override
+                        .map(str::trim)
+                        .unwrap_or(r.relay_url.as_str())
+                        .to_string()
+                })
+                .unwrap_or_else(|| relay_url_override.unwrap_or("").trim().to_string());
+            reject_duplicate_hermes_profile(records, trimmed, &relay, Some(pubkey))?;
+            Ok(Some(Some(trimmed.to_string())))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

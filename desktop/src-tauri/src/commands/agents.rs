@@ -583,28 +583,11 @@ pub async fn create_managed_agent(
         }
     }
     crate::managed_agents::validate_user_env_keys(&input.env_vars)?;
+    let hermes_profile = crate::managed_agents::hermes_profile::parse_optional_hermes_profile(
+        input.hermes_profile.as_deref(),
+    )?;
 
-    // Hermes profile binding (D-019): validate name + reject duplicates on this relay.
-    let hermes_profile = match input
-        .hermes_profile
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        Some(name) => {
-            crate::managed_agents::hermes_profile::validate_hermes_profile_name(name)?;
-            Some(name.to_string())
-        }
-        None => None,
-    };
-
-    // Validate & normalize the respond-to allowlist BEFORE any side effects.
-    // The harness has its own validator (buzz-acp/src/config.rs) but we want
-    // to catch malformed input at the boundary so the agent never tries to
-    // start with a list that will crash it on launch. The mode/allowlist
-    // pairing (and the definition-default fallback) is resolved later at the
-    // mint site via `resolve_mint_behavioral_defaults`, where the linked
-    // definition is in hand.
+    // Validate respond-to allowlist before side effects; mode pairing at mint.
     let respond_to_allowlist =
         crate::managed_agents::validate_respond_to_allowlist(&input.respond_to_allowlist)?;
     if input.respond_to == Some(crate::managed_agents::RespondTo::Allowlist)
@@ -716,21 +699,12 @@ pub async fn create_managed_agent(
         if records.iter().any(|record| record.pubkey == pubkey) {
             return Err(format!("agent {pubkey} already exists"));
         }
-        if let Some(profile) = hermes_profile.as_deref() {
-            if let Some(other) =
-                crate::managed_agents::hermes_profile::find_duplicate_hermes_profile_binding(
-                    &records,
-                    profile,
-                    &resolved_relay_url,
-                    None,
-                )
-            {
-                return Err(format!(
-                    "hermes profile '{profile}' is already bound to agent '{}' ({})",
-                    other.name, other.pubkey
-                ));
-            }
-        }
+        crate::managed_agents::hermes_profile::reject_duplicate_hermes_profile_if_set(
+            &records,
+            hermes_profile.as_deref(),
+            &resolved_relay_url,
+            None,
+        )?;
         // Provider config was already validated in Pre-Phase 2; cache the discovered binary path for deploy_to_provider.
         let provider_binary_path = if let BackendKind::Provider { ref id, .. } = input.backend {
             // Use resolve_provider_binary (discovered candidates only).

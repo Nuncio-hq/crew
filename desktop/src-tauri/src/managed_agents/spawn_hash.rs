@@ -99,10 +99,7 @@ pub(crate) fn spawn_config_hash(
         .unwrap_or("")
         .hash(&mut hasher);
 
-    // Effective env layering (baked floor → runtime metadata → definition env
-    // → global → persona → agent). BTreeMap iteration is ordered, deterministic.
-    // For Hermes, hash the post-guard view (BUZZ_ACP_MODEL stripped) so the
-    // restart badge cannot disagree with spawn (spike 0013).
+    // Effective env (post-guard for Hermes — spike 0013).
     crate::managed_agents::hermes_profile::env_without_suppressed_model_for_runtime(
         &descriptor.command,
         &descriptor.env,
@@ -129,8 +126,7 @@ pub(crate) fn spawn_config_hash(
             EffectiveConfigResult::OrphanedInstance { .. } => (None, None, None),
         };
     resolved_prompt.hash(&mut hasher);
-    // Hermes profile owns the model — spawn strips BUZZ_ACP_MODEL, so the hash
-    // must ignore resolved_model or a global-default edit would false-badge.
+    // Hermes: model stripped at spawn — don't false-badge on model edits.
     let hash_model =
         if crate::managed_agents::hermes_profile::is_hermes_runtime(&descriptor.command) {
             None
