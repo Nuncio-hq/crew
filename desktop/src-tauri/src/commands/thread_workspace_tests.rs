@@ -88,6 +88,41 @@ async fn dirty_worktree_returns_typed_refusal() {
 }
 
 #[tokio::test]
+async fn ignored_only_local_state_refuses_thread_removal_and_preserves_file() {
+    let fixture = Fixture::new();
+    fs::write(fixture.worktree.join(".gitignore"), "ignored-local/\n").expect("gitignore");
+    git(&fixture.worktree, &["add", ".gitignore"]);
+    git(&fixture.worktree, &["commit", "-m", "ignore"]);
+    let secret_dir = fixture.worktree.join("ignored-local");
+    fs::create_dir_all(&secret_dir).expect("ignored dir");
+    fs::write(secret_dir.join("secret.txt"), "secret").expect("secret");
+
+    let plain = Command::new("git")
+        .arg("-C")
+        .arg(&fixture.worktree)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("status");
+    assert!(plain.status.success());
+    assert!(String::from_utf8_lossy(&plain.stdout).trim().is_empty());
+
+    let (repository, branch, root) = fixture.args();
+    let result = remove_thread_worktree(
+        repository,
+        fixture.worktree.to_string_lossy().into_owned(),
+        branch,
+        root,
+    )
+    .await
+    .expect("command returns");
+
+    assert_eq!(result.status, ThreadWorkspaceActionStatus::Refused);
+    assert!(result.message.to_lowercase().contains("ignored"));
+    assert!(fixture.worktree.is_dir());
+    assert!(secret_dir.join("secret.txt").is_file());
+}
+
+#[tokio::test]
 async fn clean_worktree_can_be_removed_then_branch_deleted() {
     let fixture = Fixture::new();
     let (repository, branch, root) = fixture.args();
@@ -101,6 +136,11 @@ async fn clean_worktree_can_be_removed_then_branch_deleted() {
     .expect("remove command succeeds");
     assert_eq!(removed.status, ThreadWorkspaceActionStatus::Completed);
     assert!(!fixture.worktree.exists());
+    // Branch is retained for reattach.
+    git(
+        &fixture.repository,
+        &["show-ref", "--verify", &format!("refs/heads/{branch}")],
+    );
 
     let deleted = delete_thread_branch(repository, branch, root)
         .await
@@ -117,6 +157,60 @@ async fn clean_worktree_can_be_removed_then_branch_deleted() {
         &fixture.repository,
         &["show-ref", "--verify", &format!("refs/heads/{branch}")],
     );
+}
+
+#[tokio::test]
+async fn active_lease_refuses_thread_worktree_removal() {
+    let fixture = Fixture::new();
+    let common = fixture.repository.join(".git");
+    let shared = buzz_worktree::try_acquire_shared(&common, &fixture.root).expect("shared");
+    let (repository, branch, root) = fixture.args();
+    let result = remove_thread_worktree(
+        repository,
+        fixture.worktree.to_string_lossy().into_owned(),
+        branch,
+        root,
+    )
+    .await
+    .expect("command returns");
+    assert_eq!(result.status, ThreadWorkspaceActionStatus::Refused);
+    assert!(result.message.to_lowercase().contains("agent"));
+    assert!(fixture.worktree.is_dir());
+    drop(shared);
+}
+
+#[tokio::test]
+async fn successful_thread_eviction_retains_branch_and_advances_generation() {
+    let fixture = Fixture::new();
+    let common = fixture.repository.join(".git");
+    buzz_worktree::adopt_or_create_record(
+        &common,
+        &fixture.root,
+        "11111111-1111-1111-1111-111111111111",
+        None,
+        &fixture.branch,
+        fixture.worktree.to_str().expect("utf8"),
+    )
+    .expect("record");
+    let (repository, branch, root) = fixture.args();
+    let result = remove_thread_worktree(
+        repository,
+        fixture.worktree.to_string_lossy().into_owned(),
+        branch.clone(),
+        root.clone(),
+    )
+    .await
+    .expect("remove");
+    assert_eq!(result.status, ThreadWorkspaceActionStatus::Completed);
+    assert!(!fixture.worktree.exists());
+    git(
+        &fixture.repository,
+        &["show-ref", "--verify", &format!("refs/heads/{branch}")],
+    );
+    let record = buzz_worktree::read_lifecycle_record(&common, &root)
+        .expect("read")
+        .expect("record");
+    assert_eq!(record.eviction_generation, 1);
 }
 
 #[tokio::test]

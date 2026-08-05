@@ -208,6 +208,7 @@ export function ChannelScreenHeader({
       />
       {onOpenThread ? (
         <ChannelScreenWorktrees
+          channelId={activeChannel?.id ?? null}
           onOpenChange={setIsWorktreesOpen}
           onOpenThread={onOpenThread}
           open={isWorktreesOpen}

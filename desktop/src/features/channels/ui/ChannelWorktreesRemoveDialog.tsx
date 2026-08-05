@@ -31,11 +31,13 @@ export function ChannelWorktreesRemoveDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Remove worktrees?</AlertDialogTitle>
+          <AlertDialogTitle>Free local space?</AlertDialogTitle>
           <AlertDialogDescription>
-            {paths?.length ?? 0} path
-            {(paths?.length ?? 0) === 1 ? "" : "s"} will be removed. Dirty
-            worktrees are refused. Branches are kept for orphans.
+            {paths?.length ?? 0} checkout
+            {(paths?.length ?? 0) === 1 ? "" : "s"} will be evicted. Dirty
+            worktrees and checkouts with ignored local files are refused — clear
+            generated cache or review local files first. Branches are kept; a
+            later agent turn reattaches a clean checkout.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <ul className="max-h-40 space-y-1 overflow-auto text-2xs text-muted-foreground">
@@ -53,7 +55,7 @@ export function ChannelWorktreesRemoveDialog({
               if (paths) onConfirm(paths);
             }}
           >
-            Remove
+            Free local space
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

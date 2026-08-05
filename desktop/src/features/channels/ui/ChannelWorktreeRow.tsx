@@ -1,41 +1,63 @@
 import { ChevronDown, ChevronRight, GitBranch } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import * as React from "react";
+import { toast } from "sonner";
 
 import { useProjectWorktreeDetails } from "@/features/agents/projectWorktreeDetailsStore";
-import type { WorktreeBucketItem } from "@/features/channels/lib/worktreeBuckets";
+import {
+  canClearCacheWorktree,
+  canReclaimWorktree,
+  type WorktreeBucketItem,
+} from "@/features/channels/lib/worktreeBuckets";
 import { formatDiskBytes } from "@/features/channels/lib/worktreeDiskFormat";
 import { projectThreadLabel } from "@/features/messages/lib/projectThreadLabel";
 import { projectThreadStatusClassName } from "@/features/messages/ui/projectThreadGitHubStatus";
-import type { RegistryPullRequest } from "@/shared/api/thread-workspace-types";
+import {
+  clearProjectWorktreeCache,
+  previewProjectWorktreeReclaim,
+} from "@/shared/api/agentControl";
+import type {
+  ProjectWorktreeReclaimPreview,
+  RegistryPullRequest,
+} from "@/shared/api/thread-workspace-types";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
 type ChannelWorktreeRowProps = {
   item: WorktreeBucketItem;
   repositoryPath: string;
+  channelId?: string | null;
   readonly: boolean;
   rootBody?: string | null;
   selected: boolean;
+  activeRootIds: ReadonlySet<string>;
   onToggleSelect: (path: string) => void;
   onOpenThread?: (rootEventId: string) => void;
   onRemove?: (worktreePath: string) => void;
   onPrune?: () => void;
+  onCacheCleared?: () => void;
 };
 
 export function ChannelWorktreeRow({
   item,
   repositoryPath,
+  channelId = null,
   readonly,
   rootBody,
   selected,
+  activeRootIds,
   onToggleSelect,
   onOpenThread,
   onRemove,
   onPrune,
+  onCacheCleared,
 }: ChannelWorktreeRowProps) {
   const { entry, orphanReason } = item;
   const [expanded, setExpanded] = React.useState(false);
+  const [preview, setPreview] =
+    React.useState<ProjectWorktreeReclaimPreview | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [cacheBusy, setCacheBusy] = React.useState(false);
   const details = useProjectWorktreeDetails(
     repositoryPath,
     entry.worktreePath,
@@ -51,11 +73,90 @@ export function ChannelWorktreeRow({
   );
   const size =
     details.status === "ready" ? formatDiskBytes(details.value.diskBytes) : "—";
-  const canRemove =
-    !readonly &&
-    (item.bucket === "idle" || item.bucket === "orphan") &&
-    !entry.prunable;
-  const canSelect = canRemove;
+  // Presentation only — Rust revalidates before any destructive mutation.
+  const canReclaim = canReclaimWorktree(item, { activeRootIds });
+  const canClearCache = canClearCacheWorktree(item, { activeRootIds });
+  const detailsBlockEvict =
+    details.status === "ready" && details.value.hasIgnoredLocalState === true;
+  const previewBlocksEvict = preview?.canEvict === false;
+  const canSelect =
+    canReclaim && !readonly && !detailsBlockEvict && !previewBlocksEvict;
+  const cacheBytes =
+    preview?.cacheCategories.reduce(
+      (sum, category) => sum + (category.present ? category.bytes : 0),
+      0,
+    ) ?? 0;
+  const presentCacheIds =
+    preview?.cacheCategories
+      .filter((category) => category.present)
+      .map((category) => category.id) ?? [];
+
+  React.useEffect(() => {
+    if (!expanded || entry.kind !== "managed" || entry.prunable) {
+      setPreview(null);
+      setPreviewError(null);
+      return;
+    }
+    let cancelled = false;
+    void previewProjectWorktreeReclaim(
+      repositoryPath,
+      entry.worktreePath,
+      channelId,
+    )
+      .then((value) => {
+        if (!cancelled) {
+          setPreview(value);
+          setPreviewError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setPreview(null);
+          setPreviewError(
+            error instanceof Error ? error.message : "Preview failed",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    expanded,
+    entry.kind,
+    entry.prunable,
+    entry.worktreePath,
+    repositoryPath,
+    channelId,
+  ]);
+
+  const runClearCache = async () => {
+    if (presentCacheIds.length === 0 || !channelId) return;
+    setCacheBusy(true);
+    try {
+      const result = await clearProjectWorktreeCache(
+        repositoryPath,
+        entry.worktreePath,
+        presentCacheIds,
+        channelId,
+      );
+      const cleared = result.results.filter(
+        (row) => row.status === "completed",
+      ).length;
+      const refused = result.results.length - cleared;
+      toast.message(`${cleared} cache categories cleared · ${refused} refused`);
+      onCacheCleared?.();
+      const refreshed = await previewProjectWorktreeReclaim(
+        repositoryPath,
+        entry.worktreePath,
+        channelId,
+      );
+      setPreview(refreshed);
+    } catch {
+      toast.error("Cache clear failed.");
+    } finally {
+      setCacheBusy(false);
+    }
+  };
 
   return (
     <div
@@ -98,7 +199,8 @@ export function ChannelWorktreeRow({
           </div>
           <p className="mt-0.5 truncate text-2xs text-muted-foreground">
             {entry.branch ?? "detached"}
-            {orphanReason === "other-channel" ? " · from another channel" : ""}
+            {item.bucket === "other-channel" ? " · from another channel" : ""}
+            {orphanReason === "channel-unknown" ? " · channel unknown" : ""}
             {orphanReason === "unknown"
               ? " · no buzzThreadRoot · branch kept"
               : ""}
@@ -106,6 +208,9 @@ export function ChannelWorktreeRow({
             {openPr ? ` · PR #${openPr.number}` : ""}
             {details.status === "ready" && details.value.dirty
               ? " · uncommitted changes"
+              : ""}
+            {details.status === "ready" && details.value.hasIgnoredLocalState
+              ? " · ignored local files present"
               : ""}
           </p>
           {entry.pullRequests.length > 0 ? (
@@ -170,16 +275,39 @@ export function ChannelWorktreeRow({
                 <p>
                   {details.value.ahead} ahead · {details.value.behind} behind ·{" "}
                   {formatDiskBytes(details.value.diskBytes)}
+                  {cacheBytes > 0
+                    ? ` · ${formatDiskBytes(cacheBytes)} reclaimable cache`
+                    : ""}
                 </p>
               ) : details.status === "pending" ? (
                 <p>Measuring…</p>
               ) : details.status === "error" ? (
                 <p className="text-destructive">{details.message}</p>
               ) : null}
+              {previewError ? (
+                <p className="text-destructive">{previewError}</p>
+              ) : null}
+              {preview?.busy ? (
+                <p>Busy — an agent holds this worktree.</p>
+              ) : null}
+              {preview?.canEvict === false && preview.evictionRefusal ? (
+                <p>{preview.evictionRefusal}</p>
+              ) : details.status === "ready" &&
+                details.value.hasIgnoredLocalState ? (
+                <p>
+                  Ignored local files block Free local space. Clear generated
+                  cache first, or review/remove local files before freeing the
+                  checkout.
+                </p>
+              ) : null}
             </div>
           ) : null}
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {entry.rootEventId && onOpenThread && orphanReason !== "unknown" ? (
+            {entry.rootEventId &&
+            onOpenThread &&
+            orphanReason !== "unknown" &&
+            item.bucket !== "channel-unknown" &&
+            item.bucket !== "other-channel" ? (
               <Button
                 onClick={() => {
                   const rootEventId = entry.rootEventId;
@@ -215,7 +343,23 @@ export function ChannelWorktreeRow({
                 Prune
               </Button>
             ) : null}
-            {canRemove && onRemove ? (
+            {canClearCache && presentCacheIds.length > 0 && channelId ? (
+              <Button
+                className="h-6 px-2 text-2xs"
+                disabled={
+                  cacheBusy ||
+                  Boolean(preview?.busy) ||
+                  preview?.canClearCache === false
+                }
+                onClick={() => void runClearCache()}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Clear generated cache
+              </Button>
+            ) : null}
+            {canSelect && onRemove ? (
               <Button
                 className="h-6 px-2 text-2xs text-destructive"
                 onClick={() => onRemove(entry.worktreePath)}
@@ -223,7 +367,7 @@ export function ChannelWorktreeRow({
                 type="button"
                 variant="ghost"
               >
-                Remove worktree
+                Free local space
               </Button>
             ) : null}
           </div>

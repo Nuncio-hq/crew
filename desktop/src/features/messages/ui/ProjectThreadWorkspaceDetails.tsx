@@ -131,9 +131,11 @@ export function ProjectThreadWorkspaceDetails({
         <dd>
           {lifecycle?.dirty === true
             ? "Uncommitted changes"
-            : lifecycle?.dirty === false
-              ? "Clean"
-              : "Unavailable"}
+            : lifecycle?.hasIgnoredLocalState === true
+              ? "Ignored local files present"
+              : lifecycle?.dirty === false
+                ? "Clean"
+                : "Unavailable"}
         </dd>
       </dl>
       {behind ? (
@@ -155,7 +157,12 @@ export function ProjectThreadWorkspaceDetails({
         </Button>
         <Button
           className="h-auto min-h-8 min-w-0 w-full whitespace-normal px-2 py-2 leading-tight"
-          disabled={!target || busy || lifecycle?.dirty !== false}
+          disabled={
+            !target ||
+            busy ||
+            lifecycle?.dirty !== false ||
+            lifecycle?.hasIgnoredLocalState === true
+          }
           onClick={() =>
             target &&
             setPendingAction({
@@ -165,8 +172,8 @@ export function ProjectThreadWorkspaceDetails({
                   worktreePath: workspace.worktreePath,
                 }),
               description:
-                "Remove this clean thread worktree? The branch will remain.",
-              title: "Remove worktree?",
+                "Free local space for this clean thread checkout? Ignored local files block eviction — clear generated cache or review them first. The branch is kept and will reattach on the next agent turn.",
+              title: "Free local space?",
             })
           }
           size="sm"
@@ -174,7 +181,7 @@ export function ProjectThreadWorkspaceDetails({
           variant="destructive"
         >
           <Trash2 className="h-4 w-4 shrink-0" />
-          <span className="text-center">Remove worktree</span>
+          <span className="text-center">Free local space</span>
         </Button>
         <Button
           className="h-auto min-h-8 min-w-0 w-full whitespace-normal px-2 py-2 leading-tight"
@@ -202,8 +209,15 @@ export function ProjectThreadWorkspaceDetails({
       </div>
       {lifecycle?.dirty ? (
         <p className="text-2xs text-muted-foreground">
-          Remove worktree stays disabled until every change is committed or
+          Free local space stays disabled until every change is committed or
           discarded.
+        </p>
+      ) : null}
+      {lifecycle?.hasIgnoredLocalState ? (
+        <p className="text-2xs text-muted-foreground">
+          Free local space stays disabled while ignored local files remain.
+          Clear generated cache or review/remove them first — eviction never
+          deletes ignored files.
         </p>
       ) : null}
       <AlertDialog

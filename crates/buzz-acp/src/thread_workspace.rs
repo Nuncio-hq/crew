@@ -42,6 +42,46 @@ pub(crate) struct ThreadWorkspace {
     pub(crate) base_source: BaseSource,
     pub(crate) remote_default_branch: Option<String>,
     pub(crate) commits_behind_remote: Option<u64>,
+    /// Canonical common Git directory (`git rev-parse --git-common-dir`),
+    /// used to key `buzz-worktree` leases and lifecycle records.
+    pub(crate) common_git: PathBuf,
+}
+
+/// How `ensure_planned_thread_worktree` obtained a verified checkout.
+///
+/// Callers use this to force ACP session invalidation after create/reattach
+/// even when path/branch/eviction-generation strings still match (issue #59
+/// BLOCKER 5 — generation write can fail after eviction).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EnsureKind {
+    /// Registered checkout already verified; no create/reattach mutation.
+    AlreadyPresent,
+    /// Fresh `git worktree add -b` succeeded under the lease.
+    Created,
+    /// Existing branch was reattached or recovered via checkout under the lease.
+    Reattached,
+}
+
+impl EnsureKind {
+    /// True when ensure mutated the checkout (create or reattach).
+    pub(crate) fn mutated_checkout(self) -> bool {
+        !matches!(self, Self::AlreadyPresent)
+    }
+}
+
+/// Discovery-only plan for a thread worktree: identity paths and base revision
+/// without creating, reattaching, or claiming the checkout.
+///
+/// Acquire the shared active-turn lease against `common_git` + `root_event_id`
+/// *before* calling [`ensure_planned_thread_worktree`].
+#[derive(Debug, Clone)]
+pub(crate) struct ThreadWorkspacePlan {
+    pub(crate) root_event_id: String,
+    pub(crate) repository_path: PathBuf,
+    pub(crate) worktree_path: PathBuf,
+    pub(crate) branch: String,
+    pub(crate) common_git: PathBuf,
+    pub(crate) workspace_base: WorkspaceBase,
 }
 
 #[derive(Debug)]
@@ -172,11 +212,12 @@ pub fn parse_project_workspace(content: &str) -> Result<Option<ProjectWorkspace>
     }))
 }
 
-/// Ensure the deterministic worktree for a thread exists and return verified metadata.
-pub async fn ensure_thread_worktree(
+/// Resolve repository identity and deterministic worktree paths without
+/// creating or reattaching a checkout.
+pub async fn plan_thread_worktree(
     workspace: &ProjectWorkspace,
     root_event_id: &str,
-) -> Result<ThreadWorkspace> {
+) -> Result<ThreadWorkspacePlan> {
     validate_root_event_id(root_event_id)?;
     let selected_path = fs::canonicalize(&workspace.local_path).with_context(|| {
         format!(
@@ -204,25 +245,53 @@ pub async fn ensure_thread_worktree(
     let branch = format!("buzz/{short_root}");
     let workspace_base = resolve_workspace_base(&repo_root).await?;
 
+    Ok(ThreadWorkspacePlan {
+        root_event_id: root_event_id.to_string(),
+        repository_path: repo_root,
+        worktree_path,
+        branch,
+        common_git,
+        workspace_base,
+    })
+}
+
+/// Ensure a previously planned worktree exists and return verified metadata
+/// plus whether this call created or reattached the checkout.
+///
+/// Callers that coordinate with eviction must hold a shared active-turn lease
+/// before invoking this (issue #59 BLOCKER 4).
+pub async fn ensure_planned_thread_worktree(
+    plan: &ThreadWorkspacePlan,
+) -> Result<(ThreadWorkspace, EnsureKind)> {
+    let repo_root = &plan.repository_path;
+    let worktree_path = &plan.worktree_path;
+    let common_git = &plan.common_git;
+    let branch = &plan.branch;
+    let root_event_id = plan.root_event_id.as_str();
+    let workspace_base = &plan.workspace_base;
+
     if let Some(metadata) = verified_metadata(
-        &repo_root,
-        &worktree_path,
-        &common_git,
-        &branch,
+        repo_root,
+        worktree_path,
+        common_git,
+        branch,
         root_event_id,
-        &workspace_base,
+        workspace_base,
     )
     .await?
     {
-        return Ok(metadata);
+        return Ok((metadata, EnsureKind::AlreadyPresent));
     }
-    fs::create_dir_all(&parent).context("could not create Buzz worktree directory")?;
+    let parent = worktree_path
+        .parent()
+        .context("planned worktree path has no parent directory")?;
+    fs::create_dir_all(parent).context("could not create Buzz worktree directory")?;
 
     let create = Command::new("git")
         .arg("-C")
-        .arg(&repo_root)
-        .args(["worktree", "add", "-b", &branch])
-        .arg(&worktree_path)
+        .arg(repo_root)
+        .args(["worktree", "add", "-b", branch])
+        .arg(worktree_path)
         .arg(&workspace_base.revision)
         .kill_on_drop(true)
         .output()
@@ -233,50 +302,50 @@ pub async fn ensure_thread_worktree(
         // Another harness may have won the same idempotent create race.
         for _ in 0..10 {
             if let Some(metadata) = verified_metadata(
-                &repo_root,
-                &worktree_path,
-                &common_git,
-                &branch,
+                repo_root,
+                worktree_path,
+                common_git,
+                branch,
                 root_event_id,
-                &workspace_base,
+                workspace_base,
             )
             .await?
             {
-                return Ok(metadata);
+                return Ok((metadata, EnsureKind::AlreadyPresent));
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         let branch_matches =
-            branch_root_matches(&repo_root, &common_git, &branch, root_event_id).await;
+            branch_root_matches(repo_root, common_git, branch, root_event_id).await;
         let mut branch_conflict = if branch_matches {
-            foreign_branch_conflict(&worktree_path, &common_git, &branch).await
+            foreign_branch_conflict(worktree_path, common_git, branch).await
         } else {
             None
         };
         if let Some(conflict) = branch_conflict.as_mut() {
             if conflict.automatic_recovery_is_safe()
-                && worktree_recovery_is_lossless(&worktree_path).await
+                && worktree_recovery_is_lossless(worktree_path).await
             {
                 let checkout = Command::new("git")
                     .arg("-C")
-                    .arg(&worktree_path)
-                    .args(["checkout", &branch])
+                    .arg(worktree_path)
+                    .args(["checkout", branch])
                     .kill_on_drop(true)
                     .output()
                     .await
                     .context("could not start git checkout for worktree recovery")?;
                 if checkout.status.success() {
                     if let Some(metadata) = verified_metadata(
-                        &repo_root,
-                        &worktree_path,
-                        &common_git,
-                        &branch,
+                        repo_root,
+                        worktree_path,
+                        common_git,
+                        branch,
                         root_event_id,
-                        &workspace_base,
+                        workspace_base,
                     )
                     .await?
                     {
-                        return Ok(metadata);
+                        return Ok((metadata, EnsureKind::Reattached));
                     }
                 } else {
                     conflict.record_git_error("checkout failed", &checkout.stderr);
@@ -289,10 +358,10 @@ pub async fn ensure_thread_worktree(
         if branch_matches {
             let attach = Command::new("git")
                 .arg("-C")
-                .arg(&repo_root)
+                .arg(repo_root)
                 .args(["worktree", "add"])
-                .arg(&worktree_path)
-                .arg(&branch)
+                .arg(worktree_path)
+                .arg(branch)
                 .kill_on_drop(true)
                 .output()
                 .await
@@ -306,32 +375,50 @@ pub async fn ensure_thread_worktree(
                 bail!("git worktree add failed: {}", stderr.trim());
             }
             if let Some(metadata) = verified_metadata(
-                &repo_root,
-                &worktree_path,
-                &common_git,
-                &branch,
+                repo_root,
+                worktree_path,
+                common_git,
+                branch,
                 root_event_id,
-                &workspace_base,
+                workspace_base,
             )
             .await?
             {
-                return Ok(metadata);
+                return Ok((metadata, EnsureKind::Reattached));
             }
         }
         let stderr = String::from_utf8_lossy(&create.stderr);
         bail!("git worktree add failed: {}", stderr.trim());
     }
 
-    verified_metadata(
-        &repo_root,
-        &worktree_path,
-        &common_git,
-        &branch,
+    let metadata = verified_metadata(
+        repo_root,
+        worktree_path,
+        common_git,
+        branch,
         root_event_id,
-        &workspace_base,
+        workspace_base,
     )
     .await?
-    .context("created worktree failed repository verification")
+    .context("created worktree failed repository verification")?;
+    Ok((metadata, EnsureKind::Created))
+}
+
+/// Ensure the deterministic worktree for a thread exists and return verified metadata.
+///
+/// Preference order for lease-aware callers: [`plan_thread_worktree`] then
+/// acquire the shared lease, then [`ensure_planned_thread_worktree`].
+///
+/// Kept as a convenience for direct callers and unit tests that do not
+/// coordinate with eviction leases.
+#[allow(dead_code)] // exercised by `thread_workspace_tests`; pool uses plan+ensure_planned
+pub async fn ensure_thread_worktree(
+    workspace: &ProjectWorkspace,
+    root_event_id: &str,
+) -> Result<ThreadWorkspace> {
+    let plan = plan_thread_worktree(workspace, root_event_id).await?;
+    let (metadata, _) = ensure_planned_thread_worktree(&plan).await?;
+    Ok(metadata)
 }
 
 async fn foreign_branch_conflict(
@@ -480,6 +567,7 @@ async fn verified_metadata(
         base_source: workspace_base.source,
         remote_default_branch: workspace_base.remote_default_branch.clone(),
         commits_behind_remote,
+        common_git: expected_common_git.to_path_buf(),
     }))
 }
 

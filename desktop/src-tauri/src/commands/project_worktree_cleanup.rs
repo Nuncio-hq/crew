@@ -1,40 +1,99 @@
 use std::path::{Path, PathBuf};
 
+use buzz_worktree::advance_eviction_generation;
+
+use super::project_worktree_auth::{
+    authorize_verified_channel_mutation, IGNORED_LOCAL_EVICTION_REFUSAL,
+};
+use super::project_worktree_details::has_ignored_local_state;
 use super::project_worktree_registry_parse::{
-    classify_worktree, is_managed_branch, managed_root_for, parse_worktree_porcelain,
-    PorcelainWorktree, ProjectWorktreeKind,
+    classify_worktree, is_managed_branch, managed_root_for, parse_buzz_thread_roots,
+    parse_worktree_porcelain, PorcelainWorktree, ProjectWorktreeKind,
 };
 use super::thread_workspace::{ThreadWorkspaceActionResult, ThreadWorkspaceActionStatus};
 use super::thread_workspace_git::{git_output_at, git_output_dir, path_text};
 
-/// Path-authorized removal for managed Buzz worktrees (including orphans).
+/// Path-authorized checkout eviction for managed Buzz worktrees.
+/// Compatibility shim name — frees local space while retaining the branch.
 /// Does not loosen `validate_target` — this is a separate authorization path.
 #[tauri::command]
 pub async fn remove_project_worktree(
     repository_path: String,
     worktree_path: String,
+    expected_routing_channel_id: String,
 ) -> Result<ThreadWorkspaceActionResult, String> {
-    let prepared = prepare_managed_removal(&repository_path, &worktree_path).await?;
-    if !git_output_at(&prepared.worktree, ["status", "--porcelain"])
+    evict_project_worktree(repository_path, worktree_path, expected_routing_channel_id).await
+}
+
+/// Evict a managed checkout while retaining the deterministic branch and
+/// durable lifecycle record. Never uses `--force` and never deletes branches.
+///
+/// Rust is the authorization boundary: the caller must prove the expected
+/// routing channel, and a verified lifecycle record must match under an
+/// exclusive lease. Legacy / no-root / conflict / other-channel refuse.
+#[tauri::command]
+pub async fn evict_project_worktree(
+    repository_path: String,
+    worktree_path: String,
+    expected_routing_channel_id: String,
+) -> Result<ThreadWorkspaceActionResult, String> {
+    let authorized = match authorize_verified_channel_mutation(
+        &repository_path,
+        &worktree_path,
+        &expected_routing_channel_id,
+    )
+    .await?
+    {
+        Ok(authorized) => authorized,
+        Err(refusal) => return Ok(refusal),
+    };
+
+    if !git_output_at(&authorized.prepared.worktree, ["status", "--porcelain"])
         .await?
         .trim()
         .is_empty()
     {
         return Ok(ThreadWorkspaceActionResult {
             status: ThreadWorkspaceActionStatus::Refused,
-            message: "Remove worktree is unavailable while files have uncommitted changes."
+            message: "Free local space is unavailable while files have uncommitted changes."
                 .to_string(),
         });
     }
+    // Detection errors fail closed via `?` — never treat unknown as clean.
+    if has_ignored_local_state(&authorized.prepared.worktree).await? {
+        return Ok(ThreadWorkspaceActionResult {
+            status: ThreadWorkspaceActionStatus::Refused,
+            message: IGNORED_LOCAL_EVICTION_REFUSAL.to_string(),
+        });
+    }
+
     git_output_dir(
-        &prepared.common_git,
-        ["worktree", "remove", "--", path_text(&prepared.worktree)?],
+        &authorized.prepared.common_git,
+        [
+            "worktree",
+            "remove",
+            "--",
+            path_text(&authorized.prepared.worktree)?,
+        ],
     )
     .await?;
-    git_output_dir(&prepared.common_git, ["worktree", "prune"]).await?;
+    git_output_dir(&authorized.prepared.common_git, ["worktree", "prune"]).await?;
+
+    // Never swallow generation advance — ACP self-heal depends on it, and when
+    // persistence fails the next ensure still detects recreate (blocker 5).
+    advance_eviction_generation(&authorized.prepared.common_git, &authorized.root_event_id)
+        .map_err(|error| {
+            format!("Worktree removed but eviction generation could not be persisted: {error}")
+        })?;
+
+    // Keep the lease alive until generation write completes.
+    drop(authorized.lease);
+    let _ = authorized.record;
+
     Ok(ThreadWorkspaceActionResult {
         status: ThreadWorkspaceActionStatus::Completed,
-        message: "Removed the project worktree.".to_string(),
+        message: "Freed local space. The branch is kept and will reattach on the next agent turn."
+            .to_string(),
     })
 }
 
@@ -54,6 +113,8 @@ pub async fn prune_project_worktrees(
 pub(crate) struct PreparedRemoval {
     pub(crate) common_git: PathBuf,
     pub(crate) worktree: PathBuf,
+    pub(crate) branch: String,
+    pub(crate) root_event_id: Option<String>,
 }
 
 /// Shared guard chain for tests and the command. Never reaches `worktree remove`
@@ -91,8 +152,9 @@ pub(crate) async fn prepare_managed_removal(
     let branch = entry
         .branch
         .as_deref()
-        .ok_or_else(|| "Worktree has no branch checked out.".to_string())?;
-    if !is_managed_branch(branch) {
+        .ok_or_else(|| "Worktree has no branch checked out.".to_string())?
+        .to_string();
+    if !is_managed_branch(&branch) {
         return Err("Worktree branch is not a managed Buzz branch.".to_string());
     }
 
@@ -103,13 +165,17 @@ pub(crate) async fn prepare_managed_removal(
         return Err("Worktree is outside the managed Buzz worktree root.".to_string());
     }
 
+    let root_event_id = lookup_branch_root(&common_git, &branch).await;
+
     Ok(PreparedRemoval {
         common_git,
         worktree,
+        branch,
+        root_event_id,
     })
 }
 
-async fn resolve_repo(repository_path: &str) -> Result<(PathBuf, PathBuf), String> {
+pub(crate) async fn resolve_repo(repository_path: &str) -> Result<(PathBuf, PathBuf), String> {
     let repository_path = std::fs::canonicalize(repository_path)
         .map_err(|error| format!("Project repository is not accessible: {error}"))?;
     let toplevel = git_output_at(&repository_path, ["rev-parse", "--show-toplevel"]).await?;
@@ -118,6 +184,19 @@ async fn resolve_repo(repository_path: &str) -> Result<(PathBuf, PathBuf), Strin
     let common = git_output_at(&repo_root, ["rev-parse", "--git-common-dir"]).await?;
     let common_git = canonical_git_path(&repo_root, common.trim())?;
     Ok((repo_root, common_git))
+}
+
+async fn lookup_branch_root(common_git: &Path, branch: &str) -> Option<String> {
+    let roots_text = git_output_dir(
+        common_git,
+        ["config", "--get-regexp", r"^branch\..*\.buzzthreadroot$"],
+    )
+    .await
+    .unwrap_or_default();
+    parse_buzz_thread_roots(&roots_text)
+        .into_iter()
+        .find(|(name, _)| name == branch)
+        .map(|(_, root)| root)
 }
 
 fn find_entry<'a>(

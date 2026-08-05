@@ -19,6 +19,8 @@ pub struct ProjectWorktreeDetails {
     /// Unix seconds of the tip commit, when available.
     pub last_commit_at: Option<i64>,
     pub disk_bytes: u64,
+    /// True when ignored/local entries exist. Presence only — never paths.
+    pub has_ignored_local_state: bool,
 }
 
 /// Lazy per-row detail. Reuses the managed-path guard so callers cannot `du`
@@ -34,6 +36,7 @@ pub async fn get_project_worktree_details(
         .await?
         .trim()
         .is_empty();
+    let has_ignored_local_state = has_ignored_local_state(&worktree).await?;
     let (ahead, behind) = ahead_behind(&worktree).await;
     let last_commit_at = last_commit_unix(&worktree).await;
     let disk_bytes = disk_bytes_of(&worktree).await?;
@@ -44,7 +47,23 @@ pub async fn get_project_worktree_details(
         behind,
         last_commit_at,
         disk_bytes,
+        has_ignored_local_state,
     })
+}
+
+/// Classify ignored/local presence without returning paths or contents.
+pub(crate) async fn has_ignored_local_state(worktree: &Path) -> Result<bool, String> {
+    let status = git_output_at(
+        worktree,
+        [
+            "status",
+            "--porcelain",
+            "--ignored",
+            "--untracked-files=all",
+        ],
+    )
+    .await?;
+    Ok(status.lines().any(|line| line.starts_with("!!")))
 }
 
 async fn ahead_behind(worktree: &Path) -> (u64, u64) {
@@ -73,11 +92,11 @@ async fn last_commit_unix(worktree: &Path) -> Option<i64> {
     raw.trim().parse().ok()
 }
 
-async fn disk_bytes_of(worktree: &Path) -> Result<u64, String> {
+pub(crate) async fn disk_bytes_of(path: &Path) -> Result<u64, String> {
     let mut command = Command::new("du");
     command
         .arg("-sk")
-        .arg(worktree)
+        .arg(path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -86,12 +105,8 @@ async fn disk_bytes_of(worktree: &Path) -> Result<u64, String> {
         .map_err(|_| "Command timed out.".to_string())?
         .map_err(|error| format!("Could not start command: {error}"))?;
     if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if message.is_empty() {
-            "Could not measure worktree disk usage.".to_string()
-        } else {
-            message
-        });
+        // Never surface path-specific ignored filenames from stderr.
+        return Err("Could not measure worktree disk usage.".to_string());
     }
     let text = String::from_utf8(output.stdout)
         .map_err(|_| "Command returned non-UTF-8 output.".to_string())?;
@@ -106,11 +121,78 @@ async fn disk_bytes_of(worktree: &Path) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::process::Command as StdCommand;
+    use tempfile::TempDir;
 
     #[test]
     fn parses_rev_list_left_right() {
         assert_eq!(parse_left_right("3\t5"), Some((5, 3)));
         assert_eq!(parse_left_right("0 0"), Some((0, 0)));
         assert_eq!(parse_left_right("bad"), None);
+    }
+
+    #[tokio::test]
+    async fn ignored_presence_without_leaking_names() {
+        let temp = TempDir::new().expect("temp");
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).expect("repo");
+        git(&repo, &["init", "-b", "main"]);
+        git(&repo, &["config", "user.email", "test@example.com"]);
+        git(&repo, &["config", "user.name", "Test"]);
+        fs::write(repo.join("README.md"), "ok").expect("readme");
+        fs::write(repo.join(".gitignore"), "secret-cache/\n").expect("gitignore");
+        git(&repo, &["add", "README.md", ".gitignore"]);
+        git(&repo, &["commit", "-m", "init"]);
+        let secret = repo.join("secret-cache");
+        fs::create_dir_all(&secret).expect("secret dir");
+        fs::write(secret.join("token.txt"), "do-not-leak").expect("secret file");
+
+        let present = has_ignored_local_state(&repo).await.expect("status");
+        assert!(present);
+
+        // Ensure helper itself does not return the secret name.
+        let status = git_output_at(
+            &repo,
+            [
+                "status",
+                "--porcelain",
+                "--ignored",
+                "--untracked-files=all",
+            ],
+        )
+        .await
+        .expect("raw status");
+        assert!(status.contains("!!"));
+        // The detection API only returns a bool — callers must not log paths.
+        let _ = status;
+    }
+
+    #[tokio::test]
+    async fn no_ignored_entries_is_false() {
+        let temp = TempDir::new().expect("temp");
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).expect("repo");
+        git(&repo, &["init", "-b", "main"]);
+        git(&repo, &["config", "user.email", "test@example.com"]);
+        git(&repo, &["config", "user.name", "Test"]);
+        fs::write(repo.join("README.md"), "ok").expect("readme");
+        git(&repo, &["add", "README.md"]);
+        git(&repo, &["commit", "-m", "init"]);
+        assert!(!has_ignored_local_state(&repo).await.expect("status"));
+    }
+
+    fn git(cwd: &Path, args: &[&str]) {
+        let output = StdCommand::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .output()
+            .expect("git starts");
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

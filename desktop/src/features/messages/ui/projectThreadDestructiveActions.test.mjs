@@ -17,6 +17,12 @@ test("workspace destructive actions use an in-app confirmation with a cancel pat
   assert.match(source, /AlertDialogCancel/);
   assert.match(source, /data-testid="project-thread-workspace-confirm-action"/);
   assert.match(source, /setPendingAction\(null\)/);
+  assert.doesNotMatch(
+    source,
+    /Ignored and other local files inside the checkout are removed/,
+  );
+  assert.match(source, /Ignored local files block eviction/);
+  assert.match(source, /hasIgnoredLocalState === true/);
 });
 
 test("close PR uses an in-app confirmation and does not run from cancel", async () => {
@@ -33,7 +39,10 @@ test("workspace lifecycle buttons fit their grid cells", async () => {
 
   assert.match(source, /grid min-w-0 grid-cols-1/);
   assert.match(source, /whitespace-normal px-2 py-2 leading-tight/);
-  assert.match(source, /<span className="text-center">Remove worktree<\/span>/);
+  assert.match(
+    source,
+    /<span className="text-center">Free local space<\/span>/,
+  );
 });
 
 test("GitHub status colors cover PR and CI states", async () => {

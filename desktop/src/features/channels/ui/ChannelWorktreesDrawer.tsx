@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import { useActiveTurnsByConversation } from "@/features/agents/activeAgentTurnsStore";
 import {
   invalidateProjectWorktreeDetails,
-  prefetchManagedWorktreeDetails,
   useProjectWorktreeDetailsMap,
 } from "@/features/agents/projectWorktreeDetailsStore";
 import {
@@ -15,14 +14,15 @@ import {
   bucketWorktrees,
   countManagedWorktrees,
   githubAvailabilityNotice,
+  pruneSelectedWorktreePaths,
 } from "@/features/channels/lib/worktreeBuckets";
 import { formatDiskBytes } from "@/features/channels/lib/worktreeDiskFormat";
 import { ChannelWorktreesDrawerBuckets } from "@/features/channels/ui/ChannelWorktreesDrawerBuckets";
 import { ChannelWorktreesDrawerShell } from "@/features/channels/ui/ChannelWorktreesDrawerShell";
 import { ChannelWorktreesRemoveDialog } from "@/features/channels/ui/ChannelWorktreesRemoveDialog";
 import {
+  evictProjectWorktree,
   pruneProjectWorktrees,
-  removeProjectWorktree,
 } from "@/shared/api/agentControl";
 import { useTheme } from "@/shared/theme/ThemeProvider";
 
@@ -30,6 +30,7 @@ type ChannelWorktreesDrawerProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   repositoryPath: string | null;
+  channelId?: string | null;
   channelRootIds: ReadonlySet<string>;
   rootBodiesById: ReadonlyMap<string, string>;
   onOpenThread: (rootEventId: string) => void;
@@ -39,6 +40,7 @@ export function ChannelWorktreesDrawer({
   open,
   onOpenChange,
   repositoryPath,
+  channelId = null,
   channelRootIds,
   rootBodiesById,
   onOpenThread,
@@ -56,15 +58,8 @@ export function ChannelWorktreesDrawer({
     [activeTurns],
   );
 
-  React.useEffect(() => {
-    if (!open || !repositoryPath || snapshot.status !== "ready") return;
-    prefetchManagedWorktreeDetails(
-      repositoryPath,
-      snapshot.value.entries
-        .filter((entry) => entry.kind === "managed" && !entry.prunable)
-        .map((entry) => entry.worktreePath),
-    );
-  }, [open, repositoryPath, snapshot]);
+  // Demand-driven details only (row expansion). Do not prefetch every managed
+  // worktree on drawer open — that was an unbounded fanout.
 
   React.useEffect(() => {
     if (!open) setSelected(new Set());
@@ -76,9 +71,16 @@ export function ChannelWorktreesDrawer({
       entries: snapshot.value.entries,
       channelRootIds,
       activeRootIds,
+      channelId,
       detailsByPath: detailsMap,
     });
-  }, [snapshot, channelRootIds, activeRootIds, detailsMap]);
+  }, [snapshot, channelRootIds, activeRootIds, channelId, detailsMap]);
+
+  React.useEffect(() => {
+    setSelected((prev) =>
+      pruneSelectedWorktreePaths(prev, buckets, { activeRootIds }),
+    );
+  }, [buckets, activeRootIds]);
 
   const managedCount =
     snapshot.status === "ready"
@@ -95,21 +97,25 @@ export function ChannelWorktreesDrawer({
   }`;
 
   const runRemove = async (paths: string[]) => {
-    if (!repositoryPath) return;
+    if (!repositoryPath || !channelId) return;
     setBusy(true);
     let removed = 0;
     let refused = 0;
     try {
       for (const path of paths) {
         try {
-          const result = await removeProjectWorktree(repositoryPath, path);
+          const result = await evictProjectWorktree(
+            repositoryPath,
+            path,
+            channelId,
+          );
           if (result.status === "completed") removed += 1;
           else refused += 1;
         } catch {
           refused += 1;
         }
       }
-      toast.message(`${removed} removed · ${refused} refused`);
+      toast.message(`${removed} freed · ${refused} refused`);
       invalidateProjectWorktreeDetails(repositoryPath);
       invalidateProjectWorktreeRegistry(repositoryPath);
       await refresh();
@@ -170,7 +176,14 @@ export function ChannelWorktreesDrawer({
           </p>
         ) : null}
         <ChannelWorktreesDrawerBuckets
+          activeRootIds={activeRootIds}
           buckets={buckets}
+          channelId={channelId}
+          onCacheCleared={() => {
+            invalidateProjectWorktreeDetails(repositoryPath);
+            invalidateProjectWorktreeRegistry(repositoryPath);
+            void refresh();
+          }}
           onOpenThread={onOpenThread}
           onPrune={() => void runPrune()}
           onRemove={(path) => setConfirmPaths([path])}
