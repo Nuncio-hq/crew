@@ -11,6 +11,7 @@ mod pool;
 mod pool_lifecycle;
 mod queue;
 mod relay;
+mod retry_turn;
 mod setup_mode;
 mod thread_workspace;
 #[cfg(test)]
@@ -846,12 +847,17 @@ async fn publish_relay_observer_event(
 /// Maximum age (seconds) for an observer control frame to be considered fresh.
 const OBSERVER_CONTROL_FRESHNESS_SECS: i64 = 300;
 
-fn handle_relay_observer_control_event(
+#[allow(clippy::too_many_arguments)]
+async fn handle_relay_observer_control_event(
     keys: &nostr::Keys,
     event: nostr::Event,
     pool: &mut AgentPool,
+    queue: &mut EventQueue,
+    rest_client: Option<&relay::RestClient>,
     observer: Option<&observer::ObserverHandle>,
     owner_pubkey_hex: &str,
+    rules: &[SubscriptionRule],
+    channel_info: &pool::ChannelInfoResolver,
 ) {
     // Defense-in-depth: verify signature even though the relay already checked.
     if let Err(e) = buzz_core::verify_event(&event) {
@@ -892,7 +898,20 @@ fn handle_relay_observer_control_event(
     let command_type = payload.get("type").and_then(|value| value.as_str());
     match command_type {
         Some("cancel_turn") => {
-            handle_cancel_turn_control(&payload, pool, observer);
+            handle_cancel_turn_control(&payload, pool, queue, rest_client, observer);
+        }
+        Some("retry_turn") => {
+            retry_turn::handle_retry_turn_control(
+                &payload,
+                pool,
+                queue,
+                rest_client,
+                observer,
+                &keys.public_key().to_hex(),
+                rules,
+                channel_info,
+            )
+            .await;
         }
         Some("switch_model") => {
             handle_switch_model_control(&payload, pool, observer);
@@ -903,10 +922,34 @@ fn handle_relay_observer_control_event(
     }
 }
 
-/// Handle a `cancel_turn` control frame: signal the in-flight task to cancel.
+/// Resolve the cancel_turn outcome after attempting to signal an in-flight turn.
+///
+/// When nothing is in flight, fall through to draining the conversation's
+/// queued events (the hold window / idle case). Keep `no_active_turn` only
+/// when there is genuinely nothing to stop.
+fn resolve_cancel_turn_outcome(
+    fired: bool,
+    queue: &mut EventQueue,
+    conversation_key: Uuid,
+) -> (&'static str, Vec<String>) {
+    if fired {
+        return ("sent", Vec::new());
+    }
+    let ids = queue.drain_channel(conversation_key);
+    if ids.is_empty() {
+        ("no_active_turn", ids)
+    } else {
+        ("cancelled_queued", ids)
+    }
+}
+
+/// Handle a `cancel_turn` control frame: signal the in-flight task to cancel,
+/// or drain queued (not-yet-dispatched) events when nothing is in flight.
 fn handle_cancel_turn_control(
     payload: &serde_json::Value,
     pool: &mut AgentPool,
+    queue: &mut EventQueue,
+    rest_client: Option<&relay::RestClient>,
     observer: Option<&observer::ObserverHandle>,
 ) {
     let Some(channel_id) = payload
@@ -926,17 +969,22 @@ fn handle_cancel_turn_control(
         .and_then(|value| value.as_str())
         .filter(|value| !value.is_empty());
 
+    let conversation_key = conversation_id.unwrap_or(channel_id);
     let fired = if let Some(turn_id) = turn_id {
         signal_in_flight_turn(pool, turn_id, ControlSignal::Cancel)
     } else {
-        signal_in_flight_task(
-            pool,
-            conversation_id.unwrap_or(channel_id),
-            channel_id,
-            ControlSignal::Cancel,
-        )
+        signal_in_flight_task(pool, conversation_key, channel_id, ControlSignal::Cancel)
     };
-    let status = if fired { "sent" } else { "no_active_turn" };
+    let (status, drained_ids) = resolve_cancel_turn_outcome(fired, queue, conversation_key);
+    let drained_count = drained_ids.len();
+    if !drained_ids.is_empty() {
+        if let Some(rest) = rest_client {
+            let rest = rest.clone();
+            tokio::spawn(async move {
+                pool::clear_reactions(rest, drained_ids).await;
+            });
+        }
+    }
     if let Some(observer) = observer {
         let context = observer::context_for_conversation(
             Some(channel_id),
@@ -951,6 +999,7 @@ fn handle_cancel_turn_control(
             serde_json::json!({
                 "type": "cancel_turn",
                 "status": status,
+                "drainedCount": drained_count,
                 "conversationId": conversation_id.map(|id| id.to_string()),
                 "turnId": turn_id,
             }),
@@ -1563,8 +1612,9 @@ async fn tokio_main() -> Result<()> {
 
     let runtime_start_nonce = std::env::var("BUZZ_MANAGED_AGENT_START_NONCE").unwrap_or_default();
     let dedup_mode = config.dedup_mode;
-    let mut queue =
-        EventQueue::new(dedup_mode).with_in_flight_deadline(config.max_turn_duration_secs);
+    let mut queue = EventQueue::new(dedup_mode)
+        .with_in_flight_deadline(config.max_turn_duration_secs)
+        .with_dispatch_hold(Duration::from_millis(config.dispatch_hold_ms));
 
     // Online means the harness can receive work, not merely that its socket is
     // connected. Publishing after channel subscriptions gives desktop callers
@@ -1774,6 +1824,9 @@ async fn tokio_main() -> Result<()> {
         // unconditionally would complete instantly on every iteration — a
         // busy spin — whenever the queued work drained after a failed wake.
         let mut lazy_wake_work_pending = false;
+        // Earliest held-head ready time. Computed before select so the wake
+        // arm can sleep without holding a borrow across the await.
+        let hold_wake_at = queue.next_hold_ready_at();
         if config.lazy_pool && !pool_ready {
             lazy_wake_work_pending = queue.has_flushable_work();
             if let Some(attempt) = pool_lifecycle
@@ -1962,7 +2015,18 @@ async fn tokio_main() -> Result<()> {
                     match control_event {
                         Some(event) => {
                             if let Some(ref owner_hex) = owner_cache.pubkey {
-                                handle_relay_observer_control_event(&config.keys, event, &mut pool, observer.as_ref(), owner_hex);
+                                handle_relay_observer_control_event(
+                                    &config.keys,
+                                    event,
+                                    &mut pool,
+                                    &mut queue,
+                                    Some(&ctx.rest_client),
+                                    observer.as_ref(),
+                                    owner_hex,
+                                    &rules,
+                                    &ctx.channel_info,
+                                )
+                                .await;
                             } else {
                                 tracing::warn!("observer control frame received but no owner resolved — dropping");
                             }
@@ -1970,6 +2034,28 @@ async fn tokio_main() -> Result<()> {
                         None => {
                             relay_observer_control_rx = None;
                             tracing::warn!("relay observer control channel closed");
+                        }
+                    }
+                    None
+                }
+                // Wake when a held head becomes flushable. Without this arm,
+                // an idle-channel event would sit until the next relay event
+                // or the 30s maintenance tick — far longer than the hold.
+                _ = async {
+                    match hold_wake_at {
+                        Some(at) => {
+                            let delay = at.saturating_duration_since(std::time::Instant::now());
+                            tokio::time::sleep(delay).await
+                        }
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let _ = result_rx;
+                    if pool_ready {
+                        for (channel_id, thread_tags) in
+                            dispatch_pending(&mut pool, &mut queue, &ctx)
+                        {
+                            typing_channels.insert(channel_id, thread_tags);
                         }
                     }
                     None
@@ -2302,12 +2388,23 @@ async fn tokio_main() -> Result<()> {
                             // backed payload) so the cost is negligible.
                             let event_for_steer = buzz_event.event.clone();
                             let prompt_tag_for_steer = prompt_tag.clone();
+                            // Sibling agents do not mis-click — skip the hold.
+                            // Owner (human) and everyone else get the hold so
+                            // accidental sends stay editable via v2.
+                            let hold_exempt = owner_cache.get() != Some(author_hex.as_str())
+                                && is_owner_or_sibling(
+                                    &author_hex,
+                                    &owner_cache,
+                                    &ctx.rest_client,
+                                )
+                                .await;
                             let accepted = queue.push(QueuedEvent {
                                 channel_id: inbound_conversation_id,
                                 event: buzz_event.event,
                                 received_at: std::time::Instant::now(),
                                 prompt_tag,
                                 edited_content: None,
+                                hold_exempt,
                             });
                             // 👀 — immediate "seen" reaction, only if the event
                             // was actually queued (not dropped by DedupMode::Drop).
@@ -2495,6 +2592,7 @@ async fn tokio_main() -> Result<()> {
                     &respawn_tx,
                     &mut respawn_tasks,
                     observer.clone(),
+                    Some(&ctx.rest_client),
                 ) == LoopAction::Exit
                 {
                     break;
@@ -2517,6 +2615,7 @@ async fn tokio_main() -> Result<()> {
                     &respawn_tx,
                     &mut respawn_tasks,
                     observer.clone(),
+                    Some(&ctx.rest_client),
                 );
                 if pool.live_count() == 0 && !any_respawn_in_flight(&crash_history) {
                     tracing::error!("all agents dead — exiting");
@@ -2866,7 +2965,7 @@ fn event_mentions_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
 }
 
 /// Extract the 64-hex `e` tag target from a kind:40003 edit event.
-fn edit_target_event_id(event: &nostr::Event) -> Option<String> {
+pub(crate) fn edit_target_event_id(event: &nostr::Event) -> Option<String> {
     event.tags.iter().find_map(|t| {
         let parts = t.as_slice();
         if parts.first().map(String::as_str) != Some("e") {
@@ -2886,7 +2985,7 @@ fn edit_target_event_id(event: &nostr::Event) -> Option<String> {
 /// Desktop emits `["p-removed", "<hex>"]` for mentions the composer dropped.
 /// Decision reads **only** this tag — never body/`@Name` matching. A false
 /// positive here silently discards a real request.
-fn edit_removes_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
+pub(crate) fn edit_removes_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
     event.tags.iter().any(|t| {
         let parts = t.as_slice();
         parts.first().map(String::as_str) == Some("p-removed")
@@ -2985,6 +3084,7 @@ mod message_edit_applied_tests {
             received_at: Instant::now(),
             prompt_tag: "@mention".into(),
             edited_content: None,
+            hold_exempt: false,
         }
     }
 
@@ -3405,11 +3505,14 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
 /// Spawn a task that posts a user-visible failure notice to the relay.
 ///
 /// Shared by the hard-cap immediate dead-letter path and the retries-exhausted
-/// dead-letter path so neither duplicates the tokio::spawn block.
+/// dead-letter path so neither duplicates the tokio::spawn block. Carries the
+/// failed batch event ids + cause class so desktop can offer Retry without
+/// string-matching the notice body.
 fn spawn_failure_notice(
     rest_client: Option<&relay::RestClient>,
     batch: &FlushBatch,
     content: String,
+    cause: buzz_sdk::FailureNoticeCause,
 ) {
     if let Some(rest) = rest_client {
         let thread_tags = batch
@@ -3417,10 +3520,20 @@ fn spawn_failure_notice(
             .last()
             .map(|be| queue::parse_thread_tags(&be.event))
             .unwrap_or_default();
+        let failed_event_ids: Vec<nostr::EventId> =
+            batch.events.iter().map(|be| be.event.id).collect();
         let rest = rest.clone();
         let channel_id = batch.routing_channel_id();
         tokio::spawn(async move {
-            pool::post_failure_notice(&rest, channel_id, &thread_tags, &content).await;
+            pool::post_failure_notice(
+                &rest,
+                channel_id,
+                &thread_tags,
+                &content,
+                cause,
+                &failed_event_ids,
+            )
+            .await;
         });
     }
 }
@@ -3446,6 +3559,7 @@ fn handle_prompt_result(
         PromptSource::Channel(id) => Some(*id),
         PromptSource::Heartbeat => None,
     };
+    let result_turn_id = result.turn_id.clone();
     pool.task_map_mut()
         .retain(|_, meta| meta.agent_index != agent_index);
     debug_assert_eq!(before, pool.task_map().len() + 1);
@@ -3466,6 +3580,7 @@ fn handle_prompt_result(
     // dead-letter protection.
     if let Some(batch) = result.batch.take() {
         let routing_channel_id = batch.routing_channel_id();
+        let conversation_id = batch.channel_id;
         // Don't requeue batches for channels the agent was removed from —
         // those events are stale and should be silently dropped.
         if !removed_channels.contains(&routing_channel_id) {
@@ -3505,7 +3620,12 @@ fn handle_prompt_result(
                     "⚠️ I couldn't process the last request (the turn exceeded the maximum duration ({}s)). Please re-send if it's still needed.",
                     config.max_turn_duration_secs
                 );
-                spawn_failure_notice(rest_client, &batch, content);
+                spawn_failure_notice(
+                    rest_client,
+                    &batch,
+                    content,
+                    buzz_sdk::FailureNoticeCause::Timeout,
+                );
                 hard_timeout_fate_suffix = Some(" — dead-lettered (no recent activity)");
             } else if matches!(
                 result.outcome,
@@ -3523,9 +3643,22 @@ fn handle_prompt_result(
                         "⚠️ I couldn't process the last request after multiple retries (the turn exceeded the maximum duration ({}s)). Please re-send if it's still needed.",
                         config.max_turn_duration_secs
                     );
-                    spawn_failure_notice(rest_client, &dead, content);
+                    spawn_failure_notice(
+                        rest_client,
+                        &dead,
+                        content,
+                        buzz_sdk::FailureNoticeCause::RetryExhausted,
+                    );
                     hard_timeout_fate_suffix = Some(" — dead-lettered (retry budget exhausted)");
                 } else {
+                    retry_turn::emit_turn_retrying(
+                        observer.as_ref(),
+                        routing_channel_id,
+                        conversation_id,
+                        Some(result_turn_id.clone()),
+                        queue.retry_count(conversation_id),
+                        queue::MAX_RETRIES,
+                    );
                     hard_timeout_fate_suffix = Some(" — requeued for retry (recently active)");
                 }
             } else if matches!(&result.outcome, PromptOutcome::Error(e) if is_auth_error(e)) {
@@ -3542,7 +3675,12 @@ fn handle_prompt_result(
                     Please re-authenticate the CLI (e.g. run `claude /login` or `codex login`) \
                     and then re-send."
                     .to_string();
-                spawn_failure_notice(rest_client, &batch, content);
+                spawn_failure_notice(
+                    rest_client,
+                    &batch,
+                    content,
+                    buzz_sdk::FailureNoticeCause::Auth,
+                );
             } else if let Some(dead) = queue.requeue(batch) {
                 let reason = match &result.outcome {
                     PromptOutcome::Timeout(TimeoutKind::Idle) => "the turn timed out".to_string(),
@@ -3556,7 +3694,21 @@ fn handle_prompt_result(
                 let content = format!(
                     "⚠️ I couldn't process the last request after multiple retries ({reason}). Please re-send if it's still needed."
                 );
-                spawn_failure_notice(rest_client, &dead, content);
+                spawn_failure_notice(
+                    rest_client,
+                    &dead,
+                    content,
+                    buzz_sdk::FailureNoticeCause::RetryExhausted,
+                );
+            } else {
+                retry_turn::emit_turn_retrying(
+                    observer.as_ref(),
+                    routing_channel_id,
+                    conversation_id,
+                    Some(result_turn_id.clone()),
+                    queue.retry_count(conversation_id),
+                    queue::MAX_RETRIES,
+                );
             }
         } else {
             tracing::debug!(
@@ -3815,6 +3967,7 @@ fn recover_panicked_agent(
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
+    rest_client: Option<&relay::RestClient>,
 ) {
     let task_id = join_error.id();
     let Some(meta) = pool.task_map_mut().remove(&task_id) else {
@@ -3830,10 +3983,30 @@ fn recover_panicked_agent(
                 .routing_channel_id
                 .is_some_and(|routing| removed_channels.contains(&routing))
             {
-                // Dead-letter on exhaustion is logged inside requeue(); a
-                // panic path has no outcome to report, so no notice here.
-                let _ = queue.requeue(batch);
-                tracing::warn!("requeued batch for panicked agent {i}");
+                // Dead-letter on exhaustion still needs a person-visible
+                // notice — the message disappearing is itself the outcome.
+                let routing_channel_id = meta.routing_channel_id.unwrap_or(ch);
+                let conversation_id = batch.channel_id;
+                if let Some(dead) = queue.requeue(batch) {
+                    let content = "⚠️ I couldn't process the last request after multiple retries (the agent process crashed). Please re-send if it's still needed."
+                        .to_string();
+                    spawn_failure_notice(
+                        rest_client,
+                        &dead,
+                        content,
+                        buzz_sdk::FailureNoticeCause::Panic,
+                    );
+                } else {
+                    retry_turn::emit_turn_retrying(
+                        observer.as_ref(),
+                        routing_channel_id,
+                        conversation_id,
+                        Some(meta.turn_id.clone()),
+                        queue.retry_count(conversation_id),
+                        queue::MAX_RETRIES,
+                    );
+                    tracing::warn!("requeued batch for panicked agent {i}");
+                }
             } else {
                 tracing::debug!(
                     channel_id = %meta.routing_channel_id.unwrap_or(ch),
@@ -3931,6 +4104,7 @@ fn drain_ready_join_results(
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
+    rest_client: Option<&relay::RestClient>,
 ) -> LoopAction {
     while let Some(Some(join_result)) = pool.join_set.join_next().now_or_never() {
         if let Err(join_error) = join_result {
@@ -3947,6 +4121,7 @@ fn drain_ready_join_results(
                 respawn_tx,
                 respawn_tasks,
                 observer.clone(),
+                rest_client,
             );
             if pool.live_count() == 0 && !any_respawn_in_flight(crash_history) {
                 return LoopAction::Exit;
@@ -4883,6 +5058,75 @@ mod owner_control_command_tests {
         assert_eq!(first_rx.await.unwrap(), ControlSignal::Cancel);
     }
 
+    #[test]
+    fn cancel_without_inflight_drains_queued_events() {
+        let mut queue =
+            EventQueue::new(DedupMode::Queue).with_dispatch_hold(Duration::from_secs(2));
+        let ch = Uuid::new_v4();
+        queue.push(QueuedEvent {
+            channel_id: ch,
+            event: {
+                let keys = nostr::Keys::generate();
+                nostr::EventBuilder::new(nostr::Kind::Custom(9), "held")
+                    .tags([])
+                    .sign_with_keys(&keys)
+                    .unwrap()
+            },
+            received_at: std::time::Instant::now(),
+            prompt_tag: "mention".into(),
+            edited_content: None,
+            hold_exempt: false,
+        });
+        assert!(queue.flush_next().is_none(), "still inside hold");
+
+        let (status, ids) = resolve_cancel_turn_outcome(false, &mut queue, ch);
+        assert_eq!(status, "cancelled_queued");
+        assert_eq!(ids.len(), 1);
+        assert!(
+            !queue.has_flushable_work(),
+            "drained queue must leave nothing to dispatch"
+        );
+        assert!(
+            queue.flush_next().is_none(),
+            "no turn_started after cancel-while-queued"
+        );
+    }
+
+    #[test]
+    fn cancel_with_nothing_anywhere_reports_no_active_turn() {
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let (status, ids) = resolve_cancel_turn_outcome(false, &mut queue, ch);
+        assert_eq!(status, "no_active_turn");
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn cancel_while_inflight_reports_sent_without_draining() {
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        queue.push(QueuedEvent {
+            channel_id: ch,
+            event: {
+                let keys = nostr::Keys::generate();
+                nostr::EventBuilder::new(nostr::Kind::Custom(9), "waiting")
+                    .tags([])
+                    .sign_with_keys(&keys)
+                    .unwrap()
+            },
+            received_at: std::time::Instant::now(),
+            prompt_tag: "mention".into(),
+            edited_content: None,
+            hold_exempt: false,
+        });
+        // Simulate an in-flight turn by flushing first... but for this unit
+        // test we only exercise the outcome helper: fired=true must not drain.
+        let (status, ids) = resolve_cancel_turn_outcome(true, &mut queue, ch);
+        assert_eq!(status, "sent");
+        assert!(ids.is_empty());
+        assert_eq!(queue.queued_event_count(&ch), 1);
+    }
+
     #[tokio::test]
     async fn signal_in_flight_turn_controls_only_the_selected_thread() {
         let mut pool = AgentPool::from_slots(vec![]);
@@ -5533,6 +5777,7 @@ mod build_mcp_servers_tests {
             mcp_command: "test-mcp-server".into(),
             idle_timeout_secs: config::DEFAULT_IDLE_TIMEOUT_SECS,
             max_turn_duration_secs: config::DEFAULT_MAX_TURN_DURATION_SECS,
+            dispatch_hold_ms: config::DEFAULT_DISPATCH_HOLD_MS,
             agents: 1,
             heartbeat_interval_secs: 0,
             turn_liveness_secs: 10,
@@ -5755,6 +6000,7 @@ mod error_outcome_emission_tests {
             mcp_command: "test-mcp-server".into(),
             idle_timeout_secs: config::DEFAULT_IDLE_TIMEOUT_SECS,
             max_turn_duration_secs: config::DEFAULT_MAX_TURN_DURATION_SECS,
+            dispatch_hold_ms: config::DEFAULT_DISPATCH_HOLD_MS,
             agents: 1,
             heartbeat_interval_secs: 0,
             turn_liveness_secs: 10,
@@ -5959,6 +6205,7 @@ mod error_outcome_emission_tests {
             &respawn_tx,
             &mut respawn_tasks,
             Some(observer.clone()),
+            None,
         );
 
         let panic = observer
@@ -6525,6 +6772,7 @@ mod error_outcome_emission_tests {
             received_at: std::time::Instant::now(),
             prompt_tag: "test".into(),
             edited_content: None,
+            hold_exempt: false,
         });
         let config = test_config();
         let mut heartbeat_in_flight = false;

@@ -1,6 +1,7 @@
 use serde::Serialize;
-use tokio::process::Command;
 
+use super::gh_cli::gh_command;
+use super::thread_github_target::origin_repo_target;
 use super::thread_workspace_git::{
     branch_is_checked_out, command_output, git_output_at, git_output_dir, git_success_at,
     git_success_dir, path_text, validate_checked_out_worktree, validate_target,
@@ -150,15 +151,21 @@ pub async fn close_thread_pull_request(
     root_event_id: String,
 ) -> Result<ThreadWorkspaceActionResult, String> {
     let target = validate_target(&repository_path, &branch, &root_event_id).await?;
-    let listed = command_output(
-        Command::new("gh")
-            .arg("pr")
-            .arg("list")
-            .args(["--state", "open", "--head", branch.as_str()])
-            .args(["--json", "number", "--limit", "1"])
-            .current_dir(&target.repository_path),
-    )
-    .await?;
+    // Both calls pin the same repository so the close cannot land on a
+    // same-named branch in the checkout's upstream remote.
+    let repo = origin_repo_target(&target.repository_path).await;
+    let mut list = gh_command()
+        .await
+        .map_err(|_| "GitHub CLI (gh) was not found.".to_string())?;
+    list.arg("pr")
+        .arg("list")
+        .args(["--state", "open", "--head", branch.as_str()])
+        .args(["--json", "number", "--limit", "1"])
+        .current_dir(&target.repository_path);
+    if let Some(repo) = repo.as_deref() {
+        list.args(["--repo", repo]);
+    }
+    let listed = command_output(&mut list).await?;
     let pull_requests: Vec<serde_json::Value> = serde_json::from_slice(&listed.stdout)
         .map_err(|_| "gh returned invalid JSON".to_string())?;
     let Some(number) = pull_requests
@@ -167,14 +174,18 @@ pub async fn close_thread_pull_request(
     else {
         return Ok(not_found("No open pull request exists for this branch."));
     };
-    command_output(
-        Command::new("gh")
-            .arg("pr")
-            .arg("close")
-            .arg(number.to_string())
-            .current_dir(&target.repository_path),
-    )
-    .await?;
+    let mut close = gh_command()
+        .await
+        .map_err(|_| "GitHub CLI (gh) was not found.".to_string())?;
+    close
+        .arg("pr")
+        .arg("close")
+        .arg(number.to_string())
+        .current_dir(&target.repository_path);
+    if let Some(repo) = repo.as_deref() {
+        close.args(["--repo", repo]);
+    }
+    command_output(&mut close).await?;
     Ok(completed("Closed the thread pull request."))
 }
 

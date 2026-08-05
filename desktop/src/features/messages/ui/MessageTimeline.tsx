@@ -31,6 +31,7 @@ import {
 import { useSettleGatedPrependMessages } from "./useSettleGatedPrependMessages";
 
 export type MessageTimelineHandle = {
+  jumpToMessage: (messageId: string) => boolean;
   scrollToBottomOnNextUpdate: () => void;
   settleAtBottom: () => boolean;
 };
@@ -107,6 +108,8 @@ type MessageTimelineProps = {
   targetMessageId?: string | null;
   onTargetReached?: (messageId: string) => void;
   splitThreadPanelOpen?: boolean;
+  /** Top-level message id the open thread panel belongs to (persistent anchor). */
+  openThreadAnchorId?: string | null;
   /** Event id of the oldest unread top-level message at channel open, or null. */
   firstUnreadMessageId?: string | null;
   /** Count of unread top-level messages at channel open. */
@@ -191,6 +194,7 @@ const MessageTimelineBase = React.forwardRef<
     targetMessageId = null,
     onTargetReached,
     splitThreadPanelOpen = false,
+    openThreadAnchorId = null,
     firstUnreadMessageId = null,
     unreadCount = 0,
     threadUnreadCounts,
@@ -430,19 +434,6 @@ const MessageTimelineBase = React.forwardRef<
     scrollToBottomOnNextUpdate();
   }, [scrollToBottomOnNextUpdate]);
 
-  React.useImperativeHandle(
-    ref,
-    () => ({
-      scrollToBottomOnNextUpdate: prepareForOwnMessage,
-      settleAtBottom: () => {
-        if (!timelineVirtualizerApi) return false;
-        scrollToBottom("auto");
-        return true;
-      },
-    }),
-    [prepareForOwnMessage, scrollToBottom, timelineVirtualizerApi],
-  );
-
   // Jump-to-message is purely DOM-based now: all loaded rows are mounted, so
   // `scrollToMessage` always finds the target row. No virtualizer convergence.
   const jumpToMessage = React.useCallback(
@@ -450,6 +441,25 @@ const MessageTimelineBase = React.forwardRef<
       return scrollToMessage(messageId, { highlight: true, ...options });
     },
     [scrollToMessage],
+  );
+
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      jumpToMessage: (messageId: string) => jumpToMessage(messageId),
+      scrollToBottomOnNextUpdate: prepareForOwnMessage,
+      settleAtBottom: () => {
+        if (!timelineVirtualizerApi) return false;
+        scrollToBottom("auto");
+        return true;
+      },
+    }),
+    [
+      jumpToMessage,
+      prepareForOwnMessage,
+      scrollToBottom,
+      timelineVirtualizerApi,
+    ],
   );
 
   // The unread pill is a transient, per-open affordance: dismiss it once the
@@ -628,6 +638,7 @@ const MessageTimelineBase = React.forwardRef<
       mainEntries={renderedMessages === messages ? mainEntries : undefined}
       leadingContent={virtualizedLeadingContent}
       historyExhausted={renderedHistoryExhausted}
+      openThreadAnchorId={openThreadAnchorId}
       threadSummaries={threadSummaries}
       messages={renderedMessages}
       onDelete={onDelete}

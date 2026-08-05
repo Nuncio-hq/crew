@@ -237,6 +237,19 @@ async function seedWorkspaceError(
   );
 }
 
+async function countGitHubStatusInvokes(page: Page) {
+  return page.evaluate(
+    () =>
+      (
+        window as Window & {
+          __BUZZ_E2E_COMMAND_LOG__?: Array<{ command: string }>;
+        }
+      ).__BUZZ_E2E_COMMAND_LOG__?.filter(
+        (entry) => entry.command === "get_thread_github_status",
+      ).length ?? 0,
+  );
+}
+
 test("Project threads show truthful isolated workspace and agent handoff", async ({
   page,
 }) => {
@@ -269,6 +282,32 @@ test("Project threads show truthful isolated workspace and agent handoff", async
   );
   await expect(panel.getByText("Ready", { exact: true })).toBeVisible();
   await expect(panel).toContainText("buzz/aaaaaaaaaaaa");
+
+  const githubInvokesBeforePr = await countGitHubStatusInvokes(page);
+  await panel.getByRole("button", { name: /^PR$/ }).click();
+  await expect(panel).toContainText("Pull request");
+  await expect(panel).toContainText(
+    "Keep the 2×3 layout and existing app colors.",
+  );
+  await expect(panel).toContainText("#9 Thread integration strip");
+  // #34: opening the PR drawer must not start an unbounded refresh loop.
+  await expect
+    .poll(() => countGitHubStatusInvokes(page))
+    .toBeLessThanOrEqual(githubInvokesBeforePr + 2);
+  const githubInvokesAfterPr = await countGitHubStatusInvokes(page);
+  await page.evaluate(() => {
+    // Force a parent re-render without closing the drawer.
+    window.dispatchEvent(new Event("resize"));
+  });
+  await expect
+    .poll(() => countGitHubStatusInvokes(page))
+    .toBe(githubInvokesAfterPr);
+
+  await waitForAnimations(page);
+  await panel.screenshot({
+    path: "test-results/thread-worktree/02-pr-history.png",
+  });
+  await panel.getByRole("button", { name: "Close details" }).click();
   await emitReplyMention(page, ROOT_A);
   await panel.getByRole("button", { name: /Handoff/ }).click();
   await expect(panel).toContainText("Handoff in this thread");
@@ -281,21 +320,11 @@ test("Project threads show truthful isolated workspace and agent handoff", async
   await panel.screenshot({
     path: "test-results/thread-worktree/01-integration-strip.png",
   });
-  await panel.getByRole("button", { name: /Pull request/ }).click();
-  await expect(panel).toContainText(
-    "Keep the 2×3 layout and existing app colors.",
-  );
-  await waitForAnimations(page);
-  await panel.screenshot({
-    path: "test-results/thread-worktree/02-pr-history.png",
-  });
   await panel.getByRole("button", { name: /Workspace/ }).click();
   await expect(
     panel.getByRole("button", { name: "Remove worktree" }),
   ).toBeDisabled();
-  await expect(
-    panel.getByRole("button", { name: /Pull request/ }),
-  ).toBeVisible();
+  await expect(panel.getByRole("button", { name: /^PR$/ })).toBeVisible();
   await waitForAnimations(page);
   await panel.screenshot({
     path: "test-results/thread-worktree/03-workspace-ready.png",
@@ -315,14 +344,105 @@ test("Project threads show truthful isolated workspace and agent handoff", async
     "/tmp/.buzz-worktrees/crew-bbbbbbbbbbbb",
     2,
   );
+  await panel.getByRole("button", { name: /Workspace/ }).click();
   await expect(panel).toContainText("buzz/bbbbbbbbbbbb");
   await expect(panel).toContainText("2 behind origin/main");
-  await panel.getByRole("button", { name: /Workspace/ }).click();
   await expect(panel).toContainText("Remote base");
   await expect(panel).not.toContainText("buzz/aaaaaaaaaaaa");
-  await expect(panel.getByRole("button", { name: /Pull request/ })).toHaveCount(
+  await expect(panel.getByRole("button", { name: /^PR$/ })).toHaveCount(0);
+});
+
+test("Docked thread panel can expand to show worktree branch detail", async ({
+  page,
+}) => {
+  await installMockBridge(page, { managedAgents: agents });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await waitForLiveChannel(page);
+
+  await emitProjectRoot(page, ROOT_A, "expand docked workspace detail");
+  const panel = await openThread(page, "expand docked workspace detail");
+  await seedWorkspace(
+    page,
+    ROOT_A,
+    "conversation-docked-expand",
+    "buzz/aaaaaaaaaaaa",
+    "/tmp/.buzz-worktrees/crew-aaaaaaaaaaaa",
+  );
+
+  // Side panel is not focus mode — expand must still reveal the grid.
+  await expect(page.getByTestId("focus-thread-drawer")).toHaveCount(0);
+  // Docked panel defaults to collapsed (compact is the default).
+  await expect(panel.getByTestId("project-thread-status-expanded")).toHaveCount(
     0,
   );
+  await panel.getByTestId("project-thread-status-expand").click();
+  const expanded = panel.getByTestId("project-thread-status-expanded");
+  await expect(expanded).toBeVisible();
+  await expect(expanded).toContainText("buzz/aaaaaaaaaaaa");
+});
+
+test("Degraded GitHub availability shows a muted chip, not silent empty", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    managedAgents: agents,
+    threadGitHubByBranch: {
+      "buzz/aaaaaaaaaaaa": {
+        availability: "cli-missing",
+        pullRequest: null,
+      },
+    },
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await waitForLiveChannel(page);
+
+  await emitProjectRoot(page, ROOT_A, "diagnose missing gh");
+  const panel = await openThread(page, "diagnose missing gh");
+  await seedWorkspace(
+    page,
+    ROOT_A,
+    "conversation-degraded-gh",
+    "buzz/aaaaaaaaaaaa",
+    "/tmp/.buzz-worktrees/crew-aaaaaaaaaaaa",
+  );
+
+  const githubChip = panel.getByRole("button", { name: /^GitHub$/ });
+  await expect(githubChip).toBeVisible();
+  await expect(githubChip).toHaveAttribute(
+    "title",
+    "GitHub CLI (gh) not found",
+  );
+  await expect(panel.getByRole("button", { name: /^PR$/ })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: /^CI$/ })).toHaveCount(0);
+});
+
+test("Docked <h2> title fallback does not steal Workspace clicks (#31)", async ({
+  page,
+}) => {
+  await installMockBridge(page, { managedAgents: agents });
+  await page.goto("/");
+  // Set after bridge init — it replaces window.__BUZZ_E2E__ on boot.
+  await page.evaluate(() => {
+    const w = window as Window & {
+      __BUZZ_E2E__?: { forceThreadTitleFallback?: boolean };
+    };
+    w.__BUZZ_E2E__ = { ...w.__BUZZ_E2E__, forceThreadTitleFallback: true };
+  });
+  await page.getByTestId("channel-general").click();
+  await waitForLiveChannel(page);
+
+  await emitProjectRoot(page, ROOT_A, "h2 title hit target");
+  const panel = await openThread(page, "h2 title hit target");
+  await expect(panel.getByTestId("thread-breadcrumb")).toHaveCount(0);
+  await expect(panel.getByRole("heading", { name: "Thread" })).toBeVisible();
+
+  // Plain click — no force. If the docked <h2> overlap returns, this fails.
+  await panel.getByRole("button", { name: /Workspace/ }).click();
+  await expect(
+    panel.getByTestId("project-thread-workspace-panel"),
+  ).toContainText("The harness is preparing this isolated worktree");
 });
 
 test("Project workspace errors render failed truth without preparing affordances", async ({
@@ -342,9 +462,16 @@ test("Project workspace errors render failed truth without preparing affordances
     "branch already checked out",
   );
 
+  // Docked sticky bar opens the drawer (error message only). "Setup failed"
+  // lives in the expanded grid — reachable from the side panel now.
   await panel.getByRole("button", { name: /Workspace/ }).click();
-  await expect(panel).toContainText("Setup failed");
   await expect(panel).toContainText("branch already checked out");
   await expect(panel).not.toContainText("Preparing");
   await expect(panel).not.toContainText("preparing this isolated worktree");
+  await panel.getByRole("button", { name: "Close details" }).click();
+
+  await panel.getByTestId("project-thread-status-expand").click();
+  await expect(
+    panel.getByTestId("project-thread-status-expanded"),
+  ).toContainText("Setup failed");
 });

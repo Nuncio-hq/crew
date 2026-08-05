@@ -4210,34 +4210,58 @@ pub(crate) async fn reaction_add(rest: &crate::relay::RestClient, event_id: &str
 
 /// Best-effort: post a visible failure notice (kind:9) to a channel after a
 /// batch is dead-lettered. Replies into the thread of `thread_tags` when the
-/// triggering event was threaded. Errors are logged and swallowed — the
-/// notice must never take down the main loop.
+/// triggering event was threaded. Tags the notice as machine-readable via
+/// [`buzz_sdk::build_failure_notice`] (cause class + `e`/`failed` targets).
+/// Errors are logged and swallowed — the notice must never take down the main
+/// loop.
 pub(crate) async fn post_failure_notice(
     rest: &crate::relay::RestClient,
     channel_id: Uuid,
     thread_tags: &ThreadTags,
     content: &str,
+    cause: buzz_sdk::FailureNoticeCause,
+    failed_event_ids: &[nostr::EventId],
 ) {
-    let thread_ref = thread_tags.root_event_id.as_deref().and_then(|root| {
-        let root_id = nostr::EventId::from_hex(root).ok()?;
-        let parent_id = thread_tags
-            .parent_event_id
-            .as_deref()
-            .and_then(|p| nostr::EventId::from_hex(p).ok())
-            .unwrap_or(root_id);
-        Some(buzz_sdk::ThreadRef {
-            root_event_id: root_id,
-            parent_event_id: parent_id,
+    let thread_ref = thread_tags
+        .root_event_id
+        .as_deref()
+        .and_then(|root| {
+            let root_id = nostr::EventId::from_hex(root).ok()?;
+            let parent_id = thread_tags
+                .parent_event_id
+                .as_deref()
+                .and_then(|p| nostr::EventId::from_hex(p).ok())
+                .unwrap_or(root_id);
+            Some(buzz_sdk::ThreadRef {
+                root_event_id: root_id,
+                parent_event_id: parent_id,
+            })
         })
-    });
-    let builder =
-        match buzz_sdk::build_message(channel_id, content, thread_ref.as_ref(), &[], false, &[]) {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(channel = %channel_id, "failure notice: build failed: {e}");
-                return;
-            }
-        };
+        // Top-level failed events have no NIP-10 thread tags. Reply to the
+        // first failed id so the notice stays attached in the timeline and
+        // desktop `rootId` resolves to the original conversation root.
+        .or_else(|| {
+            failed_event_ids
+                .first()
+                .copied()
+                .map(|id| buzz_sdk::ThreadRef {
+                    root_event_id: id,
+                    parent_event_id: id,
+                })
+        });
+    let builder = match buzz_sdk::build_failure_notice(
+        channel_id,
+        content,
+        thread_ref.as_ref(),
+        cause,
+        failed_event_ids,
+    ) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(channel = %channel_id, "failure notice: build failed: {e}");
+            return;
+        }
+    };
     let event = match builder.sign_with_keys(&rest.keys) {
         Ok(e) => e,
         Err(e) => {
@@ -4350,10 +4374,11 @@ async fn react_working(rest: &crate::relay::RestClient, event_ids: &[String]) {
     }
 }
 
-/// Fire-and-forget: remove both 👀 and 💬 from all events. Spawned on turn complete.
-/// Capped at `REACTION_CONCURRENCY` concurrent requests per chunk to avoid
-/// unbounded HTTP fan-out on large batches.
-async fn clear_reactions(rest: crate::relay::RestClient, event_ids: Vec<String>) {
+/// Fire-and-forget: remove both 👀 and 💬 from all events. Spawned on turn
+/// complete and when a queued batch is drained by Stop/`cancel_turn` before
+/// dispatch. Capped at `REACTION_CONCURRENCY` concurrent requests per chunk to
+/// avoid unbounded HTTP fan-out on large batches.
+pub(crate) async fn clear_reactions(rest: crate::relay::RestClient, event_ids: Vec<String>) {
     // Each event needs two removals (👀 and 💬); pair them and chunk by
     // REACTION_CONCURRENCY pairs so the total concurrent requests stay bounded.
     for chunk in event_ids.chunks(REACTION_CONCURRENCY) {

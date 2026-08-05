@@ -9,6 +9,8 @@ type Target = {
   rootEventId: string;
 };
 
+type GitHubStatusFetcher = (input: Target) => Promise<ThreadGitHubStatus>;
+
 export type ProjectThreadGitHubSnapshot =
   | { status: "pending" }
   | { status: "ready"; value: ThreadGitHubStatus };
@@ -25,6 +27,14 @@ const entries = new Map<
 >();
 const listeners = new Set<() => void>();
 let cacheEpoch = 0;
+let statusFetcher: GitHubStatusFetcher = getThreadGitHubStatus;
+
+/** Test-only seam — ESM named exports are not redefinable via mock.method. */
+export function setProjectThreadGitHubFetcherForTests(
+  fetcher: GitHubStatusFetcher | null,
+): void {
+  statusFetcher = fetcher ?? getThreadGitHubStatus;
+}
 
 function cacheKey(target: Target): string {
   return `${target.repositoryPath}\u0000${target.branch}`;
@@ -45,7 +55,7 @@ async function load(target: Target, force: boolean): Promise<void> {
   if (!force && stored && stored.expiresAt > Date.now()) return;
   if (stored?.promise) return stored.promise;
   const epoch = cacheEpoch;
-  const promise = getThreadGitHubStatus(target)
+  const promise = statusFetcher(target)
     .then((value) => {
       if (cacheEpoch !== epoch) return;
       entries.set(key, {
@@ -56,11 +66,13 @@ async function load(target: Target, force: boolean): Promise<void> {
     })
     .catch(() => {
       if (cacheEpoch !== epoch) return;
+      // Invoke/IPC threw — not a gh binary miss. Treat as a failed probe so
+      // the UI can show a degraded affordance instead of silently vanishing.
       entries.set(key, {
         expiresAt: Date.now() + CACHE_TTL_MS,
         snapshot: {
           status: "ready",
-          value: { availability: "unavailable", pullRequest: null },
+          value: { availability: "cli-failed", pullRequest: null },
         },
       });
       notify();
@@ -93,5 +105,6 @@ export function useProjectThreadGitHub(target: Target | null) {
 export function resetProjectThreadGitHubStore(): void {
   cacheEpoch += 1;
   entries.clear();
+  statusFetcher = getThreadGitHubStatus;
   notify();
 }

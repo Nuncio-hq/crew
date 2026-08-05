@@ -3,17 +3,22 @@ import { Loader2 } from "lucide-react";
 
 import {
   getActiveTurnActivityBounds,
-  getActiveTurnControlTargetsForAgent,
   subscribeActiveAgentTurns,
 } from "@/features/agents/activeAgentTurnsStore";
+import {
+  getRetryingTurn,
+  getRetryingTurnsForChannel,
+  subscribeRetryingTurns,
+  type RetryingTurn,
+} from "@/features/agents/retryingTurnsStore";
 import {
   ACTIVITY_SILENCE_MS,
   ACTIVITY_STUCK_MS,
   AGENT_ACTIVITY_CHROME,
 } from "@/features/agents/ui/agentActivityChrome";
 import { formatElapsed } from "@/features/agents/ui/agentSessionUtils";
+import { useComposerAgentStop } from "@/features/channels/ui/useComposerAgentStop";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
-import { cancelManagedAgentTurn } from "@/shared/api/agentControl";
 import type { ManagedAgent } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
@@ -49,18 +54,35 @@ export function BotActivityComposerAction({
 }: BotActivityBarProps) {
   const [open, setOpen] = React.useState(false);
   const [now, setNow] = React.useState(() => Date.now());
-  const [stopping, setStopping] = React.useState(false);
+  const [stoppingPubkey, setStoppingPubkey] = React.useState<string | null>(
+    null,
+  );
   const hoverTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
     null,
+  );
+  const { hasStoppableWork, stopAgent } = useComposerAgentStop({
+    channelId,
+    conversationId,
+  });
+
+  const retryingTurns = useRetryingTurns(channelId, conversationId);
+  const retryingPubkeys = React.useMemo(
+    () => new Set(retryingTurns.map((entry) => entry.agentPubkey)),
+    [retryingTurns],
   );
 
   const workingAgents = React.useMemo(() => {
     const workingSet = new Set(
       workingBotPubkeys.map((pubkey) => pubkey.toLowerCase()),
     );
+    for (const pubkey of retryingPubkeys) workingSet.add(pubkey);
 
     return agents.filter((agent) => workingSet.has(agent.pubkey.toLowerCase()));
-  }, [agents, workingBotPubkeys]);
+  }, [agents, retryingPubkeys, workingBotPubkeys]);
+  const singleWorkingAgent =
+    workingAgents.length === 1 ? (workingAgents[0] ?? null) : null;
+  const primaryRetrying =
+    retryingTurns.length === 1 ? (retryingTurns[0] ?? null) : null;
 
   const activityBounds = useActiveTurnActivityBounds(
     workingBotPubkeys,
@@ -104,43 +126,18 @@ export function BotActivityComposerAction({
   }, [clearHoverTimer]);
 
   const handleStop = React.useCallback(
-    async (event: React.MouseEvent<HTMLButtonElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (stopping || workingAgents.length === 0) return;
-      setStopping(true);
+    async (agent: BotActivityAgent, event?: React.MouseEvent) => {
+      event?.preventDefault();
+      event?.stopPropagation();
+      const key = agent.pubkey.toLowerCase();
+      setStoppingPubkey(key);
       try {
-        await Promise.all(
-          workingAgents.flatMap((agent) => {
-            const targets = getActiveTurnControlTargetsForAgent(agent.pubkey);
-            return targets
-              .filter((target) => {
-                if (
-                  conversationId &&
-                  target.conversationId !== conversationId
-                ) {
-                  return false;
-                }
-                if (channelId && target.channelId !== channelId) {
-                  return false;
-                }
-                return true;
-              })
-              .map((target) =>
-                cancelManagedAgentTurn(
-                  agent.pubkey,
-                  target.channelId,
-                  target.conversationId,
-                  target.turnId,
-                ),
-              );
-          }),
-        );
+        await stopAgent(agent.pubkey, agent.name);
       } finally {
-        setStopping(false);
+        setStoppingPubkey((current) => (current === key ? null : current));
       }
     },
-    [channelId, conversationId, stopping, workingAgents],
+    [stopAgent],
   );
 
   if (workingAgents.length === 0) {
@@ -150,7 +147,13 @@ export function BotActivityComposerAction({
   const elapsedMs = activityBounds
     ? Math.max(0, now - activityBounds.anchorAt)
     : 0;
-  if (activityBounds && elapsedMs < ACTIVITY_SILENCE_MS) {
+  // Silence only applies to in-flight turns. Queued/held work and automatic
+  // retries have no live bounds, so the chrome stays visible for those.
+  if (
+    activityBounds &&
+    elapsedMs < ACTIVITY_SILENCE_MS &&
+    retryingTurns.length === 0
+  ) {
     return null;
   }
 
@@ -164,12 +167,47 @@ export function BotActivityComposerAction({
     workingAgents.length === 1
       ? `${workingAgents[0]?.name ?? "Agent"} ${AGENT_ACTIVITY_CHROME.isWorking}`
       : AGENT_ACTIVITY_CHROME.agentsWorking(workingAgents.length);
-  const statusLabel = stuck
-    ? `${triggerLabel} · ${AGENT_ACTIVITY_CHROME.seemsStuck}`
-    : activityBounds
-      ? `${triggerLabel} · ${formatElapsed(elapsedMs)}`
-      : triggerLabel;
+  const retryingLabel = primaryRetrying
+    ? AGENT_ACTIVITY_CHROME.retrying(
+        primaryRetrying.attempt,
+        primaryRetrying.maxAttempts,
+      )
+    : retryingTurns.length > 1
+      ? AGENT_ACTIVITY_CHROME.retrying(
+          retryingTurns[0]?.attempt ?? 1,
+          retryingTurns[0]?.maxAttempts ?? 10,
+        )
+      : null;
+  const statusLabel = retryingLabel
+    ? workingAgents.length === 1
+      ? `${workingAgents[0]?.name ?? "Agent"} · ${retryingLabel}`
+      : retryingLabel
+    : stuck
+      ? `${triggerLabel} · ${AGENT_ACTIVITY_CHROME.seemsStuck}`
+      : activityBounds
+        ? `${triggerLabel} · ${formatElapsed(elapsedMs)}`
+        : triggerLabel;
   const isInline = variant === "inline";
+  const inlineStop =
+    isInline &&
+    singleWorkingAgent &&
+    hasStoppableWork(singleWorkingAgent.pubkey) ? (
+      <button
+        aria-label={`${AGENT_ACTIVITY_CHROME.stop} ${singleWorkingAgent.name}`}
+        className={cn(
+          "shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50",
+          stuck && "text-amber-400 hover:text-amber-300",
+        )}
+        data-testid="bot-activity-stop"
+        disabled={stoppingPubkey === singleWorkingAgent.pubkey.toLowerCase()}
+        onClick={(event) => {
+          void handleStop(singleWorkingAgent, event);
+        }}
+        type="button"
+      >
+        {AGENT_ACTIVITY_CHROME.stop}
+      </button>
+    ) : null;
 
   return (
     <div
@@ -242,7 +280,7 @@ export function BotActivityComposerAction({
         </PopoverTrigger>
         <PopoverContent
           align={isInline ? "start" : "end"}
-          className="w-64 p-1"
+          className="w-72 p-1"
           onMouseEnter={keepOpen}
           onMouseLeave={closeWithDelay}
           onOpenAutoFocus={(event) => event.preventDefault()}
@@ -255,57 +293,111 @@ export function BotActivityComposerAction({
           <div className="mt-1 flex flex-col gap-1">
             {workingAgents.map((agent) => {
               const isSelected = selectedPubkey === agent.pubkey.toLowerCase();
+              const canStop = hasStoppableWork(agent.pubkey);
+              const isStopping = stoppingPubkey === agent.pubkey.toLowerCase();
 
               return (
-                <button
+                <div
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors",
+                    "flex w-full items-center gap-1 rounded-lg pr-1",
                     isSelected
                       ? "bg-primary/10 text-primary"
-                      : "text-foreground hover:bg-accent hover:text-accent-foreground",
+                      : "text-foreground",
                   )}
-                  data-testid={`bot-activity-composer-item-${agent.pubkey}`}
                   key={agent.pubkey}
-                  onClick={() => {
-                    clearHoverTimer();
-                    setOpen(false);
-                    onOpenAgentSession(agent.pubkey, channelId);
-                  }}
-                  type="button"
                 >
-                  <UserAvatar
-                    avatarUrl={agentAvatarUrl(agent)}
-                    className="shrink-0"
-                    displayName={agent.name}
-                    size="sm"
-                  />
-                  <span className="min-w-0 flex-1 truncate">{agent.name}</span>
-                  <span className="shrink-0 whitespace-nowrap text-xs font-medium opacity-80">
-                    {AGENT_ACTIVITY_CHROME.viewActivity}
-                  </span>
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground/70" />
-                </button>
+                  <button
+                    className={cn(
+                      "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors",
+                      isSelected
+                        ? "text-primary"
+                        : "hover:bg-accent hover:text-accent-foreground",
+                    )}
+                    data-testid={`bot-activity-composer-item-${agent.pubkey}`}
+                    onClick={() => {
+                      clearHoverTimer();
+                      setOpen(false);
+                      onOpenAgentSession(agent.pubkey, channelId);
+                    }}
+                    type="button"
+                  >
+                    <UserAvatar
+                      avatarUrl={agentAvatarUrl(agent)}
+                      className="shrink-0"
+                      displayName={agent.name}
+                      size="sm"
+                    />
+                    <span className="min-w-0 flex-1 truncate">
+                      {agent.name}
+                    </span>
+                    <span className="shrink-0 whitespace-nowrap text-xs font-medium opacity-80">
+                      {AGENT_ACTIVITY_CHROME.viewActivity}
+                    </span>
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground/70" />
+                  </button>
+                  {canStop ? (
+                    <button
+                      aria-label={`${AGENT_ACTIVITY_CHROME.stop} ${agent.name}`}
+                      className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                      data-testid={`bot-activity-composer-stop-${agent.pubkey}`}
+                      disabled={isStopping}
+                      onClick={(event) => {
+                        void handleStop(agent, event);
+                      }}
+                      type="button"
+                    >
+                      {AGENT_ACTIVITY_CHROME.stop}
+                    </button>
+                  ) : null}
+                </div>
               );
             })}
           </div>
         </PopoverContent>
       </Popover>
-      {isInline ? (
-        <button
-          className={cn(
-            "shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-            stuck && "text-amber-400 hover:text-amber-300",
-          )}
-          data-testid="bot-activity-stop"
-          disabled={stopping}
-          onClick={handleStop}
-          type="button"
-        >
-          {AGENT_ACTIVITY_CHROME.stop}
-        </button>
-      ) : null}
+      {inlineStop}
     </div>
   );
+}
+
+function useRetryingTurns(
+  channelId: string | null,
+  conversationId: string | null,
+): RetryingTurn[] {
+  const cacheRef = React.useRef<{
+    channelId: string | null;
+    conversationId: string | null;
+    value: RetryingTurn[];
+  } | null>(null);
+
+  const getSnapshot = React.useCallback(() => {
+    const next = conversationId
+      ? (() => {
+          const single = getRetryingTurn(conversationId);
+          return single ? [single] : [];
+        })()
+      : getRetryingTurnsForChannel(channelId);
+    const prev = cacheRef.current;
+    if (
+      prev &&
+      prev.channelId === channelId &&
+      prev.conversationId === conversationId &&
+      prev.value.length === next.length &&
+      prev.value.every(
+        (entry, index) =>
+          entry.agentPubkey === next[index]?.agentPubkey &&
+          entry.conversationId === next[index]?.conversationId &&
+          entry.attempt === next[index]?.attempt &&
+          entry.maxAttempts === next[index]?.maxAttempts,
+      )
+    ) {
+      return prev.value;
+    }
+    cacheRef.current = { channelId, conversationId, value: next };
+    return next;
+  }, [channelId, conversationId]);
+
+  return React.useSyncExternalStore(subscribeRetryingTurns, getSnapshot);
 }
 
 function useActiveTurnActivityBounds(

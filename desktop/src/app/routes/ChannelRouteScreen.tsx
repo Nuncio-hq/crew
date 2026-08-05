@@ -60,9 +60,15 @@ async function fetchRouteTargetEvents(
     addEvent(event);
   }
 
-  const targetEvent = targetMessageId
+  // Prefer the message deep-link when present; otherwise the thread head is
+  // the target (bare `?thread=`). Without this, ancestor walking never runs
+  // for nested thread opens and parent rows stay missing from the cache.
+  let targetEvent: RelayEvent | null = targetMessageId
     ? (eventsById.get(targetMessageId) ?? null)
     : null;
+  if (!targetEvent && targetThreadRootId) {
+    targetEvent = eventsById.get(targetThreadRootId) ?? null;
+  }
   if (!targetEvent) {
     return [...eventsById.values()];
   }

@@ -801,8 +801,24 @@ test("opens a single-level thread panel with inline expansion", async ({
     Math.abs(summaryGeometry.topPadding - summaryGeometry.bottomPadding),
   ).toBeLessThanOrEqual(1);
 
+  // Active/open summary drops the resting last-reply hover-swap in favor of a
+  // persistent "Viewing thread" label. Assert that while open, then close so
+  // the same row is no longer the anchor and the resting/hover swap still holds.
+  await expect(rootSummaryRow).toContainText("Viewing thread");
+  await expect(
+    rootSummaryRow.getByTestId("message-thread-summary-hover-action"),
+  ).toHaveText("Viewing thread");
+  await expect(
+    rootSummaryRow.getByTestId("message-thread-summary-last-reply"),
+  ).toHaveCount(0);
+
+  await threadPanel.getByTestId("auxiliary-panel-close").click();
+  await expect(threadPanel).toBeHidden();
+  // Park the pointer off the summary so resting opacity asserts group-hover
+  // off-state, not leftover :hover after the close-button click reflow.
   await page.mouse.move(0, 0);
-  const rootSummaryWidthBeforeHover = await rootSummaryRow.evaluate((row) =>
+
+  const summaryWidthBeforeHover = await rootSummaryRow.evaluate((row) =>
     Math.round(row.getBoundingClientRect().width),
   );
   await expect
@@ -848,16 +864,14 @@ test("opens a single-level thread panel with inline expansion", async ({
         Math.round(row.getBoundingClientRect().width),
       ),
     )
-    .toBe(rootSummaryWidthBeforeHover);
-
-  await threadPanel.getByTestId("auxiliary-panel-close").click();
-  await expect(threadPanel).toBeHidden();
+    .toBe(summaryWidthBeforeHover);
 
   await rootSummaryRow.click();
   await expect(threadPanel).toBeVisible();
   await expect(threadPanel.getByTestId("message-thread-head")).toContainText(
     "Welcome to #general",
   );
+  await expect(rootSummaryRow).toContainText("Viewing thread");
 
   const firstReplyRow = threadReplies
     .getByTestId("message-row")

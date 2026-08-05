@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
+use super::gh_cli::{gh_command, GhUnavailable};
+use super::thread_github_target::origin_repo_target;
 use super::thread_workspace_git::{command_output, validate_target};
 
 #[derive(Debug, Serialize)]
@@ -10,11 +11,12 @@ pub struct ThreadGitHubStatus {
     pub pull_request: Option<ThreadPullRequest>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ThreadGitHubAvailability {
     Available,
-    Unavailable,
+    CliMissing,
+    CliFailed,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -72,6 +74,18 @@ pub struct ThreadPullRequest {
     status_check_rollup: Vec<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GhLookupError {
+    CliMissing,
+    CliFailed,
+}
+
+impl From<GhUnavailable> for GhLookupError {
+    fn from(_: GhUnavailable) -> Self {
+        Self::CliMissing
+    }
+}
+
 #[tauri::command]
 pub async fn get_thread_github_status(
     repository_path: String,
@@ -79,18 +93,25 @@ pub async fn get_thread_github_status(
     root_event_id: String,
 ) -> Result<ThreadGitHubStatus, String> {
     let target = validate_target(&repository_path, &branch, &root_event_id).await?;
-    let Some(number) = find_pull_request_number(&target.repository_path, &branch).await else {
-        return Ok(unavailable());
-    };
+    let repo = origin_repo_target(&target.repository_path).await;
+    let number =
+        match find_pull_request_number(&target.repository_path, repo.as_deref(), &branch).await {
+            Ok(number) => number,
+            Err(GhLookupError::CliMissing) => return Ok(cli_missing()),
+            Err(GhLookupError::CliFailed) => return Ok(cli_failed()),
+        };
     if number == 0 {
         return Ok(ThreadGitHubStatus {
             availability: ThreadGitHubAvailability::Available,
             pull_request: None,
         });
     }
-    let Some(mut pull_request) = read_pull_request(&target.repository_path, number).await else {
-        return Ok(unavailable());
-    };
+    let mut pull_request =
+        match read_pull_request(&target.repository_path, repo.as_deref(), number).await {
+            Ok(pull_request) => pull_request,
+            Err(GhLookupError::CliMissing) => return Ok(cli_missing()),
+            Err(GhLookupError::CliFailed) => return Ok(cli_failed()),
+        };
     pull_request.checks = pull_request
         .status_check_rollup
         .iter()
@@ -104,36 +125,50 @@ pub async fn get_thread_github_status(
     })
 }
 
-async fn find_pull_request_number(repository: &std::path::Path, branch: &str) -> Option<u64> {
-    let output = command_output(
-        Command::new("gh")
-            .args(["pr", "list", "--state", "all", "--head", branch])
-            .args(["--json", "number", "--limit", "1"])
-            .current_dir(repository),
-    )
-    .await
-    .ok()?;
-    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).ok()?;
-    Some(
-        rows.first()
-            .and_then(|row| row["number"].as_u64())
-            .unwrap_or(0),
-    )
+async fn find_pull_request_number(
+    repository: &std::path::Path,
+    repo: Option<&str>,
+    branch: &str,
+) -> Result<u64, GhLookupError> {
+    let mut command = gh_command().await?;
+    command
+        .args(["pr", "list", "--state", "all", "--head", branch])
+        .args(["--json", "number", "--limit", "1"])
+        .current_dir(repository);
+    if let Some(repo) = repo {
+        command.args(["--repo", repo]);
+    }
+    let output = command_output(&mut command)
+        .await
+        .map_err(|_| GhLookupError::CliFailed)?;
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).map_err(|_| GhLookupError::CliFailed)?;
+    Ok(rows
+        .first()
+        .and_then(|row| row["number"].as_u64())
+        .unwrap_or(0))
 }
 
-async fn read_pull_request(repository: &std::path::Path, number: u64) -> Option<ThreadPullRequest> {
+async fn read_pull_request(
+    repository: &std::path::Path,
+    repo: Option<&str>,
+    number: u64,
+) -> Result<ThreadPullRequest, GhLookupError> {
     let fields = "number,title,state,url,headRefName,baseRefName,isDraft,mergeStateStatus,reviewDecision,additions,deletions,changedFiles,comments,closingIssuesReferences,statusCheckRollup";
-    let output = command_output(
-        Command::new("gh")
-            .args(["pr", "view", &number.to_string(), "--json", fields])
-            .current_dir(repository),
-    )
-    .await
-    .ok()?;
-    serde_json::from_slice(&output.stdout).ok()
+    let mut command = gh_command().await?;
+    command
+        .args(["pr", "view", &number.to_string(), "--json", fields])
+        .current_dir(repository);
+    if let Some(repo) = repo {
+        command.args(["--repo", repo]);
+    }
+    let output = command_output(&mut command)
+        .await
+        .map_err(|_| GhLookupError::CliFailed)?;
+    serde_json::from_slice(&output.stdout).map_err(|_| GhLookupError::CliFailed)
 }
 
-fn parse_check(value: &serde_json::Value) -> Option<ThreadPullRequestCheck> {
+pub(crate) fn parse_check(value: &serde_json::Value) -> Option<ThreadPullRequestCheck> {
     let name = value["name"]
         .as_str()
         .or_else(|| value["context"].as_str())?
@@ -153,16 +188,23 @@ fn parse_check(value: &serde_json::Value) -> Option<ThreadPullRequestCheck> {
     })
 }
 
-fn unavailable() -> ThreadGitHubStatus {
+fn cli_missing() -> ThreadGitHubStatus {
     ThreadGitHubStatus {
-        availability: ThreadGitHubAvailability::Unavailable,
+        availability: ThreadGitHubAvailability::CliMissing,
+        pull_request: None,
+    }
+}
+
+fn cli_failed() -> ThreadGitHubStatus {
+    ThreadGitHubStatus {
+        availability: ThreadGitHubAvailability::CliFailed,
         pull_request: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_check;
+    use super::*;
 
     #[test]
     fn parses_check_runs_and_commit_statuses() {
@@ -186,5 +228,43 @@ mod tests {
         assert_eq!(status.name, "release/ready");
         assert_eq!(status.state, "SUCCESS");
         assert_eq!(status.url.as_deref(), Some("https://example.test/status"));
+    }
+
+    #[test]
+    fn availability_wire_values_are_kebab_case() {
+        assert_eq!(
+            serde_json::to_value(ThreadGitHubAvailability::Available).unwrap(),
+            "available"
+        );
+        assert_eq!(
+            serde_json::to_value(ThreadGitHubAvailability::CliMissing).unwrap(),
+            "cli-missing"
+        );
+        assert_eq!(
+            serde_json::to_value(ThreadGitHubAvailability::CliFailed).unwrap(),
+            "cli-failed"
+        );
+    }
+
+    #[test]
+    fn degraded_helpers_leave_pull_request_empty() {
+        assert_eq!(
+            cli_missing().availability,
+            ThreadGitHubAvailability::CliMissing
+        );
+        assert!(cli_missing().pull_request.is_none());
+        assert_eq!(
+            cli_failed().availability,
+            ThreadGitHubAvailability::CliFailed
+        );
+        assert!(cli_failed().pull_request.is_none());
+    }
+
+    #[test]
+    fn gh_unavailable_maps_to_cli_missing() {
+        assert_eq!(
+            GhLookupError::from(GhUnavailable::CliMissing),
+            GhLookupError::CliMissing
+        );
     }
 }

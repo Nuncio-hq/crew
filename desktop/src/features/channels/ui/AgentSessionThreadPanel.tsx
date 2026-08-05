@@ -25,6 +25,8 @@ import {
 } from "@/features/agents/ui/useObserverEvents";
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
+import { describeCancelTurnResult } from "@/features/agents/cancelTurnFeedback";
+import { subscribeControlResults } from "@/features/agents/observerRelayStore";
 import { cancelManagedAgentTurn } from "@/shared/api/agentControl";
 import type { Channel } from "@/shared/api/types";
 import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
@@ -270,15 +272,38 @@ export function AgentSessionThreadPanel({
     }
 
     try {
+      const statusPromise = new Promise<string>((resolve) => {
+        const unsub = subscribeControlResults(agent.pubkey, (frame) => {
+          if (frame.type !== "cancel_turn") return;
+          if (
+            typeof frame.conversationId === "string" &&
+            frame.conversationId.length > 0 &&
+            frame.conversationId !== target.conversationId
+          ) {
+            return;
+          }
+          unsub();
+          clearTimeout(timer);
+          resolve(frame.status);
+        });
+        const timer = window.setTimeout(() => {
+          unsub();
+          resolve("unconfirmed");
+        }, 5_000);
+      });
       await cancelManagedAgentTurn(
         agent.pubkey,
         target.channelId,
         target.conversationId,
         target.turnId,
       );
-      toast.success(
-        `Stop signal sent to ${agent.name}. It may take a moment to respond.`,
+      const feedback = describeCancelTurnResult(
+        await statusPromise,
+        agent.name,
       );
+      if (feedback.tone === "success") toast.success(feedback.message);
+      else if (feedback.tone === "info") toast.message(feedback.message);
+      else toast.warning(feedback.message);
     } catch (error) {
       toast.error(
         error instanceof Error
