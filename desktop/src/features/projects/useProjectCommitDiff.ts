@@ -5,7 +5,8 @@ import {
   getProjectRepoDiff,
 } from "@/shared/api/projectGit";
 import type { ProjectRepoDiff } from "@/shared/api/types";
-import type { Project } from "./hooks";
+import type { Repository as Project } from "./hooks";
+import { firstCloneUrl } from "./lib/projectCloneUrl";
 
 async function fetchProjectCommitDiff(
   project: Project,
@@ -19,13 +20,13 @@ async function fetchProjectCommitDiff(
     const local = await getProjectLocalRepoDiff({
       reposDir,
       projectDtag: project.dtag,
-      cloneUrl: project.cloneUrls[0] ?? null,
+      cloneUrl: firstCloneUrl(project) ?? null,
       targetCommit: commitHash,
     });
     if (local) return local;
   }
 
-  const cloneUrl = project.cloneUrls[0];
+  const cloneUrl = firstCloneUrl(project);
   if (!cloneUrl) {
     throw new Error("This project has no clone URL to load the commit from.");
   }

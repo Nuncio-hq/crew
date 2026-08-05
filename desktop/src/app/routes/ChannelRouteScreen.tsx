@@ -4,6 +4,8 @@ import { getCachedSearchHitEvent } from "@/app/navigation/searchHitEventCache";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { ChannelScreen } from "@/features/channels/ui/ChannelScreen";
+import { HuddleStartingView } from "@/features/huddle/components/HuddleStartingView";
+import { huddleWindowChannelId } from "@/features/huddle/lib/huddleWindow";
 import {
   getThreadReference,
   isBroadcastReply,
@@ -108,6 +110,7 @@ export function ChannelRouteScreen({
   targetReplyId,
   targetThreadRootId,
 }: ChannelRouteScreenProps) {
+  const isHuddleTranscript = huddleWindowChannelId() !== null;
   const { closeForumPost, goForumPost } = useAppNavigation();
   const channelsQuery = useChannelsQuery();
   const identityQuery = useIdentityQuery();
@@ -192,6 +195,9 @@ export function ChannelRouteScreen({
   }, [selectedPostId, targetMessageId, targetThreadRootId]);
 
   if (channelsQuery.isPending && !activeChannel) {
+    if (isHuddleTranscript) {
+      return <HuddleStartingView />;
+    }
     return (
       <ViewLoadingFallback
         includeHeader

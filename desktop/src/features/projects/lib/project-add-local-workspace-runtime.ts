@@ -10,6 +10,7 @@ import {
 } from "./project-local-workspace-runtime";
 
 import { eventToProject, type Project } from "@/features/projects/hooks";
+import { repositoryToLegacyProject } from "@/features/projects/projectModels";
 import { relayClient } from "@/shared/api/relayClient";
 import { getCachedRelayOrigin } from "@/shared/lib/mediaUrl";
 import { signRelayEvent } from "@/shared/api/tauri";
@@ -17,6 +18,14 @@ import { getIdentity } from "@/shared/api/tauriIdentity";
 import { KIND_REPO_ANNOUNCEMENT } from "@/shared/constants/kinds";
 
 type RelayFilter = Parameters<typeof relayClient.fetchEvents>[0];
+
+function projectFromAnnouncement(
+  event: Parameters<typeof eventToProject>[0],
+): Project {
+  return repositoryToLegacyProject(
+    eventToProject(event, getCachedRelayOrigin()),
+  );
+}
 
 export async function createCurrentLocalWorkspaceProject(
   input: LocalWorkspaceProjectInput,
@@ -35,7 +44,7 @@ export async function createCurrentLocalWorkspaceProject(
             ? workspace.localWorkspace.path
             : null,
         owner,
-        saved: eventToProject(event, getCachedRelayOrigin()),
+        saved: projectFromAnnouncement(event),
       };
     },
     getOwnerPubkey: async () => (await getIdentity()).pubkey,
@@ -65,7 +74,7 @@ export async function createCurrentLocalWorkspaceProject(
           },
         },
       );
-      return eventToProject(saved, getCachedRelayOrigin());
+      return projectFromAnnouncement(saved);
     },
   });
   return result.saved;

@@ -329,3 +329,32 @@ Consequences:
   resolves in favor of upstream's shape and Crew's delta is retired.
 - Feature 0001 documents (P-4, §7.2, Slice 3) are historical as written;
   this decision governs.
+
+## D-021 — Keep Crew local workspace fields on upstream `Repository`
+
+- **Status:** Accepted
+- **Date:** 2026-08-05
+
+Under NIP-MP, kind `30617` is a repository (`Repository`) and kind `30621` is
+a project (`Project`). Crew's `buzz-location` tag and the derived
+`localWorkspacePath` / `localWorkspaceStatus` fields live on `Repository` in
+upstream's `projectModels.ts` — an intentional Crew edit of an upstream file,
+recorded here rather than hidden behind a parallel type.
+
+When a Project has several repositories, a Crew thread worktree binds to
+`primaryRepositoryAddress`, falling back to `repositories[0]` for
+`legacy: true` projects. Selection uses `selectProjectRepository()`.
+
+## D-022 — Extract Crew deltas when sync trips the file-size ratchet
+
+- **Status:** Accepted
+- **Date:** 2026-08-05
+
+When an upstream sync merge makes a shared file exceed the Desktop file-size
+ratchet, extract the Crew-owned additions into new Crew-only files so the
+shared file returns to at or below the upstream line count. Do not grant a
+sync-only exception, do not raise `MAX_LINES`, and do not restructure
+upstream's own code just to pass the guard.
+
+This shrinks future conflict surface instead of freezing oversized shared
+blobs. Record the extracted files in the sync PR body.

@@ -2,8 +2,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { toast } from "sonner";
 
-import type { Project } from "@/features/projects/hooks";
+import type { Repository } from "@/features/projects/hooks";
+import { projectCloneErrorPresentation } from "@/features/projects/lib/projectGitError";
 import { openProjectTerminal } from "@/shared/api/projectGit";
+import { firstCloneUrl } from "@/features/projects/lib/projectCloneUrl";
 
 export function projectTerminalLabel(hasLocalCheckout: boolean) {
   return hasLocalCheckout ? "Open in Terminal" : "Clone & open in Terminal";
@@ -19,7 +21,7 @@ export function useOpenProjectTerminal(reposDir?: string | null) {
 
   return React.useCallback(
     async (
-      project: Project,
+      project: Repository,
       options: { branch?: string | null; hasLocalCheckout: boolean },
     ) => {
       const toastId = options.hasLocalCheckout
@@ -29,7 +31,7 @@ export function useOpenProjectTerminal(reposDir?: string | null) {
         const result = await openProjectTerminal({
           reposDir,
           projectDtag: project.dtag,
-          cloneUrl: project.cloneUrls[0] ?? null,
+          cloneUrl: firstCloneUrl(project) ?? null,
           defaultBranch: options.branch ?? project.defaultBranch ?? null,
         });
         if (result.cloned) {
@@ -42,10 +44,17 @@ export function useOpenProjectTerminal(reposDir?: string | null) {
           toast.dismiss(toastId);
         }
       } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Failed to open terminal",
-          { id: toastId },
-        );
+        const presentation = options.hasLocalCheckout
+          ? {
+              title: "Couldn’t open terminal",
+              description:
+                "Buzz could not open this checkout in your configured terminal.",
+            }
+          : projectCloneErrorPresentation(error, firstCloneUrl(project));
+        toast.error(presentation.title, {
+          description: presentation.description,
+          id: toastId,
+        });
       }
     },
     [queryClient, reposDir],

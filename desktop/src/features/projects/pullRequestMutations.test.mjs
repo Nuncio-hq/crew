@@ -15,10 +15,11 @@ const PR_ID = "d".repeat(64);
 const COMMIT = "e".repeat(40);
 const MERGE_BASE = "f".repeat(40);
 
+const PROJECT_CLONE = `https://relay.example/git/${OWNER}/buzz`;
 const project = {
   owner: OWNER,
   repoAddress: `30617:${OWNER}:buzz`,
-  cloneUrls: [`https://relay.example/git/${OWNER}/buzz`],
+  cloneUrls: [PROJECT_CLONE],
 };
 const pullRequest = {
   author: AUTHOR,
@@ -56,7 +57,7 @@ test("projectPullRequestTags builds a NIP-34 kind 1618 tag set", () => {
     ["p", REVIEWER],
     ["subject", "Add Projects workflow"],
     ["c", COMMIT],
-    ["clone", project.cloneUrls[0]],
+    ["clone", PROJECT_CLONE],
     ["branch-name", "projects-workflow"],
     ["target-branch", "main"],
     ["merge-base", MERGE_BASE],
@@ -80,7 +81,7 @@ test("projectPullRequestUpdateTags uses uppercase NIP-22 root tags", () => {
       (tag) =>
         tag[0] === "clone" &&
         tag[1] === forkCloneUrl &&
-        !tag.includes(project.cloneUrls[0]),
+        !tag.includes(PROJECT_CLONE),
     ),
   );
 });

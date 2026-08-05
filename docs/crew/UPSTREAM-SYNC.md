@@ -60,10 +60,15 @@ Then:
    `upstream-buzz.json`.
 2. Inspect every conflict as a fork-maintenance signal.
 3. Prefer moving Crew behavior into additive files over repeatedly resolving
-   the same upstream file.
-4. Run focused tests for conflict areas.
-5. Run upstream's required quality gates.
-6. Review the fork delta:
+   the same upstream file. If the Desktop file-size ratchet trips on a shared
+   file, extract Crew-owned additions into Crew-only files so the shared file
+   returns to at or below the upstream line count (D-022) — do not raise the
+   limit or grant a sync-only exception.
+4. After the merge, run `gh workflow list --all` and disable any newly imported
+   workflows that fall outside Crew scope (for example Sprig publication).
+5. Run focused tests for conflict areas.
+6. Run upstream's required quality gates.
+7. Review the fork delta:
 
 ```bash
 git diff --stat upstream/main...HEAD

@@ -31,6 +31,7 @@ HOST_TARGET=$(rustc -vV | sed -n 's|host: ||p')
 cargo build --release --target "$HOST_TARGET" \
   -p buzz-acp \
   -p buzz-agent \
+  -p buzz-backend-kubernetes \
   -p buzz-dev-mcp \
   -p git-credential-nostr \
   -p buzz-cli
