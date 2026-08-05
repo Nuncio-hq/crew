@@ -273,7 +273,7 @@ agent. Later agents remain visible through non-notifying reference tags and
 are woken by explicit mentions in subsequent thread replies. Ordinary chat,
 single-agent prompts, DMs, and non-Project channels keep existing routing.
 
-## D-019 — Keep Crew local workspace fields on upstream `Repository`
+## D-020 — Keep Crew local workspace fields on upstream `Repository`
 
 - **Status:** Accepted
 - **Date:** 2026-08-05
