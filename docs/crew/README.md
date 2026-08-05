@@ -66,6 +66,7 @@ contract is visible, and the manager approves the plan.
 | [`UPSTREAM-SYNC.md`](UPSTREAM-SYNC.md)               | Thin-fork and sync runbook         | When Git workflow changes    |
 | [`STATE.md`](STATE.md)                               | Short, current project state       | Frequently; rewrite in place |
 | [`DECISIONS.md`](DECISIONS.md)                       | Durable rationale                  | Append only                  |
+| [`features/`](features/README.md)                    | Feature plans (stories + slices)   | One document per initiative  |
 | [`spikes/`](spikes/README.md)                        | Feasibility evidence               | One record per spike         |
 | [`verification/`](verification/README.md)            | Reproducible feature evidence      | One record per delivered slice |
 | [`templates/`](templates/)                           | Required work artifacts            | When workflow changes        |
