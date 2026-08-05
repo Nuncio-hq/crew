@@ -29,7 +29,7 @@ import { useProjectThreadWorkspaceModel } from "./useProjectThreadWorkspaceModel
 type Props = {
   agentMentions: readonly ProjectThreadAgentMention[];
   channelId: string | null;
-  /** When true, the bar may expand to the full Task/Workspace/Handoff grid. */
+  /** When true, the expanded grid uses the wide 3-column layout. */
   isFocusMode?: boolean;
   profiles?: UserProfileLookup;
   replies: readonly TimelineMessage[];
@@ -87,8 +87,9 @@ function githubDegradedTitle(
 
 /**
  * Sticky project-thread status bar. Mount **outside** the scroll region
- * (between header and message list). Collapsed by default; full grid only in
- * focus mode. Owns the agent working signal for project threads.
+ * (between header and message list). Collapsed by default; expand reveals the
+ * Task/Workspace/Handoff grid (stacked in the side panel, 3-col in focus).
+ * Owns the agent working signal for project threads.
  */
 export function ProjectThreadWorkspacePanel({
   agentMentions,
@@ -112,10 +113,6 @@ export function ProjectThreadWorkspacePanel({
 
   const closeDrawer = React.useCallback(() => setActiveDrawer(null), []);
   useEscapeKey(closeDrawer, activeDrawer !== null);
-
-  React.useEffect(() => {
-    if (!isFocusMode) setExpanded(false);
-  }, [isFocusMode]);
 
   const refreshGitHub = model?.refreshGitHub;
   React.useEffect(() => {
@@ -185,7 +182,7 @@ export function ProjectThreadWorkspacePanel({
     target,
     workspace,
   } = model;
-  const showExpanded = isFocusMode && expanded;
+  const showExpanded = expanded;
   const elapsedMs = activityBounds
     ? Math.max(0, now - activityBounds.anchorAt)
     : 0;
@@ -342,22 +339,20 @@ export function ProjectThreadWorkspacePanel({
           </button>
         ) : null}
 
-        {isFocusMode ? (
-          <button
-            aria-expanded={showExpanded}
-            aria-label={showExpanded ? "Collapse status" : "Expand status"}
-            className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-            data-testid="project-thread-status-expand"
-            onClick={() => setExpanded((value) => !value)}
-            type="button"
-          >
-            {showExpanded ? (
-              <ChevronUp className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
-            )}
-          </button>
-        ) : null}
+        <button
+          aria-expanded={showExpanded}
+          aria-label={showExpanded ? "Collapse status" : "Expand status"}
+          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          data-testid="project-thread-status-expand"
+          onClick={() => setExpanded((value) => !value)}
+          type="button"
+        >
+          {showExpanded ? (
+            <ChevronUp className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5" />
+          )}
+        </button>
       </div>
 
       {showExpanded ? (
@@ -365,7 +360,14 @@ export function ProjectThreadWorkspacePanel({
           className="mt-2 space-y-2"
           data-testid="project-thread-status-expanded"
         >
-          <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-border/60 bg-muted/20 [&>*:not(:last-child)]:border-r">
+          <div
+            className={cn(
+              "grid overflow-hidden rounded-xl border border-border/60 bg-muted/20",
+              isFocusMode
+                ? "grid-cols-3 [&>*:not(:last-child)]:border-r"
+                : "grid-cols-1 [&>*:not(:last-child)]:border-b",
+            )}
+          >
             <ProjectThreadIntegrationCell
               active={activeDrawer === "task"}
               detail={`${context.repoAddress} · shared branch`}
