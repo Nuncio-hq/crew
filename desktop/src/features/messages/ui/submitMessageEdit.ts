@@ -6,7 +6,10 @@ import {
   type ImetaMedia,
   mergeOutgoingTags,
 } from "@/features/messages/lib/imetaMediaMarkdown";
-import { diffAddedMentionPubkeys } from "@/features/messages/lib/threading";
+import {
+  diffAddedMentionPubkeys,
+  diffRemovedMentionPubkeys,
+} from "@/features/messages/lib/threading";
 import { buildCustomEmojiTags } from "@/shared/lib/customEmojiTags";
 import type { CustomEmoji } from "@/shared/lib/remarkCustomEmoji";
 
@@ -34,6 +37,7 @@ type SubmitMessageEditOptions = Omit<EditDraft, "mentionRefs"> & {
     content: string,
     mediaTags?: string[][],
     mentionPubkeys?: string[],
+    removedMentionPubkeys?: string[],
     eventId?: string,
   ) => Promise<void>;
   setUploadError: (message: string) => void;
@@ -72,10 +76,21 @@ export async function submitMessageEdit({
       restoreMentionRefs(draft.mentionRefs);
     }
   };
+  const originalMentionPubkeys = extractMentionPubkeys(originalContent);
+  const editedMentionPubkeys = extractMentionPubkeys(content);
+  const selfPubkey = ownerPubkey ?? "";
   const addedMentionPubkeys = diffAddedMentionPubkeys(
-    extractMentionPubkeys(originalContent),
-    extractMentionPubkeys(content),
-    ownerPubkey ?? "",
+    originalMentionPubkeys,
+    editedMentionPubkeys,
+    selfPubkey,
+  );
+  // Upstream #4522 deferred uploads into this helper and only wired the
+  // added-mention diff. Without the removed set, kind:40003 never emits
+  // `p-removed`, so un-mentioning an agent cannot drop a still-queued request.
+  const removedMentionPubkeys = diffRemovedMentionPubkeys(
+    originalMentionPubkeys,
+    editedMentionPubkeys,
+    selfPubkey,
   );
   const hasQueuedAttachments = draft.queuedAttachments.length > 0;
   if (hasQueuedAttachments) setDeferredUploadPending(true);
@@ -99,7 +114,13 @@ export async function submitMessageEdit({
         buildCustomEmojiTags(finalContent, customEmoji),
       ) ?? [];
     if (signal?.aborted) return;
-    await save(finalContent, outgoingTags, addedMentionPubkeys, editTargetId);
+    await save(
+      finalContent,
+      outgoingTags,
+      addedMentionPubkeys,
+      removedMentionPubkeys,
+      editTargetId,
+    );
   };
 
   if (hasQueuedAttachments) {
