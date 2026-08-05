@@ -62,3 +62,8 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0006-reuse-existing-git-reader-for-exact-local-workspace.md`](0006-reuse-existing-git-reader-for-exact-local-workspace.md)
 - [`0007-manual-dual-channel-release.md`](0007-manual-dual-channel-release.md)
 - [`0008-lean-macos-arm-ci.md`](0008-lean-macos-arm-ci.md)
+- [`0009-profile-bound-hermes-acp-spawn.md`](0009-profile-bound-hermes-acp-spawn.md)
+- [`0010-hermes-headless-auth-probe.md`](0010-hermes-headless-auth-probe.md)
+- [`0011-headless-hermes-profile-lifecycle.md`](0011-headless-hermes-profile-lifecycle.md)
+- [`0012-one-profile-concurrent-acp.md`](0012-one-profile-concurrent-acp.md)
+- [`0013-buzz-acp-model-leak-suppression.md`](0013-buzz-acp-model-leak-suppression.md)
