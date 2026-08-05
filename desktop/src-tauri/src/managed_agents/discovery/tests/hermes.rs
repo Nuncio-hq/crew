@@ -23,6 +23,7 @@ fn known_acp_runtime_resolves_hermes_identities() {
         );
         assert!(runtime.auth_probe_args.is_none());
         assert!(runtime.supports_acp_model_switching);
+        assert_eq!(runtime.profile_arg, Some("-p"));
     }
 }
 

@@ -13,17 +13,17 @@ mod runtime_metadata;
 #[macro_use]
 mod windows_install;
 mod known_runtimes;
+use known_runtimes::KNOWN_ACP_RUNTIMES;
+#[cfg(test)]
+use known_runtimes::{
+    BUZZ_AGENT_AVATAR_URL, CLAUDE_CODE_AVATAR_URL, CODEX_AVATAR_URL, GOOSE_AVATAR_URL,
+};
 pub(crate) use presets::{
     canonical_harness_command, command_for_runtime_id, preset_harness_definitions,
     preset_harness_ids,
 };
 use presets::{preset_catalog_entry, PRESET_HARNESSES};
 pub(crate) use runtime_metadata::KnownAcpRuntime;
-use known_runtimes::KNOWN_ACP_RUNTIMES;
-#[cfg(test)]
-use known_runtimes::{
-    BUZZ_AGENT_AVATAR_URL, CLAUDE_CODE_AVATAR_URL, CODEX_AVATAR_URL, GOOSE_AVATAR_URL,
-};
 
 fn common_binary_paths() -> &'static [PathBuf] {
     static PATHS: OnceLock<Vec<PathBuf>> = OnceLock::new();
@@ -1271,8 +1271,8 @@ fn discover_acp_runtime_phase1(runtime: &'static KnownAcpRuntime) -> PartialEntr
             auth_status: AuthStatus::Unknown,
             login_hint: None,
             source: HarnessSource::Builtin,
-            // Builtin entries have no user-editable env; definition_env is empty.
             definition_env: Default::default(),
+            profile_arg: runtime.profile_arg.map(str::to_string),
         },
     }
 }
@@ -1433,9 +1433,9 @@ pub fn discover_acp_runtimes_from(
                 auth_status: AuthStatus::NotApplicable,
                 login_hint: None,
                 source: HarnessSource::Custom,
-                // Carry definition env into the catalog so the edit form can
-                // read it back — prevents silently erasing env on save.
+                // Carry definition env so the edit form can preserve it on save.
                 definition_env: def.env.clone(),
+                profile_arg: None,
             });
         }
     }

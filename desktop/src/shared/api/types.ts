@@ -528,14 +528,9 @@ export type AcpRuntimeCatalogEntry = {
   loginHint: string | null;
   /** "builtin" (compiled in), "preset" (PATH-probed, not editable), or "custom" (user JSON). Controls UI editability. */
   source: "builtin" | "preset" | "custom";
-  /**
-   * Definition-level environment variables for `source: custom` entries.
-   *
-   * Populated by the backend from `HarnessDefinition.env` so the edit form can
-   * read them back without losing existing env vars on save. Always absent/empty
-   * for `builtin` and `preset` entries.
-   */
+  /** Env for `source: custom` so the edit form can preserve vars on save. */
   definitionEnv?: Record<string, string>;
+  profileArg?: string | null; // Rust profile_arg
 };
 
 /** An AcpRuntimeCatalogEntry that is confirmed available — command and binaryPath are non-null. */
