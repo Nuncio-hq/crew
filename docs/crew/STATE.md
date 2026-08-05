@@ -222,3 +222,23 @@ record and its durable root claim.
   separately reviewed canonical-path flow.
 - When to publish or link a real Project on the manager relay for the final
   native exact-reader smoke.
+
+## Hermes runtime track (feature 0001)
+
+- Feature plan:
+  [`features/0001-hermes-first-class-runtime.md`](features/0001-hermes-first-class-runtime.md);
+  decisions locked as D-019; runbook [`HERMES.md`](HERMES.md).
+- Slice 0 (five spikes, records 0009–0013) complete: profile-bound spawn,
+  headless lifecycle, and bounded concurrency PASS; no headless auth probe
+  exists in Hermes v0.20.0 (ask filed); `BUZZ_ACP_MODEL` leak paths and
+  suppression point identified.
+- Slice 1 verified live
+  ([`verification/0006`](verification/0006-hermes-slice1-live-roundtrip.md)):
+  mention → profile-bound Hermes turn → signed `CREW-LIVE-OK` reply over a
+  real relay, and a profile-side model change picked up by the running
+  adapter after `!rotate` with no respawn. Operational requirement found:
+  `BUZZ_ACP_MCP_COMMAND=buzz-dev-mcp` is mandatory (Hermes' sandbox strips
+  `BUZZ_*` from its own terminal tool).
+- Next gates: Slice 2 (binding/readiness/no-model UI + RED contracts),
+  Slice 3 (upstream tier-1 PR to block/buzz), Slice 4 (profile lifecycle
+  UI).

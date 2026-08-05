@@ -272,3 +272,35 @@ A new multi-agent Project task notifies only the first explicitly ordered
 agent. Later agents remain visible through non-notifying reference tags and
 are woken by explicit mentions in subsequent thread replies. Ordinary chat,
 single-agent prompts, DMs, and non-Project channels keep existing routing.
+
+## D-019 — Hermes agents bind 1:1 to Hermes profiles; the profile owns the model
+
+- **Status:** Accepted (Slice 1 of feature 0001)
+- **Date:** 2026-08-05
+
+Adopted from
+[`features/0001-hermes-first-class-runtime.md`](features/0001-hermes-first-class-runtime.md)
+(P-1 … P-7), backed by spikes 0009–0013:
+
+1. Every Crew agent on the Hermes runtime binds 1:1 to a named Hermes
+   profile. The profile owns model, provider, memory, skills, and
+   credentials; Crew never stores a competing copy.
+2. Crew renders model/provider for Hermes agents as read-only,
+   profile-sourced information. The live ACP model switch remains a
+   session-scoped escape hatch only.
+3. For runtime=Hermes the spawn environment must not carry
+   `BUZZ_ACP_MODEL` from any layer; enforcement is code once Slice 2
+   lands (spike 0013 fixes the mechanism).
+4. Tier-1 promotion of Hermes happens upstream in `block/buzz`; Crew
+   carries at most temporary additive shims.
+5. Hermes agents spawn with command basename `hermes` (or `hermes-acp`),
+   never renamed wrappers, and select the profile with `-p <name>` args.
+6. Crew may invoke `hermes profile create`/`delete -y` only as a direct,
+   visible consequence of a manager action; deletion always passes `-y`
+   and verifies by directory absence (spike 0011: bare `delete` on a
+   non-TTY auto-cancels with exit 0).
+7. The manager's default profile (`~/.hermes`) is never bound to a Crew
+   agent without explicit confirmation. Public (`respond-to anyone`)
+   agents additionally require a credential-isolation step: spike 0010
+   showed fresh profiles read the manager's pooled credentials through a
+   global-root fallback.

@@ -6,3 +6,5 @@ spikes, RED tests, approved plan, or current status.
 
 Use one numbered record per delivered slice. State the real boundary exercised,
 commands, observable results, environment limits, and cleanup.
+
+- [`0006-hermes-slice1-live-roundtrip.md`](0006-hermes-slice1-live-roundtrip.md)
