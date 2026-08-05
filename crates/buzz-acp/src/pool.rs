@@ -1752,16 +1752,9 @@ pub async fn run_prompt_task(
                 (sid.clone(), false)
             } else {
                 match create_session_and_apply_model(
-                    &mut agent,
-                    &ctx,
-                    &ctx.cwd,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
+                    &mut agent, &ctx, &ctx.cwd, None, None, None, None, None,
                 )
-                    .await
+                .await
                 {
                     Ok(sid) => {
                         tracing::info!(
@@ -2772,7 +2765,8 @@ async fn fetch_conversation_context(
             ctx.agent_keys.public_key(),
             &ctx.rest_client,
         )
-        .await;
+        .await
+        .map(|parsed| parsed.context);
     }
 
     // DM non-reply: fetch recent conversation history.
@@ -2805,6 +2799,16 @@ impl ThreadWorkspaceProvisionError {
 struct VerifiedThreadRoot {
     root_event_id: String,
     context: ConversationContext,
+}
+
+fn verify_thread_root_context(
+    root_event_id: &str,
+    parsed: ParsedThreadContext,
+) -> Option<VerifiedThreadRoot> {
+    parsed.root_present.then(|| VerifiedThreadRoot {
+        root_event_id: root_event_id.to_string(),
+        context: parsed.context,
+    })
 }
 
 impl std::fmt::Display for ThreadWorkspaceProvisionError {
@@ -2880,10 +2884,7 @@ async fn resolve_thread_session_workspace(
             &ctx.rest_client,
         )
         .await
-        .map(|context| VerifiedThreadRoot {
-            root_event_id: root_event_id.clone(),
-            context,
-        })
+        .and_then(|parsed| verify_thread_root_context(&root_event_id, parsed))
     } else {
         None
     };
@@ -2969,8 +2970,8 @@ mod thread_session_cwd_tests {
 
     use super::{
         select_trusted_workspace_content, thread_workspace_error_payload,
-        thread_workspace_ready_payload, trusted_fetched_root_content, VerifiedThreadRoot,
-        THREAD_WORKSPACE_ERROR_MESSAGE,
+        thread_workspace_ready_payload, trusted_fetched_root_content, verify_thread_root_context,
+        ParsedThreadContext, VerifiedThreadRoot, THREAD_WORKSPACE_ERROR_MESSAGE,
     };
     use crate::queue::{ContextMessage, ConversationContext};
     use crate::thread_workspace::ThreadWorkspace;
@@ -2979,6 +2980,24 @@ mod thread_session_cwd_tests {
     fn missing_root_context_fails_closed() {
         let error = trusted_fetched_root_content("owner", &"a".repeat(64), None).unwrap_err();
         assert!(error.to_string().contains("could not verify thread root"));
+    }
+
+    #[test]
+    fn reply_only_context_cannot_become_a_verified_thread_root() {
+        let parsed = ParsedThreadContext {
+            context: ConversationContext::Thread {
+                messages: vec![ContextMessage {
+                    pubkey: "owner".into(),
+                    timestamp: "2026-08-05T00:00:00Z".into(),
+                    content: "buzz://project-workspace?path=%2Freply-repo".into(),
+                }],
+                total: 1,
+                truncated: false,
+            },
+            root_present: false,
+        };
+
+        assert!(verify_thread_root_context(&"a".repeat(64), parsed).is_none());
     }
 
     #[test]
@@ -3263,7 +3282,7 @@ async fn fetch_thread_context(
     limit: u32,
     agent_pubkey: nostr::PublicKey,
     rest: &RestClient,
-) -> Option<ConversationContext> {
+) -> Option<ParsedThreadContext> {
     fetch_thread_context_with(
         channel_id,
         root_event_id,
@@ -3282,7 +3301,7 @@ async fn fetch_thread_context_with<Query, QueryFut, Count, CountFut>(
     agent_pubkey: nostr::PublicKey,
     query: Query,
     count: Count,
-) -> Option<ConversationContext>
+) -> Option<ParsedThreadContext>
 where
     Query: Fn(Vec<nostr::Filter>) -> QueryFut,
     QueryFut: std::future::Future<Output = Result<serde_json::Value, crate::relay::RelayError>>,
@@ -3387,7 +3406,7 @@ where
         }
     }
 
-    Some(parsed.context)
+    Some(parsed)
 }
 
 /// Best-effort exact thread size for truncated context labels.
@@ -3586,6 +3605,7 @@ fn parse_nostr_thread_response(
     agent_pubkey: &nostr::PublicKey,
 ) -> Option<ConversationContext> {
     parse_nostr_thread_response_with_meta(json, root_event_id, limit, agent_pubkey)
+        .filter(|parsed| parsed.root_present)
         .map(|parsed| parsed.context)
 }
 
@@ -4527,6 +4547,82 @@ mod tests {
         assert_eq!(messages[1].content, "reply");
     }
 
+    #[tokio::test]
+    async fn reply_only_relay_response_cannot_reach_workspace_authority() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let root_id = "a".repeat(64);
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let reply_workspace = "buzz://project-workspace?path=%2Fdefinitely-missing-nuncio-49";
+        let response_body = json!([{
+            "id": "b".repeat(64),
+            "pubkey": owner_keys.public_key().to_hex(),
+            "created_at": 2,
+            "content": reply_workspace
+        }])
+        .to_string();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind thread-context test server");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept thread query");
+            let mut request = vec![0; 8192];
+            let _ = socket.read(&mut request).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write thread query response");
+        });
+
+        let root_tag =
+            Tag::parse(["e", root_id.as_str(), "", "reply"]).expect("valid thread root tag");
+        let reply = EventBuilder::new(Kind::Custom(9), reply_workspace)
+            .tags([root_tag])
+            .sign_with_keys(&owner_keys)
+            .expect("sign owner reply");
+        let batch = FlushBatch {
+            channel_id: Uuid::new_v4(),
+            events: vec![crate::queue::BatchEvent {
+                event: reply,
+                prompt_tag: "test".into(),
+                received_at: std::time::Instant::now(),
+                edited_content: None,
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+        let mut ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        ctx.rest_client = crate::relay::RestClient {
+            http: reqwest::Client::new(),
+            base_url,
+            keys: agent_keys,
+            auth_tag_json: None,
+        };
+
+        let error = resolve_thread_session_workspace(&batch, &ctx)
+            .await
+            .expect_err("a reply-only response must fail before workspace provisioning");
+        let provision_error = error
+            .downcast_ref::<ThreadWorkspaceProvisionError>()
+            .expect("workspace failures keep their thread root identity");
+        assert_eq!(provision_error.root_event_id, root_id);
+        assert!(
+            error
+                .to_string()
+                .contains("could not verify thread root before creating an agent session"),
+            "reply-only context reached a later workspace stage: {error}"
+        );
+        server.await.expect("thread-context test server completes");
+    }
+
     fn test_mcp_server() -> McpServer {
         McpServer {
             name: "dev".into(),
@@ -5203,7 +5299,7 @@ mod tests {
             )
         ]);
 
-        let ctx = fetch_thread_context_with(
+        let parsed = fetch_thread_context_with(
             channel_id,
             root_id,
             2,
@@ -5220,7 +5316,7 @@ mod tests {
         .await
         .expect("thread context");
 
-        match ctx {
+        match parsed.context {
             ConversationContext::Thread {
                 messages,
                 total,
@@ -5260,7 +5356,7 @@ mod tests {
             )
         ]);
 
-        let ctx = fetch_thread_context_with(
+        let parsed = fetch_thread_context_with(
             channel_id,
             root_id,
             2,
@@ -5271,7 +5367,8 @@ mod tests {
         .await
         .expect("thread context");
 
-        match ctx {
+        assert!(!parsed.root_present);
+        match parsed.context {
             ConversationContext::Thread {
                 messages,
                 total,
@@ -5312,7 +5409,7 @@ mod tests {
             )
         ]);
 
-        let ctx = fetch_thread_context_with(
+        let parsed = fetch_thread_context_with(
             channel_id,
             root_id,
             2,
@@ -5323,7 +5420,7 @@ mod tests {
         .await
         .expect("thread context");
 
-        match ctx {
+        match parsed.context {
             ConversationContext::Thread {
                 messages,
                 total,
@@ -5364,7 +5461,7 @@ mod tests {
             )
         ]);
 
-        let ctx = fetch_thread_context_with(
+        let parsed = fetch_thread_context_with(
             channel_id,
             root_id,
             2,
@@ -5375,7 +5472,7 @@ mod tests {
         .await
         .expect("thread context");
 
-        match ctx {
+        match parsed.context {
             ConversationContext::Thread {
                 messages,
                 total,
@@ -5425,7 +5522,7 @@ mod tests {
             )
         ]);
 
-        let ctx = fetch_thread_context_with(
+        let parsed = fetch_thread_context_with(
             channel_id,
             root_id,
             2,
@@ -5436,7 +5533,7 @@ mod tests {
         .await
         .expect("thread context");
 
-        match ctx {
+        match parsed.context {
             ConversationContext::Thread {
                 messages,
                 total,
@@ -5498,7 +5595,7 @@ mod tests {
             )
         ]);
 
-        let ctx = fetch_thread_context_with(
+        let parsed = fetch_thread_context_with(
             channel_id,
             root_id,
             2,
@@ -5509,7 +5606,7 @@ mod tests {
         .await
         .expect("thread context");
 
-        match ctx {
+        match parsed.context {
             ConversationContext::Thread {
                 messages,
                 total,
