@@ -1,16 +1,39 @@
-import * as React from "react";
-
 import {
-  subscribeAgentObserverStore,
   getAgentObserverSnapshot,
   compareObserverEvents,
 } from "@/features/agents/observerRelayStore";
+import {
+  clearConversationOutcome,
+  clearConversationOutcomeLedger,
+  cloneConversationOutcomeLedger,
+  conversationOutcomeLedgerSize,
+  pruneExpiredConversationOutcomes,
+  recordConversationOutcome,
+  restoreConversationOutcomeLedger,
+  type ConversationOutcomeEntry,
+} from "@/features/agents/conversationOutcomeLedger";
 import {
   clearTurnRetrying,
   recordTurnRetrying,
 } from "@/features/agents/retryingTurnsStore";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import type { ObserverEvent } from "./ui/agentSessionTypes";
+
+export {
+  CONVERSATION_OUTCOME_TTL_MS,
+  getConversationOutcomeEntry,
+  walkConversationOutcomes,
+  type ConversationOutcomeEntry,
+} from "@/features/agents/conversationOutcomeLedger";
+
+export {
+  useActiveAgentTurns,
+  useActiveAgentTurnControlTargets,
+  useActiveAgentTurnsByChannel,
+  useActiveTurnsByConversation,
+  useActiveAgentsForConversation,
+  useActiveAgentTurnsBridge,
+} from "@/features/agents/activeAgentTurnsHooks";
 
 /** Harness emits turn_liveness every ~10s (BUZZ_ACP_TURN_LIVENESS_SECS). */
 const LIVENESS_INTERVAL_MS = 10_000;
@@ -128,13 +151,30 @@ const terminalAtByAgent = new Map<string, Map<string, number>>();
 
 let pruneInterval: ReturnType<typeof setInterval> | null = null;
 
-function invalidateCache(agentKey: string) {
-  cachedTurnSummaries.delete(agentKey);
-  cachedControlTargets.delete(agentKey);
+function bumpActiveTurnsGeneration() {
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
   cachedConversationTurnSummaries = null;
   activeTurnsGeneration += 1;
+}
+
+function invalidateCache(agentKey: string) {
+  cachedTurnSummaries.delete(agentKey);
+  cachedControlTargets.delete(agentKey);
+  bumpActiveTurnsGeneration();
+}
+
+function clearOutcomeAndBump(conversationId: string) {
+  if (!clearConversationOutcome(conversationId)) return;
+  bumpActiveTurnsGeneration();
+}
+
+function recordOutcomeAndBump(
+  conversationId: string,
+  entry: ConversationOutcomeEntry,
+) {
+  recordConversationOutcome(conversationId, entry);
+  bumpActiveTurnsGeneration();
 }
 
 function notifyListeners() {
@@ -202,6 +242,8 @@ function startTurn(
     startedAt,
     lastActivityAt: Date.now(),
   });
+  // A new turn for this conversation supersedes any prior terminal outcome.
+  clearOutcomeAndBump(conversationId);
   invalidateCache(key);
 }
 
@@ -352,6 +394,10 @@ function pruneExpired() {
       activeTurnsByAgent.delete(agentKey);
     }
   }
+  if (pruneExpiredConversationOutcomes(now)) {
+    bumpActiveTurnsGeneration();
+    changed = true;
+  }
   if (changed) {
     notifyListeners();
   }
@@ -428,11 +474,22 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
     }
     case "turn_completed":
     case "turn_error":
-    case "agent_panic":
+    case "agent_panic": {
       // Do not clear retrying here: automatic requeue emits `turn_retrying`
       // in the same failure path, and clearing on turn_error would wipe it.
       // Retrying state clears on the next `turn_started` (or a later
       // turn_retrying overwrite).
+      // Reuse the event's already-resolved channel/conversation ids — do not
+      // re-derive from the live turn map (the turn may already be pruned).
+      const conversationId = event.conversationId ?? event.channelId;
+      if (event.channelId && conversationId) {
+        recordOutcomeAndBump(conversationId, {
+          outcome: event.kind === "turn_completed" ? "completed" : "error",
+          agentPubkey: key,
+          channelId: event.channelId,
+          endedAt: Date.now(),
+        });
+      }
       endTurn(
         agentPubkey,
         event.turnId ?? null,
@@ -441,6 +498,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
       );
       notifyListeners();
       return;
+    }
     case "acp_read":
     case "acp_write":
     // turn_liveness keeps a quiet-but-alive turn from being pruned; same
@@ -740,60 +798,6 @@ export function syncAgentTurnsFromEvents(
 }
 
 /**
- * Hook: returns the channels where the given agent is currently working, each
- * with the desktop-clock `anchorAt` to anchor a live elapsed counter.
- * Re-renders when the set of channels changes — not when the clock ticks.
- */
-export function useActiveAgentTurns(
-  agentPubkey: string | null | undefined,
-): ActiveTurnSummary[] {
-  const getSnapshot = React.useCallback(
-    () => getActiveTurnsForAgent(agentPubkey),
-    [agentPubkey],
-  );
-
-  return React.useSyncExternalStore(subscribeActiveAgentTurns, getSnapshot);
-}
-
-export function useActiveAgentTurnControlTargets(
-  agentPubkey: string | null | undefined,
-): ActiveTurnControlTarget[] {
-  const getSnapshot = React.useCallback(
-    () => getActiveTurnControlTargetsForAgent(agentPubkey),
-    [agentPubkey],
-  );
-  return React.useSyncExternalStore(subscribeActiveAgentTurns, getSnapshot);
-}
-
-/**
- * Hook: returns channels with active agent work across all tracked agents.
- * Re-renders when the channel set changes — not when the clock ticks.
- */
-export function useActiveAgentTurnsByChannel(): ActiveChannelTurnSummary[] {
-  return React.useSyncExternalStore(
-    subscribeActiveAgentTurns,
-    getActiveTurnsByChannel,
-  );
-}
-
-export function useActiveTurnsByConversation(): ActiveConversationTurnSummary[] {
-  return React.useSyncExternalStore(
-    subscribeActiveAgentTurns,
-    getActiveTurnsByConversation,
-  );
-}
-
-export function useActiveAgentsForConversation(
-  conversationId: string | null | undefined,
-): string[] {
-  const getSnapshot = React.useCallback(
-    () => getActiveAgentsForConversation(conversationId),
-    [conversationId],
-  );
-  return React.useSyncExternalStore(subscribeActiveAgentTurns, getSnapshot);
-}
-
-/**
  * Sync every running/deployed agent's observer events into the active-turns
  * store. Extracted from the bridge hook so a regression can drive the exact
  * observer→derived-liveness path without a React renderer.
@@ -806,23 +810,6 @@ export function syncActiveAgentTurnsFromObserver(
     const snapshot = getAgentObserverSnapshot(agent.pubkey, true);
     syncAgentTurnsFromEvents(agent.pubkey, snapshot.events);
   }
-}
-
-/**
- * Bridge hook: processes observer events into the active-turns store.
- * Should be called by a parent component that has access to the observer events.
- */
-export function useActiveAgentTurnsBridge(
-  agents: readonly { pubkey: string; status: string }[],
-) {
-  React.useEffect(() => {
-    function syncAll() {
-      syncActiveAgentTurnsFromObserver(agents);
-    }
-
-    syncAll();
-    return subscribeAgentObserverStore(syncAll);
-  }, [agents]);
 }
 
 /**
@@ -871,6 +858,7 @@ export function resetActiveAgentTurnsStore() {
   cachedConversationTurnSummaries = null;
   activeTurnsGeneration += 1;
   terminalAtByAgent.clear();
+  clearConversationOutcomeLedger();
   notifyListeners();
 }
 
@@ -883,6 +871,7 @@ type TurnsStoreSnapshot = {
   offsets: Map<string, number>;
   watermarks: Map<string, ObserverEvent>;
   terminals: Map<string, Map<string, number>>;
+  outcomes: Map<string, ConversationOutcomeEntry>;
 };
 
 /** Per-community snapshots. Keyed by community ID. */
@@ -890,15 +879,19 @@ const savedByCommunity = new Map<string, TurnsStoreSnapshot>();
 
 /**
  * Snapshot the current active-turns state under `communityId` so it can be
- * restored when the user switches back.  If both the turns map and the
- * tombstone map are empty there is nothing worth restoring — discard any
+ * restored when the user switches back.  If turns, tombstones, and outcomes
+ * are all empty there is nothing worth restoring — discard any
  * previously-saved snapshot instead.
  *
- * Deep-clones all four maps so subsequent mutations on the live maps do not
+ * Deep-clones all maps so subsequent mutations on the live maps do not
  * corrupt the snapshot.
  */
 export function saveActiveAgentTurnsForCommunity(communityId: string): void {
-  if (activeTurnsByAgent.size === 0 && terminalAtByAgent.size === 0) {
+  if (
+    activeTurnsByAgent.size === 0 &&
+    terminalAtByAgent.size === 0 &&
+    conversationOutcomeLedgerSize() === 0
+  ) {
     savedByCommunity.delete(communityId);
     return;
   }
@@ -924,7 +917,13 @@ export function saveActiveAgentTurnsForCommunity(communityId: string): void {
     terminals.set(agentKey, new Map(tombstones));
   }
 
-  savedByCommunity.set(communityId, { turns, offsets, watermarks, terminals });
+  savedByCommunity.set(communityId, {
+    turns,
+    offsets,
+    watermarks,
+    terminals,
+    outcomes: cloneConversationOutcomeLedger(),
+  });
 }
 
 /**
@@ -955,6 +954,7 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
   clockOffsetByAgent.clear();
   lastProcessed.clear();
   terminalAtByAgent.clear();
+  clearConversationOutcomeLedger();
 
   const now = Date.now();
 
@@ -977,6 +977,8 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
   for (const [agentKey, tombstones] of snap.terminals) {
     terminalAtByAgent.set(agentKey, new Map(tombstones));
   }
+
+  restoreConversationOutcomeLedger(snap.outcomes);
 
   cachedTurnSummaries.clear();
   cachedControlTargets.clear();

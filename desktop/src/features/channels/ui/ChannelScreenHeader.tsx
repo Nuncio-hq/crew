@@ -6,6 +6,7 @@ import type { EphemeralChannelDisplay } from "@/features/channels/lib/ephemeralC
 import type { ActiveDmHeaderParticipant } from "@/features/channels/useActiveChannelHeader";
 import { getChannelDescription } from "@/features/channels/lib/channelDescription";
 import { getDmParticipantPreview } from "@/features/channels/lib/dmParticipantDisplay";
+import { ChannelAgentDigest } from "@/features/channels/ui/ChannelAgentDigest";
 import { ChannelHeaderStatusBadge } from "@/features/channels/ui/ChannelHeaderStatusBadge";
 import { ChannelMembersBar } from "@/features/channels/ui/ChannelMembersBar";
 import {
@@ -13,6 +14,7 @@ import {
   useProjectChannelRepositoryPath,
 } from "@/features/channels/ui/ChannelScreenWorktrees";
 import { ChannelWorktreesPill } from "@/features/channels/ui/ChannelWorktreesPill";
+import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
 import {
   DEFAULT_HOVER_PROFILE_STATUS_GEOMETRY,
   ProfileAvatarWithStatus,
@@ -210,6 +212,19 @@ export function ChannelScreenHeader({
           onOpenThread={onOpenThread}
           open={isWorktreesOpen}
           timelineMessages={timelineMessages}
+        />
+      ) : null}
+      {activeChannel && onOpenThread ? (
+        <ChannelAgentDigest
+          channelId={activeChannel.id}
+          onOpenThread={(conversationId) => {
+            const message = timelineMessages.find(
+              (entry) =>
+                deriveAgentConversationIdOrNull(activeChannel.id, entry.id) ===
+                conversationId,
+            );
+            if (message) onOpenThread(message);
+          }}
         />
       ) : null}
     </>
