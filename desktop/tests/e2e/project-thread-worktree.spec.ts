@@ -373,9 +373,9 @@ test("Docked thread panel can expand to show worktree branch detail", async ({
   // Side panel is not focus mode — expand must still reveal the grid.
   await expect(page.getByTestId("focus-thread-drawer")).toHaveCount(0);
   // Docked panel defaults to collapsed (compact is the default).
-  await expect(
-    panel.getByTestId("project-thread-status-expanded"),
-  ).toHaveCount(0);
+  await expect(panel.getByTestId("project-thread-status-expanded")).toHaveCount(
+    0,
+  );
   await panel.getByTestId("project-thread-status-expand").click();
   const expanded = panel.getByTestId("project-thread-status-expanded");
   await expect(expanded).toBeVisible();
