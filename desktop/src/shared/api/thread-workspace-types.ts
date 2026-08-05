@@ -71,6 +71,15 @@ export type RegistryPullRequest = {
   url: string;
 };
 
+/** Issue linked to a worktree via a PR closing reference. */
+export type RegistryIssue = {
+  number: number;
+  /** Normalized `"open"` | `"closed"`. */
+  state: string;
+  title: string;
+  url: string;
+};
+
 export type ProjectWorktreeKind = "main" | "managed" | "external";
 
 export type ProjectWorktreeEntry = {
@@ -82,6 +91,7 @@ export type ProjectWorktreeEntry = {
   rootEventId: string | null;
   prunable: boolean;
   pullRequests: RegistryPullRequest[];
+  linkedIssues: RegistryIssue[];
 };
 
 export type GithubAvailability = "available" | "cli-missing" | "cli-failed";

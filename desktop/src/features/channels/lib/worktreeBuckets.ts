@@ -41,6 +41,16 @@ export type BucketWorktreesInput = {
   nowMs?: number;
 };
 
+/** Devin-style channel rollup across managed worktree entries. */
+export type GithubRollupCounts = {
+  prOpen: number;
+  prDraft: number;
+  prMerged: number;
+  prClosed: number;
+  issuesOpen: number;
+  issuesClosed: number;
+};
+
 const BUCKET_META: Record<
   WorktreeBucketId,
   { label: string; hint: string; readonly: boolean }
@@ -194,6 +204,53 @@ export function countOpenPullRequests(
   return seen.size;
 }
 
+/**
+ * Aggregate PR/issue state counts across managed registry entries.
+ * Dedupes by PR/issue number so the same item on two worktrees counts once.
+ */
+export function aggregateGithubRollup(
+  entries: readonly ProjectWorktreeEntry[],
+): GithubRollupCounts {
+  const prSeen = new Set<number>();
+  const issueSeen = new Set<number>();
+  const counts: GithubRollupCounts = {
+    prOpen: 0,
+    prDraft: 0,
+    prMerged: 0,
+    prClosed: 0,
+    issuesOpen: 0,
+    issuesClosed: 0,
+  };
+
+  for (const entry of entries) {
+    if (entry.kind !== "managed") continue;
+    for (const pr of entry.pullRequests) {
+      if (prSeen.has(pr.number)) continue;
+      prSeen.add(pr.number);
+      const state = pr.state.toUpperCase();
+      if (state === "MERGED") {
+        counts.prMerged += 1;
+      } else if (state === "CLOSED") {
+        counts.prClosed += 1;
+      } else if (pr.isDraft) {
+        counts.prDraft += 1;
+      } else {
+        counts.prOpen += 1;
+      }
+    }
+    for (const issue of entry.linkedIssues ?? []) {
+      if (issueSeen.has(issue.number)) continue;
+      issueSeen.add(issue.number);
+      if (issue.state.toLowerCase() === "open") {
+        counts.issuesOpen += 1;
+      } else {
+        counts.issuesClosed += 1;
+      }
+    }
+  }
+  return counts;
+}
+
 /** Channel-header pill label; degraded GitHub stays distinguishable from 0 PRs. */
 export function channelWorktreesPillLabel(
   managed: number,
@@ -213,10 +270,10 @@ export function githubAvailabilityNotice(
   github: GithubAvailability,
 ): string | null {
   if (github === "cli-missing") {
-    return "GitHub CLI (gh) not found — PR status unavailable.";
+    return "GitHub CLI (gh) not found — PR and issue status unavailable.";
   }
   if (github === "cli-failed") {
-    return "GitHub CLI could not read this repo — PR status unavailable.";
+    return "GitHub CLI could not read this repo — PR and issue status unavailable.";
   }
   return null;
 }
