@@ -71,7 +71,7 @@ use managed_agents::{
 };
 #[cfg(not(feature = "mesh-llm"))]
 use mesh_llm_stubs::*;
-use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc};
+use std::sync::{atomic::AtomicBool, Arc};
 #[cfg(target_os = "macos")]
 use tauri::Listener;
 use tauri::{Emitter, Manager};
