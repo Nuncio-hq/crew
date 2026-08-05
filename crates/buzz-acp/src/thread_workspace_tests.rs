@@ -147,6 +147,173 @@ async fn create_and_reuse_return_stable_verified_metadata() {
 }
 
 #[tokio::test]
+async fn clean_foreign_branch_recovers_without_losing_its_commit() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "5".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    let feature_commit = checkout_feature_with_commit(&created.worktree_path).await;
+
+    let recovered = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("clean foreign branch recovers");
+
+    assert_eq!(recovered.branch, "buzz/555555555555");
+    assert_eq!(
+        git_output(&created.worktree_path, &["symbolic-ref", "--short", "HEAD"]).await,
+        "buzz/555555555555"
+    );
+    assert_eq!(
+        git_output(&created.worktree_path, &["rev-parse", "feature"]).await,
+        feature_commit,
+        "recovery must preserve the foreign branch commit"
+    );
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn dirty_foreign_branch_refuses_recovery_with_actionable_error() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "6".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    checkout_feature_with_commit(&created.worktree_path).await;
+    let dirty_path = created.worktree_path.join("DIRTY.md");
+    fs::write(&dirty_path, "do not discard").expect("dirty file");
+
+    let error = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect_err("dirty foreign branch must not recover");
+
+    assert_branch_conflict_error(
+        &error,
+        &created.worktree_path,
+        "feature",
+        "buzz/666666666666",
+    );
+    assert_eq!(
+        git_output(&created.worktree_path, &["symbolic-ref", "--short", "HEAD"]).await,
+        "feature"
+    );
+    assert_eq!(
+        fs::read_to_string(dirty_path).expect("dirty file remains"),
+        "do not discard"
+    );
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn merge_in_progress_refuses_foreign_branch_recovery() {
+    let (fixture, workspace, base_revision) = git_fixture().await;
+    let root = "7".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    run_git(&created.worktree_path, &["checkout", "-b", "feature"]).await;
+    let git_dir =
+        PathBuf::from(git_output(&created.worktree_path, &["rev-parse", "--git-dir"]).await);
+    let merge_head = git_dir.join("MERGE_HEAD");
+    fs::write(&merge_head, format!("{base_revision}\n")).expect("merge marker");
+    assert_eq!(
+        git_output(&created.worktree_path, &["status", "--porcelain"]).await,
+        "",
+        "merge marker fixture must keep the worktree otherwise clean"
+    );
+
+    let error = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect_err("merge in progress must not recover");
+
+    assert_branch_conflict_error(
+        &error,
+        &created.worktree_path,
+        "feature",
+        "buzz/777777777777",
+    );
+    assert!(merge_head.is_file(), "recovery must preserve MERGE_HEAD");
+    assert_eq!(
+        git_output(&created.worktree_path, &["symbolic-ref", "--short", "HEAD"]).await,
+        "feature"
+    );
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn reattach_failure_reports_the_path_conflict_stderr() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "0".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    run_git(
+        &workspace.local_path,
+        &[
+            "worktree",
+            "remove",
+            created.worktree_path.to_str().expect("worktree UTF-8"),
+        ],
+    )
+    .await;
+    fs::create_dir_all(&created.worktree_path).expect("blocking directory");
+    fs::write(created.worktree_path.join("BLOCKER"), "occupied")
+        .expect("non-empty blocking directory");
+
+    let error = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect_err("reattach must fail while the path exists");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("already exists"),
+        "reattach stderr must describe the path conflict: {message}"
+    );
+    assert!(
+        message.contains(created.worktree_path.to_string_lossy().as_ref()),
+        "reattach stderr must name the conflicting path: {message}"
+    );
+    assert!(
+        !message.contains("a branch named 'buzz/000000000000' already exists"),
+        "reattach failure must not report the earlier create stderr: {message}"
+    );
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+fn assert_branch_conflict_error(
+    error: &anyhow::Error,
+    worktree_path: &std::path::Path,
+    current_branch: &str,
+    expected_branch: &str,
+) {
+    let message = error.to_string();
+    assert!(
+        message.contains(worktree_path.to_string_lossy().as_ref()),
+        "error must name the worktree path: {message}"
+    );
+    assert!(
+        message.contains(current_branch),
+        "error must name the current branch: {message}"
+    );
+    assert!(
+        message.contains(expected_branch),
+        "error must name the expected branch: {message}"
+    );
+    assert!(
+        message.contains("git -C") && message.contains("checkout"),
+        "error must include a runnable checkout command: {message}"
+    );
+}
+
+async fn checkout_feature_with_commit(worktree_path: &std::path::Path) -> String {
+    run_git(worktree_path, &["checkout", "-b", "feature"]).await;
+    fs::write(worktree_path.join("FEATURE.md"), "preserved").expect("feature file");
+    run_git(worktree_path, &["add", "FEATURE.md"]).await;
+    run_git(worktree_path, &["commit", "-m", "feature commit"]).await;
+    git_output(worktree_path, &["rev-parse", "feature"]).await
+}
+
+#[tokio::test]
 async fn concurrent_ensure_calls_converge_on_one_worktree() {
     let (fixture, workspace, _) = git_fixture().await;
     let root = "b".repeat(64);

@@ -15,6 +15,15 @@ use base::{resolve_workspace_base, WorkspaceBase};
 const CONTEXT_URL_PREFIX: &str = "buzz://project-workspace?";
 const ROOT_CLAIM_DIRECTORY: &str = "buzz-thread-workspace-roots";
 const ROOT_CLAIM_READ_ATTEMPTS: usize = 10;
+const IN_PROGRESS_MARKERS: [&str; 7] = [
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "REBASE_HEAD",
+    "BISECT_LOG",
+    "rebase-merge",
+    "rebase-apply",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectWorkspace {
@@ -34,6 +43,60 @@ pub(crate) struct ThreadWorkspace {
     pub(crate) remote_default_branch: Option<String>,
     pub(crate) commits_behind_remote: Option<u64>,
 }
+
+#[derive(Debug)]
+pub(crate) struct ThreadWorkspaceBranchConflict {
+    worktree_path: PathBuf,
+    current_branch: String,
+    expected_branch: String,
+    git_errors: Vec<String>,
+}
+
+impl ThreadWorkspaceBranchConflict {
+    fn new(worktree_path: &Path, current_branch: String, expected_branch: &str) -> Self {
+        Self {
+            worktree_path: worktree_path.to_path_buf(),
+            current_branch,
+            expected_branch: expected_branch.to_string(),
+            git_errors: Vec::new(),
+        }
+    }
+
+    fn record_git_error(&mut self, step: &str, stderr: &[u8]) {
+        let stderr = String::from_utf8_lossy(stderr);
+        let stderr = stderr.trim();
+        if !stderr.is_empty() {
+            self.git_errors.push(format!("{step}: {stderr}"));
+        }
+    }
+
+    fn recovery_command(&self) -> String {
+        format!(
+            "git -C {} checkout {}",
+            shell_quote(self.worktree_path.to_string_lossy().as_ref()),
+            shell_quote(&self.expected_branch)
+        )
+    }
+}
+
+impl std::fmt::Display for ThreadWorkspaceBranchConflict {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Worktree {} is on branch '{}' instead of expected branch '{}'. Preserve or finish any in-progress work, then run `{}`.",
+            self.worktree_path.display(),
+            self.current_branch,
+            self.expected_branch,
+            self.recovery_command()
+        )?;
+        if !self.git_errors.is_empty() {
+            write!(formatter, " Git reported: {}", self.git_errors.join("; "))?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ThreadWorkspaceBranchConflict {}
 
 pub fn parse_project_workspace(content: &str) -> Result<Option<ProjectWorkspace>> {
     let Some(start) = content.find(CONTEXT_URL_PREFIX) else {
@@ -138,10 +201,45 @@ pub async fn ensure_thread_worktree(
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
+        let branch_matches =
+            branch_root_matches(&repo_root, &common_git, &branch, root_event_id).await;
+        let mut branch_conflict = if branch_matches {
+            foreign_branch_conflict(&worktree_path, &common_git, &branch).await
+        } else {
+            None
+        };
+        if let Some(conflict) = branch_conflict.as_mut() {
+            if worktree_recovery_is_lossless(&worktree_path).await {
+                let checkout = Command::new("git")
+                    .arg("-C")
+                    .arg(&worktree_path)
+                    .args(["checkout", &branch])
+                    .kill_on_drop(true)
+                    .output()
+                    .await
+                    .context("could not start git checkout for worktree recovery")?;
+                if checkout.status.success() {
+                    if let Some(metadata) = verified_metadata(
+                        &repo_root,
+                        &worktree_path,
+                        &common_git,
+                        &branch,
+                        root_event_id,
+                        &workspace_base,
+                    )
+                    .await?
+                    {
+                        return Ok(metadata);
+                    }
+                } else {
+                    conflict.record_git_error("checkout failed", &checkout.stderr);
+                }
+            }
+        }
         // The deterministic branch can outlive a manually removed worktree.
         // Reattach it instead of treating that recoverable state as a task
         // failure. Git still rejects a branch checked out somewhere else.
-        if branch_root_matches(&repo_root, &common_git, &branch, root_event_id).await {
+        if branch_matches {
             let attach = Command::new("git")
                 .arg("-C")
                 .arg(&repo_root)
@@ -153,7 +251,11 @@ pub async fn ensure_thread_worktree(
                 .await
                 .context("could not start git worktree reattach")?;
             if !attach.status.success() {
-                let stderr = String::from_utf8_lossy(&create.stderr);
+                if let Some(mut conflict) = branch_conflict {
+                    conflict.record_git_error("reattach failed", &attach.stderr);
+                    return Err(conflict.into());
+                }
+                let stderr = String::from_utf8_lossy(&attach.stderr);
                 bail!("git worktree add failed: {}", stderr.trim());
             }
             if let Some(metadata) = verified_metadata(
@@ -183,6 +285,50 @@ pub async fn ensure_thread_worktree(
     )
     .await?
     .context("created worktree failed repository verification")
+}
+
+async fn foreign_branch_conflict(
+    path: &Path,
+    expected_common_git: &Path,
+    expected_branch: &str,
+) -> Option<ThreadWorkspaceBranchConflict> {
+    let root = git_output(path, ["rev-parse", "--show-toplevel"])
+        .await
+        .ok()?;
+    let common = git_output(path, ["rev-parse", "--git-common-dir"])
+        .await
+        .ok()?;
+    let current_branch = git_output(path, ["symbolic-ref", "--short", "HEAD"])
+        .await
+        .ok()?;
+    let root = fs::canonicalize(root.trim()).ok()?;
+    let common = canonical_git_path(&root, common.trim()).ok()?;
+    let current_branch = current_branch.trim();
+    (root == path && common == expected_common_git && current_branch != expected_branch).then(
+        || ThreadWorkspaceBranchConflict::new(path, current_branch.to_string(), expected_branch),
+    )
+}
+
+async fn worktree_recovery_is_lossless(path: &Path) -> bool {
+    let Ok(status) = git_output(path, ["status", "--porcelain"]).await else {
+        return false;
+    };
+    if !status.trim().is_empty() {
+        return false;
+    }
+    let Ok(git_dir) = git_output(path, ["rev-parse", "--git-dir"]).await else {
+        return false;
+    };
+    let Ok(git_dir) = canonical_git_path(path, git_dir.trim()) else {
+        return false;
+    };
+    !IN_PROGRESS_MARKERS
+        .iter()
+        .any(|marker| git_dir.join(marker).exists())
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 async fn verified_metadata(
