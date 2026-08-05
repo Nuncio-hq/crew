@@ -637,6 +637,7 @@ export function MessageThreadPanel({
                 data-render-pending={isRepliesPending ? "true" : undefined}
               >
                 <MessageThreadSummaryRow
+                  {...{ channelId, profiles }}
                   depth={threadHead.depth}
                   message={threadHead}
                   onOpenThread={expandThreadHeadReplies}
@@ -766,6 +767,7 @@ export function MessageThreadPanel({
                       />
                       {entry.summary ? (
                         <MessageThreadSummaryRow
+                          {...{ channelId, profiles }}
                           collapseDepthGuideActions={collapseDepthGuideActions}
                           depth={entry.message.depth}
                           depthGuideDepths={
