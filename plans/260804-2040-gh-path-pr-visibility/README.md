@@ -2,7 +2,7 @@
 
 Date: 2026-08-04 · Owner: Oscar · Author: Claude Opus
 Trigger: Oscar reported worktree/PR status missing from thread info in NuncioCrew v0.0.7.
-Status: **Draft — awaiting approval on D3**
+Status: **Phases 1–3 merged** (#40, #42) · Packaged Finder verify on v0.0.8 still pending
 
 ## Outcome
 

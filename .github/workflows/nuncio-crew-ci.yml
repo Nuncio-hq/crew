@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       desktop: ${{ steps.filter.outputs.desktop }}
+      desktop-rust: ${{ steps.filter.outputs.desktop-rust }}
       relay: ${{ steps.filter.outputs.relay }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -41,6 +42,14 @@ jobs:
               - 'Cargo.lock'
               - 'package.json'
               - 'pnpm-lock.yaml'
+              - 'rust-toolchain.toml'
+              - 'Justfile'
+              - '.github/workflows/nuncio-crew-ci.yml'
+            desktop-rust:
+              - 'desktop/src-tauri/**'
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'Justfile'
               - '.github/workflows/nuncio-crew-ci.yml'
@@ -79,6 +88,57 @@ jobs:
         run: just desktop-test
       - name: Build desktop
         run: just desktop-build
+
+  # Path-gated Tauri Rust clippy + unit tests. Relevance key in the gate payload
+  # is `desktop-rust-changed` (not `desktop-rust`) so it cannot collide with the
+  # job result key — check-nuncio-crew-ci-results.mjs reads both from one object.
+  desktop-rust:
+    name: Desktop Rust
+    needs: changes
+    if: needs.changes.outputs.desktop-rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: desktop/src-tauri
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Install Tauri dependencies (Linux)
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30
+          sudo apt-get install -y --no-install-recommends \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o DPkg::Lock::Timeout=120 \
+            build-essential \
+            curl \
+            file \
+            libasound2-dev \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+      - name: Desktop Tauri clippy
+        run: just desktop-tauri-clippy
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      - name: Desktop Tauri tests
+        run: just desktop-tauri-test
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
   macos-arm:
     name: macOS ARM Package
@@ -226,7 +286,7 @@ jobs:
   gate:
     name: NuncioCrew Gate
     if: ${{ always() }}
-    needs: [changes, desktop-fast, macos-arm, project-relay]
+    needs: [changes, desktop-fast, desktop-rust, macos-arm, project-relay]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -235,4 +295,4 @@ jobs:
       - name: Require all relevant Crew checks
         run: |
           node desktop/scripts/check-nuncio-crew-ci-results.mjs \
-            '{"ci-policy":"${{ needs.changes.result }}","desktop":"${{ needs.changes.outputs.desktop }}","relay":"${{ needs.changes.outputs.relay }}","desktop-fast":"${{ needs.desktop-fast.result }}","macos-arm":"${{ needs.macos-arm.result }}","project-relay":"${{ needs.project-relay.result }}"}'
+            '{"ci-policy":"${{ needs.changes.result }}","desktop":"${{ needs.changes.outputs.desktop }}","desktop-rust-changed":"${{ needs.changes.outputs.desktop-rust }}","relay":"${{ needs.changes.outputs.relay }}","desktop-fast":"${{ needs.desktop-fast.result }}","desktop-rust":"${{ needs.desktop-rust.result }}","macos-arm":"${{ needs.macos-arm.result }}","project-relay":"${{ needs.project-relay.result }}"}'

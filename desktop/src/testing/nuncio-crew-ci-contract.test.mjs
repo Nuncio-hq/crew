@@ -24,7 +24,13 @@ test("Crew CI exposes one stable merge gate", () => {
   assert.match(ci, /^\s+name:\s*NuncioCrew Gate$/m);
   assert.match(ci, /if:\s*\$\{\{\s*always\(\)\s*\}\}/);
   assert.match(ci, /check-nuncio-crew-ci-results\.mjs/);
-  for (const job of ["changes", "desktop-fast", "macos-arm", "project-relay"]) {
+  for (const job of [
+    "changes",
+    "desktop-fast",
+    "desktop-rust",
+    "macos-arm",
+    "project-relay",
+  ]) {
     assert.match(ci, new RegExp(`needs\\.${job}\\.result`));
   }
   assert.doesNotMatch(ci, /pull_request_target|schedule:/);
@@ -61,6 +67,41 @@ test("relay-native Project behavior remains an automatic conditional gate", () =
   assert.match(ci, /- 'scripts\/attach-schema-partitions\.sql'/);
   assert.match(ci, /CREW_LIVE_RELAY_URL:\s*ws:\/\/localhost:3000/);
   assert.match(ci, /needs\.project-relay\.result/);
+});
+
+test("desktop rust is path-gated and registered in the merge gate", () => {
+  const ci = workflow("nuncio-crew-ci.yml");
+  const rustStart = ci.indexOf("\n  desktop-rust:");
+  assert.ok(rustStart > 0, "desktop-rust job must exist");
+  const nextJob = ci.indexOf("\n  macos-arm:", rustStart);
+  const rust = ci.slice(rustStart, nextJob > rustStart ? nextJob : undefined);
+
+  assert.match(rust, /name:\s*Desktop Rust/);
+  assert.match(rust, /needs\.changes\.outputs\.desktop-rust == 'true'/);
+  // Filter must cover Tauri path deps in crates/ — otherwise a crates-only PR
+  // skips Desktop Rust while macOS ARM only catches compile, not clippy/tests.
+  assert.match(
+    ci,
+    /desktop-rust:\s*\n(?:\s+- '[^']+'\n)*\s+- 'desktop\/src-tauri\/\*\*'\n(?:\s+- '[^']+'\n)*\s+- 'crates\/\*\*'/,
+  );
+  assert.match(
+    ci,
+    /desktop-rust:\s*\n(?:\s+- '[^']+'\n)*\s+- 'Cargo\.toml'\n\s+- 'Cargo\.lock'/,
+  );
+  assert.match(rust, /workspaces:\s*desktop\/src-tauri/);
+  assert.match(rust, /libwebkit2gtk-4\.1-dev/);
+  assert.match(rust, /DPkg::Lock::Timeout=120/);
+  assert.match(rust, /just desktop-tauri-clippy/);
+  assert.match(rust, /just desktop-tauri-test/);
+  assert.match(rust, /CMAKE_POLICY_VERSION_MINIMUM:\s*"3\.5"/);
+  // Cost controls: leave check + compiled-flags to Upstream Sync.
+  assert.doesNotMatch(rust, /desktop-tauri-check/);
+  assert.doesNotMatch(rust, /desktop-tauri-test-compiled-flags/);
+  assert.match(ci, /desktop-rust-changed/);
+  assert.match(ci, /needs\.desktop-rust\.result/);
+
+  const gateHelper = readFileSync(gateHelperPath, "utf8");
+  assert.match(gateHelper, /"desktop-rust":\s*"desktop-rust-changed"/);
 });
 
 test("desktop smoke e2e runs on PRs as an advisory signal until flakes are triaged", () => {
@@ -119,8 +160,32 @@ test("merge gate accepts deliberately skipped conditional work", async () => {
     assertNuncioCrewCiResults({
       "ci-policy": "success",
       desktop: "true",
+      "desktop-rust-changed": "false",
       relay: "false",
       "desktop-fast": "success",
+      "desktop-rust": "skipped",
+      "macos-arm": "success",
+      "project-relay": "skipped",
+    }),
+  );
+});
+
+test("merge gate rejects a skipped Desktop Rust job when rust paths changed", async () => {
+  const { assertNuncioCrewCiResults } = await import(
+    pathToFileURL(gateHelperPath).href
+  );
+
+  // Skip acceptance lives in "deliberately skipped conditional work" above.
+  // This PR always touches the workflow, so CI cannot prove the false branch
+  // by running — the true+skipped reject is the complementary lock.
+  assert.throws(() =>
+    assertNuncioCrewCiResults({
+      "ci-policy": "success",
+      desktop: "true",
+      "desktop-rust-changed": "true",
+      relay: "false",
+      "desktop-fast": "success",
+      "desktop-rust": "skipped",
       "macos-arm": "success",
       "project-relay": "skipped",
     }),
@@ -137,8 +202,10 @@ test("merge gate rejects failed, cancelled, or missing dependencies", async () =
       assertNuncioCrewCiResults({
         "ci-policy": "success",
         desktop: "true",
+        "desktop-rust-changed": "true",
         relay: "true",
         "desktop-fast": "success",
+        "desktop-rust": "success",
         "macos-arm": result,
         "project-relay": "success",
       }),
@@ -148,8 +215,10 @@ test("merge gate rejects failed, cancelled, or missing dependencies", async () =
     assertNuncioCrewCiResults({
       "ci-policy": "skipped",
       desktop: "false",
+      "desktop-rust-changed": "false",
       relay: "false",
       "desktop-fast": "skipped",
+      "desktop-rust": "skipped",
       "macos-arm": "skipped",
       "project-relay": "skipped",
     }),
@@ -165,8 +234,10 @@ test("merge gate rejects a skipped relevant job or a run for irrelevant paths", 
     assertNuncioCrewCiResults({
       "ci-policy": "success",
       desktop: "true",
+      "desktop-rust-changed": "false",
       relay: "false",
       "desktop-fast": "success",
+      "desktop-rust": "skipped",
       "macos-arm": "skipped",
       "project-relay": "skipped",
     }),
@@ -175,8 +246,10 @@ test("merge gate rejects a skipped relevant job or a run for irrelevant paths", 
     assertNuncioCrewCiResults({
       "ci-policy": "success",
       desktop: "false",
+      "desktop-rust-changed": "false",
       relay: "false",
       "desktop-fast": "success",
+      "desktop-rust": "skipped",
       "macos-arm": "skipped",
       "project-relay": "skipped",
     }),

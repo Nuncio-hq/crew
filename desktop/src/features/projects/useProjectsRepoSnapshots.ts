@@ -1,10 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
 
-import { getProjectRepoSnapshot } from "@/shared/api/projectGit";
+import {
+  getProjectLocalRepoSnapshot,
+  getProjectRepoSnapshot,
+} from "@/shared/api/projectGit";
 import type { ProjectRepoSnapshot } from "@/shared/api/types";
 import type { Project } from "./hooks";
-import { readProjectLocalRepoSnapshot } from "./lib/project-exact-local-workspace";
+import { selectProjectRepository } from "./projectModels";
+import {
+  type ProjectRepoUnavailableReason,
+  projectRepoUnavailableReason,
+} from "./lib/projectRepoAvailability";
 
 // Remote snapshots are backed by a blobless `git clone` per repository, so the
 // overview scan is deliberately throttled and cached for a long time.
@@ -25,36 +32,39 @@ async function fetchProjectSnapshot(
   project: Project,
   reposDir: string | null | undefined,
 ): Promise<ProjectRepoSnapshot | null> {
+  const repository = selectProjectRepository(project, null);
+  if (!repository) return null;
   try {
-    const local = await readProjectLocalRepoSnapshot({
-      cloneUrl: project.cloneUrls[0] ?? null,
-      localWorkspacePath: project.localWorkspacePath,
-      localWorkspaceStatus: project.localWorkspaceStatus,
+    const local = await getProjectLocalRepoSnapshot({
       reposDir,
-      projectDtag: project.dtag,
-      defaultBranch: project.defaultBranch,
-      baseBranch: project.defaultBranch,
+      projectDtag: repository.dtag,
+      cloneUrl: repository.cloneUrls[0] ?? null,
+      defaultBranch: repository.defaultBranch,
+      baseBranch: repository.defaultBranch,
     });
     if (snapshotHasData(local?.snapshot)) return local?.snapshot ?? null;
   } catch {
     // Best-effort: fall through to the remote snapshot.
   }
 
-  if (project.localWorkspacePath) return null;
-  const cloneUrl = project.cloneUrls[0];
+  const cloneUrl = repository.cloneUrls[0];
   if (!cloneUrl) return null;
   return getProjectRepoSnapshot({
     cloneUrl,
-    defaultBranch: project.defaultBranch,
-    baseBranch: project.defaultBranch,
+    defaultBranch: repository.defaultBranch,
+    baseBranch: repository.defaultBranch,
   });
 }
 
 async function fetchProjectsRepoSnapshots(
   projects: Project[],
   reposDir: string | null | undefined,
-): Promise<Record<string, ProjectRepoSnapshot>> {
+): Promise<{
+  snapshots: Record<string, ProjectRepoSnapshot>;
+  unavailable: Record<string, ProjectRepoUnavailableReason>;
+}> {
   const snapshots: Record<string, ProjectRepoSnapshot> = {};
+  const unavailable: Record<string, ProjectRepoUnavailableReason> = {};
   const queue = [...projects];
 
   const workers = Array.from(
@@ -65,16 +75,20 @@ async function fetchProjectsRepoSnapshots(
         if (!project) return;
         try {
           const snapshot = await fetchProjectSnapshot(project, reposDir);
-          if (snapshot) snapshots[project.id] = snapshot;
-        } catch {
-          // Best-effort: unreachable or empty repositories are skipped.
+          if (snapshot) {
+            snapshots[project.id] = snapshot;
+          } else {
+            unavailable[project.id] = "missing";
+          }
+        } catch (error) {
+          unavailable[project.id] = projectRepoUnavailableReason(error);
         }
       }
     },
   );
 
   await Promise.all(workers);
-  return snapshots;
+  return { snapshots, unavailable };
 }
 
 /**
@@ -87,25 +101,14 @@ export function useProjectsRepoSnapshotsQuery(
   projects: Project[],
   reposDir?: string | null,
 ) {
-  const projectLocations = React.useMemo(
-    () =>
-      projects
-        .map(
-          (project) =>
-            `${project.id}:${project.localWorkspaceStatus ?? "unlinked"}:${project.localWorkspacePath ?? "managed"}:${project.cloneUrls[0] ?? "no-clone"}:${project.defaultBranch}`,
-        )
-        .sort(),
+  const projectIds = React.useMemo(
+    () => projects.map((project) => project.id).sort(),
     [projects],
   );
 
   return useQuery({
     enabled: projects.length > 0,
-    queryKey: [
-      "projects",
-      "repo-snapshots",
-      reposDir ?? "default",
-      projectLocations,
-    ],
+    queryKey: ["projects", "repo-snapshots", reposDir ?? "default", projectIds],
     queryFn: () => fetchProjectsRepoSnapshots(projects, reposDir),
     staleTime: 15 * 60_000,
     retry: 0,

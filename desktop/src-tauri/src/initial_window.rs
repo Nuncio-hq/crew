@@ -1,4 +1,9 @@
-pub(super) fn reveal_initial_window<R: tauri::Runtime>(window: &tauri::Window<R>) {
+//! First-frame window reveal helpers.
+
+#[cfg(target_os = "macos")]
+pub(crate) const INITIAL_RENDER_READY_EVENT: &str = "initial-render-ready";
+
+pub(crate) fn reveal_initial_window<R: tauri::Runtime>(window: &tauri::Window<R>) {
     if let Err(error) = window.show() {
         eprintln!("buzz-desktop: failed to reveal main window: {error}");
         return;
@@ -9,7 +14,7 @@ pub(super) fn reveal_initial_window<R: tauri::Runtime>(window: &tauri::Window<R>
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn set_initial_window_backing<R: tauri::Runtime>(window: &tauri::Window<R>) {
+pub(crate) fn set_initial_window_backing<R: tauri::Runtime>(window: &tauri::Window<R>) {
     // The window remains transparent at runtime for vibrancy. Use an opaque
     // native backing only across the first visible frames so the previous app
     // cannot show through before WebKit has submitted its first surface.
@@ -19,7 +24,7 @@ pub(super) fn set_initial_window_backing<R: tauri::Runtime>(window: &tauri::Wind
 }
 
 #[cfg(target_os = "macos")]
-pub(super) async fn clear_initial_window_backing<R: tauri::Runtime>(window: &tauri::Window<R>) {
+pub(crate) async fn clear_initial_window_backing<R: tauri::Runtime>(window: &tauri::Window<R>) {
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     if let Err(error) = window.set_background_color(None) {
         eprintln!("buzz-desktop: failed to clear initial window backing: {error}");
@@ -27,7 +32,7 @@ pub(super) async fn clear_initial_window_backing<R: tauri::Runtime>(window: &tau
 }
 
 #[cfg(target_os = "macos")]
-pub(super) async fn wait_for_stable_initial_window_geometry<R: tauri::Runtime>(
+pub(crate) async fn wait_for_stable_initial_window_geometry<R: tauri::Runtime>(
     window: &tauri::Window<R>,
 ) {
     const MAX_POLLS: usize = 120;
