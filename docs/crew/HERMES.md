@@ -2,8 +2,9 @@
 
 - **Feature:** [`features/0001-hermes-first-class-runtime.md`](features/0001-hermes-first-class-runtime.md)
 - **Decision:** [`DECISIONS.md`](DECISIONS.md) D-019
-- **Status of this flow:** manual (Slice 1). UI integration is Slice 2+;
-  until then the conventions below are enforced by this document.
+- **Status of this flow:** tier-1 runtime on main (PR #54); profile
+  binding is still manual until Phase 02. Conventions below are
+  enforced by this document until the UI lands.
 
 ## The model in one sentence
 
@@ -64,21 +65,24 @@ One file per profile. The id must not be a reserved builtin id (`hermes`
 itself is reserved); `hermes-<profile>` is the convention. Restart the
 desktop app (or reopen Settings → runtimes) to re-run discovery.
 
+With the tier-1 `Hermes Agent` runtime on main (PR #54), the per-profile
+JSON's only remaining job is carrying the `-p <profile>` args. You can
+instead pick runtime **Hermes Agent** and set agent args
+`-p,<profile>,acp` directly. Phase 02 replaces both with a proper
+binding field.
+
 ### 3. Create the Crew agent
 
-In Crew, create the agent with runtime `Hermes (scout)`. Leave model and
+In Crew, create the agent with runtime `Hermes (scout)` (or **Hermes
+Agent** plus `-p,<profile>,acp` args — see above). Leave model and
 provider blank everywhere (agent record, persona, global default — and
-never add `BUZZ_ACP_MODEL` to any env-var map; Slice 2 automates this
+never add `BUZZ_ACP_MODEL` to any env-var map; Phase 02 automates this
 guard, until then it is manual discipline).
 
-**Mandatory env var (verification 0006):** set
-`BUZZ_ACP_MCP_COMMAND=<path-to>/buzz-dev-mcp` in the agent's env vars.
-Hermes' own terminal sandbox strips `BUZZ_*` credentials by design, so
-the agent can only read/post Buzz messages through the harness-provided
-`buzz-dev-mcp` MCP server (its tools receive the credentials via ACP,
-outside the sandbox). Without this, every turn ends with
-`auth error: BUZZ_PRIVATE_KEY is required` when the agent tries to reply.
-The upstream tier-1 entry (Slice 3) makes this automatic.
+The tier-1 Hermes runtime attaches `buzz-dev-mcp` automatically at spawn
+(`mcp_command` in `known_runtimes.rs`). That MCP path is required because
+Hermes' terminal sandbox strips `BUZZ_*` credentials — see verification
+0006.
 
 ## Daily operations
 
@@ -110,6 +114,7 @@ remove the `hermes-scout.json` harness file.
 | ------- | ----- | --- |
 | Runtime shows unavailable | `hermes` not on PATH for the desktop app | Install Hermes; check PATH the app sees |
 | Spawn exits immediately, log shows `Profile 'x' does not exist. Create it with: hermes profile create x` | Profile deleted/renamed outside Crew | Recreate the profile or rebind the agent |
+| Agent replies with `auth error: BUZZ_PRIVATE_KEY is required` | Reply path missing `buzz-dev-mcp` (Hermes sandbox strips `BUZZ_*`) | Use the tier-1 **Hermes Agent** runtime (attaches MCP automatically); ensure `buzz-dev-mcp` is on PATH the app sees |
 | Agent replies with `model: String should have at least 1 character` | Profile has no model configured | `hermes -p <name> config set model.default …` |
 | Agent replies with a provider billing/auth error | Profile's provider unauthenticated or out of credit | `hermes -p <name> …` auth flow for that provider |
 
@@ -133,10 +138,6 @@ Hermes-side ask lands.
 
 ## Known gaps in this slice (by design)
 
-- No UI for binding/creating profiles (Slice 2/4).
-- No enforcement of the no-model rule (Slice 2 guard, spike 0013).
+- No UI for binding/creating profiles (Phase 02 / Phase 03).
+- No `BUZZ_ACP_MODEL` guard yet (Phase 02; spike 0013).
 - No auth badge (blocked on Hermes-side probe, §7.3 of the feature doc).
-- Preset "Hermes" tile still probes for `hermes-acp` and shows
-  unavailable even when `hermes` is installed — fixed by the upstream
-  tier-1 PR (Slice 3). Use the tier-3 per-profile harnesses above; they
-  probe `hermes` correctly.
