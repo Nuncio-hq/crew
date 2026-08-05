@@ -204,8 +204,8 @@ export type RawAcpRuntimeCatalogEntry = {
   auth_status: AuthStatus;
   login_hint?: string;
   source: "builtin" | "preset" | "custom";
-  /** Definition-level env vars for `source: custom` entries; absent for builtin/preset. */
-  definition_env?: Record<string, string>;
+  definition_env?: Record<string, string>; // custom only
+  profile_arg?: string | null;
 };
 
 export type {
@@ -761,9 +761,8 @@ export function fromRawAcpRuntimeCatalogEntry(
     authStatus: entry.auth_status,
     loginHint: entry.login_hint ?? null,
     source: entry.source,
-    // Map definition_env (snake_case from Rust) to definitionEnv (camelCase).
-    // Absent when empty (Rust serialization skips empty BTreeMap) — default to {}.
     definitionEnv: entry.definition_env ?? {},
+    profileArg: entry.profile_arg ?? null,
   };
 }
 

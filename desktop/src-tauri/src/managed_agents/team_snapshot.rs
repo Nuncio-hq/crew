@@ -264,6 +264,7 @@ mod tests {
             agent_command: "goose".to_string(),            // MUST NOT appear
             agent_command_override: None,
             agent_args: vec![],
+            hermes_profile: None,
             mcp_command: String::new(),
             turn_timeout_seconds: 120,
             idle_timeout_seconds: Some(30),

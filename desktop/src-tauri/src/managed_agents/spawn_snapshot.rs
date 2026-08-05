@@ -145,11 +145,23 @@ impl SpawnConfigSnapshot {
                 .and_then(|runtime| runtime.mcp_command)
                 .unwrap_or("")
                 .to_string(),
-            env: descriptor.env.clone(),
+            // Hermes strips BUZZ_ACP_MODEL at spawn (spike 0013) — snapshot the
+            // post-guard env so the restart badge matches what actually runs.
+            env: crate::managed_agents::hermes_profile::env_without_suppressed_model_for_runtime(
+                &descriptor.command,
+                &descriptor.env,
+            ),
             relay_url: relay_url.to_string(),
             team_instructions: team_instructions.map(str::to_string),
             system_prompt: system_prompt.map(str::to_string),
-            model: model.map(str::to_string),
+            // Hermes profile owns the model — ignore resolved_model so a
+            // global/persona model edit cannot false-badge a Hermes agent.
+            model: if crate::managed_agents::hermes_profile::is_hermes_runtime(&descriptor.command)
+            {
+                None
+            } else {
+                model.map(str::to_string)
+            },
             provider: provider.map(str::to_string),
             session_title: (!descriptor.env.contains_key(SESSION_TITLE_ENV_VAR))
                 .then(|| resolve_session_title(record.display_name.as_deref(), &record.name))
