@@ -1,10 +1,11 @@
-# Hermes agents in Crew — Slice 1 runbook
+# Hermes agents in Crew — Slice 1+2 runbook
 
 - **Feature:** [`features/0001-hermes-first-class-runtime.md`](features/0001-hermes-first-class-runtime.md)
 - **Decision:** [`DECISIONS.md`](DECISIONS.md) D-019
-- **Status of this flow:** tier-1 runtime on main (PR #54); profile
-  binding is still manual until Phase 02. Conventions below are
-  enforced by this document until the UI lands.
+- **Status of this flow:** tier-1 runtime on main (PR #54); Phase 02A
+  (Rust binding + spawn guard + readiness) and Phase 02B (desktop binding
+  UI + profile-owned model display) are on main. Profile lifecycle UI is
+  still Phase 03.
 
 ## The model in one sentence
 
@@ -20,16 +21,20 @@ placement, scheduling, and display.
    (`~/.hermes`).
 2. Model and provider are configured on the profile
    (`hermes -p <name> config set model.provider …` /
-   `model.default …`) — never in Crew. Leave persona/agent model fields
-   blank; do not set `BUZZ_ACP_MODEL` anywhere for Hermes agents.
-3. Spawn shape is `hermes` with args `-p <profile> acp`. Never use a
-   renamed wrapper binary — `buzz-acp` keys per-runtime defaults (e.g.
+   `model.default …`) — never in Crew. The create/edit UI shows
+   "Model: decided by profile \<name\>" and does not offer an editable
+   model control. Crew also strips `BUZZ_ACP_MODEL` at spawn for
+   profile-locked runtimes (Phase 02A).
+3. Spawn shape is `hermes` with args `-p <profile> acp`. The desktop
+   injects `-p <bound name>` from `ManagedAgentRecord.hermes_profile`
+   when the catalog entry has `profile_arg`. Never use a renamed
+   wrapper binary — `buzz-acp` keys per-runtime defaults (e.g.
    `HERMES_ACP_SKIP_CONFIGURED_MCP=1`) off the command basename.
 4. `parallelism` stays `1` for Hermes agents (spike 0012).
 5. Public agents (`respond-to` ≠ owner-only) require the
    credential-isolation caveat below.
 
-## Hiring a new agent (manual flow)
+## Hiring a new agent
 
 Example: an agent called `scout`.
 
@@ -45,44 +50,25 @@ Names must match `[a-z0-9][a-z0-9_-]{0,63}`. `--no-alias` because Crew
 binds by name, not by wrapper script. Add `--no-skills` for an empty
 profile (default bundles ~70 skills).
 
-### 2. Register the harness (tier-3 custom harness JSON)
+### 2. Create the Crew agent (binding field)
 
-Create
-`~/Library/Application Support/com.nuncio.crew/custom_harnesses/hermes-scout.json`:
+In Crew, create or edit the agent with runtime **Hermes Agent**. Fill
+the **Hermes profile** field with the profile name (`scout`). Leave
+model blank — the UI replaces the model control with
+"decided by profile scout". Binding `default` is rejected (client and
+server). Binding a profile already used by another agent on the same
+relay is rejected with an inline save error (C-10).
 
-```json
-{
-  "id": "hermes-scout",
-  "label": "Hermes (scout)",
-  "command": "hermes",
-  "args": ["-p", "scout", "acp"],
-  "installInstructionsUrl": "https://hermes-agent.nousresearch.com",
-  "installHint": "Runs Hermes bound to the 'scout' profile. Create it first: hermes profile create scout --no-alias."
-}
-```
+Readiness / Doctor surfaces a `hermesProfile` requirement with the
+hint `hermes profile create <name>` when the binding is missing.
 
-One file per profile. The id must not be a reserved builtin id (`hermes`
-itself is reserved); `hermes-<profile>` is the convention. Restart the
-desktop app (or reopen Settings → runtimes) to re-run discovery.
+### Legacy: tier-3 custom harness JSON (optional)
 
-With the tier-1 `Hermes Agent` runtime on main (PR #54), the per-profile
-JSON's only remaining job is carrying the `-p <profile>` args. You can
-instead pick runtime **Hermes Agent** and set agent args
-`-p,<profile>,acp` directly. Phase 02 replaces both with a proper
-binding field.
-
-### 3. Create the Crew agent
-
-In Crew, create the agent with runtime `Hermes (scout)` (or **Hermes
-Agent** plus `-p,<profile>,acp` args — see above). Leave model and
-provider blank everywhere (agent record, persona, global default — and
-never add `BUZZ_ACP_MODEL` to any env-var map; Phase 02 automates this
-guard, until then it is manual discipline).
-
-The tier-1 Hermes runtime attaches `buzz-dev-mcp` automatically at spawn
-(`mcp_command` in `known_runtimes.rs`). That MCP path is required because
-Hermes' terminal sandbox strips `BUZZ_*` credentials — see verification
-0006.
+Per-profile JSON under
+`~/Library/Application Support/com.nuncio.crew/custom_harnesses/` that
+baked `-p <profile>` into `args` is **legacy**. Prefer the binding
+field on the builtin Hermes runtime. Existing JSONs still work if you
+need them; new agents should not add more.
 
 ## Daily operations
 
@@ -105,18 +91,19 @@ hermes profile delete scout -y
 ```
 
 Always pass `-y`: on a non-TTY, a bare `delete` auto-cancels **with exit
-code 0** (spike 0011) — verify by directory absence, not exit code. Then
-remove the `hermes-scout.json` harness file.
+code 0** (spike 0011) — verify by directory absence, not exit code.
 
-## Failure classes (C-03/C-12, current manual reading)
+## Failure classes (C-03/C-12)
 
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
-| Runtime shows unavailable | `hermes` not on PATH for the desktop app | Install Hermes; check PATH the app sees |
+| Runtime shows unavailable / MissingBinary | `hermes` not on PATH for the desktop app | Install Hermes; check PATH the app sees |
+| Config nudge: bind Hermes profile | No `hermes_profile` on the record | Edit Agent → Hermes profile; or `hermes profile create <name>` first |
 | Spawn exits immediately, log shows `Profile 'x' does not exist. Create it with: hermes profile create x` | Profile deleted/renamed outside Crew | Recreate the profile or rebind the agent |
 | Agent replies with `auth error: BUZZ_PRIVATE_KEY is required` | Reply path missing `buzz-dev-mcp` (Hermes sandbox strips `BUZZ_*`) | Use the tier-1 **Hermes Agent** runtime (attaches MCP automatically); ensure `buzz-dev-mcp` is on PATH the app sees |
 | Agent replies with `model: String should have at least 1 character` | Profile has no model configured | `hermes -p <name> config set model.default …` |
 | Agent replies with a provider billing/auth error | Profile's provider unauthenticated or out of credit | `hermes -p <name> …` auth flow for that provider |
+| Save error: profile already bound | Another agent on this relay uses that profile (C-10) | Pick a different profile name |
 
 There is currently **no headless auth probe** (spike 0010): Hermes
 `auth status` always exits 0, so Crew cannot badge auth state. Auth
@@ -136,8 +123,11 @@ Hermes-side ask lands.
   messaging surfaces stay out of agent profiles as long as you never
   bind `~/.hermes` itself.
 
-## Known gaps in this slice (by design)
+## Known gaps
 
-- No UI for binding/creating profiles (Phase 02 / Phase 03).
-- No `BUZZ_ACP_MODEL` guard yet (Phase 02; spike 0013).
-- No auth badge (blocked on Hermes-side probe, §7.3 of the feature doc).
+- UI binding field + profile-owned model display — **done (Phase 02B)**.
+- `BUZZ_ACP_MODEL` spawn guard + duplicate-bind reject — **done (Phase 02A)**.
+- Profile listing / create-from-UI lifecycle — Phase 03.
+- Auth badge — blocked on Hermes-side probe (spike 0010 / feature §7.3).
+- Live session model in the "decided by profile" row — optional follow-up
+  when a clean ACP session-catalog read path exists from create/edit.

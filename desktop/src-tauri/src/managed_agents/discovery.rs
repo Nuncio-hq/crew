@@ -1273,6 +1273,7 @@ fn discover_acp_runtime_phase1(runtime: &'static KnownAcpRuntime) -> PartialEntr
             source: HarnessSource::Builtin,
             definition_env: Default::default(),
             profile_arg: runtime.profile_arg.map(str::to_string),
+            provider_locked: runtime.provider_locked,
         },
     }
 }
@@ -1433,9 +1434,8 @@ pub fn discover_acp_runtimes_from(
                 auth_status: AuthStatus::NotApplicable,
                 login_hint: None,
                 source: HarnessSource::Custom,
-                // Carry definition env so the edit form can preserve it on save.
                 definition_env: def.env.clone(),
-                profile_arg: None,
+                profile_arg: None, provider_locked: false,
             });
         }
     }

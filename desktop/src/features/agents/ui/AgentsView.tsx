@@ -317,7 +317,9 @@ export function AgentsView() {
           onOpenChange={(open) => {
             if (!open) setIsCreateDialogOpen(false);
           }}
-          onSubmitDefinition={personas.handleSubmit}
+          onSubmitDefinition={(input, intent, backendIntent, opts) =>
+            personas.handleSubmit(input, intent, backendIntent, undefined, opts)
+          }
           runtimes={personas.acpRuntimesQuery.data ?? []}
           runtimeCatalogStatus={
             personas.acpRuntimesQuery.isLoading

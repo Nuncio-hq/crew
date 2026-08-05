@@ -561,3 +561,74 @@ test("NUMERIC_KIND_MIN_contextLimit_is_1", () => {
 test("NUMERIC_KIND_MIN_maxRounds_is_0", () => {
   assert.equal(NUMERIC_KIND_MIN.maxRounds, 0);
 });
+
+// ── Hermes profile binding / profile-owned model (Phase 02B / D-019) ───────
+
+test("profileArg runtime projects hermesProfile on instance scope only", () => {
+  const hermes = runtime("hermes", {
+    profileArg: "-p",
+    providerLocked: true,
+    modelEnvVar: null,
+  });
+  const instance = deriveAgentConfigFieldModel({
+    config,
+    hermesProfile: "scout",
+    runtime: hermes,
+    scope: "instance",
+  });
+  const global = deriveAgentConfigFieldModel({
+    config,
+    hermesProfile: "scout",
+    runtime: hermes,
+    scope: "global",
+  });
+
+  assert.equal(field(instance, "hermesProfile")?.value, "scout");
+  assert.equal(field(instance, "hermesProfile")?.render, "control");
+  assert.equal(field(global, "hermesProfile"), undefined);
+});
+
+test("goose without profileArg has no hermesProfile field", () => {
+  const model = deriveAgentConfigFieldModel({
+    config,
+    runtime: runtime("goose", {
+      modelEnvVar: "GOOSE_MODEL",
+      providerEnvVar: "GOOSE_PROVIDER",
+    }),
+    scope: "instance",
+  });
+  assert.equal(field(model, "hermesProfile"), undefined);
+  assert.ok(field(model, "model"));
+});
+
+test("profile-owned model omits editable model with ownedByProfile", () => {
+  const model = deriveAgentConfigFieldModel({
+    config,
+    hermesProfile: "scout",
+    runtime: runtime("hermes", {
+      profileArg: "-p",
+      providerLocked: true,
+      modelEnvVar: null,
+    }),
+    scope: "instance",
+  });
+
+  assert.equal(field(model, "model"), undefined);
+  assert.deepEqual(
+    model.omissions.filter((o) => o.kind === "model"),
+    [{ kind: "model", reason: "ownedByProfile" }],
+  );
+});
+
+test("claude stays editable model despite providerLocked without profileArg", () => {
+  const model = deriveAgentConfigFieldModel({
+    config,
+    runtime: runtime("claude", { providerLocked: true, modelEnvVar: null }),
+    scope: "global",
+  });
+  assert.ok(field(model, "model"));
+  assert.equal(
+    model.omissions.some((o) => o.reason === "ownedByProfile"),
+    false,
+  );
+});

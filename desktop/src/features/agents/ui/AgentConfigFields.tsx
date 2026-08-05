@@ -27,6 +27,9 @@ import {
   structuredEnvKeys,
   filterBakedGenericRows,
 } from "@/features/agents/lib/agentConfigCore";
+import { ProfileOwnedModelRow } from "./HermesProfileBindingFields";
+import { resolveAgentConfigModelGate } from "./agentConfigModelGate";
+export { shouldRenderModelControl } from "./agentConfigModelGate";
 import {
   getBakedProviderInheritLabel,
   getGlobalModelFallback,
@@ -145,35 +148,6 @@ export function shouldShowModelStatusMessage(
   return showDescriptions || status !== null;
 }
 
-/**
- * Renders the Model control given discovery state. Optional-model harnesses omit it while
- * discovery is loading or after confirmed successful empty; failures keep it for the #2246 UI.
- */
-export function shouldRenderModelControl({
-  discoveredModelOptions,
-  modelDiscoveryLoading,
-  modelDiscoverySuccessfulEmpty,
-  modelIsOptional,
-  showCustomModelOption,
-}: {
-  discoveredModelOptions: readonly { id: string }[] | null;
-  modelDiscoveryLoading: boolean;
-  /** True only when discovery IPC resolved with a response that yielded no options. */
-  modelDiscoverySuccessfulEmpty: boolean;
-  modelIsOptional: boolean;
-  showCustomModelOption: boolean;
-}): boolean {
-  if (!modelIsOptional) return true;
-  if (modelDiscoveryLoading) return false;
-  const hasExplicitModel = (discoveredModelOptions ?? []).some(
-    (option) => option.id.trim().length > 0,
-  );
-  if (hasExplicitModel) return true;
-  if (showCustomModelOption) return true;
-  // Omit only on confirmed successful empty — not on failure/unavailable.
-  return !modelDiscoverySuccessfulEmpty;
-}
-
 export type AgentConfigFieldsProps = {
   bakedEnv: BakedEnvEntry[];
   selectedRuntime: AcpRuntimeCatalogEntry | undefined;
@@ -283,16 +257,6 @@ export function AgentConfigFields({
     () => getGlobalModelFallback(bakedEnv, effectiveProvider, config.env_vars),
     [bakedEnv, config.env_vars, effectiveProvider],
   );
-  const modelField = fieldModel.fields.find(
-    (field) => field.kind === "model" && field.render === "control",
-  );
-  // CLI-login harnesses apply this setting through ACP rather than an env var
-  // and provide their own default when no model override is persisted.
-  const modelIsOptional = modelField?.targetApplication.kind === "acpNative";
-  const modelIsValid =
-    modelIsOptional ||
-    (config.model?.trim().length ?? 0) > 0 ||
-    fallbackModel !== null;
   const bakedEffort = React.useMemo(
     () =>
       bakedEnv.find((e) => e.key === BUZZ_AGENT_THINKING_EFFORT)?.value ?? null,
@@ -351,11 +315,6 @@ export function AgentConfigFields({
     runtimeFileConfig,
     runtimeId: credentialRuntimeId,
   });
-  const configIsValid =
-    selectedRuntimeId.length > 0 && modelIsValid && credentialsValid;
-  React.useEffect(() => {
-    onValidityChange?.(configIsValid);
-  }, [configIsValid, onValidityChange]);
 
   const {
     discoveredModelOptions,
@@ -370,18 +329,26 @@ export function AgentConfigFields({
     provider: providerForDiscovery,
     selectedRuntime,
   });
-  const modelControlVisible = shouldRenderModelControl({
-    discoveredModelOptions: dependentFieldsDisabled
-      ? null
-      : discoveredModelOptions,
-    modelDiscoveryLoading: dependentFieldsDisabled
-      ? false
-      : modelDiscoveryLoading,
-    modelDiscoverySuccessfulEmpty:
-      !dependentFieldsDisabled && modelDiscoverySuccessfulEmpty,
+  const {
+    modelOwnedByProfile,
     modelIsOptional,
+    modelIsValid,
+    modelControlVisible,
+  } = resolveAgentConfigModelGate({
+    fieldModel,
+    configModel: config.model,
+    fallbackModel,
+    dependentFieldsDisabled,
+    discoveredModelOptions,
+    modelDiscoveryLoading,
+    modelDiscoverySuccessfulEmpty,
     showCustomModelOption,
   });
+  const configIsValid =
+    selectedRuntimeId.length > 0 && modelIsValid && credentialsValid;
+  React.useEffect(() => {
+    onValidityChange?.(configIsValid);
+  }, [configIsValid, onValidityChange]);
 
   // Mount-time healing policy: onboarding page 4 edits the root config during
   // first-run (no higher layers to inherit from), so acting on open is safe
@@ -793,8 +760,9 @@ export function AgentConfigFields({
         </div>
       ) : null}
 
-      {/* Model field — omitted only after confirmed successful empty discovery */}
-      {modelControlVisible ? (
+      {modelOwnedByProfile ? (
+        <ProfileOwnedModelRow className={fieldClassName} />
+      ) : modelControlVisible ? (
         <div className={showDescriptions ? fieldClassName : undefined}>
           <AgentModelField
             allowDefaultModel={fallbackModel !== null}

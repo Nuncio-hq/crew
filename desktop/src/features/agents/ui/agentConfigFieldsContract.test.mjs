@@ -25,6 +25,11 @@ import {
   shouldRenderModelControl,
   shouldShowModelStatusMessage,
 } from "./AgentConfigFields.tsx";
+import {
+  deriveAgentConfigFieldModel,
+  isModelOwnedByProfile,
+} from "../lib/agentConfigCore.ts";
+import { profileOwnedModelLabel } from "../lib/hermesProfileBinding.ts";
 
 test("canonical behaviors: onboarding's values are the only behavior", () => {
   assert.deepEqual(CANONICAL_CONFIG_BEHAVIORS, {
@@ -216,5 +221,72 @@ test("required-model harnesses always keep the control", () => {
     }),
     true,
     "required-model harnesses always keep the control",
+  );
+});
+
+// ── Profile-owned model (Phase 02B / C-04) ───────────────────────────────────
+// Named omission `ownedByProfile` must render as an informational row, never as
+// an editable model control. Capability projection only (profileArg +
+// providerLocked + no modelEnvVar) — never runtime.id.
+
+test("ownedByProfile omission is informational copy, not a control", () => {
+  const model = deriveAgentConfigFieldModel({
+    config: {
+      env_vars: {},
+      model: null,
+      preferred_runtime: null,
+      provider: null,
+    },
+    hermesProfile: "scout",
+    runtime: {
+      id: "any-profile-locked-runtime",
+      label: "Profile Locked",
+      avatarUrl: "",
+      availability: "available",
+      command: "hermes",
+      binaryPath: "hermes",
+      defaultArgs: [],
+      mcpCommand: null,
+      modelEnvVar: null,
+      providerEnvVar: null,
+      thinkingEnvVar: null,
+      maxTokensEnvVar: null,
+      contextLimitEnvVar: null,
+      maxRoundsEnvVar: null,
+      installHint: "",
+      installInstructionsUrl: "",
+      canAutoInstall: false,
+      underlyingCliPath: null,
+      nodeRequired: false,
+      authStatus: { status: "not_applicable" },
+      loginHint: null,
+      profileArg: "-p",
+      providerLocked: true,
+    },
+    scope: "instance",
+  });
+
+  assert.equal(isModelOwnedByProfile(model), true);
+  assert.equal(
+    model.fields.some((f) => f.kind === "model" && f.render === "control"),
+    false,
+    "must not project an editable model control",
+  );
+  assert.match(
+    profileOwnedModelLabel("scout", null),
+    /decided by profile scout/,
+  );
+  // shouldRenderModelControl stays about optional/empty discovery — the
+  // ownedByProfile gate is a separate named omission before that helper runs.
+  assert.equal(
+    shouldRenderModelControl({
+      discoveredModelOptions: null,
+      modelDiscoveryLoading: false,
+      modelDiscoverySuccessfulEmpty: false,
+      modelIsOptional: false,
+      showCustomModelOption: false,
+    }),
+    true,
+    "helper itself is unchanged; surfaces skip it when ownedByProfile",
   );
 });

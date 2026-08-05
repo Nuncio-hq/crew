@@ -25,6 +25,14 @@ import { Dialog } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { setManagedAgentAutoRestart } from "@/shared/api/tauriManagedAgents";
 import { EditAgentAdvancedFields } from "./EditAgentAdvancedFields";
+import { EditAgentModelAndProfileSection } from "./EditAgentModelAndProfileSection";
+import {
+  deriveAgentConfigFieldModel,
+  getRenderableHermesProfileField,
+  isModelOwnedByProfile,
+} from "../lib/agentConfigCore";
+import { hermesProfileBindingError } from "../lib/hermesProfileBinding";
+import { EMPTY_GLOBAL_CONFIG } from "./AgentConfigFields";
 import {
   ADVANCED_FIELDS_MOTION_TRANSITION,
   AUTO_PROVIDER_DROPDOWN_VALUE,
@@ -137,6 +145,9 @@ export function AgentInstanceEditDialog({
     agent.systemPrompt ?? "",
   );
   const [model, setModel] = React.useState(agent.model ?? "");
+  const [hermesProfile, setHermesProfile] = React.useState(
+    agent.hermesProfile ?? "",
+  );
   const [isCustomModelEditing, setIsCustomModelEditing] = React.useState(false);
   const [provider, setProvider] = React.useState(agent.provider ?? "");
   const [isCustomProviderEditing, setIsCustomProviderEditing] =
@@ -188,6 +199,7 @@ export function AgentInstanceEditDialog({
       setParallelism(String(agent.parallelism));
       setSystemPrompt(agent.systemPrompt ?? "");
       setModel(agent.model ?? "");
+      setHermesProfile(agent.hermesProfile ?? "");
       setIsCustomModelEditing(false);
       setProvider(agent.provider ?? "");
       setIsCustomProviderEditing(false);
@@ -393,12 +405,8 @@ export function AgentInstanceEditDialog({
 
   const { data: bakedEnvKeys } = useBakedBuildEnvKeysQuery({ enabled: open });
 
-  // Merge global env as the base layer so credential keys satisfied via global
-  // config (e.g. ANTHROPIC_API_KEY) are available to model discovery. Use
-  // `inheritedSubmission.envVars` (the same snapshot the credential gate
-  // validates) rather than raw `envVars`, so an inherit-transition that layers
-  // in persona env vars is reflected in discovery. Agent-local env takes
-  // precedence, matching the agent → global → file spawn-path precedence.
+  // Merge global env so credentials satisfied globally reach model discovery.
+  // Prefer inheritedSubmission.envVars (same snapshot as the credential gate).
   const envVarsForDiscovery = React.useMemo(
     () => ({ ...globalConfig.env_vars, ...inheritedSubmission.envVars }),
     [globalConfig.env_vars, inheritedSubmission.envVars],
@@ -408,6 +416,27 @@ export function AgentInstanceEditDialog({
     inheritedProviderDefault.value;
   const providerForDiscovery = llmProviderFieldVisible ? effectiveProvider : "";
 
+  const instanceFieldModel = React.useMemo(
+    () =>
+      deriveAgentConfigFieldModel({
+        config: {
+          ...EMPTY_GLOBAL_CONFIG,
+          model: model.trim() || null,
+          provider: provider.trim() || null,
+        },
+        hermesProfile,
+        runtime: prospectiveRuntime,
+        scope: "instance",
+      }),
+    [hermesProfile, model, prospectiveRuntime, provider],
+  );
+  const showHermesProfileField =
+    getRenderableHermesProfileField(instanceFieldModel) != null;
+  const modelOwnedByProfile = isModelOwnedByProfile(instanceFieldModel);
+  const hermesProfileError = showHermesProfileField
+    ? hermesProfileBindingError(hermesProfile, true)
+    : null;
+
   const {
     discoveredModelOptions,
     modelDiscoveryLoading,
@@ -415,17 +444,14 @@ export function AgentInstanceEditDialog({
   } = usePersonaModelDiscovery({
     envVars: envVarsForDiscovery,
     isCustomProviderEditing,
-    modelFieldVisible: true,
+    modelFieldVisible: !modelOwnedByProfile,
     open,
     provider: providerForDiscovery,
     selectedRuntime,
   });
 
-  // D2: derive advancedRequiredEnvKeys for EnvVarsEditor display.
-  // The full requiredEnvKeys/requiredEnvKeyMissing continue driving Save gating.
-  // D2/D3: the top-level API key owns display, while the readiness gate keeps
-  // the complete required-key list. The effective snapshot covers persona
-  // inheritance during an instance inherit transition.
+  // D2/D3: top-level API key owns display; readiness gate keeps the full
+  // required-key list. Effective snapshot covers persona inherit transitions.
   const providerApiKeyEnvVar = getProviderApiKeyEnvVar(effectiveProvider);
   const personaSatisfied =
     providerApiKeyEnvVar != null &&
@@ -609,6 +635,7 @@ export function AgentInstanceEditDialog({
       requiredEnvKeyMissing,
     }) &&
     providerValid &&
+    hermesProfileError == null &&
     !updateMutation.isPending &&
     !isAvatarUploadPending;
 
@@ -721,6 +748,11 @@ export function AgentInstanceEditDialog({
           respondToAllowlist.join(",") !== agent.respondToAllowlist.join(",")
             ? respondToAllowlist
             : undefined,
+        hermesProfile: showHermesProfileField
+          ? hermesProfile.trim() !== (agent.hermesProfile ?? "")
+            ? hermesProfile.trim() || null
+            : undefined
+          : undefined,
       };
 
       const result = await updateMutation.mutateAsync(input);
@@ -1076,57 +1108,23 @@ export function AgentInstanceEditDialog({
               />
             ) : null}
 
-            {/* Model */}
-            <div className="space-y-1.5">
-              <label
-                className="text-sm font-medium text-foreground"
-                htmlFor="edit-agent-model"
-              >
-                Model
-                {modelRequired ? (
-                  <span className="ml-1 text-destructive" aria-hidden="true">
-                    *
-                  </span>
-                ) : (
-                  <span className={PERSONA_LABEL_OPTIONAL_CLASS}>Optional</span>
-                )}
-              </label>
-              <PersonaDropdownField
-                disabled={updateMutation.isPending || modelDiscoveryLoading}
-                id="edit-agent-model"
-                onValueChange={handleModelDropdownChange}
-                options={modelDropdownOptions}
-                placeholder="Default model"
-                value={modelSelectValue}
-              />
-              {showCustomModelInput ? (
-                <div
-                  className={cn(
-                    "mt-2 flex min-h-11 items-center px-3",
-                    PERSONA_FIELD_SHELL_CLASS,
-                  )}
-                >
-                  <Input
-                    aria-label="Custom model ID"
-                    autoCorrect="off"
-                    className={cn(
-                      "h-8 px-0 py-0 leading-6",
-                      PERSONA_FIELD_CONTROL_CLASS,
-                    )}
-                    disabled={updateMutation.isPending}
-                    id="edit-agent-custom-model"
-                    onChange={(event) => setModel(event.target.value)}
-                    placeholder="Custom model ID"
-                    value={model}
-                  />
-                </div>
-              ) : null}
-              {modelStatusMessage ? (
-                <p className="text-xs text-muted-foreground">
-                  {modelStatusMessage}
-                </p>
-              ) : null}
-            </div>
+            {/* Model / Hermes profile (field-model driven) */}
+            <EditAgentModelAndProfileSection
+              disabled={updateMutation.isPending}
+              hermesProfile={hermesProfile}
+              model={model}
+              modelDiscoveryLoading={modelDiscoveryLoading}
+              modelDropdownOptions={modelDropdownOptions}
+              modelOwnedByProfile={modelOwnedByProfile}
+              modelRequired={modelRequired}
+              modelSelectValue={modelSelectValue}
+              modelStatusMessage={modelStatusMessage}
+              onCustomModelChange={setModel}
+              onHermesProfileChange={setHermesProfile}
+              onModelValueChange={handleModelDropdownChange}
+              showCustomModelInput={showCustomModelInput}
+              showProfileField={showHermesProfileField}
+            />
 
             <AgentAiDefaultsNotice
               onEditDefaults={() => setAiDefaultsOpen(true)}
@@ -1213,9 +1211,11 @@ export function AgentInstanceEditDialog({
               </AnimatePresence>
             </div>
 
-            {/* Error */}
             {updateMutation.error instanceof Error ? (
-              <p className="text-sm text-destructive">
+              <p
+                className="text-sm text-destructive"
+                data-testid="edit-agent-save-error"
+              >
                 {updateMutation.error.message}
               </p>
             ) : null}

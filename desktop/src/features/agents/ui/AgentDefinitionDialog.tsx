@@ -13,12 +13,9 @@ import { Dialog } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import { AgentCreationPreview } from "./AgentCreationPreview";
-import { PersonaDropdownField } from "./PersonaDropdownField";
 import type { EnvVarsValue } from "./EnvVarsEditor";
 import { PersonaAdvancedFields } from "./PersonaAdvancedFields";
-import { PersonaModelField } from "./PersonaModelField";
 import { runtimeAvailabilityWarning } from "./runtimeAvailabilityWarning";
-import { PersonaProviderApiKeyField } from "./PersonaProviderApiKeyField";
 import {
   canSubmitPersonaDialog,
   formatPersonaNamePoolText,
@@ -50,10 +47,8 @@ import {
   type PersonaDropdownOption,
   PERSONA_FIELD_CONTROL_CLASS,
   PERSONA_FIELD_SHELL_CLASS,
-  PERSONA_LABEL_OPTIONAL_CLASS,
   shouldClearKnownModelForSelectionScope,
 } from "./agentConfigOptions";
-import { RequiredFieldLabel } from "./agentConfigControls";
 import {
   modelDropdownOptions as buildModelDropdownOptions,
   relayMeshModelPickerState,
@@ -83,6 +78,8 @@ import {
   initialAgentAiConfigurationMode,
 } from "./agentAiConfigurationPolicy";
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
+import { useCreateHermesBinding } from "./createHermesBindingFields";
+import { AgentDefinitionCustomAiFields } from "./AgentDefinitionCustomAiFields";
 import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload";
 import { AgentDefinitionDialogFooter } from "./AgentDefinitionDialogFooter";
 import { AddCustomHarnessDialog } from "./AddCustomHarnessDialog";
@@ -117,6 +114,8 @@ type AgentDefinitionDialogProps = {
 
 export type AgentDefinitionSubmitOptions = {
   publishCatalogUpdates: boolean;
+  /** Instance binding collected on create-start; ignored on definition edit. */
+  hermesProfile?: string | null;
 };
 
 export function AgentDefinitionDialog({
@@ -143,6 +142,7 @@ export function AgentDefinitionDialog({
   const [systemPrompt, setSystemPrompt] = React.useState("");
   const [runtime, setRuntime] = React.useState("");
   const [model, setModel] = React.useState("");
+  const [hermesProfile, setHermesProfile] = React.useState("");
   const [isCustomModelEditing, setIsCustomModelEditing] = React.useState(false);
   const [provider, setProvider] = React.useState("");
   const [aiConfigurationMode, setAiConfigurationMode] =
@@ -203,6 +203,7 @@ export function AgentDefinitionDialog({
     setSystemPrompt(initialValues.systemPrompt);
     setRuntime(initialValues.runtime ?? "");
     setModel(initialValues.model ?? "");
+    setHermesProfile("");
     setIsCustomModelEditing(false);
     setProvider(initialValues.provider ?? "");
     setAiConfigurationMode(
@@ -302,6 +303,7 @@ export function AgentDefinitionDialog({
       setSystemPrompt("");
       setRuntime("");
       setModel("");
+      setHermesProfile("");
       setIsCustomModelEditing(false);
       setProvider("");
       setAiConfigurationMode("defaults");
@@ -377,7 +379,10 @@ export function AgentDefinitionDialog({
       return;
     }
 
-    await onSubmit(baseInput, { publishCatalogUpdates: false });
+    await onSubmit(baseInput, {
+      publishCatalogUpdates: false,
+      hermesProfile: hermesProfile.trim() || null,
+    });
   }
 
   function handleSubmitForm(event: React.FormEvent<HTMLFormElement>) {
@@ -386,6 +391,15 @@ export function AgentDefinitionDialog({
   }
 
   const selectedRuntime = runtimes.find((p) => p.id === runtime);
+  const {
+    showProfileField: showHermesProfileField,
+    modelOwnedByProfile,
+    profileError: hermesProfileError,
+  } = useCreateHermesBinding({
+    enabled: isCreateMode,
+    hermesProfile,
+    runtime: selectedRuntime,
+  });
   const blankRuntimeModelProviderEditable =
     initialModelProviderEditableWithoutRuntime && runtime.trim().length === 0;
   const runtimeCanChooseLlmProvider =
@@ -475,7 +489,8 @@ export function AgentDefinitionDialog({
   const providerIsRequired =
     aiConfigurationMode === "custom" && runtimeCanChooseLlmProvider;
   const modelFieldVisible =
-    runtime.trim().length > 0 || blankRuntimeModelProviderEditable;
+    !modelOwnedByProfile &&
+    (runtime.trim().length > 0 || blankRuntimeModelProviderEditable);
   const isExplicitModelRequired = aiConfigurationMode === "custom";
   // Gate the provider requirement on the field's actual visibility, not the raw
   // runtime capability. Codex/Claude hide the provider picker (they drive their
@@ -505,6 +520,7 @@ export function AgentDefinitionDialog({
     // missingEnvKeys — credential env keys now block submit, not just display.
     localModeSatisfied &&
     customAiPairSatisfied &&
+    hermesProfileError == null &&
     !isAvatarUploadPending;
 
   // Merge global env as the base layer so credential keys satisfied via global
@@ -850,92 +866,52 @@ export function AgentDefinitionDialog({
                 />
               ) : null}
 
-              {llmProviderFieldVisible && aiConfigurationMode === "custom" ? (
-                <div className="space-y-1.5">
-                  <RequiredFieldLabel
-                    htmlFor="persona-llm-provider"
-                    isRequired={providerIsRequired}
-                  >
-                    LLM provider
-                    {!providerIsRequired ? (
-                      <span className={PERSONA_LABEL_OPTIONAL_CLASS}>
-                        Optional
-                      </span>
-                    ) : null}
-                  </RequiredFieldLabel>
-                  <PersonaDropdownField
-                    disabled={isPending}
-                    id="persona-llm-provider"
-                    onValueChange={handleProviderDropdownChange}
-                    options={providerDropdownOptions}
-                    placeholder="Choose a provider"
-                    value={providerSelectValue}
-                  />
-                  {showCustomProviderInput ? (
-                    <div
-                      className={cn(
-                        "mt-2 flex min-h-11 items-center px-3",
-                        PERSONA_FIELD_SHELL_CLASS,
-                      )}
-                    >
-                      <Input
-                        aria-label="Custom provider ID"
-                        autoCorrect="off"
-                        className={cn(
-                          "h-8 px-0 py-0 leading-6",
-                          PERSONA_FIELD_CONTROL_CLASS,
-                        )}
-                        disabled={isPending}
-                        id="persona-custom-provider"
-                        onChange={(event) => setProvider(event.target.value)}
-                        placeholder="Custom provider ID"
-                        value={provider}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {llmProviderFieldVisible &&
-              aiConfigurationMode === "custom" &&
-              topLevelSecretEnvVar ? (
-                <PersonaProviderApiKeyField
-                  disabled={isPending}
-                  envVarName={topLevelSecretEnvVar}
-                  isInherited={apiKeyIsInherited}
-                  inheritedLabel={apiKeyInheritedLabel}
-                  isRequired={apiKeyIsRequired}
-                  label={getProviderApiKeyLabel(effectiveProvider) ?? "API key"}
-                  onValueChange={(next) => {
-                    setEnvVars((prev) => ({
-                      ...prev,
-                      [topLevelSecretEnvVar]: next,
-                    }));
-                  }}
-                  value={apiKeyValue}
-                />
-              ) : null}
-
-              <AnimatePresence initial={false}>
-                {modelFieldVisible && aiConfigurationMode === "custom" ? (
-                  <PersonaModelField
-                    disabled={isPending}
-                    isExplicitModelRequired={isExplicitModelRequired}
-                    model={model}
-                    modelDiscoveryStatus={modelDiscoveryStatus}
-                    modelDropdownOptions={modelDropdownOptions}
-                    modelSelectValue={modelSelectValue}
-                    onCustomModelChange={setModel}
-                    showSharedComputeAutoHint={
-                      isRelayMesh &&
-                      modelSelectValue === AUTO_MODEL_DROPDOWN_VALUE
-                    }
-                    onModelValueChange={handleModelDropdownChange}
-                    showCustomModelInput={showCustomModelInput}
-                    transition={advancedFieldsTransition}
-                  />
-                ) : null}
-              </AnimatePresence>
+              <AgentDefinitionCustomAiFields
+                aiConfigurationMode={aiConfigurationMode}
+                apiKeyInheritedLabel={apiKeyInheritedLabel}
+                apiKeyIsInherited={apiKeyIsInherited}
+                apiKeyIsRequired={apiKeyIsRequired}
+                apiKeyValue={apiKeyValue}
+                autoModelDropdownValue={AUTO_MODEL_DROPDOWN_VALUE}
+                disabled={isPending}
+                effectiveProviderApiKeyLabel={
+                  getProviderApiKeyLabel(effectiveProvider) ?? "API key"
+                }
+                hermesProfile={hermesProfile}
+                isExplicitModelRequired={isExplicitModelRequired}
+                isRelayMesh={isRelayMesh}
+                llmProviderFieldVisible={llmProviderFieldVisible}
+                model={model}
+                modelDiscoveryStatus={modelDiscoveryStatus}
+                modelDropdownOptions={modelDropdownOptions}
+                modelFieldVisible={modelFieldVisible}
+                modelOwnedByProfile={modelOwnedByProfile}
+                modelSelectValue={modelSelectValue}
+                onCustomModelChange={setModel}
+                onHermesProfileChange={(next) => {
+                  setHasUserChanges(true);
+                  setHermesProfile(next);
+                }}
+                onModelValueChange={handleModelDropdownChange}
+                onProviderChange={setProvider}
+                onProviderValueChange={handleProviderDropdownChange}
+                onSecretEnvChange={(next) => {
+                  if (!topLevelSecretEnvVar) return;
+                  setEnvVars((prev) => ({
+                    ...prev,
+                    [topLevelSecretEnvVar]: next,
+                  }));
+                }}
+                provider={provider}
+                providerDropdownOptions={providerDropdownOptions}
+                providerIsRequired={providerIsRequired}
+                providerSelectValue={providerSelectValue}
+                showCustomModelInput={showCustomModelInput}
+                showCustomProviderInput={showCustomProviderInput}
+                showHermesProfileField={showHermesProfileField}
+                topLevelSecretEnvVar={topLevelSecretEnvVar}
+                transition={advancedFieldsTransition}
+              />
 
               {aiConfigurationMode === "defaults" ? (
                 <AgentCreateAiDefaultsSummary

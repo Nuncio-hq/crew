@@ -177,7 +177,10 @@ export function usePersonaActions() {
     intent?: AgentCreateIntent,
     backendIntent?: BackendIntent | null,
     targetChannel?: Pick<Channel, "id" | "name"> | null,
-    options?: { publishCatalogUpdates?: boolean },
+    options?: {
+      publishCatalogUpdates?: boolean;
+      hermesProfile?: string | null;
+    },
   ): Promise<boolean> {
     if (isPersonaSubmitPending) {
       return false;
@@ -243,6 +246,9 @@ export function usePersonaActions() {
           undefined,
           startIntent ?? undefined,
         );
+        if (options?.hermesProfile) {
+          agentInput.hermesProfile = options.hermesProfile;
+        }
 
         try {
           const created = await createAgentMutation.mutateAsync(agentInput);

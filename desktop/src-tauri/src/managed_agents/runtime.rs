@@ -308,7 +308,7 @@ pub fn build_managed_agent_summary(
         acp_command: record.acp_command.clone(),
         agent_command: descriptor.command,
         agent_command_override: record.agent_command_override.clone(),
-        agent_args: descriptor.args,
+        agent_args: descriptor.args, hermes_profile: record.hermes_profile.clone(),
         mcp_command: effective_mcp_command,
         turn_timeout_seconds: record.turn_timeout_seconds,
         idle_timeout_seconds: record.idle_timeout_seconds,

@@ -38,9 +38,12 @@ with a TypeScript lookup table or an id comparison in a component.
    Goose/Claude — do not "fix" one to match the other without doing the
    migration work.
 3. **Field absence has a named reason, not a boolean.** Codex effort is
-   `ownedByModelId`; Claude effort is `deferredUntilNativeOptionsAvailable`.
-   New absences get new named reasons in `AgentConfigOmission` /
-   `render` — never a `showX` prop.
+   `ownedByModelId`; Claude effort is `deferredUntilNativeOptionsAvailable`;
+   profile-locked model (Hermes / any runtime with `profileArg` +
+   `providerLocked` + no `modelEnvVar`) is `ownedByProfile` — surfaces render
+   an informational row, never an editable model control. New absences get
+   new named reasons in `AgentConfigOmission` / `render` — never a `showX`
+   prop.
 4. **The clearing policy is the named types.** `onContextChange:
    "resetDependentValues"` (user changed harness/provider → dependent values
    reset everywhere) vs `onCatalogMismatch: "explainOnly" | "onboardingCleanup"`
@@ -64,6 +67,9 @@ with a TypeScript lookup table or an id comparison in a component.
    via `synthesizeEmptyDiscoveryStatus()` and is intentionally **not cached**
    so that closing → reopening the dialog re-runs discovery after the user
    installs or signs into the CLI (`isCacheableDiscoveryResponse()`).
+   Hermes profile binding (`hermesProfile` field kind) is projected only for
+   `definition`/`instance` scopes when `profileArg` is set — create/edit
+   render it; global defaults do not.
 7. **Onboarding setup detects readiness; it does not select defaults.** The
    setup page derives visible and ready harnesses from the runtime catalog and
    only offers install or sign-in actions. The following defaults page is the
@@ -88,9 +94,13 @@ with a TypeScript lookup table or an id comparison in a component.
    A thrown or unavailable discovery keeps the control so #2246 failure UI can
    render, and must not heal/clear persisted model or effort. Full disclosure
    still shows the control when Custom model is available. Required-model
-   harnesses always keep the field. Gate: `defaults hides model when optional
+   harnesses always keep the field. **Separately**, `ownedByProfile` omits the
+   model control before discovery runs — that path does not use
+   `shouldRenderModelControl`. Gate: `defaults hides model when optional
    harness has empty discovery` (and the failed-discovery counterpart) in
-   `onboarding-agent-defaults.spec.ts`.
+   `onboarding-agent-defaults.spec.ts`; profile-owned model in
+   `lib/agentConfigCore.test.mjs` + `ui/agentConfigFieldsContract.test.mjs` +
+   `hermes-profile-binding.spec.ts`.
 9. **The defaults modal is progressively disclosed.** An unset global config
    starts on the Buzz Agent-first deployment fallback and carries that visible
    harness into the next saved edit. The `progressive-defaults` disclosure
@@ -157,12 +167,14 @@ with a TypeScript lookup table or an id comparison in a component.
 ## The tests that enforce this
 
 - `lib/agentConfigCore.test.mjs` — field model per harness × scope, clearing
-  policy. Update when the capability model changes.
+  policy, `hermesProfile` / `ownedByProfile`. Update when the capability model
+  changes.
 - `ui/agentConfigFieldsContract.test.mjs` — canonical behaviors + disclosure
   presets + `shouldShowModelStatusMessage` status-bypass +
-  `shouldRenderModelControl` (successful-empty omit vs failure keep). If this
-  fails, you probably reintroduced a per-surface flag or conflated empty with
-  failed discovery.
+  `shouldRenderModelControl` (successful-empty omit vs failure keep) +
+  profile-owned informational row contract.
+- `ui/hermesProfileBindingContract.test.mjs` — client validation + capability
+  helpers for profile binding.
 - `ui/usePersonaModelDiscovery.test.mjs` — `synthesizeEmptyDiscoveryStatus`,
   `isCacheableDiscoveryResponse`, `deriveModelDiscoveryPending`,
   `isSuccessfulEmptyDiscovery`. If the "reopen to retry" copy becomes inert
@@ -177,6 +189,8 @@ with a TypeScript lookup table or an id comparison in a component.
   acceptance coverage for readiness, failure states, defaults, session-draft
   restoration, zero-write Skip, Next save failure/retry, navigation, and
   successful-empty vs failed optional-model discovery.
+- `desktop/tests/e2e/hermes-profile-binding.spec.ts` — create/edit binding
+  field visibility, validation, profile-owned model row, duplicate-bind error.
 - Rust: `runtime_metadata_env_vars` tests pin spawn-time key application.
 - Rust: persona sharing/retention tests pin relay+owner scoping, durable
   enqueue errors, relay rejection/unavailability, and accepted publication.

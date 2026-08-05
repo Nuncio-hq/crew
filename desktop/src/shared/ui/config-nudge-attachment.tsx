@@ -334,8 +334,20 @@ function RequirementRow({
       return (
         <div className="flex items-center gap-2 text-xs leading-4 text-muted-foreground">
           <span className="flex-1 [overflow-wrap:anywhere]">
-            Set the <strong>{requirement.field}</strong> field in Edit Agent
-            dropdowns
+            {requirement.field === "hermesProfile" ? (
+              <>
+                Bind a Hermes profile in Edit Agent (create one with{" "}
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">
+                  hermes profile create &lt;name&gt;
+                </code>
+                )
+              </>
+            ) : (
+              <>
+                Set the <strong>{requirement.field}</strong> field in Edit Agent
+                dropdowns
+              </>
+            )}
           </span>
           {!allCliLogin && (
             <button
