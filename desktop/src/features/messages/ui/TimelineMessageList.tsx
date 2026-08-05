@@ -265,7 +265,7 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
               }
               isFollowingThreadById={isFollowingThreadById}
               isUnread={isMessageUnreadById?.(item.entry.message.id)}
-              {...({ openThreadAnchorId } as Record<string, unknown>)}
+              openThreadAnchorId={openThreadAnchorId}
               playEntrance={item.entry.message.id === entranceMessageId}
               onEntranceComplete={onEntranceMessageComplete}
               onDelete={onDelete}

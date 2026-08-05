@@ -81,6 +81,8 @@ type MessageRowItemProps = {
   onMarkRead?: (message: TimelineMessage) => void;
   onReply?: (message: TimelineMessage) => void;
   onOpenThread?: (message: TimelineMessage) => void;
+  /** Top-level message id that owns the currently open thread panel. */
+  openThreadAnchorId?: string | null;
   onToggleReaction?: ToggleReaction;
   profiles?: UserProfileLookup;
   searchActiveMessageId?: string | null;
@@ -113,6 +115,7 @@ export function MessageRowItem({
   onMarkRead,
   onReply,
   onOpenThread,
+  openThreadAnchorId = null,
   onToggleReaction,
   profiles,
   searchActiveMessageId,
@@ -133,13 +136,19 @@ export function MessageRowItem({
 
   if (summary && onOpenThread) {
     const isHighlighted = message.id === highlightedMessageId;
+    const isThreadAnchor =
+      openThreadAnchorId != null && message.id === openThreadAnchorId;
     return (
       <div
+        aria-current={isThreadAnchor ? "location" : undefined}
         className={cn(
           "group/message relative mx-1 mb-1 flex flex-col gap-0 rounded-2xl px-0 py-1 transition-colors hover:bg-muted/50 focus-within:bg-muted/50",
+          isThreadAnchor &&
+            "-mx-4 bg-primary/5 px-4 hover:bg-primary/10 after:absolute after:-inset-y-1.5 after:left-0 after:w-0.5 after:rounded-full after:bg-primary after:content-[''] sm:-mx-6 sm:px-6",
           isHighlighted &&
             "-mx-4 px-4 before:absolute before:-inset-y-1.5 before:inset-x-0 before:animate-[route-target-highlight-fade_2s_ease-out_forwards] before:bg-primary/10 before:content-[''] motion-reduce:before:animate-none sm:-mx-6 sm:px-6",
         )}
+        data-thread-anchor={isThreadAnchor ? "true" : undefined}
       >
         <MessageRow
           channelId={channelId}
@@ -178,6 +187,7 @@ export function MessageRowItem({
         />
         <MessageThreadSummaryRow
           depth={message.depth}
+          isActive={isThreadAnchor}
           message={message}
           onOpenThread={onOpenThread}
           showDepthGuides={false}

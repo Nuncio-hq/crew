@@ -263,6 +263,7 @@ export function useMentionSendComplete({
         const finishSend = async (
           uploaded: ImetaMedia[],
           signal?: AbortSignal,
+          clearAfterResolve = false,
         ) => {
           const { content: builtContent, mediaTags } = buildOutgoingMessage(
             draft.trimmed,
@@ -298,6 +299,18 @@ export function useMentionSendComplete({
               toast.error(message);
               throw error instanceof Error ? error : new Error(message);
             }
+          }
+          // No-upload: clear after resolve succeeds, before the network send, so
+          // persistent audiences transition atomically while a failed Project
+          // lookup never wipes the draft (throw above skips this clear).
+          if (
+            clearAfterResolve &&
+            (draft.capturedChannelId === channelIdRef.current ||
+              channelIdRef.current === null)
+          ) {
+            clearComposer(
+              resolvePostSendContent?.(effectiveExplicitAgentPubkeys),
+            );
           }
           const taskRouting = resolveProjectThreadAgentRouting({
             content: finalContent,
@@ -358,6 +371,7 @@ export function useMentionSendComplete({
         }
 
         if (preparedUpload) {
+          // Uploads clear optimistically at start; finishSend restores on failure.
           if (
             draft.capturedChannelId === channelIdRef.current ||
             channelIdRef.current === null
@@ -368,18 +382,11 @@ export function useMentionSendComplete({
           }
         } else {
           try {
-            await finishSend([]);
+            // Clear inside finishSend after resolve, before network send.
+            await finishSend([], undefined, true);
           } catch {
             restoreComposerAfterFailure();
             return;
-          }
-          if (
-            draft.capturedChannelId === channelIdRef.current ||
-            channelIdRef.current === null
-          ) {
-            clearComposer(
-              resolvePostSendContent?.(effectiveExplicitAgentPubkeys),
-            );
           }
         }
       } finally {
