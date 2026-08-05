@@ -16,6 +16,44 @@ code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
+## Crew builds on top of Buzz
+
+**Crew is a layer on Buzz, not a parallel product beside it.** Every Crew
+feature integrates *on top of* an existing Buzz model, type, event kind, or
+extension point. This is the rule that decides design arguments; the thin-fork
+file-edit budget in
+[`docs/crew/UPSTREAM-SYNC.md`](docs/crew/UPSTREAM-SYNC.md) is a separate,
+narrower constraint about *how many upstream files you touch*.
+
+What this means in practice:
+
+1. **Extend Buzz's model; do not clone it.** A Crew feature attaches to the
+   existing Nostr kind, React type, or Tauri command. Adding a tag to an
+   existing event beats inventing a Crew-only event. A Crew-only registry,
+   React-owned authoritative state, or separate database is not an acceptable
+   substitute for Buzz's relay lifecycle — see
+   [`docs/crew/DECISIONS.md`](docs/crew/DECISIONS.md) D-003 and D-010.
+2. **When upstream ships a model for something Crew hand-rolled, Crew moves
+   onto it.** Do not keep a Crew implementation running beside an upstream one
+   that covers the same concept. Upstream's model wins; Crew's behavior
+   re-homes onto it.
+3. **Additive features that upstream has no concept of are legitimate** —
+   Crew's GitHub PR/CI surface and worktree-per-thread registry have no
+   upstream equivalent. Build them on Buzz's types anyway, so an upstream model
+   can absorb them later.
+4. **Use upstream's vocabulary in code.** Crew prose has historically called
+   NIP-34 kind `30617` a "Project". Upstream calls it
+   `KIND_GIT_REPO_ANNOUNCEMENT` — a **repository** — and NIP-MP reserves
+   `KIND_PROJECT` = `30621` for a *group of* repositories. "Project" now means
+   two different things depending on which document you read. In code, follow
+   upstream: `30617` is a repository, `30621` is a project.
+
+Before adding a Crew surface, find the Buzz seam it hangs off and name that
+seam in the plan. If there is no seam, say so explicitly and justify the new
+one — that is a decision worth recording in `docs/crew/DECISIONS.md`.
+
+---
+
 ## Ecosystem
 
 Buzz spans five repos. Upstream (`block/buzz`) is the OSS source for the relay,
