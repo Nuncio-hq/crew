@@ -21,6 +21,9 @@ const HARNESS_DESCRIPTIONS: Record<string, string> = {
   // Source: https://block.github.io/goose/ — "an open source, extensible AI
   // agent".
   goose: "Block's open-source, extensible AI agent.",
+  // Sources: https://github.com/NousResearch/hermes-agent,
+  // https://hermes-agent.nousresearch.com/docs/
+  hermes: "A general-purpose AI agent from Nous Research.",
 
   // Bundled presets — sources per RESEARCH/BYOH_CATALOG_IA.md.
   // Source: https://cursor.com/docs/cli/acp
@@ -37,9 +40,6 @@ const HARNESS_DESCRIPTIONS: Record<string, string> = {
   kimi: "A terminal coding agent for software development and command-line tasks.",
   // Sources: https://ampcode.com, https://ampcode.com/manual
   amp: "The coding agent and development environment that runs anywhere and everywhere.",
-  // Sources: https://github.com/NousResearch/hermes-agent,
-  // https://hermes-agent.nousresearch.com/docs/
-  hermes: "A general-purpose AI agent from Nous Research.",
   // Sources: https://github.com/openclaw/openclaw,
   // https://docs.openclaw.ai/start/getting-started
   openclaw: "A personal AI assistant that runs on your own devices.",
