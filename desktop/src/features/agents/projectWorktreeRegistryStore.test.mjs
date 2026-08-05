@@ -37,6 +37,7 @@ test("selector returns null for unknown roots", () => {
         rootEventId: root,
         prunable: false,
         pullRequests: [],
+        linkedIssues: [],
       },
     ]),
   );
@@ -57,6 +58,7 @@ test("selector finds managed entry by root", () => {
         rootEventId: root,
         prunable: false,
         pullRequests: [{ number: 21, state: "OPEN" }],
+        linkedIssues: [],
       },
     ]),
   );
@@ -78,6 +80,7 @@ test("epoch reset clears entries", () => {
         rootEventId: root,
         prunable: false,
         pullRequests: [],
+        linkedIssues: [],
       },
     ]),
   );
@@ -98,6 +101,7 @@ test("invalidate drops a single repo key", () => {
         rootEventId: root,
         prunable: false,
         pullRequests: [],
+        linkedIssues: [],
       },
     ]),
   );
