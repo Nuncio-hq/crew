@@ -4,9 +4,9 @@
 use crate::app_state::AppState;
 use crate::commands::ClipboardState;
 use crate::huddle::HuddlePhase;
-use crate::shutdown::{is_restart_request, shut_down_app};
 #[cfg(all(feature = "mesh-llm", target_os = "macos"))]
 use crate::shutdown::{hard_exit_after_mesh_shutdown, relaunch_after_mesh_shutdown};
+use crate::shutdown::{is_restart_request, shut_down_app};
 #[cfg(target_os = "macos")]
 use crate::tray_menu::show_main_window;
 use std::sync::{

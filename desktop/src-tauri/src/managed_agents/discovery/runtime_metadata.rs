@@ -64,6 +64,10 @@ pub(crate) struct KnownAcpRuntime {
     /// CLI args for probing authentication status. `args[0]` is the binary name;
     /// the remainder are the subcommand. `None` for runtimes with no login step.
     pub auth_probe_args: Option<&'static [&'static str]>,
+    /// CLI flag for selecting a named profile (e.g. Hermes `-p`).
+    /// `None` when the runtime has no profile-binding concept.
+    /// Projected to the UI as `profileArg` on [`crate::managed_agents::AcpRuntimeCatalogEntry`].
+    pub profile_arg: Option<&'static str>,
 }
 
 impl KnownAcpRuntime {
@@ -133,5 +137,6 @@ mod tests {
         assert!(hermes.provider_locked);
         assert!(hermes.cli_install_commands.is_empty());
         assert!(hermes.auth_probe_args.is_none());
+        assert_eq!(hermes.profile_arg, Some("-p"));
     }
 }

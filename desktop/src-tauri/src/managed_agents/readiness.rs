@@ -47,12 +47,12 @@ use crate::managed_agents::{
     discovery::{known_acp_runtime, KnownAcpRuntime},
     env_vars::merged_user_env,
     global_config::GlobalAgentConfig,
-    normalize_agent_args,
     types::{AcpAvailabilityStatus, AgentDefinition, ManagedAgentRecord},
 };
 
 mod cli_login;
 pub(crate) mod cli_probe;
+mod hermes;
 
 // ── EffectiveAgentEnv ─────────────────────────────────────────────────────────
 
@@ -76,20 +76,14 @@ pub(crate) struct EffectiveAgentEnv {
     pub config_file_path: Option<&'static str>,
     /// The resolved harness binary name (e.g. `"buzz-agent"`, `"goose"`).
     pub effective_command: String,
+    pub hermes_profile: Option<String>, // D-019; readiness only
 }
 
 // ── Typed effective-harness descriptor ───────────────────────────────────────
-//
-// A single owned type that fully describes what a spawn would run.  Produced
-// by `resolve_effective_harness_descriptor` and consumed by spawn_agent_child,
-// spawn_snapshot, build_managed_agent_summary, get_agent_models, and
-// agent_readiness — so the harness-definition lookup and arg/env resolution
-// happen exactly once, in one place.
+// Produced by resolve_effective_harness_descriptor; consumed by spawn,
+// spawn_snapshot, summaries, get_agent_models, and readiness.
 
-/// The complete effective description of a harness spawn: resolved command,
-/// args, and layered env.  This is the single source of truth for what will
-/// actually run — computed once and shared across every consumer that needs
-/// the effective values.
+/// Complete effective harness spawn description: command, args, and layered env.
 #[derive(Debug, Clone)]
 pub(crate) struct EffectiveHarnessDescriptor {
     /// The raw effective command string (e.g. `"buzz-agent"`, `"my-acp-agent"`).
@@ -148,18 +142,13 @@ pub(crate) fn resolve_effective_harness_descriptor(
         crate::managed_agents::custom_harnesses::lookup_loaded_harness_by_id(runtime_id)
     };
 
-    // Args: explicit non-empty instance args win; otherwise use definition args.
-    let args = {
-        let record_args = record.agent_args.clone();
-        let instance_has_args = record_args.iter().any(|a| !a.trim().is_empty());
-        if instance_has_args {
-            normalize_agent_args(&effective_command, record_args)
-        } else if let Some(ref def) = harness_def {
-            normalize_agent_args(&effective_command, def.args.clone())
-        } else {
-            normalize_agent_args(&effective_command, record_args)
-        }
-    };
+    // Args: instance args win when non-empty; else definition; then Hermes `-p`.
+    let args = hermes::resolve_agent_args_with_profile(
+        &effective_command,
+        record,
+        harness_def.as_deref(),
+        runtime_meta,
+    );
 
     // Env: full layered resolution (same as resolve_effective_agent_env).
     // Pass harness_def directly to avoid a second lookup.
@@ -282,6 +271,7 @@ fn resolve_effective_agent_env_with_def(
         env,
         config_file_path: runtime.and_then(|r| r.config_file_path),
         effective_command,
+        hermes_profile: record.hermes_profile.clone(),
     }
 }
 
@@ -441,6 +431,7 @@ fn collect_missing_requirements(
             rt,
         ),
         "codex" => cli_login::requirements(&["codex", "login", "status"], "run `codex login`", rt),
+        "hermes" => hermes::hermes_requirements(effective),
         _ => vec![],
     }
 }
@@ -666,6 +657,7 @@ mod tests {
             env,
             config_file_path: runtime.and_then(|r| r.config_file_path),
             effective_command: command.to_string(),
+            hermes_profile: None,
         }
     }
 
@@ -1055,6 +1047,7 @@ mod tests {
             required_normalized_fields: &[],
             login_hint: None,
             auth_probe_args: None,
+            profile_arg: None,
         }
     }
 
@@ -1247,6 +1240,7 @@ mod tests {
             required_normalized_fields: &[],
             login_hint: None,
             auth_probe_args: None,
+            profile_arg: None,
         }
     }
 
@@ -1488,6 +1482,7 @@ mod tests {
             agent_command: "buzz-agent".to_string(),
             agent_command_override: None,
             agent_args: vec![],
+            hermes_profile: None,
             mcp_command: String::new(),
             turn_timeout_seconds: 320,
             idle_timeout_seconds: None,

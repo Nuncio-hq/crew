@@ -725,11 +725,8 @@ fn apply_model_provider_prompt_update(
     }
 }
 
-/// Update mutable fields on an existing managed agent record.
-///
-/// Does NOT auto-restart the agent. Runtime config changes (system prompt,
-/// parallelism, commands, toolsets) take effect on the next agent spawn.
-/// Name changes are synced to the relay immediately via a kind:0 re-publish.
+/// Update mutable fields on an existing managed agent. Does not auto-restart;
+/// runtime config takes effect on next spawn. Name changes re-publish kind:0.
 #[tauri::command]
 pub async fn update_managed_agent(
     input: UpdateManagedAgentRequest,
@@ -753,6 +750,13 @@ pub async fn update_managed_agent(
             state.clear_agent_session_caches(pubkey);
         }
 
+        let hermes_profile_update =
+            crate::managed_agents::hermes_profile::resolve_hermes_profile_update(
+                &input.hermes_profile,
+                &records,
+                &input.pubkey,
+                input.relay_url.as_deref(),
+            )?;
         let record = find_managed_agent_mut(&mut records, &input.pubkey)?;
         let previous_record = record.clone();
 
@@ -785,15 +789,8 @@ pub async fn update_managed_agent(
         if let Some(acp_command) = input.acp_command {
             record.acp_command = acp_command;
         }
-        // Harness edit: the persona's runtime is authoritative, so an explicit
-        // `agent_command_override` is persisted ONLY when the user picks a
-        // command that diverges from the persona, and the empty/whitespace
-        // "Inherit from persona" sentinel clears both the pin and the
-        // materialized record runtime. A name-only edit
-        // (`agent_command == None`) leaves the pin intact. `harness_override`
-        // threads the user's explicit intent — see `apply_agent_command_update`
-        // and `update_time_agent_command_override` for the full resolution
-        // rules.
+        // Harness edit: persona runtime is authoritative; override only when divergent.
+        // See apply_agent_command_update / update_time_agent_command_override.
         if let Some(agent_command) = input.agent_command {
             let personas = load_personas(&app).unwrap_or_default();
             crate::managed_agents::apply_agent_command_update(
@@ -805,6 +802,9 @@ pub async fn update_managed_agent(
         }
         if let Some(agent_args) = input.agent_args {
             record.agent_args = agent_args;
+        }
+        if let Some(p) = hermes_profile_update {
+            record.hermes_profile = p;
         }
         // mcp_command is intentionally not applied here — the effective MCP
         // command is always catalog-derived (known_acp_runtime at spawn time)

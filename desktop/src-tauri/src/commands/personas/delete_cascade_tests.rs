@@ -28,6 +28,7 @@ fn make_agent(
         agent_command: "buzz-agent".to_string(),
         agent_command_override: None,
         agent_args: vec![],
+        hermes_profile: None,
         mcp_command: "".to_string(),
         turn_timeout_seconds: 300,
         idle_timeout_seconds: None,

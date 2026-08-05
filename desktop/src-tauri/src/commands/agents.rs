@@ -584,13 +584,7 @@ pub async fn create_managed_agent(
     }
     crate::managed_agents::validate_user_env_keys(&input.env_vars)?;
 
-    // Validate & normalize the respond-to allowlist BEFORE any side effects.
-    // The harness has its own validator (buzz-acp/src/config.rs) but we want
-    // to catch malformed input at the boundary so the agent never tries to
-    // start with a list that will crash it on launch. The mode/allowlist
-    // pairing (and the definition-default fallback) is resolved later at the
-    // mint site via `resolve_mint_behavioral_defaults`, where the linked
-    // definition is in hand.
+    // Validate respond-to allowlist before side effects; mode pairing at mint.
     let respond_to_allowlist =
         crate::managed_agents::validate_respond_to_allowlist(&input.respond_to_allowlist)?;
     if input.respond_to == Some(crate::managed_agents::RespondTo::Allowlist)
@@ -702,6 +696,11 @@ pub async fn create_managed_agent(
         if records.iter().any(|record| record.pubkey == pubkey) {
             return Err(format!("agent {pubkey} already exists"));
         }
+        let hermes_profile = crate::managed_agents::hermes_profile::bind_hermes_profile_on_create(
+            input.hermes_profile.as_deref(),
+            &records,
+            &resolved_relay_url,
+        )?;
         // Provider config was already validated in Pre-Phase 2; cache the discovered binary path for deploy_to_provider.
         let provider_binary_path = if let BackendKind::Provider { ref id, .. } = input.backend {
             // Use resolve_provider_binary (discovered candidates only).
@@ -848,6 +847,7 @@ pub async fn create_managed_agent(
             agent_command,
             agent_command_override,
             agent_args,
+            hermes_profile: hermes_profile.clone(),
             mcp_command,
             // BUZZ_ACP_TURN_TIMEOUT is deprecated and ignored by the harness;
             // store the schema default only. Use idle_timeout_seconds or

@@ -169,6 +169,7 @@ mod tests {
             agent_command: "goose".to_string(),
             agent_command_override: None,
             agent_args: vec!["--flag".to_string()],
+            hermes_profile: None,
             mcp_command: "buzz-dev-mcp".to_string(),
             turn_timeout_seconds: 320,
             idle_timeout_seconds: None,
