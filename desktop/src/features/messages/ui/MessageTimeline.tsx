@@ -71,6 +71,14 @@ type MessageTimelineProps = {
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
   /** True when the timeline has the composer overlay below it. */
   hasComposerOverlay?: boolean;
+  /** Companion huddle transcripts are live conversations, not channel history. */
+  hideDayDividers?: boolean;
+  /** Show speaker identity on every row instead of grouping consecutive messages. */
+  alwaysShowMessageIdentity?: boolean;
+  /** Hide agent access-policy badges in the purpose-built Huddle chat. */
+  hideAgentAccessBadges?: boolean;
+  /** Stable context rendered above the timeline, including when it is empty. */
+  pinnedIntro?: React.ReactNode;
   isFetchingOlder?: boolean;
   messageFooters?: Record<string, React.ReactNode>;
   /** Map from lowercase pubkey → persona display name for bot members. */
@@ -85,6 +93,7 @@ type MessageTimelineProps = {
   onMarkUnread?: (message: TimelineMessage) => void;
   onMarkRead?: (message: TimelineMessage) => void;
   onReply?: (message: TimelineMessage) => void;
+  onOpenThread?: (message: TimelineMessage) => void;
   isSendingVideoReviewComment?: boolean;
   onSendVideoReviewComment?: (
     message: TimelineMessage,
@@ -164,6 +173,10 @@ const MessageTimelineBase = React.forwardRef<
     currentPubkey,
     fetchOlder,
     hasComposerOverlay = true,
+    hideDayDividers = false,
+    alwaysShowMessageIdentity = false,
+    hideAgentAccessBadges = false,
+    pinnedIntro,
     hasOlderMessages = true,
     historyExhausted = false,
     isFetchingOlder = false,
@@ -181,6 +194,7 @@ const MessageTimelineBase = React.forwardRef<
     onMarkUnread,
     onMarkRead,
     onReply,
+    onOpenThread,
     channelName,
     channelType,
     isSendingVideoReviewComment = false,
@@ -277,7 +291,10 @@ const MessageTimelineBase = React.forwardRef<
 
   const timelineBodySurface = selectTimelineBodySurface({
     deferredCount: deferredMessages.length,
-    hasPersistentIntro: channelIntro !== null || directMessageIntro !== null,
+    hasPersistentIntro:
+      channelIntro !== null ||
+      directMessageIntro !== null ||
+      pinnedIntro != null,
     isLoading: isLoading || isDeferredSnapshotStale,
     liveCount: messages.length,
   });
@@ -420,11 +437,16 @@ const MessageTimelineBase = React.forwardRef<
     ? directMessageIntro
     : null;
   const activeChannelIntro = showChannelIntro ? channelIntro : null;
+  const activePinnedIntro = pinnedIntro ?? null;
   const showIntro =
-    activeDirectMessageIntro !== null || activeChannelIntro !== null;
+    activeDirectMessageIntro !== null ||
+    activeChannelIntro !== null ||
+    activePinnedIntro !== null;
   const showGenericEmpty = timelineBodySurface === "empty" && !showIntro;
   const showMessageList = timelineBodySurface === "list";
   const showChannelIntroOnly = activeChannelIntro !== null && !showMessageList;
+  const showPinnedIntroOnly = activePinnedIntro !== null && !showMessageList;
+  const omitHistoryLeadIn = showChannelIntroOnly || showPinnedIntroOnly;
 
   const prepareForOwnMessage = React.useCallback(() => {
     // The user's own send is the deliberate Zulip exception: release buffered
@@ -589,7 +611,9 @@ const MessageTimelineBase = React.forwardRef<
 
   const virtualizedLeadingContent = React.useMemo(
     () =>
-      activeChannelIntro ? (
+      activePinnedIntro ? (
+        <div className="pt-3">{activePinnedIntro}</div>
+      ) : activeChannelIntro ? (
         <ChannelIntroBlock className="pb-4 pt-2" intro={activeChannelIntro} />
       ) : activeDirectMessageIntro ? (
         <div
@@ -611,7 +635,7 @@ const MessageTimelineBase = React.forwardRef<
           </p>
         </div>
       ) : null,
-    [activeChannelIntro, activeDirectMessageIntro],
+    [activeChannelIntro, activeDirectMessageIntro, activePinnedIntro],
   );
 
   const handleVirtualizerRangeChanged = React.useCallback(() => {
@@ -639,6 +663,9 @@ const MessageTimelineBase = React.forwardRef<
       leadingContent={virtualizedLeadingContent}
       historyExhausted={renderedHistoryExhausted}
       openThreadAnchorId={openThreadAnchorId}
+      hideDayDividers={hideDayDividers}
+      alwaysShowMessageIdentity={alwaysShowMessageIdentity}
+      hideAgentAccessBadges={hideAgentAccessBadges}
       threadSummaries={threadSummaries}
       messages={renderedMessages}
       onDelete={onDelete}
@@ -646,6 +673,7 @@ const MessageTimelineBase = React.forwardRef<
       onMarkUnread={onMarkUnread}
       onMarkRead={onMarkRead}
       onReply={onReply}
+      onOpenThread={onOpenThread}
       isSendingVideoReviewComment={isSendingVideoReviewComment}
       onSendVideoReviewComment={onSendVideoReviewComment}
       onStartReached={loadOlderViaVirtualizer}
@@ -672,8 +700,8 @@ const MessageTimelineBase = React.forwardRef<
         {showUnreadPill ? (
           <div
             className={cn(
-              "pointer-events-none absolute inset-x-0 z-30 flex translate-y-3 justify-center px-4",
-              channelChrome.top,
+              "pointer-events-none absolute inset-x-0 z-30 flex justify-center px-4",
+              channelChrome.stickyTimelineTop,
             )}
           >
             <UnreadPill
@@ -692,8 +720,8 @@ const MessageTimelineBase = React.forwardRef<
         isRenderedTimelineBehindHistoryPrepend(deferredMessages, messages) ? (
           <div
             className={cn(
-              "pointer-events-none absolute inset-x-0 z-30 flex translate-y-3 justify-center px-4",
-              channelChrome.top,
+              "pointer-events-none absolute inset-x-0 z-30 flex justify-center px-4",
+              channelChrome.stickyTimelineTop,
             )}
             data-testid="message-timeline-fetching-older"
           >
@@ -745,7 +773,7 @@ const MessageTimelineBase = React.forwardRef<
               )}
               ref={contentRef}
             >
-              {showChannelIntroOnly ? null : (
+              {omitHistoryLeadIn ? null : (
                 <div ref={topSentinelRef} aria-hidden className="h-px" />
               )}
 
@@ -753,9 +781,7 @@ const MessageTimelineBase = React.forwardRef<
                   stable across load-older fetches. The intro-only state has no
                   history to anchor, so omitting it matches the virtualized
                   leading row's top geometry when the first message arrives. */}
-              {showChannelIntroOnly ? null : (
-                <div aria-hidden className="h-8" />
-              )}
+              {omitHistoryLeadIn ? null : <div aria-hidden className="h-8" />}
 
               <div
                 className={cn(
@@ -790,6 +816,10 @@ const MessageTimelineBase = React.forwardRef<
                       .
                     </p>
                   </div>
+                ) : null}
+
+                {activePinnedIntro ? (
+                  <div className="pt-3">{activePinnedIntro}</div>
                 ) : null}
 
                 {activeChannelIntro ? (
@@ -835,8 +865,9 @@ const MessageTimelineBase = React.forwardRef<
         {!isAtBottom ? (
           <div
             className={cn(
-              "pointer-events-none absolute inset-x-0 z-50 flex justify-center px-4",
-              hasComposerOverlay ? "bottom-36" : "bottom-4",
+              "pointer-events-none absolute inset-x-0 bottom-4 z-50 flex justify-center px-4",
+              hasComposerOverlay &&
+                "translate-y-[calc(-1*var(--composer-overlay-height,8rem))] transform-gpu transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
             )}
           >
             <UnreadPill

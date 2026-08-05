@@ -3,7 +3,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use std::{io::Read, io::Write};
 
-use crate::managed_agents::InstallStepResult;
+use crate::managed_agents::{is_npm_global_install, InstallStepResult};
 
 const MANAGED_NODE_VERSION: &str = "v24.18.0";
 const MANAGED_NODE_MAX_BYTES: u64 = 90 * 1024 * 1024;
@@ -104,6 +104,56 @@ fn managed_node_failed_step(stderr: String) -> InstallStepResult {
 
 fn managed_node_runtime_ready() -> bool {
     crate::managed_agents::managed_node_runtime_probe_ok()
+}
+
+/// Returns `true` when the managed Node runtime is absent or no longer executes —
+/// meaning any existing npm adapter shims are broken and must be reinstalled.
+///
+/// This fires when the pinned Node version changes (e.g. v24.11.0 → v24.18.0):
+/// the old dir stays on disk, shims appear installed, but they fail at run time
+/// because the Node binary they reference is gone. Treating the adapter as
+/// missing forces `ensure_managed_node_runtime_blocking` to re-download Node and
+/// npm to reinstall the shims.
+pub(super) fn managed_node_orphaned() -> bool {
+    managed_node_runtime_supported() && !managed_node_runtime_ready()
+}
+
+/// Returns `true` when an adapter at `resolved` should be invalidated.
+///
+/// Only a Buzz-managed shim (path under `managed_prefix`) with an orphaned
+/// runtime is invalidated; external adapters are always preserved.
+pub(super) fn should_invalidate_adapter(
+    resolved: &std::path::Path,
+    managed_prefix: &std::path::Path,
+    orphaned: bool,
+) -> bool {
+    orphaned && resolved.starts_with(managed_prefix)
+}
+
+/// Resolve the adapter binary path, accounting for the Node-orphan case.
+/// Resolves first; invalidates only managed-prefix shims when Node is orphaned.
+pub(super) fn resolve_adapter_path(
+    commands: &[&str],
+    adapter_install_commands: &[&str],
+) -> Option<std::path::PathBuf> {
+    let resolved = commands
+        .iter()
+        .find_map(|cmd| crate::managed_agents::resolve_command(cmd));
+
+    let needs_managed_npm = adapter_install_commands
+        .iter()
+        .any(|cmd| is_npm_global_install(cmd));
+    if needs_managed_npm {
+        if let (Some(ref path), Some(ref managed_bin)) =
+            (&resolved, crate::managed_agents::buzz_managed_npm_bin_dir())
+        {
+            if should_invalidate_adapter(path, managed_bin, managed_node_orphaned()) {
+                return None;
+            }
+        }
+    }
+
+    resolved
 }
 
 fn managed_node_install_lock() -> &'static Mutex<()> {
@@ -603,5 +653,47 @@ mod tests {
             let err = verify_node_tree(tmp.path()).unwrap_err();
             assert!(err.contains("npm"), "err: {err}");
         }
+    }
+
+    // ── should_invalidate_adapter / orphan policy (ported from upstream v0.5.5) ─
+
+    #[test]
+    fn test_should_invalidate_adapter_invalidates_managed_shim_when_orphaned() {
+        let prefix = std::path::Path::new("/managed/npm/bin");
+        let shim = prefix.join("codex-acp");
+        assert!(
+            should_invalidate_adapter(&shim, prefix, true),
+            "managed shim + orphaned runtime must be invalidated"
+        );
+    }
+
+    #[test]
+    fn test_should_invalidate_adapter_keeps_external_adapter_when_orphaned() {
+        let prefix = std::path::Path::new("/managed/npm/bin");
+        let external = std::path::Path::new("/usr/local/bin/codex-acp");
+        assert!(
+            !should_invalidate_adapter(external, prefix, true),
+            "external adapter must not be invalidated even when Node is orphaned"
+        );
+    }
+
+    #[test]
+    fn test_should_invalidate_adapter_keeps_managed_shim_when_node_healthy() {
+        let prefix = std::path::Path::new("/managed/npm/bin");
+        let shim = prefix.join("codex-acp");
+        assert!(
+            !should_invalidate_adapter(&shim, prefix, false),
+            "managed shim must not be invalidated when Node is healthy"
+        );
+    }
+
+    #[test]
+    fn test_resolve_adapter_path_returns_none_when_binary_absent() {
+        let commands: &[&str] = &["nonexistent-buzz-test-binary-xyz"];
+        let adapter_install_commands: &[&str] = &["curl -fsSL https://example.com | bash"];
+        assert!(
+            resolve_adapter_path(commands, adapter_install_commands).is_none(),
+            "must return None when the command is not on PATH"
+        );
     }
 }

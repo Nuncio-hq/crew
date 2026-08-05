@@ -13,6 +13,7 @@ import { getIdentity } from "@/shared/api/tauriIdentity";
 import { clearTrayAgentActivity } from "@/shared/api/trayMenu";
 import { getOverrides } from "@/shared/features";
 import { resetMediaCaches } from "@/shared/lib/mediaUrl";
+import { resetLinkPreviewTitleCache } from "@/shared/lib/useResolvedLinkPreviews";
 import { clearSearchHitEventCache } from "@/app/navigation/searchHitEventCache";
 import {
   clearAllDrafts,
@@ -22,6 +23,7 @@ import { resetRenderScopedReactionHydration } from "@/features/messages/lib/rend
 import { resetProjectThreadGitHubStore } from "@/features/messages/lib/projectThreadGitHubStore";
 import { resetProjectWorktreeDetailsStore } from "@/features/agents/projectWorktreeDetailsStore";
 import { resetProjectWorktreeRegistryStore } from "@/features/agents/projectWorktreeRegistryStore";
+import { resetBackgroundMediaUploads } from "@/features/messages/lib/backgroundMediaUploadStore";
 import {
   resetActiveAgentTurnsStore,
   saveActiveAgentTurnsForCommunity,
@@ -77,8 +79,10 @@ function resetCommunityState({
   resetProjectThreadGitHubStore();
   resetProjectWorktreeRegistryStore();
   resetProjectWorktreeDetailsStore();
+  resetBackgroundMediaUploads();
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
+  resetLinkPreviewTitleCache();
 }
 
 type CommunityInitResult =

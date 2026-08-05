@@ -18,13 +18,23 @@ export function ProjectThreadBadgeChips({
       <span className="mx-1 text-muted-foreground/50">·</span>
       <span
         className={cn(
-          "inline-flex max-w-60 min-w-0 items-center gap-0.5 truncate",
+          "inline-flex max-w-60 min-w-0 items-center gap-0.5",
           badge.mono && "font-mono",
         )}
         title={badge.branch}
       >
         <span aria-hidden="true">⎇</span>
-        <span className="truncate">{branchText}</span>
+        <span
+          className={cn(
+            "truncate",
+            "[@container(max-width:659.9px)]:max-w-24",
+            "[@container(max-width:519.9px)]:max-w-16",
+            "[@container(max-width:419.9px)]:hidden",
+          )}
+          data-testid="project-thread-badge-branch-text"
+        >
+          {branchText}
+        </span>
       </span>
       {badge.pullRequests.map((pr) => (
         <React.Fragment key={pr.number}>
@@ -50,15 +60,21 @@ export function ProjectThreadBadgeChips({
         </>
       ) : null}
       {badge.diff ? (
-        <>
+        <span
+          className="[@container(max-width:659.9px)]:hidden"
+          data-testid="project-thread-badge-diff"
+        >
           <span className="mx-1 text-muted-foreground/50">·</span>
-          <span className="tabular-nums">
+          <span
+            className="tabular-nums"
+            title={`+${badge.diff.additions} −${badge.diff.deletions}`}
+          >
             <span className="text-emerald-600 dark:text-emerald-400">
               +{badge.diff.additions}
             </span>{" "}
             <span className="text-destructive">−{badge.diff.deletions}</span>
           </span>
-        </>
+        </span>
       ) : null}
     </span>
   );

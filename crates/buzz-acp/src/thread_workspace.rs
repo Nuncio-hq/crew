@@ -48,6 +48,8 @@ pub(crate) struct ThreadWorkspace {
 pub(crate) struct ThreadWorkspaceBranchConflict {
     worktree_path: PathBuf,
     current_branch: String,
+    detached_head: Option<String>,
+    automatic_recovery_safe: bool,
     expected_branch: String,
     git_errors: Vec<String>,
 }
@@ -57,9 +59,31 @@ impl ThreadWorkspaceBranchConflict {
         Self {
             worktree_path: worktree_path.to_path_buf(),
             current_branch,
+            detached_head: None,
+            automatic_recovery_safe: true,
             expected_branch: expected_branch.to_string(),
             git_errors: Vec::new(),
         }
+    }
+
+    fn detached(
+        worktree_path: &Path,
+        commit: String,
+        expected_branch: &str,
+        reachable_from_named_ref: bool,
+    ) -> Self {
+        Self {
+            worktree_path: worktree_path.to_path_buf(),
+            current_branch: format!("detached at {commit}"),
+            detached_head: Some(commit),
+            automatic_recovery_safe: reachable_from_named_ref,
+            expected_branch: expected_branch.to_string(),
+            git_errors: Vec::new(),
+        }
+    }
+
+    fn automatic_recovery_is_safe(&self) -> bool {
+        self.automatic_recovery_safe
     }
 
     fn record_git_error(&mut self, step: &str, stderr: &[u8]) {
@@ -81,14 +105,35 @@ impl ThreadWorkspaceBranchConflict {
 
 impl std::fmt::Display for ThreadWorkspaceBranchConflict {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "Worktree {} is on branch '{}' instead of expected branch '{}'. Preserve or finish any in-progress work, then run `{}`.",
-            self.worktree_path.display(),
-            self.current_branch,
-            self.expected_branch,
-            self.recovery_command()
-        )?;
+        if let Some(commit) = self.detached_head.as_deref() {
+            write!(
+                formatter,
+                "Worktree {} has a detached HEAD at '{}' instead of expected branch '{}'.",
+                self.worktree_path.display(),
+                commit,
+                self.expected_branch
+            )?;
+            if !self.automatic_recovery_safe {
+                write!(
+                    formatter,
+                    " Commit '{commit}' is not reachable from a named branch, remote, or tag; preserve it with a branch before recovery."
+                )?;
+            }
+            write!(
+                formatter,
+                " Preserve or finish any in-progress work, then run `{}`.",
+                self.recovery_command()
+            )?;
+        } else {
+            write!(
+                formatter,
+                "Worktree {} is on branch '{}' instead of expected branch '{}'. Preserve or finish any in-progress work, then run `{}`.",
+                self.worktree_path.display(),
+                self.current_branch,
+                self.expected_branch,
+                self.recovery_command()
+            )?;
+        }
         if !self.git_errors.is_empty() {
             write!(formatter, " Git reported: {}", self.git_errors.join("; "))?;
         }
@@ -209,7 +254,9 @@ pub async fn ensure_thread_worktree(
             None
         };
         if let Some(conflict) = branch_conflict.as_mut() {
-            if worktree_recovery_is_lossless(&worktree_path).await {
+            if conflict.automatic_recovery_is_safe()
+                && worktree_recovery_is_lossless(&worktree_path).await
+            {
                 let checkout = Command::new("git")
                     .arg("-C")
                     .arg(&worktree_path)
@@ -298,15 +345,51 @@ async fn foreign_branch_conflict(
     let common = git_output(path, ["rev-parse", "--git-common-dir"])
         .await
         .ok()?;
-    let current_branch = git_output(path, ["symbolic-ref", "--short", "HEAD"])
-        .await
-        .ok()?;
     let root = fs::canonicalize(root.trim()).ok()?;
     let common = canonical_git_path(&root, common.trim()).ok()?;
-    let current_branch = current_branch.trim();
-    (root == path && common == expected_common_git && current_branch != expected_branch).then(
-        || ThreadWorkspaceBranchConflict::new(path, current_branch.to_string(), expected_branch),
+    if root != path || common != expected_common_git {
+        return None;
+    }
+    if let Ok(current_branch) = git_output(path, ["symbolic-ref", "--short", "HEAD"]).await {
+        let current_branch = current_branch.trim();
+        return (current_branch != expected_branch).then(|| {
+            ThreadWorkspaceBranchConflict::new(path, current_branch.to_string(), expected_branch)
+        });
+    }
+
+    let commit = git_output(path, ["rev-parse", "--verify", "HEAD^{commit}"])
+        .await
+        .ok()?
+        .trim()
+        .to_string();
+    let reachable_from_named_ref = detached_head_reachable_from_named_ref(path, &commit).await;
+    Some(ThreadWorkspaceBranchConflict::detached(
+        path,
+        commit,
+        expected_branch,
+        reachable_from_named_ref,
+    ))
+}
+
+async fn detached_head_reachable_from_named_ref(path: &Path, commit: &str) -> bool {
+    let contains = format!("--contains={commit}");
+    let Ok(refs) = git_output(
+        path,
+        [
+            "for-each-ref",
+            "--count=1",
+            contains.as_str(),
+            "--format=%(refname)",
+            "refs/heads",
+            "refs/remotes",
+            "refs/tags",
+        ],
     )
+    .await
+    else {
+        return false;
+    };
+    !refs.trim().is_empty()
 }
 
 async fn worktree_recovery_is_lossless(path: &Path) -> bool {

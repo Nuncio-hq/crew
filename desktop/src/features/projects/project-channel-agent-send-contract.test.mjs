@@ -131,29 +131,78 @@ test("invalid Project workspace metadata blocks an explicit-agent send", async (
 });
 
 test("the send hook returns before clearing a draft when context resolution fails", async () => {
+  // Resolve/clear ordering lives in the Crew-extracted complete-send helper
+  // (D-022); the flow hook only wires it in.
+  //
+  // Two independent user-visible properties (do not collapse into one order scan):
+  // 1) resolve failure → draft is NOT cleared (throw skips clearComposer)
+  // 2) no-upload success → clearComposer runs after resolve, before await send
+  //    (atomic persistent audience; e2e can see composer change before send resolves)
   const source = await readFile(
-    new URL("../messages/ui/useMentionSendFlow.ts", import.meta.url),
+    new URL("../messages/ui/useMentionSendComplete.ts", import.meta.url),
     "utf8",
   );
-  const integration = source.slice(
-    source.indexOf("let finalContent = draft.finalContent"),
-    source.indexOf(
-      "await onSendRef.current(",
-      source.indexOf("let finalContent"),
-    ),
-  );
-  const resolverIndex = integration.indexOf(
-    "await resolveCurrentProjectChannelAgentMessage",
-  );
-  const failureReturnIndex = integration.indexOf(
-    "return;",
-    integration.indexOf("Could not resolve Project workspace"),
-  );
-  const clearComposerIndex = integration.indexOf("clearComposer(");
+  const finishSendIndex = source.indexOf("const finishSend = async");
+  assert.ok(finishSendIndex >= 0);
 
+  const resolverIndex = source.indexOf(
+    "await resolveCurrentProjectChannelAgentMessage",
+    finishSendIndex,
+  );
   assert.ok(resolverIndex >= 0);
-  assert.ok(failureReturnIndex > resolverIndex);
-  assert.ok(clearComposerIndex > failureReturnIndex);
+
+  const failureMessageIndex = source.indexOf(
+    "Could not resolve Project workspace",
+    resolverIndex,
+  );
+  assert.ok(failureMessageIndex >= 0);
+  assert.ok(failureMessageIndex > resolverIndex);
+
+  const failureThrowIndex = source.indexOf("throw error", failureMessageIndex);
+  assert.ok(failureThrowIndex >= 0);
+  assert.ok(failureThrowIndex > failureMessageIndex);
+
+  // Independent of success-path ordering: the resolve→throw slice must not
+  // clear the draft. Order-only asserts on the happy path would pass even if
+  // this failure branch wiped content.
+  const resolveToThrowSlice = source.slice(resolverIndex, failureThrowIndex);
+  assert.equal(
+    resolveToThrowSlice.includes("clearComposer("),
+    false,
+    "resolve-fail path must not call clearComposer before throw",
+  );
+
+  const clearAfterResolveIndex = source.indexOf(
+    "clearAfterResolve &&",
+    failureThrowIndex,
+  );
+  assert.ok(clearAfterResolveIndex >= 0);
+  assert.ok(clearAfterResolveIndex > failureThrowIndex);
+
+  const clearComposerIndex = source.indexOf(
+    "clearComposer(",
+    clearAfterResolveIndex,
+  );
+  assert.ok(clearComposerIndex >= 0);
+  assert.ok(clearComposerIndex > clearAfterResolveIndex);
+
+  const networkSendIndex = source.indexOf("await send(", clearComposerIndex);
+  assert.ok(networkSendIndex >= 0);
+  assert.ok(networkSendIndex > clearComposerIndex);
+
+  const noUploadFinishCall = source.indexOf(
+    "await finishSend([], undefined, true)",
+    networkSendIndex,
+  );
+  assert.ok(noUploadFinishCall >= 0);
+  assert.ok(noUploadFinishCall > networkSendIndex);
+
+  // No-upload path must not clear again after finishSend returns.
+  const clearAfterNoUploadCall = source.indexOf(
+    "clearComposer(",
+    noUploadFinishCall,
+  );
+  assert.equal(clearAfterNoUploadCall, -1);
 });
 
 test("fresh fetch is scoped to the current identity and ignores other owners", async () => {

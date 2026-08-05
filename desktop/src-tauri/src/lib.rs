@@ -1,4 +1,5 @@
 #![recursion_limit = "256"] // Deep Tauri command futures exceed the default layout query depth.
+mod app_menu;
 mod app_state;
 mod archive;
 mod builderlab;
@@ -30,9 +31,13 @@ mod ptt_shortcut;
 mod relay;
 mod relay_admission;
 mod reset;
+mod run_lifecycle;
 mod secret_store;
 mod shutdown;
 mod templates;
+mod terminal_runtime;
+#[cfg_attr(not(test), allow(dead_code))]
+mod terminal_transport;
 #[cfg(target_os = "macos")]
 mod tray_menu;
 mod util;
@@ -50,17 +55,14 @@ use huddle::audio_output::{
 };
 use huddle::reconnect::reconnect_huddle_audio;
 use huddle::{
-    add_agent_to_huddle, check_pipeline_hotstart, confirm_huddle_active, download_voice_models,
-    end_huddle, get_huddle_agent_pubkeys, get_huddle_state, get_model_status, get_voice_input_mode,
-    join_huddle, leave_huddle, push_audio_pcm, set_huddle_transcription_enabled, set_tts_enabled,
-    set_voice_input_mode, speak_agent_message, start_huddle, start_stt_pipeline,
+    add_agent_to_huddle, check_pipeline_hotstart, close_huddle_companion, confirm_huddle_active,
+    download_voice_models, end_huddle, get_huddle_agent_pubkeys, get_huddle_state,
+    get_model_status, get_voice_input_mode, interrupt_huddle_speech, join_huddle, leave_huddle,
+    open_huddle_window, push_audio_pcm, remove_agent_from_huddle, set_huddle_manual_mic_unmuted,
+    set_huddle_transcription_enabled, set_tts_enabled, set_voice_input_mode, speak_agent_message,
+    start_huddle, start_stt_pipeline,
 };
-use initial_window::reveal_initial_window;
-#[cfg(target_os = "macos")]
-use initial_window::{
-    clear_initial_window_backing, set_initial_window_backing,
-    wait_for_stable_initial_window_geometry,
-};
+use initial_window::*;
 use managed_agents::{
     backfill_persona_snapshots, ensure_nest, list_managed_agent_runtimes,
     put_managed_agent_runtime_lifecycle, reconcile_managed_agent_runtimes,
@@ -69,22 +71,11 @@ use managed_agents::{
 };
 #[cfg(not(feature = "mesh-llm"))]
 use mesh_llm_stubs::*;
-#[cfg(all(feature = "mesh-llm", target_os = "macos"))]
-use shutdown::{hard_exit_after_mesh_shutdown, relaunch_after_mesh_shutdown};
-use shutdown::{is_restart_request, shut_down_app};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
-use tauri::{Emitter, Manager, RunEvent};
+use std::sync::{atomic::AtomicBool, Arc};
 #[cfg(target_os = "macos")]
-use tauri::{Listener, WindowEvent};
+use tauri::Listener;
+use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::StateFlags;
-#[cfg(target_os = "macos")]
-use tray_menu::show_main_window;
-
-#[cfg(target_os = "macos")]
-const INITIAL_RENDER_READY_EVENT: &str = "initial-render-ready";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -115,7 +106,6 @@ pub fn run() {
             eprintln!("buzz-mesh: failed to build big-stack tokio runtime, using default: {error}");
         }
     }
-
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // Focus the existing window when a duplicate instance launches.
@@ -297,10 +287,7 @@ pub fn run() {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     };
 
-    #[cfg(not(buzz_updater_enabled))]
-    let builder = builder;
-
-    let app = builder
+    let app = app_menu::install(builder)
         .register_asynchronous_uri_scheme_protocol("buzz-media", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -314,6 +301,7 @@ pub fn run() {
         .manage(BuilderlabSession::default())
         .manage(BuilderlabLogin::default())
         .manage(commands::pairing::PairingHandle::new())
+        .manage(terminal_runtime::TerminalSessions::default())
         .setup(move |app| {
             let app_handle = app.handle().clone();
             #[cfg(target_os = "macos")]
@@ -549,7 +537,7 @@ pub fn run() {
             if restore_agents && !recovery_mode {
                 state
                     .managed_agent_restore_pending
-                    .store(true, Ordering::Release);
+                    .store(true, std::sync::atomic::Ordering::Release);
             }
 
             // Periodic sweep: reap orphaned agents from dead instances every 60s.
@@ -617,10 +605,18 @@ pub fn run() {
                     }
                 });
             }
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            terminal_runtime::terminal_attach,
+            terminal_runtime::terminal_detach,
+            terminal_runtime::terminal_close,
+            terminal_runtime::terminal_input,
+            terminal_runtime::terminal_resize,
+            terminal_runtime::terminal_scroll,
+            terminal_runtime::terminal_ack,
+            terminal_runtime::terminal_viewport_ready,
+            terminal_runtime::terminal_focus,
             take_pending_community_deep_link,
             acknowledge_pending_community_deep_link,
             start_builderlab_login,
@@ -746,12 +742,15 @@ pub fn run() {
             pick_and_upload_media,
             pick_and_upload_image,
             upload_media_bytes,
+            upload_media_bytes_raw,
+            cancel_media_upload,
             download_image,
             save_png_data_url,
             download_file,
             fetch_media_bytes,
             copy_image_to_clipboard,
             copy_text_to_clipboard,
+            read_clipboard_text,
             fetch_snapshot_bytes,
             relay_requires_membership,
             list_relay_members,
@@ -816,6 +815,12 @@ pub fn run() {
             update_team,
             delete_team,
             export_agent_snapshot,
+            card_mint_key_status,
+            card_mint_save_openai_key,
+            mint_agent_card,
+            save_agent_card,
+            list_agent_cards,
+            load_agent_card,
             preview_agent_snapshot_import,
             confirm_agent_snapshot_import,
             encode_agent_snapshot_for_send,
@@ -847,6 +852,8 @@ pub fn run() {
             leave_huddle,
             end_huddle,
             get_huddle_state,
+            close_huddle_companion,
+            open_huddle_window,
             push_audio_pcm,
             reconnect_huddle_audio,
             start_stt_pipeline,
@@ -860,14 +867,21 @@ pub fn run() {
             huddle::tts_settings::preview_pocket_voice,
             huddle::tts_settings::import_pocket_voice,
             huddle::tts_settings::delete_pocket_voice,
+            huddle::agent_voice::ensure_huddle_agent_voice_settings,
+            huddle::agent_voice::set_huddle_agent_tts_enabled,
+            huddle::agent_voice::set_huddle_agent_voice,
             speak_agent_message,
+            interrupt_huddle_speech,
             add_agent_to_huddle,
+            remove_agent_from_huddle,
+            huddle::agents::sync_agents_to_active_huddle,
             check_pipeline_hotstart,
             confirm_huddle_active,
             perform_sidebar_default_haptic,
             get_huddle_agent_pubkeys,
             set_voice_input_mode,
             get_voice_input_mode,
+            set_huddle_manual_mic_unmuted,
             list_audio_output_devices,
             set_audio_output_device,
             get_audio_output_device,
@@ -908,7 +922,6 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
-
     let shutdown_done = Arc::new(AtomicBool::new(false));
 
     #[cfg(unix)]
@@ -916,46 +929,7 @@ pub fn run() {
 
     let run_shutdown_done = Arc::clone(&shutdown_done);
     let restart_requested = Arc::new(AtomicBool::new(false));
-    app.run(move |app_handle, event| match event {
-        #[cfg(target_os = "macos")]
-        RunEvent::Reopen { .. } => show_main_window(app_handle),
-        #[cfg(target_os = "macos")]
-        RunEvent::WindowEvent {
-            label,
-            event: WindowEvent::CloseRequested { api, .. },
-            ..
-        } if label == "main" => {
-            // Keep the webview alive so Buzz can be reopened from its tray menu.
-            api.prevent_close();
-            if let Some(window) = app_handle.get_webview_window("main") {
-                if let Err(error) = window.hide() {
-                    eprintln!("buzz-desktop: failed to hide main window: {error}");
-                }
-            }
-        }
-        RunEvent::ExitRequested { code, .. } => {
-            if is_restart_request(code) {
-                restart_requested.store(true, Ordering::SeqCst);
-            }
-            shut_down_app(app_handle, &run_shutdown_done);
-        }
-        RunEvent::Exit => {
-            shut_down_app(app_handle, &run_shutdown_done);
-            app_handle.state::<ClipboardState>().release();
-
-            #[cfg(all(feature = "mesh-llm", target_os = "macos"))]
-            if restart_requested.load(Ordering::SeqCst) {
-                relaunch_after_mesh_shutdown(app_handle);
-            }
-
-            // AppKit terminates through libc exit(), which runs C++ static
-            // destructors. The embedded ggml/Metal runtime currently aborts in
-            // that destructor phase even after its node has stopped cleanly.
-            // End the process only after Buzz and Mesh shutdown above, while
-            // deliberately skipping those native global destructors.
-            #[cfg(all(feature = "mesh-llm", target_os = "macos"))]
-            hard_exit_after_mesh_shutdown();
-        }
-        _ => {}
+    app.run(move |app_handle, event| {
+        run_lifecycle::drive(app_handle, event, &run_shutdown_done, &restart_requested);
     });
 }

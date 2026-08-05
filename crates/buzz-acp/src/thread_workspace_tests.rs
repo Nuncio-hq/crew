@@ -241,6 +241,154 @@ async fn merge_in_progress_refuses_foreign_branch_recovery() {
 }
 
 #[tokio::test]
+async fn reachable_clean_detached_head_recovers() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "8".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    let expected_commit =
+        git_output(&created.worktree_path, &["rev-parse", "buzz/888888888888"]).await;
+    let feature_commit = checkout_feature_with_commit(&created.worktree_path).await;
+    let detached_commit = detach_head(&created.worktree_path).await;
+    assert_eq!(detached_commit, feature_commit);
+    assert!(
+        !named_refs_containing(&created.worktree_path, &detached_commit)
+            .await
+            .is_empty(),
+        "fixture commit must remain reachable from a named ref"
+    );
+
+    let recovered = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("reachable clean detached HEAD recovers");
+
+    assert_eq!(recovered.branch, "buzz/888888888888");
+    assert_eq!(
+        git_output(&created.worktree_path, &["symbolic-ref", "--short", "HEAD"]).await,
+        "buzz/888888888888"
+    );
+    assert_eq!(
+        git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await,
+        expected_commit
+    );
+    assert_eq!(
+        git_output(&created.worktree_path, &["rev-parse", "feature"]).await,
+        detached_commit,
+        "recovery must preserve the detached commit through its named ref"
+    );
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn unreachable_detached_commit_refuses_recovery_and_names_commit() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "a".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    detach_head(&created.worktree_path).await;
+    fs::write(created.worktree_path.join("DETACHED.md"), "preserve commit").expect("detached file");
+    run_git(&created.worktree_path, &["add", "DETACHED.md"]).await;
+    run_git(
+        &created.worktree_path,
+        &["commit", "-m", "unreachable detached commit"],
+    )
+    .await;
+    let detached_commit = git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await;
+    assert_eq!(
+        git_output(&created.worktree_path, &["status", "--porcelain"]).await,
+        "",
+        "fixture must be clean before recovery"
+    );
+    assert_eq!(
+        named_refs_containing(&created.worktree_path, &detached_commit).await,
+        "",
+        "fixture commit must not be reachable from a named branch"
+    );
+
+    let error = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect_err("unreachable detached commit must not recover");
+
+    assert_branch_conflict_error(
+        &error,
+        &created.worktree_path,
+        &detached_commit,
+        "buzz/aaaaaaaaaaaa",
+    );
+    assert!(
+        error.to_string().contains("detached"),
+        "error must identify detached HEAD: {error}"
+    );
+    assert!(
+        error.to_string().contains("not reachable")
+            && error.to_string().contains("preserve it with a branch"),
+        "error must explain how to preserve the detached commit: {error}"
+    );
+    assert_eq!(
+        git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await,
+        detached_commit,
+        "recovery must preserve the unreachable commit"
+    );
+    assert!(
+        git_output(&created.worktree_path, &["branch", "--show-current"])
+            .await
+            .is_empty(),
+        "HEAD must remain detached"
+    );
+    assert_eq!(
+        fs::read_to_string(created.worktree_path.join("DETACHED.md"))
+            .expect("detached file remains"),
+        "preserve commit"
+    );
+    assert_eq!(
+        named_refs_containing(&created.worktree_path, &detached_commit).await,
+        "",
+        "refusing recovery must not create a named ref"
+    );
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn dirty_detached_head_refuses_recovery() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "c".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    let detached_commit = detach_head(&created.worktree_path).await;
+    let dirty_path = created.worktree_path.join("DIRTY-DETACHED.md");
+    fs::write(&dirty_path, "do not discard").expect("dirty detached file");
+
+    let error = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect_err("dirty detached HEAD must not recover");
+
+    assert_branch_conflict_error(
+        &error,
+        &created.worktree_path,
+        &detached_commit,
+        "buzz/cccccccccccc",
+    );
+    assert_eq!(
+        git_output(&created.worktree_path, &["rev-parse", "HEAD"]).await,
+        detached_commit
+    );
+    assert!(
+        git_output(&created.worktree_path, &["branch", "--show-current"])
+            .await
+            .is_empty(),
+        "HEAD must remain detached"
+    );
+    assert_eq!(
+        fs::read_to_string(dirty_path).expect("dirty detached file remains"),
+        "do not discard"
+    );
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
 async fn reattach_failure_reports_the_path_conflict_stderr() {
     let (fixture, workspace, _) = git_fixture().await;
     let root = "0".repeat(64);
@@ -311,6 +459,29 @@ async fn checkout_feature_with_commit(worktree_path: &std::path::Path) -> String
     run_git(worktree_path, &["add", "FEATURE.md"]).await;
     run_git(worktree_path, &["commit", "-m", "feature commit"]).await;
     git_output(worktree_path, &["rev-parse", "feature"]).await
+}
+
+async fn detach_head(worktree_path: &std::path::Path) -> String {
+    let head = git_output(worktree_path, &["rev-parse", "HEAD"]).await;
+    run_git(worktree_path, &["checkout", "--detach", &head]).await;
+    head
+}
+
+async fn named_refs_containing(worktree_path: &std::path::Path, commit: &str) -> String {
+    let contains = format!("--contains={commit}");
+    git_output(
+        worktree_path,
+        &[
+            "for-each-ref",
+            "--count=1",
+            contains.as_str(),
+            "--format=%(refname)",
+            "refs/heads",
+            "refs/remotes",
+            "refs/tags",
+        ],
+    )
+    .await
 }
 
 #[tokio::test]

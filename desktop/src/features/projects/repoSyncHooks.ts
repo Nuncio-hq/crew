@@ -6,14 +6,20 @@ import {
   pullProjectLocalRepository,
   pushProjectLocalRepository,
 } from "@/shared/api/projectGit";
-import type { Project, ProjectPullRequest } from "@/features/projects/hooks";
+import type {
+  ProjectPullRequest,
+  Repository as Project,
+} from "@/features/projects/hooks";
+import { firstCloneUrl } from "@/features/projects/lib/projectCloneUrl";
+import { useProjectRepoHost } from "@/features/projects/useProjectRepoHost";
 import { publishProjectPullRequestUpdate } from "./pullRequestMutations";
 
 function mutableManagedProject(project: Project | null | undefined): Project {
   if (project?.localWorkspacePath) {
     throw new Error("Linked workspaces are read-only.");
   }
-  if (!project?.cloneUrls[0]) throw new Error("No project selected.");
+  const cloneUrl = firstCloneUrl(project);
+  if (!project || !cloneUrl) throw new Error("No project selected.");
   return project;
 }
 
@@ -29,9 +35,13 @@ export function useProjectRepoSyncStatusQuery(
 ) {
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
   const selectedBaseBranch = baseBranch ?? project?.defaultBranch ?? null;
+  const host = useProjectRepoHost(project);
+  const cloneUrl = firstCloneUrl(project);
 
   return useQuery({
-    enabled: Boolean(project?.cloneUrls[0] && !project?.localWorkspacePath),
+    enabled: Boolean(
+      host.kind === "buzz" && cloneUrl && !project?.localWorkspacePath,
+    ),
     queryKey: [
       "project",
       project?.id ?? "none",
@@ -42,11 +52,11 @@ export function useProjectRepoSyncStatusQuery(
       selectedBaseBranch ?? "default",
     ],
     queryFn: () => {
-      if (!project?.cloneUrls[0]) throw new Error("No project selected.");
+      if (!cloneUrl || !project) throw new Error("No project selected.");
       return getProjectRepoSyncStatus({
         reposDir,
         projectDtag: project.dtag,
-        cloneUrl: project.cloneUrls[0],
+        cloneUrl,
         branchName: selectedBranch,
         baseBranch: selectedBaseBranch,
       });
@@ -71,10 +81,12 @@ export function usePushProjectLocalRepositoryMutation(
   return useMutation({
     mutationFn: async () => {
       const mutableProject = mutableManagedProject(project);
+      const cloneUrl = firstCloneUrl(mutableProject);
+      if (!cloneUrl) throw new Error("No project selected.");
       const result = await pushProjectLocalRepository({
         reposDir,
         projectDtag: mutableProject.dtag,
-        cloneUrl: mutableProject.cloneUrls[0],
+        cloneUrl,
         branchName: selectedBranch,
         baseBranch: mutableProject.defaultBranch,
       });
@@ -125,10 +137,12 @@ export function useCloneProjectRepositoryMutation(
   return useMutation({
     mutationFn: () => {
       const mutableProject = mutableManagedProject(project);
+      const cloneUrl = firstCloneUrl(mutableProject);
+      if (!cloneUrl) throw new Error("No project selected.");
       return cloneProjectRepository({
         reposDir,
         projectDtag: mutableProject.dtag,
-        cloneUrl: mutableProject.cloneUrls[0],
+        cloneUrl,
         defaultBranch: mutableProject.defaultBranch,
       });
     },
@@ -160,10 +174,12 @@ export function usePullProjectLocalRepositoryMutation(
   return useMutation({
     mutationFn: () => {
       const mutableProject = mutableManagedProject(project);
+      const cloneUrl = firstCloneUrl(mutableProject);
+      if (!cloneUrl) throw new Error("No project selected.");
       return pullProjectLocalRepository({
         reposDir,
         projectDtag: mutableProject.dtag,
-        cloneUrl: mutableProject.cloneUrls[0],
+        cloneUrl,
         branchName: selectedBranch,
       });
     },

@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
 import type {
   TimelineThreadSummary,
   TimelineThreadSummaryParticipant,
@@ -18,6 +19,8 @@ import {
   THREAD_REPLY_ROW_MARGIN_INLINE_REM,
 } from "@/features/messages/lib/threadTreeLayout";
 import { ProjectThreadBadgeChips } from "@/features/messages/ui/ProjectThreadBadgeChips";
+import { ThreadAgentStatusChip } from "@/features/messages/ui/ThreadAgentStatusChip";
+import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { cn } from "@/shared/lib/cn";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
 
@@ -36,7 +39,13 @@ function ParticipantAvatar({
 }) {
   return (
     <div
-      className={index > 0 ? "-ml-1" : ""}
+      className={cn(
+        index > 0 ? "-ml-1" : "",
+        // S: cap at 2 avatars; XS: cap at 1. Hidden avatars stay in the DOM
+        // for screen readers via the row aria-label / title elsewhere.
+        index >= 2 && "[@container(max-width:519.9px)]:hidden",
+        index >= 1 && "[@container(max-width:419.9px)]:hidden",
+      )}
       data-testid="message-thread-summary-participant"
       style={{
         zIndex: index + 1,
@@ -59,6 +68,7 @@ function ParticipantAvatar({
 
 export function MessageThreadSummaryRow({
   badge: badgeProp,
+  channelId,
   collapseDepthGuideActions,
   depth = 0,
   depthGuideDepths,
@@ -68,12 +78,14 @@ export function MessageThreadSummaryRow({
   onCollapseDepthGuide,
   onCollapseDepthGuideHoverChange,
   onOpenThread,
+  profiles,
   showDepthGuides = true,
   summary,
   summaryIndentOffsetRem = 0,
   unreadCount,
 }: {
   badge?: ProjectThreadBadge | null;
+  channelId?: string | null;
   collapseDepthGuideActions?: ReadonlyArray<ThreadDepthGuideAction>;
   depth?: number;
   depthGuideDepths?: ReadonlyArray<number>;
@@ -87,6 +99,7 @@ export function MessageThreadSummaryRow({
     hovered: boolean,
   ) => void;
   onOpenThread: (message: TimelineMessage) => void;
+  profiles?: UserProfileLookup;
   showDepthGuides?: boolean;
   summary: TimelineThreadSummary;
   summaryIndentOffsetRem?: number;
@@ -96,6 +109,12 @@ export function MessageThreadSummaryRow({
     badgeProp === undefined ? message : null,
   );
   const badge = badgeProp === undefined ? derivedBadge : badgeProp;
+  // ACP conversation ids are derived from channel + thread-head event id —
+  // same seam as composer bot activity and pending agent requests.
+  const conversationId = React.useMemo(
+    () => deriveAgentConversationIdOrNull(channelId, message.id),
+    [channelId, message.id],
+  );
   const indentRem = getThreadReplyIndentRem(depth);
   const hoverLeftRem =
     indentRem + THREAD_REPLY_ROW_MARGIN_INLINE_REM + summaryIndentOffsetRem;
@@ -107,12 +126,15 @@ export function MessageThreadSummaryRow({
     THREAD_SUMMARY_SURFACE_AVATAR_INSET_REM,
   )})`;
   const replyLabel = summary.replyCount === 1 ? "reply" : "replies";
+  const lastReplyLabel = summary.lastReplyAt
+    ? `last reply ${formatThreadSummaryLastReplyTime(summary.lastReplyAt)}`
+    : null;
   const summaryAriaLabel = isActive
     ? summary.lastReplyAt
-      ? `Viewing thread with ${summary.replyCount} ${replyLabel}, last reply ${formatThreadSummaryLastReplyTime(summary.lastReplyAt)}`
+      ? `Viewing thread with ${summary.replyCount} ${replyLabel}, ${lastReplyLabel}`
       : `Viewing thread with ${summary.replyCount} ${replyLabel}`
     : summary.lastReplyAt
-      ? `View thread with ${summary.replyCount} ${replyLabel}, last reply ${formatThreadSummaryLastReplyTime(summary.lastReplyAt)}`
+      ? `View thread with ${summary.replyCount} ${replyLabel}, ${lastReplyLabel}`
       : `View thread with ${summary.replyCount} ${replyLabel}`;
   const guideDepths = depthGuideDepths
     ? [...depthGuideDepths]
@@ -126,7 +148,7 @@ export function MessageThreadSummaryRow({
   );
 
   return (
-    <div className="relative pb-1 pt-0.5">
+    <div className="relative w-full [container-type:inline-size] pb-1 pt-0.5">
       {showDepthGuides && depthGuideItems.length > 0 ? (
         <div
           aria-hidden={
@@ -227,7 +249,7 @@ export function MessageThreadSummaryRow({
       <button
         aria-label={summaryAriaLabel}
         className={cn(
-          "group relative isolate inline-flex h-[1.875rem] w-fit max-w-full cursor-pointer items-center gap-1.5 rounded-full py-0 pr-3 text-left text-xs font-medium transition-[color,opacity] focus-visible:outline-hidden",
+          "group relative isolate inline-flex min-h-[1.875rem] w-fit max-w-full cursor-pointer items-center gap-1.5 rounded-full py-0 pr-3 text-left text-xs font-medium transition-[color,opacity] focus-visible:outline-hidden",
           isActive
             ? "text-foreground"
             : "text-muted-foreground hover:text-foreground hover:opacity-90",
@@ -267,64 +289,85 @@ export function MessageThreadSummaryRow({
           ))}
         </div>
         <div className="relative z-10 min-w-0">
-          <div>
+          <div className="flex flex-wrap items-center">
             <span
               className={cn(
                 "font-medium transition-colors",
                 !isActive && "group-hover:text-foreground",
               )}
+              title={`${summary.replyCount} ${replyLabel}`}
             >
-              {summary.replyCount} {replyLabel}
+              {summary.replyCount}
+              <span className="[@container(max-width:519.9px)]:hidden">
+                {" "}
+                {replyLabel}
+              </span>
             </span>
             {unreadCount != null && unreadCount > 0 ? (
               <span className="ml-1" data-testid="thread-unread-badge">
                 ({unreadCount} new)
               </span>
             ) : null}
-            {summary.lastReplyAt ? (
-              <>
-                <span className="mx-1 font-normal text-muted-foreground/50">
-                  ·
-                </span>
-                {isActive ? (
-                  <span
-                    className="font-normal text-muted-foreground/70"
-                    data-testid="message-thread-summary-hover-action"
-                  >
-                    Viewing thread
-                  </span>
+            {summary.lastReplyAt || isActive ? (
+              <span
+                className="[@container(max-width:659.9px)]:hidden"
+                data-testid="message-thread-summary-last-reply-wrap"
+                title={
+                  lastReplyLabel ?? (isActive ? "Viewing thread" : undefined)
+                }
+              >
+                {summary.lastReplyAt ? (
+                  <>
+                    <span className="mx-1 font-normal text-muted-foreground/50">
+                      ·
+                    </span>
+                    {isActive ? (
+                      <span
+                        className="font-normal text-muted-foreground/70"
+                        data-testid="message-thread-summary-hover-action"
+                      >
+                        Viewing thread
+                      </span>
+                    ) : (
+                      <span className="inline-grid font-normal text-muted-foreground/70">
+                        <span
+                          className="col-start-1 row-start-1 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
+                          data-testid="message-thread-summary-last-reply"
+                        >
+                          last reply{" "}
+                          {formatThreadSummaryLastReplyTime(
+                            summary.lastReplyAt,
+                          )}
+                        </span>
+                        <span
+                          className="col-start-1 row-start-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                          data-testid="message-thread-summary-hover-action"
+                        >
+                          View thread
+                        </span>
+                      </span>
+                    )}
+                  </>
                 ) : (
-                  <span className="inline-grid font-normal text-muted-foreground/70">
-                    <span
-                      className="col-start-1 row-start-1 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
-                      data-testid="message-thread-summary-last-reply"
-                    >
-                      last reply{" "}
-                      {formatThreadSummaryLastReplyTime(summary.lastReplyAt)}
+                  <>
+                    <span className="mx-1 font-normal text-muted-foreground/50">
+                      ·
                     </span>
                     <span
-                      className="col-start-1 row-start-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                      className="font-normal text-muted-foreground/70"
                       data-testid="message-thread-summary-hover-action"
                     >
-                      View thread
+                      Viewing thread
                     </span>
-                  </span>
+                  </>
                 )}
-              </>
-            ) : isActive ? (
-              <>
-                <span className="mx-1 font-normal text-muted-foreground/50">
-                  ·
-                </span>
-                <span
-                  className="font-normal text-muted-foreground/70"
-                  data-testid="message-thread-summary-hover-action"
-                >
-                  Viewing thread
-                </span>
-              </>
+              </span>
             ) : null}
             {badge ? <ProjectThreadBadgeChips badge={badge} /> : null}
+            <ThreadAgentStatusChip
+              conversationId={conversationId}
+              profiles={profiles}
+            />
           </div>
         </div>
       </button>

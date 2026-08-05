@@ -9,7 +9,9 @@ use super::managed_adapter_install::{
     reclaim_legacy_unscoped_npm_prefix, sibling_adapter_reinstall_failure_step,
     sibling_runtimes_to_reinstall_after_purge,
 };
-use super::managed_node::{ensure_managed_node_runtime_blocking, managed_node_runtime_supported};
+use super::managed_node::{
+    ensure_managed_node_runtime_blocking, managed_node_runtime_supported, resolve_adapter_path,
+};
 use super::post_install_verification;
 
 fn active_installs() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
@@ -287,10 +289,9 @@ pub(super) fn install_acp_runtime_blocking(
         }
     }
 
-    let adapter_path = runtime
-        .commands
-        .iter()
-        .find_map(|cmd| crate::managed_agents::resolve_command(cmd));
+    // Upstream v0.5.5 orphan policy: when managed Node is gone/broken, treat
+    // managed-prefix shims as missing so install re-downloads Node + adapters.
+    let adapter_path = resolve_adapter_path(runtime.commands, runtime.adapter_install_commands);
     let adapter_probe_path = crate::managed_agents::readiness::cli_probe::augmented_path();
     let planned_cmds = if force_adapter_reinstall {
         Some(runtime.adapter_install_commands.to_vec())
