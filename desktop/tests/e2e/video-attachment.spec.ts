@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 
+import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
 import { expectCornerRadiusPx, expectSmoothCorners } from "../helpers/css";
 
@@ -1031,8 +1032,14 @@ test("right-click menus expose distinct selectors for links, relay video, and of
     sha: MENU_RELAY_VIDEO_SHA,
     filename: "relay-clip.mp4",
   });
+  // The mock emitter publishes before React appends the new row; wait for the
+  // player count so `.last()` cannot probe a not-yet-mounted player.
+  await expect(page.getByTestId("video-player")).toHaveCount(1);
   const relayPlayer = page.getByTestId("video-player").last();
   await expect(relayPlayer).toBeVisible();
+  // Video controls finish mounting after the player becomes visible; wait for
+  // that layout/animation settle before routing the captured context menu.
+  await waitForAnimations(page);
   // Right-click the player surface. `force` skips the actionability guard: the
   // Play-button overlay sits above the video, but the contextmenu event still
   // capture-bubbles to the surface handler that opens the menu.
@@ -1077,8 +1084,19 @@ test("right-click menus expose distinct selectors for links, relay video, and of
     sha: MENU_OFF_RELAY_VIDEO_SHA,
     filename: "external-clip.mp4",
   });
-  const offRelayPlayer = page.getByTestId("video-player").last();
+  // Without this render barrier `.last()` can still target the relay player,
+  // making the off-relay Download assertion inspect the wrong context menu.
+  await expect(page.getByTestId("video-player")).toHaveCount(2);
+  // Message ordering is not stable when same-second mock events are merged;
+  // select the rendered player by its source so the menu assertion cannot
+  // inspect the relay video's Download action by mistake.
+  const offRelayPlayer = page.getByTestId("video-player").filter({
+    has: page.locator(`video[src="${MENU_OFF_RELAY_VIDEO_URL}"]`),
+  });
   await expect(offRelayPlayer).toBeVisible();
+  // The second player has the same post-mount capture race as the relay
+  // player, so settle the surface before sending the right-click event.
+  await waitForAnimations(page);
   await offRelayPlayer.click({ button: "right", force: true });
 
   const offRelayMenu = page.locator("[data-video-context-menu]");
