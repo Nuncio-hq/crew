@@ -7,6 +7,7 @@
  */
 
 import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 
 /** Reserved manager-personal profile — never bindable to a Crew agent (P-7). */
 export const HERMES_FORBIDDEN_PROFILE_NAME = "default";
@@ -180,7 +181,7 @@ export function buildHermesProfileOccupancy(args: {
 
     map.set(profile, {
       status: "bound",
-      agentName: agent.name.trim() || agent.pubkey.slice(0, 8),
+      agentName: agent.name.trim() || truncatePubkey(agent.pubkey),
       agentPubkey: agent.pubkey,
     });
   }
