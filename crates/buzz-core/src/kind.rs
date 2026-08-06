@@ -573,6 +573,17 @@ pub const KIND_AGENT_USER_INPUT_REQUESTED: u32 = 46040;
 pub const KIND_AGENT_USER_INPUT_ANSWER: u32 = 46041;
 /// Terminal resolution of an ACP agent human-input request.
 pub const KIND_AGENT_USER_INPUT_RESOLVED: u32 = 46042;
+/// A durable terminal receipt for a successful ACP agent turn.
+///
+/// The content is a JSON object with `summary` and `verify` strings, a
+/// `lights` array of `{ label, status }` objects, and an `engineering` object
+/// whose optional fields are `pr_ref`, `branch`, `files_changed`, and `ci`.
+/// Receipts are channel-scoped with an `h` tag and reply to the turn's
+/// triggering event using ordinary NIP-10 markers — a `reply` `e` tag to the
+/// trigger, plus a `root` `e` tag when the trigger is not itself the thread
+/// root — so they land in thread-replies queries and thread counters like any
+/// reply. They are authored by the agent that completed the turn.
+pub const KIND_AGENT_RECEIPT: u32 = 46043;
 
 // User groups (47000–47999)
 
@@ -740,6 +751,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_AGENT_USER_INPUT_REQUESTED,
     KIND_AGENT_USER_INPUT_ANSWER,
     KIND_AGENT_USER_INPUT_RESOLVED,
+    KIND_AGENT_RECEIPT,
     KIND_AUDIT_ENTRY,
     KIND_HUDDLE_STARTED,
     KIND_HUDDLE_PARTICIPANT_JOINED,

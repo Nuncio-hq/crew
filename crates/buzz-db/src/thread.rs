@@ -1775,4 +1775,51 @@ mod tests {
             "reply-less row carries no summary"
         );
     }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn agent_receipt_is_returned_by_thread_replies_and_updates_counters() {
+        let pool = setup_pool().await;
+        let author = Keys::generate();
+        let agent = Keys::generate();
+        let (channel, community) = create_test_channel(
+            &pool,
+            &format!("receipt-thread-{}", Uuid::new_v4()),
+            ChannelType::Stream,
+            ChannelVisibility::Open,
+            None,
+            author.public_key().to_bytes().as_slice(),
+            None,
+        )
+        .await
+        .expect("create channel");
+
+        let root = make_stream_event(&author, "trigger");
+        insert_root(&pool, community, channel.id, &root).await;
+        let receipt = EventBuilder::new(Kind::Custom(46043), "receipt")
+            .tags([
+                nostr::Tag::parse(["h", &channel.id.to_string()]).unwrap(),
+                nostr::Tag::parse(["e", &root.id.to_hex(), "", "reply"]).unwrap(),
+            ])
+            .sign_with_keys(&agent)
+            .expect("sign receipt");
+        insert_reply(&pool, community, channel.id, &root, &receipt, false).await;
+
+        let replies = get_thread_replies(&pool, community, root.id.as_bytes(), None, 50, None)
+            .await
+            .expect("fetch thread replies");
+        assert!(
+            replies
+                .iter()
+                .any(|reply| reply.stored_event.event.id == receipt.id),
+            "receipt must be visible through the thread-replies query"
+        );
+
+        let summary = get_thread_summary(&pool, community, root.id.as_bytes())
+            .await
+            .expect("fetch thread summary")
+            .expect("root summary");
+        assert_eq!(summary.reply_count, 1);
+        assert_eq!(summary.descendant_count, 1);
+    }
 }
