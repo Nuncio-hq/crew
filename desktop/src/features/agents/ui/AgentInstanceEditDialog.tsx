@@ -25,12 +25,8 @@ import { Input } from "@/shared/ui/input";
 import { setManagedAgentAutoRestart } from "@/shared/api/tauriManagedAgents";
 import { EditAgentAdvancedFields } from "./EditAgentAdvancedFields";
 import { EditAgentModelAndProfileSection } from "./EditAgentModelAndProfileSection";
-import {
-  deriveAgentConfigFieldModel,
-  getRenderableHermesProfileField,
-  isModelOwnedByProfile,
-} from "../lib/agentConfigCore";
-import { hermesProfileBindingError } from "../lib/hermesProfileBinding";
+import { deriveAgentConfigFieldModel } from "../lib/agentConfigCore";
+import { useEditHermesBinding } from "./editHermesBinding";
 import { EMPTY_GLOBAL_CONFIG } from "./AgentConfigFields";
 import {
   ADVANCED_FIELDS_MOTION_TRANSITION,
@@ -429,12 +425,12 @@ export function AgentInstanceEditDialog({
       }),
     [hermesProfile, model, prospectiveRuntime, provider],
   );
-  const showHermesProfileField =
-    getRenderableHermesProfileField(instanceFieldModel) != null;
-  const modelOwnedByProfile = isModelOwnedByProfile(instanceFieldModel);
-  const hermesProfileError = showHermesProfileField
-    ? hermesProfileBindingError(hermesProfile, true)
-    : null;
+  const { showHermesProfileField, modelOwnedByProfile, hermesProfileError } =
+    useEditHermesBinding({
+      agent,
+      fieldModel: instanceFieldModel,
+      hermesProfile,
+    });
 
   const {
     discoveredModelOptions,
@@ -1110,6 +1106,7 @@ export function AgentInstanceEditDialog({
             {/* Model / Hermes profile (field-model driven) */}
             <EditAgentModelAndProfileSection
               disabled={updateMutation.isPending}
+              editingPubkey={agent.pubkey}
               hermesProfile={hermesProfile}
               model={model}
               modelDiscoveryLoading={modelDiscoveryLoading}

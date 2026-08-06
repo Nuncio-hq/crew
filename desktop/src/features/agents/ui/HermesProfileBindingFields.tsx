@@ -4,17 +4,26 @@
  * Rendered from the agent config field model (`hermesProfile` control /
  * `ownedByProfile` omission) — never from a hardcoded runtime id.
  */
-import { Input } from "@/shared/ui/input";
+import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
+
 import { cn } from "@/shared/lib/cn";
+import { useCommunities } from "@/features/communities/useCommunities";
 import {
+  hermesProfilesQueryKey,
+  useHermesProfilesQuery,
+  useManagedAgentsQuery,
+} from "../hooks";
+import {
+  buildHermesProfileOccupancy,
   hermesProfileBindingError,
+  hermesProfileOccupancyError,
+  normalizeHermesProfileList,
   profileOwnedModelLabel,
+  shouldShowHermesProfileCreate,
 } from "../lib/hermesProfileBinding";
-import {
-  PERSONA_FIELD_CONTROL_CLASS,
-  PERSONA_FIELD_SHELL_CLASS,
-} from "./agentConfigOptions";
 import { RequiredFieldLabel } from "./agentConfigControls";
+import { HermesProfileCombobox } from "./HermesProfileCombobox";
 import {
   HermesProfileCreateAffordance,
   isNonOwnerOnlyRespondTo,
@@ -43,6 +52,61 @@ export function ProfileOwnedModelRow({
   );
 }
 
+/** Shared binding state for the field UI and create/edit save gates. */
+export function useHermesProfileBindingState({
+  enabled,
+  hermesProfile,
+  editingPubkey = null,
+  required = true,
+}: {
+  enabled: boolean;
+  hermesProfile: string;
+  editingPubkey?: string | null;
+  required?: boolean;
+}) {
+  const profilesQuery = useHermesProfilesQuery({ enabled });
+  const agentsQuery = useManagedAgentsQuery({ enabled });
+  const { activeCommunity } = useCommunities();
+  const queryClient = useQueryClient();
+
+  const profiles = React.useMemo(
+    () => normalizeHermesProfileList(profilesQuery.data ?? []),
+    [profilesQuery.data],
+  );
+
+  const occupancy = React.useMemo(
+    () =>
+      buildHermesProfileOccupancy({
+        profiles,
+        agents: agentsQuery.data ?? [],
+        relayUrl: activeCommunity?.relayUrl ?? "",
+        editingPubkey,
+      }),
+    [profiles, agentsQuery.data, activeCommunity?.relayUrl, editingPubkey],
+  );
+
+  const formatError = enabled
+    ? hermesProfileBindingError(hermesProfile, required)
+    : null;
+  const occupancyError = enabled
+    ? hermesProfileOccupancyError(hermesProfile, occupancy)
+    : null;
+  const profileError = formatError ?? occupancyError;
+
+  const invalidateProfiles = React.useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: hermesProfilesQueryKey });
+  }, [queryClient]);
+
+  return {
+    profiles,
+    occupancy,
+    profileError,
+    listLoading: profilesQuery.isLoading,
+    listFailed: profilesQuery.isError,
+    invalidateProfiles,
+  };
+}
+
 export function HermesProfileField({
   value,
   onChange,
@@ -52,6 +116,7 @@ export function HermesProfileField({
   showValidation = true,
   enableCreateInPlace = true,
   respondTo,
+  editingPubkey = null,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -64,50 +129,61 @@ export function HermesProfileField({
   enableCreateInPlace?: boolean;
   /** When set and not owner-only, show credential-fallback warning. */
   respondTo?: string | null;
+  /** When editing, occupancy treats this pubkey as "self". */
+  editingPubkey?: string | null;
 }) {
-  const error = showValidation
-    ? hermesProfileBindingError(value, required)
-    : null;
+  const {
+    profiles,
+    occupancy,
+    profileError,
+    listLoading,
+    listFailed,
+    invalidateProfiles,
+  } = useHermesProfileBindingState({
+    enabled: true,
+    hermesProfile: value,
+    editingPubkey,
+    required,
+  });
+
+  const error = showValidation ? profileError : null;
   const showPublicWarning = isNonOwnerOnlyRespondTo(respondTo);
+  const showCreate =
+    enableCreateInPlace && shouldShowHermesProfileCreate(value, profiles);
 
   return (
     <div className="space-y-1.5" data-testid="hermes-profile-field">
       <RequiredFieldLabel htmlFor={id} isRequired={required}>
         Hermes profile
       </RequiredFieldLabel>
-      <div
-        className={cn(
-          "flex min-h-11 items-center px-3",
-          PERSONA_FIELD_SHELL_CLASS,
-        )}
-      >
-        <Input
-          autoCorrect="off"
-          className={cn("h-8 px-0 py-0 leading-6", PERSONA_FIELD_CONTROL_CLASS)}
-          disabled={disabled}
-          id={id}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder="scout"
-          spellCheck={false}
-          value={value}
-        />
-      </div>
+      <HermesProfileCombobox
+        disabled={disabled}
+        id={id}
+        listFailed={listFailed}
+        listLoading={listLoading}
+        occupancy={occupancy}
+        onChange={onChange}
+        profiles={profiles}
+        value={value}
+      />
       <p className="text-xs text-muted-foreground">
-        Bind this agent to a named Hermes profile (
+        Pick an existing Hermes profile or type a new name and create it (
         <code className="font-mono text-2xs">hermes -p &lt;name&gt;</code>
         ). The manager&apos;s personal{" "}
         <code className="font-mono text-2xs">default</code> profile cannot be
         bound — see docs/crew/HERMES.md.
       </p>
-      {enableCreateInPlace ? (
+      {showCreate ? (
         <HermesProfileCreateAffordance
           disabled={disabled}
-          onCreated={onChange}
+          onCreated={(name) => {
+            onChange(name);
+            invalidateProfiles();
+          }}
           profileName={value}
           showPublicAgentWarning={showPublicWarning}
         />
-      ) : null}
-      {!enableCreateInPlace && showPublicWarning ? (
+      ) : showPublicWarning ? (
         <p
           className="text-xs text-muted-foreground"
           data-testid="hermes-public-agent-credential-warning"

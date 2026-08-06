@@ -1,9 +1,10 @@
 /**
- * Hermes profile binding UI (Phase 02B / feature 0001).
+ * Hermes profile binding UI (Phase 02B / Phase 04 picker / feature 0001).
  *
  * Pins capability-driven visibility: profileArg runtimes show the binding
  * field + profile-owned model row; goose does not. Invalid names and
  * "default" are blocked client-side. Model is never an editable control.
+ * Phase 04: disk profiles appear in a combobox; occupancy blocks save.
  */
 import { expect, test } from "@playwright/test";
 
@@ -119,6 +120,116 @@ test.describe("hermes profile binding", () => {
     );
   });
 
+  test("create: lists existing disk profiles and pick binds", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      hermesProfiles: ["scout", "builder", "default"],
+    });
+    const dialog = await openCreateCustomize(page);
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await waitForAnimations(page);
+
+    await dialog.getByTestId("hermes-profile-combobox-trigger").click();
+    await waitForAnimations(page);
+
+    const list = page.getByTestId("hermes-profile-combobox-list");
+    await expect(list).toBeVisible();
+    await expect(list.getByTestId("hermes-profile-option")).toHaveCount(2);
+    await expect(list.getByTestId("hermes-profile-option")).toContainText([
+      "builder",
+      "scout",
+    ]);
+    await expect(list.getByText("default", { exact: true })).toHaveCount(0);
+
+    await list
+      .getByTestId("hermes-profile-option")
+      .filter({ hasText: "scout" })
+      .click();
+    await expect(dialog.locator("#persona-hermes-profile")).toHaveValue(
+      "scout",
+    );
+    await expect(page.getByTestId("profile-owned-model-row")).toContainText(
+      "decided by profile scout",
+    );
+    // Existing profile — no create-in-place button.
+    await expect(page.getByTestId("hermes-profile-create-button")).toHaveCount(
+      0,
+    );
+  });
+
+  test("create: create-in-place button appears for a new valid profile name", async ({
+    page,
+  }) => {
+    await installMockBridge(page, { hermesProfiles: ["scout"] });
+    const dialog = await openCreateCustomize(page);
+
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await waitForAnimations(page);
+
+    const profileInput = dialog.locator("#persona-hermes-profile");
+    await profileInput.fill("builder");
+    await expect(
+      page.getByTestId("hermes-profile-create-affordance"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("hermes-profile-create-button"),
+    ).toContainText("Create profile 'builder'");
+    await expect(
+      page.getByTestId("hermes-profile-create-affordance"),
+    ).toContainText("hermes profile create builder --no-alias");
+
+    await page.getByTestId("hermes-profile-create-button").click();
+    await expect(page.getByTestId("hermes-profile-create-button")).toHaveCount(
+      0,
+      { timeout: 10_000 },
+    );
+
+    await dialog.getByTestId("hermes-profile-combobox-trigger").click();
+    await waitForAnimations(page);
+    await expect(
+      page.getByTestId("hermes-profile-option").filter({ hasText: "builder" }),
+    ).toBeVisible();
+  });
+
+  test("create: bound profile shows occupancy and blocks submit", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      hermesProfiles: ["scout", "builder"],
+      managedAgents: [
+        {
+          pubkey: HERMES_AGENT_PUBKEY,
+          name: "Hermes Scout",
+          status: "stopped",
+          channelNames: ["agents"],
+          runtime: "hermes",
+          hermesProfile: "scout",
+        },
+      ],
+    });
+    const dialog = await openCreateCustomize(page);
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await waitForAnimations(page);
+
+    await dialog.getByTestId("hermes-profile-combobox-trigger").click();
+    await waitForAnimations(page);
+    const scoutOption = page
+      .getByTestId("hermes-profile-option")
+      .filter({ hasText: "scout" });
+    await expect(
+      scoutOption.getByTestId("hermes-profile-occupancy"),
+    ).toContainText(/bound/i);
+    await scoutOption.click();
+
+    await expect(page.getByTestId("hermes-profile-error")).toContainText(
+      /already bound/i,
+    );
+    await expect(
+      dialog.getByRole("button", { name: /Create|Save|Start/i }).first(),
+    ).toBeDisabled();
+  });
+
   test("edit: Hermes agent shows binding + profile-owned model; goose does not", async ({
     page,
   }) => {
@@ -164,10 +275,11 @@ test.describe("hermes profile binding", () => {
     await expect(page.getByTestId("profile-owned-model-row")).toHaveCount(0);
   });
 
-  test("edit: duplicate profile bind surfaces server error inline", async ({
+  test("edit: duplicate profile bind surfaces occupancy error before save", async ({
     page,
   }) => {
     await installMockBridge(page, {
+      hermesProfiles: ["scout", "twin"],
       managedAgents: [
         {
           pubkey: HERMES_AGENT_PUBKEY,
@@ -192,37 +304,10 @@ test.describe("hermes profile binding", () => {
     await waitForAnimations(page);
 
     await page.locator("#edit-agent-hermes-profile").fill("scout");
-    await page.getByTestId("edit-agent-dialog-submit").click();
-
-    await expect(page.getByTestId("edit-agent-save-error")).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(page.getByTestId("edit-agent-save-error")).toContainText(
+    await expect(page.getByTestId("hermes-profile-error")).toContainText(
       /already bound/i,
     );
-    await expect(page.getByTestId("edit-agent-dialog")).toBeVisible();
-  });
-
-  test("create: create-in-place button appears for a new valid profile name", async ({
-    page,
-  }) => {
-    await installMockBridge(page);
-    const dialog = await openCreateCustomize(page);
-
-    await pickRuntime(page, dialog, /Hermes Agent/);
-    await waitForAnimations(page);
-
-    const profileInput = dialog.locator("#persona-hermes-profile");
-    await profileInput.fill("builder");
-    await expect(
-      page.getByTestId("hermes-profile-create-affordance"),
-    ).toBeVisible();
-    await expect(
-      page.getByTestId("hermes-profile-create-button"),
-    ).toContainText("Create profile 'builder'");
-    await expect(
-      page.getByTestId("hermes-profile-create-affordance"),
-    ).toContainText("hermes profile create builder --no-alias");
+    await expect(page.getByTestId("edit-agent-dialog-submit")).toBeDisabled();
   });
 
   test("delete: bound Hermes agent shows keep/delete choice defaulting to keep", async ({

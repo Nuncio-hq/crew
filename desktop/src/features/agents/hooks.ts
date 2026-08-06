@@ -39,6 +39,7 @@ import {
   saveCustomHarness,
   updateManagedAgent,
 } from "@/shared/api/tauri";
+import { listHermesProfiles } from "@/shared/api/hermesProfiles";
 import type { HarnessDefinitionInput } from "@/shared/api/tauri";
 import {
   setManagedAgentAutoRestart,
@@ -107,6 +108,7 @@ export type {
 
 export const relayAgentsQueryKey = ["relay-agents"] as const;
 export const managedAgentsQueryKey = ["managed-agents"] as const;
+export const hermesProfilesQueryKey = ["hermes-profiles"] as const;
 export const personasQueryKey = ["personas"] as const;
 export const acpRuntimesQueryKey = ["acp-runtimes"] as const;
 export const acpAuthMethodsQueryKey = ["acp-auth-methods"] as const;
@@ -357,6 +359,16 @@ export function useManagedAgentsQuery(options?: { enabled?: boolean }) {
         ? 5_000
         : false;
     },
+  });
+}
+
+/** Disk Hermes profiles under ~/.hermes/profiles (Phase 03 IPC / Phase 04 picker). */
+export function useHermesProfilesQuery(options?: { enabled?: boolean }) {
+  return useQuery({
+    enabled: options?.enabled ?? true,
+    queryKey: hermesProfilesQueryKey,
+    queryFn: listHermesProfiles,
+    staleTime: 15_000,
   });
 }
 

@@ -39,12 +39,15 @@ Example: an agent called `scout`.
 
 ### 1. Create the profile (CLI or create-in-place)
 
-**Preferred (Phase 03):** in Crew, pick runtime **Hermes Agent**, type
-the profile name in the **Hermes profile** field, then click
-**Create profile '\<name\>'**. Crew runs
+**Preferred (Phase 04):** in Crew, pick runtime **Hermes Agent**, open
+the **Hermes profile** control, and **pick an existing profile** from
+disk (`scout`, `builder`, …) or type a new name and click
+**Create profile '\<name\>'**. Crew lists `~/.hermes/profiles` via
+`list_hermes_profiles`. Create runs
 `hermes profile create <name> --no-alias` (command line shown in the
 UI) and binds on success. Bundled skills are kept (D-023); there is no
-`--no-skills` from Crew.
+`--no-skills` from Crew. Profiles already bound on this relay show a
+**bound** badge; save is blocked client-side (server C-10 still applies).
 
 **CLI fallback:**
 
@@ -60,11 +63,12 @@ want an empty profile from the CLI (Crew does not offer this).
 
 ### 2. Create / bind the Crew agent
 
-Fill the **Hermes profile** field with the profile name (`scout`). Leave
-model blank — the UI replaces the model control with
+Select the profile from the list or keep the name you just created
+(`scout`). Leave model blank — the UI replaces the model control with
 "decided by profile scout". Binding `default` is rejected (client and
 server). Binding a profile already used by another agent on the same
-relay is rejected with an inline save error (C-10).
+relay shows an occupancy error and disables save; the server still
+rejects duplicates (C-10) if forced.
 
 Readiness / Doctor surfaces a `hermesProfile` requirement when the
 binding is missing, and a recreate/rebind repair when the bound

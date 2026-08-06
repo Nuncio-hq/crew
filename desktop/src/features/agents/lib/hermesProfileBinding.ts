@@ -7,6 +7,7 @@
  */
 
 import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 
 /** Reserved manager-personal profile — never bindable to a Crew agent (P-7). */
 export const HERMES_FORBIDDEN_PROFILE_NAME = "default";
@@ -82,4 +83,129 @@ export function profileOwnedModelLabel(
     return `Model: decided by profile ${name}`;
   }
   return "Model: decided by profile";
+}
+
+/**
+ * Normalize a disk/IPC profile list for the picker: drop empty/`default`/invalid
+ * names, de-dupe, sort. Directory IPC already filters; this is belt-and-suspenders
+ * for mocks and future CLI sources.
+ */
+export function normalizeHermesProfileList(
+  profiles: readonly string[],
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of profiles) {
+    const name = raw.trim();
+    if (!name || name === HERMES_FORBIDDEN_PROFILE_NAME) continue;
+    if (validateHermesProfileName(name) != null) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  out.sort((a, b) => a.localeCompare(b));
+  return out;
+}
+
+/** Typeahead filter over normalized profile names (substring, case-insensitive). */
+export function filterHermesProfileOptions(
+  profiles: readonly string[],
+  query: string,
+): string[] {
+  const normalized = normalizeHermesProfileList(profiles);
+  const q = query.trim().toLowerCase();
+  if (!q) return normalized;
+  return normalized.filter((name) => name.toLowerCase().includes(q));
+}
+
+/**
+ * Show create-in-place only for a valid name that is not already on disk.
+ * Never silent-create — callers still require an explicit button click.
+ */
+export function shouldShowHermesProfileCreate(
+  name: string,
+  profiles: readonly string[],
+): boolean {
+  const trimmed = name.trim();
+  if (!trimmed || validateHermesProfileName(trimmed) != null) return false;
+  const existing = new Set(
+    normalizeHermesProfileList(profiles).map((p) => p.toLowerCase()),
+  );
+  return !existing.has(trimmed.toLowerCase());
+}
+
+export type HermesProfileOccupancy =
+  | { status: "free" }
+  | { status: "self" }
+  | { status: "bound"; agentName: string; agentPubkey: string };
+
+export type HermesProfileOccupancyAgent = {
+  pubkey: string;
+  name: string;
+  hermesProfile: string | null | undefined;
+  relayUrl: string;
+};
+
+/**
+ * Join disk profiles with managed agents on one relay (C-10 early UX).
+ * Server duplicate reject remains authoritative.
+ */
+export function buildHermesProfileOccupancy(args: {
+  profiles: readonly string[];
+  agents: readonly HermesProfileOccupancyAgent[];
+  relayUrl: string;
+  editingPubkey?: string | null;
+}): Map<string, HermesProfileOccupancy> {
+  const relay = args.relayUrl.trim();
+  const editing = args.editingPubkey?.trim() || null;
+  const map = new Map<string, HermesProfileOccupancy>();
+
+  for (const name of normalizeHermesProfileList(args.profiles)) {
+    map.set(name, { status: "free" });
+  }
+
+  for (const agent of args.agents) {
+    const profile = agent.hermesProfile?.trim() || "";
+    if (!profile || profile === HERMES_FORBIDDEN_PROFILE_NAME) continue;
+    if (validateHermesProfileName(profile) != null) continue;
+    if (agent.relayUrl.trim() !== relay) continue;
+
+    if (editing && agent.pubkey === editing) {
+      map.set(profile, { status: "self" });
+      continue;
+    }
+
+    // Prefer first other binder; do not overwrite self if listed twice.
+    const current = map.get(profile);
+    if (current?.status === "self") continue;
+
+    map.set(profile, {
+      status: "bound",
+      agentName: agent.name.trim() || truncatePubkey(agent.pubkey),
+      agentPubkey: agent.pubkey,
+    });
+  }
+
+  return map;
+}
+
+/** Occupancy gate for save: bound-to-other blocks; free/self/unknown OK. */
+export function hermesProfileOccupancyError(
+  raw: string,
+  occupancy: ReadonlyMap<string, HermesProfileOccupancy>,
+): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const entry = occupancy.get(trimmed);
+  if (entry?.status !== "bound") return null;
+  return `Hermes profile '${trimmed}' is already bound to agent '${entry.agentName}'.`;
+}
+
+/** Badge / secondary label for a profile option row. */
+export function hermesProfileOccupancyLabel(
+  occupancy: HermesProfileOccupancy | undefined,
+): string {
+  if (!occupancy || occupancy.status === "free") return "free";
+  if (occupancy.status === "self") return "this agent";
+  return `bound · ${occupancy.agentName}`;
 }

@@ -10,11 +10,11 @@ import {
   getRenderableHermesProfileField,
   isModelOwnedByProfile,
 } from "../lib/agentConfigCore";
-import { hermesProfileBindingError } from "../lib/hermesProfileBinding";
 import { EMPTY_GLOBAL_CONFIG } from "./AgentConfigFields";
 import {
   HermesProfileField,
   ProfileOwnedModelRow,
+  useHermesProfileBindingState,
 } from "./HermesProfileBindingFields";
 
 export function useCreateHermesBinding({
@@ -39,9 +39,12 @@ export function useCreateHermesBinding({
   const showProfileField =
     enabled && getRenderableHermesProfileField(fieldModel) != null;
   const modelOwnedByProfile = enabled && isModelOwnedByProfile(fieldModel);
-  const profileError = showProfileField
-    ? hermesProfileBindingError(hermesProfile, true)
-    : null;
+  const { profileError } = useHermesProfileBindingState({
+    enabled: showProfileField,
+    hermesProfile,
+    editingPubkey: null,
+    required: true,
+  });
   return { showProfileField, modelOwnedByProfile, profileError };
 }
 
