@@ -49,7 +49,7 @@ export class ProjectLocalWorkspaceCreateError extends Error {
 
   constructor(cause: unknown, retryChannel: ProjectChannelRetry) {
     super(
-      cause instanceof Error ? cause.message : "Could not create Project.",
+      cause instanceof Error ? cause.message : "Could not create Repository.",
       {
         cause,
       },
@@ -82,7 +82,7 @@ export function buildLocalWorkspaceProject(input: {
   const name = input.name.trim();
   const dtag = projectDtagFromName(name);
   if (!dtag) {
-    throw new Error("Project name must include letters or numbers.");
+    throw new Error("Repository name must include letters or numbers.");
   }
   if (!input.channelId.trim()) {
     throw new Error("Project channel is required.");
@@ -104,7 +104,7 @@ export async function createLocalWorkspaceProject<Saved>(
   validateLocalWorkspacePath(input.localPath);
   const dtag = projectDtagFromName(input.name);
   if (!dtag) {
-    throw new Error("Project name must include letters or numbers.");
+    throw new Error("Repository name must include letters or numbers.");
   }
   const owner = (await dependencies.getOwnerPubkey()).toLowerCase();
   const existing = await dependencies.findProject(owner, dtag);
@@ -126,7 +126,7 @@ export async function createLocalWorkspaceProject<Saved>(
     };
   }
   if (existing) {
-    throw new Error(`You already have a Project named "${dtag}".`);
+    throw new Error(`You already have a Repository named "${dtag}".`);
   }
 
   const reusableChannelId = retryMatchesIdentity

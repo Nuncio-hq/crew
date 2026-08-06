@@ -143,7 +143,9 @@ test("top-level project lists align dates and overflow actions", async ({
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByTestId("projects-create-menu").hover();
-  await expect(page.getByRole("menuitem", { name: "Project" })).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: "Repository" }),
+  ).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Issue" })).toBeVisible();
   await page
     .getByRole("menuitem", { name: "Pull Request", exact: true })

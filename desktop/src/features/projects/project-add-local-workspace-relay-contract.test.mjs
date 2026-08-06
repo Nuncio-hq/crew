@@ -34,7 +34,7 @@ test("duplicate owner and d-tag fails before a channel is created", async () => 
         throw new Error("must not publish");
       },
     }),
-    /already have a Project/i,
+    /already have a Repository/i,
   );
   assert.equal(channelCreates, 0);
 });
