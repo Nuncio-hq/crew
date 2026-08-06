@@ -17,6 +17,8 @@ import {
   formatCompactAgo,
   formatElapsed,
 } from "@/features/agents/ui/agentSessionUtils";
+import { ThreadAgentActivityHeadline } from "@/features/messages/ui/ThreadAgentActivityHeadline";
+import { useThreadAgentActivityHeadline } from "@/features/messages/ui/conversationActivityHeadline";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { cn } from "@/shared/lib/cn";
@@ -235,57 +237,71 @@ export function ThreadAgentStatusChip({
     now,
     needsYou,
   );
+  const isRunning = view?.state === "running";
+  // Transcript subscription only while ≥1 running chip is mounted.
+  const activity = useThreadAgentActivityHeadline(
+    conversationId,
+    Boolean(isRunning),
+    profiles,
+  );
   if (!view) return null;
 
   const chrome = STATE_CHROME[view.state];
+  const title =
+    isRunning && activity?.latest
+      ? `${view.title} · ${activity.latest}`
+      : view.title;
 
   return (
-    <span
-      aria-label={view.title}
-      className={cn(
-        "ml-1 inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-2xs font-semibold tabular-nums",
-        chrome.className,
-        view.state === "needs-you" && "motion-safe:animate-pulse",
-      )}
-      data-state={view.state}
-      data-testid="thread-agent-status-chip"
-      role="status"
-      title={view.title}
-    >
-      {view.state === "running" ? (
-        <Loader2
-          aria-hidden
-          className="h-3 w-3 shrink-0 animate-spin opacity-80"
-        />
-      ) : (
-        <span aria-hidden className="shrink-0 text-2xs leading-none">
-          {chrome.glyph}
-        </span>
-      )}
-      <span className="flex items-center -space-x-1">
-        {view.displayAgents.map((agent) => (
-          <UserAvatar
-            avatarUrl={agent.avatarUrl}
-            className="!h-3.5 !w-3.5 border border-background text-3xs"
-            displayName={agent.displayName}
-            fallbackDelayMs={0}
-            key={agent.pubkey}
-            size="xs"
-          />
-        ))}
-      </span>
+    <>
       <span
+        aria-label={title}
         className={cn(
-          "min-w-0 truncate",
-          "[@container(max-width:519.9px)]:hidden",
+          "ml-1 inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-2xs font-semibold tabular-nums",
+          chrome.className,
+          view.state === "needs-you" && "motion-safe:animate-pulse",
         )}
-        data-testid="thread-agent-status-chip-label"
+        data-state={view.state}
+        data-testid="thread-agent-status-chip"
+        role="status"
+        title={title}
       >
-        {view.label}
+        {view.state === "running" ? (
+          <Loader2
+            aria-hidden
+            className="h-3 w-3 shrink-0 animate-spin opacity-80"
+          />
+        ) : (
+          <span aria-hidden className="shrink-0 text-2xs leading-none">
+            {chrome.glyph}
+          </span>
+        )}
+        <span className="flex items-center -space-x-1">
+          {view.displayAgents.map((agent) => (
+            <UserAvatar
+              avatarUrl={agent.avatarUrl}
+              className="!h-3.5 !w-3.5 border border-background text-3xs"
+              displayName={agent.displayName}
+              fallbackDelayMs={0}
+              key={agent.pubkey}
+              size="xs"
+            />
+          ))}
+        </span>
+        <span
+          className={cn(
+            "min-w-0 truncate",
+            "[@container(max-width:519.9px)]:hidden",
+          )}
+          data-testid="thread-agent-status-chip-label"
+        >
+          {view.label}
+        </span>
+        <span data-testid="thread-agent-status-chip-elapsed">
+          {view.elapsedLabel}
+        </span>
       </span>
-      <span data-testid="thread-agent-status-chip-elapsed">
-        {view.elapsedLabel}
-      </span>
-    </span>
+      {isRunning ? <ThreadAgentActivityHeadline selection={activity} /> : null}
+    </>
   );
 }
