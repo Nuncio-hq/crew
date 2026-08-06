@@ -14,7 +14,7 @@ import { CrewAddProjectDialog } from "@/features/projects/ui/crew-add-project-di
 import { chooseProjectWorkspaceFolder } from "@/shared/api/tauri-project-folder-dialog";
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Could not add Project.";
+  return error instanceof Error ? error.message : "Could not add Repository.";
 }
 
 export function CrewAddProjectFlow({
@@ -69,7 +69,7 @@ export function CrewAddProjectFlow({
       setLocalPath(null);
       setName("");
       setRetryChannel(null);
-      toast.success(`Project "${project.name}" added from local folder.`);
+      toast.success(`Repository "${project.name}" added from local folder.`);
     } catch (error) {
       if (error instanceof ProjectLocalWorkspaceCreateError) {
         setRetryChannel(error.retryChannel);
