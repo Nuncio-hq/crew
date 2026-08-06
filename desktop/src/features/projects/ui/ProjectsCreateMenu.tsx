@@ -49,7 +49,7 @@ export function ProjectsCreateMenu({
 
   return (
     <nav
-      aria-label="Create project item"
+      aria-label="Create item"
       className="relative shrink-0 pl-4"
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
@@ -86,6 +86,7 @@ export function ProjectsCreateMenu({
             role="menu"
             style={POPOVER_SHADOW_STYLE}
           >
+            {/* 30617 = repository; Crew has no 30621 Project surface yet. Folder-first D-014 remains the add path. */}
             <button
               className={MENU_ITEM_CLASS}
               onClick={() => select(onCreateProject)}
@@ -93,7 +94,7 @@ export function ProjectsCreateMenu({
               type="button"
             >
               <FolderGit2 />
-              Project
+              Repository
             </button>
             <button
               className={MENU_ITEM_CLASS}

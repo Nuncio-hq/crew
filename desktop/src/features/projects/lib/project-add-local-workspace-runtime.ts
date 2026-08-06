@@ -68,8 +68,8 @@ export async function createCurrentLocalWorkspaceProject(
           publishEvent: async (event, timeoutMessage, errorMessage) => {
             await relayClient.publishEvent(
               event,
-              timeoutMessage ?? "Timed out adding the Project.",
-              errorMessage ?? "Failed to add the Project.",
+              timeoutMessage ?? "Timed out adding the Repository.",
+              errorMessage ?? "Failed to add the Repository.",
             );
           },
         },

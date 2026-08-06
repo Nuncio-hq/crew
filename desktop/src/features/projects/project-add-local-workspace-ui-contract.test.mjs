@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 const viewUrl = new URL("./ui/ProjectsView.tsx", import.meta.url);
+const menuUrl = new URL("./ui/ProjectsCreateMenu.tsx", import.meta.url);
 const screenUrl = new URL("./ui/crew-projects-screen.tsx", import.meta.url);
 const flowUrl = new URL("./ui/crew-add-project-flow.tsx", import.meta.url);
 const cardsUrl = new URL("./ui/ProjectCards.tsx", import.meta.url);
@@ -104,11 +105,16 @@ test("a local-only Project cannot fall through to Clone and open Terminal", asyn
 });
 
 test("Crew uses one folder-first callback and removes the standalone workspace strip", async () => {
-  const [screen, flow] = await Promise.all([
+  const [menu, screen, flow] = await Promise.all([
+    readFile(menuUrl, "utf8"),
     readFile(screenUrl, "utf8"),
     readFile(flowUrl, "utf8"),
   ]);
 
+  assert.match(menu, /Repository/);
+  assert.doesNotMatch(menu, /\n\s+Project\n/);
+  assert.match(menu, /30617 = repository/);
+  assert.match(menu, /30621 Project surface yet/);
   assert.match(screen, /CrewAddProjectFlow/);
   assert.match(screen, /onCreateRepository=\{chooseFolder\}/);
   assert.equal(screen.includes("CrewProjectWorkspacePanel"), false);
@@ -116,4 +122,60 @@ test("Crew uses one folder-first callback and removes the standalone workspace s
     flow.indexOf("const path = await chooseProjectWorkspaceFolder") <
       flow.indexOf("await createCurrentLocalWorkspaceProject"),
   );
+  assert.doesNotMatch(flow, /Could not add Project/);
+  assert.match(flow, /Repository .* added from local folder/);
+});
+
+test("the 30617 add flow never calls the repository a Project in user-visible copy", async () => {
+  const dialogUrl = new URL(
+    "./ui/crew-add-project-dialog.tsx",
+    import.meta.url,
+  );
+  const libUrl = new URL(
+    "./lib/project-add-local-workspace.ts",
+    import.meta.url,
+  );
+  const runtimeUrl = new URL(
+    "./lib/project-add-local-workspace-runtime.ts",
+    import.meta.url,
+  );
+  const pickerUrl = new URL(
+    "../../shared/api/tauri-project-folder-dialog.ts",
+    import.meta.url,
+  );
+  const [dialog, lib, runtime, picker] = await Promise.all([
+    readFile(dialogUrl, "utf8"),
+    readFile(libUrl, "utf8"),
+    readFile(runtimeUrl, "utf8"),
+    readFile(pickerUrl, "utf8"),
+  ]);
+
+  assert.match(dialog, /Add this Repository\?/);
+  assert.match(dialog, /Repository name/);
+  assert.match(dialog, /"Add Repository"/);
+  assert.match(lib, /Could not create Repository\./);
+  assert.match(lib, /Repository name must include letters or numbers\./);
+  assert.match(lib, /already have a Repository named/);
+  assert.match(runtime, /Timed out adding the Repository\./);
+  assert.match(runtime, /Failed to add the Repository\./);
+  assert.match(picker, /Select Repository workspace/);
+  // The whole chain: no user-visible string may call the 30617 entity a Project.
+  for (const [name, source] of [
+    ["dialog", dialog],
+    ["lib", lib],
+    ["runtime", runtime],
+    ["picker", picker],
+  ]) {
+    const userStrings = source.match(/"[^"\n]*\bProject\b[^"\n]*"/g) ?? [];
+    const offending = userStrings.filter(
+      (s) =>
+        !s.includes("ProjectLocalWorkspaceCreateError") &&
+        !s.includes("Project channel"),
+    );
+    assert.deepEqual(
+      offending,
+      [],
+      `${name} still says Project in user-visible copy: ${offending.join(", ")}`,
+    );
+  }
 });
