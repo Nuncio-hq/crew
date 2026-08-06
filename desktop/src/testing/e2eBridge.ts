@@ -270,6 +270,8 @@ type E2eConfig = {
       mcp?: MockCommandAvailability;
     };
     managedAgents?: MockManagedAgentSeed[];
+    /** Disk Hermes profiles for list_hermes_profiles (Phase 04 picker). */
+    hermesProfiles?: string[];
     /** Result returned by the mocked `add_agent_to_huddle` command. */
     addAgentToHuddleResult?: {
       ephemeral_added: boolean;
@@ -2291,6 +2293,11 @@ function resetMockManagedAgents(config?: E2eConfig) {
       logPath: null,
     }),
   );
+
+  for (const name of config?.mock?.hermesProfiles ?? []) {
+    const trimmed = name.trim();
+    if (trimmed) mockHermesProfiles.add(trimmed);
+  }
 
   for (const seed of config?.mock?.managedAgents ?? []) {
     mockManagedAgents.push(buildSeededManagedAgent(seed));

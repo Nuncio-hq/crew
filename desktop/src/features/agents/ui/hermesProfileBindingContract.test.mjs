@@ -1,14 +1,20 @@
 /**
- * Validation helpers for Hermes profile binding (Phase 02B).
+ * Validation helpers for Hermes profile binding (Phase 02B + Phase 04 picker).
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildHermesProfileOccupancy,
+  filterHermesProfileOptions,
   hermesProfileBindingError,
+  hermesProfileOccupancyError,
+  hermesProfileOccupancyLabel,
+  normalizeHermesProfileList,
   profileOwnedModelLabel,
   runtimeOffersProfileBinding,
   runtimeOwnsModelViaProfile,
+  shouldShowHermesProfileCreate,
   validateHermesProfileName,
 } from "../lib/hermesProfileBinding.ts";
 import {
@@ -68,6 +74,112 @@ test("profileOwnedModelLabel formats C-04 copy", () => {
     "Model: decided by profile scout",
   );
   assert.equal(profileOwnedModelLabel(null, null), "Model: decided by profile");
+});
+
+test("normalizeHermesProfileList drops default/invalid and sorts", () => {
+  assert.deepEqual(
+    normalizeHermesProfileList([
+      "builder",
+      "default",
+      "scout",
+      "Bad",
+      "scout",
+      "",
+    ]),
+    ["builder", "scout"],
+  );
+});
+
+test("filterHermesProfileOptions typeahead is case-insensitive", () => {
+  assert.deepEqual(
+    filterHermesProfileOptions(["scout", "builder", "ops"], "sc"),
+    ["scout"],
+  );
+  assert.deepEqual(filterHermesProfileOptions(["scout", "builder"], ""), [
+    "builder",
+    "scout",
+  ]);
+});
+
+test("shouldShowHermesProfileCreate only for valid missing names", () => {
+  assert.equal(shouldShowHermesProfileCreate("research", ["scout"]), true);
+  assert.equal(shouldShowHermesProfileCreate("scout", ["scout"]), false);
+  assert.equal(shouldShowHermesProfileCreate("default", []), false);
+  assert.equal(shouldShowHermesProfileCreate("Bad Name", []), false);
+  assert.equal(shouldShowHermesProfileCreate("", ["scout"]), false);
+});
+
+test("buildHermesProfileOccupancy scopes by relay and edit-self", () => {
+  const map = buildHermesProfileOccupancy({
+    profiles: ["scout", "builder", "twin"],
+    relayUrl: "wss://a",
+    editingPubkey: "aaa",
+    agents: [
+      {
+        pubkey: "aaa",
+        name: "Self Scout",
+        hermesProfile: "scout",
+        relayUrl: "wss://a",
+      },
+      {
+        pubkey: "bbb",
+        name: "Other Builder",
+        hermesProfile: "builder",
+        relayUrl: "wss://a",
+      },
+      {
+        pubkey: "ccc",
+        name: "Other Relay",
+        hermesProfile: "twin",
+        relayUrl: "wss://b",
+      },
+    ],
+  });
+  assert.deepEqual(map.get("scout"), { status: "self" });
+  assert.deepEqual(map.get("builder"), {
+    status: "bound",
+    agentName: "Other Builder",
+    agentPubkey: "bbb",
+  });
+  assert.deepEqual(map.get("twin"), { status: "free" });
+});
+
+test("hermesProfileOccupancyError blocks bound-other only", () => {
+  const occupancy = buildHermesProfileOccupancy({
+    profiles: ["scout", "builder"],
+    relayUrl: "wss://a",
+    editingPubkey: "aaa",
+    agents: [
+      {
+        pubkey: "aaa",
+        name: "Me",
+        hermesProfile: "scout",
+        relayUrl: "wss://a",
+      },
+      {
+        pubkey: "bbb",
+        name: "Hermes Scout",
+        hermesProfile: "builder",
+        relayUrl: "wss://a",
+      },
+    ],
+  });
+  assert.equal(hermesProfileOccupancyError("scout", occupancy), null);
+  assert.match(
+    hermesProfileOccupancyError("builder", occupancy) ?? "",
+    /already bound to agent 'Hermes Scout'/,
+  );
+  assert.equal(hermesProfileOccupancyError("research", occupancy), null);
+  assert.equal(hermesProfileOccupancyLabel({ status: "free" }), "free");
+  assert.equal(hermesProfileOccupancyLabel({ status: "self" }), "this agent");
+  assert.equal(
+    hermesProfileOccupancyLabel({
+      status: "bound",
+      agentName: "Hermes Scout",
+      agentPubkey: "bbb",
+    }),
+    "bound · Hermes Scout",
+  );
 });
 
 test("isNonOwnerOnlyRespondTo flags public respond-to modes", async () => {

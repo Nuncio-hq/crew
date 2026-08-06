@@ -1,10 +1,10 @@
 # Hermes first-class runtime (profile-per-agent)
 
-- **Status:** In progress — Slices 0–1 + Phase 01 (tier-1) delivered; Phase 02 next
-- **Date:** 2026-08-05
+- **Status:** In progress — Phases 01–04 delivered (picker in this branch)
+- **Date:** 2026-08-05 (Phase 04 indexed 2026-08-06)
 - **Feature:** [`docs/crew/features/0001-hermes-first-class-runtime.md`](../../docs/crew/features/0001-hermes-first-class-runtime.md)
-- **Decision:** D-019 / D-020
-- **Branch:** `feat/hermes-first-class-runtime`
+- **Decision:** D-019 / D-020 / D-023
+- **Branch:** `feat/hermes-first-class-runtime` (historical); Phase 04 → `feat/hermes-profile-picker`
 
 ## Goal
 
@@ -23,12 +23,20 @@ identity, placement, and scheduling.
 3. [x] [Phase 01 — Hermes tier-1 runtime entry in Crew](phase-01-upstream-tier1-pr.md)
    — landed via [PR #54](https://github.com/Nuncio-hq/crew/pull/54)
    (D-020: Crew, not block/buzz).
-4. [ ] [Phase 02 — Crew UI: binding, readiness, no-model guard (Slice 2)](phase-02-crew-binding-ui.md)
-5. [ ] [Phase 03 — profile lifecycle completion (Slice 4)](phase-03-profile-lifecycle.md)
+4. [x] [Phase 02 — Crew UI: binding, readiness, no-model guard (Slice 2)](phase-02-crew-binding-ui.md)
+   — #60 (02A) + #73 (02B).
+5. [x] [Phase 03 — profile lifecycle completion (Slice 4)](phase-03-profile-lifecycle.md)
+   — #77 (list/create/delete IPC + create-in-place UI; list not yet in picker).
+6. [x] **Phase 04 — profile picker (S-2.1 pick path)** — issue
+   [#78](https://github.com/Nuncio-hq/crew/issues/78); plan
+   [`../20260806-1225-hermes-profile-picker/plan.md`](../20260806-1225-hermes-profile-picker/plan.md)
+   - 04a combobox pick-or-create
+   - 04b occupancy badges (C-10 early UX)
 
 Phase 01 preceded Phase 02 so the tier-1 entry could remove manual
 steps (bare-`hermes` probe, automatic `buzz-dev-mcp`, declarative env
-guard) before the binding UI.
+guard) before the binding UI. Phase 04 closes the remaining half of
+S-2.1: pick an existing disk profile instead of free-text-only binding.
 
 ## Locked boundaries (D-019)
 

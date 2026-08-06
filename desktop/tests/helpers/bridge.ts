@@ -219,6 +219,8 @@ type MockBridgeOptions = {
     mcp?: MockCommandAvailability;
   };
   managedAgents?: MockManagedAgentSeed[];
+  /** Disk Hermes profiles returned by list_hermes_profiles. */
+  hermesProfiles?: string[];
   /** Result returned by the mocked `add_agent_to_huddle` command. */
   addAgentToHuddleResult?: {
     ephemeral_added: boolean;
