@@ -30,6 +30,7 @@ import {
   restoreActiveAgentTurnsForCommunity,
 } from "@/features/agents/activeAgentTurnsStore";
 import { resetAgentWorkingSignal } from "@/features/agents/agentWorkingSignal";
+import { resetNeedsYouStore } from "@/features/agents/needsYouStore";
 import { resetAgentObserverStore } from "@/features/agents/observerRelayStore";
 import {
   restoreProjectThreadWorkspacesForCommunity,
@@ -65,6 +66,7 @@ function resetCommunityState({
   resetAgentObserverStore();
   resetActiveAgentTurnsStore();
   resetAgentWorkingSignal();
+  resetNeedsYouStore();
   if (isTauri() && isMacPlatform()) {
     void clearTrayAgentActivity();
   }

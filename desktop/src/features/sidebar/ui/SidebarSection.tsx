@@ -28,6 +28,7 @@ import {
 import type { Channel, PresenceStatus } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { useNow } from "@/shared/lib/useNow";
+import { useNeedsYouForChannel } from "@/features/agents/needsYouStore";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -97,6 +98,27 @@ function UnreadDotBadge({
       data-testid={`channel-unread-dot-${channelName}`}
     >
       <span className="sr-only">unread</span>
+    </span>
+  );
+}
+
+function NeedsYouBadge({
+  channelName,
+  count,
+}: {
+  channelName: string;
+  count: number;
+}) {
+  return (
+    <span
+      className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 px-1 text-2xs font-semibold leading-none text-amber-600 tabular-nums dark:text-amber-400"
+      data-testid={`channel-needs-you-${channelName}`}
+      title={`${count} conversation${count === 1 ? "" : "s"} waiting for your approval`}
+    >
+      <span aria-hidden>⚠ {count > 99 ? "99+" : count}</span>
+      <span className="sr-only">
+        {count} conversation{count === 1 ? "" : "s"} waiting for approval
+      </span>
     </span>
   );
 }
@@ -272,6 +294,10 @@ export function ChannelMenuButton({
   presenceStatus?: PresenceStatus;
   onSelectChannel: (channelId: string) => void;
 }) {
+  const needsYouRequests = useNeedsYouForChannel(channel.id);
+  const needsYouConversationCount = new Set(
+    needsYouRequests.map((request) => request.conversationId),
+  ).size;
   const resolvedLabel = label ?? channel.name;
   const ephemeralDisplay = getEphemeralChannelDisplay(channel);
   const {
@@ -354,8 +380,19 @@ export function ChannelMenuButton({
           )}
         />
       ) : null}
+      {needsYouConversationCount > 0 ? (
+        <NeedsYouBadge
+          channelName={channel.name}
+          count={needsYouConversationCount}
+        />
+      ) : null}
       {hasThreadUnread ? (
-        <UnreadDotBadge channelName={channel.name} className="ml-auto" />
+        <UnreadDotBadge
+          channelName={channel.name}
+          // The trailing cluster owns a single ml-auto: when the needs-you
+          // badge is present it already pushes right, so the dot just trails.
+          className={needsYouConversationCount > 0 ? undefined : "ml-auto"}
+        />
       ) : null}
     </SidebarMenuButton>
   );
