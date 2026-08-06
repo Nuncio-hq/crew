@@ -40,7 +40,7 @@ export function CrewAddProjectDialog({
     <AlertDialog onOpenChange={onOpenChange} open={localPath !== null}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Add this Project?</AlertDialogTitle>
+          <AlertDialogTitle>Add this Repository?</AlertDialogTitle>
           <AlertDialogDescription className="space-y-3">
             <span className="block">
               The folder stays where it is. NuncioCrew will not clone,
@@ -63,7 +63,7 @@ export function CrewAddProjectDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <label className="space-y-2 text-sm" htmlFor="crew-project-name">
-          <span className="font-medium">Project name</span>
+          <span className="font-medium">Repository name</span>
           <Input
             autoFocus
             disabled={saving}
@@ -83,7 +83,7 @@ export function CrewAddProjectDialog({
             {saving
               ? "Publishing…"
               : canPublish
-                ? "Add Project"
+                ? "Add Repository"
                 : "Waiting for relay"}
           </Button>
         </AlertDialogFooter>
