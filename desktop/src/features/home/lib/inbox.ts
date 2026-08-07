@@ -10,6 +10,7 @@ import {
   getProjectInboxReference,
   isProjectInboxItem,
 } from "@/features/home/lib/projectInbox";
+import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
 import type { TimelineReaction } from "@/features/messages/types";
 import type {
   Channel,
@@ -416,7 +417,13 @@ export function getInboxConversationId(
   }
 
   const thread = getThreadReference(tags);
-  return thread.rootId ?? thread.parentId ?? eventId;
+  const rootEventId = thread.rootId ?? thread.parentId ?? eventId;
+  if (kind === 46010 || kind === 46040) {
+    return (
+      deriveAgentConversationIdOrNull(channelId, rootEventId) ?? rootEventId
+    );
+  }
+  return rootEventId;
 }
 
 /** Returns the stable conversation identity for a complete Inbox feed item. */

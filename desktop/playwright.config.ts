@@ -155,6 +155,7 @@ export default defineConfig({
         "**/huddle-transcription.spec.ts",
         "**/agent-numeric-tuning.spec.ts",
         "**/needs-restart-screenshots.spec.ts",
+        "**/mission-inbox.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

@@ -184,13 +184,8 @@ export function AppShell() {
   useAgentsDataRefresh();
   // Chunk F: auto-restart drifted idle agents (per-agent opt-out, default ON).
   useAutoRestartPolicy();
-  // Owner-global observer ingestion: receives + decrypts agent observer
-  // frames and keeps derived active-turn liveness in sync app-wide, so no
-  // individual screen/panel has to mount its own bridge for ingestion.
-  // Intentionally mounted without a `startupReady`/identity guard: before
-  // `currentPubkey` resolves the hook ingests managed agents only, and
-  // relay-owned agents join automatically once identity arrives. Adding a
-  // guard here would drop managed-agent coverage during startup.
+  // Owner-global observer ingestion; it must stay mounted app-wide so managed
+  // and relay-owned agents are covered during startup.
   useAgentObserverIngestion();
   // Kind 24200 is relay-ephemeral, so reconciliation runs eagerly (not
   // deferred): seeds kind 24200 for fresh identities, no-ops for explicit
@@ -221,6 +216,10 @@ export function AppShell() {
   const feedItemState = useFeedItemState(identityQuery.data?.pubkey);
   const channelsQuery = useChannelsQuery();
   const channels = channelsQuery.data ?? [];
+  const liveHomeChannelIds = React.useMemo(
+    () => (channelsQuery.data ?? []).map((c) => c.id),
+    [channelsQuery.data],
+  );
   useReminderNotifications(
     identityQuery.data?.pubkey,
     notificationSettings.settings,
@@ -232,6 +231,7 @@ export function AppShell() {
   useLiveHomeFeedActions(
     identityQuery.data?.pubkey,
     refetchHomeFeedFromLiveSignal,
+    liveHomeChannelIds,
   );
   const { refetch: refetchChannels } = channelsQuery;
   const channelsErrorMessage =
