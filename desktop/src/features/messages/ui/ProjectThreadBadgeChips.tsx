@@ -1,7 +1,7 @@
 import * as React from "react";
 
 import type { ProjectThreadBadge } from "@/features/messages/lib/projectThreadBadge";
-import { projectThreadStatusClassName } from "@/features/messages/ui/projectThreadGitHubStatus";
+import { projectThreadStatusClassName } from "@/features/messages/lib/projectThreadGitHubStatus";
 import { cn } from "@/shared/lib/cn";
 
 export function ProjectThreadBadgeChips({

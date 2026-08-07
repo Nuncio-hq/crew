@@ -11,8 +11,14 @@ import {
 } from "@/features/agents/ui/agentActivityChrome";
 import { formatElapsed } from "@/features/agents/ui/agentSessionUtils";
 import { useComposerAgentStop } from "@/features/channels/ui/useComposerAgentStop";
-import type { ProjectThreadAgentMention } from "@/features/messages/lib/projectThreadWorkspace";
-import type { TimelineMessage } from "@/features/messages/types";
+import { useNeedsYouForConversation } from "@/features/agents/needsYouStore";
+import { useSharedNowWhen } from "@/features/agents/lib/sharedNow";
+
+import {
+  deriveProjectThreadPhaseStates,
+  type ProjectThreadPhaseState,
+} from "@/features/messages/lib/projectThreadMissionControl";
+
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
 import { cn } from "@/shared/lib/cn";
@@ -23,46 +29,27 @@ import {
   type ProjectThreadDrawer,
 } from "./ProjectThreadIntegrationDrawer";
 import { ProjectThreadGitHubRow } from "./ProjectThreadGitHubRow";
-import { ciStatus, pullRequestStatus } from "./projectThreadGitHubStatus";
-import { useProjectThreadWorkspaceModel } from "./useProjectThreadWorkspaceModel";
+import { ProjectThreadPhaseDot } from "./ProjectThreadPhaseDot";
+import type { ProjectThreadWorkspaceModel } from "./useProjectThreadWorkspaceModel";
 
 type Props = {
-  agentMentions: readonly ProjectThreadAgentMention[];
   channelId: string | null;
   /** When true, the expanded grid uses the wide 3-column layout. */
   isFocusMode?: boolean;
   profiles?: UserProfileLookup;
-  replies: readonly TimelineMessage[];
-  threadHead: TimelineMessage;
+  model: ProjectThreadWorkspaceModel | null;
 };
-
-type ChipTone = "idle" | "active" | "success" | "danger";
-
-function StatusDot({ tone }: { tone: ChipTone }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "inline-block h-1.5 w-1.5 rounded-full",
-        tone === "active" && "bg-amber-400",
-        tone === "success" && "bg-emerald-500",
-        tone === "danger" && "bg-destructive",
-        tone === "idle" && "bg-muted-foreground/40",
-      )}
-    />
-  );
-}
 
 function ChipButton({
   label,
   onClick,
+  phase,
   title,
-  tone,
 }: {
   label: string;
   onClick: () => void;
+  phase?: ProjectThreadPhaseState;
   title?: string;
-  tone: ChipTone;
 }) {
   return (
     <button
@@ -71,7 +58,7 @@ function ChipButton({
       title={title}
       type="button"
     >
-      <StatusDot tone={tone} />
+      {phase ? <ProjectThreadPhaseDot phase={phase} /> : null}
       {label}
     </button>
   );
@@ -92,24 +79,15 @@ function githubDegradedTitle(
  * Owns the agent working signal for project threads.
  */
 export function ProjectThreadWorkspacePanel({
-  agentMentions,
   channelId,
   isFocusMode = false,
   profiles,
-  replies,
-  threadHead,
+  model,
 }: Props) {
-  const model = useProjectThreadWorkspaceModel({
-    agentMentions,
-    profiles,
-    replies,
-    threadHead,
-  });
   const [activeDrawer, setActiveDrawer] =
     React.useState<ProjectThreadDrawer | null>(null);
   const [expanded, setExpanded] = React.useState(false);
   const [stopping, setStopping] = React.useState(false);
-  const [now, setNow] = React.useState(() => Date.now());
 
   const closeDrawer = React.useCallback(() => setActiveDrawer(null), []);
   useEscapeKey(closeDrawer, activeDrawer !== null);
@@ -126,7 +104,11 @@ export function ProjectThreadWorkspacePanel({
   }, [activeDrawer, refreshGitHub]);
 
   const workingPubkeys = model?.workingPubkeys ?? [];
+  const now = useSharedNowWhen(workingPubkeys.length > 0);
   const conversationId = model?.conversationId ?? null;
+  // Real source for the amber "waiting on user" handoff phase: pending
+  // approval requests (kind 46010) blocking this conversation (#74 store).
+  const needsYou = useNeedsYouForConversation(conversationId);
   const { hasStoppableWork, stopAgent } = useComposerAgentStop({
     channelId,
     conversationId,
@@ -164,12 +146,6 @@ export function ProjectThreadWorkspacePanel({
     conversationId,
   );
 
-  React.useEffect(() => {
-    if (workingPubkeys.length === 0) return;
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
-  }, [workingPubkeys.length]);
-
   if (!model) return null;
 
   const {
@@ -202,35 +178,15 @@ export function ProjectThreadWorkspacePanel({
       : formatElapsed(elapsedMs)
     : null;
 
-  const workspaceTone: ChipTone =
-    workspace.status === "error"
-      ? "danger"
-      : workspace.status === "ready"
-        ? "success"
-        : "active";
-  const taskTone: ChipTone =
-    counts.working > 0
-      ? "active"
-      : counts.done === steps.length
-        ? "success"
-        : "idle";
-  const handoffTone: ChipTone =
-    counts.working > 0 ? "active" : counts.done > 0 ? "success" : "idle";
-  const prTone: ChipTone = pullRequest
-    ? pullRequestStatus(pullRequest).tone === "merged" ||
-      pullRequestStatus(pullRequest).tone === "open"
-      ? "success"
-      : pullRequestStatus(pullRequest).tone === "closed"
-        ? "danger"
-        : "active"
-    : "idle";
-  const ciTone: ChipTone = pullRequest
-    ? ciStatus(pullRequest.checks).tone === "success"
-      ? "success"
-      : ciStatus(pullRequest.checks).tone === "failure"
-        ? "danger"
-        : "active"
-    : "idle";
+  const phases = deriveProjectThreadPhaseStates({
+    hasThread: true,
+    pullRequest,
+    steps,
+    // Real source for the amber handoff state: pending approval requests
+    // (kind 46010) blocking this conversation, from #74's needs-you store.
+    waitingOnUser: needsYou.length > 0,
+    workspace,
+  });
 
   const toggle = (drawer: ProjectThreadDrawer) =>
     setActiveDrawer((current) => (current === drawer ? null : drawer));
@@ -272,7 +228,7 @@ export function ProjectThreadWorkspacePanel({
               counts.working > 0
                 ? stuck
                   ? "bg-amber-400"
-                  : "animate-pulse bg-emerald-400"
+                  : "animate-pulse bg-emerald-400 motion-reduce:animate-none"
                 : "bg-muted-foreground/40",
             )}
           />
@@ -288,17 +244,17 @@ export function ProjectThreadWorkspacePanel({
           <ChipButton
             label="Task"
             onClick={() => toggle("task")}
-            tone={taskTone}
+            phase={phases.task}
           />
           <ChipButton
             label="Workspace"
             onClick={() => toggle("workspace")}
-            tone={workspaceTone}
+            phase={phases.workspace}
           />
           <ChipButton
             label="Handoff"
             onClick={() => toggle("handoff")}
-            tone={handoffTone}
+            phase={phases.handoff}
           />
           {githubAvailability === "cli-missing" ||
           githubAvailability === "cli-failed" ? (
@@ -306,19 +262,18 @@ export function ProjectThreadWorkspacePanel({
               label="GitHub"
               onClick={() => undefined}
               title={githubDegradedTitle(githubAvailability)}
-              tone="idle"
             />
           ) : pullRequest ? (
             <>
               <ChipButton
                 label="PR"
                 onClick={() => toggle("pr")}
-                tone={prTone}
+                phase={phases.pr}
               />
               <ChipButton
                 label="CI"
                 onClick={() => toggle("ci")}
-                tone={ciTone}
+                phase={phases.ci}
               />
             </>
           ) : null}
@@ -374,6 +329,7 @@ export function ProjectThreadWorkspacePanel({
               icon={<Users className="h-3.5 w-3.5" />}
               label="Task"
               onClick={() => toggle("task")}
+              phase={phases.task}
               title={`${steps.length}-agent task`}
             />
             <ProjectThreadIntegrationCell
@@ -395,6 +351,7 @@ export function ProjectThreadWorkspacePanel({
               icon={<GitBranch className="h-3.5 w-3.5" />}
               label="Workspace"
               onClick={() => toggle("workspace")}
+              phase={phases.workspace}
               title={
                 workspace.status === "ready" || workspace.status === "derived"
                   ? workspace.branch
@@ -407,6 +364,7 @@ export function ProjectThreadWorkspacePanel({
               icon={<Route className="h-3.5 w-3.5" />}
               label="Handoff"
               onClick={() => toggle("handoff")}
+              phase={phases.handoff}
               title={counts.working ? `${activeName} working` : "Thread crew"}
             />
           </div>
@@ -415,6 +373,7 @@ export function ProjectThreadWorkspacePanel({
             <ProjectThreadGitHubRow
               activeDrawer={activeDrawer}
               onToggle={toggle}
+              phases={phases}
               pullRequest={pullRequest}
             />
           ) : null}

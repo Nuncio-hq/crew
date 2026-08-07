@@ -21,6 +21,8 @@ import { syncAgentTurnsFromEvents } from "@/features/agents/activeAgentTurnsStor
 import { recordTimeoutFromRejection } from "@/features/moderation/lib/timeoutStore";
 import {
   injectObserverEventsForE2E,
+  _testRegisterKnownAgents,
+  resetAgentObserverLiveEventsForE2E,
   syncAgentObserverEvents,
 } from "@/features/agents/observerRelayStore";
 import {
@@ -421,6 +423,8 @@ type E2eConfig = {
       scope_value: string;
       kinds: string; // JSON-encoded integer array, e.g. "[9,40002]"
     }>;
+    /** Synthetic observer frames returned by the archive IPC mocks. */
+    archivedObserverEvents?: RelayEvent[];
     // Event IDs that `get_event` should report as definitively not found.
     // Causes `useDraftRootStatus` to classify as `deleted`.
     deletedEventIds?: string[];
@@ -1277,6 +1281,7 @@ declare global {
     }) => void;
     __BUZZ_E2E_SEED_OBSERVER_EVENTS__?: (input: {
       agentPubkey: string;
+      archive?: boolean;
       events: Array<{
         seq: number;
         timestamp: string;
@@ -1289,6 +1294,7 @@ declare global {
         payload: unknown;
       }>;
     }) => void;
+    __BUZZ_E2E_RESET_OBSERVER_EVENTS__?: () => void;
     __BUZZ_E2E_EMIT_MOCK_READ_STATE__?: (input: {
       clientId: string;
       contexts: Record<string, number>;
@@ -2999,6 +3005,7 @@ const mockMessages = new Map<string, RelayEvent[]>();
 const mockUserStatuses: RelayEvent[] = [];
 const mockReminderEvents: RelayEvent[] = [];
 const mockPersonaEvents: RelayEvent[] = [];
+const mockArchivedObserverEvents: RelayEvent[] = [];
 let mockRelayMembers: RawRelayMember[] = [];
 const mockSockets = new Map<number, MockSocket>();
 const mockAuthResponses: Array<{ success: boolean; message: string }> = [];
@@ -3030,6 +3037,23 @@ function resetMockSaveSubscriptions(config: E2eConfig | undefined) {
   mockSaveSubscriptions = (config?.mock?.saveSubscriptions ?? []).map((s) => ({
     ...s,
   }));
+}
+
+function resetMockArchivedObserverEvents(config: E2eConfig | undefined) {
+  mockArchivedObserverEvents.length = 0;
+  for (const event of config?.mock?.archivedObserverEvents ?? []) {
+    mockArchivedObserverEvents.push({
+      ...event,
+      tags: event.tags.map((tag) => [...tag]),
+    });
+  }
+  _testRegisterKnownAgents(
+    "e2e-archive",
+    mockArchivedObserverEvents.flatMap((event) => {
+      const agent = event.tags.find((tag) => tag[0] === "agent")?.[1];
+      return agent ? [agent] : [];
+    }),
+  );
 }
 
 function resetMockPersonaCatalogEvents(config: E2eConfig | undefined) {
@@ -10065,6 +10089,7 @@ export function maybeInstallE2eTauriMocks() {
   resetMockUserStatuses();
   resetMockPersonaCatalogEvents(config);
   resetMockSaveSubscriptions(config);
+  resetMockArchivedObserverEvents(config);
   resetMockPendingCommunityDeepLinks(config);
   initializeMockHuddle(config.mock?.huddle, config);
   mockWebsocketSendMutexWedged = false;
@@ -10424,8 +10449,32 @@ export function maybeInstallE2eTauriMocks() {
     syncAgentTurnsFromEvents(agentPubkey, [event]);
     syncAgentObserverEvents(agentPubkey, [event]);
   };
-  window.__BUZZ_E2E_SEED_OBSERVER_EVENTS__ = ({ agentPubkey, events }) => {
-    injectObserverEventsForE2E(agentPubkey, events);
+  window.__BUZZ_E2E_SEED_OBSERVER_EVENTS__ = ({
+    agentPubkey,
+    archive = false,
+    events,
+  }) => {
+    if (!archive) {
+      injectObserverEventsForE2E(agentPubkey, events);
+      return;
+    }
+    for (const event of events) {
+      mockArchivedObserverEvents.push({
+        id: `e2e-archive-${agentPubkey}-${event.seq}`,
+        pubkey: agentPubkey,
+        created_at: Math.floor(Date.parse(event.timestamp) / 1000),
+        kind: KIND_AGENT_OBSERVER_FRAME,
+        tags: [
+          ["agent", agentPubkey],
+          ["frame", "telemetry"],
+        ],
+        content: JSON.stringify(event),
+        sig: "",
+      });
+    }
+  };
+  window.__BUZZ_E2E_RESET_OBSERVER_EVENTS__ = () => {
+    resetAgentObserverLiveEventsForE2E();
   };
   const meshModelName = (modelId: string) => {
     const basename = modelId.split("/").at(-1) ?? modelId;
@@ -12998,6 +13047,51 @@ export function maybeInstallE2eTauriMocks() {
         }
         // Return the no-canvas success shape — content null means no canvas set.
         return { content: null, updated_at: null, author: null };
+      }
+      case "read_archived_observer_events_for_channel": {
+        const counters = (window as unknown as Record<string, unknown>)
+          .__BUZZ_E2E_IPC_COUNTERS__ as Record<string, number> | undefined;
+        if (counters) {
+          counters.read_archived_observer_events_for_channel =
+            (counters.read_archived_observer_events_for_channel ?? 0) + 1;
+        }
+        _testRegisterKnownAgents(
+          "e2e-archive",
+          mockArchivedObserverEvents.flatMap((event) => {
+            const agent = event.tags.find((tag) => tag[0] === "agent")?.[1];
+            return agent ? [agent] : [];
+          }),
+        );
+        const channelId = (payload as { channelId?: string }).channelId;
+        return mockArchivedObserverEvents
+          .filter((event) => {
+            try {
+              return (
+                (JSON.parse(event.content) as { channelId?: string })
+                  .channelId === channelId
+              );
+            } catch {
+              return false;
+            }
+          })
+          .map((event) => JSON.stringify(event));
+      }
+      case "read_unindexed_observer_rows": {
+        const counters = (window as unknown as Record<string, unknown>)
+          .__BUZZ_E2E_IPC_COUNTERS__ as Record<string, number> | undefined;
+        if (counters) {
+          counters.read_unindexed_observer_rows =
+            (counters.read_unindexed_observer_rows ?? 0) + 1;
+        }
+        return [];
+      }
+      case "index_observer_channel_id":
+        return null;
+      case "decrypt_observer_event": {
+        const event = JSON.parse(
+          (payload as { eventJson: string }).eventJson,
+        ) as RelayEvent;
+        return JSON.parse(event.content);
       }
       // ── Local-save archive ──────────────────────────────────────────────
       // These stubs drive the LocalArchiveSettingsCard in screenshot / UI tests

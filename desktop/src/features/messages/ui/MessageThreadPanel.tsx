@@ -43,6 +43,8 @@ import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
 import { ProjectThreadWorkspacePanel } from "./ProjectThreadWorkspacePanel";
+import { ProjectThreadActivityPeek } from "./ProjectThreadActivityPeek";
+import { useProjectThreadWorkspaceModel } from "./useProjectThreadWorkspaceModel";
 import type { ThreadBreadcrumb } from "@/features/messages/lib/threadOrientation";
 import {
   ThreadPanelAncestry,
@@ -552,6 +554,12 @@ export function MessageThreadPanel({
     threadMessages,
     threadTypingCount: threadTypingPubkeys.length,
   });
+  const projectThreadWorkspaceModel = useProjectThreadWorkspaceModel({
+    agentMentions: projectThreadAgentMentions,
+    profiles,
+    replies: threadMessages,
+    threadHead,
+  });
 
   if (!threadHead) {
     return null;
@@ -855,6 +863,10 @@ export function MessageThreadPanel({
               hasComposerBottomActivity && "composer-dock--with-activity",
             )}
           >
+            <ProjectThreadActivityPeek
+              channelId={channelId}
+              model={projectThreadWorkspaceModel}
+            />
             <ComposerDockBackdrop gutterClassName="inset-x-5" />
             <MessageComposer
               audienceContext={{
@@ -973,12 +985,10 @@ export function MessageThreadPanel({
         )}
       >
         <ProjectThreadWorkspacePanel
-          agentMentions={projectThreadAgentMentions}
           channelId={channelId}
           isFocusMode={isFocusMode}
           profiles={profiles}
-          replies={threadMessages}
-          threadHead={threadHead}
+          model={projectThreadWorkspaceModel}
         />
         {threadScrollRegion}
       </div>
