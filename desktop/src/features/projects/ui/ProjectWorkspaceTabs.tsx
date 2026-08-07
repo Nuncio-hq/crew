@@ -79,6 +79,15 @@ type UpdatePullRequestAction = {
   pending: boolean;
 };
 
+/** Returns the diff-only badge count, or null while the diff query is pending. */
+export function getPullRequestFilesBadgeCount(
+  repoDiff: ProjectRepoDiff | null | undefined,
+  repoDiffLoading: boolean,
+): number | null {
+  if (repoDiffLoading) return null;
+  return repoDiff?.files.length ?? 0;
+}
+
 function WorkItemListHeader({
   actionDisabled = false,
   actionLabel,
@@ -360,7 +369,10 @@ export function WorkspaceTabs({
               />
               <div className="border-b border-border/60 px-4">
                 <PullRequestTabsList
-                  filesCount={repoDiff?.files.length ?? files.length}
+                  filesCount={getPullRequestFilesBadgeCount(
+                    repoDiff,
+                    repoDiffLoading,
+                  )}
                   pullRequest={selectedPullRequest}
                 />
               </div>

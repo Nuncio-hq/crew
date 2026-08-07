@@ -9,6 +9,10 @@ import {
 } from "@/features/agents/activeAgentTurnsStore.ts";
 import { getAgentThreadDigestForChannel } from "@/features/agents/agentThreadDigestForChannel.ts";
 import {
+  ingestApprovalRequest,
+  resetNeedsYouStore,
+} from "@/features/agents/needsYouStore.ts";
+import {
   ChannelAgentDigest,
   ChannelAgentDigestView,
 } from "./ChannelAgentDigest.tsx";
@@ -36,6 +40,7 @@ function makeEvent(overrides) {
 describe("getAgentThreadDigestForChannel", () => {
   beforeEach(() => {
     resetActiveAgentTurnsStore();
+    resetNeedsYouStore();
   });
 
   it("returns null when the channel has no running or recent outcomes", () => {
@@ -162,11 +167,36 @@ describe("getAgentThreadDigestForChannel", () => {
     const second = getAgentThreadDigestForChannel("chan-1");
     assert.equal(first, second);
   });
+  it("counts blocked conversations in the needs-you bucket", () => {
+    const root =
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    ingestApprovalRequest({
+      id: "approval-a",
+      channelId: "00112233-4455-6677-8899-aabbccddeeff",
+      rootEventId: root,
+      agentPubkey: AGENT_A,
+      createdAt: Date.now(),
+    });
+    ingestApprovalRequest({
+      id: "approval-b",
+      channelId: "00112233-4455-6677-8899-aabbccddeeff",
+      rootEventId: root,
+      agentPubkey: AGENT_B,
+      createdAt: Date.now(),
+    });
+    const digest = getAgentThreadDigestForChannel(
+      "00112233-4455-6677-8899-aabbccddeeff",
+    );
+    assert.ok(digest);
+    assert.equal(digest.needsYou.length, 1);
+    assert.deepEqual(digest.needsYou[0].agentPubkeys, [AGENT_A, AGENT_B]);
+  });
 });
 
 describe("ChannelAgentDigest render", () => {
   beforeEach(() => {
     resetActiveAgentTurnsStore();
+    resetNeedsYouStore();
   });
 
   it("renders nothing when digest is empty", () => {

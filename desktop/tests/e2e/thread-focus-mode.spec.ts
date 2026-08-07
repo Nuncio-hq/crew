@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
 
 async function seedLongThread(page: import("@playwright/test").Page) {
@@ -201,6 +202,9 @@ test("focus and split preserve reading context and interaction ownership", async
   await expect(page.getByRole("tooltip")).toHaveCount(0);
   await expect(page.getByTestId("message-thread-body")).toBeFocused();
   await expect(summary).not.toBeFocused();
+  // The drawer exit animation and anchored scroll settle after the drawer is
+  // removed; assert the preserved row only once that layout has settled.
+  await waitForAnimations(page);
   await expect(
     body.locator(`[data-message-id="${anchorId}"]`),
   ).toBeInViewport();
@@ -220,6 +224,9 @@ test("focus and split preserve reading context and interaction ownership", async
   await expect(drawer).toBeVisible();
   await expect(channel).toHaveAttribute("inert", "");
   await expect(page.getByTestId("thread-view-mode-toggle")).toBeFocused();
+  // Re-opening focus mode also animates the panel after visibility is true;
+  // wait for the anchored layout before checking the reading context.
+  await waitForAnimations(page);
   await expect(
     body.locator(`[data-message-id="${anchorId}"]`),
   ).toBeInViewport();

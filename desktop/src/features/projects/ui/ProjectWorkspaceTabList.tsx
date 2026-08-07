@@ -70,7 +70,7 @@ export function PullRequestTabsList({
   filesCount,
   pullRequest,
 }: {
-  filesCount: number;
+  filesCount: number | null;
   pullRequest: ProjectPullRequest;
 }) {
   const commitCount = Math.max(1, pullRequest.updateCount + 1);
@@ -94,9 +94,11 @@ export function PullRequestTabsList({
       </TabsTrigger>
       <TabsTrigger className={PR_TAB_TRIGGER_CLASS} value="pr-files">
         Files changed
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-2xs">
-          {filesCount}
-        </span>
+        {filesCount === null ? null : (
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-2xs">
+            {filesCount}
+          </span>
+        )}
       </TabsTrigger>
     </TabsList>
   );

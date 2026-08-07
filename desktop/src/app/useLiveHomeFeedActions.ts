@@ -5,11 +5,15 @@ import { remindersQueryKey } from "@/features/reminders/hooks";
 import { relayClient } from "@/shared/api/relayClient";
 import {
   KIND_APPROVAL_REQUEST,
+  KIND_APPROVAL_GRANT,
+  KIND_APPROVAL_DENY,
   KIND_EVENT_REMINDER,
-  KIND_REMINDER,
 } from "@/shared/constants/kinds";
+import {
+  ingestApprovalRequestEvent,
+  resolveApprovalRequestEvent,
+} from "@/features/agents/needsYouStore";
 
-const HOME_FEED_ACTION_KINDS = [KIND_APPROVAL_REQUEST, KIND_REMINDER] as const;
 const LIVE_HOME_FEED_RETRY_BASE_MS = 1_000;
 const LIVE_HOME_FEED_RETRY_MAX_MS = 30_000;
 
@@ -65,12 +69,30 @@ export function useLiveHomeFeedActions(
       void Promise.allSettled([
         relayClient.subscribeLive(
           {
-            kinds: [...HOME_FEED_ACTION_KINDS],
+            kinds: [KIND_APPROVAL_REQUEST],
             "#p": [normalizedPubkey],
             limit: 50,
             since,
           },
-          handleLiveHomeFeedEvent,
+          (event) => {
+            ingestApprovalRequestEvent(event);
+            handleLiveHomeFeedEvent();
+          },
+        ),
+        relayClient.subscribeLive(
+          {
+            authors: [normalizedPubkey],
+            kinds: [KIND_APPROVAL_GRANT, KIND_APPROVAL_DENY],
+            limit: 50,
+            since,
+          },
+          (event) => {
+            // Refresh the feed only after the resolution settles so the
+            // refetched needs_action can't race the store update.
+            void resolveApprovalRequestEvent(event).finally(
+              handleLiveHomeFeedEvent,
+            );
+          },
         ),
         relayClient.subscribeLive(
           {

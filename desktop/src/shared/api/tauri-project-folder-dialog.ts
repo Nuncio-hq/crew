@@ -4,6 +4,6 @@ export async function chooseProjectWorkspaceFolder(): Promise<string | null> {
   return open({
     directory: true,
     multiple: false,
-    title: "Select Project workspace",
+    title: "Select Repository workspace",
   });
 }

@@ -88,9 +88,9 @@ pub async fn get_feed(
     if let Some(s) = since {
         mention_filter["since"] = serde_json::json!(s);
     }
-    // Needs-action: workflow approval-request events sent to me.
+    // Needs-action requests are #p-addressed; user-authored responses are handled live.
     let mut approval_filter = serde_json::json!({
-        "kinds": [46010, 46011, 46012],
+        "kinds": [buzz_core_pkg::kind::KIND_WORKFLOW_APPROVAL_REQUESTED],
         "#p": [my_pubkey],
         "limit": 20,
     });

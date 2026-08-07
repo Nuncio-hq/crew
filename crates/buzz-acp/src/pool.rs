@@ -2845,6 +2845,12 @@ struct ThreadWorkspaceProvisionError {
 
 impl ThreadWorkspaceProvisionError {
     fn protocol_message(&self) -> String {
+        if let Some(error) =
+            self.source
+                .downcast_ref::<crate::thread_workspace::ThreadWorkspaceRootVerificationError>()
+        {
+            return format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {error}");
+        }
         if let Some(error) = self
             .source
             .downcast_ref::<crate::thread_workspace::ThreadWorkspaceBranchConflict>()
@@ -3168,22 +3174,50 @@ fn trusted_fetched_root_content<'a>(
     fetched_root: Option<&'a VerifiedThreadRoot>,
 ) -> anyhow::Result<Option<&'a str>> {
     let Some(fetched_root) = fetched_root else {
-        anyhow::bail!("could not verify thread root before creating an agent session");
+        return Err(
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::Unavailable {
+                root_event_id: expected_root_event_id.to_string(),
+            }
+            .into(),
+        );
     };
     if !fetched_root
         .root_event_id
         .eq_ignore_ascii_case(expected_root_event_id)
     {
-        anyhow::bail!("thread root lookup returned an unexpected root");
+        return Err(
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::IdMismatch {
+                requested_root_event_id: expected_root_event_id.to_string(),
+                fetched_root_event_id: fetched_root.root_event_id.clone(),
+            }
+            .into(),
+        );
     }
     let ConversationContext::Thread { messages, .. } = &fetched_root.context else {
-        anyhow::bail!("thread root lookup returned unexpected context");
+        return Err(
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::UnexpectedContext {
+                root_event_id: expected_root_event_id.to_string(),
+            }
+            .into(),
+        );
     };
     let Some(root) = messages.first() else {
-        anyhow::bail!("thread root lookup returned no messages");
+        return Err(
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::NoMessages {
+                root_event_id: expected_root_event_id.to_string(),
+            }
+            .into(),
+        );
     };
     if !root.pubkey.eq_ignore_ascii_case(owner) {
-        anyhow::bail!("thread root author does not match the Project owner");
+        return Err(
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::AuthorMismatch {
+                root_event_id: expected_root_event_id.to_string(),
+                expected_owner: owner.to_string(),
+                actual_author: root.pubkey.clone(),
+            }
+            .into(),
+        );
     }
     Ok(Some(root.content.as_str()))
 }
@@ -3219,7 +3253,14 @@ mod thread_session_cwd_tests {
     #[test]
     fn missing_root_context_fails_closed() {
         let error = trusted_fetched_root_content("owner", &"a".repeat(64), None).unwrap_err();
-        assert!(error.to_string().contains("could not verify thread root"));
+        let verification = error
+            .downcast_ref::<crate::thread_workspace::ThreadWorkspaceRootVerificationError>()
+            .expect("missing root context must produce a typed verification error");
+        assert!(matches!(
+            verification,
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::Unavailable { .. }
+        ));
+        assert!(error.to_string().contains("could not be verified"));
     }
 
     #[test]
@@ -3290,7 +3331,22 @@ mod thread_session_cwd_tests {
 
         let error = trusted_fetched_root_content("owner", &"a".repeat(64), Some(&root))
             .expect_err("mismatched root identity must not be trusted");
-        assert!(error.to_string().contains("unexpected root"));
+        let verification = error
+            .downcast_ref::<crate::thread_workspace::ThreadWorkspaceRootVerificationError>()
+            .expect("mismatched root identity must produce a typed verification error");
+        assert!(matches!(
+            verification,
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::IdMismatch { .. }
+        ));
+        let message = error.to_string();
+        assert!(
+            message.contains(&"a".repeat(64)),
+            "missing requested id: {message}"
+        );
+        assert!(
+            message.contains("instead"),
+            "missing mismatch phrasing: {message}"
+        );
     }
 
     #[test]
@@ -4931,12 +4987,7 @@ mod tests {
             .downcast_ref::<ThreadWorkspaceProvisionError>()
             .expect("workspace failures keep their thread root identity");
         assert_eq!(provision_error.root_event_id, root_id);
-        assert!(
-            error
-                .to_string()
-                .contains("could not verify thread root before creating an agent session"),
-            "reply-only context reached a later workspace stage: {error}"
-        );
+        assert!(error.to_string().contains("could not be verified"));
         server.await.expect("thread-context test server completes");
     }
 
@@ -6599,6 +6650,93 @@ mod tests {
         let message = error.protocol_message();
         assert!(message.contains("Could not prepare the isolated Project workspace."));
         assert!(message.contains("actively using this Project workspace"));
+    }
+
+    #[test]
+    fn thread_workspace_root_verification_error_displays_root_and_remediation() {
+        let root_id = "a".repeat(64);
+        let other_id = "b".repeat(64);
+        let cases = [
+            (
+                crate::thread_workspace::ThreadWorkspaceRootVerificationError::Unavailable {
+                    root_event_id: root_id.clone(),
+                },
+                vec!["could not be verified", "available from the relay"],
+            ),
+            (
+                crate::thread_workspace::ThreadWorkspaceRootVerificationError::IdMismatch {
+                    requested_root_event_id: root_id.clone(),
+                    fetched_root_event_id: other_id.clone(),
+                },
+                vec![other_id.as_str(), "instead"],
+            ),
+            (
+                crate::thread_workspace::ThreadWorkspaceRootVerificationError::UnexpectedContext {
+                    root_event_id: root_id.clone(),
+                },
+                vec!["unexpected context"],
+            ),
+            (
+                crate::thread_workspace::ThreadWorkspaceRootVerificationError::NoMessages {
+                    root_event_id: root_id.clone(),
+                },
+                vec!["no messages"],
+            ),
+            (
+                crate::thread_workspace::ThreadWorkspaceRootVerificationError::AuthorMismatch {
+                    root_event_id: root_id.clone(),
+                    expected_owner: "owner".into(),
+                    actual_author: "other-author".into(),
+                },
+                vec!["other-author", "owner", "Project owner"],
+            ),
+        ];
+
+        for (error, hints) in cases {
+            let message = error.to_string();
+            assert!(message.contains(&root_id), "missing root id: {message}");
+            for hint in hints {
+                assert!(message.contains(hint), "missing '{hint}' in: {message}");
+            }
+        }
+    }
+
+    #[test]
+    fn thread_workspace_provision_error_surfaces_root_verification_details() {
+        let root_id = "a".repeat(64);
+        let errors = [
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::Unavailable {
+                root_event_id: root_id.clone(),
+            },
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::IdMismatch {
+                requested_root_event_id: root_id.clone(),
+                fetched_root_event_id: "b".repeat(64),
+            },
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::UnexpectedContext {
+                root_event_id: root_id.clone(),
+            },
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::NoMessages {
+                root_event_id: root_id.clone(),
+            },
+            crate::thread_workspace::ThreadWorkspaceRootVerificationError::AuthorMismatch {
+                root_event_id: root_id.clone(),
+                expected_owner: "owner".into(),
+                actual_author: "other-author".into(),
+            },
+        ];
+
+        for source in errors {
+            let message =
+                thread_workspace_provision_error(&root_id, source.into()).protocol_message();
+            assert!(message.contains(THREAD_WORKSPACE_ERROR_MESSAGE));
+            assert!(message.contains(&root_id), "missing root detail: {message}");
+        }
+    }
+
+    #[test]
+    fn thread_workspace_provision_error_keeps_bare_message_for_opaque_error() {
+        let error = thread_workspace_provision_error(&"a".repeat(64), anyhow::anyhow!("opaque"));
+        assert_eq!(error.protocol_message(), THREAD_WORKSPACE_ERROR_MESSAGE);
     }
 
     // ── ControlSignal::SwitchModel (Phase 3a, Option ii) ─────────────────────

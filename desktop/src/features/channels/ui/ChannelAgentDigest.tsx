@@ -51,7 +51,7 @@ function useSharedNow(): number {
   );
 }
 
-type DigestBucket = "running" | "failed" | "done";
+type DigestBucket = "needsYou" | "running" | "failed" | "done";
 
 const BUCKET_META: Record<
   DigestBucket,
@@ -62,6 +62,13 @@ const BUCKET_META: Record<
     testId: string;
   }
 > = {
+  needsYou: {
+    glyph: "⚠",
+    word: "needs you",
+    pillClass:
+      "border-amber-500/35 bg-amber-500/10 text-amber-600 hover:bg-amber-500/15 dark:text-amber-400",
+    testId: "channel-agent-digest-pill-needs-you",
+  },
   running: {
     glyph: "⟳",
     word: "running",
@@ -128,6 +135,7 @@ export function ChannelAgentDigestView({
   const now = useSharedNow();
 
   const buckets: Array<{ key: DigestBucket; refs: ConversationRef[] }> = [
+    { key: "needsYou", refs: digest.needsYou ?? [] },
     { key: "running", refs: digest.running },
     { key: "failed", refs: digest.failed },
     { key: "done", refs: digest.done },
@@ -238,15 +246,17 @@ function DigestItem({
   const pubkeys = refEntry.agentPubkeys;
   const names = pubkeys.map((pubkey) => agentLabel(pubkey, profiles));
   const timeLabel =
-    bucket === "running"
+    bucket === "running" || bucket === "needsYou"
       ? formatElapsed(Math.max(0, now - refEntry.anchorAt))
       : formatCompactAgo(Math.max(0, now - refEntry.anchorAt));
   const title =
     bucket === "running"
       ? `${names.join(", ")} working · ${timeLabel}`
-      : bucket === "failed"
-        ? `${names.join(", ")} failed ${timeLabel}`
-        : `${names.join(", ")} finished ${timeLabel}`;
+      : bucket === "needsYou"
+        ? `${names.join(", ")} is waiting for your approval · ${timeLabel}`
+        : bucket === "failed"
+          ? `${names.join(", ")} failed ${timeLabel}`
+          : `${names.join(", ")} finished ${timeLabel}`;
 
   return (
     <button
