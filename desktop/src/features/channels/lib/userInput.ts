@@ -4,6 +4,7 @@ import {
   KIND_AGENT_USER_INPUT_RESOLVED,
 } from "@/shared/constants/kinds";
 import type { RelayEvent } from "@/shared/api/types";
+import { getThreadReference } from "@/features/messages/lib/threading";
 
 export type UserInputOption = {
   value: string;
@@ -162,6 +163,15 @@ export function parseUserInputRequest(
   } catch {
     return null;
   }
+}
+
+/** Resolve the same thread-root fallback used by the approval lifecycle. */
+export function deriveUserInputRootEventId(event: RelayEvent): string {
+  const thread = getThreadReference(event.tags);
+  const fallbackEventTag = [...event.tags]
+    .reverse()
+    .find((tag) => tag[0] === "e" && tag[1])?.[1];
+  return thread.rootId ?? thread.parentId ?? fallbackEventTag ?? event.id;
 }
 
 export function getAnswerRequestId(event: RelayEvent): string | null {

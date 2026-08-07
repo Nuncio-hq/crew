@@ -8,12 +8,21 @@ import { KIND_AGENT_USER_INPUT_REQUESTED } from "@/shared/constants/kinds";
 import {
   buildSkippedAnswers,
   buildUserInputAnswers,
+  deriveUserInputRootEventId,
   deriveResolvedUserInputs,
   derivePendingUserInputs,
+  getAnswerRequestId,
+  getResolvedRequestId,
+  parseUserInputRequest,
   publishUserInputAnswer,
   type UserInputAnswers,
   type UserInputEvent,
 } from "@/features/channels/lib/userInput";
+import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
+import {
+  ingestUserInputRequest,
+  resolveUserInputRequest,
+} from "@/features/agents/needsYouStore";
 
 const RETAINED_EVENTS = 200;
 
@@ -52,6 +61,27 @@ export function useChannelUserInput(channelId: string | null) {
     const filter = buildChannelUserInputFilter(channelId, RETAINED_EVENTS);
     const onEvent = (event: RelayEvent) => {
       if (cancelled) return;
+      const request = parseUserInputRequest(event);
+      if (request) {
+        const rootEventId = deriveUserInputRootEventId(event);
+        const conversationId = deriveAgentConversationIdOrNull(
+          request.channel_id || channelId,
+          rootEventId,
+        );
+        if (!conversationId) return;
+        ingestUserInputRequest({
+          id: event.id,
+          channelId: request.channel_id || channelId || "",
+          rootEventId,
+          conversationId,
+          agentPubkey: event.pubkey,
+          createdAt: event.created_at * 1_000,
+        });
+      } else {
+        const resolvedId =
+          getAnswerRequestId(event) ?? getResolvedRequestId(event);
+        if (resolvedId) resolveUserInputRequest(resolvedId);
+      }
       if (event.kind === KIND_AGENT_USER_INPUT_REQUESTED) {
         setVisibleRequestIds((current) => {
           if (current.has(event.id)) return current;
@@ -75,11 +105,35 @@ export function useChannelUserInput(channelId: string | null) {
         }
         const history = await relayClient.fetchEvents(filter);
         if (!cancelled) {
+          for (const event of history) {
+            const resolvedId =
+              getAnswerRequestId(event) ?? getResolvedRequestId(event);
+            if (resolvedId) resolveUserInputRequest(resolvedId);
+          }
           const pendingIds = new Set(
             derivePendingUserInputs(history, currentPubkey).map(
               ({ event }) => event.id,
             ),
           );
+          for (const event of history) {
+            const request = parseUserInputRequest(event);
+            if (!request) continue;
+            if (!pendingIds.has(event.id)) continue;
+            const rootEventId = deriveUserInputRootEventId(event);
+            const conversationId = deriveAgentConversationIdOrNull(
+              request.channel_id || channelId,
+              rootEventId,
+            );
+            if (!conversationId) continue;
+            ingestUserInputRequest({
+              id: event.id,
+              channelId: request.channel_id || channelId || "",
+              rootEventId,
+              conversationId,
+              agentPubkey: event.pubkey,
+              createdAt: event.created_at * 1_000,
+            });
+          }
           setVisibleRequestIds((current) => {
             const next = new Set(current);
             for (const id of pendingIds) next.add(id);

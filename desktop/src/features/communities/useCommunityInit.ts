@@ -31,6 +31,7 @@ import {
 } from "@/features/agents/activeAgentTurnsStore";
 import { resetAgentWorkingSignal } from "@/features/agents/agentWorkingSignal";
 import { resetNeedsYouStore } from "@/features/agents/needsYouStore";
+import { resetChannelAgentPresenceCache } from "@/features/agents/channelAgentPresence";
 import { resetAgentObserverStore } from "@/features/agents/observerRelayStore";
 import { resetThreadAgentActivityHeadlineCaches } from "@/features/messages/ui/conversationActivityHeadline";
 import {
@@ -69,6 +70,7 @@ function resetCommunityState({
   resetThreadAgentActivityHeadlineCaches();
   resetAgentWorkingSignal();
   resetNeedsYouStore();
+  resetChannelAgentPresenceCache();
   if (isTauri() && isMacPlatform()) {
     void clearTrayAgentActivity();
   }
