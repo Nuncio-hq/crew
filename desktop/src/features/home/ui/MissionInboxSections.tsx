@@ -94,7 +94,11 @@ export function MissionInboxSectionsView({
   const [workingOpen, setWorkingOpen] = React.useState(false);
   const groups = [
     { key: "needsYou", label: "Needs you", rows: sections.needsYou },
-    { key: "readyToReview", label: "Ready to review", rows: sections.readyToReview },
+    {
+      key: "readyToReview",
+      label: "Ready to review",
+      rows: sections.readyToReview,
+    },
   ] as const;
   return (
     <div
