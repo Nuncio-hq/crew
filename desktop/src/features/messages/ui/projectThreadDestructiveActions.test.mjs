@@ -8,7 +8,10 @@ const workspaceUrl = new URL(
 );
 const githubUrl = new URL("./ProjectThreadGitHubDetails.tsx", import.meta.url);
 const githubRowUrl = new URL("./ProjectThreadGitHubRow.tsx", import.meta.url);
-const statusUrl = new URL("./projectThreadGitHubStatus.ts", import.meta.url);
+const statusUrl = new URL(
+  "../lib/projectThreadGitHubStatus.ts",
+  import.meta.url,
+);
 
 test("workspace destructive actions use an in-app confirmation with a cancel path", async () => {
   const source = await readFile(workspaceUrl, "utf8");
