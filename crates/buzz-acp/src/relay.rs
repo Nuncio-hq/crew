@@ -599,6 +599,13 @@ impl RelayEventPublisher {
         });
         (Self { cmd_tx }, event_rx)
     }
+
+    /// Test-only publisher that does not spawn a Tokio task.
+    #[cfg(test)]
+    pub(crate) fn test_noop() -> Self {
+        let (cmd_tx, _cmd_rx) = mpsc::channel(1);
+        Self { cmd_tx }
+    }
 }
 
 impl HarnessRelay {

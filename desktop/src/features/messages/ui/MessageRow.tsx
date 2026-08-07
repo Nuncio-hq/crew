@@ -26,6 +26,7 @@ import {
   THREAD_REPLY_LINE_WIDTH_REM,
 } from "@/features/messages/lib/threadTreeLayout";
 import {
+  KIND_AGENT_RECEIPT,
   KIND_HUDDLE_STARTED,
   KIND_STREAM_MESSAGE_DIFF,
 } from "@/shared/constants/kinds";
@@ -37,6 +38,7 @@ import { useChannelNavigation } from "@/shared/context/ChannelNavigationContext"
 import { parseImetaTags } from "@/shared/ui/markdown/parseImeta";
 import { useMessageEmoji } from "@/features/messages/lib/useMessageEmoji";
 import { parseWaveMessageContent } from "@/features/messages/lib/waveMessage";
+import { parseAgentReceipt } from "@/features/messages/lib/agentReceipt.mjs";
 import { resolveSnapshotSharedBy } from "@/features/messages/lib/snapshotSharedBy";
 import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
 import { Markdown } from "@/shared/ui/markdown";
@@ -47,6 +49,7 @@ import { MessageAgentOwner } from "./MessageAgentOwner";
 import { MessageAuthorText, MessageHeaderRow } from "./MessageHeader";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { WaveMessageAttachment } from "./WaveMessageAttachment";
+import { AgentReceiptCard } from "./AgentReceiptCard";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 const DiffMessage = React.lazy(() => import("./DiffMessage"));
@@ -329,6 +332,35 @@ export const MessageRow = React.memo(
     const getTag = (name: string) =>
       message.tags?.find((tag) => tag[0] === name)?.[1];
 
+    const renderMarkdownBody = () => (
+      <Markdown
+        channelNames={channelNames}
+        className={cn(
+          "max-w-full text-sm",
+          emojiOnly &&
+            "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
+        )}
+        // Only pass the author pubkey for agent-authored messages so
+        // config-nudge cards can authenticate the sender. Uses the
+        // raw event signer (signerPubkey), not a relay-delegated display
+        // author, because the agent itself must have signed the card.
+        configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
+          message,
+          isKnownAgentPubkey,
+        )}
+        content={message.body}
+        customEmoji={customEmoji}
+        imetaByUrl={imetaByUrl}
+        agentMentionPubkeysByName={agentMentionPubkeysByName}
+        agentMentionAvatarsByName={agentMentionAvatarsByName}
+        mentionNames={mentionNames}
+        mentionPubkeysByName={mentionPubkeysByName}
+        searchQuery={searchQuery}
+        snapshotSharedBy={snapshotSharedBy}
+        videoReviewContext={videoReviewContext}
+      />
+    );
+
     const renderBody = () => {
       switch (message.kind) {
         case KIND_STREAM_MESSAGE_DIFF:
@@ -361,6 +393,14 @@ export const MessageRow = React.memo(
               message={message}
             />
           );
+        case KIND_AGENT_RECEIPT: {
+          const receipt = parseAgentReceipt(message.body);
+          return receipt ? (
+            <AgentReceiptCard receipt={receipt} />
+          ) : (
+            renderMarkdownBody()
+          );
+        }
         default:
           {
             const waveMessage = parseWaveMessageContent(message.body);
@@ -376,34 +416,7 @@ export const MessageRow = React.memo(
             }
           }
 
-          return (
-            <Markdown
-              channelNames={channelNames}
-              className={cn(
-                "max-w-full text-sm",
-                emojiOnly &&
-                  "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
-              )}
-              // Only pass the author pubkey for agent-authored messages so
-              // config-nudge cards can authenticate the sender. Uses the
-              // raw event signer (signerPubkey), not a relay-delegated display
-              // author, because the agent itself must have signed the card.
-              configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
-                message,
-                isKnownAgentPubkey,
-              )}
-              content={message.body}
-              customEmoji={customEmoji}
-              imetaByUrl={imetaByUrl}
-              agentMentionPubkeysByName={agentMentionPubkeysByName}
-              agentMentionAvatarsByName={agentMentionAvatarsByName}
-              mentionNames={mentionNames}
-              mentionPubkeysByName={mentionPubkeysByName}
-              searchQuery={searchQuery}
-              snapshotSharedBy={snapshotSharedBy}
-              videoReviewContext={videoReviewContext}
-            />
-          );
+          return renderMarkdownBody();
       }
     };
 

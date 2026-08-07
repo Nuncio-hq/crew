@@ -12,29 +12,30 @@ use uuid::Uuid;
 use buzz_auth::Scope;
 use buzz_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
-    is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
-    KIND_AGENT_USER_INPUT_ANSWER, KIND_AGENT_USER_INPUT_REQUESTED, KIND_AGENT_USER_INPUT_RESOLVED,
-    KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
-    KIND_CANVAS, KIND_CONTACT_LIST, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN,
-    KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT,
-    KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH,
-    KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE,
-    KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN,
-    KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES, KIND_HUDDLE_PARTICIPANT_JOINED,
-    KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED, KIND_IA_ARCHIVE_REQUEST,
-    KIND_IA_UNARCHIVE_REQUEST, KIND_LONG_FORM, KIND_MANAGED_AGENT, KIND_MEMBER_ADDED_NOTIFICATION,
-    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
-    KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_MUTE_LIST,
-    KIND_NIP29_CREATE_GROUP, KIND_NIP29_DELETE_EVENT, KIND_NIP29_DELETE_GROUP,
-    KIND_NIP29_EDIT_METADATA, KIND_NIP29_JOIN_REQUEST, KIND_NIP29_LEAVE_REQUEST,
-    KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER, KIND_NIP43_LEAVE_REQUEST,
-    KIND_NIP65_RELAY_LIST_METADATA, KIND_PERSONA, KIND_PIN_LIST, KIND_PRESENCE_UPDATE,
-    KIND_PRODUCT_FEEDBACK, KIND_PROFILE, KIND_PROJECT, KIND_REACTION, KIND_READ_STATE, KIND_REPORT,
-    KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_BOOKMARKED, KIND_STREAM_MESSAGE_DIFF,
-    KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_MESSAGE_PINNED, KIND_STREAM_MESSAGE_SCHEDULED,
-    KIND_STREAM_MESSAGE_V2, KIND_STREAM_REMINDER, KIND_TEAM, KIND_TEAM_CATALOG, KIND_TEXT_NOTE,
-    KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER, RELAY_ADMIN_ADD_MEMBER,
-    RELAY_ADMIN_CHANGE_ROLE, RELAY_ADMIN_REMOVE_MEMBER, RELAY_ADMIN_SET_WORKSPACE_PROFILE,
+    is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_RECEIPT,
+    KIND_AGENT_TURN_METRIC, KIND_AGENT_USER_INPUT_ANSWER, KIND_AGENT_USER_INPUT_REQUESTED,
+    KIND_AGENT_USER_INPUT_RESOLVED, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH,
+    KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET, KIND_CANVAS, KIND_CONTACT_LIST, KIND_DELETION,
+    KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
+    KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
+    KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+    KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
+    KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES,
+    KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED,
+    KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST, KIND_LONG_FORM, KIND_MANAGED_AGENT,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_MODERATION_BAN,
+    KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN,
+    KIND_MODERATION_UNTIMEOUT, KIND_MUTE_LIST, KIND_NIP29_CREATE_GROUP, KIND_NIP29_DELETE_EVENT,
+    KIND_NIP29_DELETE_GROUP, KIND_NIP29_EDIT_METADATA, KIND_NIP29_JOIN_REQUEST,
+    KIND_NIP29_LEAVE_REQUEST, KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER,
+    KIND_NIP43_LEAVE_REQUEST, KIND_NIP65_RELAY_LIST_METADATA, KIND_PERSONA, KIND_PIN_LIST,
+    KIND_PRESENCE_UPDATE, KIND_PRODUCT_FEEDBACK, KIND_PROFILE, KIND_PROJECT, KIND_REACTION,
+    KIND_READ_STATE, KIND_REPORT, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_BOOKMARKED,
+    KIND_STREAM_MESSAGE_DIFF, KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_MESSAGE_PINNED,
+    KIND_STREAM_MESSAGE_SCHEDULED, KIND_STREAM_MESSAGE_V2, KIND_STREAM_REMINDER, KIND_TEAM,
+    KIND_TEAM_CATALOG, KIND_TEXT_NOTE, KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+    RELAY_ADMIN_ADD_MEMBER, RELAY_ADMIN_CHANGE_ROLE, RELAY_ADMIN_REMOVE_MEMBER,
+    RELAY_ADMIN_SET_WORKSPACE_PROFILE,
 };
 use buzz_core::tenant::TenantContext;
 use buzz_core::verification::verify_event;
@@ -259,7 +260,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         | KIND_FORUM_COMMENT
         | KIND_AGENT_USER_INPUT_REQUESTED
         | KIND_AGENT_USER_INPUT_ANSWER
-        | KIND_AGENT_USER_INPUT_RESOLVED => Ok(Scope::MessagesWrite),
+        | KIND_AGENT_USER_INPUT_RESOLVED
+        | KIND_AGENT_RECEIPT => Ok(Scope::MessagesWrite),
         KIND_NIP29_PUT_USER | KIND_NIP29_REMOVE_USER | KIND_NIP29_DELETE_GROUP => {
             Ok(Scope::AdminChannels)
         }
@@ -493,6 +495,7 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_FORUM_POST
             | KIND_FORUM_VOTE
             | KIND_FORUM_COMMENT
+            | KIND_AGENT_RECEIPT
             // NIP-29 admin kinds (except CREATE_GROUP which creates the channel)
             | KIND_NIP29_PUT_USER
             | KIND_NIP29_REMOVE_USER
@@ -1596,6 +1599,142 @@ fn validate_agent_turn_metric_envelope(event: &nostr::Event) -> Result<(), Strin
     Ok(())
 }
 
+/// Validate the public JSON envelope of a channel-scoped agent receipt.
+fn validate_agent_receipt_envelope(
+    event: &nostr::Event,
+) -> Result<(uuid::Uuid, Vec<u8>, Vec<u8>), String> {
+    let h_tags: Vec<&nostr::Tag> = event
+        .tags
+        .iter()
+        .filter(|tag| tag.kind().to_string() == "h")
+        .collect();
+    if h_tags.len() != 1 {
+        return Err(format!(
+            "agent receipt must have exactly one `h` tag (got {})",
+            h_tags.len()
+        ));
+    }
+    let h_value = h_tags[0]
+        .content()
+        .ok_or_else(|| "agent receipt `h` tag must contain a channel UUID".to_string())?;
+
+    let e_tags: Vec<&nostr::Tag> = event
+        .tags
+        .iter()
+        .filter(|tag| tag.kind().to_string() == "e")
+        .collect();
+    if !(1..=2).contains(&e_tags.len()) {
+        return Err(format!(
+            "agent receipt must have one or two `e` tags (got {})",
+            e_tags.len()
+        ));
+    }
+    let mut root_id = None;
+    let mut parent_id = None;
+    for e_tag in &e_tags {
+        let parts = e_tag.as_slice();
+        let event_id = parts
+            .get(1)
+            .map(String::as_str)
+            .ok_or_else(|| "agent receipt `e` tag must contain an event id".to_string())?;
+        if event_id.len() != 64
+            || !event_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(
+                "agent receipt `e` tag must contain a 64-character lowercase hex event id"
+                    .to_string(),
+            );
+        }
+        match parts.get(3).map(String::as_str) {
+            Some("root") if root_id.is_none() => root_id = Some(event_id),
+            Some("reply") if parent_id.is_none() => parent_id = Some(event_id),
+            Some("root") | Some("reply") => {
+                return Err(
+                    "agent receipt must have at most one root and one reply e tag".to_string(),
+                )
+            }
+            _ => return Err("agent receipt `e` tag must use a root or reply marker".to_string()),
+        }
+    }
+    let parent_id = parent_id.ok_or_else(|| "agent receipt must have a reply e tag".to_string())?;
+    let root_id = root_id.unwrap_or(parent_id);
+
+    let payload: serde_json::Value = serde_json::from_str(&event.content)
+        .map_err(|_| "agent receipt content must be valid JSON".to_string())?;
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "agent receipt content must be a JSON object".to_string())?;
+    for field in ["summary", "verify"] {
+        if object
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+        {
+            return Err(format!("agent receipt `{field}` must be a string"));
+        }
+    }
+    let lights = object
+        .get("lights")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "agent receipt `lights` must be an array".to_string())?;
+    for light in lights {
+        let light = light
+            .as_object()
+            .ok_or_else(|| "agent receipt lights must contain objects".to_string())?;
+        for field in ["label", "status"] {
+            if light
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+            {
+                return Err(format!("agent receipt light `{field}` must be a string"));
+            }
+        }
+    }
+    if !object
+        .get("engineering")
+        .is_some_and(serde_json::Value::is_object)
+    {
+        return Err("agent receipt `engineering` must be an object".to_string());
+    }
+
+    let channel_id = uuid::Uuid::parse_str(h_value)
+        .map_err(|_| "agent receipt `h` tag must contain a channel UUID".to_string())?;
+    let root_event_id = hex::decode(root_id)
+        .map_err(|_| "agent receipt `e` tag must contain a valid event id".to_string())?;
+    let parent_event_id = hex::decode(parent_id)
+        .map_err(|_| "agent receipt `e` tag must contain a valid event id".to_string())?;
+
+    Ok((channel_id, root_event_id, parent_event_id))
+}
+
+fn is_registered_agent_policy(policy: Option<(String, Option<Vec<u8>>)>) -> bool {
+    policy.is_some_and(|(_, owner)| owner.is_some())
+}
+
+fn receipt_parent_targets_agent(parent_event: &nostr::Event, agent_hex: &str) -> bool {
+    // The p-tag check is a multi-agent "this turn was aimed at me" guard.
+    // It only holds when the trigger actually targeted someone: harnesses in
+    // SubscribeMode::All / --no-mention-filter fire turns from mention-less
+    // channel messages, which carry no `p` tags at all. For those, registered
+    // agent authorship + same-channel parent existence (checked by the
+    // caller) are the authorization; a parent with p tags that omit this
+    // agent is still rejected.
+    let mut saw_p_tag = false;
+    for tag in parent_event.tags.iter() {
+        let parts = tag.as_slice();
+        if parts.len() >= 2 && parts[0] == "p" {
+            if parts[1] == agent_hex {
+                return true;
+            }
+            saw_p_tag = true;
+        }
+    }
+    !saw_p_tag
+}
+
 /// Parse a NIP-ER `not_before` tag value into a Unix timestamp.
 ///
 /// The value MUST be a decimal integer string containing only ASCII digits, with
@@ -2404,6 +2543,56 @@ async fn ingest_event_inner(
         }
     }
 
+    if kind_u32 == KIND_AGENT_RECEIPT {
+        let (receipt_channel_id, _root_event_id, parent_event_id) =
+            validate_agent_receipt_envelope(&event)
+                .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+
+        // A receipt is a terminal statement from the managed agent, not a
+        // human-authored message that happens to use the receipt kind. The
+        // users table's immutable owner link is the same registration seam
+        // used by ACP agent turns and observer events.
+        let agent_pubkey = event.pubkey.to_bytes().to_vec();
+        let is_registered_agent = is_registered_agent_policy(
+            state
+                .db
+                .get_agent_channel_policy(tenant.community(), &agent_pubkey)
+                .await
+                .map_err(|e| {
+                    IngestError::Internal(format!(
+                        "error: db error checking agent receipt author: {e}"
+                    ))
+                })?,
+        );
+        if !is_registered_agent {
+            return Err(IngestError::AuthFailed(
+                "restricted: agent receipt must be authored by a registered agent".into(),
+            ));
+        }
+
+        let parent_event = state
+            .db
+            .get_event_by_id(tenant.community(), &parent_event_id)
+            .await
+            .map_err(|e| {
+                IngestError::Internal(format!("error: db error checking receipt parent: {e}"))
+            })?
+            .ok_or_else(|| {
+                IngestError::Rejected("invalid: receipt parent event not found".into())
+            })?;
+        if parent_event.channel_id != Some(receipt_channel_id) {
+            return Err(IngestError::Rejected(
+                "invalid: receipt parent event belongs to a different channel".into(),
+            ));
+        }
+        let agent_hex = event.pubkey.to_hex();
+        if !receipt_parent_targets_agent(&parent_event.event, &agent_hex) {
+            return Err(IngestError::AuthFailed(
+                "restricted: receipt signer was not targeted by the triggering event".into(),
+            ));
+        }
+    }
+
     if kind_u32 == KIND_EVENT_REMINDER {
         validate_event_reminder(&event)
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
@@ -2914,9 +3103,9 @@ mod tests {
     use super::*;
     use buzz_conformance::{TraceStep, Tracer};
     use buzz_core::kind::{
-        KIND_CANVAS, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_LONG_FORM,
-        KIND_MANAGED_AGENT, KIND_PERSONA, KIND_PRESENCE_UPDATE, KIND_STREAM_MESSAGE,
-        KIND_STREAM_MESSAGE_DIFF, KIND_TEAM, KIND_USER_STATUS,
+        KIND_AGENT_RECEIPT, KIND_CANVAS, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
+        KIND_LONG_FORM, KIND_MANAGED_AGENT, KIND_PERSONA, KIND_PRESENCE_UPDATE,
+        KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_DIFF, KIND_TEAM, KIND_USER_STATUS,
     };
     use nostr::{EventBuilder, Kind};
 
@@ -3520,6 +3709,152 @@ mod tests {
             .tags(nostr_tags)
             .sign_with_keys(&keys)
             .unwrap()
+    }
+
+    fn make_receipt_event(h_tags: &[&str], e_tags: &[&str], content: &str) -> Event {
+        let mut tags = Vec::new();
+        for value in h_tags {
+            tags.push(nostr::Tag::parse(["h", *value]).unwrap());
+        }
+        for (index, value) in e_tags.iter().enumerate() {
+            let marker = if index == 0 && e_tags.len() == 2 {
+                "root"
+            } else {
+                "reply"
+            };
+            tags.push(nostr::Tag::parse(["e", *value, "", marker]).unwrap());
+        }
+        let keys = nostr::Keys::generate();
+        nostr::EventBuilder::new(nostr::Kind::Custom(KIND_AGENT_RECEIPT as u16), content)
+            .tags(tags)
+            .sign_with_keys(&keys)
+            .unwrap()
+    }
+
+    #[test]
+    fn agent_receipt_envelope_accepts_valid_payload() {
+        let channel = Uuid::new_v4().to_string();
+        let root = "a".repeat(64);
+        let event = make_receipt_event(
+            &[&channel],
+            &[&root],
+            r#"{"summary":"done","verify":"ready","lights":[{"label":"tests","status":"passed"}],"engineering":{}}"#,
+        );
+
+        assert!(validate_agent_receipt_envelope(&event).is_ok());
+    }
+
+    #[test]
+    fn agent_receipt_envelope_accepts_nested_reply_shape() {
+        let channel = Uuid::new_v4().to_string();
+        let root = "a".repeat(64);
+        let parent = "b".repeat(64);
+        let event = make_receipt_event(
+            &[&channel],
+            &[&root, &parent],
+            r#"{"summary":"done","verify":"ready","lights":[],"engineering":{}}"#,
+        );
+
+        let (_, actual_root, actual_parent) = validate_agent_receipt_envelope(&event).unwrap();
+        assert_eq!(actual_root, hex::decode(root).unwrap());
+        assert_eq!(actual_parent, hex::decode(parent).unwrap());
+    }
+
+    #[test]
+    fn agent_receipt_envelope_rejects_missing_h_tag() {
+        let root = "a".repeat(64);
+        let event = make_receipt_event(
+            &[],
+            &[&root],
+            r#"{"summary":"done","verify":"ready","lights":[],"engineering":{}}"#,
+        );
+
+        let error = validate_agent_receipt_envelope(&event).unwrap_err();
+        assert!(error.contains("exactly one `h` tag"));
+    }
+
+    #[test]
+    fn agent_receipt_envelope_counts_malformed_extra_h_tag() {
+        let channel = Uuid::new_v4().to_string();
+        let root = "a".repeat(64);
+        let mut event = make_receipt_event(
+            &[&channel],
+            &[&root],
+            r#"{"summary":"done","verify":"ready","lights":[],"engineering":{}}"#,
+        );
+        event.tags.push(nostr::Tag::parse(["h"]).unwrap());
+
+        let error = validate_agent_receipt_envelope(&event).unwrap_err();
+        assert!(error.contains("exactly one `h` tag (got 2)"));
+    }
+
+    #[test]
+    fn agent_receipt_envelope_rejects_missing_e_tag() {
+        let channel = Uuid::new_v4().to_string();
+        let event = make_receipt_event(
+            &[&channel],
+            &[],
+            r#"{"summary":"done","verify":"ready","lights":[],"engineering":{}}"#,
+        );
+
+        let error = validate_agent_receipt_envelope(&event).unwrap_err();
+        assert!(error.contains("one or two `e` tags"));
+    }
+
+    #[test]
+    fn agent_receipt_envelope_rejects_malformed_json() {
+        let channel = Uuid::new_v4().to_string();
+        let root = "a".repeat(64);
+        let event = make_receipt_event(&[&channel], &[&root], "{");
+
+        let error = validate_agent_receipt_envelope(&event).unwrap_err();
+        assert_eq!(error, "agent receipt content must be valid JSON");
+    }
+
+    #[test]
+    fn agent_receipt_author_requires_registered_owner() {
+        assert!(!is_registered_agent_policy(None));
+        assert!(!is_registered_agent_policy(Some(("human".into(), None))));
+        assert!(is_registered_agent_policy(Some((
+            "owner".into(),
+            Some(vec![1, 2, 3]),
+        ))));
+    }
+
+    #[test]
+    fn agent_receipt_author_must_be_targeted_by_triggering_event() {
+        let agent = nostr::Keys::generate();
+        let other = nostr::Keys::generate();
+        let root = EventBuilder::new(nostr::Kind::Custom(KIND_STREAM_MESSAGE as u16), "work")
+            .tags([nostr::Tag::parse(["p", &agent.public_key().to_hex()]).unwrap()])
+            .sign_with_keys(&nostr::Keys::generate())
+            .unwrap();
+
+        assert!(receipt_parent_targets_agent(
+            &root,
+            &agent.public_key().to_hex()
+        ));
+        assert!(!receipt_parent_targets_agent(
+            &root,
+            &other.public_key().to_hex()
+        ));
+    }
+
+    #[test]
+    fn agent_receipt_mentionless_trigger_authorizes_registered_agent() {
+        // SubscribeMode::All / --no-mention-filter turns fire from plain
+        // channel messages with no p tags at all. Authorization then rests on
+        // registered-agent authorship + same-channel parent (caller checks);
+        // the p-gate must not reject these.
+        let agent = nostr::Keys::generate();
+        let mentionless =
+            EventBuilder::new(nostr::Kind::Custom(KIND_STREAM_MESSAGE as u16), "work")
+                .sign_with_keys(&nostr::Keys::generate())
+                .unwrap();
+        assert!(receipt_parent_targets_agent(
+            &mentionless,
+            &agent.public_key().to_hex()
+        ));
     }
 
     #[test]

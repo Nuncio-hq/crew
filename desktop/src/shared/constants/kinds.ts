@@ -36,6 +36,7 @@ export const KIND_APPROVAL_DENY = 46031;
 export const KIND_AGENT_USER_INPUT_REQUESTED = 46040;
 export const KIND_AGENT_USER_INPUT_ANSWER = 46041;
 export const KIND_AGENT_USER_INPUT_RESOLVED = 46042;
+export const KIND_AGENT_RECEIPT = 46043;
 export const KIND_MEMBER_ADDED_NOTIFICATION = 44100;
 export const KIND_MEMBER_REMOVED_NOTIFICATION = 44101;
 export const KIND_TYPING_INDICATOR = 20002;
@@ -101,6 +102,7 @@ export const CHANNEL_EVENT_KINDS = [
   KIND_STREAM_MESSAGE_EDIT, // 40003 — message edits
   KIND_STREAM_MESSAGE_DIFF, // 40008 — message diffs
   KIND_SYSTEM_MESSAGE, // 40099 — system messages (join, leave, etc.)
+  KIND_AGENT_RECEIPT, // 46043 — terminal agent receipt
   KIND_HUDDLE_STARTED, // 48100 — visible huddle session card
   KIND_HUDDLE_PARTICIPANT_JOINED, // 48101 — huddle lifecycle overlay
   KIND_HUDDLE_PARTICIPANT_LEFT, // 48102 — huddle lifecycle overlay
@@ -141,6 +143,7 @@ export const CHANNEL_TIMELINE_CONTENT_KINDS = [
   KIND_JOB_CANCEL, // 43005
   KIND_JOB_ERROR, // 43006
   KIND_HUDDLE_STARTED, // 48100 — huddle session card
+  KIND_AGENT_RECEIPT, // 46043 — terminal agent receipt
 ] as const;
 
 // Timeline kinds that are NOT conversational: relay-signed system rows
