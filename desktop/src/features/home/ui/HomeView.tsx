@@ -26,6 +26,11 @@ import { useHomeInboxReadState } from "@/features/home/useHomeInboxReadState";
 import { useHomeInboxAutoSelection } from "@/features/home/useHomeInboxAutoSelection";
 import { useHomeInboxContextMessages } from "@/features/home/useHomeInboxContextMessages";
 import { useHomePersonalInbox } from "@/features/home/useHomePersonalInbox";
+import {
+  getMissionInboxEventTarget,
+  type MissionInboxRow,
+} from "@/features/home/lib/missionInbox";
+import { useMissionInboxSections } from "@/features/home/useMissionInboxSections";
 import { useInboxThreadContext } from "@/features/home/useInboxThreadContext";
 import {
   type ProfilePanelTab,
@@ -396,6 +401,12 @@ export function HomeView({
       undoDoneLocal: undoDone,
       undoUnreadLocal: undoUnread,
     });
+  const missionSections = useMissionInboxSections({
+    channels,
+    effectiveDoneSet,
+    feed,
+    inboxItems,
+  });
   // Resolve selection before filtering so unread-only can retain its active row.
   const selectedItemFromAll = React.useMemo(
     () =>
@@ -701,6 +712,40 @@ export function HomeView({
                 setSelectedDraftKey(null);
                 handleUserSelectItem(null);
                 setSelectedReminderId(reminderId);
+              }}
+              missionSections={missionSections}
+              missionSelectedConversationId={selectedConversationId}
+              onOpenMissionChannel={(row: MissionInboxRow) => {
+                const target = getMissionInboxEventTarget(row);
+                if (target) {
+                  onOpenContext(
+                    row.channelId,
+                    target.messageId,
+                    target.threadRootId,
+                  );
+                  return;
+                }
+                void goChannel(row.channelId);
+              }}
+              onSelectMission={(row: MissionInboxRow) => {
+                if (!row.inboxItem) {
+                  const target = getMissionInboxEventTarget(row);
+                  if (target) {
+                    onOpenContext(
+                      row.channelId,
+                      target.messageId,
+                      target.threadRootId,
+                    );
+                  } else {
+                    void goChannel(row.channelId);
+                  }
+                  return;
+                }
+                setUnreadBoundary(null);
+                setSelectedDraftKey(null);
+                setSelectedReminderId(null);
+                setAutoSelectedEventId(row.inboxItem.id);
+                markItemRead(row.inboxItem.id);
               }}
               onUnreadOnlyChange={setUnreadOnly}
               reminderPubkey={currentPubkey}

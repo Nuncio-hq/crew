@@ -31,6 +31,7 @@ import {
 } from "@/shared/api/customEmoji";
 import {
   KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_ANSWER,
   KIND_AGENT_USER_INPUT_RESOLVED,
   KIND_AGENT_OBSERVER_FRAME,
   KIND_CHANNEL_THREAD_SUMMARY,
@@ -1133,6 +1134,11 @@ declare global {
       requestId?: string;
       content: string;
       pubkey?: string;
+    }) => RelayEvent;
+    __BUZZ_E2E_EMIT_MOCK_USER_INPUT_ANSWER__?: (input: {
+      channelName: string;
+      requestEventId: string;
+      content?: string;
     }) => RelayEvent;
     __BUZZ_E2E_EMIT_MOCK_USER_INPUT_RESOLVED__?: (input: {
       channelName: string;
@@ -10212,6 +10218,27 @@ export function maybeInstallE2eTauriMocks() {
       pubkey,
       Math.floor(Date.now() / 1000),
       requestId,
+    );
+    emitMockLiveEvent(channel.id, event);
+    return event;
+  };
+  window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT_ANSWER__ = ({
+    channelName,
+    requestEventId,
+    content = "{}",
+  }) => {
+    const channel = mockChannels.find(
+      (candidate) => candidate.name === channelName,
+    );
+    if (!channel) throw new Error(`Mock channel ${channelName} not found.`);
+    const event = createMockEvent(
+      KIND_AGENT_USER_INPUT_ANSWER,
+      content,
+      [
+        ["h", channel.id],
+        ["e", requestEventId],
+      ],
+      DEFAULT_MOCK_IDENTITY.pubkey,
     );
     emitMockLiveEvent(channel.id, event);
     return event;

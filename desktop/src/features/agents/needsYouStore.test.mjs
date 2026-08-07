@@ -4,6 +4,7 @@ import { beforeEach, describe, it } from "node:test";
 import {
   getNeedsYouForChannels,
   getNeedsYouForConversation,
+  getNeedsYouForAll,
   getNeedsYouForChannel,
   ingestUserInputRequest,
   ingestApprovalRequest,
@@ -208,6 +209,26 @@ describe("needsYouStore", () => {
       second.map((entry) => entry.id),
       ["second-request", "replacement-request"],
     );
+  });
+
+  it("returns one stable all-channel snapshot for both request families", () => {
+    ingestApprovalRequest(request({ id: "approval-all" }));
+    ingestUserInputRequest({
+      id: "user-input-all",
+      channelId: CHANNEL,
+      rootEventId: ROOT,
+      conversationId: "conversation-user-input",
+      agentPubkey: AGENT,
+      createdAt: Date.now() + 1,
+    });
+    const first = getNeedsYouForAll();
+    assert.deepEqual(
+      first.map((entry) => entry.id),
+      ["approval-all", "user-input-all"],
+    );
+    assert.strictEqual(first, getNeedsYouForAll());
+    resolveUserInputRequest("user-input-all");
+    assert.notStrictEqual(first, getNeedsYouForAll());
   });
 
   it("expires stale requests without notifying during a snapshot read", () => {

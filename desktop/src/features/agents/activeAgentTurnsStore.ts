@@ -96,6 +96,7 @@ export type ActiveChannelTurnSummary = {
 
 /** One conversation/thread with active agent work, aggregated across agents. */
 export type ActiveConversationTurnSummary = {
+  channelId: string;
   conversationId: string;
   anchorAt: number;
   agentCount: number;
@@ -666,9 +667,8 @@ export function getActiveTurnsByChannel(): ActiveChannelTurnSummary[] {
 
   const summaries = new Map<
     string,
-    { anchorAt: number; agentPubkeys: Set<string> }
+    { anchorAt: number; channelId: string; agentPubkeys: Set<string> }
   >();
-
   for (const [agentKey, agentTurns] of activeTurnsByAgent) {
     if (agentTurns.size === 0) continue;
     const offset = clockOffsetByAgent.get(agentKey) ?? 0;
@@ -679,11 +679,11 @@ export function getActiveTurnsByChannel(): ActiveChannelTurnSummary[] {
       if (!summary) {
         summaries.set(turn.channelId, {
           anchorAt,
+          channelId: turn.channelId,
           agentPubkeys: new Set([agentKey]),
         });
         continue;
       }
-
       summary.agentPubkeys.add(agentKey);
       if (anchorAt < summary.anchorAt) {
         summary.anchorAt = anchorAt;
@@ -713,9 +713,8 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
 
   const summaries = new Map<
     string,
-    { anchorAt: number; agentPubkeys: Set<string> }
+    { anchorAt: number; channelId: string; agentPubkeys: Set<string> }
   >();
-
   for (const [agentKey, agentTurns] of activeTurnsByAgent) {
     if (agentTurns.size === 0) continue;
     const offset = clockOffsetByAgent.get(agentKey) ?? 0;
@@ -728,11 +727,11 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
       if (!summary) {
         summaries.set(conversationId, {
           anchorAt,
+          channelId: turn.channelId,
           agentPubkeys: new Set([agentKey]),
         });
         continue;
       }
-
       summary.agentPubkeys.add(agentKey);
       if (anchorAt < summary.anchorAt) {
         summary.anchorAt = anchorAt;
@@ -742,6 +741,7 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
 
   const result = [...summaries.entries()]
     .map(([conversationId, summary]) => ({
+      channelId: summary.channelId,
       conversationId,
       anchorAt: summary.anchorAt,
       agentCount: summary.agentPubkeys.size,

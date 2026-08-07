@@ -8,7 +8,12 @@ import {
   type InboxTypeLabel,
 } from "@/features/home/lib/inbox";
 import { buildInboxListRows } from "@/features/home/lib/inboxListRows";
+import type {
+  MissionInboxRow,
+  MissionInboxSections,
+} from "@/features/home/lib/missionInbox";
 import { InboxFilterMenu } from "@/features/home/ui/InboxFilterMenu";
+import { MissionInboxSectionsView } from "@/features/home/ui/MissionInboxSections";
 import {
   DraftsPanel,
   type DraftViewItem,
@@ -188,6 +193,10 @@ type InboxListPaneProps = {
   onSelect: (itemId: string) => void;
   onSelectDraft: (draftKey: string) => void;
   onSelectReminder: (reminderId: string) => void;
+  missionSections?: MissionInboxSections;
+  onSelectMission?: (row: MissionInboxRow) => void;
+  onOpenMissionChannel?: (row: MissionInboxRow) => void;
+  missionSelectedConversationId?: string | null;
   onUnreadOnlyChange: (checked: boolean) => void;
   selectedConversationId: string | null;
   selectedDraftKey: string | null;
@@ -225,6 +234,10 @@ export function InboxListPane({
   reminders,
   selectedReminderId,
   unreadOnly,
+  missionSections,
+  onSelectMission,
+  onOpenMissionChannel,
+  missionSelectedConversationId,
 }: InboxListPaneProps) {
   const isReminders = filter === "reminders";
   const isDrafts = filter === "drafts";
@@ -608,6 +621,14 @@ export function InboxListPane({
           data-testid="home-inbox-list"
           ref={scrollRef}
         >
+          {filter === "all" && missionSections ? (
+            <MissionInboxSectionsView
+              onOpenChannel={onOpenMissionChannel ?? (() => undefined)}
+              onSelect={onSelectMission ?? (() => undefined)}
+              sections={missionSections}
+              selectedConversationId={missionSelectedConversationId}
+            />
+          ) : null}
           {visibleInboxRows.length > 0 ? (
             <VirtualizedList
               estimateSize={96}

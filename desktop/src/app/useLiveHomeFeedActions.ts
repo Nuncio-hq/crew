@@ -12,7 +12,17 @@ import {
 import {
   ingestApprovalRequestEvent,
   resolveApprovalRequestEvent,
+  ingestUserInputRequest,
+  resolveUserInputRequest,
 } from "@/features/agents/needsYouStore";
+import {
+  deriveUserInputRootEventId,
+  getAnswerRequestId,
+  getResolvedRequestId,
+  parseUserInputRequest,
+} from "@/features/channels/lib/userInput";
+import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
+import { buildChannelUserInputFilter } from "@/shared/api/relayChannelFilters";
 
 const LIVE_HOME_FEED_RETRY_BASE_MS = 1_000;
 const LIVE_HOME_FEED_RETRY_MAX_MS = 30_000;
@@ -20,8 +30,14 @@ const LIVE_HOME_FEED_RETRY_MAX_MS = 30_000;
 export function useLiveHomeFeedActions(
   pubkey: string | undefined,
   onHomeFeedEvent: () => void,
+  channelIds: readonly string[] = [],
 ) {
   const queryClient = useQueryClient();
+  // Joined-string key: an unstable array identity from a caller can never
+  // thrash the subscription lifecycle — only a real membership change
+  // re-subscribes. The effect re-derives the array from this key.
+  const channelIdsKey = channelIds.join(",");
+
   const handleLiveHomeFeedEvent = React.useEffectEvent(() => {
     onHomeFeedEvent();
   });
@@ -39,6 +55,8 @@ export function useLiveHomeFeedActions(
     if (!normalizedPubkey) {
       return;
     }
+    const subscribedChannelIds =
+      channelIdsKey.length > 0 ? channelIdsKey.split(",") : [];
 
     let isCancelled = false;
     let disposers: Array<() => Promise<void>> = [];
@@ -66,7 +84,40 @@ export function useLiveHomeFeedActions(
         return;
       }
 
+      const userInputSubscriptions = subscribedChannelIds.map((channelId) =>
+        relayClient.subscribeLive(
+          buildChannelUserInputFilter(channelId, 50, since),
+          (event) => {
+            const request = parseUserInputRequest(event);
+            if (request) {
+              const resolvedChannelId = request.channel_id || channelId;
+              const rootEventId = deriveUserInputRootEventId(event);
+              const conversationId = deriveAgentConversationIdOrNull(
+                resolvedChannelId,
+                rootEventId,
+              );
+              if (conversationId) {
+                ingestUserInputRequest({
+                  id: event.id,
+                  channelId: resolvedChannelId,
+                  rootEventId,
+                  conversationId,
+                  agentPubkey: event.pubkey,
+                  createdAt: event.created_at * 1_000,
+                });
+              }
+            } else {
+              const requestId =
+                getAnswerRequestId(event) ?? getResolvedRequestId(event);
+              if (requestId) resolveUserInputRequest(requestId);
+            }
+            handleLiveHomeFeedEvent();
+          },
+        ),
+      );
+
       void Promise.allSettled([
+        ...userInputSubscriptions,
         relayClient.subscribeLive(
           {
             kinds: [KIND_APPROVAL_REQUEST],
@@ -146,5 +197,5 @@ export function useLiveHomeFeedActions(
       disposers = [];
       disposeAll(currentDisposers);
     };
-  }, [pubkey]);
+  }, [channelIdsKey, pubkey]);
 }

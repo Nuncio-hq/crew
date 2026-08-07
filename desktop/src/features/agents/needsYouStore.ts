@@ -32,6 +32,8 @@ const channelCache = new Map<string, NeedsYouRequest[]>();
 const conversationCache = new Map<string, NeedsYouRequest[]>();
 const channelsCache = new Map<string, NeedsYouRequest[]>();
 const EMPTY_REQUESTS: NeedsYouRequest[] = [];
+let allCache: NeedsYouRequest[] | null = null;
+let allCacheGeneration = -1;
 let expiryTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 
 function notify() {
@@ -39,6 +41,8 @@ function notify() {
   channelCache.clear();
   conversationCache.clear();
   channelsCache.clear();
+  allCache = null;
+  allCacheGeneration = -1;
   for (const listener of listeners) listener();
 }
 
@@ -304,6 +308,8 @@ export function getNeedsYouForConversation(
     channelCache.clear();
     conversationCache.clear();
     channelsCache.clear();
+    allCache = null;
+    allCacheGeneration = -1;
     scheduleExpiry();
   }
   const cached = conversationCache.get(conversationId);
@@ -324,6 +330,8 @@ export function getNeedsYouForChannel(
     channelCache.clear();
     conversationCache.clear();
     channelsCache.clear();
+    allCache = null;
+    allCacheGeneration = -1;
     scheduleExpiry();
   }
   const cached = channelCache.get(channelId);
@@ -333,6 +341,23 @@ export function getNeedsYouForChannel(
     .sort((a, b) => a.createdAt - b.createdAt);
   channelCache.set(channelId, result);
   return result;
+}
+
+/** Return every pending request as one reference-stable snapshot. */
+export function getNeedsYouForAll(now = Date.now()): NeedsYouRequest[] {
+  if (prune(now)) {
+    channelCache.clear();
+    conversationCache.clear();
+    allCache = null;
+    allCacheGeneration = -1;
+    scheduleExpiry();
+  }
+  if (allCache && allCacheGeneration === generation) return allCache;
+  allCache = [...requests.values(), ...userInputRequests.values()].sort(
+    (a, b) => a.createdAt - b.createdAt,
+  );
+  allCacheGeneration = generation;
+  return allCache;
 }
 
 export function subscribeNeedsYou(listener: () => void) {
@@ -356,6 +381,8 @@ export function resetNeedsYouStore() {
   channelCache.clear();
   conversationCache.clear();
   channelsCache.clear();
+  allCache = null;
+  allCacheGeneration = -1;
   generation += 1;
   for (const listener of listeners) listener();
 }
