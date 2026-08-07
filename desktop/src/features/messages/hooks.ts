@@ -414,6 +414,7 @@ export function useSendMessageMutation(
       content: string;
       mentionPubkeys?: string[];
       parentEventId?: string | null;
+      threadHeadId?: string | null;
       mediaTags?: string[][];
     },
     MessageQueryContext | undefined
@@ -424,6 +425,7 @@ export function useSendMessageMutation(
       content,
       mentionPubkeys,
       parentEventId,
+      threadHeadId,
       mediaTags,
     }) => {
       // Prefer a channel captured by the caller at compose time. Otherwise,
@@ -494,7 +496,7 @@ export function useSendMessageMutation(
               effectiveChannel.id,
               identity.pubkey,
               parentEventId,
-              resolveReplyRootId(parentEventId, cachedMessages),
+              resolveReplyRootId(parentEventId, cachedMessages, threadHeadId),
               recipientPubkeys,
             )
           : [];

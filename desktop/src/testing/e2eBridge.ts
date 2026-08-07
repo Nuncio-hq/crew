@@ -52,6 +52,7 @@ import {
   KIND_PROJECT_ANNOUNCEMENT,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
+  KIND_STREAM_MESSAGE,
   KIND_STREAM_MESSAGE_EDIT,
   KIND_SYSTEM_MESSAGE,
   KIND_TEXT_NOTE,
@@ -1117,6 +1118,16 @@ declare global {
       /** 64-hex id required for the event to be a valid reaction target. */
       id?: string;
     }) => RelayEvent;
+    __BUZZ_E2E_SEED_MOCK_MESSAGE__?: (input: {
+      channelName: string;
+      content: string;
+      id?: string;
+      pubkey?: string;
+    }) => RelayEvent;
+    __BUZZ_E2E_INJECT_OBSERVER_EVENTS__?: (input: {
+      agentPubkey: string;
+      events: Parameters<typeof injectObserverEventsForE2E>[1];
+    }) => void;
     __BUZZ_E2E_EMIT_MOCK_USER_INPUT__?: (input: {
       channelName: string;
       requestId?: string;
@@ -10156,6 +10167,33 @@ export function maybeInstallE2eTauriMocks() {
       id,
       rootEventId,
     );
+  };
+  window.__BUZZ_E2E_SEED_MOCK_MESSAGE__ = ({
+    channelName,
+    content,
+    id,
+    pubkey,
+  }) => {
+    const channel = mockChannels.find(
+      (candidate) => candidate.name === channelName,
+    );
+    if (!channel) {
+      throw new Error(`Mock channel ${channelName} not found.`);
+    }
+    const event = createMockEvent(
+      KIND_STREAM_MESSAGE,
+      content,
+      [["h", channel.id]],
+      pubkey,
+      Math.floor(Date.now() / 1000),
+      id,
+    );
+    recordMockMessage(channel.id, event);
+    return event;
+  };
+  window.__BUZZ_E2E_INJECT_OBSERVER_EVENTS__ = ({ agentPubkey, events }) => {
+    injectObserverEventsForE2E(agentPubkey, events);
+    syncAgentTurnsFromEvents(agentPubkey, events);
   };
   window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__ = ({
     channelName,

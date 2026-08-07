@@ -44,6 +44,7 @@ export default defineConfig({
         "**/hosted-communities-settings-screenshots.spec.ts",
         "**/invites-settings-screenshots.spec.ts",
         "**/messaging.spec.ts",
+        "**/project-outcomes.spec.ts",
         "**/project-thread-worktree.spec.ts",
         "**/message-feedback-snapshots.spec.ts",
         "**/custom-emoji.spec.ts",

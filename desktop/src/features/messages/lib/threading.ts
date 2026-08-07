@@ -173,10 +173,11 @@ export function buildThreadReferenceTags(
 export function resolveReplyRootId(
   parentEventId: string,
   events: RelayEvent[],
+  fallbackRootId?: string | null,
 ) {
   const parent = events.find((event) => event.id === parentEventId);
   if (!parent) {
-    return parentEventId;
+    return fallbackRootId ?? parentEventId;
   }
 
   const thread = getThreadReference(parent.tags);
