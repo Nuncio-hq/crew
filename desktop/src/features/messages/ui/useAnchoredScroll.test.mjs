@@ -5,6 +5,7 @@ import {
   getPinnedCenterDrift,
   settleProgrammaticBottomPin,
   shouldIgnorePinnedCenterScroll,
+  shouldIgnoreTransientVirtualizedAwayFromBottom,
   shouldSettleForSplitPanel,
   shouldSettleVirtualizedBottom,
 } from "./anchoredScrollPolicy.ts";
@@ -90,6 +91,43 @@ test("virtualized bottom settle arms for pinned appends and replacements", () =>
       messageDelta: "none",
       messagesArrived: 0,
       messagesChanged: true,
+    }),
+    false,
+  );
+});
+
+test("ignores a transient virtualizer away-from-bottom report while anchored at bottom", () => {
+  assert.equal(
+    shouldIgnoreTransientVirtualizedAwayFromBottom({
+      anchorKind: "at-bottom",
+      atBottom: false,
+      msSinceContainerScroll: 5_000,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldIgnoreTransientVirtualizedAwayFromBottom({
+      anchorKind: "message",
+      atBottom: false,
+      msSinceContainerScroll: 5_000,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldIgnoreTransientVirtualizedAwayFromBottom({
+      anchorKind: "at-bottom",
+      atBottom: true,
+      msSinceContainerScroll: 5_000,
+    }),
+    false,
+  );
+  // A non-bottom report right after a container scroll event is a REAL user
+  // departure (scroll events only fire when scrollTop changes) — honor it.
+  assert.equal(
+    shouldIgnoreTransientVirtualizedAwayFromBottom({
+      anchorKind: "at-bottom",
+      atBottom: false,
+      msSinceContainerScroll: 50,
     }),
     false,
   );

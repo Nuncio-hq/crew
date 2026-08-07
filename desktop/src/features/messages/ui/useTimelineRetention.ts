@@ -1,5 +1,6 @@
 import * as React from "react";
 import type { VListHandle } from "virtua";
+import { hasOpenVideoOverlays } from "@/shared/ui/videoPlayerState";
 import { nextRetainedTimelineKeys } from "./timelineRetention";
 
 export function useTimelineRetention(
@@ -31,6 +32,10 @@ export function useTimelineRetention(
     const currentKeys = keysRef.current;
     const list = listRef.current;
     if (!list || currentKeys.length === 0) return;
+    // A video overlay (review dialog / speed menu) portals out of a timeline
+    // row. Evicting rows now could unmount that row — and the overlay with
+    // it — mid-interaction. Admission still happens on the next scroll end.
+    if (hasOpenVideoOverlays()) return;
     setRetainedKeys((previous) =>
       nextRetainedTimelineKeys(currentKeys, previous, list),
     );

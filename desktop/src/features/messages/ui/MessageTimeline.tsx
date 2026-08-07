@@ -301,6 +301,7 @@ const MessageTimelineBase = React.forwardRef<
   const showTimelineSkeleton = timelineBodySurface === "skeleton";
   const [isSemanticallyAtBottom, setIsSemanticallyAtBottom] =
     React.useState(true);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset semantic tail state when the active channel changes
   React.useEffect(() => {
     setIsSemanticallyAtBottom(true);
@@ -318,6 +319,7 @@ const MessageTimelineBase = React.forwardRef<
       searchActiveMessageId !== null,
     messages: deferredMessages,
   });
+
   // Hold older-page render commits until the scroller is at rest: WKWebView
   // can drop scrollTop compensation writes during live trackpad momentum.
   // Full rationale in useSettleGatedPrependMessages.
@@ -365,6 +367,38 @@ const MessageTimelineBase = React.forwardRef<
     virtualizerRenderVersion,
   });
 
+  // The virtualizer path renders its own scroller (the keyed div below gets
+  // no onScroll prop), but the anchored-scroll hook still needs to know when
+  // a REAL user departure happens so it can tell it apart from a remeasure
+  // blip. Capture phase on the ancestor (scroll does not bubble, does
+  // capture). Direction filter: only an UPWARD scroll (scrollTop decreased)
+  // can be a user leaving the bottom — virtua's own settle/compensation
+  // scrolls hold or increase scrollTop and must not count.
+  const lastVirtualizerScrollTopRef = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    // Re-attach after `scrollContainerDomKey` swaps the keyed scroll DOM node.
+    void scrollContainerDomKey;
+    if (!useTimelineVirtualizer) return;
+    const host = scrollContainerRef.current;
+    if (!host) return;
+    lastVirtualizerScrollTopRef.current = null;
+    const recordUpwardScroll = (event: Event) => {
+      if (!(event.target instanceof HTMLElement)) return;
+      const previous = lastVirtualizerScrollTopRef.current;
+      const current = event.target.scrollTop;
+      lastVirtualizerScrollTopRef.current = current;
+      if (previous !== null && current < previous) onScroll();
+    };
+    host.addEventListener("scroll", recordUpwardScroll, {
+      capture: true,
+      passive: true,
+    });
+    return () =>
+      host.removeEventListener("scroll", recordUpwardScroll, {
+        capture: true,
+      });
+  }, [scrollContainerRef, scrollContainerDomKey, onScroll]);
+
   const hasConfirmedVirtualizerBottomRef = React.useRef(false);
   const bottomConfirmationChannelRef = React.useRef(channelId);
   if (bottomConfirmationChannelRef.current !== channelId) {
@@ -411,8 +445,12 @@ const MessageTimelineBase = React.forwardRef<
           queueSemanticBottom(true);
         }
       } else if (hasConfirmedVirtualizerBottomRef.current) {
-        onVirtualizerAtBottomStateChange(false);
-        if (semanticAtBottomRef.current) {
+        // The hook returns false when it classified this report as a
+        // transient virtualizer remeasure (the anchor owner still holds the
+        // bottom): the semantic dataset must not freeze in that case, or a
+        // live arrival is buffered behind a timeline the user never left.
+        const leftBottom = onVirtualizerAtBottomStateChange(false);
+        if (leftBottom && semanticAtBottomRef.current) {
           suppressNextSemanticBottomRef.current = true;
           queueSemanticBottom(false);
         }

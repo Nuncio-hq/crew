@@ -69,3 +69,35 @@ export function shouldSettleVirtualizedBottom({
     (messagesArrived > 0 || messagesChanged)
   );
 }
+
+/**
+ * Grace window for attributing a virtualizer non-bottom report to a real user
+ * scroll. Container scroll events only fire when scrollTop actually changes,
+ * so a remeasure blip (scrollHeight growth under a pinned floor) arrives with
+ * no scroll event while a genuine departure always has one just before it.
+ */
+export const VIRTUALIZED_BOTTOM_SCROLL_ATTRIBUTION_MS = 200;
+
+/**
+ * Virtua can report a transient non-bottom state while an at-bottom list is
+ * remeasured after an in-place row update (no scrollTop change, so no scroll
+ * event). The anchored-scroll owner has not released its bottom anchor in
+ * that case, so later live arrivals must not be frozen behind the timeline
+ * buffer. A report backed by a recent container scroll event is a REAL
+ * departure and must be honored.
+ */
+export function shouldIgnoreTransientVirtualizedAwayFromBottom({
+  anchorKind,
+  atBottom,
+  msSinceContainerScroll,
+}: {
+  anchorKind: "at-bottom" | "message" | "pinned-center";
+  atBottom: boolean;
+  msSinceContainerScroll: number;
+}): boolean {
+  return (
+    !atBottom &&
+    anchorKind === "at-bottom" &&
+    msSinceContainerScroll > VIRTUALIZED_BOTTOM_SCROLL_ATTRIBUTION_MS
+  );
+}
