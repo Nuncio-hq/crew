@@ -1,13 +1,14 @@
 import { CircleDot, GitPullRequest, ListChecks } from "lucide-react";
 
 import type { ThreadPullRequest } from "@/shared/api/thread-workspace-types";
+import type { ProjectThreadPhaseStates } from "@/features/messages/lib/projectThreadMissionControl";
 import { ProjectThreadIntegrationCell } from "./ProjectThreadIntegrationCell";
 import type { ProjectThreadDrawer } from "./ProjectThreadIntegrationDrawer";
 import {
   ciStatus,
   projectThreadStatusClassName,
   pullRequestStatus,
-} from "./projectThreadGitHubStatus";
+} from "@/features/messages/lib/projectThreadGitHubStatus";
 
 function ciSummary(states: readonly string[]) {
   let passed = 0;
@@ -24,10 +25,12 @@ function ciSummary(states: readonly string[]) {
 export function ProjectThreadGitHubRow({
   activeDrawer,
   onToggle,
+  phases,
   pullRequest,
 }: {
   activeDrawer: ProjectThreadDrawer | null;
   onToggle: (drawer: ProjectThreadDrawer) => void;
+  phases: Pick<ProjectThreadPhaseStates, "pr" | "ci">;
   pullRequest: ThreadPullRequest;
 }) {
   const issue = pullRequest.closingIssuesReferences[0];
@@ -50,6 +53,7 @@ export function ProjectThreadGitHubRow({
         icon={<GitPullRequest className="h-3.5 w-3.5" />}
         label="Pull request"
         onClick={() => onToggle("pr")}
+        phase={phases.pr}
         statusClassName={projectThreadStatusClassName(
           pullRequestStatusValue.tone,
         )}
@@ -61,6 +65,7 @@ export function ProjectThreadGitHubRow({
         icon={<ListChecks className="h-3.5 w-3.5" />}
         label="CI"
         onClick={() => onToggle("ci")}
+        phase={phases.ci}
         statusClassName={projectThreadStatusClassName(ciStatusValue.tone)}
         title={ciStatusValue.label}
       />

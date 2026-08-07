@@ -11,7 +11,7 @@ import {
 } from "@/features/channels/lib/worktreeBuckets";
 import { formatDiskBytes } from "@/features/channels/lib/worktreeDiskFormat";
 import { projectThreadLabel } from "@/features/messages/lib/projectThreadLabel";
-import { projectThreadStatusClassName } from "@/features/messages/ui/projectThreadGitHubStatus";
+import { projectThreadStatusClassName } from "@/features/messages/lib/projectThreadGitHubStatus";
 import {
   clearProjectWorktreeCache,
   previewProjectWorktreeReclaim,

@@ -1,4 +1,3 @@
-import * as React from "react";
 import { Loader2 } from "lucide-react";
 
 import {
@@ -21,51 +20,9 @@ import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { cn } from "@/shared/lib/cn";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
+import { useSharedNowWhen } from "@/features/agents/lib/sharedNow";
 
 const MAX_CHIP_AVATARS = 2;
-
-/** Shared 1s clock for every mounted chip — one interval, not one per row. */
-let sharedNow = Date.now();
-const sharedNowListeners = new Set<() => void>();
-let sharedNowInterval: ReturnType<typeof setInterval> | null = null;
-
-function subscribeSharedNow(listener: () => void) {
-  sharedNowListeners.add(listener);
-  if (sharedNowListeners.size === 1) {
-    sharedNowInterval = setInterval(() => {
-      sharedNow = Date.now();
-      for (const notify of sharedNowListeners) {
-        notify();
-      }
-    }, 1_000);
-  }
-  return () => {
-    sharedNowListeners.delete(listener);
-    if (sharedNowListeners.size === 0 && sharedNowInterval) {
-      clearInterval(sharedNowInterval);
-      sharedNowInterval = null;
-    }
-  };
-}
-
-function getSharedNowSnapshot() {
-  return sharedNow;
-}
-
-function useSharedNowWhen(enabled: boolean): number {
-  const subscribe = React.useCallback(
-    (listener: () => void) => {
-      if (!enabled) return () => {};
-      return subscribeSharedNow(listener);
-    },
-    [enabled],
-  );
-  return React.useSyncExternalStore(
-    subscribe,
-    getSharedNowSnapshot,
-    getSharedNowSnapshot,
-  );
-}
 
 export type ThreadAgentStatusChipState =
   | "needs-you"

@@ -1,7 +1,9 @@
 import { ChevronDown } from "lucide-react";
 import type * as React from "react";
 
+import type { ProjectThreadPhaseState } from "@/features/messages/lib/projectThreadMissionControl";
 import { cn } from "@/shared/lib/cn";
+import { ProjectThreadPhaseDot } from "./ProjectThreadPhaseDot";
 
 export function ProjectThreadIntegrationCell({
   active,
@@ -9,6 +11,7 @@ export function ProjectThreadIntegrationCell({
   icon,
   label,
   onClick,
+  phase,
   statusClassName,
   title,
 }: {
@@ -17,6 +20,7 @@ export function ProjectThreadIntegrationCell({
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
+  phase?: ProjectThreadPhaseState;
   statusClassName?: string;
   title: string;
 }) {
@@ -31,11 +35,12 @@ export function ProjectThreadIntegrationCell({
       type="button"
     >
       <span className="flex items-center gap-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+        {phase ? <ProjectThreadPhaseDot phase={phase} /> : null}
         {icon}
         {label}
         <ChevronDown
           className={cn(
-            "ml-auto h-3 w-3 transition-transform",
+            "ml-auto h-3 w-3 transition-transform motion-reduce:transition-none",
             active && "rotate-180",
           )}
         />
