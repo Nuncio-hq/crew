@@ -160,6 +160,15 @@ test("failed initial relay dial retries automatically", async ({ page }) => {
     websocketConnectErrors: ["mock relay pod unavailable"],
   });
   await page.goto("/");
+  // The relay-state seam is installed by the e2e bridge during app bootstrap;
+  // wait for that seam before polling connection state to avoid a bootstrap
+  // race being reported as a failed retry.
+  await page.waitForFunction(() => {
+    const win = window as Window & {
+      __BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?: () => string;
+    };
+    return typeof win.__BUZZ_E2E_GET_RELAY_CONNECTION_STATE__ === "function";
+  });
 
   // App-shell preconnect owns a keep-alive request. The first native dial is
   // rejected before a socket ID exists; the session must still enter its
