@@ -21,6 +21,7 @@ import type { ProjectThreadWorkspaceSnapshot } from "@/features/agents/projectTh
 
 export type ProjectThreadWorkspaceModel = {
   activeName: string;
+  activePubkey: string;
   context: ProjectThreadContext;
   conversationId: string | null;
   counts: { done: number; queued: number; working: number };
@@ -47,18 +48,18 @@ export function useProjectThreadWorkspaceModel({
   agentMentions: readonly ProjectThreadAgentMention[];
   profiles?: UserProfileLookup;
   replies: readonly TimelineMessage[];
-  threadHead: TimelineMessage;
+  threadHead: TimelineMessage | null;
 }): ProjectThreadWorkspaceModel | null {
   const context = React.useMemo(
-    () => parseProjectThreadContext(threadHead.body),
-    [threadHead.body],
+    () => parseProjectThreadContext(threadHead?.body),
+    [threadHead?.body],
   );
   // The repository path is what lets the hook fall back to the worktree
   // registry and report `derived`. It is an optional parameter, so omitting it
   // still compiles and still passes tests — it just silently disables that
   // fallback entirely. Keep it wired.
   const workspace = useProjectThreadWorkspace(
-    threadHead.id,
+    threadHead?.id ?? null,
     context?.localPath ?? null,
   );
   const conversationId =
@@ -129,6 +130,7 @@ export function useProjectThreadWorkspaceModel({
     if (!context || !activeStep || steps.length === 0) return null;
     return {
       activeName,
+      activePubkey: activeStep.pubkey,
       context,
       conversationId,
       counts,

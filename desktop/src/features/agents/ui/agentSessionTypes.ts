@@ -75,6 +75,8 @@ export type TranscriptItemIdentity = {
   turnId?: string | null;
   sessionId?: string | null;
   channelId?: string | null;
+  /** ACP conversation/thread id when the observer frame carried one. */
+  conversationId?: string | null;
 };
 
 export type TranscriptItem =

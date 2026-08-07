@@ -1,0 +1,265 @@
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET / HTTP/1.1" 200 -
+
+Running 2 tests using 1 worker
+
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET / HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/index-DBR_jpQt.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/tauri-CiizRZLm.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/preload-helper-zJ_50EbN.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/createLucideIcon-5x_AnOKN.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/core-CGTdLJHd.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/react-CYAoy8YY.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/tauriMedia-Ce7-f_ny.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/useAppNavigation-DN4isGPx.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/dist-B2suDcfC.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/hooks-Ce8Z8kWW.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/useKnownAgentPubkeys-B14xaexc.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/UserProfilePanel-BNxrlnS6.css HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/card-texture-B4AjYKdN.css HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/index-D_mNuFW_.css HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/pure-Dvo1D2Uc.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/react-dom-BE7rlsJy.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/dist-BfU76zy_.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/hooks-aXJxv1ms.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/timeoutStore-CqNAyj7V.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/ProfileAvatar-BWRjd2GH.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/event-Dx8IHwKE.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/dist-257sWMjJ.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/dialog-FHQSlHgM.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/dist-DFgFn264.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/badge-lRLZ7Ryu.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/card-Df-ir_Rp.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/alert-dialog-ix45a68e.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/clipboard-C9LqpHpx.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/chooser-dialog-content-L8Z_CZsf.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/tooltip-DfrkHgfm.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/huddle-BMJS4345.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/agentAutocompleteEligibility-CaeNC98R.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/agentConfigOptions-tikrYfqg.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/textarea-CX0H21Bw.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/RespondToField-DbldyXJW.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/useGlobalAgentConfig-CYAXRR0f.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/persistentAgentAudience-C5ftmxnC.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/AnimatePresence-sWuiDj5Q.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/tabs-DXlwcGO8.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/chevrons-up-down-M3atCuQV.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/use-reduced-motion-CAgGRTE4.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/lock-DPSnxJzP.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/eye-Crks68Kl.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/plus-BSHdo0B3.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/instanceInputForDefinition-VywKtyga.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/nodeCache-CJPETYaM.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/checkbox-BP_d_wHv.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/CustomHarnessForm-DRznIZHy.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/code-BXOmE5OH.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/smoothCorners-BkkkRGfq.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/agentParallelism-mvCVyAic.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/markdown-ihjA_5tb.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/CopyButton-CXUVDDsO.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/refresh-cw-BAnCMn1R.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/AgentSnapshotExportDialog-KpnVR2-h.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/features-zp-1eH3y.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/dateFormatters-DcwxMoFQ.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/chromeLayout-BVIo91zG.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/arrow-left-B8V7f-zD.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/archive-CjWiEyUY.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/skeleton-qwY0w33R.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/use-mobile-D5rf6bLI.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/circle-dot-DJNVA4yJ.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/square-Cl8jt8gV.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/clock-DmxuJGwl.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/user-plus-BHm24eua.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/radio-CP6N1PYZ.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/shield-check-1s1obNJN.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/square-terminal-DJpigsnL.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/ephemeralChannel-COFYQOvZ.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/PageHeader-CjugNTdG.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/UserProfilePanel-CzZfv4oh.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/ellipsis-DTqld05F.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/e2eBridge-VsYgbJ9i.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/browser-CwO9Yb1v.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /pow/plop.m4a HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/github-light-DnUD0JAn.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/github-light-EUqPIrTm.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /pow/poof2@3x.png HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /pow/poof1@3x.png HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /pow/poof3@3x.png HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/inter-latin-wght-normal-Dx4kXJAl.woff2 HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /pow/poof4@3x.png HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /pow/poof5@3x.png HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/MembersSidebar-dcg20ReK.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/useToastEffect-IwXSqXy0.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/modalSearchStyles-B8jPxmoK.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/ChannelRouteScreen-BPGdraAD.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/projectThreadGitHubStatus-CeGqw-Er.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:27] "GET /assets/useMeasuredCssVariable-DOx9HpWL.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:28] "GET /assets/ChannelPane-Bik_6iEr.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:28] "GET /assets/message-square-text-VURaydST.js HTTP/1.1" 200 -
+  ✘  1 [smoke] › tests/e2e/project-thread-worktree.spec.ts:330:1 › Project threads show truthful isolated workspace and agent handoff (9.6s)
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET / HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/preload-helper-zJ_50EbN.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/core-CGTdLJHd.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/index-DBR_jpQt.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/react-CYAoy8YY.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/createLucideIcon-5x_AnOKN.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/tauri-CiizRZLm.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/tauriMedia-Ce7-f_ny.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/card-texture-B4AjYKdN.css HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/useKnownAgentPubkeys-B14xaexc.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/useAppNavigation-DN4isGPx.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/hooks-Ce8Z8kWW.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/UserProfilePanel-BNxrlnS6.css HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/index-D_mNuFW_.css HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/dist-B2suDcfC.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/react-dom-BE7rlsJy.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/pure-Dvo1D2Uc.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/dist-BfU76zy_.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/hooks-aXJxv1ms.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/ProfileAvatar-BWRjd2GH.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/dist-257sWMjJ.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/timeoutStore-CqNAyj7V.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/dialog-FHQSlHgM.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/event-Dx8IHwKE.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/dist-DFgFn264.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/badge-lRLZ7Ryu.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/clipboard-C9LqpHpx.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/card-Df-ir_Rp.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/alert-dialog-ix45a68e.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/tooltip-DfrkHgfm.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/chooser-dialog-content-L8Z_CZsf.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/huddle-BMJS4345.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/agentAutocompleteEligibility-CaeNC98R.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/agentConfigOptions-tikrYfqg.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/textarea-CX0H21Bw.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/RespondToField-DbldyXJW.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/useGlobalAgentConfig-CYAXRR0f.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/tabs-DXlwcGO8.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/persistentAgentAudience-C5ftmxnC.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/AnimatePresence-sWuiDj5Q.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/use-reduced-motion-CAgGRTE4.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/eye-Crks68Kl.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/chevrons-up-down-M3atCuQV.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/lock-DPSnxJzP.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/plus-BSHdo0B3.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/instanceInputForDefinition-VywKtyga.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/CustomHarnessForm-DRznIZHy.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/nodeCache-CJPETYaM.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/checkbox-BP_d_wHv.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/smoothCorners-BkkkRGfq.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/CopyButton-CXUVDDsO.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/agentParallelism-mvCVyAic.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/code-BXOmE5OH.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/refresh-cw-BAnCMn1R.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/markdown-ihjA_5tb.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/dateFormatters-DcwxMoFQ.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/AgentSnapshotExportDialog-KpnVR2-h.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/chromeLayout-BVIo91zG.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/features-zp-1eH3y.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/arrow-left-B8V7f-zD.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/use-mobile-D5rf6bLI.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/skeleton-qwY0w33R.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/archive-CjWiEyUY.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/circle-dot-DJNVA4yJ.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/square-Cl8jt8gV.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/clock-DmxuJGwl.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/radio-CP6N1PYZ.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/shield-check-1s1obNJN.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/user-plus-BHm24eua.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/UserProfilePanel-CzZfv4oh.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/ephemeralChannel-COFYQOvZ.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/square-terminal-DJpigsnL.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/ellipsis-DTqld05F.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/PageHeader-CjugNTdG.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/e2eBridge-VsYgbJ9i.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/browser-CwO9Yb1v.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/inter-latin-wght-normal-Dx4kXJAl.woff2 HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /pow/plop.m4a HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/github-light-DnUD0JAn.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/github-light-EUqPIrTm.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /pow/poof1@3x.png HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /pow/poof2@3x.png HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /pow/poof3@3x.png HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /pow/poof4@3x.png HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /pow/poof5@3x.png HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/MembersSidebar-dcg20ReK.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/useToastEffect-IwXSqXy0.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/modalSearchStyles-B8jPxmoK.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/projectThreadGitHubStatus-CeGqw-Er.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/ChannelRouteScreen-BPGdraAD.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/useMeasuredCssVariable-DOx9HpWL.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/ChannelPane-Bik_6iEr.js HTTP/1.1" 200 -
+[2m[WebServer] [22m::ffff:127.0.0.1 - - [07/Aug/2026 01:58:37] "GET /assets/message-square-text-VURaydST.js HTTP/1.1" 200 -
+  ✘  2 [smoke] › tests/e2e/project-thread-worktree.spec.ts:556:1 › Project thread phase chips and transcript peek stay reviewable after completion (8.1s)
+
+
+  1) [smoke] › tests/e2e/project-thread-worktree.spec.ts:330:1 › Project threads show truthful isolated workspace and agent handoff 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoHaveCount[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Locator:  getByTestId('message-thread-panel').getByRole('button', { name: /^PR$/ })
+    Expected: [32m0[39m
+    Received: [31m1[39m
+    Timeout:  5000ms
+
+    Call log:
+    [2m  - Expect "toHaveCount" with timeout 5000ms[22m
+    [2m  - waiting for getByTestId('message-thread-panel').getByRole('button', { name: /^PR$/ })[22m
+    [2m    14 × locator resolved to 1 element[22m
+    [2m       - unexpected value "1"[22m
+
+
+      427 |   await expect(panel).toContainText("Remote base");
+      428 |   await expect(panel).not.toContainText("buzz/aaaaaaaaaaaa");
+    > 429 |   await expect(panel.getByRole("button", { name: /^PR$/ })).toHaveCount(0);
+          |                                                             ^
+      430 | });
+      431 |
+      432 | test("Docked thread panel can expand to show worktree branch detail", async ({
+        at /private/tmp/wt-i82/desktop/tests/e2e/project-thread-worktree.spec.ts:429:61
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/project-thread-worktree-Pr-f434c-workspace-and-agent-handoff-smoke/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/project-thread-worktree-Pr-f434c-workspace-and-agent-handoff-smoke/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/project-thread-worktree-Pr-f434c-workspace-and-agent-handoff-smoke/error-context.md
+
+  2) [smoke] › tests/e2e/project-thread-worktree.spec.ts:556:1 › Project thread phase chips and transcript peek stay reviewable after completion 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoHaveAttribute[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Locator: getByTestId('message-thread-panel').getByTestId('project-thread-activity-peek')
+    Expected: [32m"history"[39m
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toHaveAttribute" with timeout 5000ms[22m
+    [2m  - waiting for getByTestId('message-thread-panel').getByTestId('project-thread-activity-peek')[22m
+
+
+      629 |   await page.evaluate(() => window.__BUZZ_E2E_RESET_OBSERVER_EVENTS__?.());
+      630 |   await seedPeekActivity(page, "conversation-issue-82", true);
+    > 631 |   await expect(peek).toHaveAttribute("data-mode", "history");
+          |                      ^
+      632 |   await expect(peek).toContainText("History");
+      633 |   await expect(peek).toContainText("Tracing the workspace projection.");
+      634 |   await waitForAnimations(page);
+        at /private/tmp/wt-i82/desktop/tests/e2e/project-thread-worktree.spec.ts:631:22
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/project-thread-worktree-Pr-6cc12-reviewable-after-completion-smoke/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/project-thread-worktree-Pr-6cc12-reviewable-after-completion-smoke/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/project-thread-worktree-Pr-6cc12-reviewable-after-completion-smoke/error-context.md
+
+  2 failed
+    [smoke] › tests/e2e/project-thread-worktree.spec.ts:330:1 › Project threads show truthful isolated workspace and agent handoff 
+    [smoke] › tests/e2e/project-thread-worktree.spec.ts:556:1 › Project thread phase chips and transcript peek stay reviewable after completion 

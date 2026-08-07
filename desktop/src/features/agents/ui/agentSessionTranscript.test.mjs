@@ -453,6 +453,17 @@ test("buildTranscript preserves channel, turn, and session ids through message u
   assert.equal(message.sessionId, "sess-identity");
 });
 
+test("buildTranscript propagates conversationId to transcript items", () => {
+  const conversationId = "conversation-identity";
+  const [item] = buildTranscript([
+    assistantChunk(92, "msg-conversation", "Scoped", {
+      conversationId,
+    }),
+  ]).filter((candidate) => candidate.type === "message");
+
+  assert.equal(item.conversationId, conversationId);
+});
+
 test("buildTranscript promotes ACP plan updates to first-class plan items", () => {
   const items = buildTranscript([
     sessionUpdate(90, {

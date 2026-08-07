@@ -32,7 +32,7 @@ import {
   ciStatus,
   projectThreadStatusClassName,
   pullRequestStatus,
-} from "./projectThreadGitHubStatus";
+} from "@/features/messages/lib/projectThreadGitHubStatus";
 
 export type ProjectThreadGitHubDrawer = "issue" | "pr" | "ci";
 

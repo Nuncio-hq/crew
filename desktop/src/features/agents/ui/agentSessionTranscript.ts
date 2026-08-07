@@ -279,9 +279,22 @@ function rawPayloadTitle(payload: unknown) {
 
 type TranscriptItemContext = {
   channelId: string | null;
+  conversationId: string | null;
   turnId: string | null;
   sessionId: string | null;
 };
+
+function updateTranscriptIdentity(
+  existing: TranscriptItem,
+  ctx: TranscriptItemContext,
+) {
+  return {
+    channelId: ctx.channelId,
+    conversationId: ctx.conversationId,
+    turnId: ctx.turnId ?? existing.turnId,
+    sessionId: ctx.sessionId ?? existing.sessionId,
+  };
+}
 
 function upsertMessage(
   d: TranscriptDraft,
@@ -303,9 +316,7 @@ function upsertMessage(
       replaceItem(d, currentKey, {
         ...existing,
         text: existing.text + text,
-        channelId: ctx.channelId,
-        turnId: ctx.turnId ?? existing.turnId,
-        sessionId: ctx.sessionId ?? existing.sessionId,
+        ...updateTranscriptIdentity(existing, ctx),
         authorPubkey: authorPubkey ?? existing.authorPubkey,
         acpSource: acpSource ?? existing.acpSource,
         messageId: messageId ?? existing.messageId,
@@ -325,9 +336,7 @@ function upsertMessage(
     text,
     timestamp,
     messageId,
-    channelId: ctx.channelId,
-    turnId: ctx.turnId,
-    sessionId: ctx.sessionId,
+    ...ctx,
     authorPubkey,
     acpSource,
   });
@@ -353,9 +362,7 @@ function upsertTextItem(
         type === "lifecycle"
           ? joinLifecycleText(existing.text, text)
           : existing.text + text,
-      channelId: ctx.channelId,
-      turnId: ctx.turnId ?? existing.turnId,
-      sessionId: ctx.sessionId ?? existing.sessionId,
+      ...updateTranscriptIdentity(existing, ctx),
       acpSource: acpSource ?? existing.acpSource,
     });
     return;
@@ -369,9 +376,7 @@ function upsertTextItem(
       title,
       text,
       timestamp,
-      channelId: ctx.channelId,
-      turnId: ctx.turnId,
-      sessionId: ctx.sessionId,
+      ...ctx,
       acpSource,
     });
     return;
@@ -417,9 +422,7 @@ function upsertLifecycleItem(
       title,
       text: joinLifecycleText(existing.text, text),
       descriptor: descriptor ?? existing.descriptor,
-      channelId: ctx.channelId,
-      turnId: ctx.turnId ?? existing.turnId,
-      sessionId: ctx.sessionId ?? existing.sessionId,
+      ...updateTranscriptIdentity(existing, ctx),
       acpSource: acpSource ?? existing.acpSource,
     });
     return;
@@ -434,9 +437,7 @@ function upsertLifecycleItem(
     text,
     timestamp,
     descriptor,
-    channelId: ctx.channelId,
-    turnId: ctx.turnId,
-    sessionId: ctx.sessionId,
+    ...ctx,
     acpSource,
   });
 }
@@ -464,9 +465,7 @@ function replaceLifecycleItem(
       renderClass,
       title,
       text,
-      channelId: ctx.channelId,
-      turnId: ctx.turnId ?? existing.turnId,
-      sessionId: ctx.sessionId ?? existing.sessionId,
+      ...updateTranscriptIdentity(existing, ctx),
       acpSource: acpSource ?? existing.acpSource,
     });
     return;
@@ -480,9 +479,7 @@ function replaceLifecycleItem(
     title,
     text,
     timestamp,
-    channelId: ctx.channelId,
-    turnId: ctx.turnId,
-    sessionId: ctx.sessionId,
+    ...ctx,
     acpSource,
   });
 }
@@ -503,9 +500,7 @@ function upsertPlan(
     replaceItem(d, id, {
       ...existing,
       text,
-      channelId: ctx.channelId,
-      turnId: ctx.turnId ?? existing.turnId,
-      sessionId: ctx.sessionId ?? existing.sessionId,
+      ...updateTranscriptIdentity(existing, ctx),
       acpSource: acpSource ?? existing.acpSource,
     });
     if (changed) {
@@ -518,9 +513,7 @@ function upsertPlan(
         timestamp,
         isUpdate: true,
         targetId: id,
-        channelId: ctx.channelId,
-        turnId: ctx.turnId,
-        sessionId: ctx.sessionId,
+        ...ctx,
         acpSource,
       });
     }
@@ -534,9 +527,7 @@ function upsertPlan(
     title,
     text,
     timestamp,
-    channelId: ctx.channelId,
-    turnId: ctx.turnId,
-    sessionId: ctx.sessionId,
+    ...ctx,
     acpSource,
   });
 }
@@ -570,9 +561,7 @@ function upsertMetadata(
     replaceItem(d, id, {
       ...existing,
       sections,
-      channelId: ctx.channelId,
-      turnId: ctx.turnId ?? existing.turnId,
-      sessionId: ctx.sessionId ?? existing.sessionId,
+      ...updateTranscriptIdentity(existing, ctx),
       acpSource: acpSource ?? existing.acpSource,
     });
     return;
@@ -585,9 +574,7 @@ function upsertMetadata(
     title,
     sections,
     timestamp,
-    channelId: ctx.channelId,
-    turnId: ctx.turnId,
-    sessionId: ctx.sessionId,
+    ...ctx,
     acpSource,
   });
 }
@@ -658,9 +645,7 @@ function upsertTool(
         isTerminalToolStatus(mergedStatus) && existing.completedAt == null
           ? timestamp
           : existing.completedAt,
-      channelId: ctx.channelId,
-      turnId: ctx.turnId ?? existing.turnId,
-      sessionId: ctx.sessionId ?? existing.sessionId,
+      ...updateTranscriptIdentity(existing, ctx),
       acpSource: acpSource ?? existing.acpSource,
     });
     return;
@@ -690,9 +675,7 @@ function upsertTool(
     timestamp,
     startedAt: timestamp,
     completedAt: isTerminalToolStatus(status) ? timestamp : null,
-    channelId: ctx.channelId,
-    turnId: ctx.turnId,
-    sessionId: ctx.sessionId,
+    ...ctx,
     acpSource,
   });
 }
@@ -711,6 +694,7 @@ export function processTranscriptEvent(
   const ch = channelId ?? "global";
   const ctx: TranscriptItemContext = {
     channelId,
+    conversationId: event.conversationId ?? null,
     turnId: event.turnId,
     sessionId: event.sessionId ?? d.latestSessionId,
   };

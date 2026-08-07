@@ -3,7 +3,7 @@ import type {
   RegistryIssue,
   RegistryPullRequest,
 } from "@/shared/api/thread-workspace-types";
-import type { ProjectThreadStatusTone } from "@/features/messages/ui/projectThreadGitHubStatus";
+import type { ProjectThreadStatusTone } from "@/features/messages/lib/projectThreadGitHubStatus";
 
 export type ProjectThreadBadgePr = {
   number: number;

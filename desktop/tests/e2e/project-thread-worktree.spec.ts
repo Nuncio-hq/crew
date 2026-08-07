@@ -5,7 +5,12 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
 const ROOT_A = "a".repeat(64);
 const ROOT_B = "b".repeat(64);
-const CHANNEL_ID = "c0a5e9cd-e3b8-5d3e-83bd-2fe5d71980c8";
+// The real UUID of the mock bridge's `general` channel
+// (STARTER_GENERAL_CHANNEL_ID in e2eBridge.ts). The archive read path
+// (`read_archived_observer_events_for_channel`) is keyed by the channel the
+// panel is actually open on, so fixtures MUST carry this id — a made-up UUID
+// silently returns an empty archive and history mode never appears.
+const CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const agents = [
   {
     pubkey: TEST_IDENTITIES.alice.pubkey,
@@ -73,6 +78,112 @@ const threadPullRequest = {
     url: "https://github.com/Nuncio-hq/crew/pull/9",
   },
 };
+const archivedPeekEvents = [
+  {
+    id: "e2e-archive-peek-thought",
+    pubkey: TEST_IDENTITIES.alice.pubkey,
+    created_at: 1_754_000_003,
+    kind: 24200,
+    tags: [
+      ["agent", TEST_IDENTITIES.alice.pubkey],
+      ["frame", "telemetry"],
+    ],
+    content: JSON.stringify({
+      seq: 3,
+      timestamp: "2026-07-31T05:00:03.000Z",
+      kind: "acp_read",
+      agentIndex: 0,
+      channelId: CHANNEL_ID,
+      conversationId: "conversation-issue-82",
+      sessionId: "session-issue-82",
+      turnId: "turn-aaaaaaaa",
+      payload: {
+        method: "session/update",
+        params: {
+          sessionId: "session-issue-82",
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: {
+              type: "text",
+              text: "Tracing the workspace projection.",
+            },
+          },
+        },
+      },
+    }),
+    sig: "",
+  },
+  {
+    id: "e2e-archive-peek-tool-start",
+    pubkey: TEST_IDENTITIES.alice.pubkey,
+    created_at: 1_754_000_004,
+    kind: 24200,
+    tags: [
+      ["agent", TEST_IDENTITIES.alice.pubkey],
+      ["frame", "telemetry"],
+    ],
+    content: JSON.stringify({
+      seq: 4,
+      timestamp: "2026-07-31T05:00:04.000Z",
+      kind: "acp_read",
+      agentIndex: 0,
+      channelId: CHANNEL_ID,
+      conversationId: "conversation-issue-82",
+      sessionId: "session-issue-82",
+      turnId: "turn-aaaaaaaa",
+      payload: {
+        method: "session/update",
+        params: {
+          sessionId: "session-issue-82",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call-check",
+            status: "executing",
+            title: "shell",
+            kind: "shell",
+            rawInput: { command: "pnpm run check" },
+          },
+        },
+      },
+    }),
+    sig: "",
+  },
+  {
+    id: "e2e-archive-peek-tool-result",
+    pubkey: TEST_IDENTITIES.alice.pubkey,
+    created_at: 1_754_000_005,
+    kind: 24200,
+    tags: [
+      ["agent", TEST_IDENTITIES.alice.pubkey],
+      ["frame", "telemetry"],
+    ],
+    content: JSON.stringify({
+      seq: 5,
+      timestamp: "2026-07-31T05:00:05.000Z",
+      kind: "acp_read",
+      agentIndex: 0,
+      channelId: CHANNEL_ID,
+      conversationId: "conversation-issue-82",
+      sessionId: "session-issue-82",
+      turnId: "turn-aaaaaaaa",
+      payload: {
+        method: "session/update",
+        params: {
+          sessionId: "session-issue-82",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call-check",
+            status: "completed",
+            title: "shell",
+            kind: "shell",
+            rawOutput: "All checks passed",
+          },
+        },
+      },
+    }),
+    sig: "",
+  },
+];
 
 test.use({ viewport: { height: 750, width: 1200 } });
 
@@ -233,6 +344,83 @@ async function seedWorkspaceError(
       conversation: conversationId,
       errorMessage: message,
       root: rootEventId,
+    },
+  );
+}
+
+async function seedPeekActivity(
+  page: Page,
+  conversationId: string,
+  terminal = false,
+  archive = false,
+) {
+  await page.evaluate(
+    ({ agentPubkey, channelId, conversation, endTurn, archive }) => {
+      const event = (seq: number, update: Record<string, unknown>) => ({
+        seq,
+        timestamp: new Date(Date.now() + seq).toISOString(),
+        kind: "acp_read",
+        agentIndex: 0,
+        channelId,
+        conversationId: conversation,
+        sessionId: "session-issue-82",
+        turnId: "turn-aaaaaaaa",
+        payload: {
+          method: "session/update",
+          params: { sessionId: "session-issue-82", update },
+        },
+      });
+      const events = endTurn
+        ? [
+            {
+              seq: 7,
+              timestamp: new Date(Date.now() + 7).toISOString(),
+              kind: "turn_completed",
+              agentIndex: 0,
+              channelId,
+              conversationId: conversation,
+              sessionId: "session-issue-82",
+              turnId: "turn-aaaaaaaa",
+              payload: {},
+            },
+          ]
+        : [
+            event(3, {
+              sessionUpdate: "agent_thought_chunk",
+              content: {
+                type: "text",
+                text: "Tracing the workspace projection.",
+              },
+            }),
+            event(4, {
+              sessionUpdate: "tool_call",
+              toolCallId: "call-check",
+              status: "executing",
+              title: "shell",
+              kind: "shell",
+              rawInput: { command: "pnpm run check" },
+            }),
+            event(5, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "call-check",
+              status: "completed",
+              title: "shell",
+              kind: "shell",
+              rawOutput: "All checks passed",
+            }),
+          ];
+      window.__BUZZ_E2E_SEED_OBSERVER_EVENTS__?.({
+        agentPubkey,
+        archive,
+        events,
+      });
+    },
+    {
+      agentPubkey: TEST_IDENTITIES.alice.pubkey,
+      channelId: CHANNEL_ID,
+      conversation: conversationId,
+      endTurn: terminal,
+      archive,
     },
   );
 }
@@ -474,4 +662,98 @@ test("Project workspace errors render failed truth without preparing affordances
   await expect(
     panel.getByTestId("project-thread-status-expanded"),
   ).toContainText("Setup failed");
+});
+
+test("Project thread phase chips and transcript peek stay reviewable after completion", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    managedAgents: agents,
+    saveSubscriptions: [
+      {
+        scope_type: "owner_p",
+        // MUST be the signed-in identity's pubkey: useLoadArchivedObserverEvents
+        // gates the entire archive hydration path on
+        // `scopeValue === identityPubkey` (tyler is the default mock identity).
+        scope_value: TEST_IDENTITIES.tyler.pubkey,
+        kinds: "[24200]",
+      },
+    ],
+    threadGitHubByBranch: {
+      "buzz/aaaaaaaaaaaa": threadPullRequest,
+    },
+    archivedObserverEvents: archivedPeekEvents,
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await waitForLiveChannel(page);
+
+  await emitProjectRoot(page, ROOT_A, "show mission control activity");
+  let panel = await openThread(page, "show mission control activity");
+  await seedWorkspace(
+    page,
+    ROOT_A,
+    "conversation-issue-82",
+    "buzz/aaaaaaaaaaaa",
+    "/tmp/.buzz-worktrees/crew-aaaaaaaaaaaa",
+  );
+  await seedPeekActivity(page, "conversation-issue-82");
+
+  const peek = panel.getByTestId("project-thread-activity-peek");
+  await expect(peek).toHaveAttribute("data-mode", "live");
+  await expect(peek).toContainText("Claude Opus");
+  await peek.getByTestId("project-thread-peek-toggle").click();
+  await expect(peek.getByTestId("project-thread-peek-thinking")).toContainText(
+    "Tracing the workspace projection.",
+  );
+  await expect(
+    peek.getByTestId("project-thread-peek-tool-result"),
+  ).toContainText("All checks passed");
+  await waitForAnimations(page);
+  await peek.screenshot({
+    path: "test-results/issue-82/01-live-peek.png",
+  });
+
+  const statusBar = panel.getByTestId("project-thread-workspace-panel");
+  await expect(
+    statusBar
+      .getByRole("button", { name: /Task/ })
+      .getByTestId("project-thread-phase-dot"),
+  ).toHaveAttribute("data-phase", "complete");
+  await expect(
+    statusBar
+      .getByRole("button", { name: /Workspace/ })
+      .getByTestId("project-thread-phase-dot"),
+  ).toHaveAttribute("data-phase", "complete");
+  await expect(
+    statusBar
+      .getByRole("button", { name: /PR/ })
+      .getByTestId("project-thread-phase-dot"),
+  ).toHaveAttribute("data-phase", "active");
+  await expect(
+    statusBar
+      .getByRole("button", { name: /CI/ })
+      .getByTestId("project-thread-phase-dot"),
+  ).toHaveAttribute("data-phase", "active");
+  await waitForAnimations(page);
+  await statusBar.screenshot({
+    path: "test-results/issue-82/02-chip-matrix.png",
+  });
+
+  await page.evaluate(() => window.__BUZZ_E2E_RESET_OBSERVER_EVENTS__?.());
+  await seedPeekActivity(page, "conversation-issue-82", true);
+  await page.getByTestId("channel-random").click();
+  await page.getByTestId("channel-general").click();
+  await waitForLiveChannel(page);
+  panel = await openThread(page, "show mission control activity");
+  const historyPeek = panel.getByTestId("project-thread-activity-peek");
+  await expect(historyPeek).toHaveAttribute("data-mode", "history");
+  await expect(historyPeek).toContainText("History");
+  // The remounted panel starts collapsed — expand to reveal the archived feed.
+  await historyPeek.getByTestId("project-thread-peek-toggle").click();
+  await expect(historyPeek).toContainText("Tracing the workspace projection.");
+  await waitForAnimations(page);
+  await historyPeek.screenshot({
+    path: "test-results/issue-82/03-history-peek.png",
+  });
 });

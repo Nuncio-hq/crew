@@ -353,6 +353,10 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_NO_USER_INPUT", default_value_t = false)]
     pub no_user_input: bool,
 
+    /// Publish a durable receipt after successful turns with streamed output.
+    #[arg(long, env = "BUZZ_ACP_AGENT_RECEIPTS", default_value_t = false)]
+    pub agent_receipts: bool,
+
     #[arg(long, env = "BUZZ_ACP_CONFIG", default_value = "./buzz-acp.toml")]
     pub config: PathBuf,
 
@@ -539,6 +543,8 @@ pub struct Config {
     pub no_mention_filter: bool,
     /// Whether ACP form elicitation is advertised and handled.
     pub user_input_enabled: bool,
+    /// Whether successful turns may publish durable agent receipts.
+    pub agent_receipts_enabled: bool,
     pub config_path: PathBuf,
     pub context_message_limit: u32,
     /// Maximum turns per session before proactive rotation. 0 = disabled.
@@ -1109,6 +1115,7 @@ impl Config {
             channels_override: args.channels,
             no_mention_filter: args.no_mention_filter,
             user_input_enabled: !args.no_user_input,
+            agent_receipts_enabled: args.agent_receipts,
             config_path: args.config,
             context_message_limit: args.context_message_limit,
             max_turns_per_session: args.max_turns_per_session,
@@ -1153,7 +1160,7 @@ impl Config {
             format!(" allowed_respond_to=[{}]", modes.join(","))
         };
         format!(
-            "relay={} pubkey={} agent_cmd={} {} mcp_cmd={} idle_timeout={}s max_turn={}s dispatch_hold={}ms agents={} heartbeat={}s subscribe={:?} dedup={:?} meh={:?} ignore_self={} context_limit={} max_turns_per_session={} presence={} typing={} memory={} model={} permission_mode={} {}{}",
+            "relay={} pubkey={} agent_cmd={} {} mcp_cmd={} idle_timeout={}s max_turn={}s dispatch_hold={}ms agents={} heartbeat={}s subscribe={:?} dedup={:?} meh={:?} ignore_self={} context_limit={} max_turns_per_session={} presence={} typing={} memory={} receipts={} model={} permission_mode={} {}{}",
             self.relay_url,
             self.keys.public_key().to_hex(),
             self.agent_command,
@@ -1173,6 +1180,7 @@ impl Config {
             self.presence_enabled,
             self.typing_enabled,
             self.memory_enabled,
+            self.agent_receipts_enabled,
             self.model.as_deref().unwrap_or("(agent default)"),
             self.permission_mode,
             respond_to_detail,
@@ -1490,6 +1498,7 @@ mod tests {
             channels_override: None,
             no_mention_filter: false,
             user_input_enabled: true,
+            agent_receipts_enabled: false,
             config_path: PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
@@ -2301,6 +2310,13 @@ channels = "ALL"
             config.memory_enabled,
             "memory_enabled should default to true"
         );
+    }
+
+    #[test]
+    fn agent_receipts_default_off_and_visible_in_summary() {
+        let config = test_config(SubscribeMode::Mentions);
+        assert!(!config.agent_receipts_enabled);
+        assert!(config.summary().contains("receipts=false"));
     }
 
     #[test]

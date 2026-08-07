@@ -866,6 +866,14 @@ export function resetAgentObserverStore() {
   void unsubscribe?.();
 }
 
+/** E2E-only: remove live frames while retaining the hydrated archive journal. */
+export function resetAgentObserverLiveEventsForE2E() {
+  eventsByAgent.clear();
+  transcriptByAgent.clear();
+  snapshotByAgent.clear();
+  notifyListeners();
+}
+
 /**
  * Test-only: register a set of agent pubkeys as trusted for a given
  * subscription id. Mirrors the effect of mounting `useManagedAgentObserverBridge`
