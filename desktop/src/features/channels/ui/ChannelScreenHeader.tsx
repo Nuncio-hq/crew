@@ -7,6 +7,7 @@ import type { ActiveDmHeaderParticipant } from "@/features/channels/useActiveCha
 import { getChannelDescription } from "@/features/channels/lib/channelDescription";
 import { getDmParticipantPreview } from "@/features/channels/lib/dmParticipantDisplay";
 import { ChannelAgentDigest } from "@/features/channels/ui/ChannelAgentDigest";
+import { ChannelAgentPresence } from "@/features/channels/ui/ChannelAgentPresence";
 import { ChannelHeaderStatusBadge } from "@/features/channels/ui/ChannelHeaderStatusBadge";
 import { ChannelMembersBar } from "@/features/channels/ui/ChannelMembersBar";
 import {
@@ -197,6 +198,13 @@ export function ChannelScreenHeader({
               onOpen={() => setIsWorktreesOpen(true)}
               repositoryPath={projectRepositoryPath}
             />
+            {activeChannel && onOpenThread ? (
+              <ChannelAgentPresence
+                channelId={activeChannel.id}
+                onOpenThread={onOpenThread}
+                timelineMessages={timelineMessages}
+              />
+            ) : null}
             <ChannelHeaderStatusBadge
               ephemeralDisplay={activeChannelEphemeralDisplay}
             />

@@ -4,10 +4,12 @@ import { beforeEach, describe, it } from "node:test";
 import {
   getNeedsYouForConversation,
   getNeedsYouForChannel,
+  ingestUserInputRequest,
   ingestApprovalRequest,
   ingestApprovalRequestEvent,
   reconcileNeedsYouFromFeed,
   resetNeedsYouStore,
+  resolveUserInputRequest,
   resolveApprovalRequestEvent,
   subscribeNeedsYou,
 } from "./needsYouStore.ts";
@@ -207,5 +209,82 @@ describe("needsYouStore", () => {
     );
     assert.equal(notifications, 0);
     unsubscribe();
+  });
+
+  it("resolves a user-input request when an answer arrives", () => {
+    ingestUserInputRequest({
+      id: "user-input-answer",
+      channelId: CHANNEL,
+      rootEventId: ROOT,
+      conversationId: "conversation-user-input",
+      agentPubkey: AGENT,
+      createdAt: Date.now(),
+    });
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 1);
+    resolveUserInputRequest("user-input-answer");
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
+  });
+
+  it("resolves a user-input request on terminal resolution", () => {
+    ingestUserInputRequest({
+      id: "user-input-resolved",
+      channelId: CHANNEL,
+      rootEventId: ROOT,
+      conversationId: "conversation-user-input",
+      agentPubkey: AGENT,
+      createdAt: Date.now(),
+    });
+    resolveUserInputRequest("user-input-resolved");
+    assert.equal(
+      getNeedsYouForConversation("conversation-user-input").length,
+      0,
+    );
+  });
+
+  it("uses a tombstone to block stale user-input re-ingestion", () => {
+    const input = {
+      id: "user-input-tombstone",
+      channelId: CHANNEL,
+      rootEventId: ROOT,
+      conversationId: "conversation-user-input",
+      agentPubkey: AGENT,
+      createdAt: Date.now(),
+    };
+    ingestUserInputRequest(input);
+    resolveUserInputRequest(input.id);
+    assert.equal(ingestUserInputRequest(input), null);
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
+  });
+
+  it("expires user-input requests", () => {
+    const now = Date.now();
+    ingestUserInputRequest({
+      id: "user-input-expired",
+      channelId: CHANNEL,
+      rootEventId: ROOT,
+      conversationId: "conversation-user-input",
+      agentPubkey: AGENT,
+      createdAt: now - 30 * 60 * 1_000,
+    });
+    assert.equal(getNeedsYouForChannel(CHANNEL, now).length, 0);
+  });
+
+  it("reconcile never prunes user-input entries (46010-only feed)", () => {
+    const now = Date.now();
+    ingestUserInputRequest({
+      id: "user-input-live",
+      channelId: CHANNEL,
+      rootEventId: ROOT,
+      conversationId: "conversation-user-input",
+      agentPubkey: AGENT,
+      createdAt: now - 5 * 60 * 1_000, // well past the 60s grace
+    });
+    // The native needs_action feed only carries 46010 approvals, so a
+    // complete snapshot without this entry must NOT delete it.
+    reconcileNeedsYouFromFeed([], now);
+    assert.equal(getNeedsYouForChannel(CHANNEL, now).length, 1);
+    // The surviving entry holds a pending expiry timer that would keep the
+    // node:test process alive — clear it.
+    resetNeedsYouStore();
   });
 });

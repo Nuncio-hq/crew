@@ -21,7 +21,11 @@ export type NeedsYouRequest = {
   approvalReferences: string[];
 };
 
+type UserInputNeedsYouRequest = NeedsYouRequest & { kind: "user-input" };
+
 const requests = new Map<string, NeedsYouRequest>();
+const userInputRequests = new Map<string, UserInputNeedsYouRequest>();
+const resolvedUserInputRequestIds = new Set<string>();
 const listeners = new Set<() => void>();
 let generation = 0;
 const channelCache = new Map<string, NeedsYouRequest[]>();
@@ -36,11 +40,47 @@ function notify() {
   for (const listener of listeners) listener();
 }
 
+export function ingestUserInputRequest(
+  input: Omit<UserInputNeedsYouRequest, "kind" | "approvalReferences">,
+) {
+  if (resolvedUserInputRequestIds.has(input.id)) return null;
+  const entry: UserInputNeedsYouRequest = {
+    ...input,
+    kind: "user-input",
+    approvalReferences: [],
+  };
+  const prior = userInputRequests.get(entry.id);
+  userInputRequests.set(entry.id, entry);
+  scheduleExpiry();
+  if (!prior || JSON.stringify(prior) !== JSON.stringify(entry)) notify();
+  return entry;
+}
+
+export function resolveUserInputRequest(requestId: string) {
+  resolvedUserInputRequestIds.add(requestId);
+  // Same LRU bound as approval tombstones: unbounded growth is a leak in
+  // long-lived sessions with chatty agents.
+  if (resolvedUserInputRequestIds.size > RESOLVED_TOMBSTONE_LIMIT) {
+    const oldest = resolvedUserInputRequestIds.values().next().value;
+    if (oldest !== undefined) resolvedUserInputRequestIds.delete(oldest);
+  }
+  if (!userInputRequests.delete(requestId)) return false;
+  scheduleExpiry();
+  notify();
+  return true;
+}
+
 function prune(now: number): boolean {
   let changed = false;
   for (const [id, request] of requests) {
     if (now - request.createdAt >= NEEDS_YOU_TTL_MS) {
       requests.delete(id);
+      changed = true;
+    }
+  }
+  for (const [id, request] of userInputRequests) {
+    if (now - request.createdAt >= NEEDS_YOU_TTL_MS) {
+      userInputRequests.delete(id);
       changed = true;
     }
   }
@@ -53,7 +93,7 @@ function scheduleExpiry() {
     expiryTimer = null;
   }
   const nextExpiry = Math.min(
-    ...[...requests.values()].map(
+    ...[...requests.values(), ...userInputRequests.values()].map(
       (request) => request.createdAt + NEEDS_YOU_TTL_MS,
     ),
   );
@@ -265,7 +305,7 @@ export function getNeedsYouForConversation(
   }
   const cached = conversationCache.get(conversationId);
   if (cached) return cached;
-  const result = [...requests.values()]
+  const result = [...requests.values(), ...userInputRequests.values()]
     .filter((request) => request.conversationId === conversationId)
     .sort((a, b) => a.createdAt - b.createdAt);
   conversationCache.set(conversationId, result);
@@ -284,7 +324,7 @@ export function getNeedsYouForChannel(
   }
   const cached = channelCache.get(channelId);
   if (cached) return cached;
-  const result = [...requests.values()]
+  const result = [...requests.values(), ...userInputRequests.values()]
     .filter((request) => request.channelId === channelId)
     .sort((a, b) => a.createdAt - b.createdAt);
   channelCache.set(channelId, result);
@@ -302,7 +342,9 @@ export function getNeedsYouGeneration() {
 
 export function resetNeedsYouStore() {
   requests.clear();
+  userInputRequests.clear();
   resolvedRequestIds.clear();
+  resolvedUserInputRequestIds.clear();
   if (expiryTimer !== null) {
     globalThis.clearTimeout(expiryTimer);
     expiryTimer = null;
