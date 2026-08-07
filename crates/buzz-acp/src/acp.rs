@@ -19,6 +19,7 @@ use crate::usage::{TurnUsage, UsageTracker};
 /// Maximum allowed size of a single NDJSON line from the agent's stdout.
 /// Lines exceeding this limit are rejected to prevent OOM from rogue agents.
 const MAX_LINE_SIZE: usize = 10_000_000; // 10 MB
+const MAX_TURN_SUMMARY_CHARS: usize = 16_384;
 
 /// An MCP server configuration passed to `session/new`.
 ///
@@ -211,6 +212,8 @@ pub struct AcpClient {
     /// deltas. Both goose and buzz-agent emit this notification; goose gates
     /// on client capability advertisement, buzz-agent emits unconditionally.
     goose_usage: UsageTracker,
+    /// Bounded text streamed by the agent during the current turn.
+    turn_summary: String,
     user_input_runtime: Option<std::sync::Arc<crate::elicitation::QuestionRuntime>>,
     user_input_context: Option<(uuid::Uuid, String)>,
     user_input_harness: Option<String>,
@@ -558,6 +561,7 @@ impl AcpClient {
             steering_supported: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
+            turn_summary: String::new(),
             user_input_runtime: None,
             user_input_context: None,
             user_input_harness: None,
@@ -783,6 +787,7 @@ impl AcpClient {
         idle_timeout: std::time::Duration,
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
+        self.turn_summary.clear();
         let params = build_prompt_params(session_id, prompt_blocks);
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
@@ -907,6 +912,26 @@ impl AcpClient {
     /// publish a kind 44200 NIP-AM event.
     pub fn take_turn_usage(&mut self) -> Option<TurnUsage> {
         self.goose_usage.take()
+    }
+
+    /// Consume the bounded agent-authored text captured during the current turn.
+    ///
+    /// A receipt is only meaningful when the adapter streamed a result summary;
+    /// empty turns return `None` so callers do not publish a synthetic receipt.
+    pub fn take_turn_summary(&mut self) -> Option<String> {
+        let summary = std::mem::take(&mut self.turn_summary);
+        let summary = summary.trim();
+        if summary.is_empty() {
+            return None;
+        }
+        Some(summary.chars().take(4_000).collect())
+    }
+
+    fn append_turn_summary(&mut self, text: &str) {
+        let remaining = MAX_TURN_SUMMARY_CHARS.saturating_sub(self.turn_summary.chars().count());
+        if remaining > 0 {
+            self.turn_summary.extend(text.chars().take(remaining));
+        }
     }
 
     /// Install a per-turn steer request channel for goose-native
@@ -1967,6 +1992,7 @@ impl AcpClient {
         match update_type {
             "agent_message_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {
+                    self.append_turn_summary(text);
                     tracing::info!(target: "acp::stream", "{text}");
                 }
                 false

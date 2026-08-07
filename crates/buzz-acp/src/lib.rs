@@ -1517,6 +1517,7 @@ async fn tokio_main() -> Result<()> {
     tracing::info!("subscribed to membership notifications");
 
     let presence_publisher = relay.event_publisher();
+    let receipt_publisher = relay.event_publisher();
     let presence_keys = config.keys.clone();
 
     // Priority: BUZZ_AUTH_TAG (NIP-OA attestation) → --agent-owner flag.
@@ -1726,6 +1727,8 @@ async fn tokio_main() -> Result<()> {
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
         user_input_runtime: Some(user_input_runtime.clone()),
+        receipt_publisher,
+        agent_receipts_enabled: config.agent_receipts_enabled,
     });
 
     if !config.memory_enabled {
@@ -5894,6 +5897,7 @@ mod build_mcp_servers_tests {
             channels_override: None,
             no_mention_filter: false,
             user_input_enabled: true,
+            agent_receipts_enabled: false,
             config_path: std::path::PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
@@ -6118,6 +6122,7 @@ mod error_outcome_emission_tests {
             channels_override: None,
             no_mention_filter: false,
             user_input_enabled: true,
+            agent_receipts_enabled: false,
             config_path: std::path::PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,

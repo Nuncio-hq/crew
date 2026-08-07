@@ -42,7 +42,7 @@ use crate::queue::{
     CancelReason, ContextMessage, ConversationContext, FlushBatch, PromptChannelInfo,
     PromptProfile, PromptProfileLookup, ThreadTags,
 };
-use crate::relay::{ChannelInfo, RestClient};
+use crate::relay::{ChannelInfo, RelayEventPublisher, RestClient};
 
 /// Window within which agent activity before a hard-cap death qualifies
 /// the turn as "recently active" (eligible for requeue instead of dead-letter).
@@ -621,6 +621,10 @@ pub struct PromptContext {
     pub relay_url: String,
     /// Shared durable user-input request/answer transport.
     pub user_input_runtime: Option<Arc<crate::elicitation::QuestionRuntime>>,
+    /// Shared event transport used for successful terminal agent receipts.
+    pub receipt_publisher: RelayEventPublisher,
+    /// Feature gate for durable terminal agent receipts.
+    pub agent_receipts_enabled: bool,
 }
 
 impl AgentPool {
@@ -2253,6 +2257,10 @@ pub async fn run_prompt_task(
                             &source,
                             &control_signal,
                         );
+                        if let Some(receipt_batch) = batch.as_ref() {
+                            let summary = agent.acp.take_turn_summary();
+                            publish_agent_receipt(&ctx, receipt_batch, summary).await;
+                        }
                         let usage = agent.acp.take_turn_usage();
                         publish_agent_turn_metric(
                             &ctx,
@@ -2314,6 +2322,12 @@ pub async fn run_prompt_task(
                 agent.state.invalidate(&source);
             }
 
+            if should_publish_agent_receipt(&stop_reason) {
+                if let Some(receipt_batch) = batch.as_ref() {
+                    let summary = agent.acp.take_turn_summary();
+                    publish_agent_receipt(&ctx, receipt_batch, summary).await;
+                }
+            }
             let core_stop = acp_stop_to_core(&stop_reason);
             let usage = agent.acp.take_turn_usage();
             publish_agent_turn_metric(
@@ -4535,6 +4549,82 @@ async fn publish_agent_turn_metric(
             "NIP-AM: publish timed out"
         ),
     }
+}
+
+/// Best-effort publication of a durable receipt for a successful channel turn.
+///
+/// Receipts use the same signed-event publisher as ACP user-input requests and
+/// are gated off by default. A missing streamed summary or thread batch is a
+/// no-op; all publishing failures remain observational and never alter turn
+/// success.
+async fn publish_agent_receipt(ctx: &PromptContext, batch: &FlushBatch, summary: Option<String>) {
+    if !ctx.agent_receipts_enabled {
+        return;
+    }
+    let Some(summary) = summary else {
+        return;
+    };
+    let Some(last_event) = batch.events.last() else {
+        return;
+    };
+
+    let thread = crate::queue::parse_thread_tags(&last_event.event);
+    // The receipt replies TO the triggering event: parent is always the
+    // trigger itself (never the trigger's own parent — that would attach the
+    // receipt one level up and break the relay's parent-targeting check).
+    // Root is the trigger's thread root, or the trigger when it is the root.
+    let root_event_id = thread
+        .root_event_id
+        .unwrap_or_else(|| last_event.event.id.to_hex());
+    let parent_event_id = last_event.event.id.to_hex();
+    let Some(root_event_id) = nostr::EventId::from_hex(&root_event_id).ok() else {
+        tracing::warn!(target: "pool::receipt", "triggering event has invalid root id");
+        return;
+    };
+    let Some(parent_event_id) = nostr::EventId::from_hex(&parent_event_id).ok() else {
+        tracing::warn!(target: "pool::receipt", "triggering event has invalid parent id");
+        return;
+    };
+    let content = serde_json::json!({
+        "summary": summary,
+        "verify": "Review the checks below and reply in this thread to continue.",
+        "lights": [{"label": "turn", "status": "passed"}],
+        "engineering": {}
+    })
+    .to_string();
+    let builder = match buzz_sdk::build_agent_receipt(
+        batch.routing_channel_id(),
+        &buzz_sdk::ThreadRef {
+            root_event_id,
+            parent_event_id,
+        },
+        &content,
+    ) {
+        Ok(builder) => builder,
+        Err(error) => {
+            tracing::warn!(target: "pool::receipt", "failed to build agent receipt: {error}");
+            return;
+        }
+    };
+    let event = match builder.sign_with_keys(&ctx.agent_keys) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(target: "pool::receipt", "failed to sign agent receipt: {error}");
+            return;
+        }
+    };
+    const RECEIPT_TIMEOUT: Duration = Duration::from_secs(3);
+    match tokio::time::timeout(RECEIPT_TIMEOUT, ctx.receipt_publisher.publish_event(event)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(target: "pool::receipt", "failed to publish agent receipt: {error}");
+        }
+        Err(_) => tracing::warn!(target: "pool::receipt", "agent receipt publish timed out"),
+    }
+}
+
+fn should_publish_agent_receipt(stop_reason: &StopReason) -> bool {
+    matches!(stop_reason, StopReason::EndTurn)
 }
 
 const REACTION_SEEN: &str = "👀";
@@ -7353,6 +7443,15 @@ mod tests {
         assert_eq!(acp_stop_to_core(&StopReason::Refusal), CoreStop::Unknown);
     }
 
+    #[test]
+    fn agent_receipts_only_publish_after_end_turn() {
+        assert!(should_publish_agent_receipt(&StopReason::EndTurn));
+        assert!(!should_publish_agent_receipt(&StopReason::Cancelled));
+        assert!(!should_publish_agent_receipt(&StopReason::MaxTokens));
+        assert!(!should_publish_agent_receipt(&StopReason::MaxTurnRequests));
+        assert!(!should_publish_agent_receipt(&StopReason::Refusal));
+    }
+
     /// `publish_agent_turn_metric` is a no-op when `usage` is `None`.
     #[tokio::test]
     async fn test_publish_agent_turn_metric_noop_on_no_usage() {
@@ -7763,6 +7862,8 @@ mod tests {
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
             user_input_runtime: None,
+            receipt_publisher: crate::relay::RelayEventPublisher::test_noop(),
+            agent_receipts_enabled: false,
         }
     }
 
