@@ -94,6 +94,64 @@ pub(crate) struct ThreadWorkspaceBranchConflict {
     git_errors: Vec<String>,
 }
 
+#[derive(Debug)]
+pub(crate) enum ThreadWorkspaceRootVerificationError {
+    Unavailable {
+        root_event_id: String,
+    },
+    IdMismatch {
+        requested_root_event_id: String,
+        fetched_root_event_id: String,
+    },
+    UnexpectedContext {
+        root_event_id: String,
+    },
+    NoMessages {
+        root_event_id: String,
+    },
+    AuthorMismatch {
+        root_event_id: String,
+        expected_owner: String,
+        actual_author: String,
+    },
+}
+
+impl std::fmt::Display for ThreadWorkspaceRootVerificationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable { root_event_id } => write!(
+                formatter,
+                "Thread root '{root_event_id}' could not be verified. Check that the root is available from the relay, then retry."
+            ),
+            Self::IdMismatch {
+                requested_root_event_id,
+                fetched_root_event_id,
+            } => write!(
+                formatter,
+                "Thread root '{requested_root_event_id}' could not be verified because the relay returned '{fetched_root_event_id}' instead. Check relay consistency and retry."
+            ),
+            Self::UnexpectedContext { root_event_id } => write!(
+                formatter,
+                "Thread root '{root_event_id}' could not be verified because the relay returned unexpected context. Check the root event and retry."
+            ),
+            Self::NoMessages { root_event_id } => write!(
+                formatter,
+                "Thread root '{root_event_id}' could not be verified because the relay returned no messages. Restore or republish the root event, then retry."
+            ),
+            Self::AuthorMismatch {
+                root_event_id,
+                expected_owner,
+                actual_author,
+            } => write!(
+                formatter,
+                "Thread root '{root_event_id}' is authored by '{actual_author}', not the Project owner '{expected_owner}'. Verify the Project owner or use the correct thread root, then retry."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ThreadWorkspaceRootVerificationError {}
+
 impl ThreadWorkspaceBranchConflict {
     fn new(worktree_path: &Path, current_branch: String, expected_branch: &str) -> Self {
         Self {
