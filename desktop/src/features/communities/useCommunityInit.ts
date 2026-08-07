@@ -32,6 +32,7 @@ import {
 import { resetAgentWorkingSignal } from "@/features/agents/agentWorkingSignal";
 import { resetNeedsYouStore } from "@/features/agents/needsYouStore";
 import { resetAgentObserverStore } from "@/features/agents/observerRelayStore";
+import { resetThreadAgentActivityHeadlineCaches } from "@/features/messages/ui/conversationActivityHeadline";
 import {
   restoreProjectThreadWorkspacesForCommunity,
   saveProjectThreadWorkspacesForCommunity,
@@ -65,6 +66,7 @@ function resetCommunityState({
   clearAllDrafts();
   resetAgentObserverStore();
   resetActiveAgentTurnsStore();
+  resetThreadAgentActivityHeadlineCaches();
   resetAgentWorkingSignal();
   resetNeedsYouStore();
   if (isTauri() && isMacPlatform()) {
