@@ -22,7 +22,7 @@ import {
   projectRepoHostForProject,
   projectRepoHostForRepository,
 } from "@/features/projects/lib/projectRepoHost";
-import { ProjectsActivityFeed } from "@/features/projects/ui/ProjectsActivityFeed";
+
 import {
   EmptyFilteredState,
   EmptyState,
@@ -34,10 +34,10 @@ import { CreateProjectIssueDialog } from "@/features/projects/ui/CreateProjectIs
 import { CreatePullRequestDialog } from "@/features/projects/ui/CreatePullRequestDialog";
 import { ProjectsCreateMenu } from "@/features/projects/ui/ProjectsCreateMenu";
 import { ProjectsIssuesList } from "@/features/projects/ui/ProjectsIssuesList";
-import { ProjectsOverviewPanel } from "@/features/projects/ui/ProjectsOverviewPanel";
-import { ProjectsOverviewRail } from "@/features/projects/ui/ProjectsOverviewRail";
+
 import { ProjectsPullRequestsList } from "@/features/projects/ui/ProjectsPullRequestsList";
-import { ProjectsWorkItemsLoadNotice } from "@/features/projects/ui/ProjectsWorkItemsLoadNotice";
+
+import { ProjectOutcomeLanding } from "@/features/projects/ui/ProjectOutcomeLanding";
 import { ProjectsListScopeDropdown } from "@/features/projects/ui/ProjectsListScopeDropdown";
 import { PROJECT_LIST_CONTAINER_CLASS } from "@/features/projects/ui/projectListRowStyles";
 import {
@@ -510,13 +510,6 @@ export function ProjectsView({
     [goProject],
   );
 
-  const handleOpenCommit = React.useCallback(
-    (project: Project, commitHash: string) => {
-      void goProject(project.id, { commitHash });
-    },
-    [goProject],
-  );
-
   const handleOpenPullRequest = React.useCallback(
     (
       project: Project,
@@ -726,40 +719,6 @@ export function ProjectsView({
     </div>
   );
 
-  const workItemFailedSections = [
-    ...new Set([
-      ...(projectsWorkItemsQuery.data?.issues.failedSections ?? []),
-      ...(projectsWorkItemsQuery.data?.pullRequests.failedSections ?? []),
-    ]),
-  ];
-  const activityFeed = (
-    <>
-      <ProjectsWorkItemsLoadNotice
-        error={projectsWorkItemsQuery.error}
-        failedSections={workItemFailedSections}
-        isRetrying={
-          projectsWorkItemsQuery.isFetching && !projectsWorkItemsQuery.isLoading
-        }
-        onRetry={() => void projectsWorkItemsQuery.refetch()}
-        subject="project activity"
-      />
-      <ProjectsActivityFeed
-        isLoading={
-          repoSnapshotsQuery.isLoading || projectsWorkItemsQuery.isLoading
-        }
-        issues={projectsWorkItemsQuery.data?.issues.items ?? []}
-        onOpenCommit={handleOpenCommit}
-        onOpenIssue={handleOpenIssue}
-        onOpenProject={handleOpenProject}
-        onOpenPullRequest={handleOpenPullRequest}
-        profiles={profiles}
-        projects={projects}
-        pullRequests={projectsWorkItemsQuery.data?.pullRequests.items ?? []}
-        snapshots={repoSnapshotsQuery.data?.snapshots}
-      />
-    </>
-  );
-
   const createMenu = (
     <ProjectsCreateMenu
       onCreateIssue={() => setCreateIssueOpen(true)}
@@ -870,22 +829,15 @@ export function ProjectsView({
               {projects.length === 0 ? (
                 <EmptyState />
               ) : filter === "all" ? (
-                <ProjectsOverviewPanel
-                  metadata={
-                    <ProjectsOverviewRail
-                      profiles={profiles}
-                      projects={projects}
-                      summaries={activitySummariesQuery.data}
-                    />
-                  }
-                  onSelectSection={(section) => {
-                    handleFilterChange(section);
-                  }}
+                <ProjectOutcomeLanding
+                  onOpen={handleOpenProject}
                   projects={projects}
-                  summaries={activitySummariesQuery.data}
-                >
-                  <section className="space-y-3">{activityFeed}</section>
-                </ProjectsOverviewPanel>
+                  pullRequests={
+                    projectsWorkItemsQuery.data?.pullRequests.items.map(
+                      ({ project, pullRequest }) => ({ project, pullRequest }),
+                    ) ?? []
+                  }
+                />
               ) : (
                 <section className="space-y-3">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

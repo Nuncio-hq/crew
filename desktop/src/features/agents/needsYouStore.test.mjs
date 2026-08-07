@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
 
 import {
+  getNeedsYouForChannels,
   getNeedsYouForConversation,
   getNeedsYouForChannel,
   ingestUserInputRequest,
@@ -9,6 +10,7 @@ import {
   ingestApprovalRequestEvent,
   reconcileNeedsYouFromFeed,
   resetNeedsYouStore,
+  resolveApprovalRequest,
   resolveUserInputRequest,
   resolveApprovalRequestEvent,
   subscribeNeedsYou,
@@ -193,6 +195,19 @@ describe("needsYouStore", () => {
     const first = getNeedsYouForChannel(CHANNEL);
     const second = getNeedsYouForChannel(CHANNEL);
     assert.strictEqual(first, second);
+  });
+
+  it("invalidates the aggregate snapshot when content changes at the same count", () => {
+    ingestApprovalRequest(request({ id: "second-request" }));
+    const first = getNeedsYouForChannels([CHANNEL]);
+    resolveApprovalRequest(REQUEST);
+    ingestApprovalRequest(request({ id: "replacement-request" }));
+    const second = getNeedsYouForChannels([CHANNEL]);
+    assert.notStrictEqual(second, first);
+    assert.deepEqual(
+      second.map((entry) => entry.id),
+      ["second-request", "replacement-request"],
+    );
   });
 
   it("expires stale requests without notifying during a snapshot read", () => {

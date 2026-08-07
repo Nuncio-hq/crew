@@ -12,6 +12,7 @@ import {
   useProjectLocalRepoSnapshotQuery,
   useProjectRepoDiffQuery,
   useProjectPullRequestsQuery,
+  useProjectsWorkItemsQuery,
   useProjectRepoSnapshotQuery,
   useProjectsQuery,
   useRepoStateQuery,
@@ -67,6 +68,7 @@ import { selectProjectRepository } from "@/features/projects/projectModels";
 import { KIND_REPO_ANNOUNCEMENT } from "@/shared/constants/kinds";
 import { useProjectRepoPresentation } from "@/features/projects/useProjectRepoHost";
 import { WorkspaceTabs } from "./ProjectWorkspaceTabs";
+import { ProjectOutcomeDetail } from "./ProjectOutcomeDetail";
 import type { RepoSourceHeaderControls } from "./ProjectRepositorySource";
 import { showProjectCloneErrorToast } from "./projectGitErrorToast";
 import {
@@ -126,6 +128,9 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const projectQuery = useProjectQuery(projectId);
   const projectsQuery = useProjectsQuery();
   const project = projectQuery.data;
+  const projectWorkItemsQuery = useProjectsWorkItemsQuery(
+    project ? [project] : [],
+  );
   // When the projectId is a canonical 30617:<owner>:<d> coordinate (emitted by
   // entity links in #4695), derive the repository selection directly from the
   // <owner>:<d> portion rather than falling back to the project's primary
@@ -775,7 +780,11 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     );
   }
   if (!repository) {
-    return <ProjectDetailScreenNoRepository project={project} />;
+    return (
+      <ProjectOutcomeDetail project={project} pullRequests={[]}>
+        <ProjectDetailScreenNoRepository project={project} />
+      </ProjectOutcomeDetail>
+    );
   }
 
   const repoContributors = repoSnapshotQuery.data?.contributors ?? [];
@@ -859,78 +868,90 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
                 repository={repository}
               />
 
-              <WorkspaceTabs
-                key={`${project.id}:${repository.id}:${tabsResetKey}`}
-                commitDiff={commitDiffQuery.data}
-                commitDiffError={commitDiffQuery.error}
-                commitDiffLoading={commitDiffQuery.isLoading}
-                createIssueAction={{
-                  onCreate: handleCreateIssue,
-                  pending: createIssueMutation.isPending,
-                }}
-                createPullRequestAction={
-                  isLinkedWorkspace
-                    ? undefined
-                    : {
-                        onCreated: handlePullRequestCreated,
-                        projects: projectsQuery.data ?? [project],
-                        reposDir: activeCommunity?.reposDir,
-                      }
-                }
-                updatePullRequestAction={
-                  !isLinkedWorkspace &&
-                  openBranchPullRequest &&
-                  repoSyncStatusQuery.data?.remoteHead &&
-                  repoSyncStatusQuery.data.remoteHead !==
-                    openBranchPullRequest.commit
-                    ? {
-                        onUpdate: () => {
-                          void handleUpdatePullRequest();
-                        },
-                        pending: updatePullRequestMutation.isPending,
-                      }
-                    : undefined
-                }
-                localSnapshot={localRepoSnapshotQuery.data}
-                localSnapshotError={localRepoSnapshotQuery.error}
-                localSnapshotLoading={localRepoSnapshotQuery.isLoading}
-                onBranchChange={handleBranchChange}
-                onOpenMergeRecoveryTerminal={
-                  isLinkedWorkspace
-                    ? undefined
-                    : handleOpenMergeRecoveryTerminal
-                }
-                onOpenTerminal={
-                  canOpenTerminal ? () => void handleOpenTerminal() : undefined
-                }
-                terminalTitle={projectTerminalLabel(hasLocalCheckout)}
-                onSelectedCommitHashChange={handleSelectedCommitHashChange}
-                onSelectedIssueIdChange={handleSelectedIssueIdChange}
-                onSelectedPullRequestIdChange={
-                  handleSelectedPullRequestIdChange
-                }
-                onSelectedTabChange={setActiveTab}
+              <ProjectOutcomeDetail
                 profiles={profiles}
-                project={repository}
-                projectId={project.id}
-                repoDiff={displayedRepoDiff}
-                repoDiffError={displayedRepoDiffError}
-                repoDiffLoading={displayedRepoDiffLoading}
-                pullRequests={pullRequestsQuery.data ?? []}
-                pullRequestsError={pullRequestsQuery.error}
-                pullRequestsLoading={pullRequestsQuery.isLoading}
-                repoContributors={repoContributors}
-                repoHost={repoRemote.host}
-                repoSource={effectiveRepoSource}
-                selectedCommitHash={selectedCommitHash}
-                selectedIssueId={selectedIssueId}
-                selectedPullRequestId={selectedPullRequestId}
-                snapshot={repoSnapshotQuery.data}
-                snapshotError={repoSnapshotQuery.error}
-                snapshotLoading={repoSnapshotQuery.isLoading}
-                sourceControls={filesSourceControls}
-                viewerGitIdentity={viewerGitIdentity}
-              />
+                project={project}
+                pullRequests={
+                  projectWorkItemsQuery.data?.pullRequests.items.map(
+                    ({ pullRequest }) => pullRequest,
+                  ) ?? []
+                }
+              >
+                <WorkspaceTabs
+                  key={`${project.id}:${repository.id}:${tabsResetKey}`}
+                  commitDiff={commitDiffQuery.data}
+                  commitDiffError={commitDiffQuery.error}
+                  commitDiffLoading={commitDiffQuery.isLoading}
+                  createIssueAction={{
+                    onCreate: handleCreateIssue,
+                    pending: createIssueMutation.isPending,
+                  }}
+                  createPullRequestAction={
+                    isLinkedWorkspace
+                      ? undefined
+                      : {
+                          onCreated: handlePullRequestCreated,
+                          projects: projectsQuery.data ?? [project],
+                          reposDir: activeCommunity?.reposDir,
+                        }
+                  }
+                  updatePullRequestAction={
+                    !isLinkedWorkspace &&
+                    openBranchPullRequest &&
+                    repoSyncStatusQuery.data?.remoteHead &&
+                    repoSyncStatusQuery.data.remoteHead !==
+                      openBranchPullRequest.commit
+                      ? {
+                          onUpdate: () => {
+                            void handleUpdatePullRequest();
+                          },
+                          pending: updatePullRequestMutation.isPending,
+                        }
+                      : undefined
+                  }
+                  localSnapshot={localRepoSnapshotQuery.data}
+                  localSnapshotError={localRepoSnapshotQuery.error}
+                  localSnapshotLoading={localRepoSnapshotQuery.isLoading}
+                  onBranchChange={handleBranchChange}
+                  onOpenMergeRecoveryTerminal={
+                    isLinkedWorkspace
+                      ? undefined
+                      : handleOpenMergeRecoveryTerminal
+                  }
+                  onOpenTerminal={
+                    canOpenTerminal
+                      ? () => void handleOpenTerminal()
+                      : undefined
+                  }
+                  terminalTitle={projectTerminalLabel(hasLocalCheckout)}
+                  onSelectedCommitHashChange={handleSelectedCommitHashChange}
+                  onSelectedIssueIdChange={handleSelectedIssueIdChange}
+                  onSelectedPullRequestIdChange={
+                    handleSelectedPullRequestIdChange
+                  }
+                  onSelectedTabChange={setActiveTab}
+                  profiles={profiles}
+                  project={repository}
+                  projectId={project.id}
+                  repoDiff={displayedRepoDiff}
+                  repoDiffError={displayedRepoDiffError}
+                  repoDiffLoading={displayedRepoDiffLoading}
+                  pullRequests={pullRequestsQuery.data ?? []}
+                  pullRequestsError={pullRequestsQuery.error}
+                  pullRequestsLoading={pullRequestsQuery.isLoading}
+                  repoContributors={repoContributors}
+                  repoHost={repoRemote.host}
+                  repoSource={effectiveRepoSource}
+                  selectedCommitHash={selectedCommitHash}
+                  selectedIssueId={selectedIssueId}
+                  selectedPullRequestId={selectedPullRequestId}
+                  snapshot={repoSnapshotQuery.data}
+                  snapshotError={repoSnapshotQuery.error}
+                  snapshotLoading={repoSnapshotQuery.isLoading}
+                  sourceControls={filesSourceControls}
+                  viewerGitIdentity={viewerGitIdentity}
+                />
+              </ProjectOutcomeDetail>
             </div>
           </div>
         </div>

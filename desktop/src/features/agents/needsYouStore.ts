@@ -30,6 +30,7 @@ const listeners = new Set<() => void>();
 let generation = 0;
 const channelCache = new Map<string, NeedsYouRequest[]>();
 const conversationCache = new Map<string, NeedsYouRequest[]>();
+const channelsCache = new Map<string, NeedsYouRequest[]>();
 const EMPTY_REQUESTS: NeedsYouRequest[] = [];
 let expiryTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 
@@ -37,6 +38,7 @@ function notify() {
   generation += 1;
   channelCache.clear();
   conversationCache.clear();
+  channelsCache.clear();
   for (const listener of listeners) listener();
 }
 
@@ -301,6 +303,7 @@ export function getNeedsYouForConversation(
   if (prune(now)) {
     channelCache.clear();
     conversationCache.clear();
+    channelsCache.clear();
     scheduleExpiry();
   }
   const cached = conversationCache.get(conversationId);
@@ -320,6 +323,7 @@ export function getNeedsYouForChannel(
   if (prune(now)) {
     channelCache.clear();
     conversationCache.clear();
+    channelsCache.clear();
     scheduleExpiry();
   }
   const cached = channelCache.get(channelId);
@@ -351,6 +355,7 @@ export function resetNeedsYouStore() {
   }
   channelCache.clear();
   conversationCache.clear();
+  channelsCache.clear();
   generation += 1;
   for (const listener of listeners) listener();
 }
@@ -373,6 +378,39 @@ export function useNeedsYouForChannel(channelId: string | null | undefined) {
   const getSnapshot = React.useCallback(
     () => getNeedsYouForChannel(channelId),
     [channelId],
+  );
+  return React.useSyncExternalStore(
+    subscribeNeedsYou,
+    getSnapshot,
+    getSnapshot,
+  );
+}
+
+export function getNeedsYouForChannels(
+  channelIds: readonly string[],
+): NeedsYouRequest[] {
+  const key = channelIds.join("\u0000");
+  const cached = channelsCache.get(key);
+  if (cached) return cached;
+  const result = [
+    ...new Map(
+      channelIds.flatMap((channelId) =>
+        getNeedsYouForChannel(channelId).map((request) => [
+          request.id,
+          request,
+        ]),
+      ),
+    ).values(),
+  ].sort((a, b) => a.createdAt - b.createdAt);
+  channelsCache.set(key, result);
+  return result;
+}
+
+export function useNeedsYouForChannels(channelIds: readonly string[]) {
+  const key = channelIds.join("\u0000");
+  const getSnapshot = React.useCallback(
+    () => getNeedsYouForChannels(key ? key.split("\u0000") : []),
+    [key],
   );
   return React.useSyncExternalStore(
     subscribeNeedsYou,
