@@ -24,6 +24,7 @@ import { buildVideoReviewContextsByMessageId } from "@/features/messages/lib/vid
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { ChannelType } from "@/shared/api/types";
+import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import { cn } from "@/shared/lib/cn";
 import { channelChrome } from "@/shared/layout/chromeLayout";
 import { DayDivider } from "./DayDivider";
@@ -43,6 +44,28 @@ export type TimelineVirtualizerApi = {
     options?: { behavior?: ScrollBehavior },
   ) => boolean;
 };
+
+function canReuseVideoReviewContext(
+  previous: VideoReviewContext | undefined,
+  next: VideoReviewContext | undefined,
+): previous is VideoReviewContext {
+  if (!previous || !next) return previous === next;
+  if (
+    previous.channelId !== next.channelId ||
+    previous.channelName !== next.channelName ||
+    previous.channelType !== next.channelType ||
+    previous.disabled !== next.disabled ||
+    previous.isSending !== next.isSending ||
+    previous.profiles !== next.profiles ||
+    previous.rootEventId !== next.rootEventId ||
+    previous.comments.length !== next.comments.length
+  ) {
+    return false;
+  }
+  return previous.comments.every(
+    (comment, index) => comment === next.comments[index],
+  );
+}
 
 type TimelineMessageListProps = {
   channelId?: string | null;
@@ -181,8 +204,11 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
   // comparisons hold across unrelated timeline re-renders (typing
   // indicators, presence updates) — a fresh context object per render would
   // defeat the memo and re-render every video message on every pass.
+  const previousVideoReviewContextsRef = React.useRef<
+    ReadonlyMap<string, VideoReviewContext>
+  >(new Map());
   const videoReviewContextById = React.useMemo(() => {
-    return buildVideoReviewContextsByMessageId({
+    const nextContexts = buildVideoReviewContextsByMessageId({
       channelId,
       channelName,
       channelType,
@@ -192,6 +218,16 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
       onToggleReaction,
       profiles,
     });
+    const previousContexts = previousVideoReviewContextsRef.current;
+    const stableContexts = new Map(nextContexts);
+    for (const [messageId, nextContext] of nextContexts) {
+      const previousContext = previousContexts.get(messageId);
+      if (canReuseVideoReviewContext(previousContext, nextContext)) {
+        stableContexts.set(messageId, previousContext);
+      }
+    }
+    previousVideoReviewContextsRef.current = stableContexts;
+    return stableContexts;
   }, [
     channelId,
     channelName,

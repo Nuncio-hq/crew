@@ -636,6 +636,19 @@ test("video upload previews use poster frames and inline videos open review mode
   await expect(page.getByTestId("video-review-composer-timecode")).toHaveText(
     "00:10",
   );
+
+  // The speed menu itself must survive the same live timeline churn as the
+  // review dialog. This exercises the interaction that used to detach the
+  // Radix menu item while it was being clicked.
+  await reviewSpeedButton.click();
+  const reviewSpeedMenu = page.getByTestId("video-review-speed-menu");
+  await expect(reviewSpeedMenu).toBeVisible();
+  await emitMockMessage(page, "general", "Another unrelated chatter");
+  await reviewSpeedMenu
+    .getByRole("button", { name: "0.5x", exact: true })
+    .click();
+  await expect(reviewSpeedButton).toHaveText("0.5x");
+
   await commentBox.fill("");
 
   await page.mouse.click(trackBox.x + trackBox.width * 0.5, timelineY);
@@ -727,16 +740,19 @@ test("video upload previews use poster frames and inline videos open review mode
     .getByRole("button", { name: "Close video review" })
     .click();
   await expect(page.getByTestId("video-review-dialog")).toHaveCount(0);
+  // 0.5x: the mid-churn speed-menu regression step above changed the shared
+  // playback speed from 0.25x, and review-mode speed carries back to the
+  // restored inline player.
   await expect(
     restoredInlinePlayer.getByTestId("video-inline-speed"),
-  ).toHaveText("0.25x");
+  ).toHaveText("0.5x");
   await expect
     .poll(() =>
       restoredInlineVideo.evaluate(
         (video) => (video as HTMLVideoElement).playbackRate,
       ),
     )
-    .toBe(0.25);
+    .toBe(0.5);
 
   await reviewButton.evaluate((button) =>
     (button as HTMLButtonElement).click(),

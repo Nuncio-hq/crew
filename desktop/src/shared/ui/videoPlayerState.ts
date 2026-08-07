@@ -4,11 +4,34 @@
 const inlinePlaybackPositions = new Map<string, number>();
 const openReviewKeys = new Set<string>();
 const reviewPlaybackPositions = new Map<string, number>();
+const openSpeedMenuKeys = new Set<string>();
 
 export function resetVideoPlayerState(): void {
   inlinePlaybackPositions.clear();
   openReviewKeys.clear();
   reviewPlaybackPositions.clear();
+  openSpeedMenuKeys.clear();
+}
+
+export function isSpeedMenuOpen(key: string): boolean {
+  return openSpeedMenuKeys.has(key);
+}
+
+export function setSpeedMenuOpen(key: string, open: boolean): void {
+  if (open) {
+    openSpeedMenuKeys.add(key);
+  } else {
+    openSpeedMenuKeys.delete(key);
+  }
+}
+
+/**
+ * True while any video overlay (review dialog or speed menu) is open. These
+ * overlays render through portals owned by a timeline row's VideoPlayer, so
+ * evicting that row unmounts the overlay out from under the user.
+ */
+export function hasOpenVideoOverlays(): boolean {
+  return openReviewKeys.size > 0 || openSpeedMenuKeys.size > 0;
 }
 
 export function getInlinePlaybackPosition(key: string): number | undefined {

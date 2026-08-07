@@ -4,6 +4,7 @@ import { classifyTimelineMessageDelta } from "@/features/messages/lib/timelineSn
 import {
   getPinnedCenterDrift,
   settleProgrammaticBottomPin,
+  shouldIgnoreTransientVirtualizedAwayFromBottom,
   shouldIgnorePinnedCenterScroll,
   shouldSettleForSplitPanel,
   shouldSettleVirtualizedBottom,
@@ -85,8 +86,8 @@ type UseAnchoredScrollResult = {
     messageId: string,
     options?: { highlight?: boolean; behavior?: ScrollBehavior },
   ) => boolean;
-  /** Syncs the hook's bottom affordances from a virtualizer-owned scroller. */
-  onVirtualizerAtBottomStateChange: (atBottom: boolean) => void;
+  /** Virtualizer bottom reports; false return = transient remeasure blip. */
+  onVirtualizerAtBottomStateChange: (atBottom: boolean) => boolean;
 };
 
 function isAtBottomNow(
@@ -172,9 +173,15 @@ export function useAnchoredScroll({
   // restoration). useState would force re-renders we don't want.
   const anchorRef = React.useRef<AnchorState>({ kind: "at-bottom" });
   const virtualizerAtBottomRef = React.useRef(true);
+  const lastContainerScrollAtRef = React.useRef(0);
   const [isAtBottom, setIsAtBottom] = React.useState(true);
   React.useLayoutEffect(() => {
-    if (shouldSettleForSplitPanel({ isAtBottom, splitPanelOpen })) {
+    if (
+      shouldSettleForSplitPanel({
+        isAtBottom: isAtBottom && virtualizerAtBottomRef.current,
+        splitPanelOpen,
+      })
+    ) {
       virtualSettleAtBottom?.();
     }
   }, [isAtBottom, splitPanelOpen, virtualSettleAtBottom]);
@@ -551,9 +558,12 @@ export function useAnchoredScroll({
   const onScroll = React.useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    // Virtua owns anchoring and reports bottom state separately. Avoid the
-    // fallback's O(N) DOM walk on every compositor-driven scroll event.
-    if (virtualizerOwnsPrependAnchoring) return;
+    // Virtua path: caller invokes only for UPWARD scrolls (potential user
+    // departures) — record the time so bottom reports can be attributed.
+    if (virtualizerOwnsPrependAnchoring) {
+      lastContainerScrollAtRef.current = performance.now();
+      return;
+    }
     // Row measurement can grow `scrollHeight` after a bottom pin and emit scroll
     // events while `scrollTop` holds at the old floor — opening a transient gap
     // above the true bottom. `computeAnchor` would read that as a deliberate
@@ -703,7 +713,7 @@ export function useAnchoredScroll({
       if (
         virtualizerOwnsPrependAnchoring &&
         shouldSettleVirtualizedBottom({
-          isAtBottom: virtualizerAtBottomRef.current,
+          isAtBottom,
           messageDelta,
           messagesArrived,
           messagesChanged: messages !== prevMessages,
@@ -763,6 +773,7 @@ export function useAnchoredScroll({
     prevMessagesRef.current = messages;
   }, [
     highlightTargetMessage,
+    isAtBottom,
     isLoading,
     messages,
     onTargetReached,
@@ -947,15 +958,29 @@ export function useAnchoredScroll({
     };
   }, []);
 
+  /** Virtualizer bottom reports; false = transient remeasure blip. */
   const onVirtualizerAtBottomStateChange = React.useCallback(
-    (atBottom: boolean) => {
-      if (!virtualizerOwnsPrependAnchoring) return;
+    (atBottom: boolean): boolean => {
+      if (!virtualizerOwnsPrependAnchoring) return false;
+      if (
+        shouldIgnoreTransientVirtualizedAwayFromBottom({
+          anchorKind: anchorRef.current.kind,
+          atBottom,
+          msSinceContainerScroll:
+            performance.now() - lastContainerScrollAtRef.current,
+        })
+      ) {
+        // Remeasure blip: record physical truth, skip the isAtBottom flip.
+        virtualizerAtBottomRef.current = false;
+        return false;
+      }
       virtualizerAtBottomRef.current = atBottom;
       if (atBottom) {
         anchorRef.current = { kind: "at-bottom" };
         setNewMessageCount(0);
       }
       setIsAtBottom(atBottom);
+      return true;
     },
     [virtualizerOwnsPrependAnchoring],
   );
