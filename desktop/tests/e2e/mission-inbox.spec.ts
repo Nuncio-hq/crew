@@ -61,13 +61,13 @@ test.describe("mission inbox", () => {
     await expect(sections).toBeVisible();
     await expect(
       page.getByTestId("mission-inbox-section-needsYou"),
-    ).toContainText("Cần bạn");
+    ).toContainText("Needs you");
     await expect(
       page.getByTestId("mission-inbox-section-readyToReview"),
-    ).toContainText("Xong");
+    ).toContainText("Ready to review");
     await expect(
       page.getByTestId("mission-inbox-section-working"),
-    ).toContainText("Đang bay");
+    ).toContainText("In flight");
     await expect(
       page.getByTestId(`mission-inbox-row-${CONVERSATION_ID}`),
     ).toBeVisible();

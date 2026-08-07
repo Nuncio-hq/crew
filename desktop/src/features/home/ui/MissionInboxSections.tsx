@@ -93,8 +93,8 @@ export function MissionInboxSectionsView({
 }) {
   const [workingOpen, setWorkingOpen] = React.useState(false);
   const groups = [
-    { key: "needsYou", label: "Cần bạn", rows: sections.needsYou },
-    { key: "readyToReview", label: "Xong", rows: sections.readyToReview },
+    { key: "needsYou", label: "Needs you", rows: sections.needsYou },
+    { key: "readyToReview", label: "Ready to review", rows: sections.readyToReview },
   ] as const;
   return (
     <div
@@ -146,7 +146,7 @@ export function MissionInboxSectionsView({
             ) : (
               <ChevronDown className="h-3 w-3 -rotate-90" />
             )}{" "}
-            Đang bay
+            In flight
           </span>
           <span className="text-2xs text-muted-foreground">
             {sections.working.length}
