@@ -11,10 +11,10 @@ import {
 } from "@/features/agents/hooks";
 import { resolvePersonaRuntime } from "@/features/agents/lib/resolvePersonaRuntime";
 import { useAddChannelMembersMutation } from "@/features/channels/hooks";
-import { type QueuedMediaAttachment } from "@/features/messages/lib/backgroundMediaUploadStore";
+import type { QueuedMediaAttachment } from "@/features/messages/lib/backgroundMediaUploadStore";
 import type { UseChannelLinksResult } from "@/features/messages/lib/useChannelLinks";
 import type { UseEmojiAutocompleteResult } from "@/features/messages/lib/useEmojiAutocomplete";
-import { type ImetaMedia } from "@/features/messages/lib/imetaMediaMarkdown";
+import type { ImetaMedia } from "@/features/messages/lib/imetaMediaMarkdown";
 import type { UseMentionsResult } from "@/features/messages/lib/useMentions";
 import type { UseRichTextEditorResult } from "@/features/messages/lib/useRichTextEditor";
 import type { UseDraftsResult } from "@/features/messages/lib/useDrafts";
