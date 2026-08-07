@@ -5,15 +5,16 @@
 
 use buzz_core::{
     kind::{
-        KIND_AGENT_OBSERVER_FRAME, KIND_AGENT_USER_INPUT_ANSWER, KIND_AGENT_USER_INPUT_REQUESTED,
-        KIND_AGENT_USER_INPUT_RESOLVED, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_DELETION,
-        KIND_DM_ADD_MEMBER, KIND_DM_OPEN, KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH,
-        KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT,
-        KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED,
-        KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST,
-        KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
-        KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_PRESENCE_UPDATE, KIND_PROJECT,
-        KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+        KIND_AGENT_OBSERVER_FRAME, KIND_AGENT_RECEIPT, KIND_AGENT_USER_INPUT_ANSWER,
+        KIND_AGENT_USER_INPUT_REQUESTED, KIND_AGENT_USER_INPUT_RESOLVED, KIND_APPROVAL_DENY,
+        KIND_APPROVAL_GRANT, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_OPEN, KIND_EMOJI_SET,
+        KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+        KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
+        KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST,
+        KIND_IA_UNARCHIVE_REQUEST, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
+        KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT,
+        KIND_PRESENCE_UPDATE, KIND_PROJECT, KIND_USER_STATUS, KIND_WORKFLOW_DEF,
+        KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -1648,6 +1649,22 @@ pub fn build_agent_user_input_resolved(
         tag(&["e", &request_event_id])?,
     ];
     Ok(EventBuilder::new(Kind::Custom(KIND_AGENT_USER_INPUT_RESOLVED as u16), content).tags(tags))
+}
+
+/// Build a durable channel-scoped reply receipt for a completed agent turn.
+///
+/// The receipt uses the same NIP-10 root/reply markers as ordinary channel
+/// replies, so it is returned by thread-replies queries and contributes to
+/// the thread counters.
+pub fn build_agent_receipt(
+    channel_id: Uuid,
+    thread_ref: &ThreadRef,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    check_content(content, 64 * 1024)?;
+    let mut tags = vec![tag(&["h", &channel_id.to_string()])?];
+    thread_tags(thread_ref, &mut tags)?;
+    Ok(EventBuilder::new(Kind::Custom(KIND_AGENT_RECEIPT as u16), content).tags(tags))
 }
 
 /// Build a DM open event (kind 41010).
@@ -4527,6 +4544,38 @@ mod tests {
             .tags
             .iter()
             .any(|tag| { tag.as_slice() == ["e".to_string(), request.clone()] }));
+    }
+
+    #[test]
+    fn agent_receipt_builder_sets_channel_and_root_link() {
+        let channel = Uuid::new_v4();
+        let root = "c".repeat(64);
+        let root_id = EventId::from_hex(&root).unwrap();
+        let event = sign(
+            build_agent_receipt(
+                channel,
+                &ThreadRef {
+                    root_event_id: root_id,
+                    parent_event_id: root_id,
+                },
+                r#"{"summary":"done","verify":"ready","lights":[],"engineering":{}}"#,
+            )
+            .unwrap(),
+        );
+        assert_eq!(event.kind, Kind::Custom(KIND_AGENT_RECEIPT as u16));
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["h".to_string(), channel.to_string()] }));
+        assert!(event.tags.iter().any(|tag| {
+            tag.as_slice()
+                == [
+                    "e".to_string(),
+                    root.clone(),
+                    "".to_string(),
+                    "reply".to_string(),
+                ]
+        }));
     }
 
     // ── NIP-MP cap-before-arity ordering ─────────────────────────────────────
