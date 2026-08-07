@@ -2,6 +2,10 @@ import * as React from "react";
 import { Loader2 } from "lucide-react";
 
 import {
+  type NeedsYouRequest,
+  useNeedsYouForConversation,
+} from "@/features/agents/needsYouStore";
+import {
   type ActiveConversationAgentTurnSummary,
   useActiveTurnSummariesForConversation,
 } from "@/features/agents/activeConversationAgentTurnSummaries";
@@ -63,7 +67,11 @@ function useSharedNowWhen(enabled: boolean): number {
   );
 }
 
-export type ThreadAgentStatusChipState = "running" | "done" | "failed";
+export type ThreadAgentStatusChipState =
+  | "needs-you"
+  | "running"
+  | "done"
+  | "failed";
 
 export type ThreadAgentStatusChipView = {
   state: ThreadAgentStatusChipState;
@@ -107,7 +115,27 @@ export function buildThreadAgentStatusChipView(
   outcome: RecentConversationOutcome | null,
   profiles: UserProfileLookup | undefined,
   now: number,
+  needsYou: readonly NeedsYouRequest[] = [],
 ): ThreadAgentStatusChipView | null {
+  if (needsYou.length > 0) {
+    const earliest = needsYou.reduce((oldest, request) =>
+      request.createdAt < oldest.createdAt ? request : oldest,
+    );
+    const { names, displayAgents } = buildAgentSlots(
+      needsYou.map((request) => request.agentPubkey),
+      profiles,
+    );
+    const elapsedLabel = formatElapsed(Math.max(0, now - earliest.createdAt));
+    const name = names[0] ?? "Agent";
+    return {
+      state: "needs-you",
+      displayAgents,
+      label: "Needs you",
+      elapsedLabel,
+      title: `${name} is waiting for your approval · ${elapsedLabel}`,
+    };
+  }
+
   // Priority: running > failed > done.
   if (summaries.length > 0) {
     let earliestAnchorAt = Number.POSITIVE_INFINITY;
@@ -171,6 +199,11 @@ const STATE_CHROME: Record<
     className: "border-primary/25 bg-primary/10 text-primary",
     glyph: "",
   },
+  "needs-you": {
+    className:
+      "border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    glyph: "⚠",
+  },
   done: {
     className:
       "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
@@ -190,14 +223,17 @@ export function ThreadAgentStatusChip({
   profiles?: UserProfileLookup;
 }) {
   const summaries = useActiveTurnSummariesForConversation(conversationId);
+  const needsYou = useNeedsYouForConversation(conversationId);
   const outcome = useRecentOutcomeForConversation(conversationId);
-  const enabled = summaries.length > 0 || outcome !== null;
+  const enabled =
+    needsYou.length > 0 || summaries.length > 0 || outcome !== null;
   const now = useSharedNowWhen(enabled);
   const view = buildThreadAgentStatusChipView(
     summaries,
     outcome,
     profiles,
     now,
+    needsYou,
   );
   if (!view) return null;
 
@@ -209,6 +245,7 @@ export function ThreadAgentStatusChip({
       className={cn(
         "ml-1 inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-2xs font-semibold tabular-nums",
         chrome.className,
+        view.state === "needs-you" && "motion-safe:animate-pulse",
       )}
       data-state={view.state}
       data-testid="thread-agent-status-chip"

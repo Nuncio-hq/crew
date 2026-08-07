@@ -7,6 +7,12 @@ import {
   walkActiveAgentTurns,
   walkConversationOutcomes,
 } from "@/features/agents/activeAgentTurnsStore";
+import {
+  getNeedsYouForChannel,
+  getNeedsYouGeneration,
+  subscribeNeedsYou,
+  type NeedsYouRequest,
+} from "@/features/agents/needsYouStore";
 
 /** One thread/conversation surfaced in the channel agent digest. */
 export type ConversationRef = {
@@ -17,16 +23,17 @@ export type ConversationRef = {
 };
 
 export type AgentThreadDigest = {
+  needsYou?: ConversationRef[];
   running: ConversationRef[];
   failed: ConversationRef[];
   done: ConversationRef[];
 };
 
 const cache = new Map<string, AgentThreadDigest | null>();
-let cacheGeneration = -1;
+let cacheGeneration = "";
 
 function ensureCacheGeneration() {
-  const generation = getActiveTurnsGeneration();
+  const generation = `${getActiveTurnsGeneration()}:${getNeedsYouGeneration()}`;
   if (generation === cacheGeneration) return;
   cache.clear();
   cacheGeneration = generation;
@@ -50,9 +57,26 @@ export function getAgentThreadDigestForChannel(
   now: number = Date.now(),
 ): AgentThreadDigest | null {
   if (!channelId) return null;
+  const needsYouRequests = getNeedsYouForChannel(channelId, now);
   ensureCacheGeneration();
   const cached = cache.get(channelId);
   if (cached !== undefined) return cached;
+
+  const needsYouByConversation = new Map<string, NeedsYouRequest[]>();
+  for (const request of needsYouRequests) {
+    const existing = needsYouByConversation.get(request.conversationId) ?? [];
+    existing.push(request);
+    needsYouByConversation.set(request.conversationId, existing);
+  }
+  const needsYou: ConversationRef[] = [...needsYouByConversation.entries()].map(
+    ([conversationId, entries]) => ({
+      conversationId,
+      agentPubkeys: [
+        ...new Set(entries.map((entry) => entry.agentPubkey)),
+      ].sort(),
+      anchorAt: Math.min(...entries.map((entry) => entry.createdAt)),
+    }),
+  );
 
   const runningByConversation = new Map<
     string,
@@ -100,12 +124,18 @@ export function getAgentThreadDigestForChannel(
     else done.push(ref);
   });
 
-  if (running.length === 0 && failed.length === 0 && done.length === 0) {
+  if (
+    needsYou.length === 0 &&
+    running.length === 0 &&
+    failed.length === 0 &&
+    done.length === 0
+  ) {
     cache.set(channelId, null);
     return null;
   }
 
   const result: AgentThreadDigest = {
+    needsYou: sortRefs(needsYou),
     running: sortRefs(running),
     failed: sortRefs(failed),
     done: sortRefs(done),
@@ -122,7 +152,14 @@ export function useAgentThreadDigestForChannel(
     [channelId],
   );
   return React.useSyncExternalStore(
-    subscribeActiveAgentTurns,
+    (listener) => {
+      const unsubscribeTurns = subscribeActiveAgentTurns(listener);
+      const unsubscribeNeedsYou = subscribeNeedsYou(listener);
+      return () => {
+        unsubscribeTurns();
+        unsubscribeNeedsYou();
+      };
+    },
     getSnapshot,
     getSnapshot,
   );

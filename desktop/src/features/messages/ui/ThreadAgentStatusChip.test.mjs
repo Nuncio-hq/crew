@@ -8,6 +8,11 @@ import {
   syncAgentTurnsFromEvents,
 } from "@/features/agents/activeAgentTurnsStore.ts";
 import {
+  getNeedsYouForConversation,
+  ingestApprovalRequest,
+  resetNeedsYouStore,
+} from "@/features/agents/needsYouStore.ts";
+import {
   buildThreadAgentStatusChipView,
   ThreadAgentStatusChip,
 } from "./ThreadAgentStatusChip.tsx";
@@ -119,6 +124,30 @@ test("buildThreadAgentStatusChipView prefers running over failed/done", () => {
   );
   assert.ok(view);
   assert.equal(view.state, "running");
+});
+
+test("buildThreadAgentStatusChipView prioritizes needs-you over running", () => {
+  resetNeedsYouStore();
+  ingestApprovalRequest({
+    id: "approval-1",
+    channelId: "00112233-4455-6677-8899-aabbccddeeff",
+    rootEventId:
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    conversationId: "thread-a",
+    agentPubkey: AGENT_A,
+    createdAt: NOW - 9 * 60_000,
+  });
+  const view = buildThreadAgentStatusChipView(
+    [{ agentPubkey: AGENT_A, anchorAt: NOW - 10_000 }],
+    null,
+    PROFILE_A,
+    NOW,
+    getNeedsYouForConversation("thread-a", NOW),
+  );
+  assert.ok(view);
+  assert.equal(view.state, "needs-you");
+  assert.equal(view.elapsedLabel, "9m 0s");
+  assert.match(view.title, /Claude Opus is waiting for your approval · 9m 0s/);
 });
 
 test("buildThreadAgentStatusChipView builds done view model", () => {
