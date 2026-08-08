@@ -14,6 +14,7 @@ import type { ImetaMedia } from "@/features/messages/lib/imetaMediaMarkdown";
 import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { VideoReviewPresentation } from "@/features/messages/lib/videoReviewContext";
+import { VideoReviewNavigationProvider } from "@/shared/ui/VideoReviewNavigation";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { Channel } from "@/shared/api/types";
 import type { ThreadPanelLayoutProps } from "@/features/channels/lib/threadPanelLayout";
@@ -956,42 +957,43 @@ export function MessageThreadPanel({
       </AuxiliaryPanelHeaderGroup>
     </>
   );
-
   return (
-    <AuxiliaryPanel
-      className="relative"
-      // The focus drawer animates itself; a second slide here would compound.
-      enterMotion={!isFocusMode}
-      footer={threadFooter}
-      header={
-        isHuddleTranscript ? undefined : (
-          <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
-        )
-      }
-      isSinglePanelView={isSinglePanelView}
-      layout={layout}
-      onClose={onClose}
-      testId="message-thread-panel"
-      transparentChrome={transparentChrome}
-      widthPx={widthPx}
-    >
-      {/* Sticky status bar lives outside the scroll region so expand/collapse
+    <VideoReviewNavigationProvider>
+      <AuxiliaryPanel
+        className="relative"
+        // The focus drawer animates itself; a second slide here would compound.
+        enterMotion={!isFocusMode}
+        footer={threadFooter}
+        header={
+          isHuddleTranscript ? undefined : (
+            <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
+          )
+        }
+        isSinglePanelView={isSinglePanelView}
+        layout={layout}
+        onClose={onClose}
+        testId="message-thread-panel"
+        transparentChrome={transparentChrome}
+        widthPx={widthPx}
+      >
+        {/* Sticky status bar lives outside the scroll region so expand/collapse
             cannot fight useAnchoredScroll's ResizeObserver. Sibling padded
             column keeps docked header chrome from stealing Workspace clicks. */}
-      <div
-        className={cn(
-          "flex min-h-0 flex-1 flex-col",
-          getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
-        )}
-      >
-        <ProjectThreadWorkspacePanel
-          channelId={channelId}
-          isFocusMode={isFocusMode}
-          profiles={profiles}
-          model={projectThreadWorkspaceModel}
-        />
-        {threadScrollRegion}
-      </div>
-    </AuxiliaryPanel>
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 flex-col",
+            getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
+          )}
+        >
+          <ProjectThreadWorkspacePanel
+            channelId={channelId}
+            isFocusMode={isFocusMode}
+            profiles={profiles}
+            model={projectThreadWorkspaceModel}
+          />
+          {threadScrollRegion}
+        </div>
+      </AuxiliaryPanel>
+    </VideoReviewNavigationProvider>
   );
 }
