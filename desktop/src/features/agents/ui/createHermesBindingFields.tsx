@@ -10,6 +10,7 @@ import {
   getRenderableHermesProfileField,
   isModelOwnedByProfile,
 } from "../lib/agentConfigCore";
+import { shouldClearHermesProfileOnRuntimeChange } from "../lib/hermesProfileBinding";
 import { EMPTY_GLOBAL_CONFIG } from "./AgentConfigFields";
 import {
   HermesProfileField,
@@ -20,14 +21,21 @@ import {
 export function useCreateHermesBinding({
   enabled,
   hermesProfile,
+  onHermesProfileChange,
   respondTo,
   runtime,
 }: {
   enabled: boolean;
   hermesProfile: string;
+  onHermesProfileChange: (next: string) => void;
   respondTo: RespondToMode | null;
   runtime: AcpRuntimeCatalogEntry | undefined;
 }) {
+  React.useEffect(() => {
+    if (hermesProfile && shouldClearHermesProfileOnRuntimeChange(runtime)) {
+      onHermesProfileChange("");
+    }
+  }, [hermesProfile, onHermesProfileChange, runtime]);
   const fieldModel = React.useMemo(
     () =>
       deriveAgentConfigFieldModel({

@@ -403,12 +403,14 @@ Create/update commands and local start/provider deploy paths enforce both
 boundaries. Existing invalid records remain loadable, stoppable, and deletable
 so they can be repaired; the generic storage writer does not brick the registry.
 
-Hermes profiles are local employees, not community-scoped copies. Reusing one
-named profile across different communities/relays is allowed and intentionally
-shares its memory, skills, and all other profile-owned state. Crew makes those
-other local uses and the shared-state consequence visible; it does not add a
-global profile lock. The existing same-relay duplicate guard remains: one
-profile may bind to at most one Crew agent record on a given relay.
+Hermes profiles are local employees, not community-scoped copies. One local
+managed-agent record owns runtime pairs for every configured community, so one
+profile binding intentionally shares its memory, skills, and all other
+profile-owned state across those communities. Crew makes that reach and the
+shared-state consequence visible. A second local record cannot bind the same
+profile: `ManagedAgent.relay_url` is a legacy pin ignored by effective relay
+resolution and therefore cannot define occupancy. This is an
+installation-local identity guard, not a network-wide profile lease.
 
 This decision supersedes D-019 item 1 only where “1:1” could be read as global
 uniqueness, and supersedes D-019 item 7's possible future public path for a

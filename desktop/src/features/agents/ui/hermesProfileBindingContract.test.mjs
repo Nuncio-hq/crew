@@ -29,8 +29,11 @@ import {
   hermesProfileOccupancyLabel,
   normalizeHermesProfileList,
   profileOwnedModelLabel,
+  resolveHermesProfileForCreate,
+  resolveHermesProfileForUpdate,
   runtimeOffersProfileBinding,
   runtimeOwnsModelViaProfile,
+  shouldClearHermesProfileOnRuntimeChange,
   shouldShowHermesProfileCreate,
   validateHermesProfileName,
 } from "../lib/hermesProfileBinding.ts";
@@ -81,6 +84,38 @@ test("runtimeOwnsModelViaProfile needs profileArg + providerLocked + no modelEnv
   assert.equal(runtimeOffersProfileBinding({ profileArg: null }), false);
 });
 
+test("runtime switches clear hidden Hermes profile state", () => {
+  const profileRuntime = { profileArg: "-p" };
+  const plainRuntime = { profileArg: null };
+
+  assert.equal(resolveHermesProfileForCreate("scout", profileRuntime), "scout");
+  assert.equal(resolveHermesProfileForCreate("scout", plainRuntime), null);
+  assert.equal(
+    resolveHermesProfileForUpdate("scout", "scout", profileRuntime),
+    undefined,
+  );
+  assert.equal(
+    resolveHermesProfileForUpdate("scout", "builder", profileRuntime),
+    "builder",
+  );
+  assert.equal(
+    resolveHermesProfileForUpdate("scout", "scout", plainRuntime),
+    null,
+  );
+  assert.equal(
+    resolveHermesProfileForUpdate("scout", "scout", undefined),
+    undefined,
+  );
+  assert.equal(
+    resolveHermesProfileForUpdate(null, "", plainRuntime),
+    undefined,
+  );
+  assert.equal(shouldClearHermesProfileOnRuntimeChange(profileRuntime), false);
+  assert.equal(shouldClearHermesProfileOnRuntimeChange(plainRuntime), true);
+  assert.equal(shouldClearHermesProfileOnRuntimeChange(undefined), false);
+  assert.equal(shouldClearHermesProfileOnRuntimeChange(undefined, true), true);
+});
+
 test("profile binding projects the trusted owner-local boundary", () => {
   assert.deepEqual(
     hermesProfileBinding.deriveProfileBoundAgentBoundary({
@@ -120,14 +155,7 @@ test("trusted boundary card shows profile reuse as shared-state information", as
         usedIn: ["Product", "Research"],
       },
       hasPresentationMismatch: false,
-      otherUses: [
-        {
-          agentName: "Scout",
-          agentPubkey: "bbb",
-          communityName: "Research",
-          relayUrl: "wss://research.example",
-        },
-      ],
+      otherUses: [],
     }),
   );
 
@@ -144,7 +172,7 @@ test("trusted boundary card shows profile reuse as shared-state information", as
     "Product, Research",
     "Crew approves ACP tool requests automatically;",
     "own approval policy still applies.",
-    "Also used by Scout in Research.",
+    "One managed agent uses this profile across its configured communities.",
     "Memory, skills, and profile state are shared.",
   ]) {
     assert.ok(html.includes(text), `missing visible boundary copy: ${text}`);
@@ -239,10 +267,9 @@ test("shouldShowHermesProfileCreate only for valid missing names", () => {
   assert.equal(shouldShowHermesProfileCreate("", ["scout"]), false);
 });
 
-test("buildHermesProfileOccupancy scopes by relay and edit-self", () => {
+test("buildHermesProfileOccupancy is global and preserves edit-self", () => {
   const map = buildHermesProfileOccupancy({
     profiles: ["scout", "builder", "twin"],
-    relayUrl: "wss://a",
     editingPubkey: "aaa",
     agents: [
       {
@@ -259,7 +286,7 @@ test("buildHermesProfileOccupancy scopes by relay and edit-self", () => {
       },
       {
         pubkey: "ccc",
-        name: "Other Relay",
+        name: "Other Agent",
         hermesProfile: "twin",
         relayUrl: "wss://b",
       },
@@ -271,10 +298,14 @@ test("buildHermesProfileOccupancy scopes by relay and edit-self", () => {
     agentName: "Other Builder",
     agentPubkey: "bbb",
   });
-  assert.deepEqual(map.get("twin"), { status: "free" });
+  assert.deepEqual(map.get("twin"), {
+    status: "bound",
+    agentName: "Other Agent",
+    agentPubkey: "ccc",
+  });
 });
 
-test("cross-community profile usage is visible without becoming occupancy", () => {
+test("profile usage follows configured communities, not obsolete record pins", () => {
   const usage = hermesProfileBinding.deriveHermesProfileUsage({
     profile: "scout",
     currentAgentName: "Scout",
@@ -314,24 +345,20 @@ test("cross-community profile usage is visible without becoming occupancy", () =
 
   assert.deepEqual(usage, {
     usedIn: ["Product", "Research"],
-    otherUses: [
-      {
-        agentName: "Scout",
-        agentPubkey: "bbb",
-        communityName: "Research",
-        relayUrl: "wss://research.example",
-      },
-    ],
+    otherUses: [],
     hasPresentationMismatch: false,
   });
 });
 
-test("profile usage ignores records without a relay identity", () => {
+test("profile usage survives native records without a relay identity", () => {
   const usage = hermesProfileBinding.deriveHermesProfileUsage({
     profile: "scout",
     currentRelayUrl: "wss://product.example",
     currentAgentName: "Scout",
-    communities: [],
+    communities: [
+      { name: "Product", relayUrl: "wss://product.example" },
+      { name: "Research", relayUrl: "wss://research.example" },
+    ],
     agents: [
       {
         pubkey: "a".repeat(64),
@@ -342,7 +369,7 @@ test("profile usage ignores records without a relay identity", () => {
     ],
   });
   assert.deepEqual(usage, {
-    usedIn: [],
+    usedIn: ["Product", "Research"],
     otherUses: [],
     hasPresentationMismatch: false,
   });
@@ -351,7 +378,6 @@ test("profile usage ignores records without a relay identity", () => {
 test("hermesProfileOccupancyError blocks bound-other only", () => {
   const occupancy = buildHermesProfileOccupancy({
     profiles: ["scout", "builder"],
-    relayUrl: "wss://a",
     editingPubkey: "aaa",
     agents: [
       {

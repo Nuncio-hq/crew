@@ -81,7 +81,14 @@ with a TypeScript lookup table or an id comparison in a component.
    installs or signs into the CLI (`isCacheableDiscoveryResponse()`).
    Hermes profile binding (`hermesProfile` field kind) is projected only for
    `definition`/`instance` scopes when `profileArg` is set — create/edit
-   render it; global defaults do not.
+   render it; global defaults do not. Create/edit submission must clear a
+   stored profile when the prospective runtime no longer advertises
+   `profileArg`; hidden form state must never preserve a binding. Profile
+   occupancy is installation-wide, not relay-scoped: one managed-agent record
+   owns runtime pairs for every configured community, while its `relayUrl` is a
+   legacy pin ignored by effective relay resolution. Bind one local Hermes
+   profile to one local record and disclose that its memory, skills, and state
+   are shared across the record's configured communities.
 7. **Onboarding setup detects readiness; it does not select defaults.** The
    setup page derives visible and ready harnesses from the runtime catalog and
    only offers install or sign-in actions. The following defaults page is the

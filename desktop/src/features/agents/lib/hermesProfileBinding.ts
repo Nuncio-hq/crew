@@ -9,7 +9,6 @@
 import type { AcpRuntimeCatalogEntry, RespondToMode } from "@/shared/api/types";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import type { AgentRunLocation } from "./agentAccessWarning";
-import { canonicalRelayUrl } from "../managedAgentRuntimeStatus";
 
 /** Reserved manager-personal profile — never bindable to a Crew agent (P-7). */
 export const HERMES_FORBIDDEN_PROFILE_NAME = "default";
@@ -38,6 +37,52 @@ export function runtimeOffersProfileBinding(
   runtime: AcpRuntimeCatalogEntry | undefined,
 ): boolean {
   return Boolean(runtime?.profileArg?.trim());
+}
+
+/** Clear only for known non-profile metadata or an explicit custom runtime. */
+export function shouldClearHermesProfileOnRuntimeChange(
+  runtime: AcpRuntimeCatalogEntry | undefined,
+  explicitCustomRuntime = false,
+): boolean {
+  return (
+    explicitCustomRuntime ||
+    (runtime !== undefined && !runtimeOffersProfileBinding(runtime))
+  );
+}
+
+function normalizedHermesProfile(
+  raw: string | null | undefined,
+): string | null {
+  return raw?.trim() || null;
+}
+
+/** Profile value for create: hidden state never survives a runtime switch. */
+export function resolveHermesProfileForCreate(
+  rawProfile: string,
+  runtime: AcpRuntimeCatalogEntry | undefined,
+): string | null {
+  return runtimeOffersProfileBinding(runtime)
+    ? normalizedHermesProfile(rawProfile)
+    : null;
+}
+
+/**
+ * Profile patch for edit: clear a stored binding when the prospective runtime
+ * no longer advertises profile binding; otherwise preserve ordinary no-op
+ * omission semantics.
+ */
+export function resolveHermesProfileForUpdate(
+  currentProfile: string | null | undefined,
+  rawProfile: string,
+  runtime: AcpRuntimeCatalogEntry | undefined,
+  confirmedNoProfileBinding = false,
+): string | null | undefined {
+  if (runtime === undefined && !confirmedNoProfileBinding) return undefined;
+  const current = normalizedHermesProfile(currentProfile);
+  const next = runtimeOffersProfileBinding(runtime)
+    ? normalizedHermesProfile(rawProfile)
+    : null;
+  return next === current ? undefined : next;
 }
 
 export type ProfileBoundAgentBoundary = {
@@ -216,14 +261,10 @@ export type HermesProfileUsage = {
   hasPresentationMismatch: boolean;
 };
 
-function relayIdentity(relayUrl: string): string {
-  return canonicalRelayUrl(relayUrl) ?? relayUrl.trim();
-}
-
 /**
- * Project intentional profile reuse from the local managed-agent store.
- * Same-relay records stay out of `otherUses` because occupancy owns that
- * duplicate-binding boundary; records on other relays are informational.
+ * Project the communities served by one installation-wide managed agent.
+ * `ManagedAgent.relayUrl` is a legacy pin and cannot identify community
+ * occupancy now that one agent owns runtime pairs for every community.
  */
 export function deriveHermesProfileUsage(args: {
   profile: string;
@@ -238,70 +279,23 @@ export function deriveHermesProfileUsage(args: {
     return { usedIn: [], otherUses: [], hasPresentationMismatch: false };
   }
 
-  const currentRelay = relayIdentity(args.currentRelayUrl);
-  const editingPubkey = args.editingPubkey?.trim() || null;
-  const currentAgentName = args.currentAgentName?.trim() || "";
-  const communityByRelay = new Map(
-    args.communities.map((community) => [
-      relayIdentity(community.relayUrl),
-      community.name.trim() || community.relayUrl,
-    ]),
-  );
-  const currentCommunityName = communityByRelay.get(currentRelay);
-  const seenUses = new Set<string>();
-  const otherUses: HermesProfileOtherUse[] = [];
-
-  for (const agent of args.agents) {
-    if (agent.hermesProfile?.trim() !== profile) continue;
-    if (editingPubkey && agent.pubkey === editingPubkey) continue;
-    const rawAgentRelay = agent.relayUrl.trim();
-    if (!rawAgentRelay) continue;
-    const agentRelay = relayIdentity(rawAgentRelay);
-    if (agentRelay === currentRelay) continue;
-    const key = `${agent.pubkey}\u0000${agentRelay}`;
-    if (seenUses.has(key)) continue;
-    seenUses.add(key);
-    otherUses.push({
-      agentName: agent.name.trim() || truncatePubkey(agent.pubkey),
-      agentPubkey: agent.pubkey,
-      communityName: communityByRelay.get(agentRelay) ?? rawAgentRelay,
-      relayUrl: rawAgentRelay,
-    });
-  }
-
-  otherUses.sort(
-    (left, right) =>
-      left.communityName.localeCompare(right.communityName) ||
-      left.agentName.localeCompare(right.agentName),
-  );
-  const usedIn = [
-    ...(currentCommunityName ? [currentCommunityName] : []),
-    ...otherUses.map((usage) => usage.communityName),
-  ].filter((name, index, values) => values.indexOf(name) === index);
-  const hasPresentationMismatch = Boolean(
-    currentAgentName &&
-      otherUses.some(
-        (usage) =>
-          usage.agentName.localeCompare(currentAgentName, undefined, {
-            sensitivity: "accent",
-          }) !== 0,
-      ),
-  );
-
-  return { usedIn, otherUses, hasPresentationMismatch };
+  const usedIn = args.communities
+    .map((community) => community.name.trim() || community.relayUrl.trim())
+    .filter(
+      (name, index, values) => Boolean(name) && values.indexOf(name) === index,
+    );
+  return { usedIn, otherUses: [], hasPresentationMismatch: false };
 }
 
 /**
- * Join disk profiles with managed agents on one relay (C-10 early UX).
+ * Join disk profiles with installation-wide managed agents (C-10 early UX).
  * Server duplicate reject remains authoritative.
  */
 export function buildHermesProfileOccupancy(args: {
   profiles: readonly string[];
   agents: readonly HermesProfileOccupancyAgent[];
-  relayUrl: string;
   editingPubkey?: string | null;
 }): Map<string, HermesProfileOccupancy> {
-  const relay = args.relayUrl.trim();
   const editing = args.editingPubkey?.trim() || null;
   const map = new Map<string, HermesProfileOccupancy>();
 
@@ -313,8 +307,6 @@ export function buildHermesProfileOccupancy(args: {
     const profile = agent.hermesProfile?.trim() || "";
     if (!profile || profile === HERMES_FORBIDDEN_PROFILE_NAME) continue;
     if (validateHermesProfileName(profile) != null) continue;
-    if (agent.relayUrl.trim() !== relay) continue;
-
     if (editing && agent.pubkey === editing) {
       map.set(profile, { status: "self" });
       continue;

@@ -136,12 +136,15 @@ pub fn env_without_suppressed_model_for_runtime(
         .collect()
 }
 
-/// Find another managed-agent record on the same relay that already binds
+/// Find another installation-wide managed-agent record that already binds
 /// `profile`. `exclude_pubkey` skips the record being updated.
+///
+/// One managed-agent record now owns runtime pairs for every configured
+/// community. Its `relay_url` is a legacy pin ignored by effective relay
+/// resolution, so it cannot define profile occupancy.
 pub fn find_duplicate_hermes_profile_binding<'a>(
     records: &'a [ManagedAgentRecord],
     profile: &str,
-    relay_url: &str,
     exclude_pubkey: Option<&str>,
 ) -> Option<&'a ManagedAgentRecord> {
     let profile = profile.trim();
@@ -152,7 +155,7 @@ pub fn find_duplicate_hermes_profile_binding<'a>(
         if exclude_pubkey.is_some_and(|pk| r.pubkey == pk) {
             return false;
         }
-        r.hermes_profile.as_deref().is_some_and(|p| p == profile) && r.relay_url == relay_url
+        r.hermes_profile.as_deref().is_some_and(|p| p == profile)
     })
 }
 
@@ -171,23 +174,19 @@ pub fn parse_optional_hermes_profile(raw: Option<&str>) -> Result<Option<String>
 pub fn bind_hermes_profile_on_create(
     raw: Option<&str>,
     records: &[ManagedAgentRecord],
-    relay_url: &str,
 ) -> Result<Option<String>, String> {
     let profile = parse_optional_hermes_profile(raw)?;
-    reject_duplicate_hermes_profile_if_set(records, profile.as_deref(), relay_url, None)?;
+    reject_duplicate_hermes_profile_if_set(records, profile.as_deref(), None)?;
     Ok(profile)
 }
 
-/// Reject when `profile` is already bound on `relay_url` (C-10).
+/// Reject when `profile` is already bound to another local record (C-10).
 pub fn reject_duplicate_hermes_profile(
     records: &[ManagedAgentRecord],
     profile: &str,
-    relay_url: &str,
     exclude_pubkey: Option<&str>,
 ) -> Result<(), String> {
-    if let Some(other) =
-        find_duplicate_hermes_profile_binding(records, profile, relay_url, exclude_pubkey)
-    {
+    if let Some(other) = find_duplicate_hermes_profile_binding(records, profile, exclude_pubkey) {
         return Err(format!(
             "hermes profile '{profile}' is already bound to agent '{}' ({})",
             other.name, other.pubkey
@@ -200,11 +199,10 @@ pub fn reject_duplicate_hermes_profile(
 pub fn reject_duplicate_hermes_profile_if_set(
     records: &[ManagedAgentRecord],
     profile: Option<&str>,
-    relay_url: &str,
     exclude_pubkey: Option<&str>,
 ) -> Result<(), String> {
     match profile {
-        Some(p) => reject_duplicate_hermes_profile(records, p, relay_url, exclude_pubkey),
+        Some(p) => reject_duplicate_hermes_profile(records, p, exclude_pubkey),
         None => Ok(()),
     }
 }
@@ -214,7 +212,6 @@ pub fn resolve_hermes_profile_update(
     update: &Option<Option<String>>,
     records: &[ManagedAgentRecord],
     pubkey: &str,
-    relay_url_override: Option<&str>,
 ) -> Result<Option<Option<String>>, String> {
     match update {
         None => Ok(None),
@@ -225,17 +222,7 @@ pub fn resolve_hermes_profile_update(
                 return Ok(Some(None));
             }
             validate_hermes_profile_name(trimmed)?;
-            let relay = records
-                .iter()
-                .find(|r| r.pubkey == pubkey)
-                .map(|r| {
-                    relay_url_override
-                        .map(str::trim)
-                        .unwrap_or(r.relay_url.as_str())
-                        .to_string()
-                })
-                .unwrap_or_else(|| relay_url_override.unwrap_or("").trim().to_string());
-            reject_duplicate_hermes_profile(records, trimmed, &relay, Some(pubkey))?;
+            reject_duplicate_hermes_profile(records, trimmed, Some(pubkey))?;
             Ok(Some(Some(trimmed.to_string())))
         }
     }
@@ -350,20 +337,17 @@ mod tests {
         let mut b = minimal_record("bbb", "wss://relay");
         b.hermes_profile = Some("scout".into());
         let records = vec![a, b];
-        let hit =
-            find_duplicate_hermes_profile_binding(&records, "scout", "wss://relay", Some("bbb"));
+        let hit = find_duplicate_hermes_profile_binding(&records, "scout", Some("bbb"));
         assert_eq!(hit.map(|r| r.pubkey.as_str()), Some("aaa"));
     }
 
     #[test]
-    fn duplicate_binding_allows_same_profile_on_different_relay() {
+    fn duplicate_binding_rejects_same_profile_despite_obsolete_relay_pin() {
         let mut a = minimal_record("aaa", "wss://relay-a");
         a.hermes_profile = Some("scout".into());
         let records = vec![a];
-        assert!(
-            find_duplicate_hermes_profile_binding(&records, "scout", "wss://relay-b", None)
-                .is_none()
-        );
+        let hit = find_duplicate_hermes_profile_binding(&records, "scout", None);
+        assert_eq!(hit.map(|record| record.pubkey.as_str()), Some("aaa"));
     }
 
     #[test]

@@ -101,21 +101,26 @@ export function ProfileBoundAgentBoundaryCard({
         Crew approves ACP tool requests automatically; the Hermes profile&apos;s
         own approval policy still applies.
       </p>
-      {otherUses.length > 0 ? (
-        <div
-          className="space-y-1 border-t border-border/60 pt-3 text-xs text-muted-foreground"
-          data-testid="hermes-profile-shared-usage"
-        >
-          <p>Also used by {otherUseText}.</p>
-          <p>Memory, skills, and profile state are shared.</p>
-          {hasPresentationMismatch ? (
-            <p className="text-warning">
-              This profile is presented as a different agent elsewhere; shared
-              state can make those identities overlap.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
+      <div
+        className="space-y-1 border-t border-border/60 pt-3 text-xs text-muted-foreground"
+        data-testid="hermes-profile-shared-usage"
+      >
+        <p>
+          One managed agent uses this profile across its configured communities.
+        </p>
+        <p>Memory, skills, and profile state are shared.</p>
+        {otherUses.length > 0 ? (
+          <>
+            <p>Also used by {otherUseText}.</p>
+            {hasPresentationMismatch ? (
+              <p className="text-warning">
+                This profile is presented as a different agent elsewhere; shared
+                state can make those identities overlap.
+              </p>
+            ) : null}
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -152,10 +157,9 @@ export function useHermesProfileBindingState({
       buildHermesProfileOccupancy({
         profiles,
         agents: agentsQuery.data ?? [],
-        relayUrl: activeCommunity?.relayUrl ?? "",
         editingPubkey,
       }),
-    [profiles, agentsQuery.data, activeCommunity?.relayUrl, editingPubkey],
+    [profiles, agentsQuery.data, editingPubkey],
   );
   const usage = React.useMemo(
     () =>

@@ -5,7 +5,7 @@
 - **Status of this flow:** tier-1 runtime on main; Phase 02 binding UI on
   main; Phase 03 profile lifecycle (create-in-place, keep/delete
   offboarding, orphan repair) on main. Issue #104 Phase 01 adds the trusted
-  owner/local boundary and cross-community shared-usage visibility.
+  owner/local boundary and multi-community shared-state visibility.
 
 ## The model in one sentence
 
@@ -16,11 +16,11 @@ placement, scheduling, and display.
 
 ## Rules (D-019 + D-024 summary)
 
-1. One Crew agent record ↔ one named Hermes profile, with at most one binding
-   for that profile on the same relay. The same local profile may be reused in
-   different communities/relays; that is the same employee and intentionally
-   shares memory, skills, and profile-owned state. Never bind the manager's
-   default profile (`~/.hermes`).
+1. One local Crew managed-agent record ↔ one named Hermes profile. That record
+   owns runtime pairs in every configured community, intentionally sharing
+   memory, skills, and profile-owned state across them. A second local record
+   cannot bind the same profile. Never bind the manager's default profile
+   (`~/.hermes`).
 2. Model and provider are configured on the profile
    (`hermes -p <name> config set model.provider …` /
    `model.default …`) — never in Crew. The create/edit UI shows
@@ -56,8 +56,9 @@ disk (`scout`, `builder`, …) or type a new name and click
 `list_hermes_profiles`. Create runs
 `hermes profile create <name> --no-alias` (command line shown in the
 UI) and binds on success. Bundled skills are kept (D-023); there is no
-`--no-skills` from Crew. Profiles already bound on this relay show a
-**bound** badge; save is blocked client-side (server C-10 still applies).
+`--no-skills` from Crew. Profiles already bound to another local managed-agent
+record show a **bound** badge; save is blocked client-side (server C-10 still
+applies).
 
 **CLI fallback:**
 
@@ -76,11 +77,11 @@ want an empty profile from the CLI (Crew does not offer this).
 Select the profile from the list or keep the name you just created
 (`scout`). Leave model blank — the UI replaces the model control with
 "decided by profile scout". Binding `default` is rejected (client and
-server). Binding a profile already used by another agent on the same relay
-shows an occupancy error and disables save; the server still rejects
-duplicates (C-10) if forced. A use on another community/relay does not block
-binding. The Phase 01 UI contract lists the other agent/community and says
-that memory, skills, and profile state are shared.
+server). Binding a profile already used by another local managed-agent record
+shows an occupancy error and disables save; the server still rejects duplicates
+(C-10) if forced. One managed-agent record owns runtime pairs for all
+configured communities, and the Phase 01 UI says that memory, skills, and
+profile state are shared across that reach.
 
 The effective boundary shown during create/edit is:
 
@@ -125,9 +126,9 @@ need them; new agents should not add more.
   owner intentionally wants total profile-level bypass, use Hermes' canonical
   surface (`hermes -p scout config set approvals.mode off`); Crew never stores
   or mutates that policy.
-- **Reuse across communities:** binding `scout` in another community uses the
-  same local profile. Changes to memory, skills, credentials, and other
-  profile-owned state affect every Crew agent record bound to `scout`.
+- **Reuse across communities:** the one managed agent bound to `scout` owns a
+  runtime pair in each configured community. Changes to memory, skills,
+  credentials, and other profile-owned state affect every one of those pairs.
 
 ## Offboarding
 
@@ -160,7 +161,7 @@ code 0** (spike 0011) — verify by directory absence, not exit code.
 | Agent replies with `auth error: BUZZ_PRIVATE_KEY is required` | Reply path missing `buzz-dev-mcp` (Hermes sandbox strips `BUZZ_*`) | Use the tier-1 **Hermes Agent** runtime (attaches MCP automatically); ensure `buzz-dev-mcp` is on PATH the app sees |
 | Agent replies with `model: String should have at least 1 character` | Profile has no model configured | `hermes -p <name> config set model.default …` |
 | Agent replies with a provider billing/auth error | Profile's provider unauthenticated or out of credit | `hermes -p <name> …` auth flow for that provider |
-| Save error: profile already bound | Another agent on this relay uses that profile (C-10) | Pick a different profile name |
+| Save error: profile already bound | Another local managed-agent record uses that profile (C-10) | Reuse that agent or pick a different profile name |
 | Save error: profile-bound agent must run locally | A legacy record is pinned to a remote backend | Stop/delete the Crew record, keep the Hermes profile, and recreate the agent on **This computer**. The legacy record remains readable, stoppable, and deletable. |
 
 There is currently **no headless auth probe** (spike 0010): Hermes
@@ -180,10 +181,11 @@ Hermes-side ask lands.
 - **Local profile custody:** a profile name points at state on this machine.
   Provider/remote backends are rejected until a separate secure profile and
   secret provisioning design exists.
-- **Shared profile state:** cross-community reuse is deliberate but not
+- **Shared profile state:** multi-community reuse is deliberate but not
   isolated. Memory, skills, credentials, and other profile-owned state are
-  shared. Same-relay duplicate binding remains blocked to prevent accidental
-  double representation in one office.
+  shared by one installation-wide managed-agent record. A second local record
+  cannot bind the same profile; this prevents duplicate workers while leaving
+  cross-installation provisioning outside Crew's scope.
 - Fresh profiles contain no gateway config and no cron jobs — personal
   messaging surfaces stay out of agent profiles as long as you never
   bind `~/.hermes` itself.
@@ -194,7 +196,7 @@ Hermes-side ask lands.
 - `BUZZ_ACP_MODEL` spawn guard + duplicate-bind reject — **done (Phase 02A)**.
 - Profile listing / create-from-UI lifecycle + keep/delete offboarding +
   orphan repair — **done (Phase 03)**.
-- Owner-only/local backend enforcement and cross-community shared-usage copy —
+- Owner-only/local backend enforcement and multi-community shared-state copy —
   **done (Issue #104 Phase 01)**.
 - Auth badge — blocked on Hermes-side probe (spike 0010 / feature §7.3).
 - Live session model in the "decided by profile" row — optional follow-up

@@ -78,6 +78,7 @@ import {
 } from "./agentAiConfigurationPolicy";
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
 import { useCreateHermesBinding } from "./createHermesBindingFields";
+import { resolveHermesProfileForCreate } from "../lib/hermesProfileBinding";
 import { AgentDefinitionCustomAiFields } from "./AgentDefinitionCustomAiFields";
 import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload";
 import { AgentDefinitionDialogFooter } from "./AgentDefinitionDialogFooter";
@@ -317,15 +318,10 @@ export function AgentDefinitionDialog({
       // isRuntimeAutoSeededRef and hasSeededForOpenRef are NOT reset here — the
       // [initialValues, open] effect resets both when the dialog re-opens.
     }
-
     onOpenChange(next);
   }
-
   async function handleSubmit() {
-    // D1: the same localModeSatisfied gate as canSubmit prevents form-submit
-    // (Enter) from bypassing a missing credential.
     if (!initialValues || !localModeSatisfied || !canSubmit) return;
-
     const {
       runtime: runtimeForSubmit,
       model: modelForSubmit,
@@ -379,7 +375,10 @@ export function AgentDefinitionDialog({
 
     await onSubmit(baseInput, {
       publishCatalogUpdates: false,
-      hermesProfile: hermesProfile.trim() || null,
+      hermesProfile: resolveHermesProfileForCreate(
+        hermesProfile,
+        selectedRuntime,
+      ),
     });
   }
 
@@ -396,6 +395,7 @@ export function AgentDefinitionDialog({
   } = useCreateHermesBinding({
     enabled: isCreateMode,
     hermesProfile,
+    onHermesProfileChange: setHermesProfile,
     respondTo: behaviorDraft.respondTo,
     runtime: selectedRuntime,
   });

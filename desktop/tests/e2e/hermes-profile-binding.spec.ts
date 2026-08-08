@@ -135,15 +135,21 @@ test.describe("hermes profile binding", () => {
     await expect(dialog.locator("#persona-model")).toHaveCount(0);
   });
 
-  test("create: goose hides Hermes profile field", async ({ page }) => {
-    await installMockBridge(page);
+  test("create: switching away clears the hidden Hermes profile", async ({
+    page,
+  }) => {
+    await installMockBridge(page, { hermesProfiles: ["scout"] });
     const dialog = await openCreateCustomize(page);
 
+    await configureExistingHermesProfile(page, dialog);
     await pickRuntime(page, dialog, /^Goose$/);
     await waitForAnimations(page);
 
     await expect(page.getByTestId("hermes-profile-field")).toHaveCount(0);
     await expect(page.getByTestId("profile-owned-model-row")).toHaveCount(0);
+
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await expect(dialog.locator("#persona-hermes-profile")).toHaveValue("");
   });
 
   test("create: invalid profile name and default are blocked", async ({
@@ -355,7 +361,7 @@ test.describe("hermes profile binding", () => {
     await expect(createSubmit(dialog)).toBeDisabled();
   });
 
-  test("create: cross-community reuse stays available and discloses shared profile state", async ({
+  test("edit: one profile-bound agent discloses multi-community shared state", async ({
     page,
   }) => {
     await seedCommunities(page, RESEARCH_COMMUNITY.id);
@@ -376,22 +382,21 @@ test.describe("hermes profile binding", () => {
       },
       { skipCommunitySeed: true },
     );
-    const dialog = await openCreateCustomize(page);
-    await configureExistingHermesProfile(page, dialog);
-
-    // The existing same-relay duplicate contract above remains authoritative;
-    // this different-relay use is informational and must not become an error.
-    await expect(page.getByTestId("hermes-profile-error")).toHaveCount(0);
+    await openEditForAgent(page, "Hermes Scout");
+    const dialog = page.getByTestId("edit-agent-dialog");
     const usage = dialog.getByTestId("hermes-profile-shared-usage");
     await expect(usage).toBeVisible();
-    await expect(usage).toContainText("Hermes Scout");
-    await expect(usage).toContainText("Product");
+    const boundary = dialog.getByTestId("hermes-effective-boundary");
+    await expect(boundary).toContainText("Product, Research");
+    await expect(usage).toContainText(
+      "One managed agent uses this profile across its configured communities.",
+    );
     await expect(usage).toContainText(
       "Memory, skills, and profile state are shared.",
     );
   });
 
-  test("edit: Hermes agent shows binding + profile-owned model; goose does not", async ({
+  test("edit: switching away clears the hidden Hermes profile", async ({
     page,
   }) => {
     await installMockBridge(page, {
@@ -426,8 +431,28 @@ test.describe("hermes profile binding", () => {
     );
     await expect(page.locator("#edit-agent-model")).toHaveCount(0);
 
-    await page.keyboard.press("Escape");
-    await expect(page.getByTestId("edit-agent-dialog")).not.toBeVisible();
+    await page.locator("#edit-agent-runtime").click();
+    await page.getByRole("menuitemradio", { name: /^Goose$/ }).click();
+    await expect(page.getByTestId("hermes-profile-field")).toHaveCount(0);
+    await waitForAnimations(page);
+    await page.locator("#edit-agent-runtime").click();
+    await waitForAnimations(page);
+    await page.getByRole("menuitemradio", { name: /Hermes Agent/ }).click();
+    await expect(page.locator("#edit-agent-hermes-profile")).toHaveValue("");
+  });
+
+  test("edit: goose does not show Hermes profile fields", async ({ page }) => {
+    await installMockBridge(page, {
+      managedAgents: [
+        {
+          pubkey: GOOSE_AGENT_PUBKEY,
+          name: "Tyler Agent",
+          status: "stopped",
+          channelNames: ["agents"],
+          runtime: "goose",
+        },
+      ],
+    });
 
     await openEditForAgent(page, "Tyler Agent");
     await waitForAnimations(page);
