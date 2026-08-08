@@ -338,6 +338,7 @@ function MessageComposerImpl({
   useComposerEditTargetLifecycle({
     editTarget,
     media,
+    onCancelEdit,
     preEditSnapshotRef,
     richText,
     setComposerContent,
