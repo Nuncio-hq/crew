@@ -19,7 +19,6 @@ import type { Channel } from "@/shared/api/types";
 import type { ThreadPanelLayoutProps } from "@/features/channels/lib/threadPanelLayout";
 import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
 import { useIsThreadPanelOverlay } from "@/shared/hooks/use-mobile";
-import { VideoReviewNavigationProvider } from "@/shared/ui/VideoReviewNavigation";
 import { cn } from "@/shared/lib/cn";
 import { AuxiliaryPanel } from "@/shared/layout/AuxiliaryPanel";
 import { AuxiliaryPanelBody } from "@/shared/layout/AuxiliaryPanel";
@@ -39,7 +38,7 @@ import { Separator } from "@/shared/ui/separator";
 import { ComposerActivityAccessory } from "./ComposerActivityAccessory";
 import { ComposerDockBackdrop } from "./ComposerDockBackdrop";
 import { MessageComposer } from "./MessageComposer";
-import { HuddleTranscriptIntro } from "@/features/huddle/components/HuddleTranscriptIntro";
+import { MessageThreadPanelHead } from "./MessageThreadPanelHead";
 import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
@@ -357,9 +356,6 @@ export function MessageThreadPanel({
     }
   }, [collapsedThreadHeadId, scrollTargetIsVisibleReply, threadHeadId]);
 
-  // Which of the three states the reply region paints this frame. Delegated to
-  // a pure helper so the "don't flash empty over an incoming list" rule is
-  // covered in the lib test suite (see selectDeferredListRenderState).
   const repliesRenderState = selectDeferredListRenderState(
     deferredThreadReplies.length,
     threadReplies.length,
@@ -597,66 +593,26 @@ export function MessageThreadPanel({
           breadcrumb={breadcrumb}
           onOpenAncestorThread={onOpenAncestorThread}
         />
-        {isHuddleTranscript ? (
-          <div className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-2 pt-4")}>
-            <HuddleTranscriptIntro />
-          </div>
-        ) : (
-          <div
-            className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-1 pt-0")}
-            data-testid="message-thread-head"
-          >
-            <div className="rounded-2xl">
-              <MessageRow
-                actionBarPlacement="inside"
-                channelId={channelId}
-                huddleMemberPubkeys={huddleMemberPubkeys}
-                huddleMemberPubkeysPending={huddleMemberPubkeysPending}
-                isFollowingThread={isFollowingThread}
-                isUnread={isMessageUnreadById?.(threadHead.id)}
-                layoutVariant="thread-reply"
-                message={threadHead}
-                onDelete={
-                  onDelete &&
-                  canManageMessageForCurrentUser(
-                    threadHead,
-                    currentPubkey,
-                    profiles,
-                  )
-                    ? onDelete
-                    : undefined
-                }
-                onEdit={
-                  onEdit &&
-                  canManageMessageForCurrentUser(
-                    threadHead,
-                    currentPubkey,
-                    profiles,
-                  )
-                    ? onEdit
-                    : undefined
-                }
-                onFollowThread={
-                  onFollowThread ? (_msg) => onFollowThread() : undefined
-                }
-                onMarkUnread={onMarkUnread}
-                onMarkRead={onMarkRead}
-                onToggleReaction={onToggleReaction}
-                onUnfollowThread={
-                  onUnfollowThread ? (_msg) => onUnfollowThread() : undefined
-                }
-                profiles={profiles}
-                showDepthGuides={shouldShowThreadBranchGuides}
-                videoReviewCommentRootId={videoReviewPresentation?.commentRootIdsByMessageId.get(
-                  threadHead.id,
-                )}
-                videoReviewContext={videoReviewPresentation?.contextsByMessageId.get(
-                  threadHead.id,
-                )}
-              />
-            </div>
-          </div>
-        )}
+        <MessageThreadPanelHead
+          channelId={channelId}
+          currentPubkey={currentPubkey}
+          huddleMemberPubkeys={huddleMemberPubkeys}
+          huddleMemberPubkeysPending={huddleMemberPubkeysPending}
+          isFollowingThread={isFollowingThread}
+          isHuddleTranscript={isHuddleTranscript}
+          isMessageUnreadById={isMessageUnreadById}
+          onDelete={onDelete}
+          onEdit={onEdit}
+          onFollowThread={onFollowThread}
+          onMarkRead={onMarkRead}
+          onMarkUnread={onMarkUnread}
+          onToggleReaction={onToggleReaction}
+          onUnfollowThread={onUnfollowThread}
+          profiles={profiles}
+          shouldShowThreadBranchGuides={shouldShowThreadBranchGuides}
+          threadHead={threadHead}
+          videoReviewPresentation={videoReviewPresentation}
+        />
 
         {showThreadHeadDivider ? (
           <div
@@ -1002,42 +958,40 @@ export function MessageThreadPanel({
   );
 
   return (
-    <VideoReviewNavigationProvider>
-      <AuxiliaryPanel
-        className="relative"
-        // The focus drawer animates itself; a second slide here would compound.
-        enterMotion={!isFocusMode}
-        footer={threadFooter}
-        header={
-          isHuddleTranscript ? undefined : (
-            <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
-          )
-        }
-        isSinglePanelView={isSinglePanelView}
-        layout={layout}
-        onClose={onClose}
-        testId="message-thread-panel"
-        transparentChrome={transparentChrome}
-        widthPx={widthPx}
-      >
-        {/* Sticky status bar lives outside the scroll region so expand/collapse
+    <AuxiliaryPanel
+      className="relative"
+      // The focus drawer animates itself; a second slide here would compound.
+      enterMotion={!isFocusMode}
+      footer={threadFooter}
+      header={
+        isHuddleTranscript ? undefined : (
+          <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
+        )
+      }
+      isSinglePanelView={isSinglePanelView}
+      layout={layout}
+      onClose={onClose}
+      testId="message-thread-panel"
+      transparentChrome={transparentChrome}
+      widthPx={widthPx}
+    >
+      {/* Sticky status bar lives outside the scroll region so expand/collapse
             cannot fight useAnchoredScroll's ResizeObserver. Sibling padded
             column keeps docked header chrome from stealing Workspace clicks. */}
-        <div
-          className={cn(
-            "flex min-h-0 flex-1 flex-col",
-            getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
-          )}
-        >
-          <ProjectThreadWorkspacePanel
-            channelId={channelId}
-            isFocusMode={isFocusMode}
-            profiles={profiles}
-            model={projectThreadWorkspaceModel}
-          />
-          {threadScrollRegion}
-        </div>
-      </AuxiliaryPanel>
-    </VideoReviewNavigationProvider>
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col",
+          getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
+        )}
+      >
+        <ProjectThreadWorkspacePanel
+          channelId={channelId}
+          isFocusMode={isFocusMode}
+          profiles={profiles}
+          model={projectThreadWorkspaceModel}
+        />
+        {threadScrollRegion}
+      </div>
+    </AuxiliaryPanel>
   );
 }

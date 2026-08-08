@@ -29,8 +29,8 @@ import {
 import { CUSTOM_EMOJI_NODE_NAME } from "./customEmojiNode";
 import { useComposerCustomEmoji } from "./useComposerCustomEmoji";
 import { buildPlainTextProjection } from "./plainTextProjection";
-import { parseSnapshotClipboardHtml } from "./agentSnapshotClipboard";
 import { buildPreviewUpdate } from "./linkPreviewContent";
+import { handleComposerPaste } from "./composerPasteHandler";
 import { createLinkInteractionExtension } from "./linkInteractionExtension";
 import {
   CodeBlockAfterHardBreak,
@@ -137,11 +137,6 @@ function shouldAppendSpaceAfterPaste(text: string): boolean {
   const trimmedEnd = text.trimEnd();
   if (!trimmedEnd || trimmedEnd.length !== text.length) return false;
   return PASTED_LINK_AT_END_RE.test(trimmedEnd);
-}
-
-function unwrapExactHttpLink(text: string): string | null {
-  const match = /^(?:<(https?:\/\/[^\s<>]+)>|(https?:\/\/\S+))$/i.exec(text);
-  return match?.[1] ?? match?.[2] ?? null;
 }
 
 const LinkPasteTrailingSpace = Extension.create({
@@ -498,34 +493,7 @@ export function useRichTextEditor({
       ],
       editorProps: {
         handleDOMEvents: {
-          paste: (view, event) => {
-            const clipboard = (event as ClipboardEvent).clipboardData;
-            if (
-              parseSnapshotClipboardHtml(clipboard?.getData("text/html") ?? "")
-            )
-              return false;
-            const url = unwrapExactHttpLink(
-              clipboard?.getData("text/plain") ?? "",
-            );
-            if (!url) return false;
-            const link = view.state.schema.marks.link;
-            if (!link) return false;
-            const { from, to } = view.state.selection;
-            let transaction = view.state.tr.replaceRangeWith(
-              from,
-              to,
-              view.state.schema.text(url, [link.create({ href: url })]),
-            );
-            const end = transaction.mapping.map(to);
-            transaction = transaction.insertText(" ", end);
-            transaction = transaction.removeMark(end, end + 1, link);
-            transaction = transaction.setSelection(
-              TextSelection.create(transaction.doc, end + 1),
-            );
-            view.dispatch(transaction.setStoredMarks([]).scrollIntoView());
-            event.preventDefault();
-            return true;
-          },
+          paste: handleComposerPaste,
         },
         attributes: {
           autocapitalize: "none",

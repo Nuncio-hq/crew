@@ -1,7 +1,11 @@
+import { getAgentObserverSnapshot } from "@/features/agents/observerRelayStore";
 import {
-  getAgentObserverSnapshot,
-  compareObserverEvents,
-} from "@/features/agents/observerRelayStore";
+  clearTurnsWatermarks,
+  gateEventByWatermark,
+  recordEventProcessed,
+  restoreTurnsWatermarks,
+  snapshotTurnsWatermarks,
+} from "@/features/agents/turnsWatermarkStore";
 import {
   clearConversationOutcome,
   clearConversationOutcomeLedger,
@@ -144,37 +148,6 @@ let cachedConversationTurnSummaries: ActiveConversationTurnSummary[] | null =
   null;
 /** Bumps on every turn-map mutation so conversation-scoped caches can drop. */
 let activeTurnsGeneration = 0;
-
-// Composite watermark per (agent, channel): the newest observer event
-// processed for that channel, by (timestamp, seq) ordering. An event is
-// processed only if it is strictly newer than its channel's watermark —
-// making full-buffer replays idempotent and post-restart streams (seq resets
-// to 1, timestamp keeps climbing) handled for free.
-//
-// Keyed per channel, not per agent, because the harness's batching packer
-// preserves FIFO order only WITHIN a channel: frames for different channels
-// may publish in an order that differs from arrival order. A per-agent
-// watermark would silently skip a delayed channel's events as stale. This is
-// safe because every turn-mutating path is channel-scoped by the event's own
-// channelId (endTurn's fallback matches `turn.channelId`, resurrectTurn keys
-// on `event.channelId`), so per-channel serialization gives each channel
-// exactly the protection per-agent serialization gave the whole agent.
-//
-// Events with a null channelId (agent_panic-class) gate against a dedicated
-// per-agent bucket: the harness treats null-channel events as packing
-// barriers, so they never reorder against any channel's events.
-//
-// The other per-agent maps stay agent-keyed because they are reorder-safe:
-// `clockOffsetByAgent` is a running MINIMUM (order-insensitive by
-// construction), and `activeTurnsByAgent` / `terminalAtByAgent` are mutated
-// only through channel-scoped paths this gate serializes (see the
-// MAX_TERMINAL_TOMBSTONES doc for the tombstone-eviction analysis).
-const NULL_CHANNEL_KEY = "\u0000null-channel";
-const lastProcessed = new Map<string, Map<string, ObserverEvent>>();
-
-function watermarkChannelKey(event: ObserverEvent): string {
-  return event.channelId ?? NULL_CHANNEL_KEY;
-}
 
 // Per-agent record of when each turn terminally ended (turnId →
 // terminal-event timestamp, in agent-host clock ms). endTurn hard-deletes a
@@ -444,36 +417,12 @@ function pruneExpired() {
 function processEvent(agentPubkey: string, event: ObserverEvent) {
   const key = normalizePubkey(agentPubkey);
 
-  // Gate every event kind on its (agent, channel) watermark uniformly:
-  // process only events strictly newer than the last one seen for this
-  // agent+channel. With sorted buffers (the documented invariant), this makes
-  // full-buffer replays a complete no-op. Evictions must be gated too —
-  // replaying a stale turn_error/agent_panic (emitted with a null turnId)
-  // would otherwise fall back to deleting the first turn in the channel,
-  // killing the live turn; the gate is per-channel, but so is that fallback
-  // (it matches the event's own channelId), so each channel's stream is
-  // serialized against exactly the mutations it can perform. Resurrection
-  // (the turn_liveness/acp case below) is gated here too: it runs only for a
-  // frame that passes its channel's watermark, so replayed stale frames
-  // cannot revive a pruned turn, and the per-turn terminal tombstone blocks
-  // reviving a turn that already completed.
-  //
-  // The per-agent map grows one entry per channel the agent has ever emitted
-  // on — bounded by real channel membership. Deliberately NOT capped:
-  // evicting a channel's watermark would reopen replay-processing for that
-  // channel, and a re-run stale eviction is exactly the badge-killing hazard
-  // this gate exists to prevent.
-  const channelKey = watermarkChannelKey(event);
-  let agentWatermarks = lastProcessed.get(key);
-  const last = agentWatermarks?.get(channelKey);
-  if (last && compareObserverEvents(event, last) <= 0) {
+  // Gate on the per-(agent, channel) watermark to keep sorted replays a no-op
+  // and prevent stale liveness/eviction from killing live turns.
+  if (gateEventByWatermark(key, event)) {
     return;
   }
-  if (!agentWatermarks) {
-    agentWatermarks = new Map();
-    lastProcessed.set(key, agentWatermarks);
-  }
-  agentWatermarks.set(channelKey, event);
+  recordEventProcessed(key, event);
 
   // Refine the clock offset from every fresh event. A tighter offset shifts
   // every live anchor for this agent, so a change must reach the UI even when
@@ -866,7 +815,7 @@ export function syncActiveAgentTurnsFromObserver(
  * Desktop itself stops or restarts the agent, so the turn store doesn't
  * have to wait for the 3-minute prune-pause backstop.
  *
- * Preserves `lastProcessed` (the watermark) so a full-buffer replay after
+ * Preserves the watermark so a full-buffer replay after
  * the clear is still a no-op — without the watermark a replayed
  * `turn_started` would immediately resurrect the badge.  Preserves
  * `clockOffsetByAgent` — the offset remains valid and harmless.
@@ -898,7 +847,7 @@ export function clearActiveTurnsForAgent(agentPubkey: string): void {
  */
 export function resetActiveAgentTurnsStore() {
   activeTurnsByAgent.clear();
-  lastProcessed.clear();
+  clearTurnsWatermarks();
   clockOffsetByAgent.clear();
   cachedTurnSummaries.clear();
   cachedControlTargets.clear();
@@ -959,12 +908,7 @@ export function saveActiveAgentTurnsForCommunity(communityId: string): void {
   // Shallow-clone the offsets map (primitives as values).
   const offsets = new Map(clockOffsetByAgent);
 
-  // Deep-clone the per-(agent, channel) watermark map: outer map + inner
-  // per-agent maps (ObserverEvent values are treated as immutable).
-  const watermarks = new Map<string, Map<string, ObserverEvent>>();
-  for (const [agentKey, channelMarks] of lastProcessed) {
-    watermarks.set(agentKey, new Map(channelMarks));
-  }
+  const watermarks = snapshotTurnsWatermarks();
 
   // Deep-clone terminalAtByAgent: outer map + inner per-agent maps.
   const terminals = new Map<string, Map<string, number>>();
@@ -1007,7 +951,7 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
   // Clear before writing so this is a replace, not a merge.
   activeTurnsByAgent.clear();
   clockOffsetByAgent.clear();
-  lastProcessed.clear();
+  clearTurnsWatermarks();
   terminalAtByAgent.clear();
   clearConversationOutcomeLedger();
 
@@ -1025,9 +969,7 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
     clockOffsetByAgent.set(agentKey, offset);
   }
 
-  for (const [agentKey, channelMarks] of snap.watermarks) {
-    lastProcessed.set(agentKey, new Map(channelMarks));
-  }
+  restoreTurnsWatermarks(snap.watermarks);
 
   for (const [agentKey, tombstones] of snap.terminals) {
     terminalAtByAgent.set(agentKey, new Map(tombstones));

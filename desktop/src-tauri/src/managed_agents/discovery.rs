@@ -108,8 +108,6 @@ pub(crate) fn normalize_command_identity(command: &str) -> String {
             _ => character.to_ascii_lowercase(),
         })
         .collect::<String>();
-    // Windows resolves commands through `.exe` binaries and npm's `.cmd`/`.bat`
-    // shims; all three name the same runtime identity (mirrors buzz-acp).
     let lower = [".exe", ".cmd", ".bat"]
         .iter()
         .find_map(|extension| lower.strip_suffix(extension).map(str::to_string))
@@ -1431,11 +1429,10 @@ pub fn discover_acp_runtimes_from(
                 requires_external_cli: false,
                 underlying_cli_path: None,
                 node_required: false,
-                // No auth probe for custom harnesses.
                 auth_status: AuthStatus::NotApplicable,
                 login_hint: None,
                 source: HarnessSource::Custom,
-                definition_env: def.env.clone(), // preserve for edit round-trip
+                definition_env: def.env.clone(),
                 profile_arg: None,
                 provider_locked: false,
                 max_parallelism: super::parallelism::harness_max_parallelism(&def.command),

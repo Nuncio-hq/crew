@@ -912,7 +912,11 @@ pub async fn edit_message(
         return Err("edit must have content or attachments".into());
     }
     let mention_refs: Vec<&str> = input.mention_pubkeys.iter().map(|s| s.as_str()).collect();
-    let removed_refs: Vec<&str> = input.removed_mention_pubkeys.iter().map(|s| s.as_str()).collect();
+    let removed_refs: Vec<&str> = input
+        .removed_mention_pubkeys
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
     let builder = events::build_message_edit(
         channel_uuid,
         target_eid,

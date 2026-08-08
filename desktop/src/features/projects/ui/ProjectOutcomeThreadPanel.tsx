@@ -12,6 +12,7 @@ import { buildThreadPanelData } from "@/features/messages/lib/threadPanel";
 import { useThreadReplies } from "@/features/messages/useThreadReplies";
 import { MessageThreadPanel } from "@/features/messages/ui/MessageThreadPanel";
 import { MessageThreadPanelSkeleton } from "@/features/messages/ui/MessageThreadPanelSkeleton";
+import { VideoReviewNavigationProvider } from "@/shared/ui/VideoReviewNavigation";
 import type { TimelineMessage } from "@/features/messages/types";
 import { useProfileQuery } from "@/features/profile/hooks";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
@@ -168,38 +169,40 @@ export function ProjectOutcomeThreadPanel({
   }
 
   return (
-    <div className="shrink-0" data-testid="project-in-flight-panel">
-      <MessageThreadPanel
-        activityAccessoryVisible={false}
-        channel={channel}
-        channelId={channel.id}
-        channelName={channel.name}
-        currentPubkey={identityQuery.data?.pubkey}
-        isFocusMode={false}
-        isSending={sendMessageMutation.isPending}
-        onCancelReply={() => setReplyTargetId(conversationId)}
-        onClose={onClose}
-        onExpandReplies={(message) => {
-          setExpandedReplyIds((current) => {
-            const next = new Set(current);
-            if (next.has(message.id)) next.delete(message.id);
-            else next.add(message.id);
-            return next;
-          });
-        }}
-        onScrollTargetResolved={() => undefined}
-        onSelectReplyTarget={(message) => setReplyTargetId(message.id)}
-        onSend={send}
-        onToggleReaction={toggleReaction}
-        profiles={profiles}
-        replyTargetMessage={thread.replyTargetMessage}
-        scrollTargetId={null}
-        threadHead={thread.threadHead}
-        threadReplies={thread.visibleReplies}
-        threadRepliesPending={threadRepliesQuery.isFetching}
-        threadTypingPubkeys={[]}
-        widthPx={360}
-      />
-    </div>
+    <VideoReviewNavigationProvider>
+      <div className="shrink-0" data-testid="project-in-flight-panel">
+        <MessageThreadPanel
+          activityAccessoryVisible={false}
+          channel={channel}
+          channelId={channel.id}
+          channelName={channel.name}
+          currentPubkey={identityQuery.data?.pubkey}
+          isFocusMode={false}
+          isSending={sendMessageMutation.isPending}
+          onCancelReply={() => setReplyTargetId(conversationId)}
+          onClose={onClose}
+          onExpandReplies={(message) => {
+            setExpandedReplyIds((current) => {
+              const next = new Set(current);
+              if (next.has(message.id)) next.delete(message.id);
+              else next.add(message.id);
+              return next;
+            });
+          }}
+          onScrollTargetResolved={() => undefined}
+          onSelectReplyTarget={(message) => setReplyTargetId(message.id)}
+          onSend={send}
+          onToggleReaction={toggleReaction}
+          profiles={profiles}
+          replyTargetMessage={thread.replyTargetMessage}
+          scrollTargetId={null}
+          threadHead={thread.threadHead}
+          threadReplies={thread.visibleReplies}
+          threadRepliesPending={threadRepliesQuery.isFetching}
+          threadTypingPubkeys={[]}
+          widthPx={360}
+        />
+      </div>
+    </VideoReviewNavigationProvider>
   );
 }
