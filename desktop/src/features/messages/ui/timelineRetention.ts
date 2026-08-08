@@ -1,9 +1,10 @@
 import type { VListHandle } from "virtua";
 
 /**
- * Keep a wide ID-keyed neighborhood around the reader plus the visual tail.
- * The wider eviction band adds hysteresis, so small direction changes do not
- * churn mounted rows. Virtua continues to own measured sizes and spacer math.
+ * Keep a bounded ID-keyed neighborhood around the reader plus the visual tail.
+ * The eviction band is wider than the admission band to prevent small direction
+ * changes from churning mounted rows. Virtua owns measured sizes and spacer
+ * math, so retaining more DOM than this only increases scroll/reflow cost.
  */
 export function nextRetainedTimelineKeys(
   keys: readonly string[],
@@ -14,11 +15,11 @@ export function nextRetainedTimelineKeys(
   const offset = list.scrollOffset;
   const indexAt = (target: number) =>
     list.findItemIndex(Math.min(list.scrollSize, Math.max(0, target)));
-  const admissionStart = indexAt(offset - viewportSize * 8);
-  const admissionEnd = indexAt(offset + viewportSize * 9);
-  const evictionStart = indexAt(offset - viewportSize * 12);
-  const evictionEnd = indexAt(offset + viewportSize * 13);
-  const tailStart = indexAt(list.scrollSize - viewportSize * 3);
+  const admissionStart = indexAt(offset - viewportSize * 3);
+  const admissionEnd = indexAt(offset + viewportSize * 4);
+  const evictionStart = indexAt(offset - viewportSize * 5);
+  const evictionEnd = indexAt(offset + viewportSize * 6);
+  const tailStart = indexAt(list.scrollSize - viewportSize * 2);
   const next = new Set<string>();
 
   for (let index = evictionStart; index <= evictionEnd; index += 1) {
