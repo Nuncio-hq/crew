@@ -1116,6 +1116,8 @@ declare global {
       createdAt?: number;
       /** Marks this test-only message as locally pending. */
       pending?: boolean;
+      /** Record the event in mock history without delivering it to live subscribers. */
+      emitLive?: boolean;
       /** 64-hex id required for the event to be a valid reaction target. */
       id?: string;
     }) => RelayEvent;
@@ -4412,6 +4414,7 @@ function emitMockChannelMessage(
   pending?: boolean,
   id?: string,
   rootEventIdOverride?: string | null,
+  emitLive = true,
 ) {
   const eventKind = kind ?? 9;
   if (!parentEventId) {
@@ -4431,7 +4434,7 @@ function emitMockChannelMessage(
     );
     if (pending) event.pending = true;
     recordMockMessage(channelId, event);
-    emitMockLiveEvent(channelId, event);
+    if (emitLive) emitMockLiveEvent(channelId, event);
     return event;
   }
 
@@ -4465,7 +4468,7 @@ function emitMockChannelMessage(
   );
   if (pending) event.pending = true;
   recordMockMessage(channelId, event);
-  emitMockLiveEvent(channelId, event);
+  if (emitLive) emitMockLiveEvent(channelId, event);
   const rootEvent = history.find((candidate) => candidate.id === rootEventId);
   if (rootEvent && mockHuddle?.state.ephemeral_channel_id === channelId) {
     const summary = buildMockChannelThreadSummary(
@@ -4473,7 +4476,7 @@ function emitMockChannelMessage(
       rootEvent,
       getMockMessageStore(channelId),
     );
-    if (summary) emitMockLiveEvent(channelId, summary);
+    if (emitLive && summary) emitMockLiveEvent(channelId, summary);
   }
   return event;
 }
@@ -10151,6 +10154,7 @@ export function maybeInstallE2eTauriMocks() {
     extraTags,
     createdAt,
     pending,
+    emitLive,
     id,
   }) => {
     const channel = mockChannels.find(
@@ -10172,6 +10176,7 @@ export function maybeInstallE2eTauriMocks() {
       pending,
       id,
       rootEventId,
+      emitLive,
     );
   };
   window.__BUZZ_E2E_SEED_MOCK_MESSAGE__ = ({

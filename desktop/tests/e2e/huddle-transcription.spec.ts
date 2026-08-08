@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  KIND_CHANNEL_THREAD_SUMMARY,
   KIND_HUDDLE_ENDED,
   KIND_HUDDLE_STARTED,
 } from "../../src/shared/constants/kinds";
@@ -262,6 +263,136 @@ test("keeps the drawer open until the huddle is expanded", async ({ page }) => {
     (element) => getComputedStyle(element).backgroundImage,
   );
   expect(closedGradient).toBe(openGradient);
+});
+
+test("records silent huddle replies without broadcasting live summaries", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    huddle: {
+      parentChannelId: HUDDLE_PARENT_ID,
+      ephemeralChannelId: HUDDLE_CHANNEL_ID,
+      members: [{ pubkey: TEST_IDENTITIES.tyler.pubkey, role: "member" }],
+    },
+  });
+  await page.goto("/");
+  await page.waitForFunction(
+    () =>
+      typeof window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ === "function" &&
+      typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+  );
+
+  const observed = await page.evaluate(
+    async ({ channelId, summaryKind }) => {
+      const invoke = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
+      const emitMessage = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+      if (!invoke || !emitMessage) {
+        throw new Error("Mock bridge controls are not installed.");
+      }
+
+      const liveEvents: Array<{ id: string; kind: number }> = [];
+      const socketId = (await invoke("plugin:websocket|connect", {
+        onMessage(message: unknown) {
+          if (
+            typeof message !== "object" ||
+            message === null ||
+            !("type" in message) ||
+            message.type !== "Text" ||
+            !("data" in message) ||
+            typeof message.data !== "string"
+          ) {
+            return;
+          }
+          const frame = JSON.parse(message.data) as [
+            string,
+            string,
+            { id: string; kind: number }?,
+          ];
+          if (frame[0] === "EVENT" && frame[2]) {
+            liveEvents.push({ id: frame[2].id, kind: frame[2].kind });
+          }
+        },
+      })) as number;
+      await invoke("plugin:websocket|send", {
+        id: socketId,
+        message: {
+          type: "Text",
+          data: JSON.stringify([
+            "REQ",
+            "live-silent-huddle-test",
+            { "#h": [channelId], kinds: [9, summaryKind] },
+          ]),
+        },
+      });
+
+      const silentRootId = "1".repeat(64);
+      const silentReplyId = "2".repeat(64);
+      const silentRoot = emitMessage({
+        channelName: "huddle",
+        content: "Silent huddle root",
+        emitLive: false,
+        id: silentRootId,
+      });
+      emitMessage({
+        channelName: "huddle",
+        content: "Silent huddle reply",
+        parentEventId: silentRoot.id,
+        emitLive: false,
+        id: silentReplyId,
+      });
+      const silentLiveEvents = [...liveEvents];
+
+      const channelWindow = (await invoke("get_channel_window", {
+        channelId,
+        limitRows: 200,
+        cursor: null,
+      })) as Array<{ id: string }>;
+      const threadPage = (await invoke("get_thread_replies", {
+        rootEventId: silentRoot.id,
+        channelId,
+        limit: 200,
+        depthLimit: null,
+        cursor: null,
+      })) as { events: Array<{ id: string }> };
+
+      const defaultRootId = "3".repeat(64);
+      const defaultReplyId = "4".repeat(64);
+      const defaultRoot = emitMessage({
+        channelName: "huddle",
+        content: "Default live huddle root",
+        id: defaultRootId,
+      });
+      emitMessage({
+        channelName: "huddle",
+        content: "Default live huddle reply",
+        parentEventId: defaultRoot.id,
+        id: defaultReplyId,
+      });
+
+      await invoke("plugin:websocket|disconnect", { id: socketId });
+      return {
+        silentLiveEvents,
+        historyIds: channelWindow.map((event) => event.id),
+        threadReplyIds: threadPage.events.map((event) => event.id),
+        defaultLiveEvents: liveEvents.slice(silentLiveEvents.length),
+        defaultRootId,
+        defaultReplyId,
+      };
+    },
+    { channelId: HUDDLE_CHANNEL_ID, summaryKind: KIND_CHANNEL_THREAD_SUMMARY },
+  );
+
+  expect(observed.silentLiveEvents).toEqual([]);
+  expect(observed.historyIds).toContain("1".repeat(64));
+  expect(observed.threadReplyIds).toContain("2".repeat(64));
+  expect(observed.defaultLiveEvents).toEqual([
+    { id: observed.defaultRootId, kind: 9 },
+    { id: observed.defaultReplyId, kind: 9 },
+    {
+      id: `mock-window-summary-${observed.defaultRootId}`,
+      kind: KIND_CHANNEL_THREAD_SUMMARY,
+    },
+  ]);
 });
 
 test("shows speaker identity on every huddle chat message", async ({
