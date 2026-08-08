@@ -140,6 +140,25 @@ void main() {
       );
       expect(merged.liveOverlay.map((event) => event.id), ['live']);
     });
+
+    test('keeps same-second live rows after the oldest page is exhausted', () {
+      final store = replaceNewestChannelWindow(
+        const ChannelWindowStore.empty(),
+        _page(rows: [_row('a', createdAt: 100), _row('m', createdAt: 100)]),
+      );
+
+      final merged = mergeLiveChannelWindowEvent(
+        store,
+        _row('z', createdAt: 100),
+        isTimelineRow: true,
+      );
+
+      expect(flattenChannelWindowEvents(merged).map((event) => event.id), [
+        'z',
+        'm',
+        'a',
+      ]);
+    });
   });
 
   group('live thread summaries', () {
