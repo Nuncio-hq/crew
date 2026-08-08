@@ -330,7 +330,11 @@ ChannelWindowStore mergeLiveChannelWindowEvent(
   final oldest = oldestPage?.rows.isEmpty ?? true
       ? null
       : oldestPage!.rows.last.event;
-  if (oldest != null && _compareRelayOrder(event, oldest) >= 0) return current;
+  if (oldest != null &&
+      (event.createdAt < oldest.createdAt ||
+          (oldestPage!.hasMore && _compareRelayOrder(event, oldest) >= 0))) {
+    return current;
+  }
   final overlay =
       current.liveOverlay
           .where((candidate) => candidate.id != event.id)

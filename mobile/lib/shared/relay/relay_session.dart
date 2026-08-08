@@ -423,20 +423,17 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     _backgroundGraceTimer = null;
 
     // A suspended isolate may not run the grace timer. Preserve a very short
-    // app switch only when the connected socket saw a recent data frame;
-    // otherwise replace it so a half-open socket cannot remain "connected".
-    // Crew half-open check layered onto upstream v0.5.5 grace-period resume.
+    // app switch only when the socket proved it was still receiving after the
+    // app backgrounded. A frame seen just before the pause says nothing about
+    // whether iOS kept the connection alive while the isolate was suspended.
     final briefBackground =
         backgroundedAt != null &&
         _now().difference(backgroundedAt) < _backgroundGraceDuration;
     if (briefBackground && state.status == SessionStatus.connected) {
       final lastInbound = _socket?.lastInboundAt;
-      // null lastInboundAt: brand-new connection with no frames yet — keep
-      // upstream's grace behavior rather than forcing a reconnect.
-      final hasRecentInbound =
-          lastInbound == null ||
-          _now().difference(lastInbound) <= _backgroundGraceDuration;
-      if (hasRecentInbound) {
+      final receivedWhileBackgrounded =
+          lastInbound != null && lastInbound.isAfter(backgroundedAt);
+      if (receivedWhileBackgrounded) {
         return;
       }
     }

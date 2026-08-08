@@ -207,6 +207,14 @@ class ChannelMessagesNotifier extends Notifier<AsyncValue<List<NostrEvent>>> {
       return;
     }
 
+    // Keep timeline events that race the first HTTP window query in the same
+    // store that will own subsequent live updates. The state merge below keeps
+    // them visible when the query resolves, but without this overlay the next
+    // live event rebuilds from `_windowStore` and silently drops the raced row.
+    if (_initialWindowQueryInFlight && !_usingChannelWindow) {
+      _mergeWindowEventIntoStore(event);
+    }
+
     // Reply ownership and its thread-local overlay must transition together.
     // The authoritative thread query performs both confirmations after it
     // contains the reply; a live echo only triggers that query below.

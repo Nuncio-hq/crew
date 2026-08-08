@@ -61,6 +61,38 @@ void main() {
   );
 
   test(
+    'keeps every live event that races the initial channel window query',
+    () async {
+      final window = Completer<List<NostrEvent>>();
+      final relaySession = _RecordingRelaySessionNotifier(
+        queryResults: [window.future],
+      );
+      final container = _buildContainer(relaySession);
+      addTearDown(container.dispose);
+
+      container.read(channelMessagesProvider(_channelId));
+      await relaySession.subscribed;
+      await _pumpEventQueue();
+      expect(relaySession.operations, ['subscribe', 'query']);
+
+      relaySession.emit(_event(id: 'live-during-query', createdAt: 20));
+      window.complete([_event(id: 'history', createdAt: 10), _bounds()]);
+      await _pumpEventQueue();
+
+      relaySession.emit(_event(id: 'live-after-query', createdAt: 30));
+      await _pumpEventQueue();
+
+      expect(
+        container
+            .read(channelMessagesProvider(_channelId))
+            .value
+            ?.map((event) => event.id),
+        ['history', 'live-during-query', 'live-after-query'],
+      );
+    },
+  );
+
+  test(
     'buffers a live thread summary until the initial window is installed',
     () async {
       final window = Completer<List<NostrEvent>>();
