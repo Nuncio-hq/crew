@@ -87,6 +87,36 @@ describe("conversation outcome ledger", () => {
     assert.equal(getConversationOutcomeEntry("conv-1")?.outcome, "error");
   });
 
+  it("retains recovery targets when liveness arrives before the delayed start", () => {
+    syncAgentTurnsFromEvents(AGENT, [
+      makeEvent({
+        seq: 2,
+        kind: "turn_liveness",
+        turnId: "t1",
+        timestamp: "2026-07-31T00:00:02.000Z",
+        startedAt: "2026-07-31T00:00:00.000Z",
+      }),
+    ]);
+    syncAgentTurnsFromEvents(AGENT, [
+      makeEvent({
+        seq: 1,
+        kind: "turn_started",
+        turnId: "t1",
+        payload: { triggeringEventIds: ["msg-1"] },
+      }),
+      makeEvent({
+        seq: 3,
+        kind: "turn_error",
+        turnId: "t1",
+        timestamp: "2026-07-31T00:00:03.000Z",
+      }),
+    ]);
+
+    assert.deepEqual(getConversationOutcomeEntry("conv-1")?.failedEventIds, [
+      "msg-1",
+    ]);
+  });
+
   it("clears outcome when a new turn_started arrives for the conversation", () => {
     syncAgentTurnsFromEvents(AGENT, [
       makeEvent({ seq: 1, kind: "turn_started", turnId: "t1" }),

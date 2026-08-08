@@ -1819,6 +1819,10 @@ fn validate_agent_user_input_transition_envelope(
     Ok((channel, request_author, request_owner))
 }
 
+fn agent_user_input_answer_is_from_owner(event: &Event, request_owner: &[u8]) -> bool {
+    event.pubkey.to_bytes().as_slice() == request_owner
+}
+
 /// Validate the public JSON envelope of a channel-scoped agent receipt.
 fn validate_agent_receipt_envelope(
     event: &nostr::Event,
@@ -2816,36 +2820,18 @@ async fn ingest_event_inner(
                 "invalid: user-input request belongs to a different channel".into(),
             ));
         }
-        if kind_u32 == KIND_AGENT_USER_INPUT_ANSWER {
-            let answer_author = event.pubkey.to_bytes().to_vec();
-            let is_owner = answer_author == request_owner;
-            let is_sibling = if is_owner {
-                false
-            } else {
-                state
-                    .db
-                    .get_agent_channel_policy(tenant.community(), &answer_author)
-                    .await
-                    .map_err(|e| {
-                        IngestError::Internal(format!(
-                            "error: db error checking user-input answer author: {e}"
-                        ))
-                    })?
-                    .and_then(|(_, owner)| owner)
-                    .as_deref()
-                    == Some(request_owner.as_slice())
-            };
-            if !is_owner && !is_sibling {
-                return Err(IngestError::AuthFailed(
-                    "restricted: user-input answer must be authored by the agent owner or a verified sibling"
-                        .into(),
-                ));
-            }
+        if kind_u32 == KIND_AGENT_USER_INPUT_ANSWER
+            && !agent_user_input_answer_is_from_owner(&event, &request_owner)
+        {
+            return Err(IngestError::AuthFailed(
+                "restricted: user-input answer must be authored by the intended owner".into(),
+            ));
         }
     }
 
+    let mut validated_receipt_thread_meta = None;
     if kind_u32 == KIND_AGENT_RECEIPT {
-        let (receipt_channel_id, _root_event_id, parent_event_id) =
+        let (receipt_channel_id, root_event_id, parent_event_id) =
             validate_agent_receipt_envelope(&event)
                 .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
 
@@ -2870,6 +2856,20 @@ async fn ingest_event_inner(
                 "restricted: agent receipt must be authored by a registered agent".into(),
             ));
         }
+
+        let thread_meta =
+            resolve_nip10_thread_meta(tenant.community(), &event, receipt_channel_id, state)
+                .await
+                .map_err(|e| IngestError::Rejected(format!("invalid: receipt {e}")))?
+                .ok_or_else(|| {
+                    IngestError::Rejected("invalid: receipt thread relationship is missing".into())
+                })?;
+        if thread_meta.root_event_id != root_event_id {
+            return Err(IngestError::Rejected(
+                "invalid: receipt root does not match thread ancestry".into(),
+            ));
+        }
+        validated_receipt_thread_meta = Some(thread_meta);
 
         let parent_event = state
             .db
@@ -3111,7 +3111,9 @@ async fn ingest_event_inner(
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
     }
 
-    let thread_meta = if requires_h_channel_scope(kind_u32) {
+    let thread_meta = if let Some(thread_meta) = validated_receipt_thread_meta {
+        Some(thread_meta)
+    } else if requires_h_channel_scope(kind_u32) {
         if let Some(ch_id) = channel_id {
             resolve_nip10_thread_meta(tenant.community(), &event, ch_id, state)
                 .await
@@ -4267,6 +4269,25 @@ mod tests {
             validate_agent_user_input_transition_envelope(&answer, &request).unwrap();
         assert_eq!(request_author, agent.public_key().to_bytes());
         assert_eq!(request_owner, owner.public_key().to_bytes());
+        assert!(agent_user_input_answer_is_from_owner(
+            &answer,
+            &request_owner
+        ));
+
+        let sibling_answer = make_event_with_keys(
+            &stranger,
+            KIND_AGENT_USER_INPUT_ANSWER,
+            r#"{"q0":"yes"}"#,
+            &[
+                ["h", &channel].as_slice(),
+                ["e", &request_id].as_slice(),
+                ["p", &agent_hex].as_slice(),
+            ],
+        );
+        assert!(!agent_user_input_answer_is_from_owner(
+            &sibling_answer,
+            &request_owner
+        ));
 
         let wrong_relation_answer = make_event_with_keys(
             &owner,

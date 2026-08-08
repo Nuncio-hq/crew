@@ -100,7 +100,7 @@ test("projects only requests from an owned agent addressed to the current owner"
   assert.equal(getNeedsYouForAll().length, 1);
 });
 
-test("rejects forged answers and accepts the owner or a verified sibling", () => {
+test("accepts answers only from the intended owner", () => {
   projectAuthorizedUserInputEvent(request(), "", OWNER, ownedAgents);
   assert.equal(
     projectAuthorizedUserInputEvent(
@@ -116,6 +116,17 @@ test("rejects forged answers and accepts the owner or a verified sibling", () =>
   assert.equal(
     projectAuthorizedUserInputEvent(
       transition(KIND_AGENT_USER_INPUT_ANSWER, SIBLING),
+      CHANNEL,
+      OWNER,
+      ownedAgents,
+    ),
+    false,
+  );
+  assert.equal(getNeedsYouForAll().length, 1);
+
+  assert.equal(
+    projectAuthorizedUserInputEvent(
+      transition(KIND_AGENT_USER_INPUT_ANSWER, OWNER),
       CHANNEL,
       OWNER,
       ownedAgents,

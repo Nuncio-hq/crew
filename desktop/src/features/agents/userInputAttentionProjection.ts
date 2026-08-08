@@ -90,8 +90,7 @@ export function validateAuthorizedUserInputTransition(
     const author = normalizePubkey(event.pubkey);
     return (
       normalizePubkey(singleTag(event, "p") ?? "") === request.agentPubkey &&
-      (author === normalizePubkey(currentPubkey) ||
-        ownedAgent(author, ownedAgentPubkeys)) &&
+      author === normalizePubkey(currentPubkey) &&
       validAnswerContent(event.content)
     );
   }

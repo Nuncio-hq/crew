@@ -1,5 +1,6 @@
 import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
+import { drainRelayTimestampBucket } from "@/shared/api/exhaustiveRelayPagination";
 import {
   KIND_AGENT_RECEIPT,
   KIND_AGENT_USER_INPUT_ANSWER,
@@ -81,18 +82,13 @@ export async function enumerateDurableActionEvents(
     if (page.length < pageSize) return [...byId.values()];
 
     const oldest = Math.min(...page.map((event) => event.created_at));
-    const boundary = await fetchPage({
-      ...baseFilter,
-      limit: pageSize,
-      since: oldest,
-      until: oldest,
-    });
+    const boundary = await drainRelayTimestampBucket(
+      fetchPage,
+      baseFilter,
+      oldest,
+      pageSize,
+    );
     for (const event of boundary) byId.set(event.id, event);
-    if (boundary.length >= pageSize) {
-      throw new Error(
-        "Durable action hydration cannot drain a relay timestamp bucket at the configured page limit.",
-      );
-    }
     if (oldest <= 0) return [...byId.values()];
     until = oldest - 1;
   }

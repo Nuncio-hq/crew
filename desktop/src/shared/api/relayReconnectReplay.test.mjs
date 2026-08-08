@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildReconnectReplayFilter,
   PAGE_REPLAY_MAX_ATTEMPTS,
+  replayReconnectHistoryPages,
   replayLiveSubscriptions,
   REPLAY_BATCH_SIZE,
   shouldPageReconnectReplay,
@@ -139,6 +140,26 @@ test("live-only subscriptions do not page reconnect history", () => {
   };
 
   assert.equal(shouldPageReconnectReplay(filter), false);
+});
+
+test("durable action subscriptions page missed reconnect history even when live-only", () => {
+  assert.equal(
+    shouldPageReconnectReplay({
+      kinds: [46043],
+      "#h": ["channel-1"],
+      limit: 0,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldPageReconnectReplay({
+      authors: ["a".repeat(64)],
+      kinds: [7],
+      "#h": ["channel-1"],
+      limit: 0,
+    }),
+    true,
+  );
 });
 
 test("reconnect replay keeps the stricter existing since window", () => {
@@ -457,6 +478,74 @@ test("channel reconnect replay pages the missed window until a short page", asyn
     },
   ]);
   assert.equal(delivered.length, 1008);
+});
+
+test("durable reconnect replay drains a full timestamp bucket by id prefix", async () => {
+  const bucket = Array.from({ length: 501 }, (_, index) => {
+    const prefix = (index % 16).toString(16);
+    const suffix = Math.floor(index / 16)
+      .toString(16)
+      .padStart(63, "0");
+    return { ...event(`${prefix}${suffix}`, 100), kind: 46043 };
+  });
+  const older = { ...event("f".repeat(64), 99), kind: 46043 };
+  const delivered = [];
+  let initialPageSent = false;
+
+  const completed = await replayReconnectHistoryPages({
+    subscription: {
+      mode: "live",
+      filter: { kinds: [46043], "#h": ["channel-1"], limit: 0 },
+      onEvent: (received) => delivered.push(received),
+    },
+    since: 90,
+    until: 100,
+    isActive: () => true,
+    requestHistory: async (filter) => {
+      if (filter.ids) {
+        return bucket
+          .filter((candidate) =>
+            filter.ids.some((prefix) => candidate.id.startsWith(prefix)),
+          )
+          .slice(0, filter.limit);
+      }
+      if (!initialPageSent) {
+        initialPageSent = true;
+        return bucket.slice(0, filter.limit);
+      }
+      return filter.until === 99 ? [older] : [];
+    },
+  });
+
+  assert.equal(completed, true);
+  assert.equal(new Set(delivered.map((received) => received.id)).size, 502);
+  assert.ok(delivered.some((received) => received.id === bucket.at(-1).id));
+  assert.ok(delivered.some((received) => received.id === older.id));
+});
+
+test("durable reconnect replay projects requests before clock-skewed transitions", async () => {
+  const deliveredKinds = [];
+  const request = { ...event("a".repeat(64), 100), kind: 46040 };
+  const answer = { ...event("b".repeat(64), 90), kind: 46041 };
+
+  const completed = await replayReconnectHistoryPages({
+    subscription: {
+      mode: "live",
+      filter: {
+        kinds: [46040, 46041, 46042],
+        "#h": ["channel-1"],
+        limit: 50,
+      },
+      onEvent: (received) => deliveredKinds.push(received.kind),
+    },
+    since: 80,
+    until: 110,
+    isActive: () => true,
+    requestHistory: async () => [answer, request],
+  });
+
+  assert.equal(completed, true);
+  assert.deepEqual(deliveredKinds, [46040, 46041]);
 });
 
 test("reconnect replay starts live REQs in parallel and preserves per-sub page order", async () => {

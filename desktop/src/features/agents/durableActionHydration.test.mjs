@@ -58,25 +58,38 @@ test("exhaustively pages durable actions and drains timestamp boundaries", async
   assert.ok(filters.some((filter) => filter.until === 19));
 });
 
-test("fails closed when one timestamp bucket exceeds the relay page limit", async () => {
-  const all = [event("a", 20), event("b", 20)];
-  await assert.rejects(
-    enumerateDurableActionEvents(
-      async (filter) =>
-        all
-          .filter(
-            (candidate) =>
-              (filter.since === undefined ||
-                candidate.created_at >= filter.since) &&
-              (filter.until === undefined ||
-                candidate.created_at <= filter.until),
-          )
-          .slice(0, filter.limit),
-      { kinds: [46043], "#h": ["channel"] },
-      2,
-    ),
-    /timestamp bucket/,
+test("exhaustively partitions a full timestamp bucket by event-id prefix", async () => {
+  const all = [
+    event(`${"a0"}${"0".repeat(62)}`, 20),
+    event(`${"a1"}${"0".repeat(62)}`, 20),
+    event(`${"b0"}${"0".repeat(62)}`, 20),
+  ];
+  const filters = [];
+  const result = await enumerateDurableActionEvents(
+    async (filter) => {
+      filters.push(filter);
+      return all
+        .filter(
+          (candidate) =>
+            (filter.since === undefined ||
+              candidate.created_at >= filter.since) &&
+            (filter.until === undefined ||
+              candidate.created_at <= filter.until) &&
+            (filter.ids === undefined ||
+              filter.ids.some((prefix) => candidate.id.startsWith(prefix))),
+        )
+        .slice(0, filter.limit);
+    },
+    { kinds: [46043], "#h": ["channel"] },
+    2,
   );
+
+  assert.deepEqual(
+    result.map((candidate) => candidate.id).sort(),
+    all.map((candidate) => candidate.id).sort(),
+  );
+  assert.ok(filters.some((filter) => filter.ids?.includes("a")));
+  assert.ok(filters.some((filter) => filter.ids?.includes("a0")));
 });
 
 test("merges live events buffered during hydration before projecting transitions", () => {

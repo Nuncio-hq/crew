@@ -13,6 +13,7 @@ import {
   relayEventFromFeedItem,
   type InboxItem,
 } from "@/features/home/lib/inbox";
+import { getThreadReference } from "@/features/messages/lib/threading";
 import type { Channel, HomeFeedResponse } from "@/shared/api/types";
 import {
   getAgentReceipts,
@@ -66,21 +67,20 @@ export function useMissionInboxSections({
 
   React.useEffect(() => {
     const activity = feed?.feed.activity ?? [];
+    const relayEvents = activity.map(relayEventFromFeedItem);
+    const eventById = new Map(relayEvents.map((event) => [event.id, event]));
     // Receipts must exist before review authority can be checked. A two-pass
     // replay is deterministic even when relay rows share a created_at second.
-    for (const item of activity) {
-      if (item.kind === KIND_AGENT_RECEIPT) {
-        ingestAgentReceiptEvent(relayEventFromFeedItem(item));
+    for (const event of relayEvents) {
+      if (event.kind === KIND_AGENT_RECEIPT) {
+        const parentId = getThreadReference(event.tags).parentId;
+        ingestAgentReceiptEvent(event, eventById.get(parentId ?? ""));
       }
     }
     if (!currentPubkey) return;
-    for (const item of activity) {
-      if (item.kind === KIND_REACTION) {
-        ingestAgentReceiptReviewEvent(
-          relayEventFromFeedItem(item),
-          currentPubkey,
-          ownedAgentPubkeys,
-        );
+    for (const event of relayEvents) {
+      if (event.kind === KIND_REACTION) {
+        ingestAgentReceiptReviewEvent(event, currentPubkey, ownedAgentPubkeys);
       }
     }
   }, [currentPubkey, feed?.feed.activity, ownedAgentPubkeys]);

@@ -21,6 +21,11 @@ export type AgentReceiptSummary = {
 
 const receiptsById = new Map<string, AgentReceiptSummary>();
 const reviewedReceiptIds = new Set<string>();
+const MAX_PENDING_RECEIPT_REVIEWS = 500;
+const pendingReviewOwnershipByReceiptId = new Map<
+  string,
+  ReadonlySet<string>
+>();
 const listeners = new Set<() => void>();
 let generation = 0;
 let cachedAll: AgentReceiptSummary[] | null = null;
@@ -47,13 +52,71 @@ function receiptEventId(event: RelayEvent): string | null {
   return eventTags.at(-1)?.[1]?.trim() || null;
 }
 
+function receiptThreadIds(
+  event: RelayEvent,
+): { channelId: string; parentId: string; rootId: string } | null {
+  const channelTags = event.tags.filter((tag) => tag[0] === "h");
+  const eventTags = event.tags.filter((tag) => tag[0] === "e");
+  if (
+    channelTags.length !== 1 ||
+    eventTags.length < 1 ||
+    eventTags.length > 2
+  ) {
+    return null;
+  }
+  const channelId = channelTags[0]?.[1]?.trim() ?? "";
+  let parentId: string | null = null;
+  let rootId: string | null = null;
+  for (const tag of eventTags) {
+    const eventId = tag[1]?.trim() ?? "";
+    if (!/^[0-9a-f]{64}$/.test(eventId)) return null;
+    if (tag[3] === "reply" && parentId === null) parentId = eventId;
+    else if (tag[3] === "root" && rootId === null) rootId = eventId;
+    else return null;
+  }
+  if (!channelId || !parentId) return null;
+  return { channelId, parentId, rootId: rootId ?? parentId };
+}
+
+/** Independently verify the receipt's signed parent and thread relationship. */
+export function validateAgentReceiptThreadRelationship(
+  event: RelayEvent,
+  parentEvent: RelayEvent | null | undefined,
+): boolean {
+  const thread = receiptThreadIds(event);
+  if (!thread || !parentEvent || parentEvent.id !== thread.parentId)
+    return false;
+  const parentChannelTags = parentEvent.tags.filter((tag) => tag[0] === "h");
+  if (
+    parentChannelTags.length !== 1 ||
+    parentChannelTags[0]?.[1]?.trim() !== thread.channelId
+  ) {
+    return false;
+  }
+  const parentRoot =
+    getThreadReference(parentEvent.tags).rootId ?? parentEvent.id;
+  if (parentRoot !== thread.rootId) return false;
+
+  const parentTargets = parentEvent.tags
+    .filter((tag) => tag[0] === "p")
+    .map((tag) => normalizePubkey(tag[1] ?? ""));
+  return (
+    parentTargets.length === 0 ||
+    parentTargets.includes(normalizePubkey(event.pubkey))
+  );
+}
+
 export function subscribeAgentReceipts(listener: () => void) {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
 
-export function ingestAgentReceiptEvent(event: RelayEvent): boolean {
+export function ingestAgentReceiptEvent(
+  event: RelayEvent,
+  parentEvent: RelayEvent | null | undefined,
+): boolean {
   if (event.kind !== KIND_AGENT_RECEIPT) return false;
+  if (!validateAgentReceiptThreadRelationship(event, parentEvent)) return false;
   const parsed = parseAgentReceipt(event.content);
   const channelId = tagValue(event, "h");
   const rootId = getThreadReference(event.tags).rootId;
@@ -61,6 +124,14 @@ export function ingestAgentReceiptEvent(event: RelayEvent): boolean {
   if (!parsed || !channelId || !conversationId) return false;
 
   const prior = receiptsById.get(event.id);
+  const pendingReviewOwnership = pendingReviewOwnershipByReceiptId.get(
+    event.id,
+  );
+  const reviewed =
+    reviewedReceiptIds.has(event.id) ||
+    pendingReviewOwnership?.has(normalizePubkey(event.pubkey)) === true;
+  pendingReviewOwnershipByReceiptId.delete(event.id);
+  if (reviewed) reviewedReceiptIds.add(event.id);
   const receipt: AgentReceiptSummary = {
     id: event.id,
     channelId,
@@ -70,7 +141,7 @@ export function ingestAgentReceiptEvent(event: RelayEvent): boolean {
     createdAt: event.created_at * 1_000,
     summary: parsed.summary,
     verify: parsed.verify,
-    reviewed: reviewedReceiptIds.has(event.id),
+    reviewed,
   };
   if (
     prior &&
@@ -100,6 +171,18 @@ export function ingestAgentReceiptReviewEvent(
   }
   const receiptId = receiptEventId(event);
   const receipt = receiptId ? receiptsById.get(receiptId) : null;
+  if (receiptId && !receipt && ownedAgentPubkeys.size > 0) {
+    if (pendingReviewOwnershipByReceiptId.size >= MAX_PENDING_RECEIPT_REVIEWS) {
+      const oldest = pendingReviewOwnershipByReceiptId.keys().next().value;
+      if (oldest !== undefined)
+        pendingReviewOwnershipByReceiptId.delete(oldest);
+    }
+    pendingReviewOwnershipByReceiptId.set(
+      receiptId,
+      new Set([...ownedAgentPubkeys].map(normalizePubkey)),
+    );
+    return false;
+  }
   if (
     !receiptId ||
     !receipt ||
@@ -135,6 +218,30 @@ export function getLatestAgentReceiptForConversation(
   return latest;
 }
 
+export function getLatestOwnedAgentReceiptForConversation(
+  conversationId: string | null | undefined,
+  ownedAgentPubkeys: ReadonlySet<string>,
+): AgentReceiptSummary | null {
+  if (!conversationId || ownedAgentPubkeys.size === 0) return null;
+  let latest: AgentReceiptSummary | null = null;
+  for (const receipt of receiptsById.values()) {
+    if (
+      receipt.conversationId !== conversationId ||
+      !ownedAgentPubkeys.has(receipt.agentPubkey)
+    ) {
+      continue;
+    }
+    if (
+      !latest ||
+      receipt.createdAt > latest.createdAt ||
+      (receipt.createdAt === latest.createdAt && receipt.id > latest.id)
+    ) {
+      latest = receipt;
+    }
+  }
+  return latest;
+}
+
 export function getAgentReceipts(): AgentReceiptSummary[] {
   if (cachedAll) return cachedAll;
   if (receiptsById.size === 0) return EMPTY;
@@ -162,9 +269,35 @@ export function useLatestAgentReceiptForConversation(
   );
 }
 
+export function useLatestOwnedAgentReceiptForConversation(
+  conversationId: string | null | undefined,
+  ownedAgentPubkeys: ReadonlySet<string>,
+): AgentReceiptSummary | null {
+  const getSnapshot = React.useCallback(
+    () =>
+      getLatestOwnedAgentReceiptForConversation(
+        conversationId,
+        ownedAgentPubkeys,
+      ),
+    [conversationId, ownedAgentPubkeys],
+  );
+  return React.useSyncExternalStore(
+    subscribeAgentReceipts,
+    getSnapshot,
+    getSnapshot,
+  );
+}
+
 export function resetAgentReceiptStore(): void {
-  if (receiptsById.size === 0 && reviewedReceiptIds.size === 0) return;
+  if (
+    receiptsById.size === 0 &&
+    reviewedReceiptIds.size === 0 &&
+    pendingReviewOwnershipByReceiptId.size === 0
+  ) {
+    return;
+  }
   receiptsById.clear();
   reviewedReceiptIds.clear();
+  pendingReviewOwnershipByReceiptId.clear();
   notify();
 }

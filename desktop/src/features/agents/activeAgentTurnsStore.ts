@@ -21,6 +21,13 @@ import {
   recordTurnRetrying,
 } from "@/features/agents/retryingTurnsStore";
 import {
+  type AgentSessionGenerationSnapshot,
+  observeAgentSession,
+  resetAgentSessionGenerations,
+  restoreAgentSessionGenerations,
+  snapshotAgentSessionGenerations,
+} from "@/features/agents/activeAgentSessionGeneration";
+import {
   applyObserverFrame,
   createActiveTurn,
   MAX_TERMINAL_TOMBSTONES,
@@ -269,6 +276,31 @@ function resurrectTurn(agentPubkey: string, event: ObserverEvent): boolean {
   return true;
 }
 
+function reconcileDelayedTurnStart(
+  agentKey: string,
+  event: ObserverEvent,
+): boolean {
+  if (event.kind !== "turn_started" || !event.turnId) return false;
+  const turn = activeTurnsByAgent.get(agentKey)?.get(event.turnId);
+  if (!turn) return false;
+
+  let changed = false;
+  const startedAt = parseTimestamp(event.timestamp);
+  if (startedAt !== null && startedAt < turn.startedAt) {
+    turn.startedAt = startedAt;
+    changed = true;
+  }
+  const triggerIds = triggeringEventIds(event);
+  if (triggerIds.some((id) => !turn.triggeringEventIds.includes(id))) {
+    turn.triggeringEventIds = [
+      ...new Set([...turn.triggeringEventIds, ...triggerIds]),
+    ];
+    changed = true;
+  }
+  if (changed) invalidateCache(agentKey);
+  return changed;
+}
+
 function recordTerminal(agentKey: string, turnId: string, terminalAt: number) {
   if (!Number.isFinite(terminalAt)) return;
   let terminals = terminalAtByAgent.get(agentKey);
@@ -374,9 +406,19 @@ function pruneExpired() {
 function processEvent(agentPubkey: string, event: ObserverEvent) {
   const key = normalizePubkey(agentPubkey);
 
+  const sessionObservation = observeAgentSession(key, event);
+  if (sessionObservation === "retired") return;
+  if (sessionObservation === "changed") {
+    clockOffsetByAgent.delete(key);
+    invalidateCache(key);
+  }
+
   // Gate on the per-(agent, channel) watermark to keep sorted replays a no-op
   // and prevent stale liveness/eviction from killing live turns.
   if (gateEventByWatermark(key, event)) {
+    if (reconcileDelayedTurnStart(key, event)) {
+      notifyListeners();
+    }
     return;
   }
   recordEventProcessed(key, event);
@@ -793,6 +835,7 @@ export function resetActiveAgentTurnsStore() {
   activeTurnsByAgent.clear();
   clearTurnsWatermarks();
   clockOffsetByAgent.clear();
+  resetAgentSessionGenerations();
   cachedTurnSummaries.clear();
   cachedControlTargets.clear();
   cachedAgentsByConversation.clear();
@@ -810,6 +853,7 @@ export function resetActiveAgentTurnsStore() {
 type TurnsStoreSnapshot = {
   turns: Map<string, Map<string, ActiveTurn>>;
   offsets: Map<string, number>;
+  sessions: AgentSessionGenerationSnapshot;
   watermarks: Map<string, Map<string, ObserverEvent>>;
   terminals: Map<string, Map<string, number>>;
   outcomes: Map<string, ConversationOutcomeEntry>;
@@ -862,6 +906,7 @@ export function saveActiveAgentTurnsForCommunity(communityId: string): void {
   savedByCommunity.set(communityId, {
     turns,
     offsets,
+    sessions: snapshotAgentSessionGenerations(),
     watermarks,
     terminals,
     outcomes: cloneConversationOutcomeLedger(),
@@ -893,6 +938,7 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
   // Clear before writing so this is a replace, not a merge.
   activeTurnsByAgent.clear();
   clockOffsetByAgent.clear();
+  resetAgentSessionGenerations();
   clearTurnsWatermarks();
   terminalAtByAgent.clear();
   clearConversationOutcomeLedger();
@@ -908,6 +954,8 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
   for (const [agentKey, offset] of snap.offsets) {
     clockOffsetByAgent.set(agentKey, offset);
   }
+
+  restoreAgentSessionGenerations(snap.sessions);
 
   restoreTurnsWatermarks(snap.watermarks);
 

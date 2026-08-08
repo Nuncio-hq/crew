@@ -51,6 +51,10 @@ describe("activeAgentTurnsStore", () => {
     resetActiveAgentTurnsStore();
   });
 
+  afterEach(() => {
+    mock.timers.reset();
+  });
+
   describe("seq filtering", () => {
     it("processes events with increasing seq", () => {
       syncAgentTurnsFromEvents(AGENT, [
@@ -205,6 +209,63 @@ describe("activeAgentTurnsStore", () => {
       assert.ok(channels.has("c1"));
       assert.ok(!channels.has("c2"));
       assert.ok(channels.has("c3"));
+    });
+
+    it("accepts a new session when the producer clock moves backward", () => {
+      const epoch = Date.parse("2024-01-01T00:00:00Z");
+      mock.timers.enable({ apis: ["Date"], now: epoch });
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({
+          seq: 100,
+          sessionId: "session-old",
+          turnId: "turn-old",
+          channelId: "c1",
+          conversationId: "conversation-old",
+          timestamp: "2024-01-01T01:00:00Z",
+        }),
+      ]);
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({
+          seq: 1,
+          sessionId: "session-new",
+          turnId: "turn-new",
+          channelId: "c1",
+          conversationId: "conversation-new",
+          timestamp: "2024-01-01T00:00:00Z",
+        }),
+      ]);
+
+      assert.ok(
+        getActiveTurnControlTargetsForAgent(AGENT).some(
+          (target) => target.turnId === "turn-new",
+        ),
+        "a fresh session must not remain below the prior session watermark",
+      );
+      assert.equal(
+        getActiveTurnActivityBounds({
+          agentPubkeys: [AGENT],
+          conversationId: "conversation-new",
+        })?.anchorAt,
+        epoch,
+        "the previous session's skew sample must not poison a new session",
+      );
+
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({
+          seq: 101,
+          sessionId: "session-old",
+          turnId: "delayed-old-turn",
+          channelId: "c1",
+          conversationId: "delayed-old-conversation",
+          timestamp: "2024-01-01T02:00:00Z",
+        }),
+      ]);
+      assert.ok(
+        !getActiveTurnControlTargetsForAgent(AGENT).some(
+          (target) => target.turnId === "delayed-old-turn",
+        ),
+        "a delayed frame from a retired session must not reactivate it",
+      );
     });
   });
 

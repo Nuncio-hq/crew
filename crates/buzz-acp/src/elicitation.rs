@@ -15,7 +15,7 @@ use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
 use crate::relay::{BuzzEvent, RelayEventPublisher, RestClient};
-use crate::{is_owner_or_sibling, OwnerCache};
+use crate::OwnerCache;
 
 /// Engine field mapping retained while a form is pending.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +56,6 @@ pub(crate) struct QuestionRuntime {
     publisher: RelayEventPublisher,
     keys: Keys,
     owner_cache: Arc<OwnerCache>,
-    rest_client: RestClient,
     pending: Mutex<std::collections::HashMap<String, PendingRequest>>,
 }
 
@@ -65,18 +64,21 @@ struct PendingRequest {
     sender: oneshot::Sender<Option<UserInputAnswers>>,
 }
 
+fn answer_author_is_intended_owner(author: &str, owner_cache: &OwnerCache) -> bool {
+    owner_cache.get() == Some(author)
+}
+
 impl QuestionRuntime {
     pub(crate) fn new(
         publisher: RelayEventPublisher,
         keys: Keys,
         owner_cache: Arc<OwnerCache>,
-        rest_client: RestClient,
+        _rest_client: RestClient,
     ) -> Arc<Self> {
         Arc::new(Self {
             publisher,
             keys,
             owner_cache,
-            rest_client,
             pending: Mutex::new(std::collections::HashMap::new()),
         })
     }
@@ -212,13 +214,7 @@ impl QuestionRuntime {
         let Some(request_event_id) = request_event_id else {
             return;
         };
-        if !is_owner_or_sibling(
-            &buzz_event.event.pubkey.to_hex(),
-            &self.owner_cache,
-            &self.rest_client,
-        )
-        .await
-        {
+        if !answer_author_is_intended_owner(&buzz_event.event.pubkey.to_hex(), &self.owner_cache) {
             tracing::warn!(
                 author = %buzz_event.event.pubkey,
                 request_event_id,
@@ -487,6 +483,16 @@ pub(crate) fn reconstruct_content(
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn user_input_answer_requires_the_intended_owner() {
+        let owner_cache = OwnerCache::new(Some("owner".to_string()));
+        assert!(answer_author_is_intended_owner("owner", &owner_cache));
+        assert!(!answer_author_is_intended_owner(
+            "same-owner-sibling",
+            &owner_cache
+        ));
+    }
 
     #[test]
     fn normalizes_select_and_freeform() {

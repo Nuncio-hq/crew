@@ -10000,6 +10000,33 @@ function sendToMockSocket(args: {
       }
     }
     if (!channelId) {
+      // Exact/prefix id lookups are how production callers independently
+      // validate a signed relationship (for example, a receipt's parent).
+      // Serve them across channel stores just like the relay instead of
+      // silently treating every id-only query as an empty global history.
+      const requestedIds = filter.ids;
+      if (requestedIds && requestedIds.length > 0) {
+        const authors = filter.authors?.map((author) => author.toLowerCase());
+        const limit = Math.max(0, filter.limit ?? Number.POSITIVE_INFINITY);
+        let emitted = 0;
+        for (const events of mockMessages.values()) {
+          for (const event of events) {
+            if (emitted >= limit) break;
+            if (!requestedIds.some((prefix) => event.id.startsWith(prefix))) {
+              continue;
+            }
+            if (filter.kinds && !filter.kinds.includes(event.kind)) continue;
+            if (authors && !authors.includes(event.pubkey.toLowerCase())) {
+              continue;
+            }
+            sendWsText(socket.handler, ["EVENT", subId, event]);
+            emitted += 1;
+          }
+          if (emitted >= limit) break;
+        }
+        sendWsText(socket.handler, ["EOSE", subId]);
+        return;
+      }
       // Aux-backfill filters (reactions/deletions) are `#e`-keyed with no
       // channel tag — serve them across all channel stores like the relay.
       const referencedIds = filter["#e"];

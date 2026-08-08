@@ -63,6 +63,7 @@ const eventsByAgent = new Map<string, ObserverEvent[]>();
 const transcriptByAgent = new Map<string, TranscriptState>();
 const snapshotByAgent = new Map<string, ObserverSnapshot>();
 const connectionErrorByAgent = new Map<string, string>();
+const agentsWithCurrentLiveContact = new Set<string>();
 
 // Channel-scoped archive event journal — holds paged history loaded from the local
 // SQLite archive without the MAX_OBSERVER_EVENTS live-relay cap. Keyed by
@@ -200,13 +201,35 @@ function invalidateSnapshot(key: string) {
   snapshotByAgent.delete(key);
 }
 
+/** Whether a relay-state transition invalidates current-session contact proof. */
+export function shouldResetObserverLiveContacts(
+  currentState: ConnectionState,
+  nextState: ConnectionState,
+) {
+  return (
+    (nextState === "connecting" && currentState !== "connecting") ||
+    (nextState !== "open" && nextState !== "connecting")
+  );
+}
+
 function setConnectionState(
   nextState: ConnectionState,
   nextErrorMessage: string | null = errorMessage,
 ) {
+  if (shouldResetObserverLiveContacts(connectionState, nextState)) {
+    agentsWithCurrentLiveContact.clear();
+  }
   connectionState = nextState;
   errorMessage = nextErrorMessage;
   snapshotByAgent.clear();
+  notifyListeners();
+}
+
+function markAgentLiveContact(agentPubkey: string) {
+  const key = normalizePubkey(agentPubkey);
+  if (agentsWithCurrentLiveContact.has(key)) return;
+  agentsWithCurrentLiveContact.add(key);
+  invalidateSnapshot(key);
   notifyListeners();
 }
 
@@ -418,6 +441,7 @@ function unwrapObserverBatch(parsed: ObserverEvent): ObserverEvent[] {
 // Per-event processing shared by every event a live frame carries (one for a
 // plain frame, many for a batch envelope).
 function processLiveObserverEvent(agentPubkey: string, parsed: ObserverEvent) {
+  if (!parsed.replayed) markAgentLiveContact(agentPubkey);
   // Track the latest-live-session-id per (agent, channel) on the live path.
   // Only set when the parsed event carries both a sessionId and channelId,
   // so we never attribute a session to the wrong channel.
@@ -695,7 +719,11 @@ export function getAgentObserverSnapshot(
   const key = normalizePubkey(agentPubkey);
   const agentError = connectionErrorByAgent.get(key) ?? null;
   const effectiveConnectionState =
-    connectionState === "open" && agentError ? "error" : connectionState;
+    connectionState === "open" && agentError
+      ? "error"
+      : connectionState === "open" && !agentsWithCurrentLiveContact.has(key)
+        ? "connecting"
+        : connectionState;
   const effectiveErrorMessage = agentError ?? errorMessage;
   const cached = snapshotByAgent.get(key);
   if (
@@ -867,6 +895,7 @@ export function injectObserverEventsForE2E(
 ) {
   setConnectionState("open", null);
   for (const event of events) {
+    if (!event.replayed) markAgentLiveContact(agentPubkey);
     appendAgentEvent(agentPubkey, event);
   }
   notifyListeners();
@@ -905,6 +934,7 @@ export function resetAgentObserverStore() {
   transcriptByAgent.clear();
   snapshotByAgent.clear();
   connectionErrorByAgent.clear();
+  agentsWithCurrentLiveContact.clear();
   archiveEventsByChannel.clear();
   resetProjectThreadWorkspaceStore();
   resetDispatchedEventIdsStore();
@@ -927,6 +957,7 @@ export function resetAgentObserverLiveEventsForE2E() {
   transcriptByAgent.clear();
   snapshotByAgent.clear();
   connectionErrorByAgent.clear();
+  agentsWithCurrentLiveContact.clear();
   notifyListeners();
 }
 

@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { remindersQueryKey } from "@/features/reminders/hooks";
 import { relayClient } from "@/shared/api/relayClient";
 import {
+  CHANNEL_EVENT_KINDS,
   KIND_APPROVAL_REQUEST,
   KIND_APPROVAL_GRANT,
   KIND_APPROVAL_DENY,
@@ -14,6 +15,7 @@ import {
   KIND_AGENT_RECEIPT,
   KIND_REACTION,
 } from "@/shared/constants/kinds";
+import { getThreadReference } from "@/features/messages/lib/threading";
 import {
   ingestApprovalRequestEvent,
   resolveApprovalRequestEvent,
@@ -34,6 +36,14 @@ import type { RelayEvent } from "@/shared/api/types";
 const LIVE_HOME_FEED_RETRY_BASE_MS = 1_000;
 const LIVE_HOME_FEED_RETRY_MAX_MS = 30_000;
 const DURABLE_ACTION_PAGE_SIZE = 500;
+const RECEIPT_PARENT_BATCH_SIZE = 100;
+const RECEIPT_PARENT_KINDS = [
+  ...new Set([
+    ...CHANNEL_EVENT_KINDS,
+    KIND_APPROVAL_REQUEST,
+    KIND_AGENT_USER_INPUT_REQUESTED,
+  ]),
+];
 
 export function useLiveHomeFeedActions(
   pubkey: string | undefined,
@@ -91,9 +101,40 @@ export function useLiveHomeFeedActions(
         ownedAgentPubkeys,
       );
     };
-    const handleReceiptEvent = (event: RelayEvent) => {
+    const fetchReceiptParents = async (events: readonly RelayEvent[]) => {
+      const parentIds = [
+        ...new Set(
+          events
+            .map((event) => getThreadReference(event.tags).parentId)
+            .filter((eventId): eventId is string => Boolean(eventId)),
+        ),
+      ];
+      const parentsById = new Map<string, RelayEvent>();
+      for (
+        let offset = 0;
+        offset < parentIds.length;
+        offset += RECEIPT_PARENT_BATCH_SIZE
+      ) {
+        const ids = parentIds.slice(offset, offset + RECEIPT_PARENT_BATCH_SIZE);
+        const parents = await relayClient.fetchEvents({
+          ids,
+          kinds: RECEIPT_PARENT_KINDS,
+          limit: ids.length,
+        });
+        for (const parent of parents) parentsById.set(parent.id, parent);
+      }
+      return parentsById;
+    };
+    const handleReceiptEvent = async (
+      event: RelayEvent,
+      knownParents?: ReadonlyMap<string, RelayEvent>,
+    ) => {
       if (event.kind === KIND_AGENT_RECEIPT) {
-        ingestAgentReceiptEvent(event);
+        const parentId = getThreadReference(event.tags).parentId;
+        const parent = knownParents
+          ? knownParents.get(parentId ?? "")
+          : (await fetchReceiptParents([event])).get(parentId ?? "");
+        if (!isCancelled) ingestAgentReceiptEvent(event, parent);
       } else if (event.kind === KIND_REACTION) {
         ingestAgentReceiptReviewEvent(
           event,
@@ -142,6 +183,8 @@ export function useLiveHomeFeedActions(
         reviewEvents,
         [...bufferedDurableEvents.values()],
       );
+      const receiptParents = await fetchReceiptParents(merged.receiptEvents);
+      if (isCancelled) return;
       bufferedDurableEvents.clear();
       durableHydrationReady = true;
       for (const event of merged.userInputEvents) {
@@ -153,10 +196,10 @@ export function useLiveHomeFeedActions(
       // Receipts establish authority before reactions are projected, even if
       // relay pages or same-second ids arrive in the opposite order.
       for (const event of merged.receiptEvents) {
-        handleReceiptEvent(event);
+        await handleReceiptEvent(event, receiptParents);
       }
       for (const event of merged.reviewEvents) {
-        handleReceiptEvent(event);
+        await handleReceiptEvent(event);
       }
       handleLiveHomeFeedEvent();
     };
@@ -216,8 +259,20 @@ export function useLiveHomeFeedActions(
               bufferedDurableEvents.set(event.id, event);
               return;
             }
-            handleReceiptEvent(event);
-            handleLiveHomeFeedEvent();
+            void handleReceiptEvent(event)
+              .then(() => handleLiveHomeFeedEvent())
+              .catch((error) => {
+                if (isCancelled) return;
+                bufferedDurableEvents.set(event.id, event);
+                durableHydrationReady = false;
+                console.error("Failed to validate agent receipt parent", error);
+                if (hydrationRetryTimer === null) {
+                  hydrationRetryTimer = globalThis.setTimeout(() => {
+                    hydrationRetryTimer = null;
+                    hydrateDurableActionsWithRetry();
+                  }, LIVE_HOME_FEED_RETRY_BASE_MS);
+                }
+              });
           },
         ),
         relayClient.subscribeLive(
@@ -233,8 +288,9 @@ export function useLiveHomeFeedActions(
               bufferedDurableEvents.set(event.id, event);
               return;
             }
-            handleReceiptEvent(event);
-            handleLiveHomeFeedEvent();
+            void handleReceiptEvent(event).then(() =>
+              handleLiveHomeFeedEvent(),
+            );
           },
         ),
       ]);

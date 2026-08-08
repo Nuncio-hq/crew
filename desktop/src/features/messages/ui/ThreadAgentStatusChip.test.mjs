@@ -14,9 +14,13 @@ import {
 } from "@/features/agents/needsYouStore.ts";
 import {
   buildThreadAgentStatusChipView,
+  receiptForActiveTurns,
   ThreadAgentStatusChip,
 } from "./ThreadAgentStatusChip.tsx";
-import { setObserverConnectionStateForE2E } from "@/features/agents/observerRelayStore.ts";
+import {
+  injectObserverEventsForE2E,
+  resetAgentObserverStore,
+} from "@/features/agents/observerRelayStore.ts";
 
 const AGENT_A =
   "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111";
@@ -38,8 +42,52 @@ const PROFILE_A = {
   },
 };
 
+function TestThreadAgentStatusChip(props) {
+  return React.createElement(ThreadAgentStatusChip, props);
+}
+
+function setLiveAgents(agentPubkeys) {
+  resetAgentObserverStore();
+  for (const [index, agentPubkey] of agentPubkeys.entries()) {
+    injectObserverEventsForE2E(agentPubkey, [
+      {
+        seq: index + 1,
+        timestamp: "2026-07-31T00:00:00.000Z",
+        kind: "turn_liveness",
+        agentIndex: index,
+        channelId: "channel-a",
+        sessionId: "session-a",
+        turnId: `turn-${index}`,
+        payload: null,
+        replayed: false,
+      },
+    ]);
+  }
+}
+
 test("buildThreadAgentStatusChipView returns null with no agents or outcome", () => {
   assert.equal(buildThreadAgentStatusChipView([], null, undefined, NOW), null);
+});
+
+test("a newer active turn suppresses a stale receipt from a prior run", () => {
+  const receipt = {
+    id: "receipt",
+    agentPubkey: AGENT_A,
+    channelId: "channel",
+    conversationId: "thread-a",
+    createdAt: NOW - 10_000,
+    reviewed: false,
+    rootEventId: null,
+    summary: "Old result",
+    verify: "pnpm test",
+  };
+  assert.equal(
+    receiptForActiveTurns(receipt, [
+      { agentPubkey: AGENT_A, anchorAt: NOW, turnCount: 1 },
+    ]),
+    null,
+  );
+  assert.equal(receiptForActiveTurns(receipt, []), receipt);
 });
 
 test("buildThreadAgentStatusChipView labels a single agent by display name", () => {
@@ -217,7 +265,7 @@ test("buildThreadAgentStatusChipView builds failed view model", () => {
 test("ThreadAgentStatusChip renders nothing when conversation has no agents", () => {
   resetActiveAgentTurnsStore();
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-empty",
     }),
   );
@@ -226,7 +274,7 @@ test("ThreadAgentStatusChip renders nothing when conversation has no agents", ()
 
 test("ThreadAgentStatusChip renders chip for a single active agent", () => {
   resetActiveAgentTurnsStore();
-  setObserverConnectionStateForE2E("open");
+  setLiveAgents([AGENT_A]);
   syncAgentTurnsFromEvents(AGENT_A, [
     {
       seq: 1,
@@ -242,7 +290,7 @@ test("ThreadAgentStatusChip renders chip for a single active agent", () => {
   ]);
 
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-a",
       profiles: {
         [AGENT_A]: {
@@ -263,6 +311,7 @@ test("ThreadAgentStatusChip renders chip for a single active agent", () => {
 
 test("ThreadAgentStatusChip renders N agents label for multiple", () => {
   resetActiveAgentTurnsStore();
+  setLiveAgents([AGENT_A, AGENT_B]);
   syncAgentTurnsFromEvents(AGENT_A, [
     {
       seq: 1,
@@ -291,7 +340,7 @@ test("ThreadAgentStatusChip renders N agents label for multiple", () => {
   ]);
 
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-a",
     }),
   );
@@ -328,7 +377,7 @@ test("ThreadAgentStatusChip does not claim Done from observer completion alone",
   ]);
 
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-a",
       profiles: PROFILE_A,
     }),
@@ -364,7 +413,7 @@ test("ThreadAgentStatusChip renders failed after turn_error", () => {
   ]);
 
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-a",
       profiles: PROFILE_A,
     }),
@@ -375,6 +424,7 @@ test("ThreadAgentStatusChip renders failed after turn_error", () => {
 
 test("ThreadAgentStatusChip stays running when a sibling agent is still active", () => {
   resetActiveAgentTurnsStore();
+  setLiveAgents([AGENT_B]);
   syncAgentTurnsFromEvents(AGENT_A, [
     {
       seq: 1,
@@ -414,7 +464,7 @@ test("ThreadAgentStatusChip stays running when a sibling agent is still active",
   ]);
 
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-a",
     }),
   );

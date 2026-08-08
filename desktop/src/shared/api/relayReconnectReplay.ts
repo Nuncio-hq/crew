@@ -1,4 +1,12 @@
-import { CHANNEL_EVENT_KINDS } from "@/shared/constants/kinds";
+import {
+  CHANNEL_EVENT_KINDS,
+  KIND_AGENT_RECEIPT,
+  KIND_AGENT_USER_INPUT_ANSWER,
+  KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_RESOLVED,
+  KIND_REACTION,
+} from "@/shared/constants/kinds";
+import { drainRelayTimestampBucket } from "@/shared/api/exhaustiveRelayPagination";
 import type {
   RelaySubscription,
   RelaySubscriptionFilter,
@@ -44,6 +52,20 @@ export const REPLAY_BATCH_SIZE = 8;
  * can absorb each batch without triggering rate-limiting on the next.
  */
 export const REPLAY_INTER_BATCH_DELAY_MS = 50;
+const DURABLE_ACTION_KINDS = new Set([
+  KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_ANSWER,
+  KIND_AGENT_USER_INPUT_RESOLVED,
+  KIND_AGENT_RECEIPT,
+  KIND_REACTION,
+]);
+
+function shouldDrainTimestampBuckets(filter: RelaySubscriptionFilter) {
+  return (
+    filter.kinds.length > 0 &&
+    filter.kinds.every((kind) => DURABLE_ACTION_KINDS.has(kind))
+  );
+}
 
 async function runWithConcurrency<T>(
   items: T[],
@@ -87,10 +109,10 @@ export function buildReconnectReplayFilter(
 
 export function shouldPageReconnectReplay(filter: RelaySubscriptionFilter) {
   return (
-    filter.limit > 0 &&
     Array.isArray(filter["#h"]) &&
     filter["#h"].length === 1 &&
-    CHANNEL_EVENT_KINDS.every((kind) => filter.kinds.includes(kind))
+    (CHANNEL_EVENT_KINDS.every((kind) => filter.kinds.includes(kind)) ||
+      shouldDrainTimestampBuckets(filter))
   );
 }
 
@@ -118,6 +140,37 @@ export async function replayReconnectHistoryPages({
   requestHistory: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
 }): Promise<boolean> {
   let pageUntil = until;
+  const deferDelivery = shouldDrainTimestampBuckets(subscription.filter);
+  const deliveredEventIds = new Set<string>();
+  const deferredEventsById = new Map<string, RelayEvent>();
+
+  const deliver = (events: readonly RelayEvent[]) => {
+    for (const event of events) {
+      if (deliveredEventIds.has(event.id)) continue;
+      deliveredEventIds.add(event.id);
+      if (deferDelivery) deferredEventsById.set(event.id, event);
+      else subscription.onEvent(event, { replay: true });
+    }
+  };
+  const complete = () => {
+    if (deferDelivery) {
+      const events = [...deferredEventsById.values()].sort((left, right) => {
+        const leftPriority =
+          left.kind === KIND_AGENT_USER_INPUT_REQUESTED ? 0 : 1;
+        const rightPriority =
+          right.kind === KIND_AGENT_USER_INPUT_REQUESTED ? 0 : 1;
+        return (
+          leftPriority - rightPriority ||
+          left.created_at - right.created_at ||
+          left.id.localeCompare(right.id)
+        );
+      });
+      for (const event of events) {
+        subscription.onEvent(event, { replay: true });
+      }
+    }
+    return true;
+  };
 
   while (pageUntil >= since) {
     if (!isActive()) return false;
@@ -133,16 +186,29 @@ export async function replayReconnectHistoryPages({
 
     if (!isActive()) return false;
 
-    for (const event of events) subscription.onEvent(event, { replay: true });
-    if (events.length < RECONNECT_REPLAY_PAGE_LIMIT) return true;
+    deliver(events);
+    if (events.length < RECONNECT_REPLAY_PAGE_LIMIT) return complete();
 
     const oldestCreatedAt = events[0]?.created_at;
-    if (oldestCreatedAt === undefined || oldestCreatedAt <= since) return true;
-
-    pageUntil =
-      oldestCreatedAt < pageUntil ? oldestCreatedAt : oldestCreatedAt - 1;
+    if (oldestCreatedAt === undefined) return complete();
+    if (shouldDrainTimestampBuckets(subscription.filter)) {
+      const boundary = await drainRelayTimestampBucket(
+        requestHistory,
+        subscription.filter,
+        oldestCreatedAt,
+        RECONNECT_REPLAY_PAGE_LIMIT,
+      );
+      if (!isActive()) return false;
+      deliver(boundary);
+    }
+    if (oldestCreatedAt <= since) return complete();
+    pageUntil = shouldDrainTimestampBuckets(subscription.filter)
+      ? oldestCreatedAt - 1
+      : oldestCreatedAt < pageUntil
+        ? oldestCreatedAt
+        : oldestCreatedAt - 1;
   }
-  return true;
+  return complete();
 }
 
 export async function replayLiveSubscriptions({

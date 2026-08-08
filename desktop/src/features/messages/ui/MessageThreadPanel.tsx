@@ -644,6 +644,7 @@ export function MessageThreadPanel({
               >
                 <MessageThreadSummaryRow
                   {...{ channelId, profiles }}
+                  currentPubkey={currentPubkey}
                   depth={threadHead.depth}
                   message={threadHead}
                   onOpenThread={expandThreadHeadReplies}

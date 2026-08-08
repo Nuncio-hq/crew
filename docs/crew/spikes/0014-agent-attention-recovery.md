@@ -106,9 +106,11 @@ until a typed reason/expected window exists.
 
 ### Durable attention
 
-- `46040` is durable but absent from the native Needs Action feed. A bounded
-  startup query for `46040`–`46042` over joined channel `h` tags reconstructs
-  pending requests without weakening owner authorization.
+- `46040` is durable but absent from the native Needs Action feed. Exhaustive
+  paginated hydration for `46040`–`46042` overlaps live subscriptions and
+  reconstructs pending requests without weakening owner authorization.
+- `46041` is accepted only from the request's intended verified owner. A
+  same-owner sibling is still an agent, not a substitute for human input.
 - kind `46043` already survives relay/thread history. Adding it to Home activity
   makes receipt-backed readiness available to Mission Inbox.
 - owner-authored `✅` kind `7` reaction linked to the exact receipt is explicit,
@@ -134,8 +136,8 @@ them would create a second authority instead of fixing the existing seam.
 
 - Cross-runtime progress taxonomy is intentionally conservative.
 - Known wait remains unreachable until explicit evidence exists.
-- The first implementation uses desktop-side bounded history queries rather than
-  changing the owner-addressing schema of kind `46040`.
+- The first implementation uses desktop-side paginated history queries rather
+  than changing the owner-addressing schema of kind `46040`.
 - Repeated live certification is still required for the issue's percentage
   targets; one deterministic run cannot prove those operational metrics.
 

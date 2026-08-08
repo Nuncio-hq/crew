@@ -26,12 +26,24 @@ import { useSharedNowWhen } from "@/features/agents/lib/sharedNow";
 import { deriveAgentAttention } from "@/features/agents/agentAttention";
 import {
   type AgentReceiptSummary,
-  useLatestAgentReceiptForConversation,
+  useLatestOwnedAgentReceiptForConversation,
 } from "@/features/agents/agentReceiptStore";
+import { mergeOwnedAgentPubkeys } from "@/features/agents/knownAgentPubkeys";
 import { useAgentObserverConnectionState } from "@/features/agents/useAgentObserverConnectionState";
 import type { ConnectionState } from "@/features/agents/ui/agentSessionTypes";
 
 const MAX_CHIP_AVATARS = 2;
+
+export function receiptForActiveTurns(
+  receipt: AgentReceiptSummary | null,
+  summaries: readonly Pick<ActiveConversationAgentTurnSummary, "anchorAt">[],
+): AgentReceiptSummary | null {
+  if (!receipt || summaries.length === 0) return receipt;
+  const latestTurnAnchor = Math.max(
+    ...summaries.map((summary) => summary.anchorAt),
+  );
+  return receipt.createdAt + 1_000 >= latestTurnAnchor ? receipt : null;
+}
 
 export type ThreadAgentStatusChipState =
   | "needs-you"
@@ -266,15 +278,22 @@ const STATE_CHROME: Record<
 
 export function ThreadAgentStatusChip({
   conversationId,
+  currentPubkey,
   profiles,
 }: {
   conversationId: string | null | undefined;
+  currentPubkey?: string;
   profiles?: UserProfileLookup;
 }) {
   const summaries = useActiveTurnSummariesForConversation(conversationId);
   const needsYou = useNeedsYouForConversation(conversationId);
   const outcome = useRecentOutcomeForConversation(conversationId);
-  const receipt = useLatestAgentReceiptForConversation(conversationId);
+  const ownedAgentPubkeys = mergeOwnedAgentPubkeys(profiles, currentPubkey);
+  const receiptCandidate = useLatestOwnedAgentReceiptForConversation(
+    conversationId,
+    ownedAgentPubkeys,
+  );
+  const receipt = receiptForActiveTurns(receiptCandidate, summaries);
   const connectionAgentPubkeys = summaries.map(
     (summary) => summary.agentPubkey,
   );

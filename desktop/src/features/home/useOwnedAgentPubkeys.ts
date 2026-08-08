@@ -6,30 +6,28 @@ import {
 } from "@/features/agents/hooks";
 import { mergeOwnedAgentPubkeys } from "@/features/agents/knownAgentPubkeys";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
-import type { UserProfileLookup } from "@/features/profile/lib/identity";
-
-export function useOwnedAgentPubkeys(
-  enabled: boolean,
-  profiles: UserProfileLookup | undefined,
-  currentPubkey: string | undefined,
-) {
-  const managedAgents = useManagedAgentsQuery({ enabled }).data;
-  return React.useMemo(
-    () => mergeOwnedAgentPubkeys(managedAgents, profiles, currentPubkey),
-    [currentPubkey, managedAgents, profiles],
-  );
-}
 
 export function useCurrentOwnedAgentPubkeys(currentPubkey: string | undefined) {
+  const managedAgents = useManagedAgentsQuery({
+    enabled: Boolean(currentPubkey),
+  }).data;
   const relayAgents = useRelayAgentsQuery({
     enabled: Boolean(currentPubkey),
   }).data;
-  const relayAgentPubkeys = React.useMemo(
-    () => (relayAgents ?? []).map((agent) => agent.pubkey),
-    [relayAgents],
+  const candidateAgentPubkeys = React.useMemo(
+    () => [
+      ...new Set([
+        ...(managedAgents ?? []).map((agent) => agent.pubkey),
+        ...(relayAgents ?? []).map((agent) => agent.pubkey),
+      ]),
+    ],
+    [managedAgents, relayAgents],
   );
-  const profiles = useUsersBatchQuery(relayAgentPubkeys, {
-    enabled: Boolean(currentPubkey) && relayAgentPubkeys.length > 0,
+  const profiles = useUsersBatchQuery(candidateAgentPubkeys, {
+    enabled: Boolean(currentPubkey) && candidateAgentPubkeys.length > 0,
   }).data?.profiles;
-  return useOwnedAgentPubkeys(Boolean(currentPubkey), profiles, currentPubkey);
+  return React.useMemo(
+    () => mergeOwnedAgentPubkeys(profiles, currentPubkey),
+    [currentPubkey, profiles],
+  );
 }

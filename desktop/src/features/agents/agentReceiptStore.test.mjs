@@ -5,7 +5,8 @@ import { deriveAgentConversationId } from "./conversationId.ts";
 import {
   getAgentReceipts,
   getLatestAgentReceiptForConversation,
-  ingestAgentReceiptEvent,
+  getLatestOwnedAgentReceiptForConversation,
+  ingestAgentReceiptEvent as ingestValidatedAgentReceiptEvent,
   ingestAgentReceiptReviewEvent,
   resetAgentReceiptStore,
 } from "./agentReceiptStore.ts";
@@ -41,6 +42,21 @@ function receiptEvent(overrides = {}) {
   };
 }
 
+function ingestAgentReceiptEvent(event) {
+  return ingestValidatedAgentReceiptEvent(event, {
+    id: ROOT,
+    pubkey: OWNER,
+    created_at: 99,
+    kind: 9,
+    tags: [
+      ["h", CHANNEL],
+      ["p", event.pubkey],
+    ],
+    content: "trigger",
+    sig: "",
+  });
+}
+
 describe("agentReceiptStore", () => {
   beforeEach(() => resetAgentReceiptStore());
 
@@ -58,6 +74,21 @@ describe("agentReceiptStore", () => {
       reviewed: false,
     });
     assert.equal(getAgentReceipts().length, 1);
+  });
+
+  it("rejects a receipt whose declared root does not match its parent", () => {
+    assert.equal(
+      ingestAgentReceiptEvent(
+        receiptEvent({
+          tags: [
+            ["h", CHANNEL],
+            ["e", "f".repeat(64), "", "root"],
+            ["e", ROOT, "", "reply"],
+          ],
+        }),
+      ),
+      false,
+    );
   });
 
   it("marks reviewed only from the owner's explicit check reaction", () => {
@@ -80,6 +111,31 @@ describe("agentReceiptStore", () => {
     );
     assert.equal(
       getLatestAgentReceiptForConversation(CONVERSATION).reviewed,
+      true,
+    );
+  });
+
+  it("applies an authorized review that arrives before its receipt", () => {
+    assert.equal(
+      ingestAgentReceiptReviewEvent(
+        {
+          id: "1".repeat(64),
+          pubkey: OWNER,
+          created_at: 101,
+          kind: 7,
+          tags: [["e", RECEIPT]],
+          content: "✅",
+          sig: "",
+        },
+        OWNER,
+        OWNED_AGENTS,
+      ),
+      false,
+    );
+
+    assert.equal(ingestAgentReceiptEvent(receiptEvent()), true);
+    assert.equal(
+      getLatestAgentReceiptForConversation(CONVERSATION)?.reviewed,
       true,
     );
   });
@@ -129,6 +185,22 @@ describe("agentReceiptStore", () => {
     assert.equal(
       getLatestAgentReceiptForConversation(CONVERSATION).reviewed,
       false,
+    );
+  });
+
+  it("does not let a newer foreign receipt shadow the owner's thread status", () => {
+    ingestAgentReceiptEvent(receiptEvent());
+    ingestAgentReceiptEvent(
+      receiptEvent({
+        id: "9".repeat(64),
+        pubkey: OTHER_AGENT,
+        created_at: 200,
+      }),
+    );
+
+    assert.equal(
+      getLatestOwnedAgentReceiptForConversation(CONVERSATION, OWNED_AGENTS)?.id,
+      RECEIPT,
     );
   });
 

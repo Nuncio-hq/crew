@@ -188,6 +188,7 @@ export function MessageRowItem({
         />
         <MessageThreadSummaryRow
           channelId={channelId}
+          currentPubkey={currentPubkey}
           depth={message.depth}
           isActive={isThreadAnchor}
           message={message}
