@@ -341,10 +341,13 @@ test.describe("hermes profile binding", () => {
     const dialog = await openCreateCustomize(page);
     await configureExistingHermesProfile(page, dialog);
 
-    await dialog.locator("#agent-run-on").selectOption(REMOTE_PROVIDER.id);
-    await expect(dialog.locator("#agent-run-on")).toHaveValue(
-      REMOTE_PROVIDER.id,
-    );
+    await dialog.getByRole("button", { name: /^Advanced/ }).click();
+    const runOn = dialog.locator("#agent-run-on");
+    await runOn.press("Enter");
+    await page
+      .getByRole("menuitemradio", { exact: true, name: REMOTE_PROVIDER.id })
+      .press("Enter");
+    await expect(runOn).toContainText(REMOTE_PROVIDER.id);
 
     const error = dialog.getByTestId("hermes-trusted-boundary-error");
     await expect(error).toContainText(/local|This Mac/i);
