@@ -1638,31 +1638,42 @@ pub fn build_agent_user_input_request(
 }
 
 /// Build an owner-authored answer to an agent question request.
+///
+/// The `p` relationship targets the agent that authored the request.
 pub fn build_agent_user_input_answer(
     channel_id: Uuid,
     request_event_id: &str,
+    requesting_agent_pubkey: &str,
     content: &str,
 ) -> Result<EventBuilder, SdkError> {
     check_content(content, 64 * 1024)?;
     let request_event_id = check_hex_exact(request_event_id, 64, "request_event_id")?;
+    let requesting_agent_pubkey =
+        check_pubkey_hex(requesting_agent_pubkey, "requesting_agent_pubkey")?;
     let tags = vec![
         tag(&["h", &channel_id.to_string()])?,
         tag(&["e", &request_event_id])?,
+        tag(&["p", &requesting_agent_pubkey])?,
     ];
     Ok(EventBuilder::new(Kind::Custom(KIND_AGENT_USER_INPUT_ANSWER as u16), content).tags(tags))
 }
 
 /// Build a terminal resolution event for an agent question request.
+///
+/// The `p` relationship targets the request's intended owner.
 pub fn build_agent_user_input_resolved(
     channel_id: Uuid,
     request_event_id: &str,
+    intended_owner_pubkey: &str,
     content: &str,
 ) -> Result<EventBuilder, SdkError> {
     check_content(content, 16 * 1024)?;
     let request_event_id = check_hex_exact(request_event_id, 64, "request_event_id")?;
+    let intended_owner_pubkey = check_pubkey_hex(intended_owner_pubkey, "intended_owner_pubkey")?;
     let tags = vec![
         tag(&["h", &channel_id.to_string()])?,
         tag(&["e", &request_event_id])?,
+        tag(&["p", &intended_owner_pubkey])?,
     ];
     Ok(EventBuilder::new(Kind::Custom(KIND_AGENT_USER_INPUT_RESOLVED as u16), content).tags(tags))
 }
@@ -4597,8 +4608,11 @@ mod tests {
     fn agent_user_input_answer_builder_sets_channel_and_request_link() {
         let channel = Uuid::new_v4();
         let request = "a".repeat(64);
-        let event =
-            sign(build_agent_user_input_answer(channel, &request, r#"{"q0":"Pick"}"#).unwrap());
+        let requesting_agent = "c".repeat(64);
+        let event = sign(
+            build_agent_user_input_answer(channel, &request, &requesting_agent, r#"{"q0":"Pick"}"#)
+                .unwrap(),
+        );
         assert_eq!(
             event.kind,
             Kind::Custom(KIND_AGENT_USER_INPUT_ANSWER as u16)
@@ -4611,16 +4625,22 @@ mod tests {
             .tags
             .iter()
             .any(|tag| { tag.as_slice() == ["e".to_string(), request.clone()] }));
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["p".to_string(), requesting_agent.clone()] }));
     }
 
     #[test]
     fn agent_user_input_resolved_builder_sets_kind_and_request_link() {
         let channel = Uuid::new_v4();
         let request = "b".repeat(64);
+        let intended_owner = "d".repeat(64);
         let event = sign(
             build_agent_user_input_resolved(
                 channel,
                 &request,
+                &intended_owner,
                 r#"{"request_event_id":"bbbb","outcome":"cancelled"}"#,
             )
             .unwrap(),
@@ -4637,6 +4657,10 @@ mod tests {
             .tags
             .iter()
             .any(|tag| { tag.as_slice() == ["e".to_string(), request.clone()] }));
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["p".to_string(), intended_owner.clone()] }));
     }
 
     #[test]

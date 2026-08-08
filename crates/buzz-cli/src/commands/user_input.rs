@@ -4,6 +4,78 @@ use crate::client::{normalize_write_response, BuzzClient};
 use crate::error::CliError;
 use crate::validate::{parse_uuid, sdk_err, validate_uuid};
 
+fn requesting_agent_from_request_event(
+    event: nostr::Event,
+    channel: &str,
+    request: &str,
+    owner_pubkey: &str,
+) -> Result<String, CliError> {
+    if event.id.to_hex() != request {
+        return Err(CliError::Other("user-input request was not found".into()));
+    }
+    if event.kind.as_u16() as u32 != KIND_AGENT_USER_INPUT_REQUESTED {
+        return Err(CliError::Other(
+            "user-input request has the wrong event kind".into(),
+        ));
+    }
+    event.verify().map_err(|error| {
+        CliError::Other(format!(
+            "user-input request failed cryptographic verification: {error}"
+        ))
+    })?;
+    let request_content: buzz_core::user_input::UserInputRequest =
+        serde_json::from_str(&event.content)
+            .map_err(|_| CliError::Other("user-input request content is malformed".into()))?;
+    if request_content.channel_id != channel {
+        return Err(CliError::Other(
+            "user-input request content targets a different channel".into(),
+        ));
+    }
+    let h_tags: Vec<_> = event
+        .tags
+        .iter()
+        .filter(|tag| tag.as_slice().first().is_some_and(|value| value == "h"))
+        .collect();
+    let p_tags: Vec<_> = event
+        .tags
+        .iter()
+        .filter(|tag| tag.as_slice().first().is_some_and(|value| value == "p"))
+        .collect();
+    if h_tags.len() != 1 || h_tags[0].as_slice().get(1).map(String::as_str) != Some(channel) {
+        return Err(CliError::Other(
+            "user-input request channel relationship is invalid".into(),
+        ));
+    }
+    if p_tags.len() != 1 || p_tags[0].as_slice().get(1).map(String::as_str) != Some(owner_pubkey) {
+        return Err(CliError::Other(
+            "user-input request is not intended for the current owner".into(),
+        ));
+    }
+    Ok(event.pubkey.to_hex())
+}
+
+async fn requesting_agent_for_request(
+    client: &BuzzClient,
+    channel: &str,
+    request: &str,
+) -> Result<String, CliError> {
+    let request = request.to_ascii_lowercase();
+    let filter = serde_json::json!({
+        "ids": [&request],
+        "kinds": [KIND_AGENT_USER_INPUT_REQUESTED],
+        "#h": [channel],
+        "limit": 1
+    });
+    let events: Vec<nostr::Event> = serde_json::from_str(&client.query(&filter).await?)
+        .map_err(|error| CliError::Other(format!("invalid request lookup response: {error}")))?;
+    let event = events
+        .into_iter()
+        .find(|event| event.id.to_hex() == request)
+        .ok_or_else(|| CliError::Other("user-input request was not found".into()))?;
+    let own_pubkey = client.keys().public_key().to_hex();
+    requesting_agent_from_request_event(event, channel, &request, &own_pubkey)
+}
+
 /// List durable user-input requests that do not have an answer event yet.
 pub async fn cmd_list(client: &BuzzClient, channel: &str) -> Result<(), CliError> {
     validate_uuid(channel)?;
@@ -69,8 +141,16 @@ pub async fn cmd_answer(
     if !value.is_object() {
         return Err(CliError::Usage("answers must be a JSON object".into()));
     }
-    let builder = buzz_sdk::build_agent_user_input_answer(channel_id, request, &value.to_string())
-        .map_err(sdk_err)?;
+    let normalized_channel = channel_id.to_string();
+    let requesting_agent =
+        requesting_agent_for_request(client, &normalized_channel, request).await?;
+    let builder = buzz_sdk::build_agent_user_input_answer(
+        channel_id,
+        request,
+        &requesting_agent,
+        &value.to_string(),
+    )
+    .map_err(sdk_err)?;
     let event = client.sign_event(builder)?;
     let response = client.submit_event(event).await?;
     println!("{}", normalize_write_response(&response));
@@ -86,5 +166,55 @@ pub async fn dispatch(cmd: crate::UserInputCmd, client: &BuzzClient) -> Result<(
             request,
             answers,
         } => cmd_answer(client, &channel, &request, &answers).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::requesting_agent_from_request_event;
+
+    #[test]
+    fn request_lookup_binds_channel_owner_and_requesting_agent() {
+        let channel_id = uuid::Uuid::new_v4();
+        let agent = nostr::Keys::generate();
+        let owner = nostr::Keys::generate();
+        let content = serde_json::json!({
+            "request_id": "request",
+            "session_id": "session",
+            "turn_id": "turn",
+            "channel_id": channel_id.to_string(),
+            "tool_call_id": null,
+            "engine": "codex",
+            "message": "Choose",
+            "questions": [],
+        })
+        .to_string();
+        let event = buzz_sdk::build_agent_user_input_request(
+            channel_id,
+            &owner.public_key().to_hex(),
+            &content,
+        )
+        .unwrap()
+        .sign_with_keys(&agent)
+        .unwrap();
+        let request_event_id = event.id.to_hex();
+
+        assert_eq!(
+            requesting_agent_from_request_event(
+                event.clone(),
+                &channel_id.to_string(),
+                &request_event_id,
+                &owner.public_key().to_hex(),
+            )
+            .unwrap(),
+            agent.public_key().to_hex()
+        );
+        assert!(requesting_agent_from_request_event(
+            event,
+            &channel_id.to_string(),
+            &request_event_id,
+            &nostr::Keys::generate().public_key().to_hex(),
+        )
+        .is_err());
     }
 }

@@ -4239,7 +4239,8 @@ mod tests {
 
     #[test]
     fn agent_user_input_transition_is_bound_to_request_authority() {
-        let channel = Uuid::new_v4().to_string();
+        let channel_id = Uuid::new_v4();
+        let channel = channel_id.to_string();
         let agent = nostr::Keys::generate();
         let owner = nostr::Keys::generate();
         let stranger = nostr::Keys::generate();
@@ -4248,23 +4249,21 @@ mod tests {
         let request_content = format!(
             r#"{{"request_id":"req","session_id":"session","turn_id":"turn","channel_id":"{channel}","tool_call_id":null,"engine":"codex","message":"Choose","questions":[]}}"#,
         );
-        let request = make_event_with_keys(
-            &agent,
-            KIND_AGENT_USER_INPUT_REQUESTED,
-            &request_content,
-            &[["h", &channel].as_slice(), ["p", &owner_hex].as_slice()],
-        );
+        let request =
+            buzz_sdk::build_agent_user_input_request(channel_id, &owner_hex, &request_content)
+                .unwrap()
+                .sign_with_keys(&agent)
+                .unwrap();
         let request_id = request.id.to_hex();
-        let answer = make_event_with_keys(
-            &owner,
-            KIND_AGENT_USER_INPUT_ANSWER,
+        let answer = buzz_sdk::build_agent_user_input_answer(
+            channel_id,
+            &request_id,
+            &agent_hex,
             r#"{"q0":"yes"}"#,
-            &[
-                ["h", &channel].as_slice(),
-                ["e", &request_id].as_slice(),
-                ["p", &agent_hex].as_slice(),
-            ],
-        );
+        )
+        .unwrap()
+        .sign_with_keys(&owner)
+        .unwrap();
         let (_, request_author, request_owner) =
             validate_agent_user_input_transition_envelope(&answer, &request).unwrap();
         assert_eq!(request_author, agent.public_key().to_bytes());
@@ -4273,6 +4272,16 @@ mod tests {
             &answer,
             &request_owner
         ));
+        let resolution = buzz_sdk::build_agent_user_input_resolved(
+            channel_id,
+            &request_id,
+            &owner_hex,
+            &format!(r#"{{"request_event_id":"{request_id}","outcome":"answered"}}"#),
+        )
+        .unwrap()
+        .sign_with_keys(&agent)
+        .unwrap();
+        assert!(validate_agent_user_input_transition_envelope(&resolution, &request).is_ok());
 
         let sibling_answer = make_event_with_keys(
             &stranger,

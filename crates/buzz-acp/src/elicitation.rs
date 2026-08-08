@@ -10,7 +10,7 @@ use buzz_core::{
         UserInputResolutionOutcome, UserInputResolved, UserInputSelection,
     },
 };
-use nostr::{Alphabet, Keys, SingleLetterTag, TagKind};
+use nostr::Keys;
 use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
@@ -61,11 +61,27 @@ pub(crate) struct QuestionRuntime {
 
 struct PendingRequest {
     channel_id: Uuid,
+    intended_owner_pubkey: String,
     sender: oneshot::Sender<Option<UserInputAnswers>>,
 }
 
-fn answer_author_is_intended_owner(author: &str, owner_cache: &OwnerCache) -> bool {
-    owner_cache.get() == Some(author)
+fn answer_author_is_intended_owner(author: &str, intended_owner_pubkey: &str) -> bool {
+    author == intended_owner_pubkey
+}
+
+fn single_relationship_tag<'a>(event: &'a nostr::Event, name: &str) -> Option<&'a str> {
+    let mut tags = event
+        .tags
+        .iter()
+        .filter(|tag| tag.as_slice().first().is_some_and(|value| value == name));
+    let tag = tags.next()?;
+    if tags.next().is_some() {
+        return None;
+    }
+    tag.as_slice()
+        .get(1)
+        .map(String::as_str)
+        .filter(|value| !value.is_empty())
 }
 
 impl QuestionRuntime {
@@ -121,6 +137,7 @@ impl QuestionRuntime {
             event_id.clone(),
             PendingRequest {
                 channel_id,
+                intended_owner_pubkey: owner_pubkey.to_owned(),
                 sender: tx,
             },
         );
@@ -137,6 +154,7 @@ impl QuestionRuntime {
             self.publish_resolution(
                 pending.channel_id,
                 event_id,
+                &pending.intended_owner_pubkey,
                 UserInputResolutionOutcome::Cancelled,
             )
             .await;
@@ -154,6 +172,7 @@ impl QuestionRuntime {
             self.publish_resolution(
                 pending.channel_id,
                 &event_id,
+                &pending.intended_owner_pubkey,
                 UserInputResolutionOutcome::Cancelled,
             )
             .await;
@@ -164,6 +183,7 @@ impl QuestionRuntime {
         &self,
         channel_id: Uuid,
         request_event_id: &str,
+        intended_owner_pubkey: &str,
         outcome: UserInputResolutionOutcome,
     ) {
         let content = match serde_json::to_string(&UserInputResolved {
@@ -179,6 +199,7 @@ impl QuestionRuntime {
         let builder = match buzz_sdk::build_agent_user_input_resolved(
             channel_id,
             request_event_id,
+            intended_owner_pubkey,
             &content,
         ) {
             Ok(builder) => builder,
@@ -203,18 +224,40 @@ impl QuestionRuntime {
         if buzz_event.event.kind.as_u16() as u32 != KIND_AGENT_USER_INPUT_ANSWER {
             return;
         }
-        let request_event_id = buzz_event
-            .event
-            .tags
-            .iter()
-            .find(|tag| {
-                tag.kind() == TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::E))
-            })
-            .and_then(|tag| tag.content().map(str::to_owned));
-        let Some(request_event_id) = request_event_id else {
+        let Some(request_event_id) = single_relationship_tag(&buzz_event.event, "e") else {
+            tracing::warn!("ignoring user-input answer without exactly one request relationship");
             return;
         };
-        if !answer_author_is_intended_owner(&buzz_event.event.pubkey.to_hex(), &self.owner_cache) {
+        let pending_authority = self
+            .pending
+            .lock()
+            .await
+            .get(request_event_id)
+            .map(|pending| (pending.channel_id, pending.intended_owner_pubkey.clone()));
+        let Some((pending_channel_id, intended_owner_pubkey)) = pending_authority else {
+            tracing::debug!(request_event_id, "ignoring late user-input answer");
+            return;
+        };
+        let declared_channel = single_relationship_tag(&buzz_event.event, "h");
+        if buzz_event.channel_id != pending_channel_id
+            || declared_channel != Some(pending_channel_id.to_string().as_str())
+        {
+            tracing::warn!(request_event_id, "ignoring cross-channel user-input answer");
+            return;
+        }
+        let requesting_agent_pubkey = self.keys.public_key().to_hex();
+        if single_relationship_tag(&buzz_event.event, "p") != Some(requesting_agent_pubkey.as_str())
+        {
+            tracing::warn!(
+                request_event_id,
+                "ignoring user-input answer with the wrong requesting-agent relationship"
+            );
+            return;
+        }
+        if !answer_author_is_intended_owner(
+            &buzz_event.event.pubkey.to_hex(),
+            &intended_owner_pubkey,
+        ) {
             tracing::warn!(
                 author = %buzz_event.event.pubkey,
                 request_event_id,
@@ -229,13 +272,14 @@ impl QuestionRuntime {
                 return;
             }
         };
-        let pending = self.pending.lock().await.remove(&request_event_id);
+        let pending = self.pending.lock().await.remove(request_event_id);
         if let Some(pending) = pending {
             let declined = answers.values().all(Option::is_none);
             let _ = pending.sender.send(Some(answers));
             self.publish_resolution(
                 pending.channel_id,
-                &request_event_id,
+                request_event_id,
+                &pending.intended_owner_pubkey,
                 if declined {
                     UserInputResolutionOutcome::Declined
                 } else {
@@ -486,11 +530,10 @@ mod tests {
 
     #[test]
     fn user_input_answer_requires_the_intended_owner() {
-        let owner_cache = OwnerCache::new(Some("owner".to_string()));
-        assert!(answer_author_is_intended_owner("owner", &owner_cache));
+        assert!(answer_author_is_intended_owner("owner", "owner"));
         assert!(!answer_author_is_intended_owner(
             "same-owner-sibling",
-            &owner_cache
+            "owner"
         ));
     }
 
@@ -630,16 +673,17 @@ mod tests {
     async fn ignores_non_owner_then_accepts_first_owner_answer() {
         let channel_id = Uuid::new_v4();
         let owner = Keys::generate();
+        let agent = Keys::generate();
         let stranger = Keys::generate();
         let (publisher, mut published) = RelayEventPublisher::test_pair();
         let runtime = QuestionRuntime::new(
             publisher,
-            owner.clone(),
+            agent.clone(),
             Arc::new(crate::OwnerCache::new(Some(owner.public_key().to_hex()))),
             RestClient {
                 http: reqwest::Client::new(),
                 base_url: "http://127.0.0.1:0".to_string(),
-                keys: owner.clone(),
+                keys: agent,
                 auth_tag_json: None,
             },
         );
@@ -667,12 +711,17 @@ mod tests {
             serde_json::from_str(&request.content).expect("request contract");
         assert_eq!(request_content.message.as_deref(), Some("Choose"));
         assert_eq!(request_content.tool_call_id.as_deref(), Some("tool"));
+        let requesting_agent = request.pubkey.to_hex();
 
-        let stranger_answer =
-            buzz_sdk::build_agent_user_input_answer(channel_id, &event_id, r#"{"q0":"stranger"}"#)
-                .expect("answer builder")
-                .sign_with_keys(&stranger)
-                .expect("signed stranger answer");
+        let stranger_answer = buzz_sdk::build_agent_user_input_answer(
+            channel_id,
+            &event_id,
+            &requesting_agent,
+            r#"{"q0":"stranger"}"#,
+        )
+        .expect("answer builder")
+        .sign_with_keys(&stranger)
+        .expect("signed stranger answer");
         runtime
             .handle_event(&BuzzEvent {
                 channel_id,
@@ -685,11 +734,36 @@ mod tests {
                 .is_err()
         );
 
-        let owner_answer =
-            buzz_sdk::build_agent_user_input_answer(channel_id, &event_id, r#"{"q0":"owner"}"#)
-                .expect("answer builder")
-                .sign_with_keys(&owner)
-                .expect("signed owner answer");
+        let wrong_relation_answer = buzz_sdk::build_agent_user_input_answer(
+            channel_id,
+            &event_id,
+            &stranger.public_key().to_hex(),
+            r#"{"q0":"wrong-relation"}"#,
+        )
+        .expect("answer builder")
+        .sign_with_keys(&owner)
+        .expect("signed owner answer");
+        runtime
+            .handle_event(&BuzzEvent {
+                channel_id,
+                event: wrong_relation_answer,
+            })
+            .await;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), &mut receiver)
+                .await
+                .is_err()
+        );
+
+        let owner_answer = buzz_sdk::build_agent_user_input_answer(
+            channel_id,
+            &event_id,
+            &requesting_agent,
+            r#"{"q0":"owner"}"#,
+        )
+        .expect("answer builder")
+        .sign_with_keys(&owner)
+        .expect("signed owner answer");
         runtime
             .handle_event(&BuzzEvent {
                 channel_id,
@@ -698,11 +772,15 @@ mod tests {
             .await;
         assert!(receiver.await.expect("owner answer received").is_some());
 
-        let late_answer =
-            buzz_sdk::build_agent_user_input_answer(channel_id, &event_id, r#"{"q0":"late"}"#)
-                .expect("answer builder")
-                .sign_with_keys(&owner)
-                .expect("signed late answer");
+        let late_answer = buzz_sdk::build_agent_user_input_answer(
+            channel_id,
+            &event_id,
+            &requesting_agent,
+            r#"{"q0":"late"}"#,
+        )
+        .expect("answer builder")
+        .sign_with_keys(&owner)
+        .expect("signed late answer");
         runtime
             .handle_event(&BuzzEvent {
                 channel_id,
@@ -723,14 +801,15 @@ mod tests {
             oneshot::Receiver<Option<UserInputAnswers>>,
         ) {
             let (publisher, published) = RelayEventPublisher::test_pair();
+            let agent = Keys::generate();
             let runtime = QuestionRuntime::new(
                 publisher,
-                owner.clone(),
+                agent.clone(),
                 Arc::new(crate::OwnerCache::new(Some(owner.public_key().to_hex()))),
                 RestClient {
                     http: reqwest::Client::new(),
                     base_url: "http://127.0.0.1:0".to_string(),
-                    keys: owner.clone(),
+                    keys: agent,
                     auth_tag_json: None,
                 },
             );
@@ -762,6 +841,12 @@ mod tests {
                 event.kind.as_u16() as u32,
                 buzz_core::kind::KIND_AGENT_USER_INPUT_RESOLVED
             );
+            let p_tag_count = event
+                .tags
+                .iter()
+                .filter(|tag| tag.as_slice().first().is_some_and(|value| value == "p"))
+                .count();
+            assert_eq!(p_tag_count, 1, "resolution tags: {:?}", event.tags);
             serde_json::from_str(&event.content).expect("resolution contract")
         }
 
@@ -770,11 +855,15 @@ mod tests {
 
         let (runtime, mut published, event_id, receiver) =
             publish_request(channel_id, &owner).await;
-        let answer =
-            buzz_sdk::build_agent_user_input_answer(channel_id, &event_id, r#"{"q0":"answer"}"#)
-                .expect("answer builder")
-                .sign_with_keys(&owner)
-                .expect("answer signature");
+        let answer = buzz_sdk::build_agent_user_input_answer(
+            channel_id,
+            &event_id,
+            &runtime.keys.public_key().to_hex(),
+            r#"{"q0":"answer"}"#,
+        )
+        .expect("answer builder")
+        .sign_with_keys(&owner)
+        .expect("answer signature");
         runtime
             .handle_event(&BuzzEvent {
                 channel_id,
@@ -789,11 +878,15 @@ mod tests {
 
         let (runtime, mut published, event_id, receiver) =
             publish_request(channel_id, &owner).await;
-        let decline =
-            buzz_sdk::build_agent_user_input_answer(channel_id, &event_id, r#"{"q0":null}"#)
-                .expect("answer builder")
-                .sign_with_keys(&owner)
-                .expect("answer signature");
+        let decline = buzz_sdk::build_agent_user_input_answer(
+            channel_id,
+            &event_id,
+            &runtime.keys.public_key().to_hex(),
+            r#"{"q0":null}"#,
+        )
+        .expect("answer builder")
+        .sign_with_keys(&owner)
+        .expect("answer signature");
         runtime
             .handle_event(&BuzzEvent {
                 channel_id,
