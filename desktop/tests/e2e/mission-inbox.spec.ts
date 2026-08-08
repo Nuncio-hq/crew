@@ -307,21 +307,6 @@ test.describe("mission inbox", () => {
     await card.getByTestId("agent-receipt-request-changes").click();
     await expect(page.getByTestId("reply-target")).toBeVisible();
     await card.getByTestId("agent-receipt-reviewed").click();
-    await page.evaluate(
-      ({ currentPubkey, receiptId }) => {
-        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
-          channelName: "general",
-          content: "✅",
-          kind: 7,
-          parentEventId: receiptId,
-          pubkey: currentPubkey,
-        });
-      },
-      {
-        currentPubkey: TEST_IDENTITIES.tyler.pubkey,
-        receiptId: RECEIPT_ID,
-      },
-    );
     await page.getByRole("button", { name: "Inbox" }).click();
     await expect(page.getByTestId("mission-inbox-sections")).toBeVisible();
     await expect(ready).not.toContainText("Recovery slice completed");
