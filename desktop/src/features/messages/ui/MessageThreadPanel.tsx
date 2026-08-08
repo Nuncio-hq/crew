@@ -13,11 +13,13 @@ import {
 import type { ImetaMedia } from "@/features/messages/lib/imetaMediaMarkdown";
 import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import type { TimelineMessage } from "@/features/messages/types";
+import type { VideoReviewPresentation } from "@/features/messages/lib/videoReviewContext";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { Channel } from "@/shared/api/types";
 import type { ThreadPanelLayoutProps } from "@/features/channels/lib/threadPanelLayout";
 import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
 import { useIsThreadPanelOverlay } from "@/shared/hooks/use-mobile";
+import { VideoReviewNavigationProvider } from "@/shared/ui/VideoReviewNavigation";
 import { cn } from "@/shared/lib/cn";
 import { AuxiliaryPanel } from "@/shared/layout/AuxiliaryPanel";
 import { AuxiliaryPanelBody } from "@/shared/layout/AuxiliaryPanel";
@@ -34,11 +36,10 @@ import {
 } from "@/features/messages/lib/messageThreadPanelLayout";
 import { Button } from "@/shared/ui/button";
 import { Separator } from "@/shared/ui/separator";
-import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import { ComposerActivityAccessory } from "./ComposerActivityAccessory";
 import { ComposerDockBackdrop } from "./ComposerDockBackdrop";
 import { MessageComposer } from "./MessageComposer";
-import { MessageThreadPanelHead } from "./message-thread-panel-head";
+import { HuddleTranscriptIntro } from "@/features/huddle/components/HuddleTranscriptIntro";
 import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
@@ -91,6 +92,8 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
     mediaTags?: string[][],
     mentionPubkeys?: string[],
     removedMentionPubkeys?: string[],
+    suppressLinkPreviews?: boolean,
+    eventId?: string,
   ) => Promise<void>;
   onMarkUnread?: (message: TimelineMessage) => void;
   onMarkRead?: (message: TimelineMessage) => void;
@@ -126,7 +129,7 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
   threadUnreadCount?: number;
   threadReplyUnreadCounts?: ReadonlyMap<string, number>;
   threadTypingPubkeys: string[];
-  videoReviewContextsByMessageId?: ReadonlyMap<string, VideoReviewContext>;
+  videoReviewPresentation?: VideoReviewPresentation;
   activityAccessoryContent?: React.ReactNode;
   activityAccessoryVisible: boolean;
   widthPx: number;
@@ -243,7 +246,7 @@ export function MessageThreadPanel({
   scrollTargetId,
   scrollTargetHighlights = true,
   threadHead,
-  videoReviewContextsByMessageId,
+  videoReviewPresentation,
   threadReplies,
   threadRepliesPending = false,
   threadUnreadCount,
@@ -594,28 +597,66 @@ export function MessageThreadPanel({
           breadcrumb={breadcrumb}
           onOpenAncestorThread={onOpenAncestorThread}
         />
-        <MessageThreadPanelHead
-          channelId={channelId}
-          currentPubkey={currentPubkey}
-          huddleMemberPubkeys={huddleMemberPubkeys}
-          huddleMemberPubkeysPending={huddleMemberPubkeysPending}
-          isFollowingThread={isFollowingThread}
-          isHuddleTranscript={isHuddleTranscript}
-          isMessageUnreadById={isMessageUnreadById}
-          onDelete={onDelete}
-          onEdit={onEdit}
-          onFollowThread={onFollowThread}
-          onMarkRead={onMarkRead}
-          onMarkUnread={onMarkUnread}
-          onToggleReaction={onToggleReaction}
-          onUnfollowThread={onUnfollowThread}
-          profiles={profiles}
-          shouldShowThreadBranchGuides={shouldShowThreadBranchGuides}
-          threadHead={threadHead}
-          videoReviewContext={videoReviewContextsByMessageId?.get(
-            threadHead.id,
-          )}
-        />
+        {isHuddleTranscript ? (
+          <div className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-2 pt-4")}>
+            <HuddleTranscriptIntro />
+          </div>
+        ) : (
+          <div
+            className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-1 pt-0")}
+            data-testid="message-thread-head"
+          >
+            <div className="rounded-2xl">
+              <MessageRow
+                actionBarPlacement="inside"
+                channelId={channelId}
+                huddleMemberPubkeys={huddleMemberPubkeys}
+                huddleMemberPubkeysPending={huddleMemberPubkeysPending}
+                isFollowingThread={isFollowingThread}
+                isUnread={isMessageUnreadById?.(threadHead.id)}
+                layoutVariant="thread-reply"
+                message={threadHead}
+                onDelete={
+                  onDelete &&
+                  canManageMessageForCurrentUser(
+                    threadHead,
+                    currentPubkey,
+                    profiles,
+                  )
+                    ? onDelete
+                    : undefined
+                }
+                onEdit={
+                  onEdit &&
+                  canManageMessageForCurrentUser(
+                    threadHead,
+                    currentPubkey,
+                    profiles,
+                  )
+                    ? onEdit
+                    : undefined
+                }
+                onFollowThread={
+                  onFollowThread ? (_msg) => onFollowThread() : undefined
+                }
+                onMarkUnread={onMarkUnread}
+                onMarkRead={onMarkRead}
+                onToggleReaction={onToggleReaction}
+                onUnfollowThread={
+                  onUnfollowThread ? (_msg) => onUnfollowThread() : undefined
+                }
+                profiles={profiles}
+                showDepthGuides={shouldShowThreadBranchGuides}
+                videoReviewCommentRootId={videoReviewPresentation?.commentRootIdsByMessageId.get(
+                  threadHead.id,
+                )}
+                videoReviewContext={videoReviewPresentation?.contextsByMessageId.get(
+                  threadHead.id,
+                )}
+              />
+            </div>
+          </div>
+        )}
 
         {showThreadHeadDivider ? (
           <div
@@ -769,7 +810,10 @@ export function MessageThreadPanel({
                         onToggleReaction={onToggleReaction}
                         profiles={profiles}
                         showDepthGuides={shouldShowThreadBranchGuides}
-                        videoReviewContext={videoReviewContextsByMessageId?.get(
+                        videoReviewCommentRootId={videoReviewPresentation?.commentRootIdsByMessageId.get(
+                          entry.message.id,
+                        )}
+                        videoReviewContext={videoReviewPresentation?.contextsByMessageId.get(
                           entry.message.id,
                         )}
                       />
@@ -958,40 +1002,42 @@ export function MessageThreadPanel({
   );
 
   return (
-    <AuxiliaryPanel
-      className="relative"
-      // The focus drawer animates itself; a second slide here would compound.
-      enterMotion={!isFocusMode}
-      footer={threadFooter}
-      header={
-        isHuddleTranscript ? undefined : (
-          <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
-        )
-      }
-      isSinglePanelView={isSinglePanelView}
-      layout={layout}
-      onClose={onClose}
-      testId="message-thread-panel"
-      transparentChrome={transparentChrome}
-      widthPx={widthPx}
-    >
-      {/* Sticky status bar lives outside the scroll region so expand/collapse
-          cannot fight useAnchoredScroll's ResizeObserver. Sibling padded
-          column keeps docked header chrome from stealing Workspace clicks. */}
-      <div
-        className={cn(
-          "flex min-h-0 flex-1 flex-col",
-          getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
-        )}
+    <VideoReviewNavigationProvider>
+      <AuxiliaryPanel
+        className="relative"
+        // The focus drawer animates itself; a second slide here would compound.
+        enterMotion={!isFocusMode}
+        footer={threadFooter}
+        header={
+          isHuddleTranscript ? undefined : (
+            <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
+          )
+        }
+        isSinglePanelView={isSinglePanelView}
+        layout={layout}
+        onClose={onClose}
+        testId="message-thread-panel"
+        transparentChrome={transparentChrome}
+        widthPx={widthPx}
       >
-        <ProjectThreadWorkspacePanel
-          channelId={channelId}
-          isFocusMode={isFocusMode}
-          profiles={profiles}
-          model={projectThreadWorkspaceModel}
-        />
-        {threadScrollRegion}
-      </div>
-    </AuxiliaryPanel>
+        {/* Sticky status bar lives outside the scroll region so expand/collapse
+            cannot fight useAnchoredScroll's ResizeObserver. Sibling padded
+            column keeps docked header chrome from stealing Workspace clicks. */}
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 flex-col",
+            getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
+          )}
+        >
+          <ProjectThreadWorkspacePanel
+            channelId={channelId}
+            isFocusMode={isFocusMode}
+            profiles={profiles}
+            model={projectThreadWorkspaceModel}
+          />
+          {threadScrollRegion}
+        </div>
+      </AuxiliaryPanel>
+    </VideoReviewNavigationProvider>
   );
 }

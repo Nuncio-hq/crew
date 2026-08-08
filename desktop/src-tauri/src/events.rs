@@ -8,15 +8,12 @@
 //!
 //! Each function validates inputs and returns a nostr::EventBuilder.
 //! Signing and submission happen in relay::submit_event.
-
 #[path = "event_mention_tags.rs"]
 mod event_mention_tags;
-
 use buzz_core_pkg::kind::{KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST};
 use event_mention_tags::{mention_reference_tags, mention_tags, removed_mention_tags};
 use nostr::{EventBuilder, EventId, Kind, Tag};
 use uuid::Uuid;
-
 // ── Constants ────────────────────────────────────────────────────────────────
 
 /// Maximum content size — matches buzz-sdk (64 KiB).
@@ -148,7 +145,6 @@ pub fn build_leave(channel_id: Uuid) -> Result<EventBuilder, String> {
 }
 
 /// Kind 9002 — update channel name/description/visibility/ttl.
-///
 /// `ttl`: outer `None` leaves it unchanged; `Some(Some(secs))` sets the
 /// ephemeral timeout; `Some(None)` clears it (emits `["ttl", ""]`).
 pub fn build_update_channel(
@@ -263,6 +259,7 @@ pub fn build_remove_member(channel_id: Uuid, target_pubkey: &str) -> Result<Even
 // ── Messages ─────────────────────────────────────────────────────────────────
 
 /// Kind 9 — stream message.
+#[allow(clippy::too_many_arguments)]
 pub fn build_message(
     channel_id: Uuid,
     content: &str,
@@ -271,6 +268,8 @@ pub fn build_message(
     media_tags: &[Vec<String>],
     custom_emoji_tags: &[Vec<String>],
     mention_ref_tags: &[Vec<String>],
+    link_preview_tags: &[Vec<String>],
+    relay_base: &str,
 ) -> Result<EventBuilder, String> {
     build_message_with_client_tags(
         channel_id,
@@ -280,6 +279,8 @@ pub fn build_message(
         media_tags,
         custom_emoji_tags,
         mention_ref_tags,
+        link_preview_tags,
+        relay_base,
         &[],
     )
 }
@@ -298,6 +299,8 @@ pub fn build_message_with_client_tags(
     media_tags: &[Vec<String>],
     custom_emoji_tags: &[Vec<String>],
     mention_ref_tags: &[Vec<String>],
+    link_preview_tags: &[Vec<String>],
+    relay_base: &str,
     client_tags: &[Vec<String>],
 ) -> Result<EventBuilder, String> {
     check_content(content)?;
@@ -309,6 +312,7 @@ pub fn build_message_with_client_tags(
     imeta_tags(media_tags, &mut tags)?;
     emoji_tags(custom_emoji_tags, &mut tags)?;
     mention_reference_tags(mention_ref_tags, &mut tags)?;
+    crate::link_preview_tags::append(link_preview_tags, relay_base, &mut tags)?;
     append_client_tags(client_tags, &mut tags)?;
     Ok(EventBuilder::new(Kind::Custom(9), content).tags(tags))
 }
@@ -364,22 +368,9 @@ pub fn build_forum_comment(
     Ok(EventBuilder::new(Kind::Custom(45003), content).tags(tags))
 }
 
-/// Kind 40003 — edit a message. Carries the full new content AND a fresh
-/// imeta tag set; the receiver overlays the imeta tags onto the original
-/// event so the rendered message reflects exactly the edited state. NIP-30
-/// custom-emoji tags ride along the same way so an edited body's `:shortcode:`s
-/// stay resolvable (the send path attaches these too).
-///
-/// `mentions` carries the pubkeys of mentions that are *newly added* by this
-/// edit (the caller diffs the edited body against the original). Only those get
-/// a `p` tag so the newly-mentioned party is notified/woken, while a typo-fix
-/// edit that leaves the mention set unchanged emits no `p` tags and never
-/// re-wakes anyone. This mirrors the send path's `mention_tags` (dedup +
-/// lowercase); the receiver overlays these onto the original event's audience.
-///
-/// `removed_mentions` is the complementary set — mentions the edit drops —
-/// emitted as `["p-removed", <hex>]` so the agent harness can undo a still-
-/// queued request without reading the body.
+/// Kind 40003 — edit a message with full content, media, emoji, mentions,
+/// optional `p-removed` undo tags, and optional monotonic link-preview suppression.
+#[allow(clippy::too_many_arguments)]
 pub fn build_message_edit(
     channel_id: Uuid,
     target_event_id: EventId,
@@ -388,6 +379,7 @@ pub fn build_message_edit(
     custom_emoji_tags: &[Vec<String>],
     mentions: &[&str],
     removed_mentions: &[&str],
+    suppress_link_previews: bool,
 ) -> Result<EventBuilder, String> {
     check_content(content)?;
     let mut tags = vec![
@@ -398,6 +390,9 @@ pub fn build_message_edit(
     tags.extend(removed_mention_tags(removed_mentions)?);
     imeta_tags(media_tags, &mut tags)?;
     emoji_tags(custom_emoji_tags, &mut tags)?;
+    if suppress_link_previews {
+        tags.push(tag(vec!["link-preview", "none"])?);
+    }
     Ok(EventBuilder::new(Kind::Custom(40003), content).tags(tags))
 }
 
@@ -903,5 +898,81 @@ mod tests {
         assert_eq!(tags[2], vec!["reason", "returned"]);
         assert_eq!(tags.len(), 3, "self unarchive must not carry auth tag");
         assert_eq!(event.pubkey.to_hex(), TARGET_HEX);
+    }
+
+    // ── build_message_edit `p`-tag emission (lane 8ace8eed) ──────────────
+    //
+    // The composer diffs the edited body's mentions against the original and
+    // hands `build_message_edit` only the *newly added* pubkeys. These tests
+    // pin the builder's contract given that contract: emit a `p` per added
+    // mention (deduped, lowercased), and none when the added set is empty
+    // (typo-fix edit) — so an unchanged mention set re-wakes nobody.
+
+    const CH_ID: &str = "11111111-1111-4111-8111-111111111111";
+    const ALICE_HEX: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    const BOB_HEX: &str = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+
+    fn edit_tags(mentions: &[&str]) -> Vec<Vec<String>> {
+        let channel = Uuid::parse_str(CH_ID).unwrap();
+        let target =
+            EventId::from_hex("d24da132115ca0a46233cf4c2ad8338fbf914250cbcaa9181a6dd59533cb5ac1")
+                .unwrap();
+        let builder = build_message_edit(
+            channel,
+            target,
+            "hi @alice",
+            &[],
+            &[],
+            mentions,
+            &[],
+            false,
+        )
+        .unwrap();
+        let secret = nostr::SecretKey::from_hex(
+            "0000000000000000000000000000000000000000000000000000000000000003",
+        )
+        .unwrap();
+        let event = builder.sign_with_keys(&Keys::new(secret)).unwrap();
+        event.tags.iter().map(|t| t.as_slice().to_vec()).collect()
+    }
+
+    #[test]
+    fn edit_with_added_mention_emits_p_tag() {
+        let tags = edit_tags(&[ALICE_HEX]);
+        assert_eq!(tags[0][0], "h");
+        assert_eq!(tags[1][0], "e");
+        // The `p` tag rides right after the `e` tag (insertion order).
+        assert_eq!(tags[2], vec!["p".to_string(), ALICE_HEX.to_string()]);
+    }
+
+    #[test]
+    fn edit_with_no_added_mentions_emits_no_p_tag() {
+        // Typo-fix edit: mention set unchanged, so the composer passes `&[]`.
+        // The edit event must carry no `p` tag and re-wake nobody.
+        let tags = edit_tags(&[]);
+        assert!(
+            !tags
+                .iter()
+                .any(|t| t.first().map(String::as_str) == Some("p")),
+            "unchanged-mention edit must not emit any `p` tag, got {tags:?}"
+        );
+    }
+
+    #[test]
+    fn edit_mentions_are_deduped_and_lowercased() {
+        let alice_upper = ALICE_HEX.to_ascii_uppercase();
+        let tags = edit_tags(&[ALICE_HEX, &alice_upper, BOB_HEX]);
+        let p_tags: Vec<&Vec<String>> = tags
+            .iter()
+            .filter(|t| t.first().map(String::as_str) == Some("p"))
+            .collect();
+        // ALICE appears twice (mixed case) but collapses to one lowercase tag.
+        assert_eq!(
+            p_tags.len(),
+            2,
+            "duplicate mention must collapse, got {p_tags:?}"
+        );
+        assert_eq!(p_tags[0], &vec!["p".to_string(), ALICE_HEX.to_string()]);
+        assert_eq!(p_tags[1], &vec!["p".to_string(), BOB_HEX.to_string()]);
     }
 }

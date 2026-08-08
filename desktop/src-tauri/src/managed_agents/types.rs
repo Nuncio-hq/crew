@@ -672,7 +672,11 @@ pub struct AcpRuntimeCatalogEntry {
     pub definition_env: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_arg: Option<String>, // KnownAcpRuntime::profile_arg (Hermes: "-p")
-    #[serde(default)] pub provider_locked: bool,
+    #[serde(default)]
+    pub provider_locked: bool,
+    /// Spawn-time parallelism cap; absent for uncapped harnesses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_parallelism: Option<u32>,
 }
 
 /// Result of a single install step (CLI or adapter).
