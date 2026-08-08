@@ -23,8 +23,10 @@ import {
   injectObserverEventsForE2E,
   _testRegisterKnownAgents,
   resetAgentObserverLiveEventsForE2E,
+  setObserverConnectionStateForE2E,
   syncAgentObserverEvents,
 } from "@/features/agents/observerRelayStore";
+import type { ConnectionState as ObserverConnectionState } from "@/features/agents/ui/agentSessionTypes";
 import {
   CUSTOM_EMOJI_SET_D_TAG,
   KIND_EMOJI_SET,
@@ -1131,6 +1133,9 @@ declare global {
       agentPubkey: string;
       events: Parameters<typeof injectObserverEventsForE2E>[1];
     }) => void;
+    __BUZZ_E2E_SET_OBSERVER_CONNECTION_STATE__?: (
+      state: ObserverConnectionState,
+    ) => void;
     __BUZZ_E2E_EMIT_MOCK_USER_INPUT__?: (input: {
       channelName: string;
       requestId?: string;
@@ -10205,6 +10210,9 @@ export function maybeInstallE2eTauriMocks() {
   window.__BUZZ_E2E_INJECT_OBSERVER_EVENTS__ = ({ agentPubkey, events }) => {
     injectObserverEventsForE2E(agentPubkey, events);
     syncAgentTurnsFromEvents(agentPubkey, events);
+  };
+  window.__BUZZ_E2E_SET_OBSERVER_CONNECTION_STATE__ = (state) => {
+    setObserverConnectionStateForE2E(state);
   };
   window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__ = ({
     channelName,

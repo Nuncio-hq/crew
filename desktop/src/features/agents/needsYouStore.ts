@@ -84,12 +84,6 @@ function prune(now: number): boolean {
       changed = true;
     }
   }
-  for (const [id, request] of userInputRequests) {
-    if (now - request.createdAt >= NEEDS_YOU_TTL_MS) {
-      userInputRequests.delete(id);
-      changed = true;
-    }
-  }
   return changed;
 }
 
@@ -99,7 +93,7 @@ function scheduleExpiry() {
     expiryTimer = null;
   }
   const nextExpiry = Math.min(
-    ...[...requests.values(), ...userInputRequests.values()].map(
+    ...[...requests.values()].map(
       (request) => request.createdAt + NEEDS_YOU_TTL_MS,
     ),
   );

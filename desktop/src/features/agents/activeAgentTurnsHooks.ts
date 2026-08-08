@@ -4,15 +4,17 @@ import {
   getActiveAgentsForConversation,
   getActiveTurnControlTargetsForAgent,
   getActiveTurnsByChannel,
-  getActiveTurnsByConversation,
   getActiveTurnsForAgent,
   subscribeActiveAgentTurns,
   syncActiveAgentTurnsFromObserver,
   type ActiveChannelTurnSummary,
-  type ActiveConversationTurnSummary,
   type ActiveTurnControlTarget,
   type ActiveTurnSummary,
 } from "@/features/agents/activeAgentTurnsStore";
+import {
+  getActiveTurnsByConversation,
+  type ActiveConversationTurnSummary,
+} from "@/features/agents/activeConversationTurns";
 import { subscribeAgentObserverStore } from "@/features/agents/observerRelayStore";
 
 /**

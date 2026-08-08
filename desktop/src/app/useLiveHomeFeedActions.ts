@@ -8,6 +8,11 @@ import {
   KIND_APPROVAL_GRANT,
   KIND_APPROVAL_DENY,
   KIND_EVENT_REMINDER,
+  KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_ANSWER,
+  KIND_AGENT_USER_INPUT_RESOLVED,
+  KIND_AGENT_RECEIPT,
+  KIND_REACTION,
 } from "@/shared/constants/kinds";
 import {
   ingestApprovalRequestEvent,
@@ -23,6 +28,12 @@ import {
 } from "@/features/channels/lib/userInput";
 import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
 import { buildChannelUserInputFilter } from "@/shared/api/relayChannelFilters";
+import {
+  getAgentReceipts,
+  ingestAgentReceiptEvent,
+  ingestAgentReceiptReviewEvent,
+} from "@/features/agents/agentReceiptStore";
+import type { RelayEvent } from "@/shared/api/types";
 
 const LIVE_HOME_FEED_RETRY_BASE_MS = 1_000;
 const LIVE_HOME_FEED_RETRY_MAX_MS = 30_000;
@@ -67,6 +78,83 @@ export function useLiveHomeFeedActions(
     const disposeAll = (currentDisposers: Array<() => Promise<void>>) => {
       void Promise.allSettled(currentDisposers.map((dispose) => dispose()));
     };
+    const handleUserInputEvent = (
+      event: RelayEvent,
+      fallbackChannelId: string,
+    ) => {
+      const request = parseUserInputRequest(event);
+      if (request) {
+        const resolvedChannelId = request.channel_id || fallbackChannelId;
+        const rootEventId = deriveUserInputRootEventId(event);
+        const conversationId = deriveAgentConversationIdOrNull(
+          resolvedChannelId,
+          rootEventId,
+        );
+        if (conversationId) {
+          ingestUserInputRequest({
+            id: event.id,
+            channelId: resolvedChannelId,
+            rootEventId,
+            conversationId,
+            agentPubkey: event.pubkey,
+            createdAt: event.created_at * 1_000,
+          });
+        }
+        return;
+      }
+      const requestId =
+        getAnswerRequestId(event) ?? getResolvedRequestId(event);
+      if (requestId) resolveUserInputRequest(requestId);
+    };
+    const handleReceiptEvent = (event: RelayEvent) => {
+      if (event.kind === KIND_AGENT_RECEIPT) {
+        ingestAgentReceiptEvent(event);
+      } else if (event.kind === KIND_REACTION) {
+        ingestAgentReceiptReviewEvent(event, normalizedPubkey);
+      }
+    };
+    const hydrateDurableActions = async () => {
+      if (subscribedChannelIds.length === 0) return;
+      const [userInputEvents, receiptEvents] = await Promise.all([
+        relayClient.fetchEvents({
+          kinds: [
+            KIND_AGENT_USER_INPUT_REQUESTED,
+            KIND_AGENT_USER_INPUT_ANSWER,
+            KIND_AGENT_USER_INPUT_RESOLVED,
+          ],
+          "#h": subscribedChannelIds,
+          limit: 1_000,
+        }),
+        relayClient.fetchEvents({
+          kinds: [KIND_AGENT_RECEIPT],
+          "#h": subscribedChannelIds,
+          limit: 500,
+        }),
+      ]);
+      for (const event of userInputEvents.sort(
+        (a, b) => a.created_at - b.created_at,
+      )) {
+        handleUserInputEvent(
+          event,
+          event.tags.find((tag) => tag[0] === "h")?.[1] ?? "",
+        );
+      }
+      for (const event of receiptEvents) ingestAgentReceiptEvent(event);
+
+      const receiptIds = getAgentReceipts().map((receipt) => receipt.id);
+      if (receiptIds.length > 0) {
+        const reviewEvents = await relayClient.fetchEvents({
+          authors: [normalizedPubkey],
+          kinds: [KIND_REACTION],
+          "#e": receiptIds,
+          limit: Math.min(1_000, receiptIds.length * 4),
+        });
+        for (const event of reviewEvents) {
+          ingestAgentReceiptReviewEvent(event, normalizedPubkey);
+        }
+      }
+      handleLiveHomeFeedEvent();
+    };
     const scheduleRetry = () => {
       if (isCancelled) {
         return;
@@ -88,29 +176,21 @@ export function useLiveHomeFeedActions(
         relayClient.subscribeLive(
           buildChannelUserInputFilter(channelId, 50, since),
           (event) => {
-            const request = parseUserInputRequest(event);
-            if (request) {
-              const resolvedChannelId = request.channel_id || channelId;
-              const rootEventId = deriveUserInputRootEventId(event);
-              const conversationId = deriveAgentConversationIdOrNull(
-                resolvedChannelId,
-                rootEventId,
-              );
-              if (conversationId) {
-                ingestUserInputRequest({
-                  id: event.id,
-                  channelId: resolvedChannelId,
-                  rootEventId,
-                  conversationId,
-                  agentPubkey: event.pubkey,
-                  createdAt: event.created_at * 1_000,
-                });
-              }
-            } else {
-              const requestId =
-                getAnswerRequestId(event) ?? getResolvedRequestId(event);
-              if (requestId) resolveUserInputRequest(requestId);
-            }
+            handleUserInputEvent(event, channelId);
+            handleLiveHomeFeedEvent();
+          },
+        ),
+      );
+      const receiptSubscriptions = subscribedChannelIds.map((channelId) =>
+        relayClient.subscribeLive(
+          {
+            kinds: [KIND_AGENT_RECEIPT, KIND_REACTION],
+            "#h": [channelId],
+            limit: 0,
+            since,
+          },
+          (event) => {
+            handleReceiptEvent(event);
             handleLiveHomeFeedEvent();
           },
         ),
@@ -118,6 +198,7 @@ export function useLiveHomeFeedActions(
 
       void Promise.allSettled([
         ...userInputSubscriptions,
+        ...receiptSubscriptions,
         relayClient.subscribeLive(
           {
             kinds: [KIND_APPROVAL_REQUEST],
@@ -186,6 +267,9 @@ export function useLiveHomeFeedActions(
       });
     };
 
+    void hydrateDurableActions().catch((error) => {
+      console.error("Failed to hydrate durable agent attention events", error);
+    });
     startSubscriptions();
 
     return () => {

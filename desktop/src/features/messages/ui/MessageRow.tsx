@@ -395,8 +395,24 @@ export const MessageRow = React.memo(
           );
         case KIND_AGENT_RECEIPT: {
           const receipt = parseAgentReceipt(message.body);
+          const reviewed = reactions.some(
+            (reaction) =>
+              reaction.emoji === "✅" && reaction.reactedByCurrentUser,
+          );
           return receipt ? (
-            <AgentReceiptCard receipt={receipt} />
+            <AgentReceiptCard
+              disabled={reactionPending}
+              onRequestChanges={onReply ? () => onReply(message) : undefined}
+              onReviewed={
+                canToggleReactions
+                  ? () => {
+                      void handleReactionSelect("✅");
+                    }
+                  : undefined
+              }
+              receipt={receipt}
+              reviewed={reviewed}
+            />
           ) : (
             renderMarkdownBody()
           );

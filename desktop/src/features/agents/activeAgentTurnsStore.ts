@@ -16,6 +16,17 @@ import {
   clearTurnRetrying,
   recordTurnRetrying,
 } from "@/features/agents/retryingTurnsStore";
+import {
+  applyObserverFrame,
+  createActiveTurn,
+  MAX_TERMINAL_TOMBSTONES,
+  MAX_TURNS_PER_AGENT,
+  PRUNE_INTERVAL_MS,
+  REMOVE_AFTER_MS,
+  shouldPausePrune,
+  triggeringEventIds,
+  type ActiveTurn,
+} from "@/features/agents/activeAgentTurnModel";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import type { ObserverEvent } from "./ui/agentSessionTypes";
 
@@ -34,43 +45,6 @@ export {
   useActiveAgentsForConversation,
   useActiveAgentTurnsBridge,
 } from "@/features/agents/activeAgentTurnsHooks";
-
-/** Harness emits turn_liveness every ~10s (BUZZ_ACP_TURN_LIVENESS_SECS). */
-const LIVENESS_INTERVAL_MS = 10_000;
-/** Remove a turn after this long with no activity. Tolerates one fully dropped
- * liveness ping plus slack before pruning a turn whose host died without
- * unwinding (kill -9 / crash) — the only case that reaches this bound, since
- * graceful exits clear via turn_completed and working turns refresh on every
- * stream event. Derived from the interval so it tracks if the interval changes. */
-const REMOVE_AFTER_MS = LIVENESS_INTERVAL_MS * 2.5;
-/** Pause pruning for an agent once ALL of its tracked turns have gone this long
- * without activity — the "all at once" signature of that agent's frame stream
- * being down. Set below REMOVE_AFTER_MS so the pause engages before the 25s
- * prune would wipe badges. */
-const FRAME_GAP_PAUSE_MS = LIVENESS_INTERVAL_MS * 2;
-/** A silent agent is treated as dead after this bounded prune pause. */
-const PRUNE_PAUSE_MAX_MS = 3 * 60_000;
-/** Maximum concurrent active turns tracked per agent. Purely an unbounded-growth
- * guard, so it sits at the harness's hard upper bound for parallel agent
- * subprocesses (`--agents` / `BUZZ_ACP_AGENTS` accepts `1..=32`) rather than the
- * Desktop default of 24 — any lower value silently evicts a live turn, dropping
- * its working badge. */
-const MAX_TURNS_PER_AGENT = 32;
-/** Cap on per-agent terminal tombstones (A's resurrection guard). Only the
- * most recently completed turns can be raced by a late liveness frame; older
- * ones are already below the watermark, so a small multiple of the live cap is
- * ample and keeps the map from growing across a long session. */
-const MAX_TERMINAL_TOMBSTONES = MAX_TURNS_PER_AGENT * 4;
-/** Interval for pruning stale/expired turns. */
-const PRUNE_INTERVAL_MS = 5_000;
-
-type ActiveTurn = {
-  turnId: string;
-  channelId: string;
-  conversationId: string;
-  startedAt: number;
-  lastActivityAt: number;
-};
 
 /** One working channel surfaced to the UI, anchored to the desktop clock. */
 export type ActiveTurnSummary = {
@@ -94,35 +68,12 @@ export type ActiveChannelTurnSummary = {
   agentNames?: string[];
 };
 
-/** One conversation/thread with active agent work, aggregated across agents. */
-export type ActiveConversationTurnSummary = {
-  channelId: string;
-  conversationId: string;
-  anchorAt: number;
-  agentCount: number;
-  agentPubkeys: string[];
-  agentNames?: string[];
-};
-
 // Module-level state: agentPubkey → turnId → ActiveTurn
 const activeTurnsByAgent = new Map<string, Map<string, ActiveTurn>>();
 const listeners = new Set<() => void>();
 
-// Per-agent clock offset: the desktop clock minus the agent-host clock, in
-// milliseconds. Estimated as the running minimum of
-// (Date.now() - Date.parse(event.timestamp)) across that agent's events. The
-// minimum converges on true skew minus the smallest network/processing delay
-// seen — a monotonically tightening estimate immune to per-event jitter. While
-// true skew is constant or shrinking it is conservative: elapsed under-reports
-// by the minimum delay and never inflates. The minimum never loosens, so under
-// GROWING skew (an NTP step forward, or the host clock drifting further behind
-// mid-session) the stored estimate goes stale-too-small and elapsed can over-
-// report — bounded by how far the skew grows, sub-second over a session. A
-// turn's badge anchor is startedAt + offset: the agent's own start, translated
-// into desktop-clock terms. Anchors are derived at read time so a later, tighter
-// offset retroactively corrects every live turn — distinct agent starts then
-// yield distinct anchors (no lockstep) and a turn started long ago anchors into
-// the past (large elapsed) instead of resetting to Date.now().
+// Desktop minus agent-host clock. The running minimum rejects network jitter;
+// read-time anchors retroactively tighten as better samples arrive.
 const clockOffsetByAgent = new Map<string, number>();
 
 // Cached snapshots for useSyncExternalStore reference stability.
@@ -131,8 +82,6 @@ const cachedTurnSummaries = new Map<string, ActiveTurnSummary[]>();
 const cachedControlTargets = new Map<string, ActiveTurnControlTarget[]>();
 const cachedAgentsByConversation = new Map<string, string[]>();
 let cachedChannelTurnSummaries: ActiveChannelTurnSummary[] | null = null;
-let cachedConversationTurnSummaries: ActiveConversationTurnSummary[] | null =
-  null;
 /** Bumps on every turn-map mutation so conversation-scoped caches can drop. */
 let activeTurnsGeneration = 0;
 
@@ -155,7 +104,6 @@ let pruneInterval: ReturnType<typeof setInterval> | null = null;
 function bumpActiveTurnsGeneration() {
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
-  cachedConversationTurnSummaries = null;
   activeTurnsGeneration += 1;
 }
 
@@ -212,6 +160,7 @@ function startTurn(
   conversationId: string,
   turnId: string,
   timestamp: string,
+  triggerIds: string[] = [],
 ) {
   const key = normalizePubkey(agentPubkey);
   let agentTurns = activeTurnsByAgent.get(key);
@@ -235,30 +184,37 @@ function startTurn(
     }
   }
 
-  const startedAt = parseTimestamp(timestamp) ?? Date.now();
-  agentTurns.set(turnId, {
+  const observedAt = Date.now();
+  agentTurns.set(
     turnId,
-    channelId,
-    conversationId,
-    startedAt,
-    lastActivityAt: Date.now(),
-  });
+    createActiveTurn({
+      turnId,
+      channelId,
+      conversationId,
+      startedAt: parseTimestamp(timestamp) ?? observedAt,
+      observedAt,
+      triggeringEventIds: triggerIds,
+    }),
+  );
   // A new turn for this conversation supersedes any prior terminal outcome.
   clearOutcomeAndBump(conversationId);
   invalidateCache(key);
 }
 
-function recordActivity(agentPubkey: string, turnId: string | null): boolean {
-  if (!turnId) return false;
+function recordFrame(
+  agentPubkey: string,
+  event: ObserverEvent,
+): { found: boolean; progressChanged: boolean } {
+  if (!event.turnId) return { found: false, progressChanged: false };
   const key = normalizePubkey(agentPubkey);
   const agentTurns = activeTurnsByAgent.get(key);
-  if (!agentTurns) return false;
-  const turn = agentTurns.get(turnId);
-  if (turn) {
-    turn.lastActivityAt = Date.now();
-    return true;
-  }
-  return false;
+  if (!agentTurns) return { found: false, progressChanged: false };
+  const turn = agentTurns.get(event.turnId);
+  if (!turn) return { found: false, progressChanged: false };
+  return {
+    found: true,
+    progressChanged: applyObserverFrame(turn, event, Date.now()),
+  };
 }
 
 /**
@@ -356,24 +312,6 @@ function endTurn(
   invalidateCache(key);
 }
 
-/** True when every tracked turn for one agent is stale, but only until the
- * bounded backstop expires. Other agents' activity intentionally has no effect. */
-function shouldPausePrune(
-  agentTurns: Map<string, ActiveTurn>,
-  now: number,
-): boolean {
-  let maxActivity = 0;
-  for (const turn of agentTurns.values()) {
-    if (turn.lastActivityAt > maxActivity) maxActivity = turn.lastActivityAt;
-  }
-  const silentFor = now - maxActivity;
-  return (
-    maxActivity > 0 &&
-    silentFor > FRAME_GAP_PAUSE_MS &&
-    silentFor < PRUNE_PAUSE_MAX_MS
-  );
-}
-
 function pruneExpired() {
   const now = Date.now();
   let changed = false;
@@ -385,7 +323,14 @@ function pruneExpired() {
     if (shouldPausePrune(agentTurns, now)) continue;
 
     for (const [turnId, turn] of agentTurns) {
-      if (now - turn.lastActivityAt > REMOVE_AFTER_MS) {
+      if (now - turn.lastSeenAt >= REMOVE_AFTER_MS) {
+        recordOutcomeAndBump(turn.conversationId, {
+          outcome: "lost-contact",
+          agentPubkey: agentKey,
+          channelId: turn.channelId,
+          endedAt: now,
+          failedEventIds: [...turn.triggeringEventIds],
+        });
         agentTurns.delete(turnId);
         invalidateCache(agentKey);
         changed = true;
@@ -441,12 +386,14 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
           event.conversationId ?? event.channelId,
           event.turnId ?? `seq-${event.seq}`,
           event.timestamp,
+          triggeringEventIds(event),
         );
         notifyListeners();
         return;
       }
       break;
     case "turn_retrying": {
+      const frame = recordFrame(agentPubkey, event);
       const payload = event.payload as {
         attempt?: unknown;
         maxAttempts?: unknown;
@@ -468,6 +415,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
           attempt,
           maxAttempts,
         });
+        if (frame.progressChanged) invalidateCache(key);
         notifyListeners();
         return;
       }
@@ -483,12 +431,18 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
       // Reuse the event's already-resolved channel/conversation ids — do not
       // re-derive from the live turn map (the turn may already be pruned).
       const conversationId = event.conversationId ?? event.channelId;
+      const terminalTurn = event.turnId
+        ? activeTurnsByAgent.get(key)?.get(event.turnId)
+        : [...(activeTurnsByAgent.get(key)?.values() ?? [])].find(
+            (turn) => turn.channelId === event.channelId,
+          );
       if (event.channelId && conversationId) {
         recordOutcomeAndBump(conversationId, {
           outcome: event.kind === "turn_completed" ? "completed" : "error",
           agentPubkey: key,
           channelId: event.channelId,
           endedAt: Date.now(),
+          failedEventIds: [...(terminalTurn?.triggeringEventIds ?? [])],
         });
       }
       endTurn(
@@ -502,14 +456,20 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
     }
     case "acp_read":
     case "acp_write":
-    // turn_liveness keeps a quiet-but-alive turn from being pruned; same
-    // refresh-only path as stream activity — no surfaced summary change on its
-    // own, so it only notifies when the offset above actually moved. If the
-    // turn was pruned out from under a still-running host (a transient drop
-    // raced the pause, or the lone-crash residual self-healed), resurrect it.
+    // Liveness only advances lastSeenAt; ACP phase changes may also advance the
+    // substantive-progress clock. If the turn was pruned under a live host,
+    // resurrect it unless a terminal tombstone rejects the frame.
     case "turn_liveness": {
-      const refreshed = recordActivity(agentPubkey, event.turnId ?? null);
-      if (!refreshed && resurrectTurn(agentPubkey, event)) {
+      const frame = recordFrame(agentPubkey, event);
+      if (!frame.found && resurrectTurn(agentPubkey, event)) {
+        notifyListeners();
+        return;
+      }
+      if (
+        frame.found &&
+        (frame.progressChanged || event.kind === "turn_liveness")
+      ) {
+        invalidateCache(key);
         notifyListeners();
         return;
       }
@@ -617,7 +577,6 @@ export function getActiveTurnControlTargetsForAgent(
 const EMPTY_TURNS: ActiveTurnSummary[] = [];
 const EMPTY_CONTROL_TARGETS: ActiveTurnControlTarget[] = [];
 const EMPTY_CHANNEL_TURNS: ActiveChannelTurnSummary[] = [];
-const EMPTY_CONVERSATION_TURNS: ActiveConversationTurnSummary[] = [];
 const EMPTY_CONVERSATION_AGENTS: string[] = [];
 
 /** Walk every live turn with its agent clock offset (desktop-clock anchors). */
@@ -703,65 +662,25 @@ export function getActiveTurnsByChannel(): ActiveChannelTurnSummary[] {
   return result;
 }
 
-/**
- * Returns active working conversations/threads across all tracked agents,
- * sorted by conversationId and anchored to the earliest live turn in each.
- */
-export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] {
-  if (cachedConversationTurnSummaries) return cachedConversationTurnSummaries;
-  if (activeTurnsByAgent.size === 0) return EMPTY_CONVERSATION_TURNS;
-
-  const summaries = new Map<
-    string,
-    { anchorAt: number; channelId: string; agentPubkeys: Set<string> }
-  >();
-  for (const [agentKey, agentTurns] of activeTurnsByAgent) {
-    if (agentTurns.size === 0) continue;
-    const offset = clockOffsetByAgent.get(agentKey) ?? 0;
-
-    for (const turn of agentTurns.values()) {
-      const conversationId = turn.conversationId;
-      if (!conversationId) continue;
-      const anchorAt = turn.startedAt + offset;
-      const summary = summaries.get(conversationId);
-      if (!summary) {
-        summaries.set(conversationId, {
-          anchorAt,
-          channelId: turn.channelId,
-          agentPubkeys: new Set([agentKey]),
-        });
-        continue;
-      }
-      summary.agentPubkeys.add(agentKey);
-      if (anchorAt < summary.anchorAt) {
-        summary.anchorAt = anchorAt;
-      }
-    }
-  }
-
-  const result = [...summaries.entries()]
-    .map(([conversationId, summary]) => ({
-      channelId: summary.channelId,
-      conversationId,
-      anchorAt: summary.anchorAt,
-      agentCount: summary.agentPubkeys.size,
-      agentPubkeys: [...summary.agentPubkeys].sort(),
-    }))
-    .sort((a, b) => a.conversationId.localeCompare(b.conversationId));
-  cachedConversationTurnSummaries = result;
-  return result;
-}
-
 /** Desktop-clock activity bounds for the given agents, optionally scoped. */
 export function getActiveTurnActivityBounds(options: {
   agentPubkeys: readonly string[];
   channelId?: string | null;
   conversationId?: string | null;
-}): { anchorAt: number; lastActivityAt: number } | null {
+}): {
+  anchorAt: number;
+  lastSeenAt: number;
+  lastSubstantiveProgressAt: number;
+  progressKind: ActiveTurn["progressKind"];
+  progressLabel: string;
+} | null {
   const channelId = options.channelId?.trim() || null;
   const conversationId = options.conversationId?.trim() || null;
   let anchorAt = Number.POSITIVE_INFINITY;
-  let lastActivityAt = 0;
+  let lastSeenAt = Number.POSITIVE_INFINITY;
+  let lastSubstantiveProgressAt = Number.POSITIVE_INFINITY;
+  let progressKind: ActiveTurn["progressKind"] = "progress";
+  let progressLabel = "Turn started";
 
   for (const pubkey of options.agentPubkeys) {
     const key = normalizePubkey(pubkey);
@@ -774,14 +693,23 @@ export function getActiveTurnActivityBounds(options: {
       if (conversationId && turn.conversationId !== conversationId) continue;
       const turnAnchor = turn.startedAt + offset;
       if (turnAnchor < anchorAt) anchorAt = turnAnchor;
-      if (turn.lastActivityAt > lastActivityAt) {
-        lastActivityAt = turn.lastActivityAt;
+      if (turn.lastSeenAt < lastSeenAt) lastSeenAt = turn.lastSeenAt;
+      if (turn.lastSubstantiveProgressAt < lastSubstantiveProgressAt) {
+        lastSubstantiveProgressAt = turn.lastSubstantiveProgressAt;
+        progressKind = turn.progressKind;
+        progressLabel = turn.progressLabel;
       }
     }
   }
 
-  if (!Number.isFinite(anchorAt) || lastActivityAt === 0) return null;
-  return { anchorAt, lastActivityAt };
+  if (!Number.isFinite(anchorAt) || !Number.isFinite(lastSeenAt)) return null;
+  return {
+    anchorAt,
+    lastSeenAt,
+    lastSubstantiveProgressAt,
+    progressKind,
+    progressLabel,
+  };
 }
 
 /**
@@ -855,7 +783,6 @@ export function resetActiveAgentTurnsStore() {
   cachedControlTargets.clear();
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
-  cachedConversationTurnSummaries = null;
   activeTurnsGeneration += 1;
   terminalAtByAgent.clear();
   clearConversationOutcomeLedger();
@@ -936,10 +863,8 @@ export function saveActiveAgentTurnsForCommunity(communityId: string): void {
  * are already empty after `resetCommunityState()`, but this guard makes the
  * contract explicit.
  *
- * Refreshes `lastActivityAt` on every restored turn so the prune interval
- * doesn't immediately kill turns that were saved more than 25 s ago (the prune
- * threshold).  New observer events arriving after restore will update
- * `lastActivityAt` normally via `recordActivity`.
+ * Refreshes `lastSeenAt` on every restored turn so the prune interval does not
+ * immediately kill saved turns. The substantive-progress clock is preserved.
  *
  * Consumes the snapshot (deletes it from `savedByCommunity`) — a given
  * community's snapshot is only usable once per round-trip.
@@ -961,7 +886,7 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
   for (const [agentKey, agentTurns] of snap.turns) {
     const restored = new Map<string, ActiveTurn>();
     for (const [turnId, turn] of agentTurns) {
-      restored.set(turnId, { ...turn, lastActivityAt: now });
+      restored.set(turnId, { ...turn, lastSeenAt: now });
     }
     activeTurnsByAgent.set(agentKey, restored);
   }
@@ -984,7 +909,6 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
   cachedControlTargets.clear();
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
-  cachedConversationTurnSummaries = null;
   activeTurnsGeneration += 1;
   notifyListeners();
 }

@@ -18,10 +18,11 @@ const MAX_OUTCOME_ENTRIES = 512;
 
 /** Terminal outcome for one conversation/thread (latest event wins). */
 export type ConversationOutcomeEntry = {
-  outcome: "completed" | "error";
+  outcome: "completed" | "error" | "lost-contact";
   agentPubkey: string;
   channelId: string;
   endedAt: number;
+  failedEventIds?: string[];
 };
 
 const outcomeByConversation = new Map<string, ConversationOutcomeEntry>();
@@ -109,7 +110,12 @@ export function cloneConversationOutcomeLedger(): Map<
 > {
   const outcomes = new Map<string, ConversationOutcomeEntry>();
   for (const [conversationId, entry] of outcomeByConversation) {
-    outcomes.set(conversationId, { ...entry });
+    outcomes.set(conversationId, {
+      ...entry,
+      failedEventIds: entry.failedEventIds
+        ? [...entry.failedEventIds]
+        : undefined,
+    });
   }
   return outcomes;
 }
@@ -120,6 +126,11 @@ export function restoreConversationOutcomeLedger(
 ): void {
   outcomeByConversation.clear();
   for (const [conversationId, entry] of outcomes) {
-    outcomeByConversation.set(conversationId, { ...entry });
+    outcomeByConversation.set(conversationId, {
+      ...entry,
+      failedEventIds: entry.failedEventIds
+        ? [...entry.failedEventIds]
+        : undefined,
+    });
   }
 }

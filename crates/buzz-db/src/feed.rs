@@ -34,10 +34,11 @@ use sqlx::{PgPool, QueryBuilder};
 use uuid::Uuid;
 
 use buzz_core::kind::{
-    KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_GIT_ISSUE, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
-    KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN,
-    KIND_JOB_PROGRESS, KIND_JOB_REQUEST, KIND_JOB_RESULT, KIND_STREAM_MESSAGE,
-    KIND_STREAM_MESSAGE_V2, KIND_STREAM_REMINDER, KIND_TEXT_NOTE, KIND_WORKFLOW_APPROVAL_REQUESTED,
+    KIND_AGENT_RECEIPT, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_GIT_ISSUE, KIND_GIT_PR_UPDATE,
+    KIND_GIT_PULL_REQUEST, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED,
+    KIND_GIT_STATUS_OPEN, KIND_JOB_PROGRESS, KIND_JOB_REQUEST, KIND_JOB_RESULT,
+    KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_V2, KIND_STREAM_REMINDER, KIND_TEXT_NOTE,
+    KIND_WORKFLOW_APPROVAL_REQUESTED,
 };
 use buzz_core::{CommunityId, StoredEvent};
 
@@ -263,7 +264,7 @@ fn build_activity_query(
     qb.push(" AND deleted_at IS NULL");
     qb.push(format!(
         " AND kind IN ({KIND_STREAM_MESSAGE}, {KIND_STREAM_MESSAGE_V2}, {KIND_FORUM_POST}, \
-         {KIND_JOB_REQUEST}, {KIND_JOB_PROGRESS}, {KIND_JOB_RESULT})"
+         {KIND_JOB_REQUEST}, {KIND_JOB_PROGRESS}, {KIND_JOB_RESULT}, {KIND_AGENT_RECEIPT})"
     ));
     push_visible_channel_filter(&mut qb, "channel_id", accessible_channel_ids);
     if let Some(s) = since {
@@ -275,7 +276,7 @@ fn build_activity_query(
 
 /// Find recent activity across accessible channels (for watched topics / agent activity).
 ///
-/// Returns stream messages, forum posts, and agent job events.
+/// Returns stream messages, forum posts, agent job events, and terminal receipts.
 /// Workflow execution kinds (46001-46012) are intentionally excluded to avoid noise.
 /// **Performance**: uses indexed `kind` + `channel_id` columns -- no JSON scan.
 /// `limit` is capped at [`FEED_MAX_LIMIT`] regardless of the value passed by the caller.
@@ -796,6 +797,21 @@ mod tests {
         assert!(
             !sql.contains("channel_id IN"),
             "empty accessible-channel list must not emit an IN filter: {sql}"
+        );
+    }
+
+    #[test]
+    fn activity_query_includes_terminal_agent_receipts() {
+        let community = buzz_core::CommunityId::from_uuid(Uuid::new_v4());
+        let channel_id = Uuid::new_v4();
+        let mut qb = build_activity_query(community, &[channel_id], None, 10);
+        let query = qb.build();
+        let sql_str = sqlx::Execute::sql(query);
+        let sql = sql_str.as_str();
+
+        assert!(
+            sql.contains(&KIND_AGENT_RECEIPT.to_string()),
+            "activity feed must include terminal agent receipts: {sql}"
         );
     }
 

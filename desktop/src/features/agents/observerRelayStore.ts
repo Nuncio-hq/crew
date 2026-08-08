@@ -822,9 +822,16 @@ export function injectObserverEventsForE2E(
   agentPubkey: string,
   events: ObserverEvent[],
 ) {
+  setConnectionState("open", null);
   for (const event of events) {
     appendAgentEvent(agentPubkey, event);
   }
+  notifyListeners();
+}
+
+/** E2E-only: drive observer telemetry health through the production store. */
+export function setObserverConnectionStateForE2E(state: ConnectionState) {
+  setConnectionState(state, state === "error" ? "Mock observer error" : null);
   notifyListeners();
 }
 

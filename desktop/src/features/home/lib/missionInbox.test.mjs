@@ -29,9 +29,29 @@ const channels = [
   { id: "channel-a", name: "alpha" },
   { id: "channel-b", name: "beta" },
 ];
+const attentionDefaults = {
+  connectionState: "open",
+  receipts: [],
+  snoozedUntilByConversation: new Map(),
+};
+
+function activeTurn(conversationId, overrides = {}) {
+  return {
+    conversationId,
+    channelId: "channel-a",
+    agentPubkeys: ["agent-1"],
+    anchorAt: 1_000,
+    lastSeenAt: 100_000,
+    lastSubstantiveProgressAt: 100_000,
+    progressKind: "progress",
+    progressLabel: "Running tests",
+    ...overrides,
+  };
+}
 
 test("blocked conversations win over working", () => {
   const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
     channels,
     inboxItems: [item("conversation-1", "channel-a", 100)],
     needsYou: [
@@ -59,8 +79,9 @@ test("blocked conversations win over working", () => {
   assert.equal(sections.working.length, 0);
 });
 
-test("read-state acknowledgement removes ready-to-review rows", () => {
+test("read-state acknowledgement does not review a durable receipt", () => {
   const input = {
+    ...attentionDefaults,
     channels,
     inboxItems: [item("conversation-2", "channel-b", 100)],
     needsYou: [],
@@ -76,6 +97,18 @@ test("read-state acknowledgement removes ready-to-review rows", () => {
         },
       ],
     ],
+    receipts: [
+      {
+        id: "receipt-2",
+        channelId: "channel-b",
+        conversationId: "conversation-2",
+        agentPubkey: "agent-2",
+        createdAt: 200,
+        summary: "Completed successfully",
+        verify: "pnpm check passed",
+        reviewed: false,
+      },
+    ],
   };
 
   assert.equal(
@@ -90,12 +123,88 @@ test("read-state acknowledgement removes ready-to-review rows", () => {
       ...input,
       acknowledgedConversationIds: new Set(["conversation-2"]),
     }).readyToReview.length,
-    0,
+    1,
   );
+});
+
+test("observer completion alone is not ready to review", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [],
+    channels,
+    inboxItems: [item("completed", "channel-a", 100)],
+    needsYou: [],
+    outcomes: [
+      [
+        "completed",
+        {
+          outcome: "completed",
+          channelId: "channel-a",
+          agentPubkey: "agent-1",
+          endedAt: 200,
+        },
+      ],
+    ],
+  });
+  assert.equal(sections.readyToReview.length, 0);
+});
+
+test("attention exceptions outrank an unreviewed receipt", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [
+      activeTurn("stalled", {
+        lastSeenAt: 109_000,
+        lastSubstantiveProgressAt: 10_000,
+      }),
+    ],
+    channels,
+    inboxItems: [item("stalled", "channel-a", 100)],
+    needsYou: [],
+    now: 110_000,
+    outcomes: [],
+    receipts: [
+      {
+        id: "receipt-stalled",
+        channelId: "channel-a",
+        conversationId: "stalled",
+        agentPubkey: "agent-1",
+        createdAt: 109_000,
+        summary: "Completed successfully",
+        verify: "pnpm check passed",
+        reviewed: false,
+      },
+    ],
+  });
+  assert.equal(sections.needsYou[0]?.state, "possiblyStalled");
+  assert.equal(sections.readyToReview.length, 0);
+});
+
+test("unavailable observer telemetry never masquerades as stalled", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [
+      activeTurn("offline", {
+        lastSeenAt: 109_000,
+        lastSubstantiveProgressAt: 10_000,
+      }),
+    ],
+    channels,
+    connectionState: "error",
+    inboxItems: [item("offline", "channel-a", 100)],
+    needsYou: [],
+    now: 110_000,
+    outcomes: [],
+  });
+  assert.equal(sections.needsYou[0]?.state, "telemetryUnavailable");
 });
 
 test("needs-you rows order newest request first", () => {
   const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
     channels,
     inboxItems: [item("old", "channel-a", 100), item("new", "channel-b", 101)],
     needsYou: [
@@ -127,6 +236,7 @@ test("needs-you rows order newest request first", () => {
 
 test("needs-you combines approval and user-input families by conversation", () => {
   const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
     channels,
     inboxItems: [
       item("approval-conversation", "channel-a", 100),
@@ -164,6 +274,7 @@ test("needs-you combines approval and user-input families by conversation", () =
 
 test("same inputs return a reference-stable snapshot", () => {
   const input = {
+    ...attentionDefaults,
     channels,
     inboxItems: [item("conversation-3", "channel-a", 100)],
     needsYou: [],
@@ -181,6 +292,7 @@ test("same inputs return a reference-stable snapshot", () => {
 test("mission rows use real roots and never promote conversation UUIDs to event ids", () => {
   const root = "a".repeat(64);
   const [needsYouRow] = deriveMissionInboxSections({
+    ...attentionDefaults,
     channels,
     inboxItems: [],
     needsYou: [

@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ChevronDown,
   Circle,
   ExternalLink,
@@ -11,6 +12,7 @@ import type {
   MissionInboxRow,
   MissionInboxSections,
 } from "@/features/home/lib/missionInbox";
+import { snoozeAgentAttention } from "@/features/agents/agentAttentionSnoozeStore";
 
 function ageLabel(ageMs: number) {
   const minutes = Math.max(0, Math.floor(ageMs / 60_000));
@@ -26,7 +28,32 @@ function SectionIcon({ state }: { state: MissionInboxRow["state"] }) {
     return <Zap className="h-3.5 w-3.5 text-amber-500" />;
   if (state === "readyToReview")
     return <PackageCheck className="h-3.5 w-3.5 text-emerald-500" />;
+  if (state === "possiblyStalled")
+    return <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />;
+  if (state === "failed" || state === "lostContact")
+    return <AlertTriangle className="h-3.5 w-3.5 text-destructive" />;
+  if (state === "telemetryUnavailable")
+    return <Circle className="h-3 w-3 text-muted-foreground" />;
   return <Circle className="h-3 w-3 fill-sky-500 text-sky-500" />;
+}
+
+function stateLabel(state: MissionInboxRow["state"]): string {
+  switch (state) {
+    case "needsYou":
+      return "Needs you";
+    case "failed":
+      return "Failed";
+    case "lostContact":
+      return "Lost contact";
+    case "telemetryUnavailable":
+      return "Telemetry unavailable";
+    case "possiblyStalled":
+      return "Possibly stalled";
+    case "readyToReview":
+      return "Ready to review";
+    default:
+      return "Working";
+  }
 }
 
 function MissionRow({
@@ -40,8 +67,12 @@ function MissionRow({
   onOpenChannel: (row: MissionInboxRow) => void;
   selected: boolean;
 }) {
+  const isException = row.state !== "working" && row.state !== "readyToReview";
   return (
-    <div className="group/mission relative border-b border-border/35 px-3 py-2">
+    <div
+      className="group/mission relative border-b border-border/35 px-3 py-2"
+      data-state={row.state}
+    >
       <button
         aria-label={`Open ${row.threadTitle}`}
         className={`flex w-full min-w-0 items-start gap-2 rounded-md text-left focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${selected ? "bg-muted/50" : ""}`}
@@ -57,13 +88,36 @@ function MissionRow({
             {row.threadTitle}
           </span>
           <span className="block truncate text-xs text-muted-foreground">
-            {row.agentPubkey || "Agent"} · {row.phaseOrHeadline}
+            {stateLabel(row.state)} · {row.agentPubkey || "Agent"} ·{" "}
+            {row.phaseOrHeadline}
           </span>
         </span>
         <span className="shrink-0 text-2xs text-muted-foreground">
           {ageLabel(row.age)}
         </span>
       </button>
+      {isException ? (
+        <div className="ml-5 mt-1 flex items-center gap-1.5">
+          {row.state === "possiblyStalled" ? (
+            <button
+              className="rounded-md border border-amber-500/40 px-2 py-0.5 text-2xs font-medium text-amber-500 transition-colors hover:bg-amber-500/10"
+              data-testid={`mission-inbox-wait-${row.conversationId}`}
+              onClick={() => snoozeAgentAttention(row.conversationId)}
+              type="button"
+            >
+              Wait 10m
+            </button>
+          ) : null}
+          <button
+            className="rounded-md border border-border px-2 py-0.5 text-2xs font-medium text-foreground transition-colors hover:bg-accent"
+            data-testid={`mission-inbox-inspect-${row.conversationId}`}
+            onClick={() => onSelect(row)}
+            type="button"
+          >
+            {row.state === "needsYou" ? "Respond" : "Inspect"}
+          </button>
+        </div>
+      ) : null}
       <button
         aria-label="Open in channel"
         className="absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-md bg-background/90 p-1 text-muted-foreground hover:text-foreground group-hover/mission:block focus-visible:block"
@@ -93,7 +147,7 @@ export function MissionInboxSectionsView({
 }) {
   const [workingOpen, setWorkingOpen] = React.useState(false);
   const groups = [
-    { key: "needsYou", label: "Needs you", rows: sections.needsYou },
+    { key: "needsYou", label: "Needs attention", rows: sections.needsYou },
     {
       key: "readyToReview",
       label: "Ready to review",
@@ -131,7 +185,7 @@ export function MissionInboxSectionsView({
           ) : (
             <p className="px-3 pb-2 text-xs text-muted-foreground">
               {group.key === "needsYou"
-                ? "Nothing needs you — safe to close"
+                ? "Nothing needs attention — safe to close"
                 : "Nothing ready to review"}
             </p>
           )}

@@ -6,11 +6,13 @@ import {
   subscribeNeedsYou,
 } from "@/features/agents/needsYouStore";
 import {
-  getActiveTurnsByConversation,
   getActiveTurnsGeneration,
   subscribeActiveAgentTurns,
-  type ActiveConversationTurnSummary,
 } from "@/features/agents/activeAgentTurnsStore";
+import {
+  getActiveTurnsByConversation,
+  type ActiveConversationTurnSummary,
+} from "@/features/agents/activeConversationTurns";
 import {
   walkConversationOutcomes,
   type ConversationOutcomeEntry,
@@ -18,8 +20,21 @@ import {
 import type { InboxItem } from "@/features/home/lib/inbox";
 import type { Channel } from "@/shared/api/types";
 import { getThreadReference } from "@/features/messages/lib/threading";
+import {
+  deriveAgentAttention,
+  type AgentAttentionState,
+} from "@/features/agents/agentAttention";
+import type { AgentReceiptSummary } from "@/features/agents/agentReceiptStore";
+import type { ConnectionState } from "@/features/agents/ui/agentSessionTypes";
 
-export type MissionInboxState = "needsYou" | "readyToReview" | "working";
+export type MissionInboxState =
+  | "needsYou"
+  | "failed"
+  | "lostContact"
+  | "telemetryUnavailable"
+  | "possiblyStalled"
+  | "readyToReview"
+  | "working";
 
 export type MissionInboxRow = {
   conversationId: string;
@@ -45,6 +60,9 @@ type MissionInboxInput = {
   needsYou: readonly NeedsYouRequest[];
   activeTurns: readonly ActiveConversationTurnSummary[];
   outcomes: readonly (readonly [string, ConversationOutcomeEntry])[];
+  receipts: readonly AgentReceiptSummary[];
+  connectionState: ConnectionState;
+  snoozedUntilByConversation: ReadonlyMap<string, number>;
   acknowledgedConversationIds: ReadonlySet<string>;
   now?: number;
 };
@@ -107,6 +125,23 @@ function rowFor({
   };
 }
 
+function missionStateForAttention(
+  state: AgentAttentionState,
+): MissionInboxState | null {
+  switch (state) {
+    case "failed":
+      return "failed";
+    case "lost-contact":
+      return "lostContact";
+    case "possibly-stalled":
+      return "possiblyStalled";
+    case "telemetry-unavailable":
+      return "telemetryUnavailable";
+    default:
+      return null;
+  }
+}
+
 /** Derive the three mission-control sections from the shared agent stores. */
 export function deriveMissionInboxSections(
   input: MissionInboxInput,
@@ -151,18 +186,16 @@ export function deriveMissionInboxSections(
     .sort((left, right) => left.age - right.age);
 
   const blocked = new Set(needsYou.map((row) => row.conversationId));
-  const readyToReview: MissionInboxRow[] = [];
   for (const [conversationId, entry] of input.outcomes) {
     if (
-      entry.outcome !== "completed" ||
+      entry.outcome === "completed" ||
       blocked.has(conversationId) ||
-      input.acknowledgedConversationIds.has(conversationId)
+      !channelIds.has(entry.channelId)
     ) {
       continue;
     }
     const item = itemByConversation.get(conversationId) ?? null;
-    if (!channelIds.has(entry.channelId)) continue;
-    readyToReview.push(
+    needsYou.push(
       rowFor({
         age: now - entry.endedAt,
         agentPubkey: entry.agentPubkey || item?.item.pubkey || "",
@@ -171,33 +204,123 @@ export function deriveMissionInboxSections(
         conversationId,
         inboxItem: item,
         rootEventId: getThreadReference(item?.item.tags ?? []).rootId ?? null,
-        phaseOrHeadline: item?.preview || "Completed successfully",
-        state: "readyToReview",
+        phaseOrHeadline:
+          entry.outcome === "error"
+            ? "Failed — retry from the thread"
+            : "Lost contact — reconnect or retry",
+        state: entry.outcome === "error" ? "failed" : "lostContact",
       }),
     );
+    blocked.add(conversationId);
   }
-  readyToReview.sort((left, right) => left.age - right.age);
 
-  const working = input.activeTurns
-    .filter(
-      (turn) =>
-        !blocked.has(turn.conversationId) && channelIds.has(turn.channelId),
-    )
-    .map((turn) => {
-      const item = itemByConversation.get(turn.conversationId) ?? null;
-      return rowFor({
-        age: now - turn.anchorAt,
+  const latestReceiptByConversation = new Map<string, AgentReceiptSummary>();
+  for (const receipt of input.receipts) {
+    const prior = latestReceiptByConversation.get(receipt.conversationId);
+    if (!prior || receipt.createdAt > prior.createdAt) {
+      latestReceiptByConversation.set(receipt.conversationId, receipt);
+    }
+  }
+  const calmTurns: MissionInboxInput["activeTurns"][number][] = [];
+  for (const turn of input.activeTurns) {
+    if (blocked.has(turn.conversationId) || !channelIds.has(turn.channelId)) {
+      continue;
+    }
+    const receipt =
+      latestReceiptByConversation.get(turn.conversationId) ?? null;
+    const attention = deriveAgentAttention({
+      connectionState: input.connectionState,
+      needsYou: false,
+      now,
+      outcome: null,
+      receipt,
+      snoozedUntil:
+        input.snoozedUntilByConversation.get(turn.conversationId) ?? 0,
+      turns: [
+        {
+          agentPubkey: turn.agentPubkeys[0] ?? "",
+          anchorAt: turn.anchorAt,
+          lastSeenAt: turn.lastSeenAt,
+          lastSubstantiveProgressAt: turn.lastSubstantiveProgressAt,
+          progressKind: turn.progressKind,
+          progressLabel: turn.progressLabel,
+        },
+      ],
+    });
+    const exceptionState = missionStateForAttention(attention.state);
+    if (!exceptionState) {
+      calmTurns.push(turn);
+      continue;
+    }
+    const item = itemByConversation.get(turn.conversationId) ?? null;
+    needsYou.push(
+      rowFor({
+        age:
+          now -
+          (exceptionState === "lostContact"
+            ? turn.lastSeenAt
+            : turn.lastSubstantiveProgressAt),
         agentPubkey: turn.agentPubkeys[0] ?? item?.item.pubkey ?? "",
         channelId: turn.channelId,
         channelName: channelNames.get(turn.channelId) ?? "",
         conversationId: turn.conversationId,
         inboxItem: item,
         rootEventId: getThreadReference(item?.item.tags ?? []).rootId ?? null,
-        phaseOrHeadline: item?.preview || "Agent is working",
+        phaseOrHeadline: attention.lastVerifiedLabel ?? "Agent activity",
+        state: exceptionState,
+      }),
+    );
+    blocked.add(turn.conversationId);
+  }
+  const readyToReview: MissionInboxRow[] = [];
+  for (const [conversationId, receipt] of latestReceiptByConversation) {
+    if (
+      receipt.reviewed ||
+      blocked.has(conversationId) ||
+      !channelIds.has(receipt.channelId)
+    ) {
+      continue;
+    }
+    const item = itemByConversation.get(conversationId) ?? null;
+    readyToReview.push(
+      rowFor({
+        age: now - receipt.createdAt,
+        agentPubkey: receipt.agentPubkey || item?.item.pubkey || "",
+        channelId: receipt.channelId,
+        channelName: channelNames.get(receipt.channelId) ?? "",
+        conversationId,
+        inboxItem: item,
+        rootEventId: getThreadReference(item?.item.tags ?? []).rootId ?? null,
+        phaseOrHeadline: receipt.summary || "Ready for review",
+        state: "readyToReview",
+      }),
+    );
+    blocked.add(conversationId);
+  }
+  readyToReview.sort((left, right) => left.age - right.age);
+
+  const working: MissionInboxRow[] = [];
+  for (const turn of calmTurns) {
+    if (blocked.has(turn.conversationId) || !channelIds.has(turn.channelId)) {
+      continue;
+    }
+    const item = itemByConversation.get(turn.conversationId) ?? null;
+    working.push(
+      rowFor({
+        age: now - turn.lastSubstantiveProgressAt,
+        agentPubkey: turn.agentPubkeys[0] ?? item?.item.pubkey ?? "",
+        channelId: turn.channelId,
+        channelName: channelNames.get(turn.channelId) ?? "",
+        conversationId: turn.conversationId,
+        inboxItem: item,
+        rootEventId: getThreadReference(item?.item.tags ?? []).rootId ?? null,
+        phaseOrHeadline: turn.progressLabel,
         state: "working",
-      });
-    })
-    .sort((left, right) => left.age - right.age);
+      }),
+    );
+  }
+  needsYou.sort((left, right) => left.age - right.age);
+  working.sort((left, right) => left.age - right.age);
 
   const key = JSON.stringify({
     acknowledged: [...input.acknowledgedConversationIds].sort(),
@@ -213,6 +336,9 @@ export function deriveMissionInboxSections(
       request.createdAt,
     ]),
     outcomes: input.outcomes,
+    receipts: input.receipts,
+    connectionState: input.connectionState,
+    snoozed: [...input.snoozedUntilByConversation],
     now,
   });
   if (key === lastKey) return lastSections;
