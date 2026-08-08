@@ -184,7 +184,7 @@ export function useLiveHomeFeedActions(
       const receiptSubscriptions = subscribedChannelIds.map((channelId) =>
         relayClient.subscribeLive(
           {
-            kinds: [KIND_AGENT_RECEIPT],
+            kinds: [KIND_AGENT_RECEIPT, KIND_REACTION],
             "#h": [channelId],
             limit: 0,
             since,
@@ -199,21 +199,6 @@ export function useLiveHomeFeedActions(
       void Promise.allSettled([
         ...userInputSubscriptions,
         ...receiptSubscriptions,
-        // NIP-25 reactions reference their target with `e`; they do not carry
-        // the target's channel `h` tag. Subscribe narrowly to the owner's
-        // reactions and let the receipt store accept only known receipt ids.
-        relayClient.subscribeLive(
-          {
-            authors: [normalizedPubkey],
-            kinds: [KIND_REACTION],
-            limit: 0,
-            since,
-          },
-          (event) => {
-            handleReceiptEvent(event);
-            handleLiveHomeFeedEvent();
-          },
-        ),
         relayClient.subscribeLive(
           {
             kinds: [KIND_APPROVAL_REQUEST],
