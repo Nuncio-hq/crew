@@ -6,7 +6,7 @@
 //! only applies them.
 
 use crate::managed_agents::discovery::KnownAcpRuntime;
-use crate::managed_agents::types::ManagedAgentRecord;
+use crate::managed_agents::types::{BackendKind, ManagedAgentRecord, RespondTo};
 
 /// Hermes rejects the reserved name `default` for Crew bindings (D-019 P-7):
 /// the manager's personal `~/.hermes` profile must never be bound.
@@ -38,6 +38,36 @@ pub fn validate_hermes_profile_name(name: &str) -> Result<(), String> {
     if !valid {
         return Err(format!(
             "invalid hermes profile name '{trimmed}': must match [a-z0-9][a-z0-9_-]{{0,63}}"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate D-024's trusted-autonomy boundary for a prospective managed-agent
+/// record. Callers invoke this on create/update before persisting the changed
+/// record. It deliberately does not run from the generic storage path: legacy
+/// records must remain readable and stoppable while the owner repairs them.
+pub(crate) fn validate_profile_bound_agent_invariants(
+    record: &ManagedAgentRecord,
+) -> Result<(), String> {
+    let Some(profile) = record
+        .hermes_profile
+        .as_deref()
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+    else {
+        return Ok(());
+    };
+    if record.respond_to != RespondTo::OwnerOnly {
+        return Err(format!(
+            "Hermes profile-bound agent '{}' (profile '{profile}') must use respond-to 'owner-only'; choose Only me to continue",
+            record.name
+        ));
+    }
+    if record.backend != BackendKind::Local {
+        return Err(format!(
+            "Hermes profile-bound agent '{}' (profile '{profile}') must run locally; create it on This computer, or delete and recreate an existing remote agent, before continuing",
+            record.name
         ));
     }
     Ok(())
@@ -334,6 +364,32 @@ mod tests {
             find_duplicate_hermes_profile_binding(&records, "scout", "wss://relay-b", None)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn profile_bound_agents_require_owner_only_local_boundary() {
+        let mut record = minimal_record("aaa", "wss://relay");
+        record.hermes_profile = Some("scout".to_string());
+        record.respond_to = RespondTo::Anyone;
+
+        let public_error = validate_profile_bound_agent_invariants(&record)
+            .expect_err("profile-bound Hermes agents must reject respond-to anyone");
+        assert!(public_error.contains("owner-only"), "{public_error}");
+        assert!(public_error.contains("Only me"), "{public_error}");
+
+        record.respond_to = RespondTo::OwnerOnly;
+        record.backend = BackendKind::Provider {
+            id: "remote".to_string(),
+            config: serde_json::json!({}),
+        };
+        let remote_error = validate_profile_bound_agent_invariants(&record)
+            .expect_err("profile-bound Hermes agents must reject provider backends");
+        assert!(remote_error.contains("local"), "{remote_error}");
+        assert!(remote_error.contains("This computer"), "{remote_error}");
+
+        record.backend = BackendKind::Local;
+        validate_profile_bound_agent_invariants(&record)
+            .expect("owner-only local profile-bound Hermes agent must be accepted");
     }
 
     fn minimal_record(pubkey: &str, relay: &str) -> ManagedAgentRecord {

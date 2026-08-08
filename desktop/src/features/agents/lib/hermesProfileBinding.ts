@@ -6,8 +6,10 @@
  * enforces; this gives create/edit surfaces immediate, friendly feedback.
  */
 
-import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
+import type { AcpRuntimeCatalogEntry, RespondToMode } from "@/shared/api/types";
 import { truncatePubkey } from "@/shared/lib/pubkey";
+import type { AgentRunLocation } from "./agentAccessWarning";
+import { canonicalRelayUrl } from "../managedAgentRuntimeStatus";
 
 /** Reserved manager-personal profile — never bindable to a Crew agent (P-7). */
 export const HERMES_FORBIDDEN_PROFILE_NAME = "default";
@@ -36,6 +38,56 @@ export function runtimeOffersProfileBinding(
   runtime: AcpRuntimeCatalogEntry | undefined,
 ): boolean {
   return Boolean(runtime?.profileArg?.trim());
+}
+
+export type ProfileBoundAgentBoundary = {
+  access: "Owner only";
+  autonomy: "Full";
+  backend: "This Mac";
+  profile: string;
+  usedIn: string[];
+};
+
+/**
+ * Trusted-autonomy/local-boundary projection for profile-binding runtimes.
+ * The caller supplies the capability result; this helper never identifies a
+ * harness by id.
+ */
+export function deriveProfileBoundAgentBoundary(args: {
+  profileBindingOffered: boolean;
+  profile: string;
+  usedIn: readonly string[];
+}): ProfileBoundAgentBoundary | null {
+  if (!args.profileBindingOffered) return null;
+  return {
+    access: "Owner only",
+    autonomy: "Full",
+    backend: "This Mac",
+    profile: args.profile.trim(),
+    usedIn: [...args.usedIn],
+  };
+}
+
+export function profileBoundAccessError(
+  profileBindingOffered: boolean,
+  respondTo: RespondToMode | null | undefined,
+): string | null {
+  if (!profileBindingOffered || !respondTo || respondTo === "owner-only") {
+    return null;
+  }
+  return "Hermes profile agents use full autonomy and must stay owner-only. Choose Only me to continue.";
+}
+
+export function profileBoundBackendError(
+  profileBindingOffered: boolean,
+  runLocation: AgentRunLocation | null,
+  editing = false,
+): string | null {
+  if (!profileBindingOffered || runLocation !== "remote") return null;
+  if (editing) {
+    return "Hermes profiles live on this Mac and cannot run on a remote backend. Delete and recreate this agent on This computer to continue.";
+  }
+  return "Hermes profiles live on this Mac and cannot run on a remote backend. Choose This computer to continue.";
 }
 
 /**
@@ -145,6 +197,99 @@ export type HermesProfileOccupancyAgent = {
   hermesProfile: string | null | undefined;
   relayUrl: string;
 };
+
+export type HermesProfileCommunity = {
+  name: string;
+  relayUrl: string;
+};
+
+export type HermesProfileOtherUse = {
+  agentName: string;
+  agentPubkey: string;
+  communityName: string;
+  relayUrl: string;
+};
+
+export type HermesProfileUsage = {
+  usedIn: string[];
+  otherUses: HermesProfileOtherUse[];
+  hasPresentationMismatch: boolean;
+};
+
+function relayIdentity(relayUrl: string): string {
+  return canonicalRelayUrl(relayUrl) ?? relayUrl.trim();
+}
+
+/**
+ * Project intentional profile reuse from the local managed-agent store.
+ * Same-relay records stay out of `otherUses` because occupancy owns that
+ * duplicate-binding boundary; records on other relays are informational.
+ */
+export function deriveHermesProfileUsage(args: {
+  profile: string;
+  agents: readonly HermesProfileOccupancyAgent[];
+  communities: readonly HermesProfileCommunity[];
+  currentRelayUrl: string;
+  editingPubkey?: string | null;
+  currentAgentName?: string | null;
+}): HermesProfileUsage {
+  const profile = args.profile.trim();
+  if (!profile || validateHermesProfileName(profile) != null) {
+    return { usedIn: [], otherUses: [], hasPresentationMismatch: false };
+  }
+
+  const currentRelay = relayIdentity(args.currentRelayUrl);
+  const editingPubkey = args.editingPubkey?.trim() || null;
+  const currentAgentName = args.currentAgentName?.trim() || "";
+  const communityByRelay = new Map(
+    args.communities.map((community) => [
+      relayIdentity(community.relayUrl),
+      community.name.trim() || community.relayUrl,
+    ]),
+  );
+  const currentCommunityName = communityByRelay.get(currentRelay);
+  const seenUses = new Set<string>();
+  const otherUses: HermesProfileOtherUse[] = [];
+
+  for (const agent of args.agents) {
+    if (agent.hermesProfile?.trim() !== profile) continue;
+    if (editingPubkey && agent.pubkey === editingPubkey) continue;
+    const rawAgentRelay = agent.relayUrl.trim();
+    if (!rawAgentRelay) continue;
+    const agentRelay = relayIdentity(rawAgentRelay);
+    if (agentRelay === currentRelay) continue;
+    const key = `${agent.pubkey}\u0000${agentRelay}`;
+    if (seenUses.has(key)) continue;
+    seenUses.add(key);
+    otherUses.push({
+      agentName: agent.name.trim() || truncatePubkey(agent.pubkey),
+      agentPubkey: agent.pubkey,
+      communityName: communityByRelay.get(agentRelay) ?? rawAgentRelay,
+      relayUrl: rawAgentRelay,
+    });
+  }
+
+  otherUses.sort(
+    (left, right) =>
+      left.communityName.localeCompare(right.communityName) ||
+      left.agentName.localeCompare(right.agentName),
+  );
+  const usedIn = [
+    ...(currentCommunityName ? [currentCommunityName] : []),
+    ...otherUses.map((usage) => usage.communityName),
+  ].filter((name, index, values) => values.indexOf(name) === index);
+  const hasPresentationMismatch = Boolean(
+    currentAgentName &&
+      otherUses.some(
+        (usage) =>
+          usage.agentName.localeCompare(currentAgentName, undefined, {
+            sensitivity: "accent",
+          }) !== 0,
+      ),
+  );
+
+  return { usedIn, otherUses, hasPresentationMismatch };
+}
 
 /**
  * Join disk profiles with managed agents on one relay (C-10 early UX).

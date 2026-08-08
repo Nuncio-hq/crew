@@ -109,6 +109,7 @@ pub(super) fn build_deploy_payload(
     state: &AppState,
     record: &ManagedAgentRecord,
 ) -> Result<serde_json::Value, String> {
+    crate::managed_agents::hermes_profile::validate_profile_bound_agent_invariants(record)?;
     if let Some(err) = crate::managed_agents::spawn_key_refusal(record) {
         return Err(err);
     }

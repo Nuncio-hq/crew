@@ -7,6 +7,7 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import type { RespondToMode } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { useCommunities } from "@/features/communities/useCommunities";
 import {
@@ -16,13 +17,20 @@ import {
 } from "../hooks";
 import {
   buildHermesProfileOccupancy,
+  deriveHermesProfileUsage,
+  deriveProfileBoundAgentBoundary,
   hermesProfileBindingError,
   hermesProfileOccupancyError,
   normalizeHermesProfileList,
+  profileBoundAccessError,
+  profileBoundBackendError,
   profileOwnedModelLabel,
   shouldShowHermesProfileCreate,
+  type HermesProfileOtherUse,
+  type ProfileBoundAgentBoundary,
 } from "../lib/hermesProfileBinding";
 import { RequiredFieldLabel } from "./agentConfigControls";
+import { useAgentRunLocation } from "./AgentRunLocationContext";
 import { HermesProfileCombobox } from "./HermesProfileCombobox";
 import {
   HermesProfileCreateAffordance,
@@ -52,21 +60,86 @@ export function ProfileOwnedModelRow({
   );
 }
 
+export function ProfileBoundAgentBoundaryCard({
+  boundary,
+  otherUses,
+  hasPresentationMismatch,
+}: {
+  boundary: ProfileBoundAgentBoundary;
+  otherUses: readonly HermesProfileOtherUse[];
+  hasPresentationMismatch: boolean;
+}) {
+  const rows = [
+    { label: "Access", value: boundary.access },
+    { label: "Autonomy", value: boundary.autonomy },
+    { label: "Backend", value: boundary.backend },
+    { label: "Profile", value: boundary.profile || "Choose a profile" },
+    {
+      label: "Used in",
+      value:
+        boundary.usedIn.length > 0 ? boundary.usedIn.join(", ") : "Not yet",
+    },
+  ];
+  const otherUseText = otherUses
+    .map((usage) => `${usage.agentName} in ${usage.communityName}`)
+    .join(", ");
+
+  return (
+    <div
+      className="space-y-3 rounded-xl border border-border/70 bg-muted/20 p-3"
+      data-testid="hermes-effective-boundary"
+    >
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+        {rows.map((row) => (
+          <React.Fragment key={row.label}>
+            <dt className="text-muted-foreground">{row.label}</dt>
+            <dd className="font-medium text-foreground">{row.value}</dd>
+          </React.Fragment>
+        ))}
+      </dl>
+      <p className="text-xs text-muted-foreground">
+        Crew approves ACP tool requests automatically; the Hermes profile&apos;s
+        own approval policy still applies.
+      </p>
+      {otherUses.length > 0 ? (
+        <div
+          className="space-y-1 border-t border-border/60 pt-3 text-xs text-muted-foreground"
+          data-testid="hermes-profile-shared-usage"
+        >
+          <p>Also used by {otherUseText}.</p>
+          <p>Memory, skills, and profile state are shared.</p>
+          {hasPresentationMismatch ? (
+            <p className="text-warning">
+              This profile is presented as a different agent elsewhere; shared
+              state can make those identities overlap.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** Shared binding state for the field UI and create/edit save gates. */
 export function useHermesProfileBindingState({
   enabled,
   hermesProfile,
   editingPubkey = null,
+  currentAgentName = null,
+  respondTo = null,
   required = true,
 }: {
   enabled: boolean;
   hermesProfile: string;
   editingPubkey?: string | null;
+  currentAgentName?: string | null;
+  respondTo?: RespondToMode | null;
   required?: boolean;
 }) {
   const profilesQuery = useHermesProfilesQuery({ enabled });
   const agentsQuery = useManagedAgentsQuery({ enabled });
-  const { activeCommunity } = useCommunities();
+  const { activeCommunity, communities } = useCommunities();
+  const runLocation = useAgentRunLocation();
   const queryClient = useQueryClient();
 
   const profiles = React.useMemo(
@@ -84,6 +157,25 @@ export function useHermesProfileBindingState({
       }),
     [profiles, agentsQuery.data, activeCommunity?.relayUrl, editingPubkey],
   );
+  const usage = React.useMemo(
+    () =>
+      deriveHermesProfileUsage({
+        profile: hermesProfile,
+        currentAgentName,
+        currentRelayUrl: activeCommunity?.relayUrl ?? "",
+        editingPubkey,
+        communities,
+        agents: agentsQuery.data ?? [],
+      }),
+    [
+      activeCommunity?.relayUrl,
+      agentsQuery.data,
+      communities,
+      currentAgentName,
+      editingPubkey,
+      hermesProfile,
+    ],
+  );
 
   const formatError = enabled
     ? hermesProfileBindingError(hermesProfile, required)
@@ -92,6 +184,10 @@ export function useHermesProfileBindingState({
     ? hermesProfileOccupancyError(hermesProfile, occupancy)
     : null;
   const profileError = formatError ?? occupancyError;
+  const trustedBoundaryError = enabled
+    ? (profileBoundAccessError(true, respondTo) ??
+      profileBoundBackendError(true, runLocation, editingPubkey !== null))
+    : null;
 
   const invalidateProfiles = React.useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: hermesProfilesQueryKey });
@@ -100,7 +196,10 @@ export function useHermesProfileBindingState({
   return {
     profiles,
     occupancy,
+    usage,
+    blockingError: profileError ?? trustedBoundaryError,
     profileError,
+    trustedBoundaryError,
     listLoading: profilesQuery.isLoading,
     listFailed: profilesQuery.isError,
     invalidateProfiles,
@@ -117,6 +216,7 @@ export function HermesProfileField({
   enableCreateInPlace = true,
   respondTo,
   editingPubkey = null,
+  currentAgentName = null,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -128,14 +228,18 @@ export function HermesProfileField({
   /** Phase 03: explicit create button (never silent on save). */
   enableCreateInPlace?: boolean;
   /** When set and not owner-only, show credential-fallback warning. */
-  respondTo?: string | null;
+  respondTo?: RespondToMode | null;
   /** When editing, occupancy treats this pubkey as "self". */
   editingPubkey?: string | null;
+  /** Visible agent identity used only to warn about cross-community mismatch. */
+  currentAgentName?: string | null;
 }) {
   const {
     profiles,
     occupancy,
+    usage,
     profileError,
+    trustedBoundaryError,
     listLoading,
     listFailed,
     invalidateProfiles,
@@ -143,9 +247,16 @@ export function HermesProfileField({
     enabled: true,
     hermesProfile: value,
     editingPubkey,
+    currentAgentName,
+    respondTo,
     required,
   });
 
+  const boundary = deriveProfileBoundAgentBoundary({
+    profileBindingOffered: true,
+    profile: value,
+    usedIn: usage.usedIn,
+  });
   const error = showValidation ? profileError : null;
   const showPublicWarning = isNonOwnerOnlyRespondTo(respondTo);
   const showCreate =
@@ -173,6 +284,13 @@ export function HermesProfileField({
         <code className="font-mono text-2xs">default</code> profile cannot be
         bound — see docs/crew/HERMES.md.
       </p>
+      {boundary ? (
+        <ProfileBoundAgentBoundaryCard
+          boundary={boundary}
+          hasPresentationMismatch={usage.hasPresentationMismatch}
+          otherUses={usage.otherUses}
+        />
+      ) : null}
       {showCreate ? (
         <HermesProfileCreateAffordance
           disabled={disabled}
@@ -198,6 +316,14 @@ export function HermesProfileField({
           data-testid="hermes-profile-error"
         >
           {error}
+        </p>
+      ) : null}
+      {trustedBoundaryError ? (
+        <p
+          className="text-sm text-destructive"
+          data-testid="hermes-trusted-boundary-error"
+        >
+          {trustedBoundaryError}
         </p>
       ) : null}
     </div>

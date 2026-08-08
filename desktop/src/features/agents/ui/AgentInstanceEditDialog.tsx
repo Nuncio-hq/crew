@@ -430,8 +430,8 @@ export function AgentInstanceEditDialog({
       agent,
       fieldModel: instanceFieldModel,
       hermesProfile,
+      respondTo,
     });
-
   const {
     discoveredModelOptions,
     modelDiscoveryLoading,
@@ -1102,9 +1102,9 @@ export function AgentInstanceEditDialog({
                 value={apiKeyValue}
               />
             ) : null}
-
             {/* Model / Hermes profile (field-model driven) */}
             <EditAgentModelAndProfileSection
+              currentAgentName={name}
               disabled={updateMutation.isPending}
               editingPubkey={agent.pubkey}
               hermesProfile={hermesProfile}

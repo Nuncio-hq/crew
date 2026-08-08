@@ -1,10 +1,11 @@
 # Hermes agents in Crew — runbook
 
 - **Feature:** [`features/0001-hermes-first-class-runtime.md`](features/0001-hermes-first-class-runtime.md)
-- **Decision:** [`DECISIONS.md`](DECISIONS.md) D-019, D-020, D-023
+- **Decision:** [`DECISIONS.md`](DECISIONS.md) D-019, D-020, D-023, D-024
 - **Status of this flow:** tier-1 runtime on main; Phase 02 binding UI on
   main; Phase 03 profile lifecycle (create-in-place, keep/delete
-  offboarding, orphan repair) on main.
+  offboarding, orphan repair) on main. Issue #104 Phase 01 adds the trusted
+  owner/local boundary and cross-community shared-usage visibility.
 
 ## The model in one sentence
 
@@ -13,11 +14,13 @@ profile (`~/.hermes/profiles/<name>`) owns the agent's model, provider,
 memory, skills, and credentials. Crew owns identity-on-relay, channel
 placement, scheduling, and display.
 
-## Rules (D-019 summary)
+## Rules (D-019 + D-024 summary)
 
-1. One Crew agent ↔ one named Hermes profile. Never share a profile
-   between two live agents; never bind the manager's default profile
-   (`~/.hermes`).
+1. One Crew agent record ↔ one named Hermes profile, with at most one binding
+   for that profile on the same relay. The same local profile may be reused in
+   different communities/relays; that is the same employee and intentionally
+   shares memory, skills, and profile-owned state. Never bind the manager's
+   default profile (`~/.hermes`).
 2. Model and provider are configured on the profile
    (`hermes -p <name> config set model.provider …` /
    `model.default …`) — never in Crew. The create/edit UI shows
@@ -30,8 +33,15 @@ placement, scheduling, and display.
    wrapper binary — `buzz-acp` keys per-runtime defaults (e.g.
    `HERMES_ACP_SKIP_CONFIGURED_MCP=1`) off the command basename.
 4. `parallelism` stays `1` for Hermes agents (spike 0012).
-5. Public agents (`respond-to` ≠ owner-only) require the
-   credential-isolation caveat below.
+5. A profile-bound Hermes agent is always `owner-only` and local. Backend
+   validation rejects `allowlist`/`anyone` and provider/remote deployment on
+   create, update, start, and deploy; client-side controls are explanatory,
+   not the authority.
+6. Full autonomy is intentional for this trusted owner-operated boundary.
+   ACP permission requests continue selecting `allow_once`; Crew has no
+   dangerous-command permission inbox. Clarification/elicitation requests are
+   separate and may enter **Needs You**. Hermes' profile-owned
+   `approvals.mode` still applies; Crew does not override it.
 
 ## Hiring a new agent
 
@@ -66,9 +76,23 @@ want an empty profile from the CLI (Crew does not offer this).
 Select the profile from the list or keep the name you just created
 (`scout`). Leave model blank — the UI replaces the model control with
 "decided by profile scout". Binding `default` is rejected (client and
-server). Binding a profile already used by another agent on the same
-relay shows an occupancy error and disables save; the server still
-rejects duplicates (C-10) if forced.
+server). Binding a profile already used by another agent on the same relay
+shows an occupancy error and disables save; the server still rejects
+duplicates (C-10) if forced. A use on another community/relay does not block
+binding. The Phase 01 UI contract lists the other agent/community and says
+that memory, skills, and profile state are shared.
+
+The effective boundary shown during create/edit is:
+
+```text
+Access       Owner only
+Autonomy     Full
+Backend      This Mac
+Profile      scout
+```
+
+Selecting public access or a remote backend must block save with actionable
+copy; a warning-only path is not sufficient.
 
 Readiness / Doctor surfaces a `hermesProfile` requirement when the
 binding is missing, and a recreate/rebind repair when the bound
@@ -93,6 +117,17 @@ need them; new agents should not add more.
   (`hermes -p scout …`); Crew inherits automatically on the next turn.
 - **Inspect what the agent knows:** `hermes -p scout` surfaces (sessions,
   memory, skills) — Crew holds none of it.
+- **Permissions:** no operator action is expected. `buzz-acp` deliberately
+  answers Hermes ACP permission requests with the advertised `allow_once`
+  option. Do not route these requests into Mission Inbox. A genuine Hermes
+  clarification is a different protocol flow and may become a **Needs You**
+  item. The profile's Hermes approval policy remains authoritative. When the
+  owner intentionally wants total profile-level bypass, use Hermes' canonical
+  surface (`hermes -p scout config set approvals.mode off`); Crew never stores
+  or mutates that policy.
+- **Reuse across communities:** binding `scout` in another community uses the
+  same local profile. Changes to memory, skills, credentials, and other
+  profile-owned state affect every Crew agent record bound to `scout`.
 
 ## Offboarding
 
@@ -126,6 +161,7 @@ code 0** (spike 0011) — verify by directory absence, not exit code.
 | Agent replies with `model: String should have at least 1 character` | Profile has no model configured | `hermes -p <name> config set model.default …` |
 | Agent replies with a provider billing/auth error | Profile's provider unauthenticated or out of credit | `hermes -p <name> …` auth flow for that provider |
 | Save error: profile already bound | Another agent on this relay uses that profile (C-10) | Pick a different profile name |
+| Save error: profile-bound agent must run locally | A legacy record is pinned to a remote backend | Stop/delete the Crew record, keep the Hermes profile, and recreate the agent on **This computer**. The legacy record remains readable, stoppable, and deletable. |
 
 There is currently **no headless auth probe** (spike 0010): Hermes
 `auth status` always exits 0, so Crew cannot badge auth state. Auth
@@ -137,12 +173,17 @@ Hermes-side ask lands.
 - **Credential fallback (spike 0010):** a fresh profile stores no
   credentials of its own but *reads the manager's pooled credentials*
   through a global-root fallback. A Hermes agent in Crew can therefore
-  spend the manager's provider credit. Acceptable for owner-only agents
-  on a one-manager machine; **not acceptable for public agents** until a
-  per-profile isolation switch exists. Do not set `respond-to anyone` on
-  a Hermes agent bound to a fallback-enabled profile. Crew shows a
-  one-line warning on create-in-place and offboarding when respond-to is
-  not owner-only.
+  spend the manager's provider credit. This is acceptable only inside D-024's
+  trusted one-manager boundary. Profile-bound Hermes agents are `owner-only`;
+  public or allowlisted access is rejected rather than downgraded to a
+  warning.
+- **Local profile custody:** a profile name points at state on this machine.
+  Provider/remote backends are rejected until a separate secure profile and
+  secret provisioning design exists.
+- **Shared profile state:** cross-community reuse is deliberate but not
+  isolated. Memory, skills, credentials, and other profile-owned state are
+  shared. Same-relay duplicate binding remains blocked to prevent accidental
+  double representation in one office.
 - Fresh profiles contain no gateway config and no cron jobs — personal
   messaging surfaces stay out of agent profiles as long as you never
   bind `~/.hermes` itself.
@@ -153,6 +194,8 @@ Hermes-side ask lands.
 - `BUZZ_ACP_MODEL` spawn guard + duplicate-bind reject — **done (Phase 02A)**.
 - Profile listing / create-from-UI lifecycle + keep/delete offboarding +
   orphan repair — **done (Phase 03)**.
+- Owner-only/local backend enforcement and cross-community shared-usage copy —
+  **done (Issue #104 Phase 01)**.
 - Auth badge — blocked on Hermes-side probe (spike 0010 / feature §7.3).
 - Live session model in the "decided by profile" row — optional follow-up
   when a clean ACP session-catalog read path exists from create/edit.

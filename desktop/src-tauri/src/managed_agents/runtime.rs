@@ -448,6 +448,7 @@ pub fn spawn_agent_child(
     lazy: bool,
     owner_hex: Option<&str>,
 ) -> Result<crate::managed_agents::ManagedAgentProcess, String> {
+    super::hermes_profile::validate_profile_bound_agent_invariants(record)?;
     if let Some(error) = spawn_key_refusal(record) {
         return Err(error);
     }
