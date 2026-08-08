@@ -9517,9 +9517,9 @@ function findMockEventChannel(eventId: string): string | undefined {
  * Mock the `add_reaction` Tauri command. Mirrors the real Rust command: a
  * kind:7 whose content is the emoji, plus — for a custom emoji — the NIP-30
  * `["emoji", shortcode, url]` tag (shortcode normalized to match the relay).
- * Recorded into the target's channel store and emitted live so the timeline's
- * reaction aggregation renders the pill (the channel subscription includes
- * kind:7). Unicode reactions carry no emoji tag, like the real command.
+ * Recorded into the target's channel store, projected into home-feed activity,
+ * and emitted live so timeline reactions and durable inbox projections observe
+ * the same event. Unicode reactions carry no emoji tag, like the real command.
  */
 async function handleAddReaction(
   args: { eventId: string; emoji: string; emojiUrl?: string | null },
@@ -9551,6 +9551,18 @@ async function handleAddReaction(
     mockEventId(),
   );
   recordMockMessage(channelId, event);
+  const channel = getMockChannel(channelId);
+  mockFeedOverrides.activity.unshift({
+    id: event.id,
+    kind: event.kind,
+    pubkey: event.pubkey,
+    content: event.content,
+    created_at: event.created_at,
+    channel_id: channelId,
+    channel_name: channel.name,
+    tags: event.tags,
+    category: "activity",
+  });
   emitMockLiveEvent(channelId, event);
 }
 

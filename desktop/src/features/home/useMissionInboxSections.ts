@@ -24,6 +24,7 @@ import type { Channel, HomeFeedResponse } from "@/shared/api/types";
 import {
   getAgentReceipts,
   ingestAgentReceiptEvent,
+  ingestAgentReceiptReviewEvent,
   subscribeAgentReceipts,
 } from "@/features/agents/agentReceiptStore";
 import {
@@ -32,13 +33,15 @@ import {
   subscribeAgentAttentionSnoozes,
 } from "@/features/agents/agentAttentionSnoozeStore";
 import { useAgentObserverConnectionState } from "@/features/agents/useAgentObserverConnectionState";
-import { KIND_AGENT_RECEIPT } from "@/shared/constants/kinds";
+import { KIND_AGENT_RECEIPT, KIND_REACTION } from "@/shared/constants/kinds";
 
 type UseMissionInboxSectionsInput = {
   channels?: readonly Pick<Channel, "id" | "name">[];
   effectiveDoneSet: ReadonlySet<string>;
   feed?: HomeFeedResponse;
   inboxItems: readonly InboxItem[];
+  currentPubkey?: string;
+  ownedAgentPubkeys: ReadonlySet<string>;
 };
 
 export function useMissionInboxSections({
@@ -46,6 +49,8 @@ export function useMissionInboxSections({
   effectiveDoneSet,
   feed,
   inboxItems,
+  currentPubkey,
+  ownedAgentPubkeys,
 }: UseMissionInboxSectionsInput): MissionInboxSections {
   React.useEffect(() => {
     for (const item of feed?.feed.needsAction ?? []) {
@@ -75,12 +80,25 @@ export function useMissionInboxSections({
   }, [feed?.feed.needsAction]);
 
   React.useEffect(() => {
-    for (const item of feed?.feed.activity ?? []) {
+    const activity = feed?.feed.activity ?? [];
+    // Receipts must exist before review authority can be checked. A two-pass
+    // replay is deterministic even when relay rows share a created_at second.
+    for (const item of activity) {
       if (item.kind === KIND_AGENT_RECEIPT) {
         ingestAgentReceiptEvent(relayEventFromFeedItem(item));
       }
     }
-  }, [feed?.feed.activity]);
+    if (!currentPubkey) return;
+    for (const item of activity) {
+      if (item.kind === KIND_REACTION) {
+        ingestAgentReceiptReviewEvent(
+          relayEventFromFeedItem(item),
+          currentPubkey,
+          ownedAgentPubkeys,
+        );
+      }
+    }
+  }, [currentPubkey, feed?.feed.activity, ownedAgentPubkeys]);
 
   const needsYou = useMissionInboxNeedsYou();
   const activeTurns = useMissionInboxActiveTurns();
@@ -124,6 +142,7 @@ export function useMissionInboxSections({
         channels: channels ?? [],
         inboxItems,
         needsYou,
+        ownedAgentPubkeys,
         outcomes,
         receipts,
         connectionState,
@@ -136,6 +155,7 @@ export function useMissionInboxSections({
       effectiveDoneSet,
       inboxItems,
       needsYou,
+      ownedAgentPubkeys,
       outcomes,
       receipts,
       snoozedUntilByConversation,

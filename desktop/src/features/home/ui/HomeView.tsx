@@ -404,9 +404,11 @@ export function HomeView({
     });
   const missionSections = useMissionInboxSections({
     channels,
+    currentPubkey,
     effectiveDoneSet,
     feed,
     inboxItems,
+    ownedAgentPubkeys,
   });
   // Resolve selection before filtering so unread-only can retain its active row.
   const selectedItemFromAll = React.useMemo(

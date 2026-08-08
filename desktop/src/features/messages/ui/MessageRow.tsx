@@ -38,7 +38,6 @@ import { useChannelNavigation } from "@/shared/context/ChannelNavigationContext"
 import { parseImetaTags } from "@/shared/ui/markdown/parseImeta";
 import { useMessageEmoji } from "@/features/messages/lib/useMessageEmoji";
 import { parseWaveMessageContent } from "@/features/messages/lib/waveMessage";
-import { parseAgentReceipt } from "@/features/messages/lib/agentReceipt.mjs";
 import { resolveSnapshotSharedBy } from "@/features/messages/lib/snapshotSharedBy";
 import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
 import { Markdown } from "@/shared/ui/markdown";
@@ -50,7 +49,7 @@ import { MessageRowDefaultBody } from "./MessageRowDefaultBody";
 import { MessageAuthorText, MessageHeaderRow } from "./MessageHeader";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { WaveMessageAttachment } from "./WaveMessageAttachment";
-import { AgentReceiptCard } from "./AgentReceiptCard";
+import { AgentReceiptMessageBody } from "./AgentReceiptMessageBody";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 const DiffMessage = React.lazy(() => import("./DiffMessage"));
@@ -68,6 +67,7 @@ export const MessageRow = React.memo(
     channelId = null,
     collapseDepthGuideActions,
     connectDescendants = false,
+    currentPubkey,
     depthGuideDepths,
     highlighted = false,
     highlightDescendantRail = false,
@@ -107,6 +107,7 @@ export const MessageRow = React.memo(
     channelId?: string | null;
     collapseDepthGuideActions?: ReadonlyArray<ThreadDepthGuideAction>;
     connectDescendants?: boolean;
+    currentPubkey?: string;
     depthGuideDepths?: ReadonlyArray<number>;
     highlighted?: boolean;
     highlightDescendantRail?: boolean;
@@ -397,27 +398,18 @@ export const MessageRow = React.memo(
             />
           );
         case KIND_AGENT_RECEIPT: {
-          const receipt = parseAgentReceipt(message.body);
-          const reviewed = reactions.some(
-            (reaction) =>
-              reaction.emoji === "✅" && reaction.reactedByCurrentUser,
-          );
-          return receipt ? (
-            <AgentReceiptCard
-              disabled={reactionPending}
+          return (
+            <AgentReceiptMessageBody
+              canToggleReactions={canToggleReactions}
+              currentPubkey={currentPubkey}
+              fallback={renderMarkdownBody()}
+              message={message}
               onRequestChanges={onReply ? () => onReply(message) : undefined}
-              onReviewed={
-                canToggleReactions
-                  ? () => {
-                      void handleReactionSelect("✅");
-                    }
-                  : undefined
-              }
-              receipt={receipt}
-              reviewed={reviewed}
+              onReviewed={() => void handleReactionSelect("✅")}
+              profiles={profiles}
+              reactionPending={reactionPending}
+              reactions={reactions}
             />
-          ) : (
-            renderMarkdownBody()
           );
         }
         default: {

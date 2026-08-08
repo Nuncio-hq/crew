@@ -38,13 +38,12 @@ function tagValue(event: RelayEvent, name: string): string | null {
 }
 
 function receiptEventId(event: RelayEvent): string | null {
-  const eventTags = event.tags.filter((tag) => tag[0] === "e");
-  return (
-    eventTags.find((tag) => tag[3] === "reply")?.[1] ??
-    eventTags.find((tag) => tag[3] === "root")?.[1] ??
-    eventTags[0]?.[1] ??
-    null
+  // NIP-25 reactions target the last valid `e` tag. Keep this identical to
+  // relay ingestion, which derives the reaction's channel from that target.
+  const eventTags = event.tags.filter(
+    (tag) => tag[0] === "e" && Boolean(tag[1]?.trim()),
   );
+  return eventTags.at(-1)?.[1]?.trim() || null;
 }
 
 export function subscribeAgentReceipts(listener: () => void) {
@@ -88,6 +87,7 @@ export function ingestAgentReceiptEvent(event: RelayEvent): boolean {
 export function ingestAgentReceiptReviewEvent(
   event: RelayEvent,
   currentPubkey: string,
+  ownedAgentPubkeys: ReadonlySet<string>,
 ): boolean {
   if (
     event.kind !== KIND_REACTION ||
@@ -97,10 +97,17 @@ export function ingestAgentReceiptReviewEvent(
     return false;
   }
   const receiptId = receiptEventId(event);
-  if (!receiptId || reviewedReceiptIds.has(receiptId)) return false;
+  const receipt = receiptId ? receiptsById.get(receiptId) : null;
+  if (
+    !receiptId ||
+    !receipt ||
+    !ownedAgentPubkeys.has(receipt.agentPubkey) ||
+    reviewedReceiptIds.has(receiptId)
+  ) {
+    return false;
+  }
   reviewedReceiptIds.add(receiptId);
-  const receipt = receiptsById.get(receiptId);
-  if (receipt) receiptsById.set(receiptId, { ...receipt, reviewed: true });
+  receiptsById.set(receiptId, { ...receipt, reviewed: true });
   notify();
   return true;
 }

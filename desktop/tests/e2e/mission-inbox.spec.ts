@@ -222,7 +222,16 @@ test.describe("mission inbox", () => {
   test("uses a durable receipt for review and keeps request changes in-thread", async ({
     page,
   }) => {
-    await installMockBridge(page);
+    await installMockBridge(page, {
+      searchProfiles: [
+        {
+          pubkey: TEST_IDENTITIES.alice.pubkey,
+          displayName: "Alice Agent",
+          ownerPubkey: MOCK_PUBKEY,
+          isAgent: true,
+        },
+      ],
+    });
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("home-inbox-list")).toBeVisible();
     await expect

@@ -60,6 +60,7 @@ type MissionInboxInput = {
   needsYou: readonly NeedsYouRequest[];
   activeTurns: readonly ActiveConversationTurnSummary[];
   outcomes: readonly (readonly [string, ConversationOutcomeEntry])[];
+  ownedAgentPubkeys: ReadonlySet<string>;
   receipts: readonly AgentReceiptSummary[];
   connectionState: ConnectionState;
   snoozedUntilByConversation: ReadonlyMap<string, number>;
@@ -216,6 +217,7 @@ export function deriveMissionInboxSections(
 
   const latestReceiptByConversation = new Map<string, AgentReceiptSummary>();
   for (const receipt of input.receipts) {
+    if (!input.ownedAgentPubkeys.has(receipt.agentPubkey)) continue;
     const prior = latestReceiptByConversation.get(receipt.conversationId);
     if (!prior || receipt.createdAt > prior.createdAt) {
       latestReceiptByConversation.set(receipt.conversationId, receipt);

@@ -28,11 +28,7 @@ import {
 } from "@/features/channels/lib/userInput";
 import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
 import { buildChannelUserInputFilter } from "@/shared/api/relayChannelFilters";
-import {
-  getAgentReceipts,
-  ingestAgentReceiptEvent,
-  ingestAgentReceiptReviewEvent,
-} from "@/features/agents/agentReceiptStore";
+import { ingestAgentReceiptEvent } from "@/features/agents/agentReceiptStore";
 import type { RelayEvent } from "@/shared/api/types";
 
 const LIVE_HOME_FEED_RETRY_BASE_MS = 1_000;
@@ -109,8 +105,6 @@ export function useLiveHomeFeedActions(
     const handleReceiptEvent = (event: RelayEvent) => {
       if (event.kind === KIND_AGENT_RECEIPT) {
         ingestAgentReceiptEvent(event);
-      } else if (event.kind === KIND_REACTION) {
-        ingestAgentReceiptReviewEvent(event, normalizedPubkey);
       }
     };
     const hydrateDurableActions = async () => {
@@ -140,19 +134,6 @@ export function useLiveHomeFeedActions(
         );
       }
       for (const event of receiptEvents) ingestAgentReceiptEvent(event);
-
-      const receiptIds = getAgentReceipts().map((receipt) => receipt.id);
-      if (receiptIds.length > 0) {
-        const reviewEvents = await relayClient.fetchEvents({
-          authors: [normalizedPubkey],
-          kinds: [KIND_REACTION],
-          "#e": receiptIds,
-          limit: Math.min(1_000, receiptIds.length * 4),
-        });
-        for (const event of reviewEvents) {
-          ingestAgentReceiptReviewEvent(event, normalizedPubkey);
-        }
-      }
       handleLiveHomeFeedEvent();
     };
     const scheduleRetry = () => {

@@ -15,7 +15,9 @@ const ROOT = "a".repeat(64);
 const RECEIPT = "b".repeat(64);
 const AGENT = "c".repeat(64);
 const OWNER = "d".repeat(64);
+const OTHER_AGENT = "8".repeat(64);
 const CONVERSATION = deriveAgentConversationId(CHANNEL, ROOT);
+const OWNED_AGENTS = new Set([AGENT]);
 
 function receiptEvent(overrides = {}) {
   return {
@@ -71,6 +73,7 @@ describe("agentReceiptStore", () => {
           sig: "",
         },
         OWNER,
+        OWNED_AGENTS,
       ),
       true,
     );
@@ -98,7 +101,59 @@ describe("agentReceiptStore", () => {
           sig: "",
         },
         OWNER,
+        OWNED_AGENTS,
       ),
+      false,
+    );
+  });
+
+  it("rejects a current-user reaction when that user does not own the receipt agent", () => {
+    ingestAgentReceiptEvent(receiptEvent({ pubkey: OTHER_AGENT }));
+    assert.equal(
+      ingestAgentReceiptReviewEvent(
+        {
+          id: "7".repeat(64),
+          pubkey: OWNER,
+          created_at: 101,
+          kind: 7,
+          tags: [["e", RECEIPT]],
+          content: "✅",
+          sig: "",
+        },
+        OWNER,
+        OWNED_AGENTS,
+      ),
+      false,
+    );
+    assert.equal(
+      getLatestAgentReceiptForConversation(CONVERSATION).reviewed,
+      false,
+    );
+  });
+
+  it("uses the last valid e tag as the NIP-25 direct target", () => {
+    ingestAgentReceiptEvent(receiptEvent());
+    assert.equal(
+      ingestAgentReceiptReviewEvent(
+        {
+          id: "6".repeat(64),
+          pubkey: OWNER,
+          created_at: 101,
+          kind: 7,
+          tags: [
+            ["e", RECEIPT],
+            ["e", "5".repeat(64)],
+          ],
+          content: "✅",
+          sig: "",
+        },
+        OWNER,
+        OWNED_AGENTS,
+      ),
+      false,
+    );
+    assert.equal(
+      getLatestAgentReceiptForConversation(CONVERSATION).reviewed,
       false,
     );
   });

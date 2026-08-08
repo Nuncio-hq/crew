@@ -31,6 +31,7 @@ const channels = [
 ];
 const attentionDefaults = {
   connectionState: "open",
+  ownedAgentPubkeys: new Set(["agent-1", "agent-2"]),
   receipts: [],
   snoozedUntilByConversation: new Map(),
 };
@@ -125,6 +126,33 @@ test("read-state acknowledgement does not review a durable receipt", () => {
     }).readyToReview.length,
     1,
   );
+});
+
+test("non-owned receipts never enter the owner's review queue", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [],
+    channels,
+    inboxItems: [item("shared-agent", "channel-a", 100)],
+    needsYou: [],
+    outcomes: [],
+    ownedAgentPubkeys: new Set(["agent-1"]),
+    receipts: [
+      {
+        id: "shared-receipt",
+        channelId: "channel-a",
+        conversationId: "shared-agent",
+        agentPubkey: "somebody-elses-agent",
+        createdAt: 200,
+        summary: "Completed successfully",
+        verify: "pnpm check passed",
+        reviewed: false,
+      },
+    ],
+  });
+
+  assert.equal(sections.readyToReview.length, 0);
 });
 
 test("observer completion alone is not ready to review", () => {
