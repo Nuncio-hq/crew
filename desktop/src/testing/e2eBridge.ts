@@ -8512,16 +8512,10 @@ async function handleCreateManagedAgent(
   }
   if (
     hermesProfile &&
-    mockManagedAgents.some(
-      (other) =>
-        other.hermes_profile === hermesProfile &&
-        other.relay_url === (args.input.relayUrl ?? DEFAULT_RELAY_WS_URL),
-    )
+    mockManagedAgents.some((other) => other.hermes_profile === hermesProfile)
   ) {
     const other = mockManagedAgents.find(
-      (candidate) =>
-        candidate.hermes_profile === hermesProfile &&
-        candidate.relay_url === (args.input.relayUrl ?? DEFAULT_RELAY_WS_URL),
+      (candidate) => candidate.hermes_profile === hermesProfile,
     );
     throw new Error(
       `hermes profile '${hermesProfile}' is already bound to agent '${other?.name}' (${other?.pubkey})`,
@@ -8821,6 +8815,8 @@ async function handleUpdateManagedAgent(args: {
     model?: string | null;
     systemPrompt?: string | null;
     envVars?: Record<string, string>;
+    agentCommand?: string;
+    agentArgs?: string[];
     respondTo?: "owner-only" | "allowlist" | "anyone";
     respondToAllowlist?: string[];
     hermesProfile?: string | null;
@@ -8839,6 +8835,12 @@ async function handleUpdateManagedAgent(args: {
   if (args.input.envVars !== undefined) {
     agent.env_vars = { ...args.input.envVars };
   }
+  if (args.input.agentCommand !== undefined) {
+    agent.agent_command = args.input.agentCommand;
+  }
+  if (args.input.agentArgs !== undefined) {
+    agent.agent_args = [...args.input.agentArgs];
+  }
   if (args.input.respondTo !== undefined) {
     agent.respond_to = args.input.respondTo;
   }
@@ -8856,16 +8858,13 @@ async function handleUpdateManagedAgent(args: {
       profile &&
       mockManagedAgents.some(
         (other) =>
-          other.pubkey !== agent.pubkey &&
-          other.hermes_profile === profile &&
-          other.relay_url === agent.relay_url,
+          other.pubkey !== agent.pubkey && other.hermes_profile === profile,
       )
     ) {
       const other = mockManagedAgents.find(
         (candidate) =>
           candidate.pubkey !== agent.pubkey &&
-          candidate.hermes_profile === profile &&
-          candidate.relay_url === agent.relay_url,
+          candidate.hermes_profile === profile,
       );
       throw new Error(
         `hermes profile '${profile}' is already bound to agent '${other?.name}' (${other?.pubkey})`,

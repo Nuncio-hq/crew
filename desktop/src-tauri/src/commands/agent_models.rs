@@ -755,7 +755,6 @@ pub async fn update_managed_agent(
                 &input.hermes_profile,
                 &records,
                 &input.pubkey,
-                input.relay_url.as_deref(),
             )?;
         let record = find_managed_agent_mut(&mut records, &input.pubkey)?;
         let previous_record = record.clone();

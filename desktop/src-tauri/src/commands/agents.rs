@@ -699,7 +699,6 @@ pub async fn create_managed_agent(
         let hermes_profile = crate::managed_agents::hermes_profile::bind_hermes_profile_on_create(
             input.hermes_profile.as_deref(),
             &records,
-            &resolved_relay_url,
         )?;
         // Provider config was already validated in Pre-Phase 2; cache the discovered binary path for deploy_to_provider.
         let provider_binary_path = if let BackendKind::Provider { ref id, .. } = input.backend {
