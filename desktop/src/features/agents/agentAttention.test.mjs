@@ -185,6 +185,18 @@ describe("agent attention projection", () => {
     assert.equal(projection.state, "telemetry-unavailable");
   });
 
+  it("does not let a locally pruned lost-contact outcome mask telemetry failure", () => {
+    const projection = deriveAgentAttention({
+      connectionState: "error",
+      needsYou: false,
+      now: NOW,
+      outcome: "lost-contact",
+      receipt: null,
+      turns: [],
+    });
+    assert.equal(projection.state, "telemetry-unavailable");
+  });
+
   it("distinguishes lost contact from alive-without-progress", () => {
     assert.equal(
       deriveAgentAttention({

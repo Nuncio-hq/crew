@@ -133,7 +133,7 @@ export async function replayReconnectHistoryPages({
 
     if (!isActive()) return false;
 
-    for (const event of events) subscription.onEvent(event);
+    for (const event of events) subscription.onEvent(event, { replay: true });
     if (events.length < RECONNECT_REPLAY_PAGE_LIMIT) return true;
 
     const oldestCreatedAt = events[0]?.created_at;
@@ -194,6 +194,7 @@ export async function replayLiveSubscriptions({
         entry[1].mode === "live",
     )
     .map(([subId, subscription]) => {
+      subscription.ready = false;
       const cursorSince =
         subscription.lastSeenCreatedAt === undefined
           ? undefined

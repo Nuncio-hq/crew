@@ -72,12 +72,15 @@ export function applyObserverFrame(
   event: ObserverEvent,
   observedAt: number,
 ): boolean {
-  turn.lastSeenAt = observedAt;
+  turn.lastSeenAt = Math.max(turn.lastSeenAt, observedAt);
   const progress = progressFromObserverEvent(event);
   if (!progress || progress.fingerprint === turn.progressFingerprint) {
     return false;
   }
-  turn.lastSubstantiveProgressAt = observedAt;
+  turn.lastSubstantiveProgressAt = Math.max(
+    turn.lastSubstantiveProgressAt,
+    observedAt,
+  );
   turn.progressFingerprint = progress.fingerprint;
   turn.progressKind = progress.kind;
   turn.progressLabel = progress.label;

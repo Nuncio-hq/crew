@@ -190,7 +190,13 @@ export function deriveAgentAttention(
 ): AgentAttentionProjection {
   if (input.needsYou) return baseProjection("needs-you", input.turns[0]);
   if (input.outcome === "error") return baseProjection("failed");
-  if (input.outcome === "lost-contact") return baseProjection("lost-contact");
+  if (input.outcome === "lost-contact") {
+    return baseProjection(
+      input.connectionState === "open"
+        ? "lost-contact"
+        : "telemetry-unavailable",
+    );
+  }
 
   if (input.turns.length > 0) {
     if (input.connectionState !== "open") {

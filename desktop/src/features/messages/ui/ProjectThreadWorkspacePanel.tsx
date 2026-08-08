@@ -111,8 +111,8 @@ export function ProjectThreadWorkspacePanel({
   const workingPubkeys = model?.workingPubkeys ?? [];
   const now = useSharedNowWhen(workingPubkeys.length > 0);
   const conversationId = model?.conversationId ?? null;
-  // Real source for the amber "waiting on user" handoff phase: pending
-  // approval requests (kind 46010) blocking this conversation (#74 store).
+  // Real source for the amber handoff phase: durable workflow approvals
+  // (46010) and ACP user-input requests (46040), never tool permissions.
   const needsYou = useNeedsYouForConversation(conversationId);
   const { hasStoppableWork, stopAgent } = useComposerAgentStop({
     channelId,

@@ -44,3 +44,37 @@ export function useAgentObserverConnectionState(
     getSnapshot,
   );
 }
+
+/** Per-agent connection states for conversation-scoped attention projection. */
+export function useAgentObserverConnectionStates(
+  agentPubkeys: readonly string[],
+): ReadonlyMap<string, ConnectionState> {
+  const key = [...new Set(agentPubkeys)].sort().join(",");
+  const getSnapshot = React.useCallback(
+    () =>
+      (key ? key.split(",") : [])
+        .map(
+          (pubkey) =>
+            `${pubkey}:${getAgentObserverSnapshot(pubkey, true).connectionState}`,
+        )
+        .join("|"),
+    [key],
+  );
+  const snapshot = React.useSyncExternalStore(
+    subscribeAgentObserverStore,
+    getSnapshot,
+    getSnapshot,
+  );
+  return React.useMemo(() => {
+    const states = new Map<string, ConnectionState>();
+    for (const entry of snapshot.split("|")) {
+      if (!entry) continue;
+      const separator = entry.lastIndexOf(":");
+      states.set(
+        entry.slice(0, separator),
+        entry.slice(separator + 1) as ConnectionState,
+      );
+    }
+    return states;
+  }, [snapshot]);
+}

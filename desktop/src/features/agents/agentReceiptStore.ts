@@ -11,6 +11,7 @@ export type AgentReceiptSummary = {
   id: string;
   channelId: string;
   conversationId: string;
+  rootEventId: string | null;
   agentPubkey: string;
   createdAt: number;
   summary: string;
@@ -64,6 +65,7 @@ export function ingestAgentReceiptEvent(event: RelayEvent): boolean {
     id: event.id,
     channelId,
     conversationId,
+    rootEventId: rootId,
     agentPubkey: normalizePubkey(event.pubkey),
     createdAt: event.created_at * 1_000,
     summary: parsed.summary,
@@ -121,7 +123,13 @@ export function getLatestAgentReceiptForConversation(
   let latest: AgentReceiptSummary | null = null;
   for (const receipt of receiptsById.values()) {
     if (receipt.conversationId !== conversationId) continue;
-    if (!latest || receipt.createdAt > latest.createdAt) latest = receipt;
+    if (
+      !latest ||
+      receipt.createdAt > latest.createdAt ||
+      (receipt.createdAt === latest.createdAt && receipt.id > latest.id)
+    ) {
+      latest = receipt;
+    }
   }
   cachedByConversation.set(conversationId, latest);
   return latest;

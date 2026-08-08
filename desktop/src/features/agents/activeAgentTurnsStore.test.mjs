@@ -973,6 +973,22 @@ describe("activeAgentTurnsStore", () => {
       );
     });
 
+    it("invalidates time-driven attention while a turn remains active", () => {
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({ seq: 1, turnId: "t1", channelId: "c1", timestamp: at(0) }),
+      ]);
+      let notified = 0;
+      const stop = subscribeActiveAgentTurns(() => {
+        notified++;
+      });
+      mock.timers.tick(PRUNE_INTERVAL_MS);
+      stop();
+      assert.ok(
+        notified > 0,
+        "elapsed thresholds need a store invalidation tick",
+      );
+    });
+
     it("separates last seen from substantive progress", () => {
       syncAgentTurnsFromEvents(AGENT, [
         makeEvent({ seq: 1, turnId: "t1", channelId: "c1", timestamp: at(0) }),
@@ -1004,6 +1020,10 @@ describe("activeAgentTurnsStore", () => {
       );
 
       mock.timers.tick(1_000);
+      let streamingNotifications = 0;
+      const stopStreaming = subscribeActiveAgentTurns(() => {
+        streamingNotifications++;
+      });
       syncAgentTurnsFromEvents(AGENT, [
         makeEvent({
           seq: 3,
@@ -1022,6 +1042,7 @@ describe("activeAgentTurnsStore", () => {
           },
         }),
       ]);
+      stopStreaming();
       const streaming = getActiveTurnActivityBounds({
         agentPubkeys: [AGENT],
         channelId: "c1",
@@ -1030,6 +1051,11 @@ describe("activeAgentTurnsStore", () => {
         streaming.lastSubstantiveProgressAt,
         initial.lastSubstantiveProgressAt,
         "token stream must not reset the progress clock",
+      );
+      assert.ok(streaming.lastSeenAt > alive.lastSeenAt);
+      assert.ok(
+        streamingNotifications > 0,
+        "liveness-only ACP frames must invalidate external-store snapshots",
       );
 
       mock.timers.tick(1_000);
@@ -1062,6 +1088,34 @@ describe("activeAgentTurnsStore", () => {
       );
       assert.equal(tool.progressKind, "progress");
       assert.equal(tool.progressLabel, "Running pnpm check");
+    });
+
+    it("preserves replay timestamps instead of presenting history as fresh liveness", () => {
+      mock.timers.tick(5 * 60_000);
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({
+          seq: 1,
+          turnId: "replayed",
+          channelId: "c1",
+          timestamp: at(0),
+          replayed: true,
+        }),
+        makeEvent({
+          seq: 2,
+          kind: "turn_liveness",
+          turnId: "replayed",
+          channelId: "c1",
+          timestamp: at(60_000),
+          replayed: true,
+        }),
+      ]);
+
+      const replayed = getActiveTurnActivityBounds({
+        agentPubkeys: [AGENT],
+        channelId: "c1",
+      });
+      assert.equal(replayed.lastSeenAt, EPOCH + 60_000);
+      assert.equal(replayed.lastSubstantiveProgressAt, EPOCH);
     });
 
     it("prunes a stale turn at the bound when its tracked sibling stays fresh", () => {
@@ -1829,6 +1883,31 @@ describe("community-switch save / restore", () => {
       anchorBefore,
       "anchorAt must equal the pre-switch value — startedAt and offset are preserved",
     );
+  });
+
+  it("does not refresh liveness merely because a community snapshot was restored", () => {
+    const originalNow = Date.now;
+    let now = Date.parse("2024-01-01T00:00:00Z");
+    Date.now = () => now;
+    try {
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({
+          seq: 1,
+          turnId: "t1",
+          channelId: "c1",
+          timestamp: new Date(now).toISOString(),
+        }),
+      ]);
+      const before = getActiveTurnActivityBounds({ agentPubkeys: [AGENT] });
+      saveActiveAgentTurnsForCommunity("ws-a");
+      resetActiveAgentTurnsStore();
+      now += 60_000;
+      restoreActiveAgentTurnsForCommunity("ws-a");
+      const after = getActiveTurnActivityBounds({ agentPubkeys: [AGENT] });
+      assert.equal(after.lastSeenAt, before.lastSeenAt);
+    } finally {
+      Date.now = originalNow;
+    }
   });
 
   it("no-op restore when no snapshot exists for the community", () => {

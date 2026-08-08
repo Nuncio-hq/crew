@@ -532,8 +532,8 @@ pub fn spawn_agent_child(
     command.env("BUZZ_PRIVATE_KEY", &record.private_key_nsec);
     command.env("BUZZ_RELAY_URL", &effective_relay_url);
     command.env("BUZZ_ACP_LAZY_POOL", if lazy { "true" } else { "false" });
-    // Crew's review state is receipt-backed. Managed agents opt in by default;
-    // an explicit per-agent environment value applied below can still opt out.
+    // Crew's review state is receipt-backed. This key is reserved, so layered
+    // harness/persona/user env written below cannot disable managed receipts.
     command.env("BUZZ_ACP_AGENT_RECEIPTS", "true");
     command.env("BUZZ_ACP_AGENT_COMMAND", &resolved_agent_command);
     command.env("BUZZ_ACP_AGENT_ARGS", agent_args.join(","));

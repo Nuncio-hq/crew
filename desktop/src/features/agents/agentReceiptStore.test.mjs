@@ -49,7 +49,8 @@ describe("agentReceiptStore", () => {
     assert.deepEqual(getLatestAgentReceiptForConversation(CONVERSATION), {
       id: RECEIPT,
       channelId: CHANNEL,
-      conversationId: CONVERSATION,
+      conversationId: deriveAgentConversationId(CHANNEL, ROOT),
+      rootEventId: ROOT,
       agentPubkey: AGENT,
       createdAt: 100_000,
       summary: "Implemented recovery",

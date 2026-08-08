@@ -19,7 +19,16 @@ test.describe("mission inbox", () => {
   test("ingests a live 46040 request, falls back to its channel, and resolves it", async ({
     page,
   }) => {
-    await installMockBridge(page);
+    await installMockBridge(page, {
+      searchProfiles: [
+        {
+          pubkey: TEST_IDENTITIES.alice.pubkey,
+          displayName: "Alice Agent",
+          ownerPubkey: MOCK_PUBKEY,
+          isAgent: true,
+        },
+      ],
+    });
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("home-inbox-list")).toBeVisible({
       timeout: 10_000,
@@ -56,7 +65,11 @@ test.describe("mission inbox", () => {
           }),
         });
       },
-      { channelId: CHANNEL_ID, id: REQUEST_ID, pubkey: MOCK_PUBKEY },
+      {
+        channelId: CHANNEL_ID,
+        id: REQUEST_ID,
+        pubkey: TEST_IDENTITIES.alice.pubkey,
+      },
     );
 
     const sections = page.getByTestId("mission-inbox-sections");
@@ -86,12 +99,16 @@ test.describe("mission inbox", () => {
     await page.screenshot({ path: `${SHOTS}/02-channel-fallback.png` });
 
     await page.evaluate(
-      ({ requestEventId }) =>
+      ({ requestAgentPubkey, requestEventId }) =>
         window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT_ANSWER__?.({
           channelName: "general",
           requestEventId,
+          requestAgentPubkey,
         }),
-      { requestEventId: REQUEST_ID },
+      {
+        requestAgentPubkey: TEST_IDENTITIES.alice.pubkey,
+        requestEventId: REQUEST_ID,
+      },
     );
     await expect(
       page.getByTestId(`mission-inbox-row-${CONVERSATION_ID}`),
@@ -300,10 +317,6 @@ test.describe("mission inbox", () => {
     await expect(ready).toContainText("Recovery slice completed");
     await ready.getByText("Recovery slice completed").click();
     await expect(page).toHaveURL(new RegExp(`/channels/${CHANNEL_ID}`));
-    await page
-      .getByRole("button", { name: /View thread with/ })
-      .last()
-      .click();
     const card = page.getByTestId("agent-receipt-card");
     await expect(card).toBeVisible();
     await expect(card.getByTestId("agent-receipt-reviewed")).toBeVisible();

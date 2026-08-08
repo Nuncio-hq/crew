@@ -1,14 +1,7 @@
 import * as React from "react";
 
-import {
-  ingestApprovalRequestFeedItem,
-  ingestUserInputRequest,
-} from "@/features/agents/needsYouStore";
-import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
-import {
-  deriveUserInputRootEventId,
-  parseUserInputRequest,
-} from "@/features/channels/lib/userInput";
+import { ingestApprovalRequestFeedItem } from "@/features/agents/needsYouStore";
+import { projectAuthorizedUserInputEvent } from "@/features/agents/userInputAttentionProjection";
 import {
   deriveMissionInboxSections,
   useMissionInboxActiveTurns,
@@ -32,7 +25,10 @@ import {
   getAgentAttentionSnoozedUntil,
   subscribeAgentAttentionSnoozes,
 } from "@/features/agents/agentAttentionSnoozeStore";
-import { useAgentObserverConnectionState } from "@/features/agents/useAgentObserverConnectionState";
+import {
+  useAgentObserverConnectionState,
+  useAgentObserverConnectionStates,
+} from "@/features/agents/useAgentObserverConnectionState";
 import { KIND_AGENT_RECEIPT, KIND_REACTION } from "@/shared/constants/kinds";
 
 type UseMissionInboxSectionsInput = {
@@ -59,25 +55,14 @@ export function useMissionInboxSections({
         continue;
       }
       const event = relayEventFromFeedItem(item);
-      const request = parseUserInputRequest(event);
-      if (!request) continue;
-      const rootEventId = deriveUserInputRootEventId(event);
-      const channelId = request.channel_id || item.channelId;
-      const conversationId = deriveAgentConversationIdOrNull(
-        channelId,
-        rootEventId,
+      projectAuthorizedUserInputEvent(
+        event,
+        item.channelId ?? "",
+        currentPubkey ?? "",
+        ownedAgentPubkeys,
       );
-      if (!channelId || !conversationId) continue;
-      ingestUserInputRequest({
-        id: item.id,
-        channelId,
-        rootEventId,
-        conversationId,
-        agentPubkey: item.pubkey,
-        createdAt: item.createdAt * 1_000,
-      });
     }
-  }, [feed?.feed.needsAction]);
+  }, [currentPubkey, feed?.feed.needsAction, ownedAgentPubkeys]);
 
   React.useEffect(() => {
     const activity = feed?.feed.activity ?? [];
@@ -114,10 +99,17 @@ export function useMissionInboxSections({
     getAgentAttentionSnoozeGeneration,
   );
   const activeAgentPubkeys = React.useMemo(
-    () => [...new Set(activeTurns.flatMap((turn) => turn.agentPubkeys))],
-    [activeTurns],
+    () => [
+      ...new Set([
+        ...activeTurns.flatMap((turn) => turn.agentPubkeys),
+        ...outcomes.map(([, outcome]) => outcome.agentPubkey),
+      ]),
+    ],
+    [activeTurns, outcomes],
   );
   const connectionState = useAgentObserverConnectionState(activeAgentPubkeys);
+  const connectionStateByAgent =
+    useAgentObserverConnectionStates(activeAgentPubkeys);
   const snoozedUntilByConversation = React.useMemo(() => {
     // The store generation invalidates values while active-turn identities
     // remain stable.
@@ -146,12 +138,14 @@ export function useMissionInboxSections({
         outcomes,
         receipts,
         connectionState,
+        connectionStateByAgent,
         snoozedUntilByConversation,
       }),
     [
       activeTurns,
       channels,
       connectionState,
+      connectionStateByAgent,
       effectiveDoneSet,
       inboxItems,
       needsYou,

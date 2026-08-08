@@ -128,6 +128,35 @@ test("read-state acknowledgement does not review a durable receipt", () => {
   );
 });
 
+test("receipt-only rows retain a direct message and thread target", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [],
+    channels,
+    inboxItems: [],
+    needsYou: [],
+    outcomes: [],
+    receipts: [
+      {
+        id: "a".repeat(64),
+        channelId: "channel-a",
+        conversationId: "receipt-only",
+        rootEventId: "b".repeat(64),
+        agentPubkey: "agent-1",
+        createdAt: 200,
+        summary: "Completed successfully",
+        verify: "pnpm check passed",
+        reviewed: false,
+      },
+    ],
+  });
+  assert.deepEqual(getMissionInboxEventTarget(sections.readyToReview[0]), {
+    messageId: "a".repeat(64),
+    threadRootId: "b".repeat(64),
+  });
+});
+
 test("non-owned receipts never enter the owner's review queue", () => {
   const sections = deriveMissionInboxSections({
     ...attentionDefaults,
@@ -210,6 +239,39 @@ test("attention exceptions outrank an unreviewed receipt", () => {
   assert.equal(sections.readyToReview.length, 0);
 });
 
+test("a newer active turn suppresses a stale receipt from the prior run", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [
+      activeTurn("rerun", {
+        anchorAt: 200_000,
+        lastSeenAt: 200_000,
+        lastSubstantiveProgressAt: 200_000,
+      }),
+    ],
+    channels,
+    inboxItems: [item("rerun", "channel-a", 100)],
+    needsYou: [],
+    now: 201_000,
+    outcomes: [],
+    receipts: [
+      {
+        id: "receipt-old-run",
+        channelId: "channel-a",
+        conversationId: "rerun",
+        agentPubkey: "agent-1",
+        createdAt: 100_000,
+        summary: "Old run completed",
+        verify: "old verification",
+        reviewed: false,
+      },
+    ],
+  });
+  assert.equal(sections.readyToReview.length, 0);
+  assert.equal(sections.working[0]?.conversationId, "rerun");
+});
+
 test("unavailable observer telemetry never masquerades as stalled", () => {
   const sections = deriveMissionInboxSections({
     ...attentionDefaults,
@@ -228,6 +290,43 @@ test("unavailable observer telemetry never masquerades as stalled", () => {
     outcomes: [],
   });
   assert.equal(sections.needsYou[0]?.state, "telemetryUnavailable");
+});
+
+test("observer failures are scoped to the affected conversation agents", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [
+      activeTurn("healthy", {
+        agentPubkeys: ["agent-1"],
+        lastSeenAt: 109_000,
+        lastSubstantiveProgressAt: 109_000,
+      }),
+      activeTurn("offline", {
+        agentPubkeys: ["agent-2"],
+        lastSeenAt: 109_000,
+        lastSubstantiveProgressAt: 109_000,
+      }),
+    ],
+    channels,
+    connectionState: "error",
+    connectionStateByAgent: new Map([
+      ["agent-1", "open"],
+      ["agent-2", "error"],
+    ]),
+    inboxItems: [
+      item("healthy", "channel-a", 100),
+      item("offline", "channel-a", 100),
+    ],
+    needsYou: [],
+    now: 110_000,
+    outcomes: [],
+  });
+  assert.equal(sections.working[0]?.conversationId, "healthy");
+  assert.equal(
+    sections.needsYou.find((row) => row.conversationId === "offline")?.state,
+    "telemetryUnavailable",
+  );
 });
 
 test("needs-you rows order newest request first", () => {

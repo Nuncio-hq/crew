@@ -21,6 +21,10 @@ export type NeedsYouRequest = {
   approvalReferences: string[];
 };
 
+// Entries in `requests` are durable workflow-human approvals (kind 46010),
+// not ACP tool permission prompts. Tool permissions stay on the established
+// permission/bypass path and never enter Agent Attention's `Needs you` state.
+
 type UserInputNeedsYouRequest = NeedsYouRequest & { kind: "user-input" };
 
 const requests = new Map<string, NeedsYouRequest>();
@@ -74,6 +78,12 @@ export function resolveUserInputRequest(requestId: string) {
   scheduleExpiry();
   notify();
   return true;
+}
+
+export function getPendingUserInputRequest(
+  requestId: string,
+): NeedsYouRequest | null {
+  return userInputRequests.get(requestId) ?? null;
 }
 
 function prune(now: number): boolean {

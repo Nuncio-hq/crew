@@ -152,12 +152,23 @@ function parseTimestamp(timestamp: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function eventObservedAt(agentKey: string, event: ObserverEvent): number {
+  if (!event.replayed) return Date.now();
+  const eventAt = parseTimestamp(event.timestamp);
+  if (eventAt === null) return Date.now();
+  return Math.min(
+    Date.now(),
+    eventAt + (clockOffsetByAgent.get(agentKey) ?? 0),
+  );
+}
+
 function startTurn(
   agentPubkey: string,
   channelId: string,
   conversationId: string,
   turnId: string,
   timestamp: string,
+  observedAt: number,
   triggerIds: string[] = [],
 ) {
   const key = normalizePubkey(agentPubkey);
@@ -182,7 +193,6 @@ function startTurn(
     }
   }
 
-  const observedAt = Date.now();
   agentTurns.set(
     turnId,
     createActiveTurn({
@@ -211,7 +221,11 @@ function recordFrame(
   if (!turn) return { found: false, progressChanged: false };
   return {
     found: true,
-    progressChanged: applyObserverFrame(turn, event, Date.now()),
+    progressChanged: applyObserverFrame(
+      turn,
+      event,
+      eventObservedAt(key, event),
+    ),
   };
 }
 
@@ -250,6 +264,7 @@ function resurrectTurn(agentPubkey: string, event: ObserverEvent): boolean {
     event.conversationId ?? event.channelId,
     event.turnId,
     safeStartedAt,
+    eventObservedAt(key, event),
   );
   return true;
 }
@@ -342,6 +357,12 @@ function pruneExpired() {
     bumpActiveTurnsGeneration();
     changed = true;
   }
+  if (activeTurnsByAgent.size > 0) {
+    // Attention states cross elapsed-time thresholds even when no new frame
+    // mutates the turn. Refresh external-store snapshots on the prune cadence.
+    bumpActiveTurnsGeneration();
+    changed = true;
+  }
   if (changed) {
     notifyListeners();
   }
@@ -363,7 +384,10 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
   // Refine the clock offset from every fresh event. A tighter offset shifts
   // every live anchor for this agent, so a change must reach the UI even when
   // the event itself surfaces no new turn.
-  const offsetChanged = sampleClockOffset(key, event.timestamp);
+  const offsetChanged = event.replayed
+    ? false
+    : sampleClockOffset(key, event.timestamp);
+  const observedAt = eventObservedAt(key, event);
 
   switch (event.kind) {
     case "turn_started":
@@ -375,6 +399,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
           event.conversationId ?? event.channelId,
           event.turnId ?? `seq-${event.seq}`,
           event.timestamp,
+          observedAt,
           triggeringEventIds(event),
         );
         notifyListeners();
@@ -430,7 +455,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
           outcome: event.kind === "turn_completed" ? "completed" : "error",
           agentPubkey: key,
           channelId: event.channelId,
-          endedAt: Date.now(),
+          endedAt: observedAt,
           failedEventIds: [...(terminalTurn?.triggeringEventIds ?? [])],
         });
       }
@@ -454,10 +479,10 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
         notifyListeners();
         return;
       }
-      if (
-        frame.found &&
-        (frame.progressChanged || event.kind === "turn_liveness")
-      ) {
+      if (frame.found) {
+        // Every observer frame is liveness, even when it is not substantive
+        // progress. Invalidate external-store projections for token, usage,
+        // stdout, and raw ACP traffic without moving the progress clock.
         invalidateCache(key);
         notifyListeners();
         return;
@@ -853,8 +878,9 @@ export function saveActiveAgentTurnsForCommunity(communityId: string): void {
  * are already empty after `resetCommunityState()`, but this guard makes the
  * contract explicit.
  *
- * Refreshes `lastSeenAt` on every restored turn so the prune interval does not
- * immediately kill saved turns. The substantive-progress clock is preserved.
+ * Preserves both activity clocks. A community switch is not evidence of
+ * liveness or substantive progress; connection health decides whether stale
+ * restored turns surface as telemetry failure or lost contact.
  *
  * Consumes the snapshot (deletes it from `savedByCommunity`) — a given
  * community's snapshot is only usable once per round-trip.
@@ -871,12 +897,10 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
   terminalAtByAgent.clear();
   clearConversationOutcomeLedger();
 
-  const now = Date.now();
-
   for (const [agentKey, agentTurns] of snap.turns) {
     const restored = new Map<string, ActiveTurn>();
     for (const [turnId, turn] of agentTurns) {
-      restored.set(turnId, { ...turn, lastSeenAt: now });
+      restored.set(turnId, { ...turn });
     }
     activeTurnsByAgent.set(agentKey, restored);
   }

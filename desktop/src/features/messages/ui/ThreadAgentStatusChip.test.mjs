@@ -16,6 +16,7 @@ import {
   buildThreadAgentStatusChipView,
   ThreadAgentStatusChip,
 } from "./ThreadAgentStatusChip.tsx";
+import { setObserverConnectionStateForE2E } from "@/features/agents/observerRelayStore.ts";
 
 const AGENT_A =
   "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111";
@@ -150,7 +151,7 @@ test("buildThreadAgentStatusChipView prioritizes needs-you over running", () => 
   assert.match(view.title, /Claude Opus is waiting for your approval · 9m 0s/);
 });
 
-test("buildThreadAgentStatusChipView builds done view model", () => {
+test("observer completion alone does not claim durable Done", () => {
   const view = buildThreadAgentStatusChipView(
     [],
     {
@@ -162,12 +163,36 @@ test("buildThreadAgentStatusChipView builds done view model", () => {
     PROFILE_A,
     NOW,
   );
-  assert.ok(view);
-  assert.equal(view.state, "done");
-  assert.equal(view.label, "Done");
-  assert.equal(view.elapsedLabel, "12m ago");
-  assert.equal(view.title, "Claude Opus finished 12m ago");
-  assert.equal(view.displayAgents.length, 1);
+  assert.equal(view, null);
+});
+
+test("receipt authority drives Ready to review and reviewed Done", () => {
+  const receipt = {
+    id: "d".repeat(64),
+    channelId: "chan-1",
+    conversationId: "thread-a",
+    rootEventId: "e".repeat(64),
+    agentPubkey: AGENT_A,
+    createdAt: NOW - 12 * 60_000,
+    summary: "Completed",
+    verify: "pnpm check",
+    reviewed: false,
+  };
+  const ready = buildThreadAgentStatusChipView(
+    [],
+    null,
+    PROFILE_A,
+    NOW,
+    [],
+    receipt,
+  );
+  assert.equal(ready?.state, "ready-to-review");
+  assert.equal(ready?.label, "Ready to review");
+  const done = buildThreadAgentStatusChipView([], null, PROFILE_A, NOW, [], {
+    ...receipt,
+    reviewed: true,
+  });
+  assert.equal(done?.state, "done");
 });
 
 test("buildThreadAgentStatusChipView builds failed view model", () => {
@@ -201,6 +226,7 @@ test("ThreadAgentStatusChip renders nothing when conversation has no agents", ()
 
 test("ThreadAgentStatusChip renders chip for a single active agent", () => {
   resetActiveAgentTurnsStore();
+  setObserverConnectionStateForE2E("open");
   syncAgentTurnsFromEvents(AGENT_A, [
     {
       seq: 1,
@@ -274,7 +300,7 @@ test("ThreadAgentStatusChip renders N agents label for multiple", () => {
   assert.match(html, /2 agents/);
 });
 
-test("ThreadAgentStatusChip renders done after turn_completed", () => {
+test("ThreadAgentStatusChip does not claim Done from observer completion alone", () => {
   resetActiveAgentTurnsStore();
   syncAgentTurnsFromEvents(AGENT_A, [
     {
@@ -307,9 +333,7 @@ test("ThreadAgentStatusChip renders done after turn_completed", () => {
       profiles: PROFILE_A,
     }),
   );
-  assert.match(html, /data-testid="thread-agent-status-chip"/);
-  assert.match(html, /data-state="done"/);
-  assert.match(html, /Done/);
+  assert.equal(html, "");
 });
 
 test("ThreadAgentStatusChip renders failed after turn_error", () => {

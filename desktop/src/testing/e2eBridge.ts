@@ -1182,11 +1182,13 @@ declare global {
       channelName: string;
       requestEventId: string;
       content?: string;
+      requestAgentPubkey?: string;
     }) => RelayEvent;
     __BUZZ_E2E_EMIT_MOCK_USER_INPUT_RESOLVED__?: (input: {
       channelName: string;
       requestEventId: string;
       outcome: "answered" | "declined" | "cancelled";
+      requestAgentPubkey?: string;
     }) => RelayEvent;
     /** Prepend `count` synthetic older messages to a channel's mock store so
      *  an older-history fetch has something to paginate. Mirrors how the real
@@ -10381,8 +10383,11 @@ export function maybeInstallE2eTauriMocks() {
     const event = createMockEvent(
       KIND_AGENT_USER_INPUT_REQUESTED,
       content,
-      [["h", channel.id]],
-      pubkey,
+      [
+        ["h", channel.id],
+        ["p", DEFAULT_MOCK_IDENTITY.pubkey],
+      ],
+      pubkey ?? OWNED_RELAY_AGENT_PUBKEY,
       Math.floor(Date.now() / 1000),
       requestId,
     );
@@ -10393,6 +10398,7 @@ export function maybeInstallE2eTauriMocks() {
     channelName,
     requestEventId,
     content = "{}",
+    requestAgentPubkey = OWNED_RELAY_AGENT_PUBKEY,
   }) => {
     const channel = mockChannels.find(
       (candidate) => candidate.name === channelName,
@@ -10404,6 +10410,7 @@ export function maybeInstallE2eTauriMocks() {
       [
         ["h", channel.id],
         ["e", requestEventId],
+        ["p", requestAgentPubkey],
       ],
       DEFAULT_MOCK_IDENTITY.pubkey,
     );
@@ -10414,6 +10421,7 @@ export function maybeInstallE2eTauriMocks() {
     channelName,
     requestEventId,
     outcome,
+    requestAgentPubkey = OWNED_RELAY_AGENT_PUBKEY,
   }) => {
     const channel = mockChannels.find(
       (candidate) => candidate.name === channelName,
@@ -10425,8 +10433,9 @@ export function maybeInstallE2eTauriMocks() {
       [
         ["h", channel.id],
         ["e", requestEventId],
+        ["p", DEFAULT_MOCK_IDENTITY.pubkey],
       ],
-      DEFAULT_MOCK_IDENTITY.pubkey,
+      requestAgentPubkey,
     );
     recordMockMessage(channel.id, event);
     emitMockLiveEvent(channel.id, event);

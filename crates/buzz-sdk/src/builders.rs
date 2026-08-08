@@ -1621,10 +1621,15 @@ pub fn build_workflow_approval(
 /// Build a durable channel-scoped agent question request.
 pub fn build_agent_user_input_request(
     channel_id: Uuid,
+    owner_pubkey: &str,
     content: &str,
 ) -> Result<EventBuilder, SdkError> {
     check_content(content, 256 * 1024)?;
-    let tags = vec![tag(&["h", &channel_id.to_string()])?];
+    let owner_pubkey = check_hex_exact(owner_pubkey, 64, "owner_pubkey")?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["p", &owner_pubkey])?,
+    ];
     Ok(EventBuilder::new(
         Kind::Custom(KIND_AGENT_USER_INPUT_REQUESTED as u16),
         content,
@@ -4571,7 +4576,9 @@ mod tests {
     #[test]
     fn agent_user_input_request_builder_sets_kind_and_channel() {
         let channel = Uuid::new_v4();
-        let event = sign(build_agent_user_input_request(channel, r#"{"q0":"Pick"}"#).unwrap());
+        let owner = "c".repeat(64);
+        let event =
+            sign(build_agent_user_input_request(channel, &owner, r#"{"q0":"Pick"}"#).unwrap());
         assert_eq!(
             event.kind,
             Kind::Custom(KIND_AGENT_USER_INPUT_REQUESTED as u16)
@@ -4580,6 +4587,10 @@ mod tests {
             .tags
             .iter()
             .any(|tag| { tag.as_slice() == ["h".to_string(), channel.to_string()] }));
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["p".to_string(), owner.clone()] }));
     }
 
     #[test]
