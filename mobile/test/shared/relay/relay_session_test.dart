@@ -490,7 +490,7 @@ void main() {
   );
 
   test(
-    'resume keeps a connected session within the background grace period',
+    'resume keeps a brief session that received a background frame',
     () async {
       final sockets = <_ControlledRelaySocket>[];
       final keychain = nostr.Keys.generate();
@@ -536,7 +536,9 @@ void main() {
       sockets.single.connectSuccessfully();
 
       session.onAppPaused();
-      now = now.add(const Duration(seconds: 4));
+      now = now.add(const Duration(seconds: 2));
+      sockets.single.inboundAt = now;
+      now = now.add(const Duration(seconds: 2));
       session.onAppResumed();
       await Future<void>.delayed(Duration.zero);
 
@@ -547,7 +549,7 @@ void main() {
   );
 
   test(
-    'resume reconnects a brief pause when inbound data is stale',
+    'resume reconnects a brief pause when no frame arrived in background',
     () async {
       final sockets = <_ControlledRelaySocket>[];
       final keychain = nostr.Keys.generate();
@@ -591,7 +593,7 @@ void main() {
       addTearDown(subscription.close);
       await Future<void>.delayed(Duration.zero);
       sockets.single.connectSuccessfully();
-      sockets.single.inboundAt = now.subtract(const Duration(seconds: 10));
+      sockets.single.inboundAt = now;
 
       session.onAppPaused();
       now = now.add(const Duration(seconds: 4));
@@ -603,6 +605,61 @@ void main() {
       expect(session.state.status, SessionStatus.reconnecting);
     },
   );
+
+  test('resume reconnects a brief pause when inbound data is stale', () async {
+    final sockets = <_ControlledRelaySocket>[];
+    final keychain = nostr.Keys.generate();
+    var now = DateTime(2026, 8, 2, 12);
+    final session = RelaySessionNotifier(
+      now: () => now,
+      socketFactory:
+          ({
+            required wsUrl,
+            required nsec,
+            required onMessage,
+            required onConnected,
+            required onDisconnected,
+          }) {
+            final socket = _ControlledRelaySocket(
+              wsUrl: wsUrl,
+              nsec: nsec,
+              onMessage: onMessage,
+              onConnected: onConnected,
+              onDisconnected: onDisconnected,
+            );
+            sockets.add(socket);
+            return socket;
+          },
+    );
+    final container = ProviderContainer(
+      overrides: [
+        relaySessionProvider.overrideWith(() => session),
+        relayConfigProvider.overrideWith(
+          () => _FakeRelayConfigNotifier(
+            baseUrl: 'https://relay.example',
+            nsec: keychain.nsec,
+          ),
+        ),
+        authProvider.overrideWith(() => _AuthenticatedAuthNotifier()),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(authProvider.future);
+    final subscription = container.listen(relaySessionProvider, (_, _) {});
+    addTearDown(subscription.close);
+    await Future<void>.delayed(Duration.zero);
+    sockets.single.connectSuccessfully();
+    sockets.single.inboundAt = now.subtract(const Duration(seconds: 10));
+
+    session.onAppPaused();
+    now = now.add(const Duration(seconds: 4));
+    session.onAppResumed();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(sockets, hasLength(2));
+    expect(sockets.first.disposeCalls, greaterThan(0));
+    expect(session.state.status, SessionStatus.reconnecting);
+  });
 
   test('delivers the same live event to each matching subscription', () async {
     final session = RelaySessionNotifier();
