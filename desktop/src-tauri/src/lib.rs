@@ -12,7 +12,10 @@ mod huddle;
 mod identity_storage;
 mod initial_window;
 mod key_backup;
+mod link_preview_tags;
 mod linux_media;
+#[cfg(target_os = "macos")]
+mod macos_notifications;
 mod managed_agents;
 mod media_proxy;
 #[cfg(feature = "mesh-llm")]
@@ -76,7 +79,6 @@ use std::sync::{atomic::AtomicBool, Arc};
 use tauri::Listener;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::StateFlags;
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // mesh-llm's async chains (model download, node start/join) overflow
@@ -305,7 +307,10 @@ pub fn run() {
         .setup(move |app| {
             let app_handle = app.handle().clone();
             #[cfg(target_os = "macos")]
-            tray_menu::init(&app_handle)?;
+            {
+                tray_menu::init(&app_handle)?;
+                macos_notifications::init(&app_handle)?;
+            }
 
             // Seed managed Node/npm product dir before any discovery/install/spawn.
             // Uses productName when set; otherwise the last identifier segment.
@@ -687,7 +692,7 @@ pub fn run() {
             get_relay_ws_url,
             get_relay_http_url,
             get_media_proxy_port,
-            fetch_link_preview_title,
+            fetch_link_preview_metadata,
             discover_acp_auth_methods,
             discover_acp_providers,
             discover_git_bash_prerequisite,
@@ -741,6 +746,12 @@ pub fn run() {
             remove_reaction,
             get_event,
             show_native_notification,
+            #[cfg(target_os = "macos")]
+            macos_notifications::take_pending_activations,
+            #[cfg(target_os = "macos")]
+            macos_notifications::notification_permission_state,
+            #[cfg(target_os = "macos")]
+            macos_notifications::request_notification_access,
             upload_media,
             pick_and_upload_media,
             pick_and_upload_image,
@@ -787,6 +798,7 @@ pub fn run() {
             get_managed_agent_log,
             get_agent_models,
             discover_agent_models,
+            agent_access_owner_only,
             get_agent_config_surface,
             get_runtime_file_config,
             get_baked_build_env_keys,
@@ -892,6 +904,7 @@ pub fn run() {
             set_audio_output_device,
             get_audio_output_device,
             start_pairing,
+            start_identity_recovery_pairing,
             confirm_pairing_sas,
             cancel_pairing,
             apply_workspace,

@@ -14,6 +14,7 @@ type EditTarget = { body: string; id: string; imetaMedia?: ImetaMedia[] };
 export function useComposerEditTargetLifecycle({
   editTarget,
   media,
+  onCancelEdit,
   preEditSnapshotRef,
   richText,
   setComposerContent,
@@ -24,11 +25,13 @@ export function useComposerEditTargetLifecycle({
   editTarget: EditTarget | null;
   media: {
     clearQueuedAttachments: () => void;
+    isUploading: boolean;
     pendingImetaRef: React.MutableRefObject<ImetaMedia[]>;
     queuedAttachmentsRef: React.MutableRefObject<QueuedMediaAttachment[]>;
     restoreQueuedAttachments: (attachments: QueuedMediaAttachment[]) => void;
     setPendingImeta: (pendingImeta: ImetaMedia[]) => void;
   };
+  onCancelEdit?: () => void;
   preEditSnapshotRef: React.MutableRefObject<{
     content: string;
     pendingImeta: ImetaMedia[];
@@ -46,6 +49,10 @@ export function useComposerEditTargetLifecycle({
 }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: editTarget?.id is the trigger
   React.useEffect(() => {
+    if (editTarget && media.isUploading) {
+      onCancelEdit?.();
+      return;
+    }
     if (editTarget) {
       preEditSnapshotRef.current = {
         content: syncComposerContentFromEditor(),

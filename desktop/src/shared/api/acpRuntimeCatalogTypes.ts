@@ -55,6 +55,8 @@ export type AcpRuntimeCatalogEntry = {
   profileArg?: string | null; // Rust profile_arg
   /** Provider owned by harness/profile; from KnownAcpRuntime.provider_locked. */
   providerLocked?: boolean;
+  /** Maximum parallel agent invocations supported by the runtime harness. */
+  maxParallelism?: number;
 };
 
 /** An AcpRuntimeCatalogEntry that is confirmed available — command and binaryPath are non-null. */

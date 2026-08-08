@@ -108,8 +108,6 @@ pub(crate) fn normalize_command_identity(command: &str) -> String {
             _ => character.to_ascii_lowercase(),
         })
         .collect::<String>();
-    // Windows resolves commands through `.exe` binaries and npm's `.cmd`/`.bat`
-    // shims; all three name the same runtime identity (mirrors buzz-acp).
     let lower = [".exe", ".cmd", ".bat"]
         .iter()
         .find_map(|extension| lower.strip_suffix(extension).map(str::to_string))
@@ -981,7 +979,7 @@ pub fn missing_command_message(command: &str, role: &str) -> String {
     }
 
     format!(
-        "{role} `{command}` was not found. Build the workspace binaries (`cargo build --release --workspace`) or add `target/release` to PATH as described in TESTING.md."
+        "{role} `{command}` was not found. Make sure it is installed and on your PATH. Antivirus software can quarantine bundled binaries — if that happened, restore the file or reinstall Buzz. (Source builds: see TESTING.md.)"
     )
 }
 
@@ -1274,6 +1272,7 @@ fn discover_acp_runtime_phase1(runtime: &'static KnownAcpRuntime) -> PartialEntr
             definition_env: Default::default(),
             profile_arg: runtime.profile_arg.map(str::to_string),
             provider_locked: runtime.provider_locked,
+            max_parallelism: super::parallelism::harness_max_parallelism(runtime.id),
         },
     }
 }
@@ -1430,12 +1429,13 @@ pub fn discover_acp_runtimes_from(
                 requires_external_cli: false,
                 underlying_cli_path: None,
                 node_required: false,
-                // No auth probe for custom harnesses.
                 auth_status: AuthStatus::NotApplicable,
                 login_hint: None,
                 source: HarnessSource::Custom,
                 definition_env: def.env.clone(),
-                profile_arg: None, provider_locked: false,
+                profile_arg: None,
+                provider_locked: false,
+                max_parallelism: super::parallelism::harness_max_parallelism(&def.command),
             });
         }
     }

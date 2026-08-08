@@ -63,6 +63,7 @@ test("edit that drops a mention passes removedMentionPubkeys into save", async (
     mediaTags,
     addedMentionPubkeys,
     removedMentionPubkeys,
+    suppressLinkPreviews,
     eventId,
   ] = saveCalls[0];
   assert.equal(content, `hi @${ALICE}`);
@@ -70,6 +71,7 @@ test("edit that drops a mention passes removedMentionPubkeys into save", async (
   assert.deepEqual(mediaTags, []);
   assert.deepEqual(addedMentionPubkeys, []);
   assert.deepEqual(removedMentionPubkeys, [BOB]);
+  assert.equal(suppressLinkPreviews, false);
   assert.equal(eventId, "event-edit-1");
 });
 

@@ -101,7 +101,8 @@ test("top-level project lists align dates and overflow actions", async ({
   await expect(
     repositoryRow.getByTestId("repositories-row-branch"),
   ).toContainText("main");
-  await expect(repositoryRow.locator("p")).toHaveText("buzz");
+  // Subtitle is the repository location (owner/repo for Buzz-hosted repos).
+  await expect(repositoryRow.locator("p")).toHaveText(/\/buzz$/);
   const repositoryPositions = await trailingPositions(repositoryRow, {
     actionName: /More options for/,
     dateTestId: "repositories-row-date",
@@ -540,7 +541,7 @@ test("commit detail opens from the commits feed with a diff", async ({
     page.getByRole("button", { name: "Copy commit hash" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "project guide" }),
+    page.getByRole("link", { name: "project guide", exact: true }),
   ).toHaveAttribute("href", "https://example.com/project-guide");
   await expect(
     page.getByRole("button", { name: "Architecture" }),
