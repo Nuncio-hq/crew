@@ -135,6 +135,7 @@ export function useLiveHomeFeedActions(
           DURABLE_ACTION_PAGE_SIZE,
         ),
       ]);
+      if (isCancelled) return;
       const merged = mergeDurableActionEvents(
         userInputEvents,
         receiptEvents,
