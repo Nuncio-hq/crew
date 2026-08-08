@@ -151,6 +151,7 @@ export function useChannelPaneHandlers({
       mediaTags?: string[][],
       mentionPubkeys?: string[],
       removedMentionPubkeys?: string[],
+      suppressLinkPreviews?: boolean,
       capturedEventId?: string,
     ) => {
       const eventId = capturedEventId ?? editTargetIdRef.current;
@@ -180,6 +181,7 @@ export function useChannelPaneHandlers({
         mediaTags,
         mentionPubkeys,
         removedMentionPubkeys,
+        suppressLinkPreviews,
       });
       setEditTargetId((current) => (current === eventId ? null : current));
     },

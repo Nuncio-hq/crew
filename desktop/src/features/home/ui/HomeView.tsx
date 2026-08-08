@@ -16,6 +16,7 @@ import {
   getInboxItemConversationId,
 } from "@/features/home/lib/inbox";
 import { useInboxSelectionAnchor } from "@/features/home/useInboxSelectionAnchor";
+import { useHomeInboxEdit } from "@/features/home/useHomeInboxEdit";
 import { useOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
 import {
   filterInboxItems,
@@ -63,7 +64,7 @@ import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { useRelaySelfQuery } from "@/features/moderation/hooks";
 import { resolveUserLabel } from "@/features/profile/lib/identity";
 import { useRemindLater } from "@/features/reminders/ui/RemindMeLaterProvider";
-import { deleteMessage, sendChannelMessage } from "@/shared/api/tauri";
+import { sendChannelMessage } from "@/shared/api/tauri";
 import type { HomeFeedResponse } from "@/shared/api/types";
 import { KIND_REACTION } from "@/shared/constants/kinds";
 import { topChromeInset } from "@/shared/layout/chromeLayout";
@@ -172,6 +173,7 @@ export function HomeView({
   );
   const { goChannel } = useAppNavigation();
   const openDmMutation = useOpenDmMutation();
+  const openDm = openDmMutation.mutateAsync;
   const handleUserSelectItem = React.useCallback(
     (itemId: string | null) => {
       setAutoSelectedEventId(null);
@@ -213,14 +215,13 @@ export function HomeView({
       ),
     [applyInboxSearchPatch],
   );
-  const [isDeletingMessage, setIsDeletingMessage] = React.useState(false);
   const [isSendingReply, setIsSendingReply] = React.useState(false);
   const handleOpenDm = React.useCallback(
     async (pubkeys: string[]) => {
-      const dm = await openDmMutation.mutateAsync({ pubkeys });
+      const dm = await openDm({ pubkeys });
       await goChannel(dm.id);
     },
-    [goChannel, openDmMutation],
+    [goChannel, openDm],
   );
   const { activeReminderEventIds, openReminder } = useRemindLater();
   const [localRepliesByItemId, setLocalRepliesByItemId] = React.useState<
@@ -476,6 +477,7 @@ export function HomeView({
     selectedChannel,
     selectedEventId,
     selectedItem,
+    structuralEvents: threadContext.structuralEvents,
   });
   const selectedItemReplies = React.useMemo<InboxReply[]>(() => {
     if (!selectedItem) return [];
@@ -501,7 +503,6 @@ export function HomeView({
 
   React.useEffect(() => {
     void selectedConversationId;
-    setIsDeletingMessage(false);
     setIsSendingReply(false);
   }, [selectedConversationId]);
 
@@ -553,6 +554,21 @@ export function HomeView({
     ],
   );
 
+  const { canDelete, canReact, canReply, disabledReplyReason } =
+    getHomeMessageCapabilities(
+      selectedItem,
+      currentPubkey,
+      availableChannelIds,
+    );
+  const inboxEdit = useHomeInboxEdit({
+    selectedChannel,
+    selectedItem,
+    canDelete,
+    selectedConversationId,
+    refreshStructuralEvents: threadContext.refreshStructuralEvents,
+    onRefresh,
+  });
+
   if (isLoading && !feed) {
     return <HomeLoadingState />;
   }
@@ -578,12 +594,6 @@ export function HomeView({
     );
   }
 
-  const { canDelete, canReact, canReply, disabledReplyReason } =
-    getHomeMessageCapabilities(
-      selectedItem,
-      currentPubkey,
-      availableChannelIds,
-    );
   const detailMode = isDrafts
     ? "drafts"
     : isReminders
@@ -618,6 +628,7 @@ export function HomeView({
 
   return (
     <ProfilePanelProvider onOpenProfilePanel={handleOpenProfilePanel}>
+      {inboxEdit.dialog}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div
           className={cn(
@@ -794,7 +805,8 @@ export function HomeView({
               contextChannelName={selectedChannel?.name ?? null}
               currentPubkey={currentPubkey}
               disabledReplyReason={disabledReplyReason}
-              isDeletingMessage={isDeletingMessage}
+              isDeletingMessage={inboxEdit.isDeletingMessage}
+              isEditingMessage={inboxEdit.isEditingMessage}
               isSendingReply={isSendingReply}
               isSinglePanelView={isSinglePanelDetailView}
               hasThreadContextLoadError={threadContext.hasLoadError}
@@ -805,6 +817,8 @@ export function HomeView({
               profiles={feedProfiles}
               selectedEventId={selectedEventId}
               unreadBoundaryEventId={unreadBoundaryEventId}
+              editTargetId={inboxEdit.editTargetId}
+              onEditTargetChange={inboxEdit.setEditTargetId}
               onBack={
                 isSinglePanelDetailView
                   ? () => {
@@ -812,28 +826,13 @@ export function HomeView({
                     }
                   : undefined
               }
-              onDelete={() => {
-                if (!selectedItem || !canDelete) {
-                  return;
-                }
-                const channelId = selectedItem.item.channelId;
-                if (!channelId) {
-                  return;
-                }
-
-                setIsDeletingMessage(true);
-                void deleteMessage(channelId, selectedItem.id)
-                  .then(() => {
-                    onRefresh();
-                  })
-                  .finally(() => {
-                    setIsDeletingMessage(false);
-                  });
-              }}
+              onDelete={inboxEdit.onDelete}
               onManageChannel={(channelId) => {
                 handleCloseProfilePanel();
                 setManagedChannelId(channelId);
               }}
+              onEditSave={inboxEdit.editMessage}
+              onRequestEmptyEditDelete={inboxEdit.setEmptyDeleteId}
               onOpenContext={onOpenContext}
               onSendReply={async ({
                 content,
@@ -888,7 +887,7 @@ export function HomeView({
                     id: result.eventId,
                     parentId: result.parentEventId,
                     rootId: result.rootEventId,
-                    tags: emojiTags,
+                    tags: [...imetaTags, ...emojiTags, ...mentionTags],
                     timeLabel: formatTime(result.createdAt),
                   };
                   setLocalRepliesByItemId((current) => ({

@@ -21,16 +21,13 @@ import {
 import { invokeTauri } from "@/shared/api/tauri";
 import { useChannelNavigation } from "@/shared/context/ChannelNavigationContext";
 import { cn } from "@/shared/lib/cn";
-import {
-  extractSupportedLinkPreviews,
-  parseSupportedLinkPreview,
-} from "@/shared/lib/linkPreview";
-import { useResolvedLinkPreviews } from "@/shared/lib/useResolvedLinkPreviews";
+import { parseSupportedLinkPreview } from "@/shared/lib/linkPreview";
+import { parseLinkPreviewSnapshots } from "@/shared/lib/linkPreviewSnapshot";
 import { rewriteRelayUrl } from "@/shared/lib/mediaUrl";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 import { AttachmentGroup } from "@/shared/ui/attachment";
 import { ConfigNudgeCard } from "@/shared/ui/config-nudge-attachment";
-import { LinkPreviewAttachment } from "@/shared/ui/link-preview-attachment";
+import { LinkPreviewList } from "@/shared/ui/link-preview-list";
 import { useSmoothCorners } from "@/shared/ui/smoothCorners";
 import {
   computeConfigNudge,
@@ -64,6 +61,7 @@ import {
 import { ExternalLinkAnchor } from "./markdown/ExternalLinkAnchor";
 import { FileCard } from "./markdown/FileCard";
 import { InlineEmojiPopover } from "./markdown/InlineEmojiPopover";
+import { createLinkPreviewImageLightbox } from "./markdown/LinkPreviewImageLightbox";
 import { MarkdownInput } from "./markdown/MarkdownInput";
 import {
   MediaContextMenu,
@@ -662,16 +660,10 @@ function ImageZoomOverlay({
   const frameCornerRadii = isReturning
     ? returnCornerRadii
     : imageLightboxExpandedCornerRadii();
-  // Once fully settled at 1x, drop the transform to `none` so the wrapper
-  // leaves the GPU-composited path and the <img> repaints through WebKit's
-  // high-quality paint rasterizer — matching inline-image sharpness. An
-  // identity `translate3d` would keep it composited, so it must be `none`.
   const atRest =
     isOpen &&
     hasEntered &&
     zoom === IMAGE_LIGHTBOX_MIN_ZOOM &&
-    // Holds composited through the trackpad gesture-end idle window: after a
-    // pinch settles back to exactly 1x, `isAdjustingZoom` stays true for
     // IMAGE_LIGHTBOX_TRACKPAD_ZOOM_IDLE_MS, avoiding a demote/re-promote thrash.
     !isAdjustingZoom;
   const transform = atRest
@@ -997,6 +989,9 @@ function ImageZoomOverlay({
     document.body,
   );
 }
+
+export const LinkPreviewImageLightbox =
+  createLinkPreviewImageLightbox(ImageZoomOverlay);
 
 /**
  * Inline image embed with click-to-zoom lightbox and right-click download.
@@ -1727,6 +1722,10 @@ function MarkdownInner({
   agentMentionPubkeysByName,
   agentMentionAvatarsByName,
   mediaInset = false,
+  messageId,
+  linkPreviewsSuppressed = false,
+  linkPreviewTags,
+  onRemoveLinkPreviewsForEveryone,
   mentionNames,
   mentionPubkeysByName,
   searchQuery,
@@ -1760,10 +1759,18 @@ function MarkdownInner({
     [goChannel],
   );
   const relayOrigin = useRelayOrigin();
-  const linkPreviews = React.useMemo(
+  const resolvedLinkPreviews = React.useMemo(
     () =>
-      interactive ? extractSupportedLinkPreviews(content, relayOrigin) : [],
-    [content, interactive, relayOrigin],
+      interactive && !linkPreviewsSuppressed
+        ? parseLinkPreviewSnapshots(linkPreviewTags, content, relayOrigin)
+        : [],
+    [
+      content,
+      interactive,
+      linkPreviewTags,
+      linkPreviewsSuppressed,
+      relayOrigin,
+    ],
   );
   const configNudge = React.useMemo(
     () => computeConfigNudge(content, interactive, configNudgeAuthorPubkey),
@@ -1820,7 +1827,6 @@ function MarkdownInner({
     processedContent = `${processedContent}\u200B`;
   }
 
-  const resolvedLinkPreviews = useResolvedLinkPreviews(linkPreviews);
   const entityCardOpenHandlers = useEntityCardOpenHandlers(
     resolvedLinkPreviews,
     onOpenEntityLink,
@@ -1874,20 +1880,13 @@ function MarkdownInner({
               <ConfigNudgeCard nudge={configNudge} />
             </AttachmentGroup>
           ) : null}
-          {resolvedLinkPreviews.length > 0 ? (
-            <AttachmentGroup
-              className="max-w-full flex-wrap overflow-visible pb-0"
-              data-link-preview-list=""
-            >
-              {resolvedLinkPreviews.map((preview) => (
-                <LinkPreviewAttachment
-                  key={preview.href}
-                  onOpen={entityCardOpenHandlers.get(preview.href)}
-                  preview={preview}
-                />
-              ))}
-            </AttachmentGroup>
-          ) : null}
+          <LinkPreviewList
+            ImageLightbox={LinkPreviewImageLightbox}
+            key={messageId}
+            onOpenByHref={entityCardOpenHandlers}
+            onRemoveForEveryone={onRemoveLinkPreviewsForEveryone}
+            previews={resolvedLinkPreviews}
+          />
         </VideoReviewMarkdownContext.Provider>
       </MarkdownRuntimeContext.Provider>
     </div>

@@ -118,7 +118,6 @@ pub async fn save_custom_harness(
     Ok(AcpRuntimeCatalogEntry {
         id: definition.id,
         label: definition.label,
-        // Security: no user-supplied avatar URL in catalog entries.
         avatar_url: String::new(),
         availability,
         command: command_opt,
@@ -140,9 +139,10 @@ pub async fn save_custom_harness(
         auth_status: AuthStatus::NotApplicable,
         login_hint: None,
         source: HarnessSource::Custom,
-        // Carry definition env back so the edit form can read and preserve it.
         definition_env: definition.env,
-        profile_arg: None, provider_locked: false,
+        profile_arg: None,
+        provider_locked: false,
+        max_parallelism: crate::managed_agents::harness_max_parallelism(&definition.command),
     })
 }
 

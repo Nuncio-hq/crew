@@ -37,6 +37,7 @@ export type RawAcpRuntimeCatalogEntry = {
   definition_env?: Record<string, string>; // custom only
   profile_arg?: string | null;
   provider_locked?: boolean;
+  max_parallelism?: number;
 };
 
 export function fromRawAcpRuntimeCatalogEntry(
@@ -69,5 +70,8 @@ export function fromRawAcpRuntimeCatalogEntry(
     definitionEnv: entry.definition_env ?? {},
     profileArg: entry.profile_arg ?? null,
     providerLocked: entry.provider_locked ?? false,
+    ...(entry.max_parallelism !== undefined && {
+      maxParallelism: entry.max_parallelism,
+    }),
   };
 }
