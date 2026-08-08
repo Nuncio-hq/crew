@@ -1,10 +1,10 @@
 import { HuddleTranscriptIntro } from "@/features/huddle/components/HuddleTranscriptIntro";
 import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import { THREAD_PANEL_MESSAGE_GUTTER_CLASS } from "@/features/messages/lib/messageThreadPanelLayout";
+import type { VideoReviewPresentation } from "@/features/messages/lib/videoReviewContext";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { cn } from "@/shared/lib/cn";
-import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import { MessageRow } from "./MessageRow";
 
 export function MessageThreadPanelHead({
@@ -25,7 +25,7 @@ export function MessageThreadPanelHead({
   profiles,
   shouldShowThreadBranchGuides,
   threadHead,
-  videoReviewContext,
+  videoReviewPresentation,
 }: {
   channelId: string | null;
   currentPubkey?: string;
@@ -48,8 +48,14 @@ export function MessageThreadPanelHead({
   profiles?: UserProfileLookup;
   shouldShowThreadBranchGuides: boolean;
   threadHead: TimelineMessage;
-  videoReviewContext?: VideoReviewContext;
+  videoReviewPresentation?: VideoReviewPresentation;
 }) {
+  const videoReviewContext = videoReviewPresentation?.contextsByMessageId.get(
+    threadHead.id,
+  );
+  const videoReviewCommentRootId =
+    videoReviewPresentation?.commentRootIdsByMessageId.get(threadHead.id);
+
   if (isHuddleTranscript) {
     return (
       <div className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-2 pt-4")}>
@@ -87,14 +93,15 @@ export function MessageThreadPanelHead({
           onFollowThread={
             onFollowThread ? (_msg) => onFollowThread() : undefined
           }
-          onMarkUnread={onMarkUnread}
           onMarkRead={onMarkRead}
+          onMarkUnread={onMarkUnread}
           onToggleReaction={onToggleReaction}
           onUnfollowThread={
             onUnfollowThread ? (_msg) => onUnfollowThread() : undefined
           }
           profiles={profiles}
           showDepthGuides={shouldShowThreadBranchGuides}
+          videoReviewCommentRootId={videoReviewCommentRootId}
           videoReviewContext={videoReviewContext}
         />
       </div>

@@ -6,8 +6,9 @@
  * enforces; this gives create/edit surfaces immediate, friendly feedback.
  */
 
-import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
+import type { AcpRuntimeCatalogEntry, RespondToMode } from "@/shared/api/types";
 import { truncatePubkey } from "@/shared/lib/pubkey";
+import type { AgentRunLocation } from "./agentAccessWarning";
 
 /** Reserved manager-personal profile — never bindable to a Crew agent (P-7). */
 export const HERMES_FORBIDDEN_PROFILE_NAME = "default";
@@ -36,6 +37,102 @@ export function runtimeOffersProfileBinding(
   runtime: AcpRuntimeCatalogEntry | undefined,
 ): boolean {
   return Boolean(runtime?.profileArg?.trim());
+}
+
+/** Clear only for known non-profile metadata or an explicit custom runtime. */
+export function shouldClearHermesProfileOnRuntimeChange(
+  runtime: AcpRuntimeCatalogEntry | undefined,
+  explicitCustomRuntime = false,
+): boolean {
+  return (
+    explicitCustomRuntime ||
+    (runtime !== undefined && !runtimeOffersProfileBinding(runtime))
+  );
+}
+
+function normalizedHermesProfile(
+  raw: string | null | undefined,
+): string | null {
+  return raw?.trim() || null;
+}
+
+/** Profile value for create: hidden state never survives a runtime switch. */
+export function resolveHermesProfileForCreate(
+  rawProfile: string,
+  runtime: AcpRuntimeCatalogEntry | undefined,
+): string | null {
+  return runtimeOffersProfileBinding(runtime)
+    ? normalizedHermesProfile(rawProfile)
+    : null;
+}
+
+/**
+ * Profile patch for edit: clear a stored binding when the prospective runtime
+ * no longer advertises profile binding; otherwise preserve ordinary no-op
+ * omission semantics.
+ */
+export function resolveHermesProfileForUpdate(
+  currentProfile: string | null | undefined,
+  rawProfile: string,
+  runtime: AcpRuntimeCatalogEntry | undefined,
+  confirmedNoProfileBinding = false,
+): string | null | undefined {
+  if (runtime === undefined && !confirmedNoProfileBinding) return undefined;
+  const current = normalizedHermesProfile(currentProfile);
+  const next = runtimeOffersProfileBinding(runtime)
+    ? normalizedHermesProfile(rawProfile)
+    : null;
+  return next === current ? undefined : next;
+}
+
+export type ProfileBoundAgentBoundary = {
+  access: "Owner only";
+  autonomy: "Full";
+  backend: "This Mac";
+  profile: string;
+  usedIn: string[];
+};
+
+/**
+ * Trusted-autonomy/local-boundary projection for profile-binding runtimes.
+ * The caller supplies the capability result; this helper never identifies a
+ * harness by id.
+ */
+export function deriveProfileBoundAgentBoundary(args: {
+  profileBindingOffered: boolean;
+  profile: string;
+  usedIn: readonly string[];
+}): ProfileBoundAgentBoundary | null {
+  if (!args.profileBindingOffered) return null;
+  return {
+    access: "Owner only",
+    autonomy: "Full",
+    backend: "This Mac",
+    profile: args.profile.trim(),
+    usedIn: [...args.usedIn],
+  };
+}
+
+export function profileBoundAccessError(
+  profileBindingOffered: boolean,
+  respondTo: RespondToMode | null | undefined,
+): string | null {
+  if (!profileBindingOffered || !respondTo || respondTo === "owner-only") {
+    return null;
+  }
+  return "Hermes profile agents use full autonomy and must stay owner-only. Choose Only me to continue.";
+}
+
+export function profileBoundBackendError(
+  profileBindingOffered: boolean,
+  runLocation: AgentRunLocation | null,
+  editing = false,
+): string | null {
+  if (!profileBindingOffered || runLocation !== "remote") return null;
+  if (editing) {
+    return "Hermes profiles live on this Mac and cannot run on a remote backend. Delete and recreate this agent on This computer to continue.";
+  }
+  return "Hermes profiles live on this Mac and cannot run on a remote backend. Choose This computer to continue.";
 }
 
 /**
@@ -146,17 +243,59 @@ export type HermesProfileOccupancyAgent = {
   relayUrl: string;
 };
 
+export type HermesProfileCommunity = {
+  name: string;
+  relayUrl: string;
+};
+
+export type HermesProfileOtherUse = {
+  agentName: string;
+  agentPubkey: string;
+  communityName: string;
+  relayUrl: string;
+};
+
+export type HermesProfileUsage = {
+  usedIn: string[];
+  otherUses: HermesProfileOtherUse[];
+  hasPresentationMismatch: boolean;
+};
+
 /**
- * Join disk profiles with managed agents on one relay (C-10 early UX).
+ * Project the communities served by one installation-wide managed agent.
+ * `ManagedAgent.relayUrl` is a legacy pin and cannot identify community
+ * occupancy now that one agent owns runtime pairs for every community.
+ */
+export function deriveHermesProfileUsage(args: {
+  profile: string;
+  agents: readonly HermesProfileOccupancyAgent[];
+  communities: readonly HermesProfileCommunity[];
+  currentRelayUrl: string;
+  editingPubkey?: string | null;
+  currentAgentName?: string | null;
+}): HermesProfileUsage {
+  const profile = args.profile.trim();
+  if (!profile || validateHermesProfileName(profile) != null) {
+    return { usedIn: [], otherUses: [], hasPresentationMismatch: false };
+  }
+
+  const usedIn = args.communities
+    .map((community) => community.name.trim() || community.relayUrl.trim())
+    .filter(
+      (name, index, values) => Boolean(name) && values.indexOf(name) === index,
+    );
+  return { usedIn, otherUses: [], hasPresentationMismatch: false };
+}
+
+/**
+ * Join disk profiles with installation-wide managed agents (C-10 early UX).
  * Server duplicate reject remains authoritative.
  */
 export function buildHermesProfileOccupancy(args: {
   profiles: readonly string[];
   agents: readonly HermesProfileOccupancyAgent[];
-  relayUrl: string;
   editingPubkey?: string | null;
 }): Map<string, HermesProfileOccupancy> {
-  const relay = args.relayUrl.trim();
   const editing = args.editingPubkey?.trim() || null;
   const map = new Map<string, HermesProfileOccupancy>();
 
@@ -168,8 +307,6 @@ export function buildHermesProfileOccupancy(args: {
     const profile = agent.hermesProfile?.trim() || "";
     if (!profile || profile === HERMES_FORBIDDEN_PROFILE_NAME) continue;
     if (validateHermesProfileName(profile) != null) continue;
-    if (agent.relayUrl.trim() !== relay) continue;
-
     if (editing && agent.pubkey === editing) {
       map.set(profile, { status: "self" });
       continue;

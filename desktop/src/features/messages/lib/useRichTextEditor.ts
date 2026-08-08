@@ -29,6 +29,8 @@ import {
 import { CUSTOM_EMOJI_NODE_NAME } from "./customEmojiNode";
 import { useComposerCustomEmoji } from "./useComposerCustomEmoji";
 import { buildPlainTextProjection } from "./plainTextProjection";
+import { buildPreviewUpdate } from "./linkPreviewContent";
+import { handleComposerPaste } from "./composerPasteHandler";
 import { createLinkInteractionExtension } from "./linkInteractionExtension";
 import {
   CodeBlockAfterHardBreak,
@@ -76,7 +78,7 @@ export type AutocompleteEdit = {
 
 export type RichTextEditorOptions = {
   placeholder?: string;
-  onUpdate?: (info: { text: string; cursor: number }) => void;
+  onUpdate?: (info: ReturnType<typeof buildPreviewUpdate>) => void;
   editable?: boolean;
   mentionNames?: string[];
   agentMentionNames?: string[];
@@ -490,6 +492,9 @@ export function useRichTextEditor({
         }),
       ],
       editorProps: {
+        handleDOMEvents: {
+          paste: handleComposerPaste,
+        },
         attributes: {
           autocapitalize: "none",
           autocorrect: "off",
@@ -622,11 +627,9 @@ export function useRichTextEditor({
         // still available through `getMarkdown()` for send/draft boundaries;
         // per-keystroke consumers only need textarea-shaped plain text for
         // autocomplete and empty/non-empty state.
-        const projection = buildPlainTextProjection(ed.state.doc);
-        onUpdateRef.current?.({
-          cursor: projection.mapPMToTextOffset(ed.state.selection.anchor),
-          text: projection.text,
-        });
+        onUpdateRef.current?.(
+          buildPreviewUpdate(ed.state.doc, ed.state.selection.anchor),
+        );
       },
     },
     [],

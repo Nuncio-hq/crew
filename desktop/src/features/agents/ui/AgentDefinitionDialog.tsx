@@ -78,6 +78,7 @@ import {
 } from "./agentAiConfigurationPolicy";
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
 import { useCreateHermesBinding } from "./createHermesBindingFields";
+import { resolveHermesProfileForCreate } from "../lib/hermesProfileBinding";
 import { AgentDefinitionCustomAiFields } from "./AgentDefinitionCustomAiFields";
 import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload";
 import { AgentDefinitionDialogFooter } from "./AgentDefinitionDialogFooter";
@@ -105,7 +106,6 @@ type AgentDefinitionDialogProps = {
   ) => Promise<unknown>;
   /** Publishes saved changes when the edited agent is shared in the catalog. */
   publishCatalogUpdatesOnSave?: boolean;
-  /** Rendered below the form fields in create mode only ("Where to run"). */
   createRunSection?: React.ReactNode;
   /** Extra create-mode submit gate (e.g. incomplete provider config). */
   createSubmitBlocked?: boolean;
@@ -318,15 +318,10 @@ export function AgentDefinitionDialog({
       // isRuntimeAutoSeededRef and hasSeededForOpenRef are NOT reset here — the
       // [initialValues, open] effect resets both when the dialog re-opens.
     }
-
     onOpenChange(next);
   }
-
   async function handleSubmit() {
-    // D1: the same localModeSatisfied gate as canSubmit prevents form-submit
-    // (Enter) from bypassing a missing credential.
     if (!initialValues || !localModeSatisfied || !canSubmit) return;
-
     const {
       runtime: runtimeForSubmit,
       model: modelForSubmit,
@@ -380,7 +375,10 @@ export function AgentDefinitionDialog({
 
     await onSubmit(baseInput, {
       publishCatalogUpdates: false,
-      hermesProfile: hermesProfile.trim() || null,
+      hermesProfile: resolveHermesProfileForCreate(
+        hermesProfile,
+        selectedRuntime,
+      ),
     });
   }
 
@@ -397,6 +395,8 @@ export function AgentDefinitionDialog({
   } = useCreateHermesBinding({
     enabled: isCreateMode,
     hermesProfile,
+    onHermesProfileChange: setHermesProfile,
+    respondTo: behaviorDraft.respondTo,
     runtime: selectedRuntime,
   });
   const blankRuntimeModelProviderEditable =
@@ -864,7 +864,6 @@ export function AgentDefinitionDialog({
                   warning={runtimeWarning}
                 />
               ) : null}
-
               <AgentDefinitionCustomAiFields
                 aiConfigurationMode={aiConfigurationMode}
                 apiKeyInheritedLabel={apiKeyInheritedLabel}
@@ -872,6 +871,7 @@ export function AgentDefinitionDialog({
                 apiKeyIsRequired={apiKeyIsRequired}
                 apiKeyValue={apiKeyValue}
                 autoModelDropdownValue={AUTO_MODEL_DROPDOWN_VALUE}
+                currentAgentName={displayName}
                 disabled={isPending}
                 effectiveProviderApiKeyLabel={
                   getProviderApiKeyLabel(effectiveProvider) ?? "API key"
@@ -912,7 +912,6 @@ export function AgentDefinitionDialog({
                 topLevelSecretEnvVar={topLevelSecretEnvVar}
                 transition={advancedFieldsTransition}
               />
-
               {aiConfigurationMode === "defaults" ? (
                 <AgentCreateAiDefaultsSummary
                   canChooseProvider={runtimeCanChooseLlmProvider}
@@ -938,9 +937,6 @@ export function AgentDefinitionDialog({
               onSaved={selectSavedHarness}
               open={isAddHarnessOpen}
             />
-
-            {isCreateMode ? createRunSection : null}
-
             <div className="space-y-3">
               <button
                 aria-expanded={showAdvancedFields}
@@ -949,7 +945,8 @@ export function AgentDefinitionDialog({
                 type="button"
               >
                 <span>Advanced</span>
-                {localModeGate.missingEnvKeys.some((key) =>
+                {(isCreateMode && createSubmitBlocked) ||
+                localModeGate.missingEnvKeys.some((key) =>
                   advancedRequiredEnvKeys.includes(key),
                 ) ? (
                   <span
@@ -978,6 +975,9 @@ export function AgentDefinitionDialog({
                     transition={advancedFieldsTransition}
                   >
                     <PersonaAdvancedFields
+                      afterRespondTo={
+                        isCreateMode ? createRunSection : undefined
+                      }
                       behaviorDraft={behaviorDraft}
                       disabled={isPending}
                       envVars={envVars}

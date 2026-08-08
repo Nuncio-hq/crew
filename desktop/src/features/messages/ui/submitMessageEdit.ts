@@ -33,11 +33,14 @@ type SubmitMessageEditOptions = Omit<EditDraft, "mentionRefs"> & {
   restoreMentionRefs: (refs: DraftMentionRef[]) => void;
   shouldRestoreComposer: () => boolean;
   setDeferredUploadPending: (isPending: boolean) => void;
+  /** Whether the edit should explicitly suppress link previews. */
+  suppressLinkPreviews?: boolean;
   save: (
     content: string,
     mediaTags?: string[][],
     mentionPubkeys?: string[],
     removedMentionPubkeys?: string[],
+    suppressLinkPreviews?: boolean,
     eventId?: string,
   ) => Promise<void>;
   setUploadError: (message: string) => void;
@@ -62,6 +65,7 @@ export async function submitMessageEdit({
   save,
   setUploadError,
   spoileredAttachmentUrls,
+  suppressLinkPreviews,
 }: SubmitMessageEditOptions): Promise<void> {
   const draft: EditDraft = {
     content,
@@ -119,6 +123,7 @@ export async function submitMessageEdit({
       outgoingTags,
       addedMentionPubkeys,
       removedMentionPubkeys,
+      suppressLinkPreviews ?? false,
       editTargetId,
     );
   };

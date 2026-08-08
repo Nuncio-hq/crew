@@ -6,7 +6,7 @@
 //! only applies them.
 
 use crate::managed_agents::discovery::KnownAcpRuntime;
-use crate::managed_agents::types::ManagedAgentRecord;
+use crate::managed_agents::types::{BackendKind, ManagedAgentRecord, RespondTo};
 
 /// Hermes rejects the reserved name `default` for Crew bindings (D-019 P-7):
 /// the manager's personal `~/.hermes` profile must never be bound.
@@ -38,6 +38,36 @@ pub fn validate_hermes_profile_name(name: &str) -> Result<(), String> {
     if !valid {
         return Err(format!(
             "invalid hermes profile name '{trimmed}': must match [a-z0-9][a-z0-9_-]{{0,63}}"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate D-024's trusted-autonomy boundary for a prospective managed-agent
+/// record. Callers invoke this on create/update before persisting the changed
+/// record. It deliberately does not run from the generic storage path: legacy
+/// records must remain readable and stoppable while the owner repairs them.
+pub(crate) fn validate_profile_bound_agent_invariants(
+    record: &ManagedAgentRecord,
+) -> Result<(), String> {
+    let Some(profile) = record
+        .hermes_profile
+        .as_deref()
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+    else {
+        return Ok(());
+    };
+    if record.respond_to != RespondTo::OwnerOnly {
+        return Err(format!(
+            "Hermes profile-bound agent '{}' (profile '{profile}') must use respond-to 'owner-only'; choose Only me to continue",
+            record.name
+        ));
+    }
+    if record.backend != BackendKind::Local {
+        return Err(format!(
+            "Hermes profile-bound agent '{}' (profile '{profile}') must run locally; create it on This computer, or delete and recreate an existing remote agent, before continuing",
+            record.name
         ));
     }
     Ok(())
@@ -106,12 +136,15 @@ pub fn env_without_suppressed_model_for_runtime(
         .collect()
 }
 
-/// Find another managed-agent record on the same relay that already binds
+/// Find another installation-wide managed-agent record that already binds
 /// `profile`. `exclude_pubkey` skips the record being updated.
+///
+/// One managed-agent record now owns runtime pairs for every configured
+/// community. Its `relay_url` is a legacy pin ignored by effective relay
+/// resolution, so it cannot define profile occupancy.
 pub fn find_duplicate_hermes_profile_binding<'a>(
     records: &'a [ManagedAgentRecord],
     profile: &str,
-    relay_url: &str,
     exclude_pubkey: Option<&str>,
 ) -> Option<&'a ManagedAgentRecord> {
     let profile = profile.trim();
@@ -122,7 +155,7 @@ pub fn find_duplicate_hermes_profile_binding<'a>(
         if exclude_pubkey.is_some_and(|pk| r.pubkey == pk) {
             return false;
         }
-        r.hermes_profile.as_deref().is_some_and(|p| p == profile) && r.relay_url == relay_url
+        r.hermes_profile.as_deref().is_some_and(|p| p == profile)
     })
 }
 
@@ -141,23 +174,19 @@ pub fn parse_optional_hermes_profile(raw: Option<&str>) -> Result<Option<String>
 pub fn bind_hermes_profile_on_create(
     raw: Option<&str>,
     records: &[ManagedAgentRecord],
-    relay_url: &str,
 ) -> Result<Option<String>, String> {
     let profile = parse_optional_hermes_profile(raw)?;
-    reject_duplicate_hermes_profile_if_set(records, profile.as_deref(), relay_url, None)?;
+    reject_duplicate_hermes_profile_if_set(records, profile.as_deref(), None)?;
     Ok(profile)
 }
 
-/// Reject when `profile` is already bound on `relay_url` (C-10).
+/// Reject when `profile` is already bound to another local record (C-10).
 pub fn reject_duplicate_hermes_profile(
     records: &[ManagedAgentRecord],
     profile: &str,
-    relay_url: &str,
     exclude_pubkey: Option<&str>,
 ) -> Result<(), String> {
-    if let Some(other) =
-        find_duplicate_hermes_profile_binding(records, profile, relay_url, exclude_pubkey)
-    {
+    if let Some(other) = find_duplicate_hermes_profile_binding(records, profile, exclude_pubkey) {
         return Err(format!(
             "hermes profile '{profile}' is already bound to agent '{}' ({})",
             other.name, other.pubkey
@@ -170,11 +199,10 @@ pub fn reject_duplicate_hermes_profile(
 pub fn reject_duplicate_hermes_profile_if_set(
     records: &[ManagedAgentRecord],
     profile: Option<&str>,
-    relay_url: &str,
     exclude_pubkey: Option<&str>,
 ) -> Result<(), String> {
     match profile {
-        Some(p) => reject_duplicate_hermes_profile(records, p, relay_url, exclude_pubkey),
+        Some(p) => reject_duplicate_hermes_profile(records, p, exclude_pubkey),
         None => Ok(()),
     }
 }
@@ -184,7 +212,6 @@ pub fn resolve_hermes_profile_update(
     update: &Option<Option<String>>,
     records: &[ManagedAgentRecord],
     pubkey: &str,
-    relay_url_override: Option<&str>,
 ) -> Result<Option<Option<String>>, String> {
     match update {
         None => Ok(None),
@@ -195,17 +222,7 @@ pub fn resolve_hermes_profile_update(
                 return Ok(Some(None));
             }
             validate_hermes_profile_name(trimmed)?;
-            let relay = records
-                .iter()
-                .find(|r| r.pubkey == pubkey)
-                .map(|r| {
-                    relay_url_override
-                        .map(str::trim)
-                        .unwrap_or(r.relay_url.as_str())
-                        .to_string()
-                })
-                .unwrap_or_else(|| relay_url_override.unwrap_or("").trim().to_string());
-            reject_duplicate_hermes_profile(records, trimmed, &relay, Some(pubkey))?;
+            reject_duplicate_hermes_profile(records, trimmed, Some(pubkey))?;
             Ok(Some(Some(trimmed.to_string())))
         }
     }
@@ -320,20 +337,43 @@ mod tests {
         let mut b = minimal_record("bbb", "wss://relay");
         b.hermes_profile = Some("scout".into());
         let records = vec![a, b];
-        let hit =
-            find_duplicate_hermes_profile_binding(&records, "scout", "wss://relay", Some("bbb"));
+        let hit = find_duplicate_hermes_profile_binding(&records, "scout", Some("bbb"));
         assert_eq!(hit.map(|r| r.pubkey.as_str()), Some("aaa"));
     }
 
     #[test]
-    fn duplicate_binding_allows_same_profile_on_different_relay() {
+    fn duplicate_binding_rejects_same_profile_despite_obsolete_relay_pin() {
         let mut a = minimal_record("aaa", "wss://relay-a");
         a.hermes_profile = Some("scout".into());
         let records = vec![a];
-        assert!(
-            find_duplicate_hermes_profile_binding(&records, "scout", "wss://relay-b", None)
-                .is_none()
-        );
+        let hit = find_duplicate_hermes_profile_binding(&records, "scout", None);
+        assert_eq!(hit.map(|record| record.pubkey.as_str()), Some("aaa"));
+    }
+
+    #[test]
+    fn profile_bound_agents_require_owner_only_local_boundary() {
+        let mut record = minimal_record("aaa", "wss://relay");
+        record.hermes_profile = Some("scout".to_string());
+        record.respond_to = RespondTo::Anyone;
+
+        let public_error = validate_profile_bound_agent_invariants(&record)
+            .expect_err("profile-bound Hermes agents must reject respond-to anyone");
+        assert!(public_error.contains("owner-only"), "{public_error}");
+        assert!(public_error.contains("Only me"), "{public_error}");
+
+        record.respond_to = RespondTo::OwnerOnly;
+        record.backend = BackendKind::Provider {
+            id: "remote".to_string(),
+            config: serde_json::json!({}),
+        };
+        let remote_error = validate_profile_bound_agent_invariants(&record)
+            .expect_err("profile-bound Hermes agents must reject provider backends");
+        assert!(remote_error.contains("local"), "{remote_error}");
+        assert!(remote_error.contains("This computer"), "{remote_error}");
+
+        record.backend = BackendKind::Local;
+        validate_profile_bound_agent_invariants(&record)
+            .expect("owner-only local profile-bound Hermes agent must be accepted");
     }
 
     fn minimal_record(pubkey: &str, relay: &str) -> ManagedAgentRecord {

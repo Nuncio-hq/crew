@@ -755,7 +755,6 @@ pub async fn update_managed_agent(
                 &input.hermes_profile,
                 &records,
                 &input.pubkey,
-                input.relay_url.as_deref(),
             )?;
         let record = find_managed_agent_mut(&mut records, &input.pubkey)?;
         let previous_record = record.clone();
@@ -851,7 +850,7 @@ pub async fn update_managed_agent(
         if input.respond_to_allowlist.is_some() {
             record.respond_to_allowlist = prospective_allowlist;
         }
-
+        crate::managed_agents::hermes_profile::validate_profile_bound_agent_invariants(record)?;
         record.updated_at = now_iso();
 
         save_managed_agents(&app, &records)?;

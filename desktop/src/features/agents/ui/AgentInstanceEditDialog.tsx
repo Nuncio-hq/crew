@@ -10,6 +10,7 @@ import {
   useStartManagedAgentMutation,
   useUpdateManagedAgentMutation,
 } from "@/features/agents/hooks";
+import { useAgentAccessOwnerOnlyQuery } from "@/features/agents/useAgentAccessOwnerOnly";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 import type {
   ManagedAgent,
@@ -66,9 +67,9 @@ import {
   type RuntimeModelProviderSelection,
 } from "./runtimeModelProviderSelection";
 import { AgentCreationPreview } from "./AgentCreationPreview";
+import { OwnerOnlyAccessField } from "./OwnerOnlyAccessField";
 import type { EnvVarsValue } from "./EnvVarsEditor";
 import { useRequiredCredentialState } from "./useRequiredCredentialState";
-import { CreateAgentRespondToField } from "./RespondToField";
 import { RunOnSummarySection } from "./RunOnSummarySection";
 import { PersonaDropdownField } from "./PersonaDropdownField";
 import {
@@ -399,6 +400,9 @@ export function AgentInstanceEditDialog({
     });
 
   const { data: bakedEnvKeys } = useBakedBuildEnvKeysQuery({ enabled: open });
+  const { data: agentAccessOwnerOnly } = useAgentAccessOwnerOnlyQuery({
+    enabled: open,
+  });
 
   // Merge global env so credentials satisfied globally reach model discovery.
   // Prefer inheritedSubmission.envVars (same snapshot as the credential gate).
@@ -425,13 +429,21 @@ export function AgentInstanceEditDialog({
       }),
     [hermesProfile, model, prospectiveRuntime, provider],
   );
-  const { showHermesProfileField, modelOwnedByProfile, hermesProfileError } =
-    useEditHermesBinding({
-      agent,
-      fieldModel: instanceFieldModel,
-      hermesProfile,
-    });
-
+  const {
+    showHermesProfileField,
+    modelOwnedByProfile,
+    hermesProfileError,
+    hermesProfileForSubmit,
+  } = useEditHermesBinding({
+    agent,
+    fieldModel: instanceFieldModel,
+    hermesProfile,
+    onHermesProfileChange: setHermesProfile,
+    respondTo,
+    runtime: prospectiveRuntime,
+    runtimeSelectionConfirmedNoBinding:
+      runtimeTouched.current && selectedRuntimeId === "custom",
+  });
   const {
     discoveredModelOptions,
     modelDiscoveryLoading,
@@ -521,10 +533,8 @@ export function AgentInstanceEditDialog({
     const previousRuntimeId = selectedRuntimeId;
     const nextRuntime = runtimes.find((r) => r.id === nextRuntimeId);
 
-    // Mark that the user has made an explicit runtime choice. The catalog-arrival
-    // effect will no longer overwrite selectedRuntimeId after this point.
+    // Stop catalog arrival from overwriting this explicit runtime choice.
     runtimeTouched.current = true;
-
     const resolvedRuntimeId = nextRuntimeId || "custom";
     setSelectedRuntimeId(resolvedRuntimeId);
 
@@ -732,22 +742,16 @@ export function AgentInstanceEditDialog({
           ? undefined
           : submitEnvVars,
         respondTo: respondTo !== agent.respondTo ? respondTo : undefined,
-        // The allowlist is preserved across mode toggles in local UI state
-        // (so a user can flip away from allowlist and back without losing
-        // their entries), but we only send it on the wire when (a) it
-        // actually changed, AND (b) the saved mode will need it. Sending
-        // an allowlist while switching to a non-allowlist mode would be
-        // harmless server-side, but it's noise in the persisted record.
+        // Preserve the allowlist across local mode toggles, but only send it
+        // when it changed and the saved mode will need it. Sending an allowlist while
+        // switching to a non-allowlist mode would be
+        // harmless server-side; it's still noise in the persisted record.
         respondToAllowlist:
           respondTo === "allowlist" &&
           respondToAllowlist.join(",") !== agent.respondToAllowlist.join(",")
             ? respondToAllowlist
             : undefined,
-        hermesProfile: showHermesProfileField
-          ? hermesProfile.trim() !== (agent.hermesProfile ?? "")
-            ? hermesProfile.trim() || null
-            : undefined
-          : undefined,
+        hermesProfile: hermesProfileForSubmit,
       };
 
       const result = await updateMutation.mutateAsync(input);
@@ -932,7 +936,6 @@ export function AgentInstanceEditDialog({
             )}
           </div>
           <div className="space-y-5">
-            {/* Agent name */}
             <div className="space-y-1.5">
               <label
                 className="text-sm font-medium text-foreground"
@@ -960,17 +963,14 @@ export function AgentInstanceEditDialog({
                 />
               </div>
             </div>
-
-            {/* Who can send instructions */}
-            <CreateAgentRespondToField
+            <OwnerOnlyAccessField
+              accessLocked={agentAccessOwnerOnly === true}
               allowlist={respondToAllowlist}
               disabled={updateMutation.isPending}
               mode={respondTo}
               onAllowlistChange={setRespondToAllowlist}
               onModeChange={setRespondTo}
-              variant="persona"
             />
-
             <RunOnSummarySection backend={agent.backend} />
 
             {/* Provider (runtime) */}
@@ -1102,9 +1102,9 @@ export function AgentInstanceEditDialog({
                 value={apiKeyValue}
               />
             ) : null}
-
             {/* Model / Hermes profile (field-model driven) */}
             <EditAgentModelAndProfileSection
+              currentAgentName={name}
               disabled={updateMutation.isPending}
               editingPubkey={agent.pubkey}
               hermesProfile={hermesProfile}

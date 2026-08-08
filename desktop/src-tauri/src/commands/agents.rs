@@ -699,7 +699,6 @@ pub async fn create_managed_agent(
         let hermes_profile = crate::managed_agents::hermes_profile::bind_hermes_profile_on_create(
             input.hermes_profile.as_deref(),
             &records,
-            &resolved_relay_url,
         )?;
         // Provider config was already validated in Pre-Phase 2; cache the discovered binary path for deploy_to_provider.
         let provider_binary_path = if let BackendKind::Provider { ref id, .. } = input.backend {
@@ -914,7 +913,7 @@ pub async fn create_managed_agent(
                 relay_mesh.clone()
             },
         };
-
+        crate::managed_agents::hermes_profile::validate_profile_bound_agent_invariants(&record)?;
         records.push(record);
 
         save_managed_agents(&app, &records)?;
@@ -1355,12 +1354,12 @@ pub async fn delete_managed_agent(
 // 2. Harness sees it, exits gracefully, sets presence to "offline"
 // 3. Desktop's existing presence polling sees "offline" — UI updates automatically
 // No backend Tauri command needed. Presence IS the status.
-
 #[path = "agents_deploy.rs"]
 mod deploy;
+pub(super) mod provider_access;
 use deploy::build_deploy_payload;
 #[cfg(test)]
-use deploy::deploy_payload_json;
+use deploy::{deploy_payload_json, DeployProjections};
 #[cfg(test)]
 use deploy::{ensure_remote_provider_supported, resolve_deploy_model_provider};
 

@@ -68,6 +68,7 @@ export type MessageComposerProps = {
     mediaTags?: string[][],
     mentionPubkeys?: string[],
     removedMentionPubkeys?: string[],
+    suppressLinkPreviews?: boolean,
     /** Target captured when the edit was submitted; avoids a later ref swap. */
     eventId?: string,
   ) => Promise<void>;

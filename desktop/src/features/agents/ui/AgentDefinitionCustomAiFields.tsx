@@ -1,6 +1,7 @@
 import type * as React from "react";
 import { AnimatePresence, type motion } from "motion/react";
 
+import type { RespondToMode } from "@/shared/api/types";
 import { Input } from "@/shared/ui/input";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -19,6 +20,7 @@ import type { PersonaModelDiscoveryStatus } from "./personaModelDiscoveryStatus"
 
 export function AgentDefinitionCustomAiFields({
   aiConfigurationMode,
+  currentAgentName,
   disabled,
   effectiveProviderApiKeyLabel,
   hermesProfile,
@@ -54,6 +56,7 @@ export function AgentDefinitionCustomAiFields({
   transition,
 }: {
   aiConfigurationMode: AgentAiConfigurationMode;
+  currentAgentName?: string | null;
   disabled: boolean;
   effectiveProviderApiKeyLabel: string;
   hermesProfile: string;
@@ -79,7 +82,7 @@ export function AgentDefinitionCustomAiFields({
   showCustomModelInput: boolean;
   showCustomProviderInput: boolean;
   showHermesProfileField: boolean;
-  respondTo?: string | null;
+  respondTo?: RespondToMode | null;
   topLevelSecretEnvVar: string | null;
   apiKeyInheritedLabel: string | null;
   apiKeyIsInherited: boolean;
@@ -170,6 +173,7 @@ export function AgentDefinitionCustomAiFields({
       </AnimatePresence>
 
       <CreateHermesBindingFields
+        currentAgentName={currentAgentName}
         disabled={disabled}
         hermesProfile={hermesProfile}
         modelOwnedByProfile={modelOwnedByProfile}

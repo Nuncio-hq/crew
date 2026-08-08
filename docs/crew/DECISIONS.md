@@ -373,3 +373,46 @@ Rationale: agents benefit from the standard skill set on day one; an
 empty profile is a power-user CLI flow (`hermes profile create … --no-skills`)
 rather than the Crew hiring path. Revisit only if managers ask for a
 Crew toggle.
+
+## D-024 — Keep profile-bound Hermes trusted, owner-only, and local
+
+- **Status:** Accepted (Issue #104, Phase 01)
+- **Date:** 2026-08-08
+
+Profile-bound Hermes agents are trusted, owner-operated workers. Crew presents
+their effective autonomy as **Full** and intentionally keeps the existing ACP
+behavior: when Hermes sends `session/request_permission`, `buzz-acp` selects the
+advertised `allow_once` option. Crew does not add a dangerous-command permission
+inbox or a competing approval policy. Hermes clarification and elicitation
+requests are product decisions, not permissions, and may use Crew's separate
+**Needs You** flow.
+
+Hermes' profile-owned `approvals.mode` remains authoritative. **Full** describes
+Crew's ACP host behavior—it does not silently override a stricter Hermes profile
+policy. An owner who wants profile-level prompt bypass changes that setting
+through Hermes' canonical surface, not through Crew.
+
+That autonomy has two mandatory backend boundaries:
+
+1. A profile-bound Hermes agent is `owner-only`; `allowlist` and `anyone` are
+   rejected even if a client bypasses the form.
+2. A profile-bound Hermes agent runs on the local backend only. A local profile
+   name is not a remote provisioning or secret-distribution contract.
+
+Create/update commands and local start/provider deploy paths enforce both
+boundaries. Existing invalid records remain loadable, stoppable, and deletable
+so they can be repaired; the generic storage writer does not brick the registry.
+
+Hermes profiles are local employees, not community-scoped copies. One local
+managed-agent record owns runtime pairs for every configured community, so one
+profile binding intentionally shares its memory, skills, and all other
+profile-owned state across those communities. Crew makes that reach and the
+shared-state consequence visible. A second local record cannot bind the same
+profile: `ManagedAgent.relay_url` is a legacy pin ignored by effective relay
+resolution and therefore cannot define occupancy. This is an
+installation-local identity guard, not a network-wide profile lease.
+
+This decision supersedes D-019 item 1 only where “1:1” could be read as global
+uniqueness, and supersedes D-019 item 7's possible future public path for a
+profile-bound agent. The profile still owns the model and credentials, and the
+named-profile requirement remains unchanged.

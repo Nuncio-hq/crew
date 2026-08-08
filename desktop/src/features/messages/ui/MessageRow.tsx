@@ -46,6 +46,7 @@ import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import { FailureNoticeRetryButton } from "./FailureNoticeRetryButton";
 import { MessageActionBar } from "./MessageActionBar";
 import { MessageAgentOwner } from "./MessageAgentOwner";
+import { MessageRowDefaultBody } from "./MessageRowDefaultBody";
 import { MessageAuthorText, MessageHeaderRow } from "./MessageHeader";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { WaveMessageAttachment } from "./WaveMessageAttachment";
@@ -100,6 +101,7 @@ export const MessageRow = React.memo(
     profiles,
     searchQuery,
     showDepthGuides = true,
+    videoReviewCommentRootId,
     videoReviewContext,
   }: {
     channelId?: string | null;
@@ -148,6 +150,7 @@ export const MessageRow = React.memo(
     profiles?: UserProfileLookup;
     searchQuery?: string;
     showDepthGuides?: boolean;
+    videoReviewCommentRootId?: string;
     videoReviewContext?: VideoReviewContext;
   }) {
     // Keep the transient send state with its timestamp rather than collapsing
@@ -417,22 +420,40 @@ export const MessageRow = React.memo(
             renderMarkdownBody()
           );
         }
-        default:
-          {
-            const waveMessage = parseWaveMessageContent(message.body);
-            if (waveMessage) {
-              return (
-                <WaveMessageAttachment
-                  channelId={channelId}
-                  fallbackText={waveMessage.fallbackText}
-                  huddleMemberPubkeys={huddleMemberPubkeys}
-                  huddleMemberPubkeysPending={huddleMemberPubkeysPending}
-                />
-              );
-            }
+        default: {
+          const waveMessage = parseWaveMessageContent(message.body);
+          if (waveMessage) {
+            return (
+              <WaveMessageAttachment
+                channelId={channelId}
+                fallbackText={waveMessage.fallbackText}
+                huddleMemberPubkeys={huddleMemberPubkeys}
+                huddleMemberPubkeysPending={huddleMemberPubkeysPending}
+              />
+            );
           }
 
-          return renderMarkdownBody();
+          return (
+            <MessageRowDefaultBody
+              message={message}
+              channelId={channelId}
+              onEdit={onEdit}
+              videoReviewCommentRootId={videoReviewCommentRootId}
+              videoReviewContext={videoReviewContext}
+              channelNames={channelNames}
+              emojiOnly={emojiOnly}
+              customEmoji={customEmoji}
+              imetaByUrl={imetaByUrl}
+              agentMentionPubkeysByName={agentMentionPubkeysByName}
+              agentMentionAvatarsByName={agentMentionAvatarsByName}
+              mentionNames={mentionNames}
+              mentionPubkeysByName={mentionPubkeysByName}
+              searchQuery={searchQuery}
+              snapshotSharedBy={snapshotSharedBy}
+              isKnownAgentPubkey={isKnownAgentPubkey}
+            />
+          );
+        }
       }
     };
 
@@ -960,6 +981,7 @@ export const MessageRow = React.memo(
     prev.playEntrance === next.playEntrance &&
     prev.profiles === next.profiles &&
     prev.searchQuery === next.searchQuery &&
+    prev.videoReviewCommentRootId === next.videoReviewCommentRootId &&
     prev.videoReviewContext === next.videoReviewContext,
 );
 

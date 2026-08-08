@@ -4,12 +4,13 @@
  */
 import * as React from "react";
 
-import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
+import type { AcpRuntimeCatalogEntry, RespondToMode } from "@/shared/api/types";
 import {
   deriveAgentConfigFieldModel,
   getRenderableHermesProfileField,
   isModelOwnedByProfile,
 } from "../lib/agentConfigCore";
+import { shouldClearHermesProfileOnRuntimeChange } from "../lib/hermesProfileBinding";
 import { EMPTY_GLOBAL_CONFIG } from "./AgentConfigFields";
 import {
   HermesProfileField,
@@ -20,12 +21,21 @@ import {
 export function useCreateHermesBinding({
   enabled,
   hermesProfile,
+  onHermesProfileChange,
+  respondTo,
   runtime,
 }: {
   enabled: boolean;
   hermesProfile: string;
+  onHermesProfileChange: (next: string) => void;
+  respondTo: RespondToMode | null;
   runtime: AcpRuntimeCatalogEntry | undefined;
 }) {
+  React.useEffect(() => {
+    if (hermesProfile && shouldClearHermesProfileOnRuntimeChange(runtime)) {
+      onHermesProfileChange("");
+    }
+  }, [hermesProfile, onHermesProfileChange, runtime]);
   const fieldModel = React.useMemo(
     () =>
       deriveAgentConfigFieldModel({
@@ -39,16 +49,22 @@ export function useCreateHermesBinding({
   const showProfileField =
     enabled && getRenderableHermesProfileField(fieldModel) != null;
   const modelOwnedByProfile = enabled && isModelOwnedByProfile(fieldModel);
-  const { profileError } = useHermesProfileBindingState({
+  const { blockingError } = useHermesProfileBindingState({
     enabled: showProfileField,
     hermesProfile,
     editingPubkey: null,
+    respondTo,
     required: true,
   });
-  return { showProfileField, modelOwnedByProfile, profileError };
+  return {
+    showProfileField,
+    modelOwnedByProfile,
+    profileError: blockingError,
+  };
 }
 
 export function CreateHermesBindingFields({
+  currentAgentName,
   disabled,
   hermesProfile,
   onHermesProfileChange,
@@ -56,18 +72,20 @@ export function CreateHermesBindingFields({
   showProfileField,
   respondTo,
 }: {
+  currentAgentName?: string | null;
   disabled?: boolean;
   hermesProfile: string;
   onHermesProfileChange: (next: string) => void;
   modelOwnedByProfile: boolean;
   showProfileField: boolean;
-  respondTo?: string | null;
+  respondTo?: RespondToMode | null;
 }) {
   if (!showProfileField && !modelOwnedByProfile) return null;
   return (
     <>
       {showProfileField ? (
         <HermesProfileField
+          currentAgentName={currentAgentName}
           disabled={disabled}
           id="persona-hermes-profile"
           onChange={onHermesProfileChange}

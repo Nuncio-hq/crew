@@ -13,6 +13,8 @@ import {
 import type { ImetaMedia } from "@/features/messages/lib/imetaMediaMarkdown";
 import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import type { TimelineMessage } from "@/features/messages/types";
+import type { VideoReviewPresentation } from "@/features/messages/lib/videoReviewContext";
+import { VideoReviewNavigationProvider } from "@/shared/ui/VideoReviewNavigation";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { Channel } from "@/shared/api/types";
 import type { ThreadPanelLayoutProps } from "@/features/channels/lib/threadPanelLayout";
@@ -34,7 +36,6 @@ import {
 } from "@/features/messages/lib/messageThreadPanelLayout";
 import { Button } from "@/shared/ui/button";
 import { Separator } from "@/shared/ui/separator";
-import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import { ComposerActivityAccessory } from "./ComposerActivityAccessory";
 import { ComposerDockBackdrop } from "./ComposerDockBackdrop";
 import { MessageComposer } from "./MessageComposer";
@@ -91,6 +92,8 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
     mediaTags?: string[][],
     mentionPubkeys?: string[],
     removedMentionPubkeys?: string[],
+    suppressLinkPreviews?: boolean,
+    eventId?: string,
   ) => Promise<void>;
   onMarkUnread?: (message: TimelineMessage) => void;
   onMarkRead?: (message: TimelineMessage) => void;
@@ -126,7 +129,7 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
   threadUnreadCount?: number;
   threadReplyUnreadCounts?: ReadonlyMap<string, number>;
   threadTypingPubkeys: string[];
-  videoReviewContextsByMessageId?: ReadonlyMap<string, VideoReviewContext>;
+  videoReviewPresentation?: VideoReviewPresentation;
   activityAccessoryContent?: React.ReactNode;
   activityAccessoryVisible: boolean;
   widthPx: number;
@@ -243,7 +246,7 @@ export function MessageThreadPanel({
   scrollTargetId,
   scrollTargetHighlights = true,
   threadHead,
-  videoReviewContextsByMessageId,
+  videoReviewPresentation,
   threadReplies,
   threadRepliesPending = false,
   threadUnreadCount,
@@ -354,9 +357,6 @@ export function MessageThreadPanel({
     }
   }, [collapsedThreadHeadId, scrollTargetIsVisibleReply, threadHeadId]);
 
-  // Which of the three states the reply region paints this frame. Delegated to
-  // a pure helper so the "don't flash empty over an incoming list" rule is
-  // covered in the lib test suite (see selectDeferredListRenderState).
   const repliesRenderState = selectDeferredListRenderState(
     deferredThreadReplies.length,
     threadReplies.length,
@@ -612,9 +612,7 @@ export function MessageThreadPanel({
           profiles={profiles}
           shouldShowThreadBranchGuides={shouldShowThreadBranchGuides}
           threadHead={threadHead}
-          videoReviewContext={videoReviewContextsByMessageId?.get(
-            threadHead.id,
-          )}
+          videoReviewPresentation={videoReviewPresentation}
         />
 
         {showThreadHeadDivider ? (
@@ -769,7 +767,10 @@ export function MessageThreadPanel({
                         onToggleReaction={onToggleReaction}
                         profiles={profiles}
                         showDepthGuides={shouldShowThreadBranchGuides}
-                        videoReviewContext={videoReviewContextsByMessageId?.get(
+                        videoReviewCommentRootId={videoReviewPresentation?.commentRootIdsByMessageId.get(
+                          entry.message.id,
+                        )}
+                        videoReviewContext={videoReviewPresentation?.contextsByMessageId.get(
                           entry.message.id,
                         )}
                       />
@@ -956,42 +957,43 @@ export function MessageThreadPanel({
       </AuxiliaryPanelHeaderGroup>
     </>
   );
-
   return (
-    <AuxiliaryPanel
-      className="relative"
-      // The focus drawer animates itself; a second slide here would compound.
-      enterMotion={!isFocusMode}
-      footer={threadFooter}
-      header={
-        isHuddleTranscript ? undefined : (
-          <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
-        )
-      }
-      isSinglePanelView={isSinglePanelView}
-      layout={layout}
-      onClose={onClose}
-      testId="message-thread-panel"
-      transparentChrome={transparentChrome}
-      widthPx={widthPx}
-    >
-      {/* Sticky status bar lives outside the scroll region so expand/collapse
-          cannot fight useAnchoredScroll's ResizeObserver. Sibling padded
-          column keeps docked header chrome from stealing Workspace clicks. */}
-      <div
-        className={cn(
-          "flex min-h-0 flex-1 flex-col",
-          getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
-        )}
+    <VideoReviewNavigationProvider>
+      <AuxiliaryPanel
+        className="relative"
+        // The focus drawer animates itself; a second slide here would compound.
+        enterMotion={!isFocusMode}
+        footer={threadFooter}
+        header={
+          isHuddleTranscript ? undefined : (
+            <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
+          )
+        }
+        isSinglePanelView={isSinglePanelView}
+        layout={layout}
+        onClose={onClose}
+        testId="message-thread-panel"
+        transparentChrome={transparentChrome}
+        widthPx={widthPx}
       >
-        <ProjectThreadWorkspacePanel
-          channelId={channelId}
-          isFocusMode={isFocusMode}
-          profiles={profiles}
-          model={projectThreadWorkspaceModel}
-        />
-        {threadScrollRegion}
-      </div>
-    </AuxiliaryPanel>
+        {/* Sticky status bar lives outside the scroll region so expand/collapse
+            cannot fight useAnchoredScroll's ResizeObserver. Sibling padded
+            column keeps docked header chrome from stealing Workspace clicks. */}
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 flex-col",
+            getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
+          )}
+        >
+          <ProjectThreadWorkspacePanel
+            channelId={channelId}
+            isFocusMode={isFocusMode}
+            profiles={profiles}
+            model={projectThreadWorkspaceModel}
+          />
+          {threadScrollRegion}
+        </div>
+      </AuxiliaryPanel>
+    </VideoReviewNavigationProvider>
   );
 }
