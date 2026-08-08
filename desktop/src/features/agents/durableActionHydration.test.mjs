@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { enumerateDurableActionEvents } from "./durableActionHydration.ts";
+import {
+  enumerateDurableActionEvents,
+  mergeDurableActionEvents,
+} from "./durableActionHydration.ts";
 
 function event(id, createdAt) {
   return {
@@ -73,5 +76,28 @@ test("fails closed when one timestamp bucket exceeds the relay page limit", asyn
       2,
     ),
     /timestamp bucket/,
+  );
+});
+
+test("merges live events buffered during hydration before projecting transitions", () => {
+  const request = { ...event("request", 10), kind: 46040 };
+  const receipt = { ...event("receipt", 11), kind: 46043 };
+  // Cross-host clocks may place a transition before its request. Authority
+  // reconstruction still has to establish every request before transitions.
+  const answer = { ...event("answer", 9), kind: 46041 };
+  const review = { ...event("review", 13), kind: 7 };
+
+  assert.deepEqual(
+    mergeDurableActionEvents(
+      [request],
+      [receipt],
+      [],
+      [answer, receipt, review],
+    ),
+    {
+      userInputEvents: [request, answer],
+      receiptEvents: [receipt],
+      reviewEvents: [review],
+    },
   );
 });

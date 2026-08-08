@@ -25,7 +25,10 @@ import {
   ingestAgentReceiptEvent,
   ingestAgentReceiptReviewEvent,
 } from "@/features/agents/agentReceiptStore";
-import { enumerateDurableActionEvents } from "@/features/agents/durableActionHydration";
+import {
+  enumerateDurableActionEvents,
+  mergeDurableActionEvents,
+} from "@/features/agents/durableActionHydration";
 import type { RelayEvent } from "@/shared/api/types";
 
 const LIVE_HOME_FEED_RETRY_BASE_MS = 1_000;
@@ -71,6 +74,8 @@ export function useLiveHomeFeedActions(
       null;
     let retryAttempt = 0;
     const since = Math.floor(Date.now() / 1_000);
+    let durableHydrationReady = false;
+    const bufferedDurableEvents = new Map<string, RelayEvent>();
 
     const disposeAll = (currentDisposers: Array<() => Promise<void>>) => {
       void Promise.allSettled(currentDisposers.map((dispose) => dispose()));
@@ -130,9 +135,15 @@ export function useLiveHomeFeedActions(
           DURABLE_ACTION_PAGE_SIZE,
         ),
       ]);
-      for (const event of userInputEvents.sort(
-        (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-      )) {
+      const merged = mergeDurableActionEvents(
+        userInputEvents,
+        receiptEvents,
+        reviewEvents,
+        [...bufferedDurableEvents.values()],
+      );
+      bufferedDurableEvents.clear();
+      durableHydrationReady = true;
+      for (const event of merged.userInputEvents) {
         handleUserInputEvent(
           event,
           event.tags.find((tag) => tag[0] === "h")?.[1] ?? "",
@@ -140,14 +151,10 @@ export function useLiveHomeFeedActions(
       }
       // Receipts establish authority before reactions are projected, even if
       // relay pages or same-second ids arrive in the opposite order.
-      for (const event of receiptEvents.sort(
-        (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-      )) {
+      for (const event of merged.receiptEvents) {
         handleReceiptEvent(event);
       }
-      for (const event of reviewEvents.sort(
-        (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-      )) {
+      for (const event of merged.reviewEvents) {
         handleReceiptEvent(event);
       }
       handleLiveHomeFeedEvent();
@@ -186,6 +193,10 @@ export function useLiveHomeFeedActions(
         relayClient.subscribeLive(
           buildChannelUserInputFilter(channelId, 50, since),
           (event) => {
+            if (!durableHydrationReady) {
+              bufferedDurableEvents.set(event.id, event);
+              return;
+            }
             handleUserInputEvent(event, channelId);
             handleLiveHomeFeedEvent();
           },
@@ -200,6 +211,10 @@ export function useLiveHomeFeedActions(
             since,
           },
           (event) => {
+            if (!durableHydrationReady) {
+              bufferedDurableEvents.set(event.id, event);
+              return;
+            }
             handleReceiptEvent(event);
             handleLiveHomeFeedEvent();
           },
@@ -213,6 +228,10 @@ export function useLiveHomeFeedActions(
             since,
           },
           (event) => {
+            if (!durableHydrationReady) {
+              bufferedDurableEvents.set(event.id, event);
+              return;
+            }
             handleReceiptEvent(event);
             handleLiveHomeFeedEvent();
           },
