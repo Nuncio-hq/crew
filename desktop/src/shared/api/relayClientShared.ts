@@ -38,6 +38,12 @@ export type RelaySubscriptionFilter = {
   until?: number;
 } & Partial<Record<`#${string}`, string[]>>;
 
+export type RelayLiveEventContext = { replay: boolean };
+export type RelayLiveSubscriptionStatus =
+  | { state: "open" }
+  | { state: "recovering"; message: string }
+  | { state: "closed"; message: string };
+
 type HistorySubscription = {
   mode: "history";
   events: RelayEvent[];
@@ -57,7 +63,9 @@ type FirstEventSubscription = {
 type LiveSubscription = {
   mode: "live";
   filter: RelaySubscriptionFilter;
-  onEvent: (event: RelayEvent) => void;
+  onEvent: (event: RelayEvent, context: RelayLiveEventContext) => void;
+  onStatus?: (status: RelayLiveSubscriptionStatus) => void;
+  ready: boolean;
   resolveReady?: () => void;
   lastSeenCreatedAt?: number;
   /**

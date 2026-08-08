@@ -3,10 +3,10 @@ import { beforeEach, test } from "node:test";
 
 import {
   getActiveAgentsForConversation,
-  getActiveTurnsByConversation,
   resetActiveAgentTurnsStore,
   syncAgentTurnsFromEvents,
 } from "./activeAgentTurnsStore.ts";
+import { getActiveTurnsByConversation } from "./activeConversationTurns.ts";
 import { getActiveTurnSummariesForConversation } from "./activeConversationAgentTurnSummaries.ts";
 
 function started(conversationId, turnId, overrides = {}) {

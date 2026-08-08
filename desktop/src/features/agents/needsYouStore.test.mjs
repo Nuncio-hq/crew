@@ -292,7 +292,7 @@ describe("needsYouStore", () => {
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
   });
 
-  it("expires user-input requests", () => {
+  it("retains durable user-input requests until resolution", () => {
     const now = Date.now();
     ingestUserInputRequest({
       id: "user-input-expired",
@@ -302,7 +302,7 @@ describe("needsYouStore", () => {
       agentPubkey: AGENT,
       createdAt: now - 30 * 60 * 1_000,
     });
-    assert.equal(getNeedsYouForChannel(CHANNEL, now).length, 0);
+    assert.equal(getNeedsYouForChannel(CHANNEL, now).length, 1);
   });
 
   it("reconcile never prunes user-input entries (46010-only feed)", () => {
@@ -319,8 +319,7 @@ describe("needsYouStore", () => {
     // complete snapshot without this entry must NOT delete it.
     reconcileNeedsYouFromFeed([], now);
     assert.equal(getNeedsYouForChannel(CHANNEL, now).length, 1);
-    // The surviving entry holds a pending expiry timer that would keep the
-    // node:test process alive — clear it.
+    // Reset to isolate the module-level durable projection from later tests.
     resetNeedsYouStore();
   });
 });

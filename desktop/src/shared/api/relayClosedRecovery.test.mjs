@@ -162,6 +162,42 @@ test("non-rate-limited history CLOSED does not arm the gate", () => {
   );
 });
 
+test("live subscription reports recovery on CLOSED and open only after EOSE", () => {
+  resetAll(0);
+  const statuses = [];
+  const subscriptions = new Map([
+    [
+      "live-health",
+      {
+        mode: "live",
+        filter: { kinds: [24_200], limit: 10 },
+        onEvent: () => {},
+        onStatus: (status) => statuses.push(status),
+        ready: true,
+      },
+    ],
+  ]);
+
+  handleRelayClosed({
+    subscriptions,
+    subId: "live-health",
+    message: "error: observer query unavailable",
+    sendReq: () => Promise.resolve(),
+  });
+  assert.equal(subscriptions.get("live-health").ready, false);
+  assert.deepEqual(statuses, [
+    { state: "recovering", message: "error: observer query unavailable" },
+  ]);
+
+  handleSubscriptionEose({
+    subscriptions,
+    subId: "live-health",
+    closeSubscription: async () => {},
+  });
+  assert.equal(subscriptions.get("live-health").ready, true);
+  assert.deepEqual(statuses.at(-1), { state: "open" });
+});
+
 test("gate armed by rate-limited history CLOSED defers the next REQ until expiry then resumes", async () => {
   // Simulate: rate-limited CLOSED arrives on a history sub → gate arms for 5s.
   // A concurrent requestHistoryGated call must not issue the REQ before 5s,

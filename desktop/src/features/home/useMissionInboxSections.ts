@@ -1,14 +1,7 @@
 import * as React from "react";
 
-import {
-  ingestApprovalRequestFeedItem,
-  ingestUserInputRequest,
-} from "@/features/agents/needsYouStore";
-import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
-import {
-  deriveUserInputRootEventId,
-  parseUserInputRequest,
-} from "@/features/channels/lib/userInput";
+import { ingestApprovalRequestFeedItem } from "@/features/agents/needsYouStore";
+import { projectAuthorizedUserInputEvent } from "@/features/agents/userInputAttentionProjection";
 import {
   deriveMissionInboxSections,
   useMissionInboxActiveTurns,
@@ -21,12 +14,30 @@ import {
   type InboxItem,
 } from "@/features/home/lib/inbox";
 import type { Channel, HomeFeedResponse } from "@/shared/api/types";
+import {
+  getAgentReceipts,
+  ingestAgentReceiptEvent,
+  ingestAgentReceiptReviewEvent,
+  subscribeAgentReceipts,
+} from "@/features/agents/agentReceiptStore";
+import {
+  getAgentAttentionSnoozeGeneration,
+  getAgentAttentionSnoozedUntil,
+  subscribeAgentAttentionSnoozes,
+} from "@/features/agents/agentAttentionSnoozeStore";
+import {
+  useAgentObserverConnectionState,
+  useAgentObserverConnectionStates,
+} from "@/features/agents/useAgentObserverConnectionState";
+import { KIND_AGENT_RECEIPT, KIND_REACTION } from "@/shared/constants/kinds";
 
 type UseMissionInboxSectionsInput = {
   channels?: readonly Pick<Channel, "id" | "name">[];
   effectiveDoneSet: ReadonlySet<string>;
   feed?: HomeFeedResponse;
   inboxItems: readonly InboxItem[];
+  currentPubkey?: string;
+  ownedAgentPubkeys: ReadonlySet<string>;
 };
 
 export function useMissionInboxSections({
@@ -34,6 +45,8 @@ export function useMissionInboxSections({
   effectiveDoneSet,
   feed,
   inboxItems,
+  currentPubkey,
+  ownedAgentPubkeys,
 }: UseMissionInboxSectionsInput): MissionInboxSections {
   React.useEffect(() => {
     for (const item of feed?.feed.needsAction ?? []) {
@@ -42,29 +55,72 @@ export function useMissionInboxSections({
         continue;
       }
       const event = relayEventFromFeedItem(item);
-      const request = parseUserInputRequest(event);
-      if (!request) continue;
-      const rootEventId = deriveUserInputRootEventId(event);
-      const channelId = request.channel_id || item.channelId;
-      const conversationId = deriveAgentConversationIdOrNull(
-        channelId,
-        rootEventId,
+      projectAuthorizedUserInputEvent(
+        event,
+        item.channelId ?? "",
+        currentPubkey ?? "",
+        ownedAgentPubkeys,
       );
-      if (!channelId || !conversationId) continue;
-      ingestUserInputRequest({
-        id: item.id,
-        channelId,
-        rootEventId,
-        conversationId,
-        agentPubkey: item.pubkey,
-        createdAt: item.createdAt * 1_000,
-      });
     }
-  }, [feed?.feed.needsAction]);
+  }, [currentPubkey, feed?.feed.needsAction, ownedAgentPubkeys]);
+
+  React.useEffect(() => {
+    const activity = feed?.feed.activity ?? [];
+    // Receipts must exist before review authority can be checked. A two-pass
+    // replay is deterministic even when relay rows share a created_at second.
+    for (const item of activity) {
+      if (item.kind === KIND_AGENT_RECEIPT) {
+        ingestAgentReceiptEvent(relayEventFromFeedItem(item));
+      }
+    }
+    if (!currentPubkey) return;
+    for (const item of activity) {
+      if (item.kind === KIND_REACTION) {
+        ingestAgentReceiptReviewEvent(
+          relayEventFromFeedItem(item),
+          currentPubkey,
+          ownedAgentPubkeys,
+        );
+      }
+    }
+  }, [currentPubkey, feed?.feed.activity, ownedAgentPubkeys]);
 
   const needsYou = useMissionInboxNeedsYou();
   const activeTurns = useMissionInboxActiveTurns();
   const outcomes = useMissionInboxOutcomes();
+  const receipts = React.useSyncExternalStore(
+    subscribeAgentReceipts,
+    getAgentReceipts,
+    getAgentReceipts,
+  );
+  const snoozeGeneration = React.useSyncExternalStore(
+    subscribeAgentAttentionSnoozes,
+    getAgentAttentionSnoozeGeneration,
+    getAgentAttentionSnoozeGeneration,
+  );
+  const activeAgentPubkeys = React.useMemo(
+    () => [
+      ...new Set([
+        ...activeTurns.flatMap((turn) => turn.agentPubkeys),
+        ...outcomes.map(([, outcome]) => outcome.agentPubkey),
+      ]),
+    ],
+    [activeTurns, outcomes],
+  );
+  const connectionState = useAgentObserverConnectionState(activeAgentPubkeys);
+  const connectionStateByAgent =
+    useAgentObserverConnectionStates(activeAgentPubkeys);
+  const snoozedUntilByConversation = React.useMemo(() => {
+    // The store generation invalidates values while active-turn identities
+    // remain stable.
+    void snoozeGeneration;
+    return new Map(
+      activeTurns.map((turn) => [
+        turn.conversationId,
+        getAgentAttentionSnoozedUntil(turn.conversationId),
+      ]),
+    );
+  }, [activeTurns, snoozeGeneration]);
 
   return React.useMemo(
     () =>
@@ -78,8 +134,25 @@ export function useMissionInboxSections({
         channels: channels ?? [],
         inboxItems,
         needsYou,
+        ownedAgentPubkeys,
         outcomes,
+        receipts,
+        connectionState,
+        connectionStateByAgent,
+        snoozedUntilByConversation,
       }),
-    [activeTurns, channels, effectiveDoneSet, inboxItems, needsYou, outcomes],
+    [
+      activeTurns,
+      channels,
+      connectionState,
+      connectionStateByAgent,
+      effectiveDoneSet,
+      inboxItems,
+      needsYou,
+      ownedAgentPubkeys,
+      outcomes,
+      receipts,
+      snoozedUntilByConversation,
+    ],
   );
 }

@@ -15,6 +15,8 @@ import {
 import {
   getTextPayload,
   type ConnectionState,
+  type RelayLiveEventContext,
+  type RelayLiveSubscriptionStatus,
   type PendingEvent,
   type RelaySubscription,
   type RelaySubscriptionFilter,
@@ -33,6 +35,7 @@ import {
   prepareSubscriptionEvent,
 } from "@/shared/api/relayClosedRecovery";
 import { replayLiveSubscriptions } from "@/shared/api/relayReconnectReplay";
+import * as liveBuffer from "@/shared/api/relayLiveEventBuffer";
 import {
   activateRateLimit,
   parseRateLimitHint,
@@ -85,7 +88,7 @@ export class RelayClient {
   } | null = null;
   private subscriptions = new Map<string, RelaySubscription>();
   private pendingEvents = new Map<string, PendingEvent>();
-  private eventBuffer: Array<{ subId: string; event: RelayEvent }> = [];
+  private eventBuffer: liveBuffer.BufferedLiveEvent[] = [];
   private flushTimeout: number | null = null;
   private reconnectListeners = new Set<() => void>();
   private hasConnectedOnce = false;
@@ -411,9 +414,10 @@ export class RelayClient {
 
   async subscribeLive(
     filter: RelaySubscriptionFilter,
-    onEvent: (event: RelayEvent) => void,
+    onEvent: (event: RelayEvent, context: RelayLiveEventContext) => void,
+    onStatus?: (status: RelayLiveSubscriptionStatus) => void,
   ) {
-    return this.subscribe(filter, onEvent);
+    return this.subscribe(filter, onEvent, onStatus);
   }
 
   async subscribeToChannelMentionEvents(
@@ -598,7 +602,8 @@ export class RelayClient {
 
   private async subscribe(
     filter: RelaySubscriptionFilter,
-    onEvent: (event: RelayEvent) => void,
+    onEvent: (event: RelayEvent, context: RelayLiveEventContext) => void,
+    onStatus?: (status: RelayLiveSubscriptionStatus) => void,
   ) {
     await this.ensureConnected();
 
@@ -620,6 +625,8 @@ export class RelayClient {
       mode: "live",
       filter,
       onEvent,
+      onStatus,
+      ready: false,
       resolveReady,
     });
 
@@ -863,9 +870,10 @@ export class RelayClient {
       subscription.onEvent(event);
       return;
     }
-
     if (!prepareSubscriptionEvent(subscription, event)) return;
-    this.eventBuffer.push({ subId, event });
+    this.eventBuffer.push(
+      liveBuffer.toBufferedLiveEvent(subId, event, subscription),
+    );
     this.flushTimeout ??= window.setTimeout(
       () => this.flushEventBuffer(),
       EVENT_BATCH_MS,
@@ -874,16 +882,8 @@ export class RelayClient {
 
   private flushEventBuffer() {
     this.flushTimeout = null;
-    const buffer = this.eventBuffer;
+    liveBuffer.dispatchBufferedLiveEvents(this.eventBuffer, this.subscriptions);
     this.eventBuffer = [];
-
-    // Re-lookup: subscriptions removed during batch window are intentionally skipped.
-    for (const { subId, event } of buffer) {
-      const subscription = this.subscriptions.get(subId);
-      if (subscription?.mode === "live") {
-        subscription.onEvent(event);
-      }
-    }
   }
 
   private handleEose(subId: string) {

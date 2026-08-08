@@ -136,6 +136,16 @@ fn is_reserved_recognises_full_list() {
 }
 
 #[test]
+fn managed_receipt_emission_cannot_be_disabled_by_layered_user_env() {
+    assert!(is_reserved_env_key("BUZZ_ACP_AGENT_RECEIPTS"));
+    let merged = merged_user_env(
+        &map(&[("BUZZ_ACP_AGENT_RECEIPTS", "false")]),
+        &BTreeMap::new(),
+    );
+    assert!(!merged.contains_key("BUZZ_ACP_AGENT_RECEIPTS"));
+}
+
+#[test]
 fn reserved_keys_include_agent_owner_for_legacy_records() {
     // Legacy records without auth_tag fall back to BUZZ_ACP_AGENT_OWNER
     // to enforce the respond-to gate. Must not be user-overridable.

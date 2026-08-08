@@ -73,10 +73,15 @@ function recoverLiveSubscriptionFromClosed({
   message: string;
   sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
 }) {
+  subscription.ready = false;
   subscription.resolveReady?.();
   subscription.resolveReady = undefined;
 
   const closedClass = classifyRelayClosed(message);
+  subscription.onStatus?.({
+    state: closedClass === "terminal" ? "closed" : "recovering",
+    message: message || "Relay closed the live subscription.",
+  });
 
   if (closedClass === "terminal") {
     // Auth/access/filter failure — permanently remove the subscription so it
@@ -157,6 +162,8 @@ export function handleSubscriptionEose({
   const subscription = subscriptions.get(subId);
   if (!subscription) return;
   if (subscription.mode === "live") {
+    subscription.ready = true;
+    subscription.onStatus?.({ state: "open" });
     subscription.resolveReady?.();
     subscription.resolveReady = undefined;
     subscription.closedRetryAttempt = 0;

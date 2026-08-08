@@ -8,27 +8,26 @@ import { KIND_AGENT_USER_INPUT_REQUESTED } from "@/shared/constants/kinds";
 import {
   buildSkippedAnswers,
   buildUserInputAnswers,
-  deriveUserInputRootEventId,
   deriveResolvedUserInputs,
   derivePendingUserInputs,
-  getAnswerRequestId,
-  getResolvedRequestId,
-  parseUserInputRequest,
   publishUserInputAnswer,
   type UserInputAnswers,
   type UserInputEvent,
 } from "@/features/channels/lib/userInput";
-import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationId";
 import {
-  ingestUserInputRequest,
-  resolveUserInputRequest,
-} from "@/features/agents/needsYouStore";
+  projectAuthorizedUserInputEvent,
+  type AuthorizedUserInputRequest,
+  validateAuthorizedUserInputRequest,
+  validateAuthorizedUserInputTransition,
+} from "@/features/agents/userInputAttentionProjection";
+import { useCurrentOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
 
 const RETAINED_EVENTS = 200;
 
 export function useChannelUserInput(channelId: string | null) {
   const identityQuery = useIdentityQuery();
   const currentPubkey = identityQuery.data?.pubkey ?? "";
+  const ownedAgentPubkeys = useCurrentOwnedAgentPubkeys(currentPubkey);
   const [events, setEvents] = React.useState<RelayEvent[]>([]);
   const [optimisticallyResolved, setOptimisticallyResolved] = React.useState(
     () => new Set<string>(),
@@ -58,30 +57,48 @@ export function useChannelUserInput(channelId: string | null) {
 
     let cancelled = false;
     let dispose: (() => Promise<void>) | undefined;
+    const authorizedRequests = new Map<string, AuthorizedUserInputRequest>();
     const filter = buildChannelUserInputFilter(channelId, RETAINED_EVENTS);
-    const onEvent = (event: RelayEvent) => {
-      if (cancelled) return;
-      const request = parseUserInputRequest(event);
+    const authorizeEvent = (event: RelayEvent) => {
+      const request = validateAuthorizedUserInputRequest(
+        event,
+        currentPubkey,
+        ownedAgentPubkeys,
+      );
       if (request) {
-        const rootEventId = deriveUserInputRootEventId(event);
-        const conversationId = deriveAgentConversationIdOrNull(
-          request.channel_id || channelId,
-          rootEventId,
+        authorizedRequests.set(request.id, request);
+        projectAuthorizedUserInputEvent(
+          event,
+          channelId,
+          currentPubkey,
+          ownedAgentPubkeys,
         );
-        if (!conversationId) return;
-        ingestUserInputRequest({
-          id: event.id,
-          channelId: request.channel_id || channelId || "",
-          rootEventId,
-          conversationId,
-          agentPubkey: event.pubkey,
-          createdAt: event.created_at * 1_000,
-        });
-      } else {
-        const resolvedId =
-          getAnswerRequestId(event) ?? getResolvedRequestId(event);
-        if (resolvedId) resolveUserInputRequest(resolvedId);
+        return true;
       }
+      const eTags = event.tags.filter((tag) => tag[0] === "e");
+      const target =
+        eTags.length === 1 ? authorizedRequests.get(eTags[0]?.[1] ?? "") : null;
+      if (
+        !target ||
+        !validateAuthorizedUserInputTransition(
+          event,
+          target,
+          currentPubkey,
+          ownedAgentPubkeys,
+        )
+      ) {
+        return false;
+      }
+      projectAuthorizedUserInputEvent(
+        event,
+        channelId,
+        currentPubkey,
+        ownedAgentPubkeys,
+      );
+      return true;
+    };
+    const onEvent = (event: RelayEvent) => {
+      if (cancelled || !authorizeEvent(event)) return;
       if (event.kind === KIND_AGENT_USER_INPUT_REQUESTED) {
         setVisibleRequestIds((current) => {
           if (current.has(event.id)) return current;
@@ -105,35 +122,19 @@ export function useChannelUserInput(channelId: string | null) {
         }
         const history = await relayClient.fetchEvents(filter);
         if (!cancelled) {
-          for (const event of history) {
-            const resolvedId =
-              getAnswerRequestId(event) ?? getResolvedRequestId(event);
-            if (resolvedId) resolveUserInputRequest(resolvedId);
-          }
+          const ordered = [...history].sort(
+            (left, right) =>
+              Number(right.kind === KIND_AGENT_USER_INPUT_REQUESTED) -
+                Number(left.kind === KIND_AGENT_USER_INPUT_REQUESTED) ||
+              left.created_at - right.created_at ||
+              left.id.localeCompare(right.id),
+          );
+          const authorizedHistory = ordered.filter(authorizeEvent);
           const pendingIds = new Set(
-            derivePendingUserInputs(history, currentPubkey).map(
+            derivePendingUserInputs(authorizedHistory, currentPubkey).map(
               ({ event }) => event.id,
             ),
           );
-          for (const event of history) {
-            const request = parseUserInputRequest(event);
-            if (!request) continue;
-            if (!pendingIds.has(event.id)) continue;
-            const rootEventId = deriveUserInputRootEventId(event);
-            const conversationId = deriveAgentConversationIdOrNull(
-              request.channel_id || channelId,
-              rootEventId,
-            );
-            if (!conversationId) continue;
-            ingestUserInputRequest({
-              id: event.id,
-              channelId: request.channel_id || channelId || "",
-              rootEventId,
-              conversationId,
-              agentPubkey: event.pubkey,
-              createdAt: event.created_at * 1_000,
-            });
-          }
           setVisibleRequestIds((current) => {
             const next = new Set(current);
             for (const id of pendingIds) next.add(id);
@@ -141,7 +142,7 @@ export function useChannelUserInput(channelId: string | null) {
           });
           setEvents((current) => {
             const byId = new Map(current.map((event) => [event.id, event]));
-            for (const event of history) byId.set(event.id, event);
+            for (const event of authorizedHistory) byId.set(event.id, event);
             return [...byId.values()]
               .sort((left, right) => right.created_at - left.created_at)
               .slice(0, RETAINED_EVENTS);
@@ -157,7 +158,7 @@ export function useChannelUserInput(channelId: string | null) {
       cancelled = true;
       void dispose?.();
     };
-  }, [channelId, currentPubkey]);
+  }, [channelId, currentPubkey, ownedAgentPubkeys]);
 
   const pending = React.useMemo(
     () =>

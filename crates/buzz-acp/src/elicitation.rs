@@ -104,7 +104,11 @@ impl QuestionRuntime {
             questions: form.questions,
         };
         let content = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-        let builder = buzz_sdk::build_agent_user_input_request(channel_id, &content)
+        let owner_pubkey = self
+            .owner_cache
+            .get()
+            .ok_or_else(|| "agent owner is required for durable user input".to_string())?;
+        let builder = buzz_sdk::build_agent_user_input_request(channel_id, owner_pubkey, &content)
             .map_err(|e| e.to_string())?;
         let event = builder
             .sign_with_keys(&self.keys)

@@ -2,6 +2,10 @@ import { buildObserverControlEvent } from "@/shared/api/tauriObserver";
 import type { RelayEvent } from "@/shared/api/types";
 import { KIND_AGENT_OBSERVER_FRAME } from "@/shared/constants/kinds";
 import { relayClient } from "./relayClient";
+import type {
+  RelayLiveEventContext,
+  RelayLiveSubscriptionStatus,
+} from "./relayClientShared";
 
 // How far back (in seconds) the live subscription looks on connect/reconnect.
 // session/prompt is the first frame emitted at turn start, so it can arrive
@@ -13,7 +17,8 @@ const OBSERVER_LIVE_LOOKBACK_SECS = 300;
 
 export function subscribeToAgentObserverFrames(
   ownerPubkey: string,
-  onEvent: (event: RelayEvent) => void,
+  onEvent: (event: RelayEvent, context: RelayLiveEventContext) => void,
+  onStatus?: (status: RelayLiveSubscriptionStatus) => void,
 ) {
   return relayClient.subscribeLive(
     {
@@ -29,6 +34,7 @@ export function subscribeToAgentObserverFrames(
       since: Math.floor(Date.now() / 1_000) - OBSERVER_LIVE_LOOKBACK_SECS,
     },
     onEvent,
+    onStatus,
   );
 }
 

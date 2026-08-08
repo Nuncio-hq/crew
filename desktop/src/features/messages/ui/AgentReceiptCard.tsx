@@ -1,7 +1,11 @@
 import type { AgentReceiptModel } from "@/features/messages/lib/agentReceipt.mjs";
 
 type AgentReceiptCardProps = {
+  disabled?: boolean;
+  onRequestChanges?: () => void;
+  onReviewed?: () => void;
   receipt: AgentReceiptModel;
+  reviewed?: boolean;
 };
 
 function resolvePrReferenceHref(value: string) {
@@ -35,7 +39,13 @@ function ExternalReference({ value }: { value: string }) {
   return <span>{value}</span>;
 }
 
-export function AgentReceiptCard({ receipt }: AgentReceiptCardProps) {
+export function AgentReceiptCard({
+  disabled = false,
+  onRequestChanges,
+  onReviewed,
+  receipt,
+  reviewed = false,
+}: AgentReceiptCardProps) {
   const { engineering } = receipt;
   const lights = receipt.lights.reduce<
     Array<AgentReceiptModel["lights"][number] & { occurrence: number }>
@@ -53,7 +63,10 @@ export function AgentReceiptCard({ receipt }: AgentReceiptCardProps) {
     engineering.ci.length > 0;
 
   return (
-    <section className="max-w-2xl rounded-lg border border-border/70 bg-muted/30 p-3 text-sm">
+    <section
+      className="max-w-2xl rounded-lg border border-border/70 bg-muted/30 p-3 text-sm"
+      data-testid="agent-receipt-card"
+    >
       <p className="font-medium text-foreground">{receipt.summary}</p>
 
       {receipt.lights.length > 0 && (
@@ -129,6 +142,32 @@ export function AgentReceiptCard({ receipt }: AgentReceiptCardProps) {
           <p className="mt-2 text-muted-foreground">No engineering details.</p>
         )}
       </details>
+      {onReviewed || onRequestChanges ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+          {onReviewed ? (
+            <button
+              className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              data-testid="agent-receipt-reviewed"
+              disabled={disabled || reviewed}
+              onClick={onReviewed}
+              type="button"
+            >
+              {reviewed ? "Reviewed" : "Mark reviewed"}
+            </button>
+          ) : null}
+          {onRequestChanges ? (
+            <button
+              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+              data-testid="agent-receipt-request-changes"
+              disabled={disabled}
+              onClick={onRequestChanges}
+              type="button"
+            >
+              Request changes
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

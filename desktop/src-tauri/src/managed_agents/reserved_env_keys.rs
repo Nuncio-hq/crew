@@ -53,6 +53,9 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     "BUZZ_ACP_RESPOND_TO_ALLOWLIST",
     "BUZZ_ACP_ALLOWED_RESPOND_TO",
     "BUZZ_ACP_AGENT_OWNER",
+    // Receipt-backed review is a Crew authority invariant for managed agents;
+    // layered harness/persona/user env must not silently disable emission.
+    "BUZZ_ACP_AGENT_RECEIPTS",
     // Stable agent identity used for git attribution and private-conversation
     // provenance must come from the managed-agent record, not user overrides.
     "BUZZ_ACP_DISPLAY_NAME",
