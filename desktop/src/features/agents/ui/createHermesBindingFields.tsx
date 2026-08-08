@@ -4,7 +4,7 @@
  */
 import * as React from "react";
 
-import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
+import type { AcpRuntimeCatalogEntry, RespondToMode } from "@/shared/api/types";
 import {
   deriveAgentConfigFieldModel,
   getRenderableHermesProfileField,
@@ -20,10 +20,12 @@ import {
 export function useCreateHermesBinding({
   enabled,
   hermesProfile,
+  respondTo,
   runtime,
 }: {
   enabled: boolean;
   hermesProfile: string;
+  respondTo: RespondToMode | null;
   runtime: AcpRuntimeCatalogEntry | undefined;
 }) {
   const fieldModel = React.useMemo(
@@ -39,16 +41,22 @@ export function useCreateHermesBinding({
   const showProfileField =
     enabled && getRenderableHermesProfileField(fieldModel) != null;
   const modelOwnedByProfile = enabled && isModelOwnedByProfile(fieldModel);
-  const { profileError } = useHermesProfileBindingState({
+  const { blockingError } = useHermesProfileBindingState({
     enabled: showProfileField,
     hermesProfile,
     editingPubkey: null,
+    respondTo,
     required: true,
   });
-  return { showProfileField, modelOwnedByProfile, profileError };
+  return {
+    showProfileField,
+    modelOwnedByProfile,
+    profileError: blockingError,
+  };
 }
 
 export function CreateHermesBindingFields({
+  currentAgentName,
   disabled,
   hermesProfile,
   onHermesProfileChange,
@@ -56,18 +64,20 @@ export function CreateHermesBindingFields({
   showProfileField,
   respondTo,
 }: {
+  currentAgentName?: string | null;
   disabled?: boolean;
   hermesProfile: string;
   onHermesProfileChange: (next: string) => void;
   modelOwnedByProfile: boolean;
   showProfileField: boolean;
-  respondTo?: string | null;
+  respondTo?: RespondToMode | null;
 }) {
   if (!showProfileField && !modelOwnedByProfile) return null;
   return (
     <>
       {showProfileField ? (
         <HermesProfileField
+          currentAgentName={currentAgentName}
           disabled={disabled}
           id="persona-hermes-profile"
           onChange={onHermesProfileChange}

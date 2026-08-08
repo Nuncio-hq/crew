@@ -3,6 +3,7 @@
  * Keeps runtime-id checks out of AgentInstanceEditDialog (field-model driven).
  */
 import { Input } from "@/shared/ui/input";
+import type { RespondToMode } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import {
   PERSONA_FIELD_CONTROL_CLASS,
@@ -33,6 +34,7 @@ export function EditAgentModelAndProfileSection({
   modelStatusMessage,
   respondTo,
   editingPubkey = null,
+  currentAgentName = null,
 }: {
   showProfileField: boolean;
   hermesProfile: string;
@@ -48,14 +50,16 @@ export function EditAgentModelAndProfileSection({
   model: string;
   onCustomModelChange: (next: string) => void;
   modelStatusMessage: string | null;
-  respondTo?: string | null;
+  respondTo?: RespondToMode | null;
   editingPubkey?: string | null;
+  currentAgentName?: string | null;
 }) {
   return (
     <>
       {showProfileField ? (
         <HermesProfileField
           disabled={disabled}
+          currentAgentName={currentAgentName}
           editingPubkey={editingPubkey}
           id="edit-agent-hermes-profile"
           onChange={onHermesProfileChange}

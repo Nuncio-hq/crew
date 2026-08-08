@@ -396,6 +396,7 @@ export function AgentDefinitionDialog({
   } = useCreateHermesBinding({
     enabled: isCreateMode,
     hermesProfile,
+    respondTo: behaviorDraft.respondTo,
     runtime: selectedRuntime,
   });
   const blankRuntimeModelProviderEditable =
@@ -863,7 +864,6 @@ export function AgentDefinitionDialog({
                   warning={runtimeWarning}
                 />
               ) : null}
-
               <AgentDefinitionCustomAiFields
                 aiConfigurationMode={aiConfigurationMode}
                 apiKeyInheritedLabel={apiKeyInheritedLabel}
@@ -871,6 +871,7 @@ export function AgentDefinitionDialog({
                 apiKeyIsRequired={apiKeyIsRequired}
                 apiKeyValue={apiKeyValue}
                 autoModelDropdownValue={AUTO_MODEL_DROPDOWN_VALUE}
+                currentAgentName={displayName}
                 disabled={isPending}
                 effectiveProviderApiKeyLabel={
                   getProviderApiKeyLabel(effectiveProvider) ?? "API key"
@@ -911,7 +912,6 @@ export function AgentDefinitionDialog({
                 topLevelSecretEnvVar={topLevelSecretEnvVar}
                 transition={advancedFieldsTransition}
               />
-
               {aiConfigurationMode === "defaults" ? (
                 <AgentCreateAiDefaultsSummary
                   canChooseProvider={runtimeCanChooseLlmProvider}

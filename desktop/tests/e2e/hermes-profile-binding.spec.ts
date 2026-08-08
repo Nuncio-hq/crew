@@ -13,6 +13,33 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
 const HERMES_AGENT_PUBKEY = TEST_IDENTITIES.alice.pubkey;
 const GOOSE_AGENT_PUBKEY = TEST_IDENTITIES.tyler.pubkey;
+const REMOTE_PROVIDER = {
+  id: "kubernetes",
+  binaryPath: "/mock/buzz-backend-kubernetes",
+};
+const REMOTE_PROVIDER_PROBE = {
+  ok: true,
+  name: "kubernetes",
+  version: "0.0.0-mock",
+  config_schema: {
+    type: "object",
+    properties: {},
+    required: [],
+  },
+};
+
+const PRODUCT_COMMUNITY = {
+  id: "product",
+  name: "Product",
+  relayUrl: "ws://localhost:3000",
+  addedAt: "2026-08-08T00:00:00.000Z",
+};
+const RESEARCH_COMMUNITY = {
+  id: "research",
+  name: "Research",
+  relayUrl: "ws://localhost:3001",
+  addedAt: "2026-08-08T00:00:01.000Z",
+};
 
 async function openCreateCustomize(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -54,6 +81,39 @@ async function openEditForAgent(
   await expect(page.getByTestId("edit-agent-dialog")).toBeVisible({
     timeout: 10_000,
   });
+}
+
+async function seedCommunities(
+  page: import("@playwright/test").Page,
+  activeId: string,
+) {
+  await page.addInitScript(
+    ({ communities, active }) => {
+      window.localStorage.setItem(
+        "buzz-communities",
+        JSON.stringify(communities),
+      );
+      window.localStorage.setItem("buzz-active-community-id", active);
+    },
+    {
+      communities: [PRODUCT_COMMUNITY, RESEARCH_COMMUNITY],
+      active: activeId,
+    },
+  );
+}
+
+async function configureExistingHermesProfile(
+  page: import("@playwright/test").Page,
+  dialog: import("@playwright/test").Locator,
+) {
+  await pickRuntime(page, dialog, /Hermes Agent/);
+  await waitForAnimations(page);
+  await dialog.locator("#persona-display-name").fill("Hermes Scout");
+  await dialog.locator("#persona-hermes-profile").fill("scout");
+}
+
+function createSubmit(dialog: import("@playwright/test").Locator) {
+  return dialog.getByRole("button", { name: /Create|Save|Start/i }).first();
 }
 
 test.describe("hermes profile binding", () => {
@@ -230,6 +290,107 @@ test.describe("hermes profile binding", () => {
     ).toBeDisabled();
   });
 
+  test("create: trusted owner-only local full-autonomy boundary is explicit", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      hermesProfiles: ["scout"],
+      backendProviders: [REMOTE_PROVIDER],
+      backendProviderProbeResult: REMOTE_PROVIDER_PROBE,
+    });
+    const dialog = await openCreateCustomize(page);
+    await configureExistingHermesProfile(page, dialog);
+
+    const boundary = dialog.getByTestId("hermes-effective-boundary");
+    await expect(boundary).toBeVisible();
+    await expect(boundary).toContainText("Access");
+    await expect(boundary).toContainText("Owner only");
+    await expect(boundary).toContainText("Autonomy");
+    await expect(boundary).toContainText("Full");
+    await expect(boundary).toContainText("Backend");
+    await expect(boundary).toContainText("This Mac");
+    await expect(boundary).toContainText("Profile");
+    await expect(boundary).toContainText("scout");
+  });
+
+  test("create: profile-bound Hermes blocks public access with actionable copy", async ({
+    page,
+  }) => {
+    await installMockBridge(page, { hermesProfiles: ["scout"] });
+    const dialog = await openCreateCustomize(page);
+    await configureExistingHermesProfile(page, dialog);
+
+    await dialog.getByRole("button", { name: /^Advanced/ }).click();
+    await page.locator("#agent-respond-to").click();
+    await page.getByRole("menuitemradio", { name: "Anyone" }).click();
+
+    const error = dialog.getByTestId("hermes-trusted-boundary-error");
+    await expect(error).toContainText(/owner-only/i);
+    await expect(error).toContainText(/choose.*Only me|change.*access/i);
+    await expect(createSubmit(dialog)).toBeDisabled();
+  });
+
+  test("create: profile-bound Hermes blocks a remote backend with actionable copy", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      hermesProfiles: ["scout"],
+      backendProviders: [REMOTE_PROVIDER],
+      backendProviderProbeResult: REMOTE_PROVIDER_PROBE,
+    });
+    const dialog = await openCreateCustomize(page);
+    await configureExistingHermesProfile(page, dialog);
+
+    await dialog.getByRole("button", { name: /^Advanced/ }).click();
+    const runOn = dialog.locator("#agent-run-on");
+    await runOn.press("Enter");
+    await page
+      .getByRole("menuitemradio", { exact: true, name: REMOTE_PROVIDER.id })
+      .press("Enter");
+    await expect(runOn).toContainText(REMOTE_PROVIDER.id);
+
+    const error = dialog.getByTestId("hermes-trusted-boundary-error");
+    await expect(error).toContainText(/local|This Mac/i);
+    await expect(error).toContainText(/choose.*This computer|run.*locally/i);
+    await expect(createSubmit(dialog)).toBeDisabled();
+  });
+
+  test("create: cross-community reuse stays available and discloses shared profile state", async ({
+    page,
+  }) => {
+    await seedCommunities(page, RESEARCH_COMMUNITY.id);
+    await installMockBridge(
+      page,
+      {
+        hermesProfiles: ["scout"],
+        managedAgents: [
+          {
+            pubkey: HERMES_AGENT_PUBKEY,
+            name: "Hermes Scout",
+            status: "stopped",
+            channelNames: ["agents"],
+            runtime: "hermes",
+            hermesProfile: "scout",
+          },
+        ],
+      },
+      { skipCommunitySeed: true },
+    );
+    const dialog = await openCreateCustomize(page);
+    await configureExistingHermesProfile(page, dialog);
+
+    // The existing same-relay duplicate contract above remains authoritative;
+    // this different-relay use is informational and must not become an error.
+    await expect(page.getByTestId("hermes-profile-error")).toHaveCount(0);
+    const usage = dialog.getByTestId("hermes-profile-shared-usage");
+    await expect(usage).toBeVisible();
+    await expect(usage).toContainText("Hermes Scout");
+    await expect(usage).toContainText("Product");
+    await expect(usage).toContainText(
+      "Memory, skills, and profile state are shared.",
+    );
+  });
+
   test("edit: Hermes agent shows binding + profile-owned model; goose does not", async ({
     page,
   }) => {
@@ -273,6 +434,34 @@ test.describe("hermes profile binding", () => {
 
     await expect(page.getByTestId("hermes-profile-field")).toHaveCount(0);
     await expect(page.getByTestId("profile-owned-model-row")).toHaveCount(0);
+  });
+
+  test("edit: profile-bound Hermes cannot be changed to public access", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      managedAgents: [
+        {
+          pubkey: HERMES_AGENT_PUBKEY,
+          name: "Hermes Scout",
+          status: "stopped",
+          channelNames: ["agents"],
+          runtime: "hermes",
+          hermesProfile: "scout",
+          respondTo: "owner-only",
+        },
+      ],
+    });
+
+    await openEditForAgent(page, "Hermes Scout");
+    await page.locator("#agent-respond-to").click();
+    await page.getByRole("menuitemradio", { name: "Anyone" }).click();
+
+    const dialog = page.getByTestId("edit-agent-dialog");
+    const error = dialog.getByTestId("hermes-trusted-boundary-error");
+    await expect(error).toContainText(/owner-only/i);
+    await expect(error).toContainText(/choose.*Only me|change.*access/i);
+    await expect(page.getByTestId("edit-agent-dialog-submit")).toBeDisabled();
   });
 
   test("edit: duplicate profile bind surfaces occupancy error before save", async ({
