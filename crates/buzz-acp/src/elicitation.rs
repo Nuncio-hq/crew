@@ -2093,8 +2093,12 @@ mod tests {
             },
         );
 
+        // This boundary proves the answer handler does not wait for the
+        // request-admission ACK. Leave enough wall-clock headroom for the
+        // required fsync on a loaded CI runner; admission remains withheld for
+        // the entire deadline, so an ACK-wait regression still times out.
         tokio::time::timeout(
-            Duration::from_millis(100),
+            Duration::from_secs(1),
             runtime.start_resolution(
                 Uuid::new_v4(),
                 &request_event_id,
