@@ -323,12 +323,7 @@ export function getLatestOwnedAgentReceiptForActiveTurns(
   turns: readonly ActiveReceiptAuthority[],
 ): AgentReceiptSummary | null {
   if (!conversationId) return null;
-  if (turns.length === 0) {
-    return getLatestOwnedAgentReceiptForConversation(
-      conversationId,
-      ownedAgentPubkeys,
-    );
-  }
+  if (turns.length === 0) return null;
   const pairs = new Set(
     turns.flatMap((turn) =>
       turn.triggeringEventIds.map(
