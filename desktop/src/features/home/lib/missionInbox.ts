@@ -278,7 +278,9 @@ export function deriveMissionInboxSections(
     const candidateReceipt =
       latestReceiptByConversation.get(turn.conversationId) ?? null;
     const receipt =
-      candidateReceipt && candidateReceipt.createdAt + 1_000 >= turn.anchorAt
+      candidateReceipt &&
+      turn.agentPubkeys.includes(candidateReceipt.agentPubkey) &&
+      turn.triggeringEventIds.includes(candidateReceipt.parentEventId)
         ? candidateReceipt
         : null;
     if (candidateReceipt && !receipt) {

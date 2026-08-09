@@ -1784,6 +1784,7 @@ async fn tokio_main() -> Result<()> {
         owner_cache.clone(),
         relay.rest_client(),
     );
+    user_input_runtime.resume_resolution_outbox().await;
 
     let mut relay_observer_control_rx = None;
     let mut relay_observer_publisher_task = None;
@@ -1960,6 +1961,7 @@ async fn tokio_main() -> Result<()> {
         user_input_runtime: Some(user_input_runtime.clone()),
         agent_receipts_enabled: config.agent_receipts_enabled,
     });
+    pool::resume_receipt_outbox(Arc::clone(&ctx));
 
     if !config.memory_enabled {
         tracing::info!(

@@ -16,6 +16,7 @@ export type ActiveConversationTurnSummary = {
   lastSubstantiveProgressAt: number;
   progressKind: AgentProgressKind;
   progressLabel: string;
+  triggeringEventIds: string[];
 };
 
 const EMPTY: ActiveConversationTurnSummary[] = [];
@@ -31,9 +32,10 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
     string,
     Omit<
       ActiveConversationTurnSummary,
-      "conversationId" | "agentCount" | "agentPubkeys"
+      "conversationId" | "agentCount" | "agentPubkeys" | "triggeringEventIds"
     > & {
       agentPubkeys: Set<string>;
+      triggeringEventIds: Set<string>;
     }
   >();
   walkActiveAgentTurns((agentPubkey, turn, offset) => {
@@ -49,10 +51,14 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
         lastSubstantiveProgressAt: turn.lastSubstantiveProgressAt,
         progressKind: turn.progressKind,
         progressLabel: turn.progressLabel,
+        triggeringEventIds: new Set(turn.triggeringEventIds),
       });
       return;
     }
     summary.agentPubkeys.add(agentPubkey);
+    for (const eventId of turn.triggeringEventIds) {
+      summary.triggeringEventIds.add(eventId);
+    }
     if (anchorAt < summary.anchorAt) summary.anchorAt = anchorAt;
     if (turn.lastSeenAt < summary.lastSeenAt)
       summary.lastSeenAt = turn.lastSeenAt;
@@ -72,6 +78,7 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
             conversationId,
             agentCount: summary.agentPubkeys.size,
             agentPubkeys: [...summary.agentPubkeys].sort(),
+            triggeringEventIds: [...summary.triggeringEventIds].sort(),
           }))
           .sort((a, b) => a.conversationId.localeCompare(b.conversationId));
   cachedGeneration = generation;

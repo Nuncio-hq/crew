@@ -200,8 +200,9 @@ describe("agentReceiptStore", () => {
     );
   });
 
-  it("bounds unknown review candidates that arrive before receipts", () => {
-    for (let index = 0; index < 1_000; index += 1) {
+  it("does not discard an authorized review beyond the old candidate cap", () => {
+    const targetReceiptId = (2_512).toString(16).padStart(64, "0");
+    for (let index = 0; index < 513; index += 1) {
       ingestAgentReceiptReviewEvent(
         {
           id: (index + 1).toString(16).padStart(64, "0"),
@@ -217,7 +218,16 @@ describe("agentReceiptStore", () => {
       );
     }
 
-    assert.ok(_testPendingAgentReceiptReviewCount() <= 512);
+    assert.equal(_testPendingAgentReceiptReviewCount(), 513);
+    assert.equal(
+      ingestAgentReceiptEvent(receiptEvent({ id: targetReceiptId })),
+      true,
+    );
+    assert.equal(
+      getAgentReceipts().find((receipt) => receipt.id === targetReceiptId)
+        ?.reviewed,
+      true,
+    );
   });
 
   it("rejects malformed receipts and another user's reactions", () => {

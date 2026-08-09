@@ -92,7 +92,19 @@ export function useMissionInboxSections({
     }
   }, [currentPubkey, feed?.feed.activity, ownedAgentPubkeys]);
 
-  const needsYou = useMissionInboxNeedsYou();
+  const storedNeedsYou = useMissionInboxNeedsYou();
+  // Cleanup effects cannot be the authority boundary: an identity switch
+  // renders once before they run. Filter synchronously on every snapshot.
+  const needsYou = React.useMemo(
+    () =>
+      storedNeedsYou.filter(
+        (request) =>
+          request.ownerPubkey === undefined ||
+          (request.ownerPubkey === (currentPubkey ?? "").toLowerCase() &&
+            ownedAgentPubkeys.has(request.agentPubkey.toLowerCase())),
+      ),
+    [currentPubkey, ownedAgentPubkeys, storedNeedsYou],
+  );
   const activeTurns = useMissionInboxActiveTurns();
   const outcomes = useMissionInboxOutcomes();
   const receipts = React.useSyncExternalStore(

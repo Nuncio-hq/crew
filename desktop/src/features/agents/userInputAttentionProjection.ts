@@ -178,6 +178,11 @@ export function projectAuthorizedUserInputEvent(
   ) {
     return false;
   }
-  resolveUserInputRequest(requestId);
+  // An owner answer (46041) means input was sent, but the requesting agent may
+  // still fail before consuming it. Only the producer's terminal 46042 closes
+  // the authoritative Needs You lifecycle.
+  if (event.kind === KIND_AGENT_USER_INPUT_RESOLVED) {
+    resolveUserInputRequest(requestId);
+  }
   return true;
 }

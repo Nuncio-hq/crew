@@ -223,7 +223,7 @@ export function useLiveHomeFeedActions(
     };
     const startSubscriptions = () => {
       if (isCancelled) {
-        return;
+        return Promise.resolve();
       }
 
       const userInputSubscriptions = subscribedChannelIds.map((channelId) =>
@@ -283,7 +283,7 @@ export function useLiveHomeFeedActions(
         ),
       ]);
 
-      void Promise.allSettled([
+      return Promise.allSettled([
         ...userInputSubscriptions,
         ...receiptSubscriptions,
         relayClient.subscribeLive(
@@ -351,11 +351,13 @@ export function useLiveHomeFeedActions(
 
         retryAttempt = 0;
         disposers = nextDisposers;
+        // Install the live overlap before taking the history snapshot. Durable
+        // events arriving during hydration are buffered and merged below.
+        void hydrationRetry.run();
       });
     };
 
-    void hydrationRetry.run();
-    startSubscriptions();
+    void startSubscriptions();
 
     return () => {
       isCancelled = true;

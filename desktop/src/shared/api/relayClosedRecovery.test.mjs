@@ -293,6 +293,55 @@ test("replacement EOSE does not report open before durable history recovery comp
   assert.deepEqual(statuses.at(-1), { state: "open" });
 });
 
+test("overlapping CLOSED recovery ignores stale send completion and EOSE", async () => {
+  resetAll(0);
+  let resolveFirstSend;
+  const firstSend = new Promise((resolve) => {
+    resolveFirstSend = resolve;
+  });
+  let sendCount = 0;
+  const subscription = {
+    mode: "live",
+    filter: { kinds: [46_043], "#h": ["channel-1"], limit: 0 },
+    onEvent: () => {},
+    ready: true,
+  };
+  const subscriptions = new Map([["durable-live", subscription]]);
+  const recover = () =>
+    handleRelayClosed({
+      subscriptions,
+      subId: "durable-live",
+      message: "error: retryable subscription failure",
+      sendReq: () => {
+        sendCount++;
+        return sendCount === 1 ? firstSend : Promise.resolve();
+      },
+      recoverHistory: async () => true,
+    });
+
+  recover();
+  tickTo(1_001);
+  recover();
+  resolveFirstSend();
+  for (let index = 0; index < 4; index++) await Promise.resolve();
+  handleSubscriptionEose({
+    subscriptions,
+    subId: "durable-live",
+    closeSubscription: async () => {},
+  });
+  assert.equal(subscription.ready, false, "stale generation cannot reopen");
+
+  tickTo(3_002);
+  for (let index = 0; index < 4; index++) await Promise.resolve();
+  handleSubscriptionEose({
+    subscriptions,
+    subId: "durable-live",
+    closeSubscription: async () => {},
+  });
+  assert.equal(subscription.ready, true);
+  assert.equal(sendCount, 2);
+});
+
 test("gate armed by rate-limited history CLOSED defers the next REQ until expiry then resumes", async () => {
   // Simulate: rate-limited CLOSED arrives on a history sub → gate arms for 5s.
   // A concurrent requestHistoryGated call must not issue the REQ before 5s,

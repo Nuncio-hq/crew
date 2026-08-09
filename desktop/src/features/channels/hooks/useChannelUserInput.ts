@@ -12,6 +12,7 @@ import { KIND_AGENT_USER_INPUT_REQUESTED } from "@/shared/constants/kinds";
 import {
   buildSkippedAnswers,
   buildUserInputAnswers,
+  deriveAnsweredUserInputs,
   deriveResolvedUserInputs,
   derivePendingUserInputs,
   publishUserInputAnswer,
@@ -106,7 +107,7 @@ export function useChannelUserInput(channelId: string | null) {
       );
       return true;
     };
-    const rebuildAuthorizedEvents = () => {
+    const rebuildAuthorizedEvents = (compactHistory = false) => {
       authorizedRequests.clear();
       const ordered = [...candidates.values()].sort(
         (left, right) =>
@@ -115,15 +116,30 @@ export function useChannelUserInput(channelId: string | null) {
           left.created_at - right.created_at ||
           left.id.localeCompare(right.id),
       );
-      const authorized = ordered.filter(authorizeEvent);
-      const pendingIds = new Set(
-        derivePendingUserInputs(authorized, currentPubkey).map(
+      let authorized = ordered.filter(authorizeEvent);
+      const activeIds = new Set([
+        ...derivePendingUserInputs(authorized, currentPubkey).map(
           ({ event }) => event.id,
         ),
-      );
+        ...deriveAnsweredUserInputs(authorized, currentPubkey).map(
+          ({ event }) => event.id,
+        ),
+      ]);
+      if (compactHistory) {
+        authorized = authorized.filter((event) => {
+          if (activeIds.has(event.id)) return true;
+          const eTags = event.tags.filter((tag) => tag[0] === "e");
+          return eTags.length === 1 && activeIds.has(eTags[0]?.[1] ?? "");
+        });
+        candidates.clear();
+        for (const event of authorized) candidates.set(event.id, event);
+        for (const id of authorizedRequests.keys()) {
+          if (!activeIds.has(id)) authorizedRequests.delete(id);
+        }
+      }
       setVisibleRequestIds((current) => {
         const next = new Set(current);
-        for (const id of pendingIds) next.add(id);
+        for (const id of activeIds) next.add(id);
         return next;
       });
       setEvents(
@@ -162,7 +178,7 @@ export function useChannelUserInput(channelId: string | null) {
       );
       if (!cancelled) {
         for (const event of history) candidates.set(event.id, event);
-        rebuildAuthorizedEvents();
+        rebuildAuthorizedEvents(true);
       }
     };
     const hydrationRetry = createHydrationRetryController({
@@ -189,8 +205,17 @@ export function useChannelUserInput(channelId: string | null) {
     [currentPubkey, events, optimisticallyResolved],
   );
   const sent = React.useMemo(() => {
-    return derivePendingUserInputs(events, currentPubkey).filter(({ event }) =>
-      sentRequestIds.has(event.id),
+    const byId = new Map(
+      deriveAnsweredUserInputs(events, currentPubkey).map((item) => [
+        item.event.id,
+        item,
+      ]),
+    );
+    for (const item of derivePendingUserInputs(events, currentPubkey)) {
+      if (sentRequestIds.has(item.event.id)) byId.set(item.event.id, item);
+    }
+    return [...byId.values()].sort(
+      (left, right) => right.event.created_at - left.event.created_at,
     );
   }, [currentPubkey, events, sentRequestIds]);
   const resolved = React.useMemo(

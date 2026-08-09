@@ -205,6 +205,33 @@ test("durable live-only subscription with no event watermark replays from its re
 test("initial recovery floor overlaps producer clock skew", () => {
   assert.equal(initialRecoveryFloor(100), 95);
   assert.equal(initialRecoveryFloor(3), 0);
+  assert.equal(
+    initialRecoveryFloor(100, {
+      kinds: [46043],
+      "#h": ["channel-1"],
+      limit: 0,
+    }),
+    0,
+  );
+  assert.equal(
+    initialRecoveryFloor(100, {
+      kinds: [24200],
+      "#p": ["owner"],
+      limit: 1000,
+    }),
+    0,
+  );
+});
+
+test("owner-scoped observer subscriptions page reconnect history", () => {
+  assert.equal(
+    shouldPageReconnectReplay({
+      kinds: [24200],
+      "#p": ["owner"],
+      limit: 1000,
+    }),
+    true,
+  );
 });
 
 test("reconnect replay keeps the stricter existing since window", () => {

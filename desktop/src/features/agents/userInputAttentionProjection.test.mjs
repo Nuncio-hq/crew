@@ -151,7 +151,7 @@ test("revalidates projected requests when identity or verified ownership changes
   assert.equal(getNeedsYouForAll().length, 0);
 });
 
-test("accepts answers only from the intended owner", () => {
+test("accepts answers only from the intended owner and waits for 46042", () => {
   projectAuthorizedUserInputEvent(request(), "", OWNER, ownedAgents);
   assert.equal(
     projectAuthorizedUserInputEvent(
@@ -178,6 +178,20 @@ test("accepts answers only from the intended owner", () => {
   assert.equal(
     projectAuthorizedUserInputEvent(
       transition(KIND_AGENT_USER_INPUT_ANSWER, OWNER),
+      CHANNEL,
+      OWNER,
+      ownedAgents,
+    ),
+    true,
+  );
+  assert.equal(getNeedsYouForAll().length, 1);
+
+  assert.equal(
+    projectAuthorizedUserInputEvent(
+      transition(KIND_AGENT_USER_INPUT_RESOLVED, AGENT, {
+        request_event_id: REQUEST_ID,
+        outcome: "answered",
+      }),
       CHANNEL,
       OWNER,
       ownedAgents,

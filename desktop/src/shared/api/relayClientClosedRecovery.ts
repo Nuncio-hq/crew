@@ -28,8 +28,9 @@ export function handleSessionRelayClosed({
     subId,
     message,
     sendReq,
+    isActive: () => isGenerationActive(generation),
     recoverHistory: async (activeSubId, subscription) => {
-      await recoverLiveSubscriptionHistory({
+      return recoverLiveSubscriptionHistory({
         subscription,
         now: Math.floor(Date.now() / 1_000),
         isActive: () =>

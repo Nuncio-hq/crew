@@ -107,6 +107,29 @@ describe("activeAgentTurnsStore", () => {
       assert.equal(turns.length, 1);
       assert.ok(channelIdsOf(turns).has("c1"));
     });
+
+    it("accepts a higher sequence terminal after same-session clock rollback", () => {
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({
+          seq: 100,
+          sessionId: "stable-session",
+          turnId: "rollback-turn",
+          channelId: "c1",
+          timestamp: "2024-01-01T01:00:00Z",
+        }),
+      ]);
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({
+          seq: 101,
+          sessionId: "stable-session",
+          kind: "turn_completed",
+          turnId: "rollback-turn",
+          channelId: "c1",
+          timestamp: "2024-01-01T00:59:59Z",
+        }),
+      ]);
+      assert.equal(getActiveTurnsForAgent(AGENT).length, 0);
+    });
   });
 
   it("keeps exact control targets for concurrent threads in one channel", () => {
@@ -1217,6 +1240,39 @@ describe("activeAgentTurnsStore", () => {
       });
       assert.equal(replayed.lastSeenAt, EPOCH + 60_000);
       assert.equal(replayed.lastSubstantiveProgressAt, EPOCH);
+    });
+
+    it("does not manufacture contact from invalid or future replay timestamps", () => {
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({
+          seq: 1,
+          turnId: "invalid-replay",
+          channelId: "invalid",
+          timestamp: "not-a-timestamp",
+          replayed: true,
+        }),
+        makeEvent({
+          seq: 2,
+          turnId: "future-replay",
+          channelId: "future",
+          timestamp: at(60_000),
+          replayed: true,
+        }),
+      ]);
+      assert.equal(
+        getActiveTurnActivityBounds({
+          agentPubkeys: [AGENT],
+          channelId: "invalid",
+        }).lastSeenAt,
+        0,
+      );
+      assert.equal(
+        getActiveTurnActivityBounds({
+          agentPubkeys: [AGENT],
+          channelId: "future",
+        }).lastSeenAt,
+        0,
+      );
     });
 
     it("prunes a stale turn at the bound when its tracked sibling stays fresh", () => {

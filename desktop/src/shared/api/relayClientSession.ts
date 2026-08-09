@@ -605,9 +605,7 @@ export class RelayClient {
   ) {
     await this.ensureConnected();
     const subId = `live-${crypto.randomUUID()}`;
-    let resolveReady = () => {
-      return;
-    };
+    let resolveReady = () => {};
     const ready = new Promise<void>((resolve) => {
       resolveReady = () => {
         window.clearTimeout(fallbackTimeout);
@@ -627,6 +625,7 @@ export class RelayClient {
       resolveReady,
       recoveryFloorCreatedAt: reconnectReplay.initialRecoveryFloor(
         Math.floor(Date.now() / 1_000),
+        filter,
       ),
     });
     try {

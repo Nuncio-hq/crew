@@ -25,6 +25,44 @@ function markLiveSubscriptionOpen(subscription: LiveSubscription) {
   clearClosedRetry(subscription);
 }
 
+/** Begin one generation-scoped live/history recovery barrier. */
+export function beginLiveSubscriptionRecovery(
+  subscription: LiveSubscription,
+): number {
+  const generation = (subscription.recoveryGeneration ?? 0) + 1;
+  subscription.recoveryGeneration = generation;
+  subscription.ready = false;
+  subscription.recoveryInFlight = true;
+  subscription.recoveryRequestSent = false;
+  subscription.recoveryEoseReceived = false;
+  return generation;
+}
+
+/** Attribute EOSE only after this generation's replacement REQ was dispatched. */
+export function markLiveRecoveryRequestSent(
+  subscription: LiveSubscription,
+  generation: number,
+) {
+  if (subscription.recoveryGeneration !== generation) return false;
+  subscription.recoveryRequestSent = true;
+  return true;
+}
+
+/** Complete history only for the current generation; stale cycles stay closed. */
+export function completeLiveSubscriptionRecovery(
+  subscription: LiveSubscription,
+  generation: number,
+  completed: boolean,
+) {
+  if (subscription.recoveryGeneration !== generation || !completed)
+    return false;
+  subscription.recoveryInFlight = false;
+  if (subscription.recoveryEoseReceived) {
+    markLiveSubscriptionOpen(subscription);
+  }
+  return true;
+}
+
 export function clearClosedRetry(subscription: LiveSubscription) {
   if (subscription.closedRetryTimeout === undefined) return;
   window.clearTimeout(subscription.closedRetryTimeout);
@@ -37,6 +75,7 @@ export function handleRelayClosed({
   message,
   sendReq,
   recoverHistory,
+  isActive,
 }: {
   subscriptions: Map<string, RelaySubscription>;
   subId: string;
@@ -45,7 +84,8 @@ export function handleRelayClosed({
   recoverHistory?: (
     subId: string,
     subscription: LiveSubscription,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
+  isActive?: () => boolean;
 }) {
   const subscription = subscriptions.get(subId);
   if (!subscription) return;
@@ -72,6 +112,7 @@ export function handleRelayClosed({
     message,
     sendReq,
     recoverHistory,
+    isActive,
   });
 }
 
@@ -82,6 +123,7 @@ function recoverLiveSubscriptionFromClosed({
   message,
   sendReq,
   recoverHistory,
+  isActive,
 }: {
   subscriptions: Map<string, RelaySubscription>;
   subId: string;
@@ -91,7 +133,8 @@ function recoverLiveSubscriptionFromClosed({
   recoverHistory?: (
     subId: string,
     subscription: LiveSubscription,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
+  isActive?: () => boolean;
 }) {
   subscription.ready = false;
   subscription.resolveReady?.();
@@ -110,11 +153,8 @@ function recoverLiveSubscriptionFromClosed({
     return;
   }
 
-  subscription.recoveryInFlight = true;
-  subscription.recoveryRequestSent = false;
-  subscription.recoveryEoseReceived = false;
-
-  if (subscription.closedRetryTimeout !== undefined) return;
+  const recoveryGeneration = beginLiveSubscriptionRecovery(subscription);
+  clearClosedRetry(subscription);
 
   const attempt = subscription.closedRetryAttempt ?? 0;
   const backoffMs = Math.min(
@@ -139,19 +179,37 @@ function recoverLiveSubscriptionFromClosed({
   subscription.closedRetryAttempt = attempt + 1;
   subscription.closedRetryTimeout = window.setTimeout(() => {
     subscription.closedRetryTimeout = undefined;
-    if (subscriptions.get(subId) !== subscription) return;
-    subscription.recoveryRequestSent = true;
+    if (
+      subscriptions.get(subId) !== subscription ||
+      subscription.recoveryGeneration !== recoveryGeneration ||
+      isActive?.() === false
+    ) {
+      return;
+    }
     void sendReq(subId, subscription.filter)
-      .then(() => recoverHistory?.(subId, subscription))
       .then(() => {
-        if (subscriptions.get(subId) !== subscription) return;
-        subscription.recoveryInFlight = false;
-        if (subscription.recoveryEoseReceived) {
-          markLiveSubscriptionOpen(subscription);
+        if (!markLiveRecoveryRequestSent(subscription, recoveryGeneration)) {
+          return false;
         }
+        if (isActive?.() === false) return false;
+        return recoverHistory ? recoverHistory(subId, subscription) : true;
+      })
+      .then((completed) => {
+        if (subscriptions.get(subId) !== subscription) return;
+        completeLiveSubscriptionRecovery(
+          subscription,
+          recoveryGeneration,
+          completed !== false,
+        );
       })
       .catch((error) => {
-        if (subscriptions.get(subId) !== subscription) return;
+        if (
+          subscriptions.get(subId) !== subscription ||
+          subscription.recoveryGeneration !== recoveryGeneration ||
+          isActive?.() === false
+        ) {
+          return;
+        }
         console.error("Failed to restore closed relay subscription", error);
         recoverLiveSubscriptionFromClosed({
           subscriptions,
@@ -160,6 +218,7 @@ function recoverLiveSubscriptionFromClosed({
           message,
           sendReq,
           recoverHistory,
+          isActive,
         });
       });
   }, delayMs);

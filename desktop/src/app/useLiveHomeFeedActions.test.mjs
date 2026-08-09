@@ -11,3 +11,18 @@ test("durable home hydration uses the reusable retry state machine", async () =>
   assert.match(source, /hydrationRetry\.stop\(\)/);
   assert.doesNotMatch(source, /hydrationRetryTimer/);
 });
+
+test("durable live overlap is installed before history hydration starts", async () => {
+  const source = await readFile(sourcePath, "utf8");
+  const hydrateAfterSubscriptions = source.lastIndexOf(
+    "void hydrationRetry.run();",
+  );
+  const startSubscriptions = source.lastIndexOf("void startSubscriptions();");
+
+  assert.ok(hydrateAfterSubscriptions >= 0);
+  assert.ok(startSubscriptions > hydrateAfterSubscriptions);
+  assert.match(
+    source,
+    /disposers = nextDisposers;[\s\S]*void hydrationRetry\.run\(\);/,
+  );
+});

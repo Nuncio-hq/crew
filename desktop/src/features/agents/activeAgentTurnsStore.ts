@@ -162,11 +162,11 @@ function parseTimestamp(timestamp: string): number | null {
 function eventObservedAt(agentKey: string, event: ObserverEvent): number {
   if (!event.replayed) return Date.now();
   const eventAt = parseTimestamp(event.timestamp);
-  if (eventAt === null) return Date.now();
-  return Math.min(
-    Date.now(),
-    eventAt + (clockOffsetByAgent.get(agentKey) ?? 0),
-  );
+  if (eventAt === null) return 0;
+  const corrected = eventAt + (clockOffsetByAgent.get(agentKey) ?? 0);
+  // Replay is historical evidence, never fresh contact. Invalid or future
+  // timestamps remain unverified until an actual live frame calibrates them.
+  return corrected <= Date.now() ? corrected : 0;
 }
 
 function startTurn(

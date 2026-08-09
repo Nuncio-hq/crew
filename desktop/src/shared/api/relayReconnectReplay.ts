@@ -1,4 +1,5 @@
 import {
+  KIND_AGENT_OBSERVER_FRAME,
   KIND_AGENT_RECEIPT,
   KIND_AGENT_USER_INPUT_ANSWER,
   KIND_AGENT_USER_INPUT_REQUESTED,
@@ -6,6 +7,11 @@ import {
   KIND_REACTION,
 } from "@/shared/constants/kinds";
 import { drainRelayTimestampBucket } from "@/shared/api/exhaustiveRelayPagination";
+import {
+  beginLiveSubscriptionRecovery,
+  completeLiveSubscriptionRecovery,
+  markLiveRecoveryRequestSent,
+} from "@/shared/api/relayClosedRecovery";
 import type {
   RelaySubscription,
   RelaySubscriptionFilter,
@@ -52,7 +58,17 @@ export const REPLAY_BATCH_SIZE = 8;
  */
 export const REPLAY_INTER_BATCH_DELAY_MS = 50;
 
-export function initialRecoveryFloor(now: number) {
+export function initialRecoveryFloor(
+  now: number,
+  filter?: RelaySubscriptionFilter,
+) {
+  const kinds = filter?.kinds ?? [];
+  if (
+    kinds.includes(KIND_AGENT_OBSERVER_FRAME) ||
+    (kinds.length > 0 && kinds.every((kind) => DURABLE_ACTION_KINDS.has(kind)))
+  ) {
+    return 0;
+  }
   return Math.max(0, now - RECONNECT_REPLAY_SKEW_SECS);
 }
 const DURABLE_ACTION_KINDS = new Set([
@@ -111,10 +127,14 @@ export function buildReconnectReplayFilter(
 }
 
 export function shouldPageReconnectReplay(filter: RelaySubscriptionFilter) {
+  const channelScoped =
+    Array.isArray(filter["#h"]) && filter["#h"].length === 1;
+  const observerOwnerScoped =
+    filter.kinds?.includes(KIND_AGENT_OBSERVER_FRAME) === true &&
+    Array.isArray(filter["#p"]) &&
+    filter["#p"].length === 1;
   return (
-    Array.isArray(filter["#h"]) &&
-    filter["#h"].length === 1 &&
-    (filter.kinds?.length ?? 0) > 0
+    (channelScoped || observerOwnerScoped) && (filter.kinds?.length ?? 0) > 0
   );
 }
 
@@ -304,13 +324,19 @@ export async function replayLiveSubscriptions({
         entry[1].mode === "live",
     )
     .map(([subId, subscription]) => {
-      subscription.ready = false;
+      const recoveryGeneration = beginLiveSubscriptionRecovery(subscription);
       const replaySince = replaySinceForSubscription(subscription);
       const shouldPageReplay =
         replaySince !== undefined &&
         shouldPageReconnectReplay(subscription.filter);
 
-      return { subId, subscription, replaySince, shouldPageReplay };
+      return {
+        subId,
+        subscription,
+        recoveryGeneration,
+        replaySince,
+        shouldPageReplay,
+      };
     });
 
   // Sort the visible channel's subscriptions first so the user sees their
@@ -341,14 +367,32 @@ export async function replayLiveSubscriptions({
     if (!isActive()) return;
     const batch = replayRequests.slice(i, i + replayBatchSize);
     await Promise.all(
-      batch.map(({ subId, subscription, replaySince, shouldPageReplay }) =>
-        sendRaw([
-          "REQ",
+      batch.map(
+        async ({
           subId,
-          shouldPageReplay
-            ? subscription.filter
-            : buildReconnectReplayFilter(subscription.filter, replaySince),
-        ]),
+          subscription,
+          recoveryGeneration,
+          replaySince,
+          shouldPageReplay,
+        }) => {
+          await sendRaw([
+            "REQ",
+            subId,
+            shouldPageReplay
+              ? subscription.filter
+              : buildReconnectReplayFilter(subscription.filter, replaySince),
+          ]);
+          if (!markLiveRecoveryRequestSent(subscription, recoveryGeneration)) {
+            return;
+          }
+          if (!shouldPageReplay) {
+            completeLiveSubscriptionRecovery(
+              subscription,
+              recoveryGeneration,
+              true,
+            );
+          }
+        },
       ),
     );
     if (i + replayBatchSize < replayRequests.length) {
@@ -368,7 +412,7 @@ export async function replayLiveSubscriptions({
       } => request.shouldPageReplay && request.replaySince !== undefined,
     ),
     pageReplayConcurrency,
-    async ({ subId, subscription, replaySince }) => {
+    async ({ subId, subscription, recoveryGeneration, replaySince }) => {
       // Backfill is best-effort: a failure here (typically a `rate-limited:`
       // CLOSED on a history REQ) must never escape to the session and tear
       // down the healthy, authenticated socket carrying the live REQs — that
@@ -404,6 +448,11 @@ export async function replayLiveSubscriptions({
           if (completed) {
             subscription.pendingReplaySince = undefined;
             subscription.recoveryFloorCreatedAt = now;
+            completeLiveSubscriptionRecovery(
+              subscription,
+              recoveryGeneration,
+              true,
+            );
           }
           return;
         } catch (error) {

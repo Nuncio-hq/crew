@@ -986,6 +986,15 @@ impl AcpClient {
         self.user_input_harness = Some(harness_name);
     }
 
+    /// Remove all per-turn user-input authority before the client is reused.
+    ///
+    /// The ACP process may live across many prompts, but a durable elicitation
+    /// must never inherit the previous prompt's channel or thread.
+    pub fn clear_user_input_context(&mut self) {
+        self.user_input_context = None;
+        self.user_input_harness = None;
+    }
+
     /// Configure whether ACP form elicitation is advertised and handled.
     pub fn set_user_input_enabled(&mut self, enabled: bool) {
         self.user_input_enabled = enabled;
@@ -998,6 +1007,12 @@ impl AcpClient {
     #[cfg(test)]
     pub fn steer_rx_is_none(&self) -> bool {
         self.steer_rx.is_none()
+    }
+
+    /// Returns `true` when no prior turn can authorize a durable elicitation.
+    #[cfg(test)]
+    pub fn user_input_context_is_none(&self) -> bool {
+        self.user_input_context.is_none() && self.user_input_harness.is_none()
     }
 
     /// Cancel a turn cleanly, handling any pending permission request first.
@@ -1578,12 +1593,17 @@ impl AcpClient {
                         continue;
                     };
                     let response = match answer {
-                        Some(Ok(None)) | Some(Err(_)) => serde_json::json!({
+                        Some(Ok(Ok(None))) | Some(Err(_)) => serde_json::json!({
                             "jsonrpc": "2.0",
                             "id": pending.request_id,
                             "result": { "action": "cancel" }
                         }),
-                        Some(Ok(Some(answers)))
+                        Some(Ok(Err(error))) => serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": pending.request_id,
+                            "error": {"code": -32000, "message": error}
+                        }),
+                        Some(Ok(Ok(Some(answers))))
                             if answers.values().all(Option::is_none) =>
                         {
                             serde_json::json!({
@@ -1592,7 +1612,7 @@ impl AcpClient {
                                 "result": { "action": "decline" }
                             })
                         }
-                        Some(Ok(Some(answers))) => {
+                        Some(Ok(Ok(Some(answers)))) => {
                             match crate::elicitation::reconstruct_content(
                                 &pending.form,
                                 &answers,

@@ -26,7 +26,6 @@ const pendingReviewOwnershipByReceiptId = new Map<
   string,
   ReadonlySet<string>
 >();
-const MAX_PENDING_RECEIPT_REVIEWS = 512;
 const listeners = new Set<() => void>();
 let generation = 0;
 let cachedAll: AgentReceiptSummary[] | null = null;
@@ -178,12 +177,9 @@ export function ingestAgentReceiptReviewEvent(
   const receiptId = receiptEventId(event);
   const receipt = receiptId ? receiptsById.get(receiptId) : null;
   if (receiptId && !receipt && ownedAgentPubkeys.size > 0) {
-    if (
-      !pendingReviewOwnershipByReceiptId.has(receiptId) &&
-      pendingReviewOwnershipByReceiptId.size >= MAX_PENDING_RECEIPT_REVIEWS
-    ) {
-      return false;
-    }
+    // This is owner-authored durable authority, not attacker-controlled cache
+    // data. Never drop a valid review merely because many receipts arrive
+    // later during replay; the receipt pass consumes these candidates.
     pendingReviewOwnershipByReceiptId.set(
       receiptId,
       new Set([...ownedAgentPubkeys].map(normalizePubkey)),

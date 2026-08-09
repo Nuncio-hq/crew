@@ -349,11 +349,11 @@ impl RestClient {
                     )));
                 }
                 Ok(resp) => {
-                    return Err(RelayError::Http(format!(
-                        "{method} {} returned HTTP {}",
-                        path,
-                        resp.status()
-                    )));
+                    return Err(RelayError::HttpStatus {
+                        method: method.to_owned(),
+                        path: path.to_owned(),
+                        status: resp.status().as_u16(),
+                    });
                 }
                 Err(e) if e.is_timeout() || e.is_connect() => {
                     tracing::warn!("{method} {path} network error: {e}");
@@ -455,17 +455,17 @@ fn validate_event_admission(event: &Event, response: &Value) -> Result<(), Relay
         .get("event_id")
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            RelayError::Http("event submission response omitted event_id".to_string())
+            RelayError::AdmissionRejected("event submission response omitted event_id".to_string())
         })?;
     if acknowledged_id != event.id.to_hex() {
-        return Err(RelayError::Http(format!(
+        return Err(RelayError::AdmissionRejected(format!(
             "event submission acknowledged {acknowledged_id}, expected {}",
             event.id
         )));
     }
     match response.get("accepted").and_then(Value::as_bool) {
         Some(true) => Ok(()),
-        Some(false) => Err(RelayError::Http(format!(
+        Some(false) => Err(RelayError::AdmissionRejected(format!(
             "relay rejected event {}: {}",
             event.id,
             response
@@ -473,13 +473,14 @@ fn validate_event_admission(event: &Event, response: &Value) -> Result<(), Relay
                 .and_then(Value::as_str)
                 .unwrap_or("no reason supplied")
         ))),
-        None => Err(RelayError::Http(
+        None => Err(RelayError::AdmissionRejected(
             "event submission response omitted accepted".to_string(),
         )),
     }
 }
 
 /// Retry one already-signed durable event without changing its id.
+#[cfg(test)]
 pub(crate) async fn retry_signed_event<F, Fut, Error>(
     event: &Event,
     retry_delays: &[Duration],
@@ -533,8 +534,28 @@ pub enum RelayError {
     #[error("HTTP error: {0}")]
     Http(String),
 
+    #[error("HTTP {status} from {method} {path}")]
+    HttpStatus {
+        method: String,
+        path: String,
+        status: u16,
+    },
+
+    #[error("Durable event admission rejected: {0}")]
+    AdmissionRejected(String),
+
     #[error("Unexpected message: {0}")]
     UnexpectedMessage(String),
+}
+
+impl RelayError {
+    /// Whether a durable publication may succeed unchanged after reconnect/backoff.
+    pub(crate) fn is_retryable_durable_publication(&self) -> bool {
+        matches!(
+            self,
+            Self::WebSocket(_) | Self::ConnectionClosed | Self::Timeout | Self::Http(_)
+        )
+    }
 }
 
 impl From<nostr::event::builder::Error> for RelayError {
@@ -3754,7 +3775,11 @@ pub(crate) fn parse_relay_message(text: &str) -> Result<RelayMessage, RelayError
 /// - `NoAuthChallenge`, `ConnectionClosed`, `Timeout` — timing/link noise.
 fn is_terminal_connect_error(err: &RelayError) -> bool {
     match err {
-        RelayError::Http(_) | RelayError::Json(_) | RelayError::UnexpectedMessage(_) => true,
+        RelayError::Http(_)
+        | RelayError::HttpStatus { .. }
+        | RelayError::AdmissionRejected(_)
+        | RelayError::Json(_)
+        | RelayError::UnexpectedMessage(_) => true,
         RelayError::WebSocket(e) => is_terminal_ws_error(e.as_ref()),
         RelayError::AuthFailed(message) => is_terminal_auth_failure(message),
         RelayError::NoAuthChallenge | RelayError::ConnectionClosed | RelayError::Timeout => false,

@@ -1,11 +1,15 @@
 //! ACP form elicitation normalization and answer reconstruction.
 
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use buzz_core::{
-    kind::KIND_AGENT_USER_INPUT_ANSWER,
+    kind::{
+        KIND_AGENT_USER_INPUT_ANSWER, KIND_AGENT_USER_INPUT_REQUESTED,
+        KIND_AGENT_USER_INPUT_RESOLVED,
+    },
     user_input::{
         Engine, Option_, UserInputAnswer, UserInputAnswers, UserInputQuestion, UserInputRequest,
         UserInputResolutionOutcome, UserInputResolved, UserInputSelection,
@@ -23,6 +27,100 @@ const RESOLUTION_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(2),
     Duration::from_secs(4),
 ];
+const RESOLUTION_OUTBOX_RETRY_DELAY: Duration = Duration::from_secs(30);
+static RESOLUTION_OUTBOX_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn resolution_outbox_lock() -> &'static Mutex<()> {
+    RESOLUTION_OUTBOX_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn resolution_outbox_dir(runtime: &QuestionRuntime) -> Result<PathBuf, String> {
+    use sha2::{Digest, Sha256};
+
+    #[cfg(test)]
+    let base = std::env::temp_dir().join("buzz-acp-resolution-outbox-tests");
+    #[cfg(not(test))]
+    let base = match std::env::var_os("BUZZ_ACP_RESOLUTION_OUTBOX_DIR") {
+        Some(path) => PathBuf::from(path),
+        None => PathBuf::from(std::env::var_os("HOME").ok_or_else(|| {
+            "HOME or BUZZ_ACP_RESOLUTION_OUTBOX_DIR is required for resolution durability"
+                .to_string()
+        })?)
+        .join(".local/share/nunciocrew/buzz-acp/resolution-outbox"),
+    };
+    let relay_hash = hex::encode(Sha256::digest(runtime.rest_client.base_url.as_bytes()));
+    Ok(base
+        .join(&relay_hash[..16])
+        .join(runtime.keys.public_key().to_hex()))
+}
+
+fn pending_request_outbox_dir(runtime: &QuestionRuntime) -> Result<PathBuf, String> {
+    Ok(resolution_outbox_dir(runtime)?.join("pending-requests"))
+}
+
+async fn persist_outbox_event(outbox_dir: &Path, event: &nostr::Event) -> Result<PathBuf, String> {
+    tokio::fs::create_dir_all(outbox_dir)
+        .await
+        .map_err(|error| format!("failed to create resolution outbox: {error}"))?;
+    let path = outbox_dir.join(format!("{}.json", event.id));
+    if tokio::fs::try_exists(&path)
+        .await
+        .map_err(|error| format!("failed to inspect resolution outbox: {error}"))?
+    {
+        return Ok(path);
+    }
+    let temporary = outbox_dir.join(format!("{}.{}.tmp", event.id, std::process::id()));
+    let bytes = serde_json::to_vec(event)
+        .map_err(|error| format!("failed to encode resolution outbox entry: {error}"))?;
+    tokio::fs::write(&temporary, bytes)
+        .await
+        .map_err(|error| format!("failed to write resolution outbox entry: {error}"))?;
+    if let Err(error) = tokio::fs::rename(&temporary, &path).await {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            return Err(format!("failed to commit resolution outbox entry: {error}"));
+        }
+    }
+    Ok(path)
+}
+
+async fn retire_pending_request(runtime: &QuestionRuntime, request_event_id: &str) {
+    let Ok(directory) = pending_request_outbox_dir(runtime) else {
+        return;
+    };
+    let path = directory.join(format!("{request_event_id}.json"));
+    if let Err(error) = tokio::fs::remove_file(&path).await {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(%error, path = %path.display(), "failed to retire pending user-input request ledger entry");
+        }
+    }
+}
+
+async fn dead_letter_pending_request(runtime: &QuestionRuntime, request_event_id: &str) {
+    let Ok(directory) = pending_request_outbox_dir(runtime) else {
+        return;
+    };
+    let path = directory.join(format!("{request_event_id}.json"));
+    let rejected = path.with_extension("rejected");
+    if let Err(error) = tokio::fs::rename(&path, &rejected).await {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(%error, path = %path.display(), "failed to dead-letter pending user-input request ledger entry");
+        }
+    }
+}
+
+fn resolution_request_event_id(event: &nostr::Event) -> Option<String> {
+    if event.kind.as_u16() as u32 != KIND_AGENT_USER_INPUT_RESOLVED {
+        return None;
+    }
+    let request_event_id = serde_json::from_str::<UserInputResolved>(&event.content)
+        .ok()?
+        .request_event_id;
+    (single_relationship_tag(event, "e") == Some(request_event_id.as_str())
+        && single_relationship_tag(event, "h").is_some()
+        && single_relationship_tag(event, "p").is_some())
+    .then_some(request_event_id)
+}
 
 /// Engine field mapping retained while a form is pending.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +153,7 @@ pub(crate) struct PendingQuestion {
     /// Normalized form used to rebuild the engine response.
     pub form: NormalizedForm,
     /// Receiver resolved by the relay answer router or cancellation.
-    pub receiver: oneshot::Receiver<Option<UserInputAnswers>>,
+    pub receiver: oneshot::Receiver<Result<Option<UserInputAnswers>, String>>,
 }
 
 /// Shared transport for durable user-input requests and owner-authored answers.
@@ -71,7 +169,7 @@ pub(crate) struct QuestionRuntime {
 struct PendingRequest {
     channel_id: Uuid,
     intended_owner_pubkey: String,
-    sender: oneshot::Sender<Option<UserInputAnswers>>,
+    sender: oneshot::Sender<Result<Option<UserInputAnswers>, String>>,
     resolution_started: bool,
 }
 
@@ -113,22 +211,264 @@ impl QuestionRuntime {
         })
     }
 
-    async fn publish_durable_event(&self, event: nostr::Event) -> Result<(), String> {
+    /// Resume exact-signed resolutions persisted by a prior process.
+    pub(crate) async fn resume_resolution_outbox(self: &Arc<Self>) {
+        let runtime = Arc::clone(self);
+        let outbox_dir = match resolution_outbox_dir(&runtime) {
+            Ok(path) => path,
+            Err(error) => {
+                tracing::error!(%error, "cannot resume durable user-input resolution outbox");
+                return;
+            }
+        };
+        let mut resolving_requests = HashSet::new();
+        match tokio::fs::read_dir(&outbox_dir).await {
+            Ok(mut entries) => loop {
+                let entry = match entries.next_entry().await {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => break,
+                    Err(error) => {
+                        tracing::error!(%error, "failed to enumerate user-input resolution outbox");
+                        break;
+                    }
+                };
+                let path = entry.path();
+                if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                    continue;
+                }
+                let event = match tokio::fs::read(&path)
+                    .await
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| {
+                        serde_json::from_slice::<nostr::Event>(&bytes)
+                            .map_err(|error| error.to_string())
+                    }) {
+                    Ok(event)
+                        if event.pubkey == runtime.keys.public_key() && event.verify().is_ok() =>
+                    {
+                        event
+                    }
+                    Ok(_) | Err(_) => {
+                        let invalid = path.with_extension("invalid");
+                        let _ = tokio::fs::rename(&path, invalid).await;
+                        tracing::error!(path = %path.display(), "quarantined invalid resolution outbox entry");
+                        continue;
+                    }
+                };
+                let Some(request_event_id) = resolution_request_event_id(&event) else {
+                    let invalid = path.with_extension("invalid");
+                    let _ = tokio::fs::rename(&path, invalid).await;
+                    tracing::error!(path = %path.display(), "quarantined resolution without request authority");
+                    continue;
+                };
+                resolving_requests.insert(request_event_id.clone());
+                runtime.spawn_recovered_resolution(event, path, request_event_id);
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::error!(%error, path = %outbox_dir.display(), "failed to read user-input resolution outbox");
+            }
+        }
+
+        runtime
+            .resume_orphaned_pending_requests(resolving_requests)
+            .await;
+    }
+
+    fn spawn_recovered_resolution(
+        self: &Arc<Self>,
+        event: nostr::Event,
+        path: PathBuf,
+        request_event_id: String,
+    ) {
+        let runtime = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                match runtime.publish_durable_event(event.clone()).await {
+                    Ok(()) => {
+                        let _guard = resolution_outbox_lock().lock().await;
+                        if let Err(error) = tokio::fs::remove_file(&path).await {
+                            if error.kind() != std::io::ErrorKind::NotFound {
+                                tracing::warn!(%error, path = %path.display(), "failed to retire recovered resolution outbox entry");
+                            }
+                        }
+                        retire_pending_request(&runtime, &request_event_id).await;
+                        break;
+                    }
+                    Err(error) if error.is_retryable_durable_publication() => {
+                        tracing::warn!(%error, event_id = %event.id, "retrying recovered user-input resolution");
+                        tokio::time::sleep(RESOLUTION_OUTBOX_RETRY_DELAY).await;
+                    }
+                    Err(error) => {
+                        let rejected = path.with_extension("rejected");
+                        let _guard = resolution_outbox_lock().lock().await;
+                        let _ = tokio::fs::rename(&path, &rejected).await;
+                        dead_letter_pending_request(&runtime, &request_event_id).await;
+                        tracing::error!(%error, event_id = %event.id, path = %rejected.display(), "dead-lettered permanently rejected user-input resolution");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    async fn resume_orphaned_pending_requests(
+        self: &Arc<Self>,
+        resolving_requests: HashSet<String>,
+    ) {
+        let directory = match pending_request_outbox_dir(self) {
+            Ok(directory) => directory,
+            Err(error) => {
+                tracing::error!(%error, "cannot resume durable pending user-input requests");
+                return;
+            }
+        };
+        let mut entries = match tokio::fs::read_dir(&directory).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                tracing::error!(%error, path = %directory.display(), "failed to read pending user-input request ledger");
+                return;
+            }
+        };
+        loop {
+            let entry = match entries.next_entry().await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::error!(%error, "failed to enumerate pending user-input request ledger");
+                    break;
+                }
+            };
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(request_event_id) = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            if resolving_requests.contains(&request_event_id) {
+                continue;
+            }
+            let event = match tokio::fs::read(&path)
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| {
+                    serde_json::from_slice::<nostr::Event>(&bytes)
+                        .map_err(|error| error.to_string())
+                }) {
+                Ok(event)
+                    if event.id.to_hex() == request_event_id
+                        && event.kind.as_u16() as u32 == KIND_AGENT_USER_INPUT_REQUESTED
+                        && event.pubkey == self.keys.public_key()
+                        && event.verify().is_ok() =>
+                {
+                    event
+                }
+                Ok(_) | Err(_) => {
+                    let invalid = path.with_extension("invalid");
+                    let _ = tokio::fs::rename(&path, invalid).await;
+                    tracing::error!(path = %path.display(), "quarantined invalid pending user-input request ledger entry");
+                    continue;
+                }
+            };
+            let Some(channel_id) =
+                single_relationship_tag(&event, "h").and_then(|value| Uuid::parse_str(value).ok())
+            else {
+                let invalid = path.with_extension("invalid");
+                let _ = tokio::fs::rename(&path, invalid).await;
+                continue;
+            };
+            let Some(owner_pubkey) = single_relationship_tag(&event, "p").map(str::to_owned) else {
+                let invalid = path.with_extension("invalid");
+                let _ = tokio::fs::rename(&path, invalid).await;
+                continue;
+            };
+            let request_matches_channel = serde_json::from_str::<UserInputRequest>(&event.content)
+                .is_ok_and(|request| request.channel_id == channel_id.to_string());
+            if !request_matches_channel {
+                let invalid = path.with_extension("invalid");
+                let _ = tokio::fs::rename(&path, invalid).await;
+                continue;
+            }
+            self.spawn_orphaned_request_cancellation(event, path, channel_id, owner_pubkey);
+        }
+    }
+
+    fn spawn_orphaned_request_cancellation(
+        self: &Arc<Self>,
+        request_event: nostr::Event,
+        request_path: PathBuf,
+        channel_id: Uuid,
+        owner_pubkey: String,
+    ) {
+        let runtime = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                match runtime.publish_durable_event(request_event.clone()).await {
+                    Ok(()) => break,
+                    Err(error) if error.is_retryable_durable_publication() => {
+                        tokio::time::sleep(RESOLUTION_OUTBOX_RETRY_DELAY).await;
+                    }
+                    Err(error) => {
+                        let rejected = request_path.with_extension("rejected");
+                        let _guard = resolution_outbox_lock().lock().await;
+                        let _ = tokio::fs::rename(&request_path, &rejected).await;
+                        tracing::error!(%error, request_event_id = %request_event.id, path = %rejected.display(), "dead-lettered orphaned user-input request rejected during replay");
+                        return;
+                    }
+                }
+            }
+            let request_event_id = request_event.id.to_hex();
+            let resolution = match runtime.build_resolution_event(
+                channel_id,
+                &request_event_id,
+                &owner_pubkey,
+                UserInputResolutionOutcome::Cancelled,
+            ) {
+                Ok(event) => event,
+                Err(error) => {
+                    tracing::error!(%error, request_event_id, "failed to sign orphaned user-input cancellation");
+                    return;
+                }
+            };
+            let resolution_path = {
+                let directory = match resolution_outbox_dir(&runtime) {
+                    Ok(directory) => directory,
+                    Err(error) => {
+                        tracing::error!(%error, request_event_id, "cannot persist orphaned user-input cancellation");
+                        return;
+                    }
+                };
+                let _guard = resolution_outbox_lock().lock().await;
+                match persist_outbox_event(&directory, &resolution).await {
+                    Ok(path) => path,
+                    Err(error) => {
+                        tracing::error!(%error, request_event_id, "failed to persist orphaned user-input cancellation");
+                        return;
+                    }
+                }
+            };
+            runtime.spawn_recovered_resolution(resolution, resolution_path, request_event_id);
+        });
+    }
+
+    async fn publish_durable_event(
+        &self,
+        event: nostr::Event,
+    ) -> Result<(), crate::relay::RelayError> {
         // Unit tests use the in-memory publisher pair so they can inspect the
         // exact signed event without standing up an HTTP bridge. Production
         // always requires the relay's explicit `{event_id, accepted}` ACK.
         #[cfg(test)]
         if self.rest_client.base_url == "http://127.0.0.1:0" {
-            return self
-                .test_publisher
-                .publish_event(event)
-                .await
-                .map_err(|error| error.to_string());
+            return self.test_publisher.publish_event(event).await;
         }
-        self.rest_client
-            .submit_event_accepted(&event)
-            .await
-            .map_err(|error| error.to_string())
+        self.rest_client.submit_event_accepted(&event).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -143,7 +483,13 @@ impl QuestionRuntime {
         request_id: &str,
         message: Option<&str>,
         tool_call_id: Option<&str>,
-    ) -> Result<(String, oneshot::Receiver<Option<UserInputAnswers>>), String> {
+    ) -> Result<
+        (
+            String,
+            oneshot::Receiver<Result<Option<UserInputAnswers>, String>>,
+        ),
+        String,
+    > {
         let request = UserInputRequest {
             request_id: request_id.to_string(),
             session_id: session_id.to_string(),
@@ -170,6 +516,11 @@ impl QuestionRuntime {
             .sign_with_keys(&self.keys)
             .map_err(|e| e.to_string())?;
         let event_id = event.id.to_hex();
+        let pending_request_path = {
+            let directory = pending_request_outbox_dir(self)?;
+            let _guard = resolution_outbox_lock().lock().await;
+            persist_outbox_event(&directory, &event).await?
+        };
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(
             event_id.clone(),
@@ -182,7 +533,9 @@ impl QuestionRuntime {
         );
         if let Err(error) = self.publish_durable_event(event).await {
             self.pending.lock().await.remove(&event_id);
-            return Err(error);
+            let _guard = resolution_outbox_lock().lock().await;
+            let _ = tokio::fs::remove_file(pending_request_path).await;
+            return Err(error.to_string());
         }
         Ok((event_id, rx))
     }
@@ -242,6 +595,7 @@ impl QuestionRuntime {
             intended_owner_pubkey,
             outcome,
         )?;
+        let outbox_dir = resolution_outbox_dir(self)?;
         {
             let mut pending = self.pending.lock().await;
             let Some(request) = pending.get_mut(request_event_id) else {
@@ -253,6 +607,19 @@ impl QuestionRuntime {
             request.resolution_started = true;
         }
 
+        let outbox_path = {
+            let _guard = resolution_outbox_lock().lock().await;
+            match persist_outbox_event(&outbox_dir, &event).await {
+                Ok(path) => path,
+                Err(error) => {
+                    if let Some(request) = self.pending.lock().await.get_mut(request_event_id) {
+                        request.resolution_started = false;
+                    }
+                    return Err(error);
+                }
+            }
+        };
+
         let runtime = Arc::clone(self);
         let request_event_id = request_event_id.to_owned();
         let retry_delays = retry_delays.to_vec();
@@ -261,14 +628,23 @@ impl QuestionRuntime {
             loop {
                 match runtime.publish_durable_event(event.clone()).await {
                     Ok(()) => {
+                        {
+                            let _guard = resolution_outbox_lock().lock().await;
+                            if let Err(error) = tokio::fs::remove_file(&outbox_path).await {
+                                if error.kind() != std::io::ErrorKind::NotFound {
+                                    tracing::warn!(%error, path = %outbox_path.display(), "failed to retire durable resolution outbox entry");
+                                }
+                            }
+                            retire_pending_request(&runtime, &request_event_id).await;
+                        }
                         if let Some(pending) =
                             runtime.pending.lock().await.remove(&request_event_id)
                         {
-                            let _ = pending.sender.send(completion);
+                            let _ = pending.sender.send(Ok(completion));
                         }
                         break;
                     }
-                    Err(error) => {
+                    Err(error) if error.is_retryable_durable_publication() => {
                         tracing::warn!(%error, request_event_id, "retrying durable user-input resolution");
                         let delay = retry_delays
                             .get(retry_index)
@@ -277,6 +653,21 @@ impl QuestionRuntime {
                             .unwrap_or(Duration::from_secs(1));
                         retry_index = retry_index.saturating_add(1);
                         tokio::time::sleep(delay).await;
+                    }
+                    Err(error) => {
+                        let rejected = outbox_path.with_extension("rejected");
+                        {
+                            let _guard = resolution_outbox_lock().lock().await;
+                            let _ = tokio::fs::rename(&outbox_path, &rejected).await;
+                            dead_letter_pending_request(&runtime, &request_event_id).await;
+                        }
+                        if let Some(pending) =
+                            runtime.pending.lock().await.remove(&request_event_id)
+                        {
+                            let _ = pending.sender.send(Err(error.to_string()));
+                        }
+                        tracing::error!(%error, request_event_id, path = %rejected.display(), "dead-lettered permanently rejected user-input resolution");
+                        break;
                     }
                 }
             }
@@ -323,10 +714,22 @@ impl QuestionRuntime {
             intended_owner_pubkey,
             outcome,
         )?;
-        crate::relay::retry_signed_event(&event, retry_delays, |candidate| {
-            self.publish_durable_event(candidate)
-        })
-        .await
+        let mut retry_index = 0_usize;
+        loop {
+            match self.publish_durable_event(event.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(error) if !error.is_retryable_durable_publication() => {
+                    return Err(error.to_string());
+                }
+                Err(error) => {
+                    let Some(delay) = retry_delays.get(retry_index).copied() else {
+                        return Err(error.to_string());
+                    };
+                    retry_index = retry_index.saturating_add(1);
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
     }
 
     pub(crate) async fn handle_event(self: &Arc<Self>, buzz_event: &BuzzEvent) {
@@ -743,14 +1146,21 @@ mod tests {
                     serde_json::from_slice(&request[body_start..body_start + content_length])
                         .expect("signed event body");
                 event_ids.push(event.id);
-                let body = serde_json::json!({
-                    "event_id": event.id.to_hex(),
-                    "accepted": accepted,
-                    "message": if accepted { "stored" } else { "policy rejected" },
-                })
-                .to_string();
+                let (status, body) = if accepted {
+                    (
+                        "200 OK",
+                        serde_json::json!({
+                            "event_id": event.id.to_hex(),
+                            "accepted": true,
+                            "message": "stored",
+                        })
+                        .to_string(),
+                    )
+                } else {
+                    ("503 Service Unavailable", "{}".to_string())
+                };
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
                 socket
@@ -897,14 +1307,96 @@ mod tests {
             .await
             .expect("enqueue resolution");
 
-        let delivered = tokio::time::timeout(Duration::from_secs(1), receiver)
+        let delivered = tokio::time::timeout(Duration::from_secs(3), receiver)
             .await
             .expect("outbox eventually accepts")
             .expect("completion sender remains live");
-        assert_eq!(delivered, Some(completion));
+        assert_eq!(delivered, Ok(Some(completion)));
         let event_ids = server.await.expect("admission server completes");
         assert_eq!(event_ids.len(), 3);
         assert!(event_ids.iter().all(|event_id| *event_id == event_ids[0]));
+    }
+
+    #[tokio::test]
+    async fn restart_replays_and_cancels_an_orphaned_pending_request() {
+        let owner = Keys::generate();
+        let agent = Keys::generate();
+        let channel_id = Uuid::new_v4();
+        let rest_client = RestClient {
+            http: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:0".to_string(),
+            keys: agent.clone(),
+            auth_tag_json: None,
+        };
+        let (publisher, mut initially_published) = RelayEventPublisher::test_pair();
+        let runtime = QuestionRuntime::new(
+            publisher,
+            agent.clone(),
+            Arc::new(crate::OwnerCache::new(Some(owner.public_key().to_hex()))),
+            rest_client.clone(),
+        );
+        let _ = tokio::fs::remove_dir_all(pending_request_outbox_dir(&runtime).unwrap()).await;
+        let _ = tokio::fs::remove_dir_all(resolution_outbox_dir(&runtime).unwrap()).await;
+        let form = normalize_form(&serde_json::json!({
+            "type": "object",
+            "properties": {"question_0": {"type": "string"}}
+        }))
+        .expect("supported form");
+
+        let (request_event_id, receiver) = runtime
+            .publish(
+                channel_id,
+                &test_thread_ref(),
+                "session",
+                "turn",
+                Engine::Codex,
+                form,
+                "request",
+                Some("Need input"),
+                None,
+            )
+            .await
+            .expect("publish request");
+        let original = initially_published.recv().await.expect("request event");
+        assert_eq!(original.id.to_hex(), request_event_id);
+        drop(receiver);
+        drop(runtime);
+
+        let (publisher, mut recovered) = RelayEventPublisher::test_pair();
+        let restarted = QuestionRuntime::new(
+            publisher,
+            agent,
+            Arc::new(crate::OwnerCache::new(Some(owner.public_key().to_hex()))),
+            rest_client,
+        );
+        restarted.resume_resolution_outbox().await;
+
+        let replayed = tokio::time::timeout(Duration::from_secs(1), recovered.recv())
+            .await
+            .expect("orphan recovery starts")
+            .expect("replayed request");
+        assert_eq!(replayed.id, original.id);
+        let resolved = tokio::time::timeout(Duration::from_secs(1), recovered.recv())
+            .await
+            .expect("orphan cancellation publishes")
+            .expect("resolution event");
+        let resolution: UserInputResolved =
+            serde_json::from_str(&resolved.content).expect("resolution content");
+        assert_eq!(resolution.request_event_id, request_event_id);
+        assert_eq!(resolution.outcome, UserInputResolutionOutcome::Cancelled);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let path = pending_request_outbox_dir(&restarted)
+                    .unwrap()
+                    .join(format!("{request_event_id}.json"));
+                if !tokio::fs::try_exists(path).await.unwrap_or(true) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pending request ledger retires after cancellation ACK");
     }
 
     #[test]
@@ -1141,7 +1633,11 @@ mod tests {
                 event: owner_answer,
             })
             .await;
-        assert!(receiver.await.expect("owner answer received").is_some());
+        assert!(receiver
+            .await
+            .expect("owner answer received")
+            .expect("resolution accepted")
+            .is_some());
 
         let late_answer = buzz_sdk::build_agent_user_input_answer(
             channel_id,
@@ -1169,7 +1665,7 @@ mod tests {
             Arc<QuestionRuntime>,
             mpsc::Receiver<nostr::Event>,
             String,
-            oneshot::Receiver<Option<UserInputAnswers>>,
+            oneshot::Receiver<Result<Option<UserInputAnswers>, String>>,
         ) {
             let (publisher, published) = RelayEventPublisher::test_pair();
             let agent = Keys::generate();
@@ -1242,7 +1738,11 @@ mod tests {
                 event: answer,
             })
             .await;
-        assert!(receiver.await.expect("answer received").is_some());
+        assert!(receiver
+            .await
+            .expect("answer received")
+            .expect("resolution accepted")
+            .is_some());
         assert_eq!(
             resolution(&mut published).await.outcome,
             UserInputResolutionOutcome::Answered
@@ -1265,7 +1765,11 @@ mod tests {
                 event: decline,
             })
             .await;
-        assert!(receiver.await.expect("decline received").is_some());
+        assert!(receiver
+            .await
+            .expect("decline received")
+            .expect("resolution accepted")
+            .is_some());
         assert_eq!(
             resolution(&mut published).await.outcome,
             UserInputResolutionOutcome::Declined
@@ -1274,7 +1778,11 @@ mod tests {
         let (runtime, mut published, event_id, receiver) =
             publish_request(channel_id, &owner).await;
         runtime.cancel(&event_id).await;
-        assert!(receiver.await.expect("cancel received").is_none());
+        assert!(receiver
+            .await
+            .expect("cancel received")
+            .expect("resolution accepted")
+            .is_none());
         assert_eq!(
             resolution(&mut published).await.outcome,
             UserInputResolutionOutcome::Cancelled
@@ -1283,7 +1791,11 @@ mod tests {
         let (runtime, mut published, _event_id, receiver) =
             publish_request(channel_id, &owner).await;
         runtime.shutdown_pending().await;
-        assert!(receiver.await.expect("shutdown received").is_none());
+        assert!(receiver
+            .await
+            .expect("shutdown received")
+            .expect("resolution accepted")
+            .is_none());
         assert_eq!(
             resolution(&mut published).await.outcome,
             UserInputResolutionOutcome::Cancelled

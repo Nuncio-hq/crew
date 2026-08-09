@@ -278,6 +278,36 @@ export function derivePendingUserInputs(
     .sort((left, right) => right.event.created_at - left.event.created_at);
 }
 
+/** Requests answered by this owner but not terminally resolved by the agent. */
+export function deriveAnsweredUserInputs(
+  events: RelayEvent[],
+  currentPubkey: string,
+): UserInputEvent[] {
+  const deduped = dedupeUserInputEvents(events);
+  const answered = new Set(
+    deduped
+      .filter(
+        (event) =>
+          event.kind === KIND_AGENT_USER_INPUT_ANSWER &&
+          event.pubkey === currentPubkey,
+      )
+      .map(getAnswerRequestId)
+      .filter((id): id is string => id !== null),
+  );
+  const resolved = new Set(
+    deduped.map(getResolvedRequestId).filter((id): id is string => id !== null),
+  );
+  return deduped
+    .filter((event) => event.kind === KIND_AGENT_USER_INPUT_REQUESTED)
+    .map((event) => {
+      const request = parseUserInputRequest(event);
+      return request ? { event, request } : null;
+    })
+    .filter((item): item is UserInputEvent => item !== null)
+    .filter(({ event }) => answered.has(event.id) && !resolved.has(event.id))
+    .sort((left, right) => right.event.created_at - left.event.created_at);
+}
+
 export function deriveResolvedUserInputs(
   events: RelayEvent[],
 ): Array<UserInputEvent & { resolution: UserInputResolutionOutcome }> {

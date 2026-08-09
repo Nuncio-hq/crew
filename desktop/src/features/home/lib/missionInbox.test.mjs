@@ -46,6 +46,7 @@ function activeTurn(conversationId, overrides = {}) {
     lastSubstantiveProgressAt: 100_000,
     progressKind: "progress",
     progressLabel: "Running tests",
+    triggeringEventIds: ["current-trigger"],
     ...overrides,
   };
 }
@@ -270,6 +271,44 @@ test("a newer active turn suppresses a stale receipt from the prior run", () => 
   });
   assert.equal(sections.readyToReview.length, 0);
   assert.equal(sections.working[0]?.conversationId, "rerun");
+});
+
+test("an active turn accepts only a receipt linked to its exact trigger", () => {
+  const base = {
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [activeTurn("exact")],
+    channels,
+    inboxItems: [item("exact", "channel-a", 100)],
+    needsYou: [],
+    now: 101_000,
+    outcomes: [],
+  };
+  const receipt = {
+    id: "receipt-exact",
+    channelId: "channel-a",
+    conversationId: "exact",
+    rootEventId: null,
+    agentPubkey: "agent-1",
+    createdAt: 100_000,
+    summary: "Completed",
+    verify: "verified",
+    reviewed: false,
+  };
+  assert.equal(
+    deriveMissionInboxSections({
+      ...base,
+      receipts: [{ ...receipt, parentEventId: "prior-trigger" }],
+    }).working[0]?.conversationId,
+    "exact",
+  );
+  assert.equal(
+    deriveMissionInboxSections({
+      ...base,
+      receipts: [{ ...receipt, parentEventId: "current-trigger" }],
+    }).readyToReview[0]?.conversationId,
+    "exact",
+  );
 });
 
 test("unavailable observer telemetry never masquerades as stalled", () => {

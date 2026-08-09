@@ -19,6 +19,8 @@ export type NeedsYouRequest = {
   agentPubkey: string;
   createdAt: number;
   approvalReferences: string[];
+  /** Present for durable 46040 requests; omitted for workflow approvals. */
+  ownerPubkey?: string;
 };
 
 // Entries in `requests` are durable workflow-human approvals (kind 46010),

@@ -8,7 +8,8 @@ function watermarkChannelKey(event: ObserverEvent): string {
 }
 
 // Composite watermark per (agent, channel, session): the newest observer event
-// processed for that session, by (timestamp, seq) ordering. An event is
+// processed for that session. Within one producer session, its monotonic
+// sequence is authoritative even if the producer clock moves backwards. An event is
 // processed only if it is strictly newer than its channel's watermark,
 // making full-buffer replays idempotent and post-restart streams (seq
 // resets to 1, timestamp keeps climbing) handled for free.
@@ -26,8 +27,17 @@ export function gateEventByWatermark(
   const channelKey = watermarkChannelKey(event);
   const agentWatermarks = lastProcessed.get(agentKey);
   const last = agentWatermarks?.get(channelKey);
-  if (last && compareObserverEvents(event, last) <= 0) {
-    return last;
+  if (last) {
+    if (event.sessionId && event.seq < last.seq) return last;
+    if (
+      event.sessionId &&
+      event.seq === last.seq &&
+      compareObserverEvents(event, last) <= 0
+    ) {
+      return last;
+    }
+    if (!event.sessionId && compareObserverEvents(event, last) <= 0)
+      return last;
   }
   return undefined;
 }

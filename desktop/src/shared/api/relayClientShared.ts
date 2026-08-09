@@ -87,6 +87,8 @@ type LiveSubscription = {
   recoveryRequestSent?: boolean;
   /** Replacement REQ reached EOSE while durable history recovery was pending. */
   recoveryEoseReceived?: boolean;
+  /** Token preventing stale recovery promises from reopening a newer cycle. */
+  recoveryGeneration?: number;
   closedRetryAttempt?: number;
   closedRetryTimeout?: number;
 };
