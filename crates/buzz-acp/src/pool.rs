@@ -4889,13 +4889,14 @@ async fn flush_receipt_outbox(
         tracing::error!(%error, "failed closed while securing receipt outbox");
         return Ok(report);
     }
-    let mut entries = match {
+    let claimed_entries = {
         let _guard = receipt_outbox_lock().lock().await;
         match ensure_receipt_spool_capacity(outbox_dir, 0).await {
             Ok(()) => claim_secure_entries(outbox_dir, "json", RECEIPT_MAX_SPOOL_BYTES).await,
             Err(error) => Err(error),
         }
-    } {
+    };
+    let mut entries = match claimed_entries {
         Ok(entries) => entries,
         Err(error) => {
             report.scan_failed = true;
