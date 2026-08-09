@@ -1,8 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import {
-  isVerifiedRelayEvent,
-  relayEventMatchesFilter,
-} from "./relayEventVerification";
+import * as eventVerification from "./relayEventVerification";
 import {
   createAuthEvent,
   getRelayWsUrl,
@@ -330,8 +327,7 @@ export class RelayClient {
     channelId: string,
     onEvent: (event: RelayEvent) => void,
   ) {
-    // 39005 rides only this window-store subscription — CHANNEL_EVENT_KINDS'
-    // other consumers (unread tracking, cache merges) must never see
+    // 39005 rides only this window-store subscription; other consumers must never see
     // summary overlays.
     return this.subscribe(
       {
@@ -790,7 +786,8 @@ export class RelayClient {
       return;
     }
     if (type === "EVENT" && typeof rest[0] === "string" && rest[1]) {
-      if (!isVerifiedRelayEvent(rest[1] as RelayEvent)) return;
+      if (!eventVerification.isVerifiedRelayEvent(rest[1] as RelayEvent))
+        return;
       this.handleEvent(rest[0], rest[1] as RelayEvent);
       return;
     }
@@ -860,9 +857,11 @@ export class RelayClient {
   private handleEvent(subId: string, event: RelayEvent) {
     const subscription = this.subscriptions.get(subId);
     if (!subscription) return;
-    if (!relayEventMatchesFilter(event, subscription.filter)) return;
-    if (!closedRecovery.isCurrentLiveWireId(subscription, subId)) return;
-
+    if (
+      !eventVerification.relayEventMatchesFilter(event, subscription.filter) ||
+      !closedRecovery.isCurrentLiveWireId(subscription, subId)
+    )
+      return;
     if (subscription.mode === "first") {
       subscription.onEvent(event);
       return;
