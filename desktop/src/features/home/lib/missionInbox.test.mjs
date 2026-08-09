@@ -81,6 +81,45 @@ test("blocked conversations win over working", () => {
   assert.equal(sections.working.length, 0);
 });
 
+test("one completed receipt cannot hide an unrelated active sibling", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    now: 100_100,
+    channels,
+    inboxItems: [item("conversation-siblings", "channel-a", 100)],
+    needsYou: [],
+    activeTurns: [
+      activeTurn("conversation-siblings", {
+        agentPubkeys: ["agent-1", "agent-2"],
+        triggeringEventIds: ["trigger-1", "trigger-2"],
+        agentTriggerPairs: [
+          { agentPubkey: "agent-1", eventId: "trigger-1" },
+          { agentPubkey: "agent-2", eventId: "trigger-2" },
+        ],
+      }),
+    ],
+    outcomes: [],
+    receipts: [
+      {
+        id: "receipt-1",
+        channelId: "channel-a",
+        conversationId: "conversation-siblings",
+        agentPubkey: "agent-1",
+        parentEventId: "trigger-1",
+        createdAt: 100_050,
+        summary: "Agent one completed",
+        verify: "done",
+        reviewed: false,
+      },
+    ],
+    acknowledgedConversationIds: new Set(),
+  });
+
+  assert.equal(sections.readyToReview.length, 0);
+  assert.equal(sections.working.length, 1);
+  assert.equal(sections.working[0].conversationId, "conversation-siblings");
+});
+
 test("read-state acknowledgement does not review a durable receipt", () => {
   const input = {
     ...attentionDefaults,

@@ -30,6 +30,7 @@ import {
   buildGlobalStreamFilter,
 } from "@/shared/api/relayChannelFilters";
 import * as closedRecovery from "@/shared/api/relayClosedRecovery";
+import { establishLiveSubscription } from "@/shared/api/liveSubscriptionSetup";
 import * as reconnectReplay from "@/shared/api/relayReconnectReplay";
 import { handleSessionRelayClosed } from "@/shared/api/relayClientClosedRecovery";
 import * as liveBuffer from "@/shared/api/relayLiveEventBuffer";
@@ -601,37 +602,23 @@ export class RelayClient {
   ) {
     await this.ensureConnected();
     const subId = `live-${crypto.randomUUID()}`;
-    let resolveReady = () => {};
-    let rejectReady = (_error: Error) => {};
-    const ready = new Promise<void>((resolve, reject) => {
-      resolveReady = resolve;
-      rejectReady = reject;
-    });
-
-    this.subscriptions.set(subId, {
-      mode: "live",
-      currentSubId: subId,
+    await establishLiveSubscription({
+      subscriptions: this.subscriptions,
+      subId,
       filter,
       onEvent,
       onStatus,
-      ready: false,
-      resolveReady,
-      rejectReady,
       recoveryFloorCreatedAt: reconnectReplay.initialRecoveryFloor(
         Math.floor(Date.now() / 1_000),
         filter,
       ),
+      sendRequest: () =>
+        this.sendRawWithReconnectRetry(
+          ["REQ", subId, filter],
+          "Failed to restore relay subscription.",
+        ),
+      closeSubscription: (wireSubId) => this.closeSubscription(wireSubId),
     });
-    try {
-      await this.sendRawWithReconnectRetry(
-        ["REQ", subId, filter],
-        "Failed to restore relay subscription.",
-      );
-    } catch (error) {
-      this.subscriptions.delete(subId);
-      throw error;
-    }
-    await ready;
 
     return async () => {
       const active = this.subscriptions.get(subId);

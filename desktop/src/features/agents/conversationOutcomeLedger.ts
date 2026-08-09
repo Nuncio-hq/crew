@@ -1,3 +1,5 @@
+import type { ObserverEvent } from "./ui/agentSessionTypes";
+
 /**
  * Terminal conversation-outcome ledger for the channel view.
  *
@@ -22,11 +24,30 @@ export type ConversationOutcomeEntry = {
   agentPubkey: string;
   channelId: string;
   endedAt: number;
+  /** Producer terminal time used for replay-stable causal ordering. */
+  terminalAt?: number;
+  /** Stable tie-breaker when distinct producers terminate at the same time. */
+  terminalOrderKey?: string;
   failedEventIds?: string[];
   triggeringEventIds?: string[];
 };
 
 const outcomeByConversation = new Map<string, ConversationOutcomeEntry>();
+
+export function conversationOutcomeTerminalOrderKey(
+  agentKey: string,
+  event: ObserverEvent,
+  resolvedTurnId: string | null,
+): string {
+  return [
+    agentKey,
+    event.agentIndex ?? "null-agent",
+    event.sessionId ?? "null-session",
+    resolvedTurnId ?? "null-turn",
+    event.seq.toString().padStart(16, "0"),
+    event.kind,
+  ].join("\u0000");
+}
 
 /** Drop oldest-by-endedAt entries once past the hard cap. */
 function enforceOutcomeCap() {
@@ -53,15 +74,33 @@ export function clearConversationOutcome(conversationId: string): boolean {
 }
 
 /**
- * Record (or overwrite) the latest terminal outcome for a conversation.
- * Enforces the LRU cap. Always mutates — callers bump generation.
+ * Record the causally latest terminal outcome for a conversation.
+ * Returns whether the ledger changed so callers can bump their generation.
  */
 export function recordConversationOutcome(
   conversationId: string,
   entry: ConversationOutcomeEntry,
-): void {
+): boolean {
+  const prior = outcomeByConversation.get(conversationId);
+  if (prior) {
+    const priorHasOrder = Number.isFinite(prior.terminalAt);
+    const entryHasOrder = Number.isFinite(entry.terminalAt);
+    if (priorHasOrder && !entryHasOrder) return false;
+    if (priorHasOrder && entryHasOrder) {
+      const priorAt = prior.terminalAt ?? 0;
+      const entryAt = entry.terminalAt ?? 0;
+      if (entryAt < priorAt) return false;
+      if (
+        entryAt === priorAt &&
+        (entry.terminalOrderKey ?? "") <= (prior.terminalOrderKey ?? "")
+      ) {
+        return false;
+      }
+    }
+  }
   outcomeByConversation.set(conversationId, entry);
   enforceOutcomeCap();
+  return true;
 }
 
 /** Drop entries past the TTL. Returns true when anything was removed. */

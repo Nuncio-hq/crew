@@ -11,6 +11,7 @@ import {
   clearConversationOutcomeLedger,
   cloneConversationOutcomeLedger,
   conversationOutcomeLedgerSize,
+  conversationOutcomeTerminalOrderKey,
   pruneExpiredConversationOutcomes,
   recordConversationOutcome,
   restoreConversationOutcomeLedger,
@@ -127,7 +128,7 @@ function recordOutcomeAndBump(
   conversationId: string,
   entry: ConversationOutcomeEntry,
 ) {
-  recordConversationOutcome(conversationId, entry);
+  if (!recordConversationOutcome(conversationId, entry)) return;
   bumpActiveTurnsGeneration();
 }
 
@@ -167,6 +168,29 @@ function eventObservedAt(agentKey: string, event: ObserverEvent): number {
   // Replay is historical evidence, never fresh contact. Invalid or future
   // timestamps remain unverified until an actual live frame calibrates them.
   return corrected <= Date.now() ? corrected : 0;
+}
+
+function resolveTerminalTurn(
+  agentKey: string,
+  event: ObserverEvent,
+  conversationId: string | null,
+): ActiveTurn | null {
+  const turns = activeTurnsByAgent.get(agentKey);
+  if (!turns) return null;
+  if (event.turnId) return turns.get(event.turnId) ?? null;
+  if (!event.channelId || !conversationId) return null;
+
+  const terminalTriggers = triggeringEventIds(event);
+  const candidates = [...turns.values()].filter(
+    (turn) =>
+      turn.channelId === event.channelId &&
+      turn.conversationId === conversationId &&
+      (terminalTriggers.length === 0 ||
+        terminalTriggers.every((trigger) =>
+          turn.triggeringEventIds.includes(trigger),
+        )),
+  );
+  return candidates.length === 1 ? (candidates[0] ?? null) : null;
 }
 
 function startTurn(
@@ -323,7 +347,6 @@ function recordTerminal(agentKey: string, turnId: string, terminalAt: number) {
 function endTurn(
   agentPubkey: string,
   turnId: string | null,
-  channelId: string | null,
   terminalAt: number,
 ) {
   const key = normalizePubkey(agentPubkey);
@@ -338,19 +361,7 @@ function endTurn(
   const agentTurns = activeTurnsByAgent.get(key);
   if (!agentTurns) return;
 
-  if (turnId) {
-    agentTurns.delete(turnId);
-  } else if (channelId) {
-    // Fallback: remove by channelId if turnId not available. Tombstone the
-    // resolved turn so a later stale liveness for it can't resurrect a badge.
-    for (const [tid, turn] of agentTurns) {
-      if (turn.channelId === channelId) {
-        agentTurns.delete(tid);
-        recordTerminal(key, tid, terminalAt);
-        break;
-      }
-    }
-  }
+  if (turnId) agentTurns.delete(turnId);
   if (agentTurns.size === 0) {
     activeTurnsByAgent.delete(key);
   }
@@ -374,6 +385,8 @@ function pruneExpired() {
           agentPubkey: agentKey,
           channelId: turn.channelId,
           endedAt: now,
+          terminalAt: now,
+          terminalOrderKey: `${agentKey}\u0000${turnId}\u0000lost-contact`,
           failedEventIds: [...turn.triggeringEventIds],
         });
         agentTurns.delete(turnId);
@@ -487,27 +500,28 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
       // Reuse the event's already-resolved channel/conversation ids — do not
       // re-derive from the live turn map (the turn may already be pruned).
       const conversationId = event.conversationId ?? event.channelId;
-      const terminalTurn = event.turnId
-        ? activeTurnsByAgent.get(key)?.get(event.turnId)
-        : [...(activeTurnsByAgent.get(key)?.values() ?? [])].find(
-            (turn) => turn.channelId === event.channelId,
-          );
-      if (event.channelId && conversationId) {
+      const terminalTurn = resolveTerminalTurn(key, event, conversationId);
+      const resolvedTurnId = event.turnId ?? terminalTurn?.turnId ?? null;
+      const terminalTriggers =
+        terminalTurn?.triggeringEventIds ?? triggeringEventIds(event);
+      const terminalAt = parseTimestamp(event.timestamp) ?? 0;
+      if (event.channelId && conversationId && resolvedTurnId) {
         recordOutcomeAndBump(conversationId, {
           outcome: event.kind === "turn_completed" ? "completed" : "error",
           agentPubkey: key,
           channelId: event.channelId,
           endedAt: observedAt,
-          failedEventIds: [...(terminalTurn?.triggeringEventIds ?? [])],
-          triggeringEventIds: [...(terminalTurn?.triggeringEventIds ?? [])],
+          terminalAt,
+          terminalOrderKey: conversationOutcomeTerminalOrderKey(
+            key,
+            event,
+            resolvedTurnId,
+          ),
+          failedEventIds: [...terminalTriggers],
+          triggeringEventIds: [...terminalTriggers],
         });
       }
-      endTurn(
-        agentPubkey,
-        event.turnId ?? null,
-        event.channelId ?? null,
-        Date.parse(event.timestamp),
-      );
+      endTurn(agentPubkey, resolvedTurnId, terminalAt);
       notifyListeners();
       return;
     }

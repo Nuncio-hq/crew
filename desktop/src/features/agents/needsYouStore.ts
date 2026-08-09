@@ -2,7 +2,7 @@ import * as React from "react";
 
 import { deriveAgentConversationId } from "@/features/agents/conversationId";
 import { getThreadReference } from "@/features/messages/lib/threading";
-import type { FeedItem, RelayEvent } from "@/shared/api/types";
+import type { RelayEvent } from "@/shared/api/types";
 import {
   KIND_APPROVAL_DENY,
   KIND_APPROVAL_GRANT,
@@ -36,6 +36,8 @@ const requests = new Map<string, NeedsYouRequest>();
 const pendingApprovalResolutions = new Map<string, RelayEvent>();
 const MAX_PENDING_APPROVAL_RESOLUTIONS = 1_000;
 let approvalProjectionUnavailable = false;
+let exhaustiveApprovalProjection = false;
+let exhaustiveApprovalProjectionOverflowed = false;
 const userInputRequests = new Map<string, UserInputNeedsYouRequest>();
 const resolvedUserInputRequestIds = new Set<string>();
 const listeners = new Set<() => void>();
@@ -47,6 +49,26 @@ const EMPTY_REQUESTS: NeedsYouRequest[] = [];
 let allCache: NeedsYouRequest[] | null = null;
 let allCacheGeneration = -1;
 let expiryTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+
+export function beginExhaustiveApprovalProjection(): void {
+  approvalProjectionUnavailable = true;
+  exhaustiveApprovalProjection = true;
+  exhaustiveApprovalProjectionOverflowed = false;
+  notify();
+}
+
+export function endExhaustiveApprovalProjection(success: boolean): boolean {
+  const projectionReady = success && !exhaustiveApprovalProjectionOverflowed;
+  exhaustiveApprovalProjection = false;
+  exhaustiveApprovalProjectionOverflowed = false;
+  approvalProjectionUnavailable = !projectionReady;
+  if (!projectionReady) {
+    requests.clear();
+    pendingApprovalResolutions.clear();
+  }
+  notify();
+  return projectionReady;
+}
 
 function notify() {
   generation += 1;
@@ -212,7 +234,8 @@ function requestFields(
 
 export function ingestApprovalRequestEvent(event: RelayEvent) {
   if (event.kind !== KIND_APPROVAL_REQUEST) return null;
-  if (approvalProjectionUnavailable) return null;
+  if (approvalProjectionUnavailable && !exhaustiveApprovalProjection)
+    return null;
   const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
   return channelId
     ? requestFields(
@@ -223,17 +246,6 @@ export function ingestApprovalRequestEvent(event: RelayEvent) {
         event.created_at * 1_000,
       )
     : null;
-}
-
-export function ingestApprovalRequestFeedItem(item: FeedItem) {
-  if (item.kind !== KIND_APPROVAL_REQUEST || !item.channelId) return null;
-  return requestFields(
-    item.id,
-    item.channelId,
-    item.tags,
-    item.pubkey,
-    item.createdAt * 1_000,
-  );
 }
 
 export function resolveApprovalRequest(requestId: string) {
@@ -294,6 +306,7 @@ export async function resolveApprovalRequestEvent(event: RelayEvent) {
   }
   pendingApprovalResolutions.set(event.id, event);
   if (pendingApprovalResolutions.size > MAX_PENDING_APPROVAL_RESOLUTIONS) {
+    exhaustiveApprovalProjectionOverflowed = exhaustiveApprovalProjection;
     approvalProjectionUnavailable = true;
     pendingApprovalResolutions.clear();
     requests.clear();
@@ -302,17 +315,8 @@ export async function resolveApprovalRequestEvent(event: RelayEvent) {
   return false;
 }
 
-// Hydration reconcile: `needs_action` is the relay's authoritative pending
-// set (kind 46010, buzz-db feed.rs). Requests resolved or expired while the
-// app was closed never emit a live grant we can observe, so on each feed
-// fetch drop store entries that the fresh snapshot no longer contains.
-// A grace window protects requests ingested live moments before the fetch.
-// When the page is full (length >= limit) the snapshot may be PARTIAL —
-// deletions are skipped then, because absence proves nothing.
-const RECONCILE_GRACE_MS = 60_000;
-
-// Tombstones for live-resolved ids: a stale feed page fetched before the
-// grant landed must not re-add a request the user already resolved.
+// Tombstones prevent delayed verified request replay from resurrecting an
+// approval already resolved by a verified terminal event.
 const resolvedRequestIds = new Set<string>();
 const RESOLVED_TOMBSTONE_LIMIT = 512;
 
@@ -322,47 +326,6 @@ function rememberResolved(requestId: string) {
     const oldest = resolvedRequestIds.values().next().value;
     if (oldest !== undefined) resolvedRequestIds.delete(oldest);
   }
-}
-
-export function reconcileNeedsYouFromFeed(
-  items: FeedItem[],
-  fetchedAt = Date.now(),
-  { snapshotComplete = true }: { snapshotComplete?: boolean } = {},
-) {
-  if (!snapshotComplete) return false;
-  if (approvalProjectionUnavailable) {
-    approvalProjectionUnavailable = false;
-    pendingApprovalResolutions.clear();
-    requests.clear();
-    for (const item of items) {
-      if (item.kind !== KIND_APPROVAL_REQUEST) continue;
-      const channelId = item.tags.find((tag) => tag[0] === "h")?.[1];
-      if (!channelId) continue;
-      requestFields(item.id, channelId, item.tags, item.pubkey, item.createdAt);
-    }
-    notify();
-    return true;
-  }
-  const present = new Set(
-    items
-      .filter((item) => item.kind === KIND_APPROVAL_REQUEST)
-      .map((item) => item.id),
-  );
-  let changed = false;
-  for (const [id, request] of requests) {
-    if (
-      !present.has(id) &&
-      request.createdAt < fetchedAt - RECONCILE_GRACE_MS
-    ) {
-      requests.delete(id);
-      changed = true;
-    }
-  }
-  if (changed) {
-    scheduleExpiry();
-    notify();
-  }
-  return changed;
 }
 
 export function getNeedsYouForConversation(
@@ -380,7 +343,10 @@ export function getNeedsYouForConversation(
   }
   const cached = conversationCache.get(conversationId);
   if (cached) return cached;
-  const result = [...requests.values(), ...userInputRequests.values()]
+  const approvalRequests = approvalProjectionUnavailable
+    ? []
+    : requests.values();
+  const result = [...approvalRequests, ...userInputRequests.values()]
     .filter((request) => request.conversationId === conversationId)
     .sort((a, b) => a.createdAt - b.createdAt);
   conversationCache.set(conversationId, result);
@@ -402,7 +368,10 @@ export function getNeedsYouForChannel(
   }
   const cached = channelCache.get(channelId);
   if (cached) return cached;
-  const result = [...requests.values(), ...userInputRequests.values()]
+  const approvalRequests = approvalProjectionUnavailable
+    ? []
+    : requests.values();
+  const result = [...approvalRequests, ...userInputRequests.values()]
     .filter((request) => request.channelId === channelId)
     .sort((a, b) => a.createdAt - b.createdAt);
   channelCache.set(channelId, result);
@@ -419,7 +388,10 @@ export function getNeedsYouForAll(now = Date.now()): NeedsYouRequest[] {
     scheduleExpiry();
   }
   if (allCache && allCacheGeneration === generation) return allCache;
-  allCache = [...requests.values(), ...userInputRequests.values()].sort(
+  const approvalRequests = approvalProjectionUnavailable
+    ? []
+    : requests.values();
+  allCache = [...approvalRequests, ...userInputRequests.values()].sort(
     (a, b) => a.createdAt - b.createdAt,
   );
   allCacheGeneration = generation;
@@ -450,6 +422,8 @@ export function clearUserInputRequests(channelId?: string): void {
 
 export function resetNeedsYouStore() {
   approvalProjectionUnavailable = false;
+  exhaustiveApprovalProjection = false;
+  exhaustiveApprovalProjectionOverflowed = false;
   requests.clear();
   pendingApprovalResolutions.clear();
   userInputRequests.clear();

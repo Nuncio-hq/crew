@@ -17,7 +17,6 @@ import type {
   FeedItem,
   FeedItemCategory,
   HomeFeedResponse,
-  RelayEvent,
 } from "@/shared/api/types";
 import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
 
@@ -473,18 +472,6 @@ function formatInboxTimestamp(unixSeconds: number) {
 
 export function formatInboxFullTimestamp(unixSeconds: number) {
   return fullTimeFormatter.format(new Date(unixSeconds * 1_000));
-}
-
-export function relayEventFromFeedItem(item: FeedItem): RelayEvent {
-  return {
-    content: item.content,
-    created_at: item.createdAt,
-    id: item.id,
-    kind: item.kind,
-    pubkey: item.pubkey,
-    sig: "",
-    tags: item.tags,
-  };
 }
 
 export function groupInboxItems(items: InboxItem[]): InboxGroup[] {

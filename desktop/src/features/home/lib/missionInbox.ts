@@ -308,16 +308,26 @@ export function deriveMissionInboxSections(
             eventId,
           }))
         : []);
+    const conversationReceipts =
+      receiptsByConversation.get(turn.conversationId) ?? [];
+    const matchingReceipts = conversationReceipts.filter((candidate) =>
+      exactPairs.some(
+        (pair) =>
+          pair.agentPubkey === candidate.agentPubkey &&
+          pair.eventId === candidate.parentEventId,
+      ),
+    );
     const receipt =
-      receiptsByConversation
-        .get(turn.conversationId)
-        ?.find((candidate) =>
-          exactPairs.some(
-            (pair) =>
-              pair.agentPubkey === candidate.agentPubkey &&
-              pair.eventId === candidate.parentEventId,
-          ),
-        ) ?? null;
+      exactPairs.length > 0 &&
+      exactPairs.every((pair) =>
+        matchingReceipts.some(
+          (candidate) =>
+            pair.agentPubkey === candidate.agentPubkey &&
+            pair.eventId === candidate.parentEventId,
+        ),
+      )
+        ? (matchingReceipts[0] ?? null)
+        : null;
     if (receipt) {
       latestReceiptByConversation.set(turn.conversationId, receipt);
     } else {

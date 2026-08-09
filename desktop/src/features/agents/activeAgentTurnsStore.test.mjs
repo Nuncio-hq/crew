@@ -14,6 +14,7 @@ import {
   restoreActiveAgentTurnsForCommunity,
   clearSavedCommunitySnapshot,
   clearActiveTurnsForAgent,
+  getConversationOutcomeEntry,
 } from "./activeAgentTurnsStore.ts";
 import {
   injectObserverEventsForE2E,
@@ -523,21 +524,75 @@ describe("activeAgentTurnsStore", () => {
       assert.equal(getActiveTurnsForAgent(AGENT).length, 1);
     });
 
-    it("channelId fallback removes only one matching turn", () => {
+    it("ambiguous null-turn terminal fails closed instead of selecting a sibling", () => {
       syncAgentTurnsFromEvents(AGENT, [
-        makeEvent({ seq: 1, turnId: "t1", channelId: "c1" }),
-        makeEvent({ seq: 2, turnId: "t2", channelId: "c1" }),
+        makeEvent({
+          seq: 1,
+          agentIndex: 0,
+          sessionId: "session-0",
+          turnId: "t1",
+          channelId: "c1",
+        }),
+        makeEvent({
+          seq: 2,
+          agentIndex: 1,
+          sessionId: "session-1",
+          turnId: "t2",
+          channelId: "c1",
+        }),
+      ]);
+      assert.equal(getActiveTurnControlTargetsForAgent(AGENT).length, 2);
+      syncAgentTurnsFromEvents(AGENT, [
         makeEvent({
           seq: 3,
           kind: "turn_completed",
+          agentIndex: null,
+          sessionId: null,
           turnId: null,
           channelId: "c1",
         }),
       ]);
-      // Only one of the two turns in c1 should be removed
-      const channels = channelIdsOf(getActiveTurnsForAgent(AGENT));
-      assert.equal(channels.size, 1);
-      assert.ok(channels.has("c1"));
+      assert.equal(getActiveTurnControlTargetsForAgent(AGENT).length, 2);
+      assert.equal(getConversationOutcomeEntry("c1"), null);
+    });
+
+    it("null-turn terminal uses exact trigger evidence to select one sibling", () => {
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({
+          seq: 1,
+          agentIndex: 0,
+          sessionId: "session-0",
+          turnId: "t1",
+          channelId: "c1",
+          payload: { triggeringEventIds: ["trigger-1"] },
+        }),
+        makeEvent({
+          seq: 2,
+          agentIndex: 1,
+          sessionId: "session-1",
+          turnId: "t2",
+          channelId: "c1",
+          payload: { triggeringEventIds: ["trigger-2"] },
+        }),
+        makeEvent({
+          seq: 3,
+          kind: "turn_completed",
+          agentIndex: 1,
+          sessionId: "session-1",
+          turnId: null,
+          channelId: "c1",
+          payload: { triggeringEventIds: ["trigger-2"] },
+        }),
+      ]);
+
+      const turns = getActiveTurnControlTargetsForAgent(AGENT);
+      assert.deepEqual(
+        turns.map((turn) => turn.turnId),
+        ["t1"],
+      );
+      assert.deepEqual(getConversationOutcomeEntry("c1")?.triggeringEventIds, [
+        "trigger-2",
+      ]);
     });
 
     it("agent_panic with an explicit turnId removes only that turn", () => {

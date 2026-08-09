@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
 
 import {
+  beginExhaustiveApprovalProjection,
+  endExhaustiveApprovalProjection,
   getNeedsYouForChannels,
   getNeedsYouForConversation,
   getNeedsYouForAll,
@@ -9,7 +11,6 @@ import {
   ingestUserInputRequest,
   ingestApprovalRequest,
   ingestApprovalRequestEvent,
-  reconcileNeedsYouFromFeed,
   resetNeedsYouStore,
   resolveApprovalRequest,
   resolveUserInputRequest,
@@ -97,7 +98,7 @@ describe("needsYouStore", () => {
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
   });
 
-  it("fails closed on terminal overflow until a complete feed rebuild", async () => {
+  it("fails closed on terminal overflow until verified exhaustive hydration", async () => {
     for (let index = 0; index <= 1_000; index += 1) {
       await resolveApprovalRequestEvent(
         event({
@@ -108,22 +109,23 @@ describe("needsYouStore", () => {
       );
     }
     assert.equal(ingestApprovalRequestEvent(event({ id: "request-0" })), null);
-    reconcileNeedsYouFromFeed([
-      {
-        id: "request-0",
-        kind: KIND_APPROVAL_REQUEST,
-        pubkey: "agent",
-        content: "approval",
-        createdAt: Date.now(),
-        channelId: CHANNEL,
-        channelName: "general",
-        tags: [
-          ["h", CHANNEL],
-          ["e", ROOT, "", "root"],
-        ],
-        category: "needs_action",
-      },
-    ]);
+    beginExhaustiveApprovalProjection();
+    assert.notEqual(
+      ingestApprovalRequestEvent(event({ id: "f".repeat(64) })),
+      null,
+    );
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
+    assert.equal(endExhaustiveApprovalProjection(true), true);
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 1);
+  });
+
+  it("preserves verified live approvals that overlap exhaustive hydration", () => {
+    assert.notEqual(ingestApprovalRequestEvent(event()), null);
+
+    beginExhaustiveApprovalProjection();
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
+    assert.equal(endExhaustiveApprovalProjection(true), true);
+
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 1);
   });
 
@@ -175,33 +177,7 @@ describe("needsYouStore", () => {
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
   });
 
-  it("reconciles hydration: drops stale entries missing from the feed snapshot", () => {
-    const now = Date.now();
-    ingestApprovalRequest(
-      request({ id: "stale-request", createdAt: now - 5 * 60 * 1_000 }),
-    );
-    ingestApprovalRequest(
-      request({ id: "fresh-request", createdAt: now - 5_000 }),
-    );
-    // Feed snapshot contains neither → stale (past grace) drops, fresh survives.
-    reconcileNeedsYouFromFeed([], now);
-    const remaining = getNeedsYouForChannel(CHANNEL);
-    assert.deepEqual(
-      remaining.map((entry) => entry.id),
-      ["fresh-request"],
-    );
-  });
-
-  it("skips reconcile deletions when the feed snapshot may be partial", () => {
-    const now = Date.now();
-    ingestApprovalRequest(
-      request({ id: "old-but-pending", createdAt: now - 10 * 60 * 1_000 }),
-    );
-    reconcileNeedsYouFromFeed([], now, { snapshotComplete: false });
-    assert.equal(getNeedsYouForChannel(CHANNEL).length, 1);
-  });
-
-  it("does not resurrect a live-resolved request from a stale feed page", async () => {
+  it("does not resurrect a live-resolved request from delayed verified replay", async () => {
     ingestApprovalRequestEvent(event());
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 1);
     assert.equal(
@@ -214,7 +190,7 @@ describe("needsYouStore", () => {
       ),
       true,
     );
-    // A feed page fetched before the grant landed still lists the request.
+    // A delayed verified request replay must not undo its terminal event.
     const resurrection = ingestApprovalRequest(request({ id: ROOT }));
     assert.equal(resurrection, null);
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
@@ -348,23 +324,5 @@ describe("needsYouStore", () => {
       createdAt: now - 30 * 60 * 1_000,
     });
     assert.equal(getNeedsYouForChannel(CHANNEL, now).length, 1);
-  });
-
-  it("reconcile never prunes user-input entries (46010-only feed)", () => {
-    const now = Date.now();
-    ingestUserInputRequest({
-      id: "user-input-live",
-      channelId: CHANNEL,
-      rootEventId: ROOT,
-      conversationId: "conversation-user-input",
-      agentPubkey: AGENT,
-      createdAt: now - 5 * 60 * 1_000, // well past the 60s grace
-    });
-    // The native needs_action feed only carries 46010 approvals, so a
-    // complete snapshot without this entry must NOT delete it.
-    reconcileNeedsYouFromFeed([], now);
-    assert.equal(getNeedsYouForChannel(CHANNEL, now).length, 1);
-    // Reset to isolate the module-level durable projection from later tests.
-    resetNeedsYouStore();
   });
 });

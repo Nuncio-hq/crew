@@ -3,6 +3,7 @@ import type { ObserverEvent } from "@/features/agents/ui/agentSessionTypes";
 const MAX_RETIRED_SESSIONS = 128;
 
 const liveSessionByAgentChannel = new Map<string, string>();
+const liveSessionStartedAtByAgentChannel = new Map<string, number>();
 const retiredSessionsByAgentChannel = new Map<string, Set<string>>();
 let preparedObservationByEvent = new WeakMap<
   ObserverEvent,
@@ -13,8 +14,16 @@ export type AgentSessionObservation = "current" | "changed" | "retired";
 
 export type AgentSessionGenerationSnapshot = {
   live: Map<string, string>;
+  startedAt: Map<string, number>;
   retired: Map<string, Set<string>>;
 };
+
+function eventStartedAt(event: ObserverEvent): number | null {
+  const source = event.startedAt ?? (event.replayed ? null : event.timestamp);
+  if (!source) return null;
+  const parsed = Date.parse(source);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 function sessionKey(agentKey: string, event: ObserverEvent): string {
   const producerIndex =
@@ -46,12 +55,20 @@ function commitAgentSessionObservation(
   const key = sessionKey(agentKey, event);
   const current = liveSessionByAgentChannel.get(key);
   const retired = retiredSessionsByAgentChannel.get(key);
+  const startedAt = eventStartedAt(event);
   if (retired?.has(event.sessionId)) return "retired";
-  if (event.replayed) {
-    return current && current !== event.sessionId ? "retired" : "current";
+  if (
+    event.replayed &&
+    current &&
+    current !== event.sessionId &&
+    (startedAt === null ||
+      startedAt <= (liveSessionStartedAtByAgentChannel.get(key) ?? 0))
+  ) {
+    return "retired";
   }
   if (!current) {
     liveSessionByAgentChannel.set(key, event.sessionId);
+    liveSessionStartedAtByAgentChannel.set(key, startedAt ?? 0);
     return "current";
   }
   if (current === event.sessionId) return "current";
@@ -64,6 +81,7 @@ function commitAgentSessionObservation(
   }
   retiredSessionsByAgentChannel.set(key, nextRetired);
   liveSessionByAgentChannel.set(key, event.sessionId);
+  liveSessionStartedAtByAgentChannel.set(key, startedAt ?? 0);
   return "changed";
 }
 
@@ -94,6 +112,7 @@ export function prepareAgentSessionObservation(
 
 export function resetAgentSessionGenerations(): void {
   liveSessionByAgentChannel.clear();
+  liveSessionStartedAtByAgentChannel.clear();
   retiredSessionsByAgentChannel.clear();
   preparedObservationByEvent = new WeakMap();
 }
@@ -101,6 +120,7 @@ export function resetAgentSessionGenerations(): void {
 export function snapshotAgentSessionGenerations(): AgentSessionGenerationSnapshot {
   return {
     live: new Map(liveSessionByAgentChannel),
+    startedAt: new Map(liveSessionStartedAtByAgentChannel),
     retired: new Map(
       [...retiredSessionsByAgentChannel].map(([key, sessions]) => [
         key,
@@ -116,6 +136,9 @@ export function restoreAgentSessionGenerations(
   resetAgentSessionGenerations();
   for (const [key, sessionId] of snapshot.live) {
     liveSessionByAgentChannel.set(key, sessionId);
+  }
+  for (const [key, startedAt] of snapshot.startedAt) {
+    liveSessionStartedAtByAgentChannel.set(key, startedAt);
   }
   for (const [key, sessions] of snapshot.retired) {
     retiredSessionsByAgentChannel.set(key, new Set(sessions));

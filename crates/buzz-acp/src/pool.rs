@@ -22,6 +22,7 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -45,8 +46,8 @@ use crate::queue::{
 };
 use crate::relay::{ChannelInfo, RestClient};
 use crate::secure_spool::{
-    claim_secure_entries, ensure_secure_directory, measure_secure_directory, read_secure_entry,
-    remove_secure_entry, rename_secure_entry, write_secure_entry_if_absent,
+    claim_secure_entries, ensure_secure_directory, lock_secure_directory, measure_secure_directory,
+    read_secure_entry, remove_secure_entry, rename_secure_entry, write_secure_entry_if_absent,
 };
 
 /// Window within which agent activity before a hard-cap death qualifies
@@ -4709,6 +4710,7 @@ const RECEIPT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const RECEIPT_MAX_SPOOL_ENTRIES: usize = 4_096;
 const RECEIPT_MAX_SPOOL_BYTES: u64 = 64 * 1024 * 1024;
 static RECEIPT_OUTBOX_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static RECEIPT_RECOVERY_CURSOR: AtomicUsize = AtomicUsize::new(0);
 static RECEIPT_DEAD_LETTER_IDS: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
 
 fn receipt_dead_letter_ids() -> &'static tokio::sync::Mutex<HashSet<String>> {
@@ -4724,6 +4726,16 @@ async fn ensure_receipt_spool_capacity(path: &Path, additional_bytes: u64) -> Re
     if count.saturating_add(1) > RECEIPT_MAX_SPOOL_ENTRIES
         || bytes.saturating_add(additional_bytes) > RECEIPT_MAX_SPOOL_BYTES
     {
+        return Err(format!(
+            "receipt outbox capacity exceeded ({count} entries, {bytes} bytes)"
+        ));
+    }
+    Ok(())
+}
+
+async fn validate_receipt_spool_capacity(path: &Path) -> Result<(), String> {
+    let (count, bytes) = measure_secure_directory(path, RECEIPT_MAX_SPOOL_BYTES).await?;
+    if count > RECEIPT_MAX_SPOOL_ENTRIES || bytes > RECEIPT_MAX_SPOOL_BYTES {
         return Err(format!(
             "receipt outbox capacity exceeded ({count} entries, {bytes} bytes)"
         ));
@@ -4807,6 +4819,18 @@ async fn persist_receipt_events(
         }
         return failures;
     }
+    let _capacity_lock = match lock_secure_directory(outbox_dir).await {
+        Ok(lock) => lock,
+        Err(error) => {
+            for event in events {
+                failures.insert(
+                    event.id.to_hex(),
+                    format!("failed to claim receipt outbox capacity: {error}"),
+                );
+            }
+            return failures;
+        }
+    };
     for event in events {
         let event_id = event.id.to_hex();
         let file_name = format!("{}.json", event.id);
@@ -4891,12 +4915,15 @@ async fn flush_receipt_outbox(
     }
     let claimed_entries = {
         let _guard = receipt_outbox_lock().lock().await;
-        match ensure_receipt_spool_capacity(outbox_dir, 0).await {
-            Ok(()) => claim_secure_entries(outbox_dir, "json", RECEIPT_MAX_SPOOL_BYTES).await,
+        match lock_secure_directory(outbox_dir).await {
+            Ok(_capacity_lock) => match validate_receipt_spool_capacity(outbox_dir).await {
+                Ok(()) => claim_secure_entries(outbox_dir, "json", RECEIPT_MAX_SPOOL_BYTES).await,
+                Err(error) => Err(error),
+            },
             Err(error) => Err(error),
         }
     };
-    let mut entries = match claimed_entries {
+    let claimed_entries = match claimed_entries {
         Ok(entries) => entries,
         Err(error) => {
             report.scan_failed = true;
@@ -4904,6 +4931,8 @@ async fn flush_receipt_outbox(
             return Ok(report);
         }
     };
+    let skipped_contended = claimed_entries.skipped_contended;
+    let mut entries = claimed_entries.entries;
     if let Some(target_event_ids) = target_event_ids {
         entries.retain(|entry| {
             Path::new(&entry.name)
@@ -4913,7 +4942,11 @@ async fn flush_receipt_outbox(
         });
     }
     entries.sort_by(|left, right| left.name.cmp(&right.name));
-    report.scan_has_more = entries.len() > max_entries;
+    report.scan_has_more = skipped_contended > 0 || entries.len() > max_entries;
+    if max_entries > 0 && entries.len() > max_entries {
+        let cursor = RECEIPT_RECOVERY_CURSOR.fetch_add(1, Ordering::Relaxed) % entries.len();
+        entries.rotate_left(cursor);
+    }
     entries.truncate(max_entries);
     let mut permanent_deadletters = Vec::new();
     for entry in entries {
@@ -5171,7 +5204,7 @@ async fn publish_agent_receipts(
         );
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    if !report.queued.is_empty() || report.scan_failed {
+    if !report.queued.is_empty() || report.scan_failed || report.scan_has_more {
         spawn_receipt_outbox_worker(
             &ctx.receipt_outbox_workers,
             outbox_dir,

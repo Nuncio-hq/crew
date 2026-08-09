@@ -402,7 +402,6 @@ export function HomeView({
     channels,
     currentPubkey,
     effectiveDoneSet,
-    feed,
     inboxItems,
     ownedAgentPubkeys,
   });

@@ -11,6 +11,7 @@ function event(overrides = {}) {
   return {
     seq: 1,
     timestamp: "2024-01-01T00:00:00Z",
+    startedAt: "2024-01-01T00:00:00Z",
     kind: "turn_started",
     agentIndex: 0,
     channelId: "channel-1",
@@ -69,6 +70,57 @@ describe("activeAgentSessionGeneration", () => {
     assert.equal(observeAgentSession("agent", old), "current");
     assert.equal(observeAgentSession("agent", current), "changed");
     assert.equal(observeAgentSession("agent", replayedOld), "retired");
+  });
+
+  it("accepts replay from a distinct session that has not been proven retired", () => {
+    assert.equal(
+      observeAgentSession("agent", event({ sessionId: "session-live" })),
+      "current",
+    );
+
+    assert.equal(
+      observeAgentSession(
+        "agent",
+        event({
+          seq: 2,
+          timestamp: "2024-01-01T00:00:02Z",
+          startedAt: "2024-01-01T00:00:02Z",
+          sessionId: "session-offline",
+          replayed: true,
+        }),
+      ),
+      "changed",
+      "a concurrent offline session is not retired without signed generation proof",
+    );
+  });
+
+  it("does not let replay emission time replace newer producer authority", () => {
+    const live = event({
+      sessionId: "session-live",
+      startedAt: "2024-01-01T00:00:10Z",
+      timestamp: "2024-01-01T00:00:10Z",
+    });
+    const replayedOlder = event({
+      sessionId: "session-offline-old",
+      startedAt: "2024-01-01T00:00:05Z",
+      timestamp: "2024-01-01T00:01:00Z",
+      replayed: true,
+    });
+    const liveAgain = event({
+      seq: 2,
+      sessionId: "session-live",
+      startedAt: "2024-01-01T00:00:10Z",
+      timestamp: "2024-01-01T00:01:01Z",
+    });
+
+    assert.deepEqual(
+      [
+        observeAgentSession("agent", live),
+        observeAgentSession("agent", replayedOlder),
+        observeAgentSession("agent", liveAgain),
+      ],
+      ["current", "retired", "current"],
+    );
   });
 
   it("revalidates a staged frame after a newer session retires it", () => {

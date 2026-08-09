@@ -1,6 +1,9 @@
 use std::ffi::{OsStr, OsString};
+#[cfg(unix)]
 use std::io::{Read, Write};
 use std::path::{Component, Path};
+
+pub(crate) const SECURE_SPOOL_LOCK_CONTENDED: &str = "durable spool lock is already held";
 
 #[derive(Debug)]
 pub(crate) struct SecureSpoolEntry {
@@ -12,6 +15,22 @@ pub(crate) struct SecureSpoolEntry {
 pub(crate) struct ClaimedSecureSpoolEntry {
     pub(crate) name: OsString,
     pub(crate) bytes: Vec<u8>,
+    _claim: std::fs::File,
+}
+
+#[derive(Debug)]
+pub(crate) struct ClaimedSecureSpoolEntries {
+    pub(crate) entries: Vec<ClaimedSecureSpoolEntry>,
+    pub(crate) skipped_contended: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct SecureSpoolDirectoryLock {
+    _claim: std::fs::File,
+}
+
+#[derive(Debug)]
+pub(crate) struct SecureSpoolEntryLease {
     _claim: std::fs::File,
 }
 
@@ -34,6 +53,28 @@ pub(crate) async fn measure_secure_directory(
 ) -> Result<(usize, u64), String> {
     let path = path.to_owned();
     run_blocking(move || platform::measure_secure_directory(&path, max_entry_bytes)).await
+}
+
+pub(crate) async fn lock_secure_directory(path: &Path) -> Result<SecureSpoolDirectoryLock, String> {
+    let path = path.to_owned();
+    run_blocking(move || {
+        platform::lock_secure_directory(&path)
+            .map(|claim| SecureSpoolDirectoryLock { _claim: claim })
+    })
+    .await
+}
+
+pub(crate) async fn lock_secure_entry_lease(
+    path: &Path,
+    name: &OsStr,
+) -> Result<SecureSpoolEntryLease, String> {
+    let path = path.to_owned();
+    let name = name.to_owned();
+    run_blocking(move || {
+        platform::lock_secure_named_file(&path, &name)
+            .map(|claim| SecureSpoolEntryLease { _claim: claim })
+    })
+    .await
 }
 
 pub(crate) async fn read_secure_entries(
@@ -60,7 +101,7 @@ pub(crate) async fn claim_secure_entries(
     path: &Path,
     extension: &str,
     max_entry_bytes: u64,
-) -> Result<Vec<ClaimedSecureSpoolEntry>, String> {
+) -> Result<ClaimedSecureSpoolEntries, String> {
     let path = path.to_owned();
     let extension = extension.to_owned();
     run_blocking(move || platform::claim_secure_entries(&path, &extension, max_entry_bytes)).await
@@ -103,8 +144,9 @@ pub(crate) async fn rename_secure_entry(
 mod platform {
     use super::*;
     use nix::dir::Dir;
+    use nix::errno::Errno;
     use nix::fcntl::{renameat, AtFlags, OFlag};
-    use nix::sys::stat::{fchmod, fstat, Mode, SFlag};
+    use nix::sys::stat::{fchmod, fstat, mkdirat, Mode, SFlag};
     use nix::unistd::{fsync, geteuid, linkat, unlinkat, UnlinkatFlags};
     use std::fs::File;
     use std::os::unix::ffi::OsStringExt;
@@ -113,42 +155,142 @@ mod platform {
         OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC
     }
 
-    fn open_directory_chain(path: &Path) -> Result<Dir, String> {
-        let mut directory = if path.is_absolute() {
-            Dir::open(Path::new("/"), directory_flags(), Mode::empty())
-        } else {
-            Dir::open(Path::new("."), directory_flags(), Mode::empty())
-        }
-        .map_err(|error| format!("failed to anchor durable spool path: {error}"))?;
+    fn anchor_directory(path: &Path) -> Result<Dir, String> {
+        Dir::open(
+            if path.is_absolute() {
+                Path::new("/")
+            } else {
+                Path::new(".")
+            },
+            directory_flags(),
+            Mode::empty(),
+        )
+        .map_err(|error| format!("failed to anchor durable spool path: {error}"))
+    }
 
-        for component in path.components() {
-            let name = match component {
-                Component::RootDir | Component::CurDir => continue,
-                Component::Normal(name) => name,
-                Component::ParentDir | Component::Prefix(_) => {
-                    return Err(format!(
-                        "unsafe durable spool path component: {}",
-                        path.display()
-                    ));
-                }
-            };
-            directory = Dir::openat(&directory, name, directory_flags(), Mode::empty())
+    fn path_components(path: &Path) -> Result<Vec<&OsStr>, String> {
+        path.components()
+            .filter_map(|component| match component {
+                Component::RootDir | Component::CurDir => None,
+                Component::Normal(name) => Some(Ok(name)),
+                Component::ParentDir | Component::Prefix(_) => Some(Err(format!(
+                    "unsafe durable spool path component: {}",
+                    path.display()
+                ))),
+            })
+            .collect()
+    }
+
+    fn validate_directory_component(
+        directory: &Dir,
+        path: &Path,
+        name: &OsStr,
+        is_leaf: bool,
+    ) -> Result<(), String> {
+        let metadata = fstat(directory)
+            .map_err(|error| format!("failed to inspect durable spool component: {error}"))?;
+        let file_type = SFlag::from_bits_truncate(metadata.st_mode);
+        let mode = Mode::from_bits_truncate(metadata.st_mode);
+        let permissions = mode & (Mode::S_IRWXU | Mode::S_IRWXG | Mode::S_IRWXO);
+        let owner = metadata.st_uid;
+        let current_owner = geteuid().as_raw();
+        if !file_type.contains(SFlag::S_IFDIR) || (owner != 0 && owner != current_owner) {
+            return Err(format!(
+                "unsafe durable spool component: {}",
+                name.to_string_lossy()
+            ));
+        }
+        if is_leaf {
+            if owner != current_owner || permissions != Mode::S_IRWXU {
+                return Err(format!(
+                    "durable spool directory must be an owner-owned 0700 directory: {}",
+                    path.display()
+                ));
+            }
+        } else if (permissions & (Mode::S_IWGRP | Mode::S_IWOTH)) != Mode::empty()
+            && !(owner == 0 && mode.contains(Mode::S_ISVTX))
+        {
+            return Err(format!(
+                "writable durable spool ancestor is not trusted: {}",
+                name.to_string_lossy()
+            ));
+        }
+        Ok(())
+    }
+
+    fn open_directory_chain(path: &Path) -> Result<Dir, String> {
+        let mut directory = anchor_directory(path)?;
+        let components = path_components(path)?;
+        for (index, name) in components.iter().enumerate() {
+            directory = Dir::openat(&directory, *name, directory_flags(), Mode::empty())
                 .map_err(|error| {
                     format!(
                         "failed to open durable spool component {} without following links: {error}",
                         name.to_string_lossy()
                     )
                 })?;
-            let metadata = fstat(&directory)
-                .map_err(|error| format!("failed to inspect durable spool component: {error}"))?;
-            let owner = metadata.st_uid;
-            if !SFlag::from_bits_truncate(metadata.st_mode).contains(SFlag::S_IFDIR)
-                || (owner != 0 && owner != geteuid().as_raw())
-            {
-                return Err(format!(
-                    "unsafe durable spool component: {}",
-                    name.to_string_lossy()
-                ));
+            validate_directory_component(&directory, path, name, index + 1 == components.len())?;
+        }
+        Ok(directory)
+    }
+
+    fn ensure_directory_chain(path: &Path) -> Result<Dir, String> {
+        let mut directory = anchor_directory(path)?;
+        let components = path_components(path)?;
+        for (index, name) in components.iter().enumerate() {
+            let (next, created) = match Dir::openat(
+                &directory,
+                *name,
+                directory_flags(),
+                Mode::empty(),
+            ) {
+                Ok(next) => (next, false),
+                Err(Errno::ENOENT) => {
+                    let created = match mkdirat(&directory, *name, Mode::S_IRWXU) {
+                        Ok(()) => true,
+                        Err(Errno::EEXIST) => false,
+                        Err(error) => {
+                            return Err(format!(
+                                "failed to create durable spool component {}: {error}",
+                                name.to_string_lossy()
+                            ));
+                        }
+                    };
+                    if created {
+                        fsync(&directory).map_err(|error| {
+                            format!("failed to commit durable spool directory creation: {error}")
+                        })?;
+                    }
+                    let next = Dir::openat(&directory, *name, directory_flags(), Mode::empty())
+                        .map_err(|error| {
+                            format!(
+                                "failed to open newly created durable spool component {}: {error}",
+                                name.to_string_lossy()
+                            )
+                        })?;
+                    if created {
+                        fchmod(&next, Mode::S_IRWXU).map_err(|error| {
+                            format!(
+                                "failed to secure newly created durable spool component {}: {error}",
+                                name.to_string_lossy()
+                            )
+                        })?;
+                    }
+                    (next, created)
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "failed to open durable spool component {} without following links: {error}",
+                        name.to_string_lossy()
+                    ));
+                }
+            };
+            directory = next;
+            validate_directory_component(&directory, path, name, index + 1 == components.len())?;
+            if created {
+                fsync(&directory).map_err(|error| {
+                    format!("failed to commit durable spool permissions: {error}")
+                })?;
             }
         }
         Ok(directory)
@@ -172,18 +314,7 @@ mod platform {
     }
 
     pub(super) fn ensure_secure_directory(path: &Path) -> Result<(), String> {
-        let existed = path
-            .try_exists()
-            .map_err(|error| format!("failed to inspect durable spool: {error}"))?;
-        if !existed {
-            std::fs::create_dir_all(path)
-                .map_err(|error| format!("failed to create durable spool: {error}"))?;
-        }
-        let directory = open_directory_chain(path)?;
-        if !existed {
-            fchmod(&directory, Mode::S_IRWXU)
-                .map_err(|error| format!("failed to secure durable spool: {error}"))?;
-        }
+        let directory = ensure_directory_chain(path)?;
         validate_leaf_directory(&directory, path)
     }
 
@@ -325,6 +456,11 @@ mod platform {
                 ));
             }
         };
+        if linked {
+            fsync(&directory).map_err(|error| {
+                format!("failed to commit durable spool entry directory metadata: {error}")
+            })?;
+        }
         unlinkat(&directory, temporary_name, UnlinkatFlags::NoRemoveDir).map_err(|error| {
             format!(
                 "failed to remove temporary durable spool entry {}: {error}",
@@ -390,69 +526,161 @@ mod platform {
         path: &Path,
         max_entry_bytes: u64,
     ) -> Result<(usize, u64), String> {
-        let mut directory = open_validated_directory(path)?;
-        let mut count = 0_usize;
-        let mut total = 0_u64;
-        let names = directory
-            .iter()
-            .map(|entry| {
-                entry
-                    .map(|entry| entry.file_name().to_bytes().to_vec())
-                    .map_err(|error| format!("failed to enumerate durable spool: {error}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for name in names {
-            if name == b"." || name == b".." {
-                continue;
+        fn measure_recursive(
+            mut directory: Dir,
+            max_entry_bytes: u64,
+            depth: usize,
+        ) -> Result<(usize, u64), String> {
+            if depth > 4 {
+                return Err("durable spool directory nesting exceeds the safety limit".to_owned());
             }
-            let name = OsString::from_vec(name);
-            let fd = nix::fcntl::openat(
-                &directory,
-                name.as_os_str(),
-                OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK,
-                Mode::empty(),
-            )
-            .map_err(|error| {
-                format!(
-                    "failed to inspect durable spool entry {} without following links: {error}",
-                    name.to_string_lossy()
+            let mut count = 0_usize;
+            let mut total = 0_u64;
+            let names = directory
+                .iter()
+                .map(|entry| {
+                    entry
+                        .map(|entry| entry.file_name().to_bytes().to_vec())
+                        .map_err(|error| format!("failed to enumerate durable spool: {error}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            for name in names {
+                if name == b"." || name == b".." {
+                    continue;
+                }
+                let name = OsString::from_vec(name);
+                if name == OsStr::new(".spool.lock") {
+                    continue;
+                }
+                let fd = nix::fcntl::openat(
+                    &directory,
+                    name.as_os_str(),
+                    OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK,
+                    Mode::empty(),
                 )
-            })?;
-            let metadata = fstat(&fd).map_err(|error| {
-                format!(
-                    "failed to inspect durable spool entry {}: {error}",
-                    name.to_string_lossy()
-                )
-            })?;
-            let file_type = SFlag::from_bits_truncate(metadata.st_mode);
-            if file_type.contains(SFlag::S_IFDIR) {
-                let permissions = Mode::from_bits_truncate(metadata.st_mode)
-                    & (Mode::S_IRWXU | Mode::S_IRWXG | Mode::S_IRWXO);
-                if metadata.st_uid != geteuid().as_raw() || permissions != Mode::S_IRWXU {
+                .map_err(|error| {
+                    format!(
+                        "failed to inspect durable spool entry {} without following links: {error}",
+                        name.to_string_lossy()
+                    )
+                })?;
+                let metadata = fstat(&fd).map_err(|error| {
+                    format!(
+                        "failed to inspect durable spool entry {}: {error}",
+                        name.to_string_lossy()
+                    )
+                })?;
+                let file_type = SFlag::from_bits_truncate(metadata.st_mode);
+                if file_type.contains(SFlag::S_IFDIR) {
+                    let permissions = Mode::from_bits_truncate(metadata.st_mode)
+                        & (Mode::S_IRWXU | Mode::S_IRWXG | Mode::S_IRWXO);
+                    if metadata.st_uid != geteuid().as_raw() || permissions != Mode::S_IRWXU {
+                        return Err(format!(
+                            "durable spool subdirectory is not owner-only: {}",
+                            name.to_string_lossy()
+                        ));
+                    }
+                    drop(fd);
+                    let nested = Dir::openat(
+                        &directory,
+                        name.as_os_str(),
+                        directory_flags(),
+                        Mode::empty(),
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "failed to open durable spool subdirectory {}: {error}",
+                            name.to_string_lossy()
+                        )
+                    })?;
+                    let (nested_count, nested_total) =
+                        measure_recursive(nested, max_entry_bytes, depth + 1)?;
+                    count = count.saturating_add(nested_count);
+                    total = total.saturating_add(nested_total);
+                    continue;
+                }
+                if !file_type.contains(SFlag::S_IFREG)
+                    || metadata.st_uid != geteuid().as_raw()
+                    || Mode::from_bits_truncate(metadata.st_mode)
+                        & (Mode::S_IRWXU | Mode::S_IRWXG | Mode::S_IRWXO)
+                        != (Mode::S_IRUSR | Mode::S_IWUSR)
+                    || metadata.st_size < 0
+                    || metadata.st_size as u64 > max_entry_bytes
+                {
                     return Err(format!(
-                        "durable spool subdirectory is not owner-only: {}",
+                        "durable spool entry must be an owner-owned bounded 0600 regular file: {}",
                         name.to_string_lossy()
                     ));
                 }
-                continue;
+                count = count.saturating_add(1);
+                total = total.saturating_add(metadata.st_size.max(0) as u64);
             }
-            if !file_type.contains(SFlag::S_IFREG)
-                || metadata.st_uid != geteuid().as_raw()
-                || Mode::from_bits_truncate(metadata.st_mode)
-                    & (Mode::S_IRWXU | Mode::S_IRWXG | Mode::S_IRWXO)
-                    != (Mode::S_IRUSR | Mode::S_IWUSR)
-                || metadata.st_size < 0
-                || metadata.st_size as u64 > max_entry_bytes
-            {
-                return Err(format!(
-                    "durable spool entry must be an owner-owned bounded 0600 regular file: {}",
-                    name.to_string_lossy()
-                ));
-            }
-            count = count.saturating_add(1);
-            total = total.saturating_add(metadata.st_size.max(0) as u64);
+            Ok((count, total))
         }
-        Ok((count, total))
+
+        let directory = open_validated_directory(path)?;
+        measure_recursive(directory, max_entry_bytes, 0)
+    }
+
+    pub(super) fn lock_secure_directory(path: &Path) -> Result<File, String> {
+        lock_secure_named_file(path, OsStr::new(".spool.lock"))
+    }
+
+    pub(super) fn lock_secure_named_file(path: &Path, name: &OsStr) -> Result<File, String> {
+        use fs4::fs_std::FileExt;
+
+        let directory = open_validated_directory(path)?;
+        validate_entry_name(name)?;
+        let (descriptor, created) = match nix::fcntl::openat(
+            &directory,
+            name,
+            OFlag::O_RDWR | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+            Mode::S_IRUSR | Mode::S_IWUSR,
+        ) {
+            Ok(descriptor) => (descriptor, true),
+            Err(Errno::EEXIST) => (
+                nix::fcntl::openat(
+                    &directory,
+                    name,
+                    OFlag::O_RDWR | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(|error| format!("failed to open durable spool lock: {error}"))?,
+                false,
+            ),
+            Err(error) => return Err(format!("failed to create durable spool lock: {error}")),
+        };
+        if created {
+            fchmod(&descriptor, Mode::S_IRUSR | Mode::S_IWUSR)
+                .map_err(|error| format!("failed to secure durable spool lock: {error}"))?;
+            fsync(&descriptor).map_err(|error| {
+                format!("failed to commit durable spool lock metadata: {error}")
+            })?;
+        }
+        let metadata = fstat(&descriptor)
+            .map_err(|error| format!("failed to inspect durable spool lock: {error}"))?;
+        let permissions = Mode::from_bits_truncate(metadata.st_mode)
+            & (Mode::S_IRWXU | Mode::S_IRWXG | Mode::S_IRWXO);
+        if !SFlag::from_bits_truncate(metadata.st_mode).contains(SFlag::S_IFREG)
+            || metadata.st_uid != geteuid().as_raw()
+            || permissions != (Mode::S_IRUSR | Mode::S_IWUSR)
+            || metadata.st_size != 0
+        {
+            return Err("durable spool lock must be an owner-owned empty 0600 file".to_owned());
+        }
+        if created {
+            fsync(&directory)
+                .map_err(|error| format!("failed to commit durable spool lock: {error}"))?;
+        }
+        let file = File::from(descriptor);
+        file.try_lock_exclusive().map_err(|error| {
+            if error.raw_os_error() == fs4::lock_contended_error().raw_os_error() {
+                SECURE_SPOOL_LOCK_CONTENDED.to_owned()
+            } else {
+                format!("failed to claim durable spool capacity lock: {error}")
+            }
+        })?;
+        Ok(file)
     }
 
     pub(super) fn read_secure_entries(
@@ -534,7 +762,7 @@ mod platform {
         path: &Path,
         extension: &str,
         max_entry_bytes: u64,
-    ) -> Result<Vec<ClaimedSecureSpoolEntry>, String> {
+    ) -> Result<ClaimedSecureSpoolEntries, String> {
         use fs4::fs_std::FileExt;
 
         let mut directory = open_validated_directory(path)?;
@@ -547,6 +775,7 @@ mod platform {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut entries = Vec::new();
+        let mut skipped_contended = 0_usize;
         for name in names {
             if name == b"." || name == b".." {
                 continue;
@@ -558,6 +787,7 @@ mod platform {
             let mut file = open_regular_file(&directory, &name, max_entry_bytes)?;
             if let Err(error) = file.try_lock_exclusive() {
                 if error.raw_os_error() == fs4::lock_contended_error().raw_os_error() {
+                    skipped_contended = skipped_contended.saturating_add(1);
                     continue;
                 }
                 return Err(format!(
@@ -572,7 +802,10 @@ mod platform {
                 _claim: file,
             });
         }
-        Ok(entries)
+        Ok(ClaimedSecureSpoolEntries {
+            entries,
+            skipped_contended,
+        })
     }
 }
 
@@ -580,195 +813,75 @@ mod platform {
 mod platform {
     use super::*;
 
-    fn validate_directory(path: &Path) -> Result<(), String> {
-        let metadata = std::fs::symlink_metadata(path)
-            .map_err(|error| format!("failed to inspect durable spool: {error}"))?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(format!("unsafe durable spool path: {}", path.display()));
-        }
-        Ok(())
+    fn unsupported<T>() -> Result<T, String> {
+        Err("durable ACP spooling is unavailable on platforms without secure descriptor-relative filesystem support".to_owned())
     }
 
-    pub(super) fn ensure_secure_directory(path: &Path) -> Result<(), String> {
-        std::fs::create_dir_all(path)
-            .map_err(|error| format!("failed to create durable spool: {error}"))?;
-        validate_directory(path)
-    }
-
-    fn read_entry(path: &Path, max_entry_bytes: u64) -> Result<Vec<u8>, String> {
-        let metadata = std::fs::symlink_metadata(path)
-            .map_err(|error| format!("failed to inspect durable spool entry: {error}"))?;
-        if metadata.file_type().is_symlink()
-            || !metadata.is_file()
-            || metadata.len() > max_entry_bytes
-        {
-            return Err(format!("unsafe durable spool entry: {}", path.display()));
-        }
-        let mut bytes = Vec::new();
-        std::fs::File::open(path)
-            .and_then(|file| {
-                file.take(max_entry_bytes.saturating_add(1))
-                    .read_to_end(&mut bytes)
-            })
-            .map_err(|error| format!("failed to read durable spool entry: {error}"))?;
-        if bytes.len() as u64 > max_entry_bytes {
-            return Err(format!(
-                "durable spool entry exceeds byte limit: {}",
-                path.display()
-            ));
-        }
-        Ok(bytes)
+    pub(super) fn ensure_secure_directory(_path: &Path) -> Result<(), String> {
+        unsupported()
     }
 
     pub(super) fn measure_secure_directory(
-        path: &Path,
-        max_entry_bytes: u64,
+        _path: &Path,
+        _max_entry_bytes: u64,
     ) -> Result<(usize, u64), String> {
-        validate_directory(path)?;
-        let mut count = 0_usize;
-        let mut total = 0_u64;
-        for entry in std::fs::read_dir(path)
-            .map_err(|error| format!("failed to enumerate durable spool: {error}"))?
-        {
-            let entry =
-                entry.map_err(|error| format!("failed to enumerate spool entry: {error}"))?;
-            let bytes = read_entry(&entry.path(), max_entry_bytes)?;
-            count = count.saturating_add(1);
-            total = total.saturating_add(bytes.len() as u64);
-        }
-        Ok((count, total))
+        unsupported()
+    }
+
+    pub(super) fn lock_secure_directory(_path: &Path) -> Result<std::fs::File, String> {
+        unsupported()
+    }
+
+    pub(super) fn lock_secure_named_file(
+        _path: &Path,
+        _name: &OsStr,
+    ) -> Result<std::fs::File, String> {
+        unsupported()
     }
 
     pub(super) fn read_secure_entries(
-        path: &Path,
-        extension: &str,
-        max_entry_bytes: u64,
+        _path: &Path,
+        _extension: &str,
+        _max_entry_bytes: u64,
     ) -> Result<Vec<SecureSpoolEntry>, String> {
-        validate_directory(path)?;
-        let mut entries = Vec::new();
-        for entry in std::fs::read_dir(path)
-            .map_err(|error| format!("failed to enumerate durable spool: {error}"))?
-        {
-            let entry =
-                entry.map_err(|error| format!("failed to enumerate spool entry: {error}"))?;
-            if entry.path().extension().and_then(OsStr::to_str) != Some(extension) {
-                continue;
-            }
-            entries.push(SecureSpoolEntry {
-                name: entry.file_name(),
-                bytes: read_entry(&entry.path(), max_entry_bytes)?,
-            });
-        }
-        Ok(entries)
+        unsupported()
     }
 
     pub(super) fn read_secure_entry(
-        path: &Path,
-        name: &OsStr,
-        max_entry_bytes: u64,
+        _path: &Path,
+        _name: &OsStr,
+        _max_entry_bytes: u64,
     ) -> Result<Option<Vec<u8>>, String> {
-        let entry = path.join(name);
-        if !entry
-            .try_exists()
-            .map_err(|error| format!("failed to inspect durable spool entry: {error}"))?
-        {
-            return Ok(None);
-        }
-        read_entry(&entry, max_entry_bytes).map(Some)
+        unsupported()
     }
 
     pub(super) fn claim_secure_entries(
-        path: &Path,
-        extension: &str,
-        max_entry_bytes: u64,
-    ) -> Result<Vec<ClaimedSecureSpoolEntry>, String> {
-        use fs4::fs_std::FileExt;
-
-        validate_directory(path)?;
-        let mut entries = Vec::new();
-        for entry in std::fs::read_dir(path)
-            .map_err(|error| format!("failed to enumerate durable spool: {error}"))?
-        {
-            let entry =
-                entry.map_err(|error| format!("failed to enumerate spool entry: {error}"))?;
-            if entry.path().extension().and_then(OsStr::to_str) != Some(extension) {
-                continue;
-            }
-            let file = std::fs::File::open(entry.path())
-                .map_err(|error| format!("failed to open durable spool entry: {error}"))?;
-            if let Err(error) = file.try_lock_exclusive() {
-                if error.raw_os_error() == fs4::lock_contended_error().raw_os_error() {
-                    continue;
-                }
-                return Err(format!("failed to claim durable spool entry: {error}"));
-            }
-            let bytes = read_entry(&entry.path(), max_entry_bytes)?;
-            entries.push(ClaimedSecureSpoolEntry {
-                name: entry.file_name(),
-                bytes,
-                _claim: file,
-            });
-        }
-        Ok(entries)
+        _path: &Path,
+        _extension: &str,
+        _max_entry_bytes: u64,
+    ) -> Result<ClaimedSecureSpoolEntries, String> {
+        unsupported()
     }
 
     pub(super) fn write_secure_entry_if_absent(
-        path: &Path,
-        name: &OsStr,
-        temporary_name: &OsStr,
-        bytes: &[u8],
+        _path: &Path,
+        _name: &OsStr,
+        _temporary_name: &OsStr,
+        _bytes: &[u8],
     ) -> Result<bool, String> {
-        validate_directory(path)?;
-        let temporary = path.join(temporary_name);
-        let destination = path.join(name);
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        let mut file = options
-            .open(&temporary)
-            .map_err(|error| format!("failed to securely create durable spool entry: {error}"))?;
-        let result = file.write_all(bytes).and_then(|()| file.sync_all());
-        drop(file);
-        if let Err(error) = result {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(format!("failed to persist durable spool entry: {error}"));
-        }
-        match std::fs::hard_link(&temporary, &destination) {
-            Ok(()) => {
-                std::fs::remove_file(&temporary)
-                    .map_err(|error| format!("failed to remove temporary spool entry: {error}"))?;
-                Ok(true)
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let _ = std::fs::remove_file(&temporary);
-                Ok(false)
-            }
-            Err(error) => {
-                let _ = std::fs::remove_file(&temporary);
-                Err(format!("failed to commit durable spool entry: {error}"))
-            }
-        }
+        unsupported()
     }
 
-    pub(super) fn remove_secure_entry(path: &Path, name: &OsStr) -> Result<bool, String> {
-        validate_directory(path)?;
-        match std::fs::remove_file(path.join(name)) {
-            Ok(()) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(format!("failed to remove durable spool entry: {error}")),
-        }
+    pub(super) fn remove_secure_entry(_path: &Path, _name: &OsStr) -> Result<bool, String> {
+        unsupported()
     }
 
     pub(super) fn rename_secure_entry(
-        path: &Path,
-        source: &OsStr,
-        destination: &OsStr,
+        _path: &Path,
+        _source: &OsStr,
+        _destination: &OsStr,
     ) -> Result<bool, String> {
-        validate_directory(path)?;
-        match std::fs::rename(path.join(source), path.join(destination)) {
-            Ok(()) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(format!("failed to rename durable spool entry: {error}")),
-        }
+        unsupported()
     }
 }
 
@@ -776,6 +889,12 @@ mod platform {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    fn secure_test_dir(label: &str) -> std::path::PathBuf {
+        std::fs::canonicalize(std::env::temp_dir())
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join(format!("buzz-acp-secure-spool-{label}-{}", Uuid::new_v4()))
+    }
 
     #[tokio::test]
     async fn entry_claims_are_exclusive_and_release_on_drop() {
@@ -797,18 +916,98 @@ mod tests {
         let first = claim_secure_entries(&directory, "json", 1024)
             .await
             .expect("first claim");
-        assert_eq!(first.len(), 1);
+        assert_eq!(first.entries.len(), 1);
+        assert_eq!(first.skipped_contended, 0);
         let contended = claim_secure_entries(&directory, "json", 1024)
             .await
             .expect("contended scan");
-        assert!(contended.is_empty());
+        assert!(contended.entries.is_empty());
+        assert_eq!(contended.skipped_contended, 1);
 
         drop(first);
         let reclaimed = claim_secure_entries(&directory, "json", 1024)
             .await
             .expect("reclaim after drop");
-        assert_eq!(reclaimed.len(), 1);
+        assert_eq!(reclaimed.entries.len(), 1);
+        assert_eq!(reclaimed.skipped_contended, 0);
         drop(reclaimed);
         std::fs::remove_dir_all(directory).expect("clean secure spool");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn secure_directory_creation_never_follows_an_ancestor_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join(format!("buzz-acp-secure-spool-ancestor-{}", Uuid::new_v4()));
+        let target = root.join("target");
+        let linked = root.join("linked");
+        std::fs::create_dir_all(&target).expect("create symlink target");
+        symlink(&target, &linked).expect("create ancestor symlink");
+
+        let result = ensure_secure_directory(&linked.join("must-not-exist")).await;
+
+        assert!(result.is_err(), "symlinked ancestors must fail closed");
+        assert!(
+            !target.join("must-not-exist").exists(),
+            "validation failure must happen before any redirected side effect"
+        );
+        std::fs::remove_dir_all(root).expect("clean symlink probe");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn root_capacity_measurement_includes_secure_nested_ledgers() {
+        let root = secure_test_dir("nested-capacity");
+        let nested = root.join("pending-requests");
+        ensure_secure_directory(&root).await.expect("secure root");
+        ensure_secure_directory(&nested)
+            .await
+            .expect("secure nested ledger");
+        assert!(write_secure_entry_if_absent(
+            &root,
+            OsStr::new("resolution.json"),
+            OsStr::new("resolution.tmp"),
+            b"resolution",
+        )
+        .await
+        .expect("write root entry"));
+        assert!(write_secure_entry_if_absent(
+            &nested,
+            OsStr::new("request.json"),
+            OsStr::new("request.tmp"),
+            b"request",
+        )
+        .await
+        .expect("write nested entry"));
+
+        assert_eq!(measure_secure_directory(&root, 1024).await, Ok((2, 17)));
+        std::fs::remove_dir_all(root).expect("clean nested capacity probe");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn directory_capacity_claims_are_exclusive() {
+        let directory = secure_test_dir("directory-claim");
+        ensure_secure_directory(&directory)
+            .await
+            .expect("secure spool");
+        let first = lock_secure_directory(&directory)
+            .await
+            .expect("first capacity claim");
+        assert!(
+            lock_secure_directory(&directory)
+                .await
+                .expect_err("concurrent capacity claim must fail closed")
+                .contains("already held"),
+            "capacity contention must stay bounded"
+        );
+        drop(first);
+        lock_secure_directory(&directory)
+            .await
+            .expect("capacity claim transfers after release");
+        std::fs::remove_dir_all(directory).expect("clean capacity claim probe");
     }
 }
