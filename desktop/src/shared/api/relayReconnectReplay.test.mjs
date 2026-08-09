@@ -166,7 +166,39 @@ test("durable action subscriptions page missed reconnect history even when live-
   );
 });
 
-test("durable live-only subscription with no event watermark replays from its recovery floor", async () => {
+test("non-channel durable subscriptions still page missed reconnect history", () => {
+  assert.equal(
+    shouldPageReconnectReplay({
+      authors: ["a".repeat(64)],
+      kinds: [7],
+      limit: 0,
+    }),
+    true,
+  );
+});
+
+test("owner-scoped approval lifecycle subscriptions page from zero", () => {
+  const filter = {
+    kinds: [46010, 46030, 46031],
+    "#p": ["a".repeat(64)],
+    since: 900,
+    limit: 0,
+  };
+  assert.equal(shouldPageReconnectReplay(filter), true);
+  assert.equal(buildReconnectReplayFilter(filter, 1_000).since, 0);
+});
+
+test("durable zero-floor recovery overrides a future-skewed steady-state since", () => {
+  assert.equal(
+    buildReconnectReplayFilter(
+      { kinds: [46043], "#h": ["channel-1"], limit: 0, since: 500 },
+      0,
+    ).since,
+    0,
+  );
+});
+
+test("durable live-only subscription always replays from its zero authority floor", async () => {
   resetGate(0);
   const delivered = [];
   const historyFilters = [];
@@ -193,7 +225,7 @@ test("durable live-only subscription with no event watermark replays from its re
   });
 
   assert.equal(historyFilters.length, 1);
-  assert.equal(historyFilters[0].since, 100);
+  assert.equal(historyFilters[0].since, 0);
   assert.equal(historyFilters[0].limit, 500);
   assert.deepEqual(
     delivered.map(({ id }) => id),

@@ -405,7 +405,7 @@ export const MessageRow = React.memo(
               fallback={renderMarkdownBody()}
               message={message}
               onRequestChanges={onReply ? () => onReply(message) : undefined}
-              onReviewed={() => void handleReactionSelect("✅")}
+              onReviewed={() => handleReactionSelect("✅")}
               profiles={profiles}
               reactionPending={reactionPending}
               reactions={reactions}

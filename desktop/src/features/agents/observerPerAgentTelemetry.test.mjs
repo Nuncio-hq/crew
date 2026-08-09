@@ -81,6 +81,82 @@ test("a retired live frame cannot roll session state backward", () => {
   assert.equal(getAgentObserverSnapshot(AGENT, true).events.length, 2);
 });
 
+test("a newly observed live session advances despite producer clock and seq reset", () => {
+  const base = {
+    ...observerEvent(false),
+    conversationId: "conversation",
+  };
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    seq: 99,
+    sessionId: "session-old",
+    timestamp: "2024-01-01T00:10:00Z",
+  });
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    seq: 1,
+    sessionId: "session-current",
+    timestamp: "2024-01-01T00:00:00Z",
+  });
+
+  assert.equal(getLatestLiveSessionId(AGENT, "channel"), "session-current");
+});
+
+test("late frames from another conversation cannot roll channel session authority back", () => {
+  const base = { ...observerEvent(false), seq: 1 };
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    kind: "turn_started",
+    conversationId: "conversation-old",
+    sessionId: "session-old",
+  });
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    kind: "turn_started",
+    conversationId: "conversation-current",
+    sessionId: "session-current",
+  });
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    kind: "turn_started",
+    seq: 2,
+    conversationId: "conversation-old",
+    sessionId: "session-old",
+  });
+  assert.equal(
+    _testProcessLiveObserverEvent(AGENT, {
+      ...base,
+      kind: "turn_completed",
+      seq: 3,
+      conversationId: "conversation-old",
+      sessionId: "session-old",
+    }),
+    true,
+  );
+
+  assert.equal(getLatestLiveSessionId(AGENT, "channel"), "session-current");
+});
+
+test("a sibling producer in another conversation keeps its own session authority", () => {
+  const base = { ...observerEvent(false), kind: "turn_started", seq: 1 };
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    conversationId: "conversation-old",
+    sessionId: "session-old",
+  });
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    conversationId: "conversation-current",
+    sessionId: "session-current",
+  });
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    conversationId: "conversation-old",
+    sessionId: "session-old-sibling",
+  });
+  assert.equal(getLatestLiveSessionId(AGENT, "channel"), "session-old-sibling");
+});
+
 test("same-sequence same-second frames from concurrent producers remain distinct", () => {
   const base = {
     ...observerEvent(false),
@@ -156,4 +232,23 @@ test("an outer frame with only retired inner events cannot clear telemetry error
     "telemetry failed",
   );
   assert.equal(getAgentObserverSnapshot(AGENT).events.length, 2);
+});
+
+test("retirement capacity fails closed instead of forgetting old sessions", () => {
+  let accepted = true;
+  for (let index = 0; index < 130; index += 1) {
+    accepted = _testProcessLiveObserverEvent(AGENT, {
+      ...observerEvent(false),
+      kind: "turn_started",
+      conversationId: "conversation",
+      sessionId: `session-${index}`,
+      seq: index,
+    });
+  }
+  assert.equal(accepted, false);
+  assert.equal(getLatestLiveSessionId(AGENT, "channel"), null);
+  assert.match(
+    getAgentObserverSnapshot(AGENT).errorMessage ?? "",
+    /safe recovery bound/,
+  );
 });

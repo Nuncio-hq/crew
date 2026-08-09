@@ -21,14 +21,18 @@
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use buzz_worktree::SharedLease;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
+use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
 use crate::acp::{
@@ -623,6 +627,8 @@ pub struct PromptContext {
     pub user_input_runtime: Option<Arc<crate::elicitation::QuestionRuntime>>,
     /// Feature gate for durable terminal agent receipts.
     pub agent_receipts_enabled: bool,
+    /// Tracks durable receipt retries so graceful shutdown can await them.
+    pub receipt_outbox_workers: TaskTracker,
 }
 
 impl AgentPool {
@@ -4698,7 +4704,97 @@ const RECEIPT_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(4),
 ];
 const RECEIPT_OUTBOX_RETRY_DELAY: Duration = Duration::from_secs(30);
+const RECEIPT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const RECEIPT_MAX_SPOOL_ENTRIES: usize = 4_096;
+const RECEIPT_MAX_SPOOL_BYTES: u64 = 64 * 1024 * 1024;
 static RECEIPT_OUTBOX_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static RECEIPT_DEAD_LETTER_IDS: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
+
+fn receipt_dead_letter_ids() -> &'static tokio::sync::Mutex<HashSet<String>> {
+    RECEIPT_DEAD_LETTER_IDS.get_or_init(|| tokio::sync::Mutex::new(HashSet::new()))
+}
+
+async fn ensure_secure_receipt_spool(path: &Path) -> Result<(), String> {
+    tokio::fs::create_dir_all(path)
+        .await
+        .map_err(|error| format!("failed to create receipt outbox: {error}"))?;
+    let metadata = tokio::fs::symlink_metadata(path)
+        .await
+        .map_err(|error| format!("failed to inspect receipt outbox: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!("unsafe receipt outbox path: {}", path.display()));
+    }
+    #[cfg(unix)]
+    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        .await
+        .map_err(|error| format!("failed to secure receipt outbox: {error}"))?;
+    Ok(())
+}
+
+async fn ensure_receipt_spool_capacity(path: &Path, additional_bytes: u64) -> Result<(), String> {
+    let mut entries = tokio::fs::read_dir(path)
+        .await
+        .map_err(|error| format!("failed to enumerate receipt outbox: {error}"))?;
+    let mut count = 0_usize;
+    let mut bytes = 0_u64;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|error| format!("failed to enumerate receipt entry: {error}"))?
+    {
+        let metadata = entry
+            .metadata()
+            .await
+            .map_err(|error| format!("failed to inspect receipt entry: {error}"))?;
+        if metadata.is_file() {
+            count = count.saturating_add(1);
+            bytes = bytes.saturating_add(metadata.len());
+        }
+    }
+    if count.saturating_add(1) > RECEIPT_MAX_SPOOL_ENTRIES
+        || bytes.saturating_add(additional_bytes) > RECEIPT_MAX_SPOOL_BYTES
+    {
+        return Err(format!(
+            "receipt outbox capacity exceeded ({count} entries, {bytes} bytes)"
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct ReceiptFlushReport {
+    acked: HashSet<String>,
+    queued: HashSet<String>,
+    rejected: HashSet<String>,
+    failed: HashSet<String>,
+    scan_failed: bool,
+}
+
+impl ReceiptFlushReport {
+    fn absorb(&mut self, other: Self) {
+        self.acked.extend(other.acked);
+        self.queued.extend(other.queued);
+        self.rejected.extend(other.rejected);
+        self.failed.extend(other.failed);
+        self.scan_failed |= other.scan_failed;
+    }
+}
+
+fn current_receipt_publication_error(
+    current_event_ids: &HashSet<String>,
+    report: &ReceiptFlushReport,
+) -> Option<String> {
+    let missing_ack = current_event_ids
+        .difference(&report.acked)
+        .cloned()
+        .collect::<Vec<_>>();
+    (!missing_ack.is_empty()).then(|| {
+        format!(
+            "mandatory agent receipt(s) lack exact accepted ACK: {}",
+            missing_ack.join(",")
+        )
+    })
+}
 
 fn receipt_outbox_lock() -> &'static tokio::sync::Mutex<()> {
     RECEIPT_OUTBOX_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
@@ -4707,6 +4803,9 @@ fn receipt_outbox_lock() -> &'static tokio::sync::Mutex<()> {
 fn receipt_outbox_dir(ctx: &PromptContext) -> Result<PathBuf, String> {
     use sha2::{Digest, Sha256};
 
+    #[cfg(test)]
+    let base = std::env::temp_dir().join("buzz-acp-receipt-outbox-tests");
+    #[cfg(not(test))]
     let base = match std::env::var_os("BUZZ_ACP_RECEIPT_OUTBOX_DIR") {
         Some(path) => PathBuf::from(path),
         None => PathBuf::from(std::env::var_os("HOME").ok_or_else(|| {
@@ -4720,32 +4819,87 @@ fn receipt_outbox_dir(ctx: &PromptContext) -> Result<PathBuf, String> {
         .join(ctx.agent_keys.public_key().to_hex()))
 }
 
-async fn persist_receipt_events(outbox_dir: &Path, events: &[nostr::Event]) -> Result<(), String> {
-    tokio::fs::create_dir_all(outbox_dir)
-        .await
-        .map_err(|error| format!("failed to create receipt outbox: {error}"))?;
-    for event in events {
-        let path = outbox_dir.join(format!("{}.json", event.id));
-        if tokio::fs::try_exists(&path)
-            .await
-            .map_err(|error| format!("failed to inspect receipt outbox: {error}"))?
-        {
-            continue;
+async fn persist_receipt_events(
+    outbox_dir: &Path,
+    events: &[nostr::Event],
+) -> HashMap<String, String> {
+    let mut failures = HashMap::new();
+    if let Err(error) = ensure_secure_receipt_spool(outbox_dir).await {
+        for event in events {
+            failures.insert(
+                event.id.to_hex(),
+                format!("failed to create receipt outbox: {error}"),
+            );
         }
-        let temporary = outbox_dir.join(format!("{}.{}.tmp", event.id, std::process::id()));
-        let bytes = serde_json::to_vec(event)
-            .map_err(|error| format!("failed to encode receipt for outbox: {error}"))?;
-        tokio::fs::write(&temporary, bytes)
-            .await
-            .map_err(|error| format!("failed to write receipt outbox: {error}"))?;
-        if let Err(error) = tokio::fs::rename(&temporary, &path).await {
-            let _ = tokio::fs::remove_file(&temporary).await;
-            if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        return failures;
+    }
+    for event in events {
+        let event_id = event.id.to_hex();
+        let path = outbox_dir.join(format!("{}.json", event.id));
+        let result = async {
+            if tokio::fs::try_exists(&path)
+                .await
+                .map_err(|error| format!("failed to inspect receipt outbox: {error}"))?
+            {
+                let metadata = tokio::fs::symlink_metadata(&path)
+                    .await
+                    .map_err(|error| format!("failed to inspect receipt entry: {error}"))?;
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(format!("unsafe receipt spool entry: {}", path.display()));
+                }
+                #[cfg(unix)]
+                if metadata.permissions().mode() & 0o077 != 0 {
+                    return Err(format!(
+                        "receipt spool entry is not owner-only: {}",
+                        path.display()
+                    ));
+                }
+                let bytes = tokio::fs::read(&path)
+                    .await
+                    .map_err(|error| format!("failed to read existing receipt outbox: {error}"))?;
+                let existing = serde_json::from_slice::<nostr::Event>(&bytes)
+                    .map_err(|error| format!("invalid existing receipt outbox: {error}"));
+                if existing.as_ref().is_ok_and(|existing| existing == event) {
+                    return Ok(());
+                }
+                let invalid = path.with_extension("invalid");
+                tokio::fs::rename(&path, &invalid).await.map_err(|error| {
+                    format!("failed to quarantine conflicting receipt outbox entry: {error}")
+                })?;
+            }
+            let temporary = outbox_dir.join(format!("{}.{}.tmp", event.id, std::process::id()));
+            let bytes = serde_json::to_vec(event)
+                .map_err(|error| format!("failed to encode receipt for outbox: {error}"))?;
+            ensure_receipt_spool_capacity(outbox_dir, bytes.len() as u64).await?;
+            let mut options = tokio::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let mut temporary_file = options
+                .open(&temporary)
+                .await
+                .map_err(|error| format!("failed to securely create receipt entry: {error}"))?;
+            temporary_file
+                .write_all(&bytes)
+                .await
+                .map_err(|error| format!("failed to write receipt outbox: {error}"))?;
+            temporary_file
+                .sync_all()
+                .await
+                .map_err(|error| format!("failed to sync receipt outbox: {error}"))?;
+            drop(temporary_file);
+            if let Err(error) = tokio::fs::rename(&temporary, &path).await {
+                let _ = tokio::fs::remove_file(&temporary).await;
                 return Err(format!("failed to commit receipt outbox entry: {error}"));
             }
+            Ok::<(), String>(())
+        }
+        .await;
+        if let Err(error) = result {
+            failures.insert(event_id, error);
         }
     }
-    Ok(())
+    failures
 }
 
 async fn flush_receipt_outbox(
@@ -4753,32 +4907,63 @@ async fn flush_receipt_outbox(
     rest_client: &RestClient,
     agent_pubkey: nostr::PublicKey,
     retry_delays: &[Duration],
-) -> Result<usize, String> {
-    if !tokio::fs::try_exists(outbox_dir)
-        .await
-        .map_err(|error| format!("failed to inspect receipt outbox: {error}"))?
-    {
-        return Ok(0);
+) -> Result<ReceiptFlushReport, String> {
+    let mut report = ReceiptFlushReport::default();
+    match tokio::fs::try_exists(outbox_dir).await {
+        Ok(false) => return Ok(report),
+        Ok(true) => {}
+        Err(error) => {
+            report.scan_failed = true;
+            tracing::error!(%error, "failed to inspect receipt outbox");
+            return Ok(report);
+        }
     }
-    let mut entries = tokio::fs::read_dir(outbox_dir)
-        .await
-        .map_err(|error| format!("failed to read receipt outbox: {error}"))?;
-    let mut remaining = 0_usize;
-    while let Some(entry) = entries
-        .next_entry()
-        .await
-        .map_err(|error| format!("failed to enumerate receipt outbox: {error}"))?
-    {
+    let mut entries = match tokio::fs::read_dir(outbox_dir).await {
+        Ok(entries) => entries,
+        Err(error) => {
+            report.scan_failed = true;
+            tracing::error!(%error, "failed to read receipt outbox");
+            return Ok(report);
+        }
+    };
+    let mut permanent_deadletters = Vec::new();
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(error) => {
+                report.scan_failed = true;
+                tracing::error!(%error, "failed to enumerate receipt outbox");
+                break;
+            }
+        };
         let path = entry.path();
         if path.extension().and_then(|value| value.to_str()) != Some("json") {
             continue;
         }
-        let event = match tokio::fs::read(&path)
-            .await
-            .map_err(|error| error.to_string())
-            .and_then(|bytes| {
-                serde_json::from_slice::<nostr::Event>(&bytes).map_err(|e| e.to_string())
-            }) {
+        let entry_id = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_owned();
+        if receipt_dead_letter_ids().lock().await.contains(&entry_id) {
+            permanent_deadletters.push((
+                path,
+                entry_id,
+                "previous permanent relay rejection".to_owned(),
+            ));
+            continue;
+        }
+        let bytes = match tokio::fs::read(&path).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                report.scan_failed = true;
+                report.failed.insert(entry_id);
+                tracing::error!(%error, path = %path.display(), "failed to read durable receipt outbox entry");
+                continue;
+            }
+        };
+        let event = match serde_json::from_slice::<nostr::Event>(&bytes) {
             Ok(event)
                 if event.id.to_hex()
                     == path
@@ -4793,8 +4978,16 @@ async fn flush_receipt_outbox(
             }
             Ok(_) | Err(_) => {
                 let invalid = path.with_extension("invalid");
-                let _ = tokio::fs::rename(&path, invalid).await;
-                tracing::error!(path = %path.display(), "quarantined invalid agent receipt outbox entry");
+                match tokio::fs::rename(&path, invalid).await {
+                    Ok(()) => {
+                        tracing::error!(path = %path.display(), "quarantined invalid agent receipt outbox entry")
+                    }
+                    Err(error) => {
+                        report.scan_failed = true;
+                        tracing::error!(%error, path = %path.display(), "failed to quarantine invalid agent receipt outbox entry")
+                    }
+                }
+                report.failed.insert(entry_id);
                 continue;
             }
         };
@@ -4817,36 +5010,59 @@ async fn flush_receipt_outbox(
             }
         };
         match publication {
-            Ok(()) => tokio::fs::remove_file(&path)
-                .await
-                .map_err(|error| format!("failed to acknowledge receipt outbox entry: {error}"))?,
+            Ok(()) => {
+                report.acked.insert(event.id.to_hex());
+                if let Err(error) = tokio::fs::remove_file(&path).await {
+                    report.queued.insert(event.id.to_hex());
+                    tracing::error!(%error, event_id = %event.id, "exact receipt ACK received but durable entry retirement failed");
+                }
+            }
             Err(error) if error.is_retryable_durable_publication() => {
-                remaining = remaining.saturating_add(1);
+                report.queued.insert(event.id.to_hex());
                 tracing::warn!(event_id = %event.id, %error, "agent receipt remains queued in durable outbox");
             }
             Err(error) => {
-                let rejected = path.with_extension("rejected");
-                tokio::fs::rename(&path, &rejected)
+                receipt_dead_letter_ids()
+                    .lock()
                     .await
-                    .map_err(|rename_error| {
-                        format!(
-                            "failed to dead-letter permanently rejected receipt {}: {rename_error}",
-                            event.id
-                        )
-                    })?;
-                tracing::error!(event_id = %event.id, %error, path = %rejected.display(), "dead-lettered permanently rejected agent receipt");
+                    .insert(event.id.to_hex());
+                permanent_deadletters.push((path, event.id.to_hex(), error.to_string()));
             }
         }
     }
-    Ok(remaining)
+    for (path, event_id, error) in permanent_deadletters {
+        let rejected = path.with_extension("rejected");
+        let moved = match tokio::fs::rename(&path, &rejected).await {
+            Ok(()) => true,
+            Err(rename_error)
+                if rename_error.kind() == std::io::ErrorKind::NotFound
+                    && tokio::fs::try_exists(&rejected).await.unwrap_or(false) =>
+            {
+                true
+            }
+            Err(rename_error) => {
+                report.queued.insert(event_id.clone());
+                report.failed.insert(event_id.clone());
+                tracing::error!(%rename_error, event_id, "durable receipt dead-letter move remains queued");
+                false
+            }
+        };
+        if moved {
+            receipt_dead_letter_ids().lock().await.remove(&event_id);
+            report.rejected.insert(event_id.clone());
+            tracing::error!(event_id, %error, path = %rejected.display(), "dead-lettered permanently rejected agent receipt");
+        }
+    }
+    Ok(report)
 }
 
 fn spawn_receipt_outbox_worker(
+    tracker: &TaskTracker,
     outbox_dir: PathBuf,
     rest_client: RestClient,
     agent_pubkey: nostr::PublicKey,
 ) {
-    tokio::spawn(async move {
+    tracker.spawn(async move {
         loop {
             let remaining = {
                 let _guard = receipt_outbox_lock().lock().await;
@@ -4859,7 +5075,7 @@ fn spawn_receipt_outbox_worker(
                 .await
             };
             match remaining {
-                Ok(0) => break,
+                Ok(report) if report.queued.is_empty() && !report.scan_failed => break,
                 Ok(_) | Err(_) => tokio::time::sleep(RECEIPT_OUTBOX_RETRY_DELAY).await,
             }
         }
@@ -4868,18 +5084,25 @@ fn spawn_receipt_outbox_worker(
 
 /// Resume exact-signed receipt publication left by a prior process.
 pub(crate) fn resume_receipt_outbox(ctx: Arc<PromptContext>) {
-    if ctx.agent_receipts_enabled {
-        match receipt_outbox_dir(&ctx) {
-            Ok(outbox_dir) => spawn_receipt_outbox_worker(
-                outbox_dir,
-                ctx.rest_client.clone(),
-                ctx.agent_keys.public_key(),
-            ),
-            Err(error) => {
-                tracing::error!(%error, "cannot resume durable agent receipt outbox");
-            }
+    match receipt_outbox_dir(&ctx) {
+        Ok(outbox_dir) => spawn_receipt_outbox_worker(
+            &ctx.receipt_outbox_workers,
+            outbox_dir,
+            ctx.rest_client.clone(),
+            ctx.agent_keys.public_key(),
+        ),
+        Err(error) => {
+            tracing::error!(%error, "cannot resume durable agent receipt outbox");
         }
     }
+}
+
+/// Wait for tracked durable receipt workers during graceful shutdown.
+pub(crate) async fn shutdown_receipt_outbox(ctx: &PromptContext) -> bool {
+    ctx.receipt_outbox_workers.close();
+    tokio::time::timeout(RECEIPT_SHUTDOWN_TIMEOUT, ctx.receipt_outbox_workers.wait())
+        .await
+        .is_ok()
 }
 
 /// Publish one relay-acknowledged receipt for every completed signed trigger.
@@ -4922,27 +5145,57 @@ async fn publish_agent_receipts(
             .map_err(|error| format!("failed to sign agent receipt: {error}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let current_event_ids = events
+        .iter()
+        .map(|event| event.id.to_hex())
+        .collect::<HashSet<_>>();
     let outbox_dir = receipt_outbox_dir(ctx)?;
-    let remaining = {
-        let _guard = receipt_outbox_lock().lock().await;
-        // Persistence precedes the first network attempt. A completed turn is
-        // never rerun just because relay admission is unavailable, while its
-        // exact signed receipts survive process restart and keep retrying.
-        persist_receipt_events(&outbox_dir, &events).await?;
-        flush_receipt_outbox(
-            &outbox_dir,
-            &ctx.rest_client,
-            ctx.agent_keys.public_key(),
-            &RECEIPT_RETRY_DELAYS,
-        )
-        .await?
-    };
-    if remaining > 0 {
+    let mut events_needing_persistence = events.clone();
+    let mut report = ReceiptFlushReport::default();
+    let mut persistence_error = None;
+    for attempt in 1..=3 {
+        let failures = {
+            let _guard = receipt_outbox_lock().lock().await;
+            let failures = persist_receipt_events(&outbox_dir, &events_needing_persistence).await;
+            let flushed = flush_receipt_outbox(
+                &outbox_dir,
+                &ctx.rest_client,
+                ctx.agent_keys.public_key(),
+                &RECEIPT_RETRY_DELAYS,
+            )
+            .await?;
+            report.absorb(flushed);
+            failures
+        };
+        if failures.is_empty() {
+            break;
+        }
+        if attempt == 3 {
+            persistence_error = Some(format!(
+                "mandatory receipt persistence failed after {attempt} attempts: {failures:?}"
+            ));
+            break;
+        }
+        events_needing_persistence.retain(|event| failures.contains_key(&event.id.to_hex()));
+        tracing::error!(
+            ?failures,
+            "retrying durable persistence for mandatory agent receipts"
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    if !report.queued.is_empty() || report.scan_failed {
         spawn_receipt_outbox_worker(
+            &ctx.receipt_outbox_workers,
             outbox_dir,
             ctx.rest_client.clone(),
             ctx.agent_keys.public_key(),
         );
+    }
+    if let Some(error) = persistence_error {
+        return Err(error);
+    }
+    if let Some(error) = current_receipt_publication_error(&current_event_ids, &report) {
+        return Err(error);
     }
     Ok(())
 }
@@ -7920,6 +8173,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mandatory_current_receipt_failure_is_observable_to_the_turn() {
+        let current = HashSet::from(["current".to_string()]);
+        let queued = ReceiptFlushReport {
+            queued: HashSet::from(["current".to_string(), "older".to_string()]),
+            ..ReceiptFlushReport::default()
+        };
+        assert!(current_receipt_publication_error(&current, &queued)
+            .expect("queued current receipt must fail the turn")
+            .contains("lack exact accepted ACK"));
+
+        let rejected = ReceiptFlushReport {
+            rejected: HashSet::from(["current".to_string()]),
+            ..ReceiptFlushReport::default()
+        };
+        assert!(current_receipt_publication_error(&current, &rejected)
+            .expect("rejected current receipt must fail the turn")
+            .contains("lack exact accepted ACK"));
+    }
+
     #[tokio::test]
     async fn agent_receipt_outbox_persists_exact_signed_event_idempotently() {
         let keys = Keys::generate();
@@ -7928,12 +8201,16 @@ mod tests {
             .expect("sign receipt");
         let outbox = std::env::temp_dir().join(format!("buzz-acp-receipt-{}", Uuid::new_v4()));
 
-        persist_receipt_events(&outbox, std::slice::from_ref(&event))
-            .await
-            .expect("persist receipt");
-        persist_receipt_events(&outbox, std::slice::from_ref(&event))
-            .await
-            .expect("repeat persistence is idempotent");
+        assert!(
+            persist_receipt_events(&outbox, std::slice::from_ref(&event))
+                .await
+                .is_empty()
+        );
+        assert!(
+            persist_receipt_events(&outbox, std::slice::from_ref(&event))
+                .await
+                .is_empty()
+        );
 
         let path = outbox.join(format!("{}.json", event.id));
         let stored: nostr::Event = serde_json::from_slice(
@@ -8360,6 +8637,7 @@ mod tests {
             relay_url: "ws://127.0.0.1:3000".to_string(),
             user_input_runtime: None,
             agent_receipts_enabled: false,
+            receipt_outbox_workers: TaskTracker::new(),
         }
     }
 

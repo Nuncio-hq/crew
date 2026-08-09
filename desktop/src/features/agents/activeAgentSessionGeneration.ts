@@ -76,7 +76,17 @@ export function prepareAgentSessionObservation(
   event: ObserverEvent,
 ): AgentSessionObservation {
   const prior = preparedObservationByEvent.get(event);
-  if (prior) return prior;
+  if (prior) {
+    const key = sessionKey(agentKey, event);
+    if (
+      key &&
+      retiredSessionsByAgentChannel.get(key)?.has(event.sessionId ?? "")
+    ) {
+      preparedObservationByEvent.set(event, "retired");
+      return "retired";
+    }
+    return prior;
+  }
   const observation = commitAgentSessionObservation(agentKey, event);
   preparedObservationByEvent.set(event, observation);
   return observation;

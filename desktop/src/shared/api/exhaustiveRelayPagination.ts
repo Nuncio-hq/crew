@@ -67,3 +67,35 @@ export async function drainRelayTimestampBucket(
   }
   return events;
 }
+
+/** Exhaustively enumerate relay history without skipping equal-timestamp events. */
+export async function fetchExhaustiveRelayHistory(
+  fetchPage: FetchPage,
+  baseFilter: BaseFilter,
+  pageSize: number,
+): Promise<RelayEvent[]> {
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1) {
+    throw new Error("relay history page size must be a positive integer");
+  }
+  const byId = new Map<string, RelayEvent>();
+  let until: number | undefined;
+  for (;;) {
+    const page = await fetchPage({
+      ...baseFilter,
+      limit: pageSize,
+      ...(until === undefined ? {} : { until }),
+    });
+    for (const event of page) byId.set(event.id, event);
+    if (page.length < pageSize) return [...byId.values()];
+    const oldest = Math.min(...page.map((event) => event.created_at));
+    const boundary = await drainRelayTimestampBucket(
+      fetchPage,
+      baseFilter,
+      oldest,
+      pageSize,
+    );
+    for (const event of boundary) byId.set(event.id, event);
+    if (oldest <= 0) return [...byId.values()];
+    until = oldest - 1;
+  }
+}

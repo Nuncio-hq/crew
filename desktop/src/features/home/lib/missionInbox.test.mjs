@@ -311,6 +311,43 @@ test("an active turn accepts only a receipt linked to its exact trigger", () => 
   );
 });
 
+test("multi-agent turns never cross-pair one agent with another agent's trigger", () => {
+  const turn = activeTurn("paired", {
+    agentPubkeys: ["agent-1", "agent-2"],
+    triggeringEventIds: ["trigger-1", "trigger-2"],
+    agentTriggerPairs: [
+      { agentPubkey: "agent-1", eventId: "trigger-1" },
+      { agentPubkey: "agent-2", eventId: "trigger-2" },
+    ],
+  });
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [turn],
+    channels,
+    inboxItems: [item("paired", "channel-a", 100)],
+    needsYou: [],
+    now: 101_000,
+    outcomes: [],
+    receipts: [
+      {
+        id: "cross-paired",
+        channelId: "channel-a",
+        conversationId: "paired",
+        rootEventId: null,
+        parentEventId: "trigger-2",
+        agentPubkey: "agent-1",
+        createdAt: 100_000,
+        summary: "must not match",
+        verify: "none",
+        reviewed: false,
+      },
+    ],
+  });
+  assert.equal(sections.readyToReview.length, 0);
+  assert.equal(sections.working[0]?.conversationId, "paired");
+});
+
 test("unavailable observer telemetry never masquerades as stalled", () => {
   const sections = deriveMissionInboxSections({
     ...attentionDefaults,

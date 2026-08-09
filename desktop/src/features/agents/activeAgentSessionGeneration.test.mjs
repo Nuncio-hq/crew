@@ -70,4 +70,18 @@ describe("activeAgentSessionGeneration", () => {
     assert.equal(observeAgentSession("agent", current), "changed");
     assert.equal(observeAgentSession("agent", replayedOld), "retired");
   });
+
+  it("revalidates a staged frame after a newer session retires it", () => {
+    const old = event({ sessionId: "session-old" });
+    const prepared = prepareAgentSessionObservation("agent", old);
+    assert.equal(prepared, "current");
+    assert.equal(
+      observeAgentSession(
+        "agent",
+        event({ seq: 1, sessionId: "session-current" }),
+      ),
+      "changed",
+    );
+    assert.equal(prepareAgentSessionObservation("agent", old), "retired");
+  });
 });

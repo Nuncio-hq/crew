@@ -46,6 +46,7 @@ export type RelayLiveSubscriptionStatus =
 
 type HistorySubscription = {
   mode: "history";
+  filter: RelaySubscriptionFilter;
   events: RelayEvent[];
   resolve: (events: RelayEvent[]) => void;
   reject: (error: Error) => void;
@@ -54,6 +55,7 @@ type HistorySubscription = {
 
 type FirstEventSubscription = {
   mode: "first";
+  filter: RelaySubscriptionFilter;
   onEvent: (event: RelayEvent) => void;
   resolve: (event: RelayEvent | null) => void;
   reject: (error: Error) => void;
@@ -62,11 +64,16 @@ type FirstEventSubscription = {
 
 type LiveSubscription = {
   mode: "live";
+  /** Exact wire id of the current replacement REQ generation. */
+  currentSubId?: string;
+  /** Stable local alias retained so the caller's disposer remains valid. */
+  baseSubId?: string;
   filter: RelaySubscriptionFilter;
   onEvent: (event: RelayEvent, context: RelayLiveEventContext) => void;
   onStatus?: (status: RelayLiveSubscriptionStatus) => void;
   ready: boolean;
   resolveReady?: () => void;
+  rejectReady?: (error: Error) => void;
   lastSeenCreatedAt?: number;
   /** Oldest wall-clock second not yet proved complete by reconnect backfill. */
   recoveryFloorCreatedAt?: number;

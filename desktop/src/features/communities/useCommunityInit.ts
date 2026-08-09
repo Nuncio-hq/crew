@@ -33,6 +33,7 @@ import { resetAgentWorkingSignal } from "@/features/agents/agentWorkingSignal";
 import { resetAgentAttentionSnoozes } from "@/features/agents/agentAttentionSnoozeStore";
 import { resetAgentReceiptStore } from "@/features/agents/agentReceiptStore";
 import { resetNeedsYouStore } from "@/features/agents/needsYouStore";
+import { resetUserInputAttentionProjection } from "@/features/agents/userInputAttentionProjection";
 import { resetChannelAgentPresenceCache } from "@/features/agents/channelAgentPresence";
 import { resetMissionInboxCache } from "@/features/home/lib/missionInbox";
 import { resetAgentObserverStore } from "@/features/agents/observerRelayStore";
@@ -75,6 +76,7 @@ function resetCommunityState({
   resetAgentAttentionSnoozes();
   resetAgentReceiptStore();
   resetNeedsYouStore();
+  resetUserInputAttentionProjection();
   resetChannelAgentPresenceCache();
   resetMissionInboxCache();
   if (isTauri() && isMacPlatform()) {

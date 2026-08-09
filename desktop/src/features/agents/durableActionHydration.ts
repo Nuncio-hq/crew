@@ -1,6 +1,7 @@
 import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
+import { classifyRelayClosed } from "@/shared/api/relayClosedPolicy";
 import type { RelayEvent } from "@/shared/api/types";
-import { drainRelayTimestampBucket } from "@/shared/api/exhaustiveRelayPagination";
+import { fetchExhaustiveRelayHistory } from "@/shared/api/exhaustiveRelayPagination";
 import {
   KIND_AGENT_RECEIPT,
   KIND_AGENT_USER_INPUT_ANSWER,
@@ -11,30 +12,59 @@ import {
 
 type FetchPage = (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
 
+export function isPermanentHydrationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (classifyRelayClosed(message) === "terminal") return true;
+  const status = message.match(/\b(4\d{2})\b/)?.[1];
+  if (status && !["408", "425", "429"].includes(status)) return true;
+  return /\b(?:forbidden|unauthori[sz]ed|not authorized|restricted|blocked|invalid|proof[- ]of[- ]work|pow:|duplicate|unsupported|malformed|terminal error|access denied|policy rejected)\b/i.test(
+    message,
+  );
+}
+
 export function createHydrationRetryController<TTimer>({
   hydrate,
   onError,
+  onPermanentError,
   retryDelayMs,
   setTimeoutFn,
   clearTimeoutFn,
+  shouldRetry = (error) => !isPermanentHydrationError(error),
 }: {
   hydrate: () => Promise<void>;
   onError: (error: unknown) => void;
+  onPermanentError?: (error: unknown) => void;
   retryDelayMs: number;
   setTimeoutFn: (callback: () => void, delayMs: number) => TTimer;
   clearTimeoutFn: (timer: TTimer) => void;
+  shouldRetry?: (error: unknown) => boolean;
 }) {
   let stopped = false;
   let retryTimer: TTimer | undefined;
   let running: Promise<void> | null = null;
+  let rerunRequested = false;
 
   const run = (): Promise<void> => {
     if (stopped) return Promise.resolve();
-    if (running) return running;
+    if (running) {
+      rerunRequested = true;
+      return running;
+    }
     running = hydrate()
+      .then(() => {
+        if (retryTimer !== undefined) {
+          clearTimeoutFn(retryTimer);
+          retryTimer = undefined;
+        }
+      })
       .catch((error) => {
         if (stopped) return;
         onError(error);
+        if (!shouldRetry(error)) {
+          rerunRequested = false;
+          onPermanentError?.(error);
+          return;
+        }
         if (retryTimer !== undefined) return;
         retryTimer = setTimeoutFn(() => {
           retryTimer = undefined;
@@ -43,6 +73,10 @@ export function createHydrationRetryController<TTimer>({
       })
       .finally(() => {
         running = null;
+        if (rerunRequested && !stopped) {
+          rerunRequested = false;
+          void run();
+        }
       });
     return running;
   };
@@ -51,6 +85,7 @@ export function createHydrationRetryController<TTimer>({
     run,
     stop() {
       stopped = true;
+      rerunRequested = false;
       if (retryTimer !== undefined) {
         clearTimeoutFn(retryTimer);
         retryTimer = undefined;
@@ -117,27 +152,5 @@ export async function enumerateDurableActionEvents(
   if (!Number.isSafeInteger(pageSize) || pageSize <= 0) {
     throw new Error("Durable action page size must be a positive integer.");
   }
-
-  const byId = new Map<string, RelayEvent>();
-  let until: number | undefined;
-  for (;;) {
-    const page = await fetchPage({
-      ...baseFilter,
-      limit: pageSize,
-      ...(until === undefined ? {} : { until }),
-    });
-    for (const event of page) byId.set(event.id, event);
-    if (page.length < pageSize) return [...byId.values()];
-
-    const oldest = Math.min(...page.map((event) => event.created_at));
-    const boundary = await drainRelayTimestampBucket(
-      fetchPage,
-      baseFilter,
-      oldest,
-      pageSize,
-    );
-    for (const event of boundary) byId.set(event.id, event);
-    if (oldest <= 0) return [...byId.values()];
-    until = oldest - 1;
-  }
+  return fetchExhaustiveRelayHistory(fetchPage, baseFilter, pageSize);
 }

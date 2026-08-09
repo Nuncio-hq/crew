@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createHydrationRetryController,
   enumerateDurableActionEvents,
+  isPermanentHydrationError,
   mergeDurableActionEvents,
 } from "./durableActionHydration.ts";
 
@@ -38,6 +39,47 @@ test("hydration retry controller retries a failed exhaustive load", async () => 
   assert.equal(attempts, 2);
 
   controller.stop();
+});
+
+test("hydration retry controller does not loop on permanent policy failure", async () => {
+  let attempts = 0;
+  const timers = [];
+  const controller = createHydrationRetryController({
+    hydrate: async () => {
+      attempts += 1;
+      throw new Error("forbidden: invalid filter policy rejected");
+    },
+    onError: () => {},
+    retryDelayMs: 5_000,
+    setTimeoutFn: (callback) => {
+      timers.push(callback);
+      return timers.length;
+    },
+    clearTimeoutFn: () => {},
+  });
+
+  await controller.run();
+  assert.equal(attempts, 1);
+  assert.equal(timers.length, 0);
+});
+
+test("hydration treats ordinary 4xx as permanent but keeps timeout/rate-limit retryable", () => {
+  assert.equal(isPermanentHydrationError(new Error("relay HTTP 403")), true);
+  assert.equal(isPermanentHydrationError(new Error("relay HTTP 408")), false);
+  assert.equal(isPermanentHydrationError(new Error("relay HTTP 429")), false);
+});
+
+test("hydration recognizes every terminal CLOSED policy family", () => {
+  for (const reason of [
+    "blocked: owner denied",
+    "invalid: bad filter",
+    "pow: insufficient work",
+    "duplicate: subscription",
+    "unsupported: filter",
+    "terminal error: policy",
+  ]) {
+    assert.equal(isPermanentHydrationError(new Error(reason)), true, reason);
+  }
 });
 
 function event(id, createdAt) {

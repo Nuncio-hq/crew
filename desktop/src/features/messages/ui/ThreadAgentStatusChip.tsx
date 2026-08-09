@@ -26,7 +26,7 @@ import { useSharedNowWhen } from "@/features/agents/lib/sharedNow";
 import { deriveAgentAttention } from "@/features/agents/agentAttention";
 import {
   type AgentReceiptSummary,
-  useLatestOwnedAgentReceiptForConversation,
+  useLatestOwnedAgentReceiptForActiveTurns,
 } from "@/features/agents/agentReceiptStore";
 import { mergeOwnedAgentPubkeys } from "@/features/agents/knownAgentPubkeys";
 import { useAgentObserverConnectionState } from "@/features/agents/useAgentObserverConnectionState";
@@ -302,11 +302,11 @@ export function ThreadAgentStatusChip({
   const needsYou = useNeedsYouForConversation(conversationId);
   const outcome = useRecentOutcomeForConversation(conversationId);
   const ownedAgentPubkeys = mergeOwnedAgentPubkeys(profiles, currentPubkey);
-  const receiptCandidate = useLatestOwnedAgentReceiptForConversation(
+  const receipt = useLatestOwnedAgentReceiptForActiveTurns(
     conversationId,
     ownedAgentPubkeys,
+    summaries,
   );
-  const receipt = receiptForActiveTurns(receiptCandidate, summaries);
   const connectionAgentPubkeys = summaries.map(
     (summary) => summary.agentPubkey,
   );

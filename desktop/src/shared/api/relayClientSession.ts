@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import * as eventVerification from "./relayEventVerification";
 import {
   createAuthEvent,
   getRelayWsUrl,
@@ -28,11 +29,7 @@ import {
   buildChannelMentionFilter,
   buildGlobalStreamFilter,
 } from "@/shared/api/relayChannelFilters";
-import {
-  clearClosedRetry,
-  handleSubscriptionEose,
-  prepareSubscriptionEvent,
-} from "@/shared/api/relayClosedRecovery";
+import * as closedRecovery from "@/shared/api/relayClosedRecovery";
 import * as reconnectReplay from "@/shared/api/relayReconnectReplay";
 import { handleSessionRelayClosed } from "@/shared/api/relayClientClosedRecovery";
 import * as liveBuffer from "@/shared/api/relayLiveEventBuffer";
@@ -156,7 +153,7 @@ export class RelayClient {
         window.clearTimeout(sub.timeout);
         sub.reject(error);
       } else {
-        clearClosedRetry(sub);
+        closedRecovery.clearClosedRetry(sub);
       }
       this.subscriptions.delete(subId);
     }
@@ -330,8 +327,7 @@ export class RelayClient {
     channelId: string,
     onEvent: (event: RelayEvent) => void,
   ) {
-    // 39005 rides only this window-store subscription — CHANNEL_EVENT_KINDS'
-    // other consumers (unread tracking, cache merges) must never see
+    // 39005 rides only this window-store subscription; other consumers must never see
     // summary overlays.
     return this.subscribe(
       {
@@ -606,23 +602,21 @@ export class RelayClient {
     await this.ensureConnected();
     const subId = `live-${crypto.randomUUID()}`;
     let resolveReady = () => {};
-    const ready = new Promise<void>((resolve) => {
-      resolveReady = () => {
-        window.clearTimeout(fallbackTimeout);
-        resolve();
-      };
+    let rejectReady = (_error: Error) => {};
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
     });
-    const fallbackTimeout = window.setTimeout(() => {
-      resolveReady();
-    }, 250);
 
     this.subscriptions.set(subId, {
       mode: "live",
+      currentSubId: subId,
       filter,
       onEvent,
       onStatus,
       ready: false,
       resolveReady,
+      rejectReady,
       recoveryFloorCreatedAt: reconnectReplay.initialRecoveryFloor(
         Math.floor(Date.now() / 1_000),
         filter,
@@ -634,7 +628,6 @@ export class RelayClient {
         "Failed to restore relay subscription.",
       );
     } catch (error) {
-      window.clearTimeout(fallbackTimeout);
       this.subscriptions.delete(subId);
       throw error;
     }
@@ -646,9 +639,9 @@ export class RelayClient {
         return;
       }
 
-      this.subscriptions.delete(subId);
-      clearClosedRetry(active);
-      await this.closeSubscription(subId);
+      closedRecovery.deleteSubscriptionAliases(this.subscriptions, active);
+      closedRecovery.clearClosedRetry(active);
+      await this.closeSubscription(active.currentSubId ?? subId);
     };
   }
 
@@ -793,6 +786,8 @@ export class RelayClient {
       return;
     }
     if (type === "EVENT" && typeof rest[0] === "string" && rest[1]) {
+      if (!eventVerification.isVerifiedRelayEvent(rest[1] as RelayEvent))
+        return;
       this.handleEvent(rest[0], rest[1] as RelayEvent);
       return;
     }
@@ -861,15 +856,17 @@ export class RelayClient {
 
   private handleEvent(subId: string, event: RelayEvent) {
     const subscription = this.subscriptions.get(subId);
-    if (!subscription) {
+    if (!subscription) return;
+    if (
+      !eventVerification.relayEventMatchesFilter(event, subscription.filter) ||
+      !closedRecovery.isCurrentLiveWireId(subscription, subId)
+    )
       return;
-    }
-
     if (subscription.mode === "first") {
       subscription.onEvent(event);
       return;
     }
-    if (!prepareSubscriptionEvent(subscription, event)) return;
+    if (!closedRecovery.prepareSubscriptionEvent(subscription, event)) return;
     this.eventBuffer.push(
       liveBuffer.toBufferedLiveEvent(subId, event, subscription),
     );
@@ -886,7 +883,7 @@ export class RelayClient {
   }
 
   private handleEose(subId: string) {
-    handleSubscriptionEose({
+    closedRecovery.handleSubscriptionEose({
       subscriptions: this.subscriptions,
       subId,
       closeSubscription: (id) => this.closeSubscription(id),
@@ -1068,9 +1065,12 @@ export class RelayClient {
         continue;
       }
 
-      subscription.resolveReady?.();
-      subscription.resolveReady = undefined;
-      clearClosedRetry(subscription);
+      if (options?.reconnect === false) {
+        subscription.rejectReady?.(error);
+        subscription.rejectReady = undefined;
+        subscription.resolveReady = undefined;
+      }
+      closedRecovery.clearClosedRetry(subscription);
     }
 
     for (const [eventId, pendingEvent] of this.pendingEvents) {

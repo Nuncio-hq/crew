@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { markAgentReceiptReviewed } from "@/features/agents/agentReceiptStore";
 import { parseAgentReceipt } from "@/features/messages/lib/agentReceipt.mjs";
 import type {
   TimelineMessage,
@@ -25,7 +26,7 @@ export function AgentReceiptMessageBody({
   fallback: ReactNode;
   message: TimelineMessage;
   onRequestChanges?: () => void;
-  onReviewed: () => void;
+  onReviewed: () => void | Promise<void>;
   profiles?: UserProfileLookup;
   reactionPending: boolean;
   reactions: readonly TimelineReaction[];
@@ -47,13 +48,17 @@ export function AgentReceiptMessageBody({
       (reaction) =>
         reaction.emoji === "✅" && reaction.reactedByCurrentUser === true,
     );
+  const handleReviewed = async () => {
+    await onReviewed();
+    markAgentReceiptReviewed(message.id);
+  };
 
   return (
     <AgentReceiptCard
       disabled={reactionPending}
       onRequestChanges={onRequestChanges}
       onReviewed={
-        ownedByCurrentUser && canToggleReactions ? onReviewed : undefined
+        ownedByCurrentUser && canToggleReactions ? handleReviewed : undefined
       }
       receipt={receipt}
       reviewed={reviewed}

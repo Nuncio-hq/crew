@@ -259,8 +259,12 @@ export function deriveMissionInboxSections(
   }
 
   const latestReceiptByConversation = new Map<string, AgentReceiptSummary>();
+  const receiptsByConversation = new Map<string, AgentReceiptSummary[]>();
   for (const receipt of input.receipts) {
     if (!input.ownedAgentPubkeys.has(receipt.agentPubkey)) continue;
+    const receipts = receiptsByConversation.get(receipt.conversationId) ?? [];
+    receipts.push(receipt);
+    receiptsByConversation.set(receipt.conversationId, receipts);
     const prior = latestReceiptByConversation.get(receipt.conversationId);
     if (
       !prior ||
@@ -270,20 +274,38 @@ export function deriveMissionInboxSections(
       latestReceiptByConversation.set(receipt.conversationId, receipt);
     }
   }
+  for (const receipts of receiptsByConversation.values()) {
+    receipts.sort(
+      (left, right) =>
+        right.createdAt - left.createdAt || right.id.localeCompare(left.id),
+    );
+  }
   const calmTurns: MissionInboxInput["activeTurns"][number][] = [];
   for (const turn of input.activeTurns) {
     if (blocked.has(turn.conversationId) || !channelIds.has(turn.channelId)) {
       continue;
     }
-    const candidateReceipt =
-      latestReceiptByConversation.get(turn.conversationId) ?? null;
+    const exactPairs =
+      turn.agentTriggerPairs ??
+      (turn.agentPubkeys.length === 1
+        ? turn.triggeringEventIds.map((eventId) => ({
+            agentPubkey: turn.agentPubkeys[0] ?? "",
+            eventId,
+          }))
+        : []);
     const receipt =
-      candidateReceipt &&
-      turn.agentPubkeys.includes(candidateReceipt.agentPubkey) &&
-      turn.triggeringEventIds.includes(candidateReceipt.parentEventId)
-        ? candidateReceipt
-        : null;
-    if (candidateReceipt && !receipt) {
+      receiptsByConversation
+        .get(turn.conversationId)
+        ?.find((candidate) =>
+          exactPairs.some(
+            (pair) =>
+              pair.agentPubkey === candidate.agentPubkey &&
+              pair.eventId === candidate.parentEventId,
+          ),
+        ) ?? null;
+    if (receipt) {
+      latestReceiptByConversation.set(turn.conversationId, receipt);
+    } else {
       latestReceiptByConversation.delete(turn.conversationId);
     }
     const attention = deriveAgentAttention({

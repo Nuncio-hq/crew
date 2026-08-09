@@ -41,6 +41,7 @@ export async function requestHistoryGated(
 
     subscriptions.set(subId, {
       mode: "history",
+      filter,
       events: [],
       resolve,
       reject,
@@ -84,6 +85,7 @@ export async function requestFirstEventGated(
 
     subscriptions.set(subId, {
       mode: "first",
+      filter,
       onEvent: (event) => {
         window.clearTimeout(timeout);
         subscriptions.delete(subId);

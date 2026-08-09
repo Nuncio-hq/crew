@@ -1960,6 +1960,7 @@ async fn tokio_main() -> Result<()> {
         relay_url: config.relay_url.clone(),
         user_input_runtime: Some(user_input_runtime.clone()),
         agent_receipts_enabled: config.agent_receipts_enabled,
+        receipt_outbox_workers: tokio_util::task::TaskTracker::new(),
     });
     pool::resume_receipt_outbox(Arc::clone(&ctx));
 
@@ -3185,7 +3186,12 @@ async fn tokio_main() -> Result<()> {
     tracing::info!("shutdown: waiting for in-flight prompts");
     // Resolve pending elicitation requests before reaping agents so clients
     // receive a terminal event during graceful harness shutdown.
-    user_input_runtime.shutdown_pending().await;
+    if !user_input_runtime.shutdown_pending().await {
+        tracing::error!(
+            "graceful shutdown timed out before all durable user-input resolutions were acknowledged"
+        );
+    }
+
     // 30 s is generous for in-flight prompts to be cancelled; using
     // max_turn_duration here would cause Ctrl+C to hang for up to an hour.
     let grace = Duration::from_secs(30);
@@ -3238,6 +3244,21 @@ async fn tokio_main() -> Result<()> {
         }
     }
     drop(pool);
+    // Re-check after prompt producers are gone: an in-flight ACP process may
+    // have opened a request while the first shutdown snapshot was draining.
+    if !user_input_runtime.shutdown_pending().await {
+        tracing::error!(
+            "final graceful shutdown drain left durable user-input resolutions pending"
+        );
+    }
+    // Prompt tasks can enqueue their mandatory terminal receipts while they
+    // drain above. Close and await the receipt tracker only after every prompt
+    // producer has either completed or been aborted.
+    if !pool::shutdown_receipt_outbox(&ctx).await {
+        tracing::error!(
+            "graceful shutdown timed out before all durable agent receipts were acknowledged"
+        );
+    }
 
     // Abort any in-flight respawn tasks. They may be sleeping in backoff or
     // running spawn_and_init — either way, we don't want them spawning new

@@ -14,6 +14,11 @@ import {
   type AgentManagementRequest,
 } from "./agentManagement";
 import { normalizePubkey } from "@/shared/lib/pubkey";
+import {
+  getLatestAuthorizedLiveSessionId,
+  observeLiveSessionAuthority,
+  resetLiveSessionAuthority,
+} from "./observerLiveSessionAuthority";
 import { useQueryClient } from "@tanstack/react-query";
 import { agentConfigSurfaceQueryKey } from "@/features/agents/hooks";
 import type {
@@ -89,29 +94,16 @@ const archiveEventsByChannel = new Map<string, ObserverEvent[]>();
 // connectionState or an ever-live Set — an ever-live Set would incorrectly
 // mark session A as "current" after session B has started (Thufir Pass 3).
 //
-// Stored as `{ sessionId, timestamp, seq }` so that late-arriving live frames
-// from an older session never regress the latest-live id. We only advance when
-// the parsed event sorts strictly AFTER the stored one, using the same
-// two-key ordering as `compareObserverEvents`: timestamp first, then seq on a
-// tie — so a higher-seq frame at equal timestamp still advances the entry.
-type LatestLiveEntry = { sessionId: string; timestamp: string; seq: number };
-const latestLiveSessionByAgentChannel = new Map<string, LatestLiveEntry>();
-
-function liveSessionKey(agentPubkey: string, channelId: string | null): string {
-  return `${normalizePubkey(agentPubkey)}:${channelId ?? ""}`;
-}
-
+// Payload timestamps and sequence numbers are producer-local and can reset or
+// skew across sessions. A changed generation in one conversation or an exact
+// turn_started frame advances channel authority; arbitrary late frames from a
+// different conversation cannot roll it back.
 /** Read the latest-live-session-id for a (agent, channel) pair. */
 export function getLatestLiveSessionId(
   agentPubkey: string | null | undefined,
   channelId: string | null | undefined,
 ): string | null {
-  if (!agentPubkey) return null;
-  return (
-    latestLiveSessionByAgentChannel.get(
-      liveSessionKey(agentPubkey, channelId ?? null),
-    )?.sessionId ?? null
-  );
+  return getLatestAuthorizedLiveSessionId(agentPubkey, channelId);
 }
 
 // Per-agent listeners for `control_result` frames. The ModelPicker subscribes
@@ -413,32 +405,28 @@ export function isObserverEventAfter(
 // Per-event processing shared by every event a live frame carries (one for a
 // plain frame, many for a batch envelope).
 function processLiveObserverEvent(agentPubkey: string, parsed: ObserverEvent) {
-  if (
-    prepareAgentSessionObservation(normalizePubkey(agentPubkey), parsed) ===
-    "retired"
-  ) {
+  const sessionObservation = prepareAgentSessionObservation(
+    normalizePubkey(agentPubkey),
+    parsed,
+  );
+  if (sessionObservation === "retired") {
+    return false;
+  }
+  const authority = observeLiveSessionAuthority(
+    agentPubkey,
+    parsed,
+    sessionObservation,
+  );
+  if (!authority.accepted) {
+    if (authority.unavailable) {
+      setAgentConnectionError(
+        agentPubkey,
+        "Observer session authority exceeded its safe recovery bound",
+      );
+    }
     return false;
   }
   if (!parsed.replayed) markAgentLiveContact(agentPubkey);
-  // Track the latest-live-session-id per (agent, channel) on the live path.
-  // Only set when the parsed event carries both a sessionId and channelId,
-  // so we never attribute a session to the wrong channel.
-  if (parsed.sessionId && parsed.channelId) {
-    const key = liveSessionKey(agentPubkey, parsed.channelId);
-    const stored = latestLiveSessionByAgentChannel.get(key);
-    // Advance only when this event sorts strictly AFTER the stored one via
-    // isObserverEventAfter (timestamp then seq — same ordering as
-    // compareObserverEvents). This prevents late-arriving live frames from
-    // older sessions from regressing the latest-live id, while also
-    // correctly advancing on a same-timestamp frame with a higher seq.
-    if (!stored || isObserverEventAfter(parsed, stored)) {
-      latestLiveSessionByAgentChannel.set(key, {
-        sessionId: parsed.sessionId,
-        timestamp: parsed.timestamp,
-        seq: parsed.seq,
-      });
-    }
-  }
   appendAgentEvent(agentPubkey, parsed);
   const managementRequest = parseAgentManagementRequest(parsed.payload);
   if (managementRequest) {
@@ -943,7 +931,7 @@ export function resetAgentObserverStore() {
   knownAgentsBySubscription.clear();
   pendingUnknownAgentFrames.length = 0;
   resetObserverDropLogger();
-  latestLiveSessionByAgentChannel.clear();
+  resetLiveSessionAuthority();
   agentManagementListeners.clear();
   onSessionConfigCaptured = null;
   connectionState = "idle";
