@@ -295,7 +295,7 @@ describe("agentReceiptStore", () => {
     );
   });
 
-  it("keeps canonical same-second receipt order after active turns complete", () => {
+  it("hides conversation receipts after active turns complete", () => {
     const lower = "1".repeat(64);
     const higher = "f".repeat(64);
     ingestAgentReceiptEvent(receiptEvent({ id: lower }));
@@ -310,9 +310,8 @@ describe("agentReceiptStore", () => {
       higher,
     );
     assert.equal(
-      getLatestOwnedAgentReceiptForActiveTurns(CONVERSATION, OWNED_AGENTS, [])
-        ?.id,
-      higher,
+      getLatestOwnedAgentReceiptForActiveTurns(CONVERSATION, OWNED_AGENTS, []),
+      null,
     );
   });
 

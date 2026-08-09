@@ -267,6 +267,16 @@ export function ingestAgentReceiptReviewEvent(
   return true;
 }
 
+/** Apply the owner-gated reviewed action after its relay publication succeeds. */
+export function markAgentReceiptReviewed(receiptId: string): boolean {
+  const receipt = receiptsById.get(receiptId);
+  if (!receipt || reviewedReceiptIds.has(receiptId)) return false;
+  reviewedReceiptIds.add(receiptId);
+  receiptsById.set(receiptId, { ...receipt, reviewed: true });
+  notify();
+  return true;
+}
+
 export function getLatestAgentReceiptForConversation(
   conversationId: string | null | undefined,
 ): AgentReceiptSummary | null {
