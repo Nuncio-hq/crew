@@ -96,6 +96,7 @@ test("read-state acknowledgement does not review a durable receipt", () => {
           channelId: "channel-b",
           agentPubkey: "agent-2",
           endedAt: 200,
+          triggeringEventIds: ["receipt-2-parent"],
         },
       ],
     ],
@@ -105,6 +106,7 @@ test("read-state acknowledgement does not review a durable receipt", () => {
         channelId: "channel-b",
         conversationId: "conversation-2",
         agentPubkey: "agent-2",
+        parentEventId: "receipt-2-parent",
         createdAt: 200,
         summary: "Completed successfully",
         verify: "pnpm check passed",
@@ -205,6 +207,43 @@ test("observer completion alone is not ready to review", () => {
       ],
     ],
   });
+  assert.equal(sections.readyToReview.length, 0);
+});
+
+test("a completed run never falls back to an older run's receipt", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [],
+    channels,
+    inboxItems: [item("conversation-2", "channel-b", 100)],
+    needsYou: [],
+    outcomes: [
+      [
+        "conversation-2",
+        {
+          outcome: "completed",
+          channelId: "channel-b",
+          agentPubkey: "agent-2",
+          endedAt: 300,
+          triggeringEventIds: ["run-b-trigger"],
+        },
+      ],
+    ],
+    receipts: [
+      {
+        id: "run-a-receipt",
+        channelId: "channel-b",
+        conversationId: "conversation-2",
+        agentPubkey: "agent-2",
+        parentEventId: "run-a-trigger",
+        createdAt: 200,
+        summary: "Run A completed",
+        reviewed: false,
+      },
+    ],
+  });
+
   assert.equal(sections.readyToReview.length, 0);
 });
 

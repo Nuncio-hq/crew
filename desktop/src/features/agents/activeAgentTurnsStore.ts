@@ -499,6 +499,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
           channelId: event.channelId,
           endedAt: observedAt,
           failedEventIds: [...(terminalTurn?.triggeringEventIds ?? [])],
+          triggeringEventIds: [...(terminalTurn?.triggeringEventIds ?? [])],
         });
       }
       endTurn(

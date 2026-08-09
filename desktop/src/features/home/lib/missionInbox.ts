@@ -280,6 +280,21 @@ export function deriveMissionInboxSections(
         right.createdAt - left.createdAt || right.id.localeCompare(left.id),
     );
   }
+  for (const [conversationId, outcome] of input.outcomes) {
+    if (outcome.outcome !== "completed") continue;
+    const receipt = receiptsByConversation
+      .get(conversationId)
+      ?.find(
+        (candidate) =>
+          candidate.agentPubkey === outcome.agentPubkey &&
+          (outcome.triggeringEventIds ?? []).includes(candidate.parentEventId),
+      );
+    if (receipt) {
+      latestReceiptByConversation.set(conversationId, receipt);
+    } else {
+      latestReceiptByConversation.delete(conversationId);
+    }
+  }
   const calmTurns: MissionInboxInput["activeTurns"][number][] = [];
   for (const turn of input.activeTurns) {
     if (blocked.has(turn.conversationId) || !channelIds.has(turn.channelId)) {

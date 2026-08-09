@@ -12,6 +12,7 @@ mod pool_lifecycle;
 mod queue;
 mod relay;
 mod retry_turn;
+mod secure_spool;
 mod setup_mode;
 mod thread_workspace;
 #[cfg(test)]
@@ -1784,7 +1785,9 @@ async fn tokio_main() -> Result<()> {
         owner_cache.clone(),
         relay.rest_client(),
     );
-    user_input_runtime.resume_resolution_outbox().await;
+    if !user_input_runtime.resume_resolution_outbox().await {
+        user_input_runtime.retry_resolution_outbox();
+    }
 
     let mut relay_observer_control_rx = None;
     let mut relay_observer_publisher_task = None;

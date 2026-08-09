@@ -23,6 +23,7 @@ export type ConversationOutcomeEntry = {
   channelId: string;
   endedAt: number;
   failedEventIds?: string[];
+  triggeringEventIds?: string[];
 };
 
 const outcomeByConversation = new Map<string, ConversationOutcomeEntry>();
@@ -115,6 +116,9 @@ export function cloneConversationOutcomeLedger(): Map<
       failedEventIds: entry.failedEventIds
         ? [...entry.failedEventIds]
         : undefined,
+      triggeringEventIds: entry.triggeringEventIds
+        ? [...entry.triggeringEventIds]
+        : undefined,
     });
   }
   return outcomes;
@@ -130,6 +134,9 @@ export function restoreConversationOutcomeLedger(
       ...entry,
       failedEventIds: entry.failedEventIds
         ? [...entry.failedEventIds]
+        : undefined,
+      triggeringEventIds: entry.triggeringEventIds
+        ? [...entry.triggeringEventIds]
         : undefined,
     });
   }
