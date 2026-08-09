@@ -137,6 +137,26 @@ test("late frames from another conversation cannot roll channel session authorit
   assert.equal(getLatestLiveSessionId(AGENT, "channel"), "session-current");
 });
 
+test("a sibling producer in another conversation keeps its own session authority", () => {
+  const base = { ...observerEvent(false), kind: "turn_started", seq: 1 };
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    conversationId: "conversation-old",
+    sessionId: "session-old",
+  });
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    conversationId: "conversation-current",
+    sessionId: "session-current",
+  });
+  _testProcessLiveObserverEvent(AGENT, {
+    ...base,
+    conversationId: "conversation-old",
+    sessionId: "session-old-sibling",
+  });
+  assert.equal(getLatestLiveSessionId(AGENT, "channel"), "session-old-sibling");
+});
+
 test("same-sequence same-second frames from concurrent producers remain distinct", () => {
   const base = {
     ...observerEvent(false),

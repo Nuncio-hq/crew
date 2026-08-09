@@ -4,8 +4,6 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 const MAX_RETIRED_SESSIONS_PER_CONVERSATION = 128;
 const currentByAuthority = new Map<string, string>();
 const latestDisplayByAgentChannel = new Map<string, string>();
-const displayConversationByAgentChannel = new Map<string, string>();
-const retiredDisplayConversations = new Map<string, Set<string>>();
 const retiredByAuthority = new Map<string, Set<string>>();
 const unavailableAuthorities = new Set<string>();
 
@@ -39,7 +37,6 @@ export function observeLiveSessionAuthority(
   }
   const key = authorityKey(agentPubkey, event);
   const currentDisplayKey = displayKey(agentPubkey, event.channelId);
-  const conversationId = event.conversationId ?? "";
   if (unavailableAuthorities.has(key)) {
     return { accepted: false, unavailable: true };
   }
@@ -55,29 +52,6 @@ export function observeLiveSessionAuthority(
     sessionObservation === "changed" ||
     event.kind === "turn_started";
   if (!advances) return { accepted: true, unavailable: false };
-
-  const displayedConversation =
-    displayConversationByAgentChannel.get(currentDisplayKey);
-  if (
-    displayedConversation !== undefined &&
-    displayedConversation !== conversationId
-  ) {
-    const retiredConversations =
-      retiredDisplayConversations.get(currentDisplayKey) ?? new Set<string>();
-    if (retiredConversations.has(conversationId)) {
-      latestDisplayByAgentChannel.delete(currentDisplayKey);
-      unavailableAuthorities.add(key);
-      return { accepted: false, unavailable: true };
-    }
-    if (retiredConversations.size >= MAX_RETIRED_SESSIONS_PER_CONVERSATION) {
-      latestDisplayByAgentChannel.delete(currentDisplayKey);
-      unavailableAuthorities.add(key);
-      return { accepted: false, unavailable: true };
-    }
-    retiredConversations.add(displayedConversation);
-    retiredDisplayConversations.set(currentDisplayKey, retiredConversations);
-  }
-  displayConversationByAgentChannel.set(currentDisplayKey, conversationId);
 
   if (stored && stored !== event.sessionId) {
     const nextRetired = retired ?? new Set<string>();
@@ -115,8 +89,6 @@ export function observeLiveSessionAuthority(
 export function resetLiveSessionAuthority(): void {
   currentByAuthority.clear();
   latestDisplayByAgentChannel.clear();
-  displayConversationByAgentChannel.clear();
-  retiredDisplayConversations.clear();
   retiredByAuthority.clear();
   unavailableAuthorities.clear();
 }
