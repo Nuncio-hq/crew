@@ -1,12 +1,14 @@
 import * as React from "react";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { relayClient } from "@/shared/api/relayClient";
+import { fetchRelayEventAncestry } from "@/features/agents/receiptParentLookup";
 import { buildChannelUserInputFilter } from "@/shared/api/relayChannelFilters";
 import {
   createHydrationRetryController,
   enumerateDurableActionEvents,
 } from "@/features/agents/durableActionHydration";
 import type { RelayEvent } from "@/shared/api/types";
+import { getThreadReference } from "@/features/messages/lib/threading";
 import { sendChannelUserInputAnswer } from "@/shared/api/tauriUserInput";
 import { KIND_AGENT_USER_INPUT_REQUESTED } from "@/shared/constants/kinds";
 import {
@@ -27,9 +29,16 @@ import {
   validateAuthorizedUserInputTransition,
 } from "@/features/agents/userInputAttentionProjection";
 import { useCurrentOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
+import { clearUserInputRequests } from "@/features/agents/needsYouStore";
 
 const USER_INPUT_PAGE_SIZE = 200;
 const USER_INPUT_HYDRATION_RETRY_MS = 5_000;
+const USER_INPUT_PARENT_BATCH_SIZE = 100;
+
+function causalParentId(event: RelayEvent): string | null {
+  const thread = getThreadReference(event.tags);
+  return thread.parentId ?? thread.rootId;
+}
 
 export function useChannelUserInput(channelId: string | null) {
   const identityQuery = useIdentityQuery();
@@ -64,9 +73,13 @@ export function useChannelUserInput(channelId: string | null) {
     if (!channelId) return;
 
     let cancelled = false;
+    let hydrationTerminal = false;
     let dispose: (() => Promise<void>) | undefined;
     const authorizedRequests = new Map<string, AuthorizedUserInputRequest>();
     const candidates = new Map<string, RelayEvent>();
+    const parentsById = new Map<string, RelayEvent>();
+    const attemptedParentIds = new Set<string>();
+    const pendingParentCandidates = new Map<string, RelayEvent>();
     const liveFilter = buildChannelUserInputFilter(channelId, 0);
     const { limit: _liveLimit, ...historyFilter } = liveFilter;
     const authorizeEvent = (event: RelayEvent) => {
@@ -74,16 +87,20 @@ export function useChannelUserInput(channelId: string | null) {
         event,
         currentPubkey,
         ownedAgentPubkeys,
+        parentsById.get(causalParentId(event) ?? ""),
+        parentsById,
       );
       if (request) {
-        authorizedRequests.set(request.id, request);
-        projectAuthorizedUserInputEvent(
+        const projected = projectAuthorizedUserInputEvent(
           event,
           channelId,
           currentPubkey,
           ownedAgentPubkeys,
+          parentsById.get(causalParentId(event) ?? ""),
+          parentsById,
         );
-        return true;
+        if (projected) authorizedRequests.set(request.id, request);
+        return projected;
       }
       const eTags = event.tags.filter((tag) => tag[0] === "e");
       const target =
@@ -151,7 +168,40 @@ export function useChannelUserInput(channelId: string | null) {
       );
     };
     const onEvent = (event: RelayEvent) => {
-      if (cancelled || candidates.has(event.id)) return;
+      if (cancelled || hydrationTerminal || candidates.has(event.id)) return;
+      if (event.kind === KIND_AGENT_USER_INPUT_REQUESTED) {
+        const parentId = causalParentId(event);
+        if (
+          parentId &&
+          !parentsById.has(parentId) &&
+          !attemptedParentIds.has(parentId)
+        ) {
+          pendingParentCandidates.set(event.id, event);
+          attemptedParentIds.add(parentId);
+          void fetchRelayEventAncestry(
+            (filter) => relayClient.fetchEvents(filter),
+            [parentId],
+            USER_INPUT_PARENT_BATCH_SIZE,
+          )
+            .then((parents) => {
+              if (cancelled) return;
+              for (const [id, parent] of parents) parentsById.set(id, parent);
+              if (!parentsById.has(parentId)) {
+                throw new Error(
+                  "history unavailable: user-input parent missing",
+                );
+              }
+              pendingParentCandidates.delete(event.id);
+              onEvent(event);
+            })
+            .catch((error) => {
+              attemptedParentIds.delete(parentId);
+              console.error("Failed to validate agent question parent", error);
+              void hydrationRetry.run();
+            });
+          return;
+        }
+      }
       candidates.set(event.id, event);
       if (event.kind === KIND_AGENT_USER_INPUT_REQUESTED) {
         setVisibleRequestIds((current) => {
@@ -176,8 +226,37 @@ export function useChannelUserInput(channelId: string | null) {
         historyFilter,
         USER_INPUT_PAGE_SIZE,
       );
+      const combinedHistory = [
+        ...new Map(
+          [...history, ...pendingParentCandidates.values()].map((event) => [
+            event.id,
+            event,
+          ]),
+        ).values(),
+      ];
+      const parentIds = [
+        ...new Set(
+          combinedHistory
+            .filter((event) => event.kind === KIND_AGENT_USER_INPUT_REQUESTED)
+            .map((event) => causalParentId(event))
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+      const parents = await fetchRelayEventAncestry(
+        (filter) => relayClient.fetchEvents(filter),
+        parentIds,
+        USER_INPUT_PARENT_BATCH_SIZE,
+      );
+      for (const [id, parent] of parents) parentsById.set(id, parent);
+      const missingParentIds = parentIds.filter((id) => !parentsById.has(id));
+      if (missingParentIds.length > 0) {
+        throw new Error(
+          `history unavailable: ${missingParentIds.length} user-input parent event(s) missing`,
+        );
+      }
       if (!cancelled) {
-        for (const event of history) candidates.set(event.id, event);
+        for (const event of combinedHistory) candidates.set(event.id, event);
+        pendingParentCandidates.clear();
         rebuildAuthorizedEvents(true);
       }
     };
@@ -185,6 +264,23 @@ export function useChannelUserInput(channelId: string | null) {
       hydrate,
       onError: (error) =>
         console.error("Failed to load agent questions", error),
+      onPermanentError: (error) => {
+        hydrationTerminal = true;
+        pendingParentCandidates.clear();
+        candidates.clear();
+        authorizedRequests.clear();
+        clearUserInputRequests(channelId);
+        setEvents([]);
+        setVisibleRequestIds(new Set());
+        console.error(
+          "Agent questions are unavailable until relay policy/configuration changes",
+          error,
+        );
+        if (dispose) {
+          void dispose();
+          dispose = undefined;
+        }
+      },
       retryDelayMs: USER_INPUT_HYDRATION_RETRY_MS,
       setTimeoutFn: (callback, delayMs) =>
         globalThis.setTimeout(callback, delayMs),

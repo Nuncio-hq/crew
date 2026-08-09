@@ -81,7 +81,11 @@ export function useMissionInboxSections({
     for (const event of relayEvents) {
       if (event.kind === KIND_AGENT_RECEIPT) {
         const parentId = getThreadReference(event.tags).parentId;
-        ingestAgentReceiptEvent(event, eventById.get(parentId ?? ""));
+        ingestAgentReceiptEvent(
+          event,
+          eventById.get(parentId ?? ""),
+          eventById,
+        );
       }
     }
     if (!currentPubkey) return;

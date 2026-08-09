@@ -6,6 +6,7 @@ import type {
 
 export type BufferedLiveEvent = {
   subId: string;
+  subscription: RelaySubscription;
   event: RelayEvent;
   context: RelayLiveEventContext;
 };
@@ -17,6 +18,7 @@ export function toBufferedLiveEvent(
 ): BufferedLiveEvent {
   return {
     subId,
+    subscription,
     event,
     context: {
       replay: subscription.mode === "live" && !subscription.ready,
@@ -29,8 +31,12 @@ export function dispatchBufferedLiveEvents(
   subscriptions: ReadonlyMap<string, RelaySubscription>,
 ) {
   // Re-lookup: subscriptions removed during the batch window are skipped.
-  for (const { subId, event, context } of buffer) {
-    const subscription = subscriptions.get(subId);
-    if (subscription?.mode === "live") subscription.onEvent(event, context);
+  for (const { subscription, event, context } of buffer) {
+    const stillActive = [...subscriptions.values()].some(
+      (candidate) => candidate === subscription,
+    );
+    if (stillActive && subscription.mode === "live") {
+      subscription.onEvent(event, context);
+    }
   }
 }

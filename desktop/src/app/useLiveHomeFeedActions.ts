@@ -20,27 +20,42 @@ import {
   resolveApprovalRequestEvent,
 } from "@/features/agents/needsYouStore";
 import {
+  beginExhaustiveUserInputProjection,
+  endExhaustiveUserInputProjection,
+  isUserInputAttentionProjectionUnavailable,
+  markUserInputAttentionProjectionUnavailable,
   projectAuthorizedUserInputEvent,
   reconcileAuthorizedUserInputRequests,
 } from "@/features/agents/userInputAttentionProjection";
 import { useCurrentOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
 import { buildChannelUserInputFilter } from "@/shared/api/relayChannelFilters";
 import {
+  beginExhaustiveAgentReceiptProjection,
+  endExhaustiveAgentReceiptProjection,
   ingestAgentReceiptEvent,
   ingestAgentReceiptReviewEvent,
+  isAgentReceiptProjectionUnavailable,
+  markAgentReceiptProjectionUnavailable,
 } from "@/features/agents/agentReceiptStore";
 import {
   createHydrationRetryController,
   enumerateDurableActionEvents,
+  isPermanentHydrationError,
   mergeDurableActionEvents,
 } from "@/features/agents/durableActionHydration";
 import type { RelayEvent } from "@/shared/api/types";
-import { buildReceiptParentFilter } from "@/features/agents/receiptParentLookup";
+import { fetchRelayEventAncestry } from "@/features/agents/receiptParentLookup";
 
 const LIVE_HOME_FEED_RETRY_BASE_MS = 1_000;
 const LIVE_HOME_FEED_RETRY_MAX_MS = 30_000;
 const DURABLE_ACTION_PAGE_SIZE = 500;
 const RECEIPT_PARENT_BATCH_SIZE = 100;
+const MAX_DURABLE_HYDRATION_BUFFER = 5_000;
+
+function causalParentId(event: RelayEvent): string | null {
+  const thread = getThreadReference(event.tags);
+  return thread.parentId ?? thread.rootId;
+}
 
 export function useLiveHomeFeedActions(
   pubkey: string | undefined,
@@ -81,7 +96,24 @@ export function useLiveHomeFeedActions(
     let retryAttempt = 0;
     const since = Math.floor(Date.now() / 1_000);
     let durableHydrationReady = false;
+    let durableHydrationTerminal = false;
+    let durableProjectionGeneration = 0;
+    let durableBufferOverflowGeneration = 0;
     const bufferedDurableEvents = new Map<string, RelayEvent>();
+    const bufferDurableEvent = (event: RelayEvent) => {
+      if (
+        !bufferedDurableEvents.has(event.id) &&
+        bufferedDurableEvents.size >= MAX_DURABLE_HYDRATION_BUFFER
+      ) {
+        bufferedDurableEvents.clear();
+        durableBufferOverflowGeneration += 1;
+        durableProjectionGeneration += 1;
+        durableHydrationReady = false;
+        markUserInputAttentionProjectionUnavailable();
+        markAgentReceiptProjectionUnavailable();
+      }
+      bufferedDurableEvents.set(event.id, event);
+    };
 
     const disposeAll = (currentDisposers: Array<() => Promise<void>>) => {
       void Promise.allSettled(currentDisposers.map((dispose) => dispose()));
@@ -89,55 +121,60 @@ export function useLiveHomeFeedActions(
     const handleUserInputEvent = (
       event: RelayEvent,
       fallbackChannelId: string,
+      knownParents?: ReadonlyMap<string, RelayEvent>,
     ) => {
+      const parentId = causalParentId(event);
       projectAuthorizedUserInputEvent(
         event,
         fallbackChannelId,
         normalizedPubkey,
         ownedAgentPubkeys,
+        knownParents?.get(parentId ?? ""),
+        knownParents,
       );
     };
-    const fetchReceiptParents = async (events: readonly RelayEvent[]) => {
+    const fetchCausalParents = async (events: readonly RelayEvent[]) => {
       const parentIds = [
         ...new Set(
           events
-            .map((event) => getThreadReference(event.tags).parentId)
+            .map((event) => causalParentId(event))
             .filter((eventId): eventId is string => Boolean(eventId)),
         ),
       ];
-      const parentsById = new Map<string, RelayEvent>();
-      for (
-        let offset = 0;
-        offset < parentIds.length;
-        offset += RECEIPT_PARENT_BATCH_SIZE
-      ) {
-        const ids = parentIds.slice(offset, offset + RECEIPT_PARENT_BATCH_SIZE);
-        const parents = await relayClient.fetchEvents(
-          buildReceiptParentFilter(ids),
-        );
-        for (const parent of parents) parentsById.set(parent.id, parent);
-      }
-      return parentsById;
+      return fetchRelayEventAncestry(
+        (filter) => relayClient.fetchEvents(filter),
+        parentIds,
+        RECEIPT_PARENT_BATCH_SIZE,
+      );
     };
     const handleReceiptEvent = async (
       event: RelayEvent,
       knownParents?: ReadonlyMap<string, RelayEvent>,
+      shouldCommit: () => boolean = () => true,
     ) => {
       if (event.kind === KIND_AGENT_RECEIPT) {
-        const parentId = getThreadReference(event.tags).parentId;
-        const parent = knownParents
-          ? knownParents.get(parentId ?? "")
-          : (await fetchReceiptParents([event])).get(parentId ?? "");
-        if (!isCancelled) ingestAgentReceiptEvent(event, parent);
+        const parentId = causalParentId(event);
+        const causalEvents =
+          knownParents ?? (await fetchCausalParents([event]));
+        const parent = causalEvents.get(parentId ?? "");
+        if (!isCancelled && shouldCommit())
+          ingestAgentReceiptEvent(event, parent, causalEvents);
       } else if (event.kind === KIND_REACTION) {
+        if (!shouldCommit()) return;
         ingestAgentReceiptReviewEvent(
           event,
           normalizedPubkey,
           ownedAgentPubkeys,
         );
+        if (isAgentReceiptProjectionUnavailable()) {
+          throw new Error("agent receipt review projection capacity exceeded");
+        }
       }
     };
     const hydrateDurableActions = async () => {
+      durableHydrationReady = false;
+      durableProjectionGeneration += 1;
+      const overflowGenerationAtStart = durableBufferOverflowGeneration;
       if (subscribedChannelIds.length === 0) return;
       const [userInputEvents, receiptEvents, reviewEvents] = await Promise.all([
         enumerateDurableActionEvents(
@@ -171,30 +208,86 @@ export function useLiveHomeFeedActions(
         ),
       ]);
       if (isCancelled) return;
-      const merged = mergeDurableActionEvents(
+      let merged = mergeDurableActionEvents(
         userInputEvents,
         receiptEvents,
         reviewEvents,
-        [...bufferedDurableEvents.values()],
+        [],
       );
-      const receiptParents = await fetchReceiptParents(merged.receiptEvents);
-      if (isCancelled) return;
-      bufferedDurableEvents.clear();
-      durableHydrationReady = true;
-      for (const event of merged.userInputEvents) {
-        handleUserInputEvent(
-          event,
-          event.tags.find((tag) => tag[0] === "h")?.[1] ?? "",
+      let projectionStarted = false;
+      for (;;) {
+        const overlap = [...bufferedDurableEvents.values()];
+        bufferedDurableEvents.clear();
+        merged = mergeDurableActionEvents(
+          merged.userInputEvents,
+          merged.receiptEvents,
+          merged.reviewEvents,
+          overlap,
         );
+        const causalParents = await fetchCausalParents([
+          ...merged.userInputEvents.filter(
+            (event) => event.kind === KIND_AGENT_USER_INPUT_REQUESTED,
+          ),
+          ...merged.receiptEvents,
+        ]);
+        if (isCancelled) return;
+        if (durableBufferOverflowGeneration !== overflowGenerationAtStart) {
+          throw new Error(
+            "Durable live-overlap capacity exceeded before projection commit",
+          );
+        }
+        if (!projectionStarted) {
+          beginExhaustiveUserInputProjection();
+          beginExhaustiveAgentReceiptProjection(
+            normalizedPubkey,
+            ownedAgentPubkeys,
+          );
+          projectionStarted = true;
+        }
+        for (const event of merged.userInputEvents) {
+          handleUserInputEvent(
+            event,
+            event.tags.find((tag) => tag[0] === "h")?.[1] ?? "",
+            causalParents,
+          );
+        }
+        // Receipts establish authority before reactions are projected, even if
+        // relay pages or same-second ids arrive in the opposite order.
+        for (const event of merged.receiptEvents) {
+          await handleReceiptEvent(event, causalParents);
+        }
+        for (const event of merged.reviewEvents) {
+          await handleReceiptEvent(event);
+        }
+        if (durableBufferOverflowGeneration !== overflowGenerationAtStart) {
+          throw new Error(
+            "Durable live-overlap capacity exceeded; exhaustive recovery required",
+          );
+        }
+        if (bufferedDurableEvents.size === 0) {
+          endExhaustiveUserInputProjection();
+          endExhaustiveAgentReceiptProjection();
+          durableHydrationReady = true;
+          break;
+        }
       }
-      // Receipts establish authority before reactions are projected, even if
-      // relay pages or same-second ids arrive in the opposite order.
-      for (const event of merged.receiptEvents) {
-        await handleReceiptEvent(event, receiptParents);
-      }
-      for (const event of merged.reviewEvents) {
-        await handleReceiptEvent(event);
-      }
+      handleLiveHomeFeedEvent();
+    };
+    const markPermanentHydrationFailure = (error: unknown) => {
+      durableHydrationTerminal = true;
+      durableHydrationReady = false;
+      markUserInputAttentionProjectionUnavailable();
+      markAgentReceiptProjectionUnavailable();
+      endExhaustiveUserInputProjection();
+      endExhaustiveAgentReceiptProjection();
+      bufferedDurableEvents.clear();
+      const currentDisposers = disposers;
+      disposers = [];
+      disposeAll(currentDisposers);
+      console.error(
+        "Durable agent attention projection is unavailable until relay policy/configuration changes",
+        error,
+      );
       handleLiveHomeFeedEvent();
     };
     const hydrationRetry = createHydrationRetryController({
@@ -204,13 +297,14 @@ export function useLiveHomeFeedActions(
           "Failed to hydrate durable agent attention events",
           error,
         ),
+      onPermanentError: markPermanentHydrationFailure,
       retryDelayMs: LIVE_HOME_FEED_RETRY_MAX_MS,
       setTimeoutFn: (callback, delayMs) =>
         globalThis.setTimeout(callback, delayMs),
       clearTimeoutFn: (timer) => globalThis.clearTimeout(timer),
     });
     const scheduleRetry = () => {
-      if (isCancelled) {
+      if (isCancelled || durableHydrationTerminal) {
         return;
       }
 
@@ -222,7 +316,7 @@ export function useLiveHomeFeedActions(
       retryTimer = globalThis.setTimeout(startSubscriptions, delay);
     };
     const startSubscriptions = () => {
-      if (isCancelled) {
+      if (isCancelled || durableHydrationTerminal) {
         return Promise.resolve();
       }
 
@@ -231,11 +325,38 @@ export function useLiveHomeFeedActions(
           buildChannelUserInputFilter(channelId, 50, since),
           (event) => {
             if (!durableHydrationReady) {
-              bufferedDurableEvents.set(event.id, event);
+              if (!durableHydrationTerminal) bufferDurableEvent(event);
               return;
             }
-            handleUserInputEvent(event, channelId);
-            handleLiveHomeFeedEvent();
+            const eventGeneration = durableProjectionGeneration;
+            bufferDurableEvent(event);
+            void fetchCausalParents([event])
+              .then((parents) => {
+                if (
+                  isCancelled ||
+                  !durableHydrationReady ||
+                  durableProjectionGeneration !== eventGeneration
+                )
+                  return;
+                handleUserInputEvent(event, channelId, parents);
+                if (isUserInputAttentionProjectionUnavailable()) {
+                  bufferDurableEvent(event);
+                  durableHydrationReady = false;
+                  durableProjectionGeneration += 1;
+                  void hydrationRetry.run();
+                  return;
+                }
+                bufferedDurableEvents.delete(event.id);
+                handleLiveHomeFeedEvent();
+              })
+              .catch((error) => {
+                if (isCancelled) return;
+                bufferDurableEvent(event);
+                durableHydrationReady = false;
+                durableProjectionGeneration += 1;
+                console.error("Failed to validate user-input parent", error);
+                void hydrationRetry.run();
+              });
           },
         ),
       );
@@ -249,15 +370,25 @@ export function useLiveHomeFeedActions(
           },
           (event) => {
             if (!durableHydrationReady) {
-              bufferedDurableEvents.set(event.id, event);
+              if (!durableHydrationTerminal) bufferDurableEvent(event);
               return;
             }
-            void handleReceiptEvent(event)
-              .then(() => handleLiveHomeFeedEvent())
+            const eventGeneration = durableProjectionGeneration;
+            bufferDurableEvent(event);
+            const ownsGeneration = () =>
+              durableHydrationReady &&
+              durableProjectionGeneration === eventGeneration;
+            void handleReceiptEvent(event, undefined, ownsGeneration)
+              .then(() => {
+                if (!ownsGeneration()) return;
+                bufferedDurableEvents.delete(event.id);
+                handleLiveHomeFeedEvent();
+              })
               .catch((error) => {
                 if (isCancelled) return;
-                bufferedDurableEvents.set(event.id, event);
+                bufferDurableEvent(event);
                 durableHydrationReady = false;
+                durableProjectionGeneration += 1;
                 console.error("Failed to validate agent receipt parent", error);
                 void hydrationRetry.run();
               });
@@ -273,12 +404,27 @@ export function useLiveHomeFeedActions(
           },
           (event) => {
             if (!durableHydrationReady) {
-              bufferedDurableEvents.set(event.id, event);
+              if (!durableHydrationTerminal) bufferDurableEvent(event);
               return;
             }
-            void handleReceiptEvent(event).then(() =>
-              handleLiveHomeFeedEvent(),
-            );
+            const eventGeneration = durableProjectionGeneration;
+            bufferDurableEvent(event);
+            const ownsGeneration = () =>
+              durableHydrationReady &&
+              durableProjectionGeneration === eventGeneration;
+            void handleReceiptEvent(event, undefined, ownsGeneration)
+              .then(() => {
+                if (!ownsGeneration()) return;
+                bufferedDurableEvents.delete(event.id);
+                handleLiveHomeFeedEvent();
+              })
+              .catch(() => {
+                if (isCancelled || durableHydrationTerminal) return;
+                bufferDurableEvent(event);
+                durableHydrationReady = false;
+                durableProjectionGeneration += 1;
+                void hydrationRetry.run();
+              });
           },
         ),
       ]);
@@ -340,6 +486,15 @@ export function useLiveHomeFeedActions(
 
         if (isCancelled) {
           disposeAll(nextDisposers);
+          return;
+        }
+
+        const permanentRejection = rejectedResults.find((result) =>
+          isPermanentHydrationError(result.reason),
+        );
+        if (permanentRejection) {
+          disposeAll(nextDisposers);
+          markPermanentHydrationFailure(permanentRejection.reason);
           return;
         }
 

@@ -6,6 +6,7 @@ import {
   _testPendingAgentReceiptReviewCount,
   getAgentReceipts,
   getLatestAgentReceiptForConversation,
+  getLatestOwnedAgentReceiptForActiveTurns,
   getLatestOwnedAgentReceiptForConversation,
   ingestAgentReceiptEvent as ingestValidatedAgentReceiptEvent,
   ingestAgentReceiptReviewEvent,
@@ -291,6 +292,27 @@ describe("agentReceiptStore", () => {
     assert.equal(
       getLatestOwnedAgentReceiptForConversation(CONVERSATION, OWNED_AGENTS)?.id,
       RECEIPT,
+    );
+  });
+
+  it("keeps canonical same-second receipt order after active turns complete", () => {
+    const lower = "1".repeat(64);
+    const higher = "f".repeat(64);
+    ingestAgentReceiptEvent(receiptEvent({ id: lower }));
+    ingestAgentReceiptEvent(receiptEvent({ id: higher }));
+    const active = [{ agentPubkey: AGENT, triggeringEventIds: [ROOT] }];
+    assert.equal(
+      getLatestOwnedAgentReceiptForActiveTurns(
+        CONVERSATION,
+        OWNED_AGENTS,
+        active,
+      )?.id,
+      higher,
+    );
+    assert.equal(
+      getLatestOwnedAgentReceiptForActiveTurns(CONVERSATION, OWNED_AGENTS, [])
+        ?.id,
+      higher,
     );
   });
 

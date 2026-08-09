@@ -4,6 +4,10 @@ import {
   KIND_AGENT_USER_INPUT_ANSWER,
   KIND_AGENT_USER_INPUT_REQUESTED,
   KIND_AGENT_USER_INPUT_RESOLVED,
+  KIND_APPROVAL_DENY,
+  KIND_APPROVAL_GRANT,
+  KIND_APPROVAL_REQUEST,
+  KIND_EVENT_REMINDER,
   KIND_REACTION,
 } from "@/shared/constants/kinds";
 import { drainRelayTimestampBucket } from "@/shared/api/exhaustiveRelayPagination";
@@ -65,7 +69,8 @@ export function initialRecoveryFloor(
   const kinds = filter?.kinds ?? [];
   if (
     kinds.includes(KIND_AGENT_OBSERVER_FRAME) ||
-    (kinds.length > 0 && kinds.every((kind) => DURABLE_ACTION_KINDS.has(kind)))
+    (kinds.length > 0 &&
+      kinds.every((kind) => DURABLE_LIFECYCLE_KINDS.has(kind)))
   ) {
     return 0;
   }
@@ -78,11 +83,25 @@ const DURABLE_ACTION_KINDS = new Set([
   KIND_AGENT_RECEIPT,
   KIND_REACTION,
 ]);
+const DURABLE_LIFECYCLE_KINDS = new Set([
+  ...DURABLE_ACTION_KINDS,
+  KIND_APPROVAL_REQUEST,
+  KIND_APPROVAL_GRANT,
+  KIND_APPROVAL_DENY,
+  KIND_EVENT_REMINDER,
+]);
 
 function isDurableActionFilter(filter: RelaySubscriptionFilter) {
   const kinds = filter.kinds ?? [];
   return (
     kinds.length > 0 && kinds.every((kind) => DURABLE_ACTION_KINDS.has(kind))
+  );
+}
+
+function isDurableLifecycleFilter(filter: RelaySubscriptionFilter) {
+  const kinds = filter.kinds ?? [];
+  return (
+    kinds.length > 0 && kinds.every((kind) => DURABLE_LIFECYCLE_KINDS.has(kind))
   );
 }
 
@@ -115,7 +134,13 @@ export function buildReconnectReplayFilter(
   const replayFilter: RelaySubscriptionFilter = {
     ...filter,
     limit,
-    since: filter.since === undefined ? since : Math.max(filter.since, since),
+    since: isDurableLifecycleFilter(filter)
+      ? 0
+      : filter.since === undefined ||
+          (since === 0 &&
+            filter.kinds?.includes(KIND_AGENT_OBSERVER_FRAME) === true)
+        ? since
+        : Math.max(filter.since, since),
   };
 
   if (until !== undefined) {
@@ -134,7 +159,10 @@ export function shouldPageReconnectReplay(filter: RelaySubscriptionFilter) {
     Array.isArray(filter["#p"]) &&
     filter["#p"].length === 1;
   return (
-    (channelScoped || observerOwnerScoped) && (filter.kinds?.length ?? 0) > 0
+    (channelScoped ||
+      observerOwnerScoped ||
+      isDurableLifecycleFilter(filter)) &&
+    (filter.kinds?.length ?? 0) > 0
   );
 }
 
@@ -321,7 +349,8 @@ export async function replayLiveSubscriptions({
       (
         entry,
       ): entry is [string, Extract<RelaySubscription, { mode: "live" }>] =>
-        entry[1].mode === "live",
+        entry[1].mode === "live" &&
+        (entry[1].currentSubId ?? entry[0]) === entry[0],
     )
     .map(([subId, subscription]) => {
       const recoveryGeneration = beginLiveSubscriptionRecovery(subscription);

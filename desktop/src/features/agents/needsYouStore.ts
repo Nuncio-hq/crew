@@ -33,6 +33,9 @@ type UserInputNeedsYouRequest = NeedsYouRequest & {
 };
 
 const requests = new Map<string, NeedsYouRequest>();
+const pendingApprovalResolutions = new Map<string, RelayEvent>();
+const MAX_PENDING_APPROVAL_RESOLUTIONS = 1_000;
+let approvalProjectionUnavailable = false;
 const userInputRequests = new Map<string, UserInputNeedsYouRequest>();
 const resolvedUserInputRequestIds = new Set<string>();
 const listeners = new Set<() => void>();
@@ -167,6 +170,9 @@ export function ingestApprovalRequest(
   requests.set(entry.id, entry);
   scheduleExpiry();
   if (!prior || JSON.stringify(prior) !== JSON.stringify(entry)) notify();
+  for (const resolution of pendingApprovalResolutions.values()) {
+    void resolveApprovalRequestEvent(resolution);
+  }
   return entry;
 }
 
@@ -206,6 +212,7 @@ function requestFields(
 
 export function ingestApprovalRequestEvent(event: RelayEvent) {
   if (event.kind !== KIND_APPROVAL_REQUEST) return null;
+  if (approvalProjectionUnavailable) return null;
   const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
   return channelId
     ? requestFields(
@@ -269,7 +276,10 @@ export async function resolveApprovalRequestEvent(event: RelayEvent) {
     .filter((tag) => ["d", "e", "t"].includes(tag[0]) && tag[1])
     .map((tag) => tag[1]);
   const direct = findRequestByReferences(references);
-  if (direct) return resolveApprovalRequest(direct.id);
+  if (direct) {
+    pendingApprovalResolutions.delete(event.id);
+    return resolveApprovalRequest(direct.id);
+  }
   // Desktop grants/denies carry the RAW approval token in a `t` tag
   // (src-tauri events.rs build_approval_grant), while request references
   // use sha256(token) (buzz-sdk build_workflow_approval d-tag contract).
@@ -278,7 +288,18 @@ export async function resolveApprovalRequestEvent(event: RelayEvent) {
     (reference): reference is string => reference !== null,
   );
   const viaHash = findRequestByReferences(hashed);
-  return viaHash ? resolveApprovalRequest(viaHash.id) : false;
+  if (viaHash) {
+    pendingApprovalResolutions.delete(event.id);
+    return resolveApprovalRequest(viaHash.id);
+  }
+  pendingApprovalResolutions.set(event.id, event);
+  if (pendingApprovalResolutions.size > MAX_PENDING_APPROVAL_RESOLUTIONS) {
+    approvalProjectionUnavailable = true;
+    pendingApprovalResolutions.clear();
+    requests.clear();
+    notify();
+  }
+  return false;
 }
 
 // Hydration reconcile: `needs_action` is the relay's authoritative pending
@@ -309,6 +330,19 @@ export function reconcileNeedsYouFromFeed(
   { snapshotComplete = true }: { snapshotComplete?: boolean } = {},
 ) {
   if (!snapshotComplete) return false;
+  if (approvalProjectionUnavailable) {
+    approvalProjectionUnavailable = false;
+    pendingApprovalResolutions.clear();
+    requests.clear();
+    for (const item of items) {
+      if (item.kind !== KIND_APPROVAL_REQUEST) continue;
+      const channelId = item.tags.find((tag) => tag[0] === "h")?.[1];
+      if (!channelId) continue;
+      requestFields(item.id, channelId, item.tags, item.pubkey, item.createdAt);
+    }
+    notify();
+    return true;
+  }
   const present = new Set(
     items
       .filter((item) => item.kind === KIND_APPROVAL_REQUEST)
@@ -401,8 +435,23 @@ export function getNeedsYouGeneration() {
   return generation;
 }
 
+export function clearUserInputRequests(channelId?: string): void {
+  let changed = false;
+  for (const [id, request] of userInputRequests) {
+    if (channelId !== undefined && request.channelId !== channelId) continue;
+    userInputRequests.delete(id);
+    changed = true;
+  }
+  if (changed) {
+    scheduleExpiry();
+    notify();
+  }
+}
+
 export function resetNeedsYouStore() {
+  approvalProjectionUnavailable = false;
   requests.clear();
+  pendingApprovalResolutions.clear();
   userInputRequests.clear();
   resolvedRequestIds.clear();
   resolvedUserInputRequestIds.clear();

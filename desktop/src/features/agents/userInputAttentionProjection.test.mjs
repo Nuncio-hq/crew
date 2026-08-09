@@ -8,8 +8,10 @@ import {
 } from "@/shared/constants/kinds";
 import { getNeedsYouForAll, resetNeedsYouStore } from "./needsYouStore.ts";
 import {
+  _testPendingUserInputTransitionCount,
   projectAuthorizedUserInputEvent,
   reconcileAuthorizedUserInputRequests,
+  resetUserInputAttentionProjection,
 } from "./userInputAttentionProjection.ts";
 
 const CHANNEL = "11111111-1111-4111-8111-111111111111";
@@ -80,28 +82,45 @@ function transition(
   });
 }
 
-test.beforeEach(resetNeedsYouStore);
+function triggerParent(target = AGENT) {
+  return event({
+    id: TRIGGER_ID,
+    kind: 9,
+    pubkey: OWNER,
+    tags: [
+      ["h", CHANNEL],
+      ["p", target],
+    ],
+    content: "trigger",
+  });
+}
+
+function project(candidate, fallbackChannelId, currentPubkey, agents) {
+  return projectAuthorizedUserInputEvent(
+    candidate,
+    fallbackChannelId,
+    currentPubkey,
+    agents,
+    candidate.kind === KIND_AGENT_USER_INPUT_REQUESTED
+      ? triggerParent(candidate.pubkey)
+      : undefined,
+  );
+}
+
+test.beforeEach(() => {
+  resetNeedsYouStore();
+  resetUserInputAttentionProjection();
+});
 
 test("projects only requests from an owned agent addressed to the current owner", () => {
+  assert.equal(project(request(STRANGER), "", OWNER, ownedAgents), false);
   assert.equal(
-    projectAuthorizedUserInputEvent(request(STRANGER), "", OWNER, ownedAgents),
-    false,
-  );
-  assert.equal(
-    projectAuthorizedUserInputEvent(
-      request(AGENT, STRANGER),
-      "",
-      OWNER,
-      ownedAgents,
-    ),
+    project(request(AGENT, STRANGER), "", OWNER, ownedAgents),
     false,
   );
   assert.equal(getNeedsYouForAll().length, 0);
 
-  assert.equal(
-    projectAuthorizedUserInputEvent(request(), "", OWNER, ownedAgents),
-    true,
-  );
+  assert.equal(project(request(), "", OWNER, ownedAgents), true);
   assert.equal(getNeedsYouForAll().length, 1);
   assert.equal(getNeedsYouForAll()[0]?.rootEventId, TRIGGER_ID);
 });
@@ -109,34 +128,119 @@ test("projects only requests from an owned agent addressed to the current owner"
 test("rejects requests without a canonical triggering thread reference", () => {
   const missingTrigger = request();
   missingTrigger.tags = missingTrigger.tags.filter(([name]) => name !== "e");
-  assert.equal(
-    projectAuthorizedUserInputEvent(
-      missingTrigger,
-      CHANNEL,
-      OWNER,
-      ownedAgents,
-    ),
-    false,
-  );
+  assert.equal(project(missingTrigger, CHANNEL, OWNER, ownedAgents), false);
 
   const malformedMarker = request();
   malformedMarker.tags = malformedMarker.tags.map((tag) =>
     tag[0] === "e" ? ["e", TRIGGER_ID, "", "mention"] : tag,
   );
+  assert.equal(project(malformedMarker, CHANNEL, OWNER, ownedAgents), false);
+  assert.equal(getNeedsYouForAll().length, 0);
+});
+
+test("rejects a request whose signed trigger does not target the requesting agent", () => {
   assert.equal(
     projectAuthorizedUserInputEvent(
-      malformedMarker,
+      request(),
       CHANNEL,
       OWNER,
       ownedAgents,
+      triggerParent(STRANGER),
     ),
     false,
   );
   assert.equal(getNeedsYouForAll().length, 0);
 });
 
+test("rejects malformed sibling target tags on the signed trigger", () => {
+  const malformedSibling = triggerParent();
+  malformedSibling.tags.push(["p", "not-a-pubkey"]);
+  assert.equal(
+    projectAuthorizedUserInputEvent(
+      request(),
+      CHANNEL,
+      OWNER,
+      ownedAgents,
+      malformedSibling,
+    ),
+    false,
+  );
+});
+
+test("rejects noncanonical whitespace and uppercase authority tags", () => {
+  const paddedChannel = request();
+  paddedChannel.tags = paddedChannel.tags.map((tag) =>
+    tag[0] === "h" ? ["h", ` ${CHANNEL} `] : tag,
+  );
+  assert.equal(project(paddedChannel, "", OWNER, ownedAgents), false);
+
+  const uppercaseOwner = request();
+  uppercaseOwner.tags = uppercaseOwner.tags.map((tag) =>
+    tag[0] === "p" ? ["p", OWNER.toUpperCase()] : tag,
+  );
+  assert.equal(project(uppercaseOwner, "", OWNER, ownedAgents), false);
+});
+
+test("rejects a trigger whose declared root is unrelated to its actual ancestry", () => {
+  const unrelatedId = "1".repeat(64);
+  const parent = triggerParent();
+  parent.tags.push(["e", TRIGGER_ID, "", "root"]);
+  parent.tags.push(["e", unrelatedId, "", "reply"]);
+  const unrelated = event({
+    id: unrelatedId,
+    kind: 9,
+    pubkey: OWNER,
+    tags: [["h", CHANNEL]],
+    content: "unrelated root",
+  });
+  assert.equal(
+    projectAuthorizedUserInputEvent(
+      request(),
+      CHANNEL,
+      OWNER,
+      ownedAgents,
+      parent,
+      new Map([
+        [parent.id, parent],
+        [unrelated.id, unrelated],
+      ]),
+    ),
+    false,
+  );
+});
+
+test("terminal resolution replayed before its request prevents resurrection", () => {
+  const terminal = transition(KIND_AGENT_USER_INPUT_RESOLVED, AGENT, {
+    request_event_id: REQUEST_ID,
+    outcome: "cancelled",
+  });
+  assert.equal(project(terminal, CHANNEL, OWNER, ownedAgents), false);
+  assert.equal(_testPendingUserInputTransitionCount(), 1);
+  assert.equal(project(request(), CHANNEL, OWNER, ownedAgents), true);
+  assert.equal(getNeedsYouForAll().length, 0);
+  assert.equal(_testPendingUserInputTransitionCount(), 1);
+  assert.equal(project(request(), CHANNEL, OWNER, ownedAgents), false);
+  assert.equal(getNeedsYouForAll().length, 0);
+});
+
+test("a newer sibling terminal cannot shadow the requesting agent terminal", () => {
+  const terminal = transition(KIND_AGENT_USER_INPUT_RESOLVED, AGENT, {
+    request_event_id: REQUEST_ID,
+    outcome: "cancelled",
+  });
+  const siblingTerminal = transition(KIND_AGENT_USER_INPUT_RESOLVED, SIBLING, {
+    request_event_id: REQUEST_ID,
+    outcome: "cancelled",
+  });
+  project(terminal, CHANNEL, OWNER, ownedAgents);
+  project(siblingTerminal, CHANNEL, OWNER, ownedAgents);
+  assert.equal(_testPendingUserInputTransitionCount(), 1);
+  assert.equal(project(request(), CHANNEL, OWNER, ownedAgents), true);
+  assert.equal(getNeedsYouForAll().length, 0);
+});
+
 test("revalidates projected requests when identity or verified ownership changes", () => {
-  projectAuthorizedUserInputEvent(request(), "", OWNER, ownedAgents);
+  project(request(), "", OWNER, ownedAgents);
   assert.equal(getNeedsYouForAll().length, 1);
 
   assert.equal(
@@ -145,16 +249,27 @@ test("revalidates projected requests when identity or verified ownership changes
   );
   assert.equal(getNeedsYouForAll().length, 0);
 
-  projectAuthorizedUserInputEvent(request(), "", OWNER, ownedAgents);
+  project(request(), "", OWNER, ownedAgents);
   assert.equal(getNeedsYouForAll().length, 1);
   assert.equal(reconcileAuthorizedUserInputRequests(OWNER, new Set()), true);
   assert.equal(getNeedsYouForAll().length, 0);
 });
 
+test("rejects a terminal transition older than its request", () => {
+  const stale = transition(KIND_AGENT_USER_INPUT_RESOLVED, AGENT, {
+    request_event_id: REQUEST_ID,
+    outcome: "cancelled",
+  });
+  stale.created_at = request().created_at - 1;
+  project(stale, CHANNEL, OWNER, ownedAgents);
+  project(request(), CHANNEL, OWNER, ownedAgents);
+  assert.equal(getNeedsYouForAll().length, 1);
+});
+
 test("accepts answers only from the intended owner and waits for 46042", () => {
-  projectAuthorizedUserInputEvent(request(), "", OWNER, ownedAgents);
+  project(request(), "", OWNER, ownedAgents);
   assert.equal(
-    projectAuthorizedUserInputEvent(
+    project(
       transition(KIND_AGENT_USER_INPUT_ANSWER, STRANGER),
       CHANNEL,
       OWNER,
@@ -165,7 +280,7 @@ test("accepts answers only from the intended owner and waits for 46042", () => {
   assert.equal(getNeedsYouForAll().length, 1);
 
   assert.equal(
-    projectAuthorizedUserInputEvent(
+    project(
       transition(KIND_AGENT_USER_INPUT_ANSWER, SIBLING),
       CHANNEL,
       OWNER,
@@ -176,7 +291,7 @@ test("accepts answers only from the intended owner and waits for 46042", () => {
   assert.equal(getNeedsYouForAll().length, 1);
 
   assert.equal(
-    projectAuthorizedUserInputEvent(
+    project(
       transition(KIND_AGENT_USER_INPUT_ANSWER, OWNER),
       CHANNEL,
       OWNER,
@@ -187,7 +302,7 @@ test("accepts answers only from the intended owner and waits for 46042", () => {
   assert.equal(getNeedsYouForAll().length, 1);
 
   assert.equal(
-    projectAuthorizedUserInputEvent(
+    project(
       transition(KIND_AGENT_USER_INPUT_RESOLVED, AGENT, {
         request_event_id: REQUEST_ID,
         outcome: "answered",
@@ -202,32 +317,26 @@ test("accepts answers only from the intended owner and waits for 46042", () => {
 });
 
 test("accepts resolution only from the requesting agent with matching content", () => {
-  projectAuthorizedUserInputEvent(request(), "", OWNER, ownedAgents);
+  project(request(), "", OWNER, ownedAgents);
   const forged = transition(KIND_AGENT_USER_INPUT_RESOLVED, STRANGER, {
     request_event_id: REQUEST_ID,
     outcome: "cancelled",
   });
-  assert.equal(
-    projectAuthorizedUserInputEvent(forged, CHANNEL, OWNER, ownedAgents),
-    false,
-  );
+  assert.equal(project(forged, CHANNEL, OWNER, ownedAgents), false);
   assert.equal(getNeedsYouForAll().length, 1);
 
   const legitimate = transition(KIND_AGENT_USER_INPUT_RESOLVED, AGENT, {
     request_event_id: REQUEST_ID,
     outcome: "cancelled",
   });
-  assert.equal(
-    projectAuthorizedUserInputEvent(legitimate, CHANNEL, OWNER, ownedAgents),
-    true,
-  );
+  assert.equal(project(legitimate, CHANNEL, OWNER, ownedAgents), true);
   assert.equal(getNeedsYouForAll().length, 0);
 });
 
 test("rejects transitions whose relationship target does not match the request", () => {
-  projectAuthorizedUserInputEvent(request(), "", OWNER, ownedAgents);
+  project(request(), "", OWNER, ownedAgents);
   assert.equal(
-    projectAuthorizedUserInputEvent(
+    project(
       transition(KIND_AGENT_USER_INPUT_ANSWER, OWNER, { q0: "yes" }, OWNER),
       CHANNEL,
       OWNER,
@@ -238,7 +347,7 @@ test("rejects transitions whose relationship target does not match the request",
   assert.equal(getNeedsYouForAll().length, 1);
 
   assert.equal(
-    projectAuthorizedUserInputEvent(
+    project(
       transition(
         KIND_AGENT_USER_INPUT_RESOLVED,
         AGENT,

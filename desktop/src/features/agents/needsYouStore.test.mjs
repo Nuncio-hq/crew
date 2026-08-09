@@ -82,6 +82,51 @@ describe("needsYouStore", () => {
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
   });
 
+  it("does not resurrect an approval when its terminal event arrives first", async () => {
+    assert.equal(
+      await resolveApprovalRequestEvent(
+        event({
+          id: "grant-first",
+          kind: KIND_APPROVAL_GRANT,
+          tags: [["d", TOKEN_HASH]],
+        }),
+      ),
+      false,
+    );
+    ingestApprovalRequestEvent(event());
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
+  });
+
+  it("fails closed on terminal overflow until a complete feed rebuild", async () => {
+    for (let index = 0; index <= 1_000; index += 1) {
+      await resolveApprovalRequestEvent(
+        event({
+          id: `terminal-${index}`,
+          kind: KIND_APPROVAL_GRANT,
+          tags: [["e", `request-${index}`, "", "reply"]],
+        }),
+      );
+    }
+    assert.equal(ingestApprovalRequestEvent(event({ id: "request-0" })), null);
+    reconcileNeedsYouFromFeed([
+      {
+        id: "request-0",
+        kind: KIND_APPROVAL_REQUEST,
+        pubkey: "agent",
+        content: "approval",
+        createdAt: Date.now(),
+        channelId: CHANNEL,
+        channelName: "general",
+        tags: [
+          ["h", CHANNEL],
+          ["e", ROOT, "", "root"],
+        ],
+        category: "needs_action",
+      },
+    ]);
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 1);
+  });
+
   it("correlates a t-tag deny with the request token", async () => {
     ingestApprovalRequestEvent(event());
     assert.equal(

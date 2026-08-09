@@ -1,4 +1,5 @@
 import { relayClient } from "@/shared/api/relayClient";
+import { fetchExhaustiveRelayHistory } from "@/shared/api/exhaustiveRelayPagination";
 import {
   nip44DecryptFromSelf,
   nip44EncryptToSelf,
@@ -142,11 +143,11 @@ async function decryptReminder(event: RelayEvent): Promise<Reminder | null> {
 }
 
 export async function fetchReminders(pubkey: string): Promise<Reminder[]> {
-  const events = await relayClient.fetchEvents({
-    kinds: [KIND_EVENT_REMINDER],
-    authors: [pubkey],
-    limit: 200,
-  });
+  const events = await fetchExhaustiveRelayHistory(
+    (filter) => relayClient.fetchEvents(filter),
+    { kinds: [KIND_EVENT_REMINDER], authors: [pubkey] },
+    200,
+  );
 
   const results = await Promise.all(events.map(decryptReminder));
   return results.filter((r): r is Reminder => r !== null);

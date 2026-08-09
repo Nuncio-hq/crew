@@ -1,6 +1,8 @@
 //! ACP form elicitation normalization and answer reconstruction.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -16,7 +18,11 @@ use buzz_core::{
     },
 };
 use nostr::Keys;
-use tokio::sync::{oneshot, Mutex};
+use tokio::io::AsyncWriteExt;
+use tokio::sync::{oneshot, watch, Mutex};
+#[cfg(test)]
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
 use crate::relay::{BuzzEvent, RelayEventPublisher, RestClient};
@@ -28,6 +34,13 @@ const RESOLUTION_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(4),
 ];
 const RESOLUTION_OUTBOX_RETRY_DELAY: Duration = Duration::from_secs(30);
+#[cfg(not(test))]
+const REQUEST_ADMISSION_RETRY_DELAY: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const REQUEST_ADMISSION_RETRY_DELAY: Duration = Duration::from_millis(10);
+const RESOLUTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_SPOOL_ENTRIES: usize = 4_096;
+const MAX_SPOOL_BYTES: u64 = 64 * 1024 * 1024;
 static RESOLUTION_OUTBOX_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn resolution_outbox_lock() -> &'static Mutex<()> {
@@ -58,23 +71,106 @@ fn pending_request_outbox_dir(runtime: &QuestionRuntime) -> Result<PathBuf, Stri
     Ok(resolution_outbox_dir(runtime)?.join("pending-requests"))
 }
 
-async fn persist_outbox_event(outbox_dir: &Path, event: &nostr::Event) -> Result<PathBuf, String> {
-    tokio::fs::create_dir_all(outbox_dir)
+async fn ensure_secure_spool_dir(path: &Path) -> Result<(), String> {
+    tokio::fs::create_dir_all(path)
         .await
-        .map_err(|error| format!("failed to create resolution outbox: {error}"))?;
+        .map_err(|error| format!("failed to create durable spool: {error}"))?;
+    let metadata = tokio::fs::symlink_metadata(path)
+        .await
+        .map_err(|error| format!("failed to inspect durable spool: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!("unsafe durable spool path: {}", path.display()));
+    }
+    #[cfg(unix)]
+    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        .await
+        .map_err(|error| format!("failed to secure durable spool: {error}"))?;
+    Ok(())
+}
+
+async fn ensure_spool_capacity(path: &Path, additional_bytes: u64) -> Result<(), String> {
+    let mut entries = tokio::fs::read_dir(path)
+        .await
+        .map_err(|error| format!("failed to enumerate durable spool: {error}"))?;
+    let mut count = 0_usize;
+    let mut bytes = 0_u64;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|error| format!("failed to enumerate durable spool entry: {error}"))?
+    {
+        let metadata = entry
+            .metadata()
+            .await
+            .map_err(|error| format!("failed to inspect durable spool entry: {error}"))?;
+        if metadata.is_file() {
+            count = count.saturating_add(1);
+            bytes = bytes.saturating_add(metadata.len());
+        }
+    }
+    if count.saturating_add(1) > MAX_SPOOL_ENTRIES
+        || bytes.saturating_add(additional_bytes) > MAX_SPOOL_BYTES
+    {
+        return Err(format!(
+            "durable spool capacity exceeded ({count} entries, {bytes} bytes)"
+        ));
+    }
+    Ok(())
+}
+
+async fn persist_outbox_event(outbox_dir: &Path, event: &nostr::Event) -> Result<PathBuf, String> {
+    ensure_secure_spool_dir(outbox_dir).await?;
     let path = outbox_dir.join(format!("{}.json", event.id));
     if tokio::fs::try_exists(&path)
         .await
         .map_err(|error| format!("failed to inspect resolution outbox: {error}"))?
     {
+        let metadata = tokio::fs::symlink_metadata(&path)
+            .await
+            .map_err(|error| format!("failed to inspect existing spool entry: {error}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(format!("unsafe durable spool entry: {}", path.display()));
+        }
+        #[cfg(unix)]
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(format!(
+                "durable spool entry is not owner-only: {}",
+                path.display()
+            ));
+        }
+        let existing = tokio::fs::read(&path)
+            .await
+            .map_err(|error| format!("failed to read existing resolution outbox entry: {error}"))?;
+        let existing: nostr::Event = serde_json::from_slice(&existing)
+            .map_err(|error| format!("invalid existing resolution outbox entry: {error}"))?;
+        if existing != *event {
+            return Err(
+                "existing resolution outbox entry does not match exact signed event".into(),
+            );
+        }
         return Ok(path);
     }
     let temporary = outbox_dir.join(format!("{}.{}.tmp", event.id, std::process::id()));
     let bytes = serde_json::to_vec(event)
         .map_err(|error| format!("failed to encode resolution outbox entry: {error}"))?;
-    tokio::fs::write(&temporary, bytes)
+    ensure_spool_capacity(outbox_dir, bytes.len() as u64).await?;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut temporary_file = options
+        .open(&temporary)
+        .await
+        .map_err(|error| format!("failed to securely create spool entry: {error}"))?;
+    temporary_file
+        .write_all(&bytes)
         .await
         .map_err(|error| format!("failed to write resolution outbox entry: {error}"))?;
+    temporary_file
+        .sync_all()
+        .await
+        .map_err(|error| format!("failed to sync resolution outbox entry: {error}"))?;
+    drop(temporary_file);
     if let Err(error) = tokio::fs::rename(&temporary, &path).await {
         let _ = tokio::fs::remove_file(&temporary).await;
         if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
@@ -84,14 +180,75 @@ async fn persist_outbox_event(outbox_dir: &Path, event: &nostr::Event) -> Result
     Ok(path)
 }
 
-async fn retire_pending_request(runtime: &QuestionRuntime, request_event_id: &str) {
-    let Ok(directory) = pending_request_outbox_dir(runtime) else {
-        return;
-    };
+async fn dead_letter_outbox_until_committed(path: &Path, label: &str) -> PathBuf {
+    let rejected = path.with_extension("rejected");
+    loop {
+        let result = {
+            let _guard = resolution_outbox_lock().lock().await;
+            match tokio::fs::rename(path, &rejected).await {
+                Ok(()) => Ok(()),
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        && tokio::fs::try_exists(&rejected).await.unwrap_or(false) =>
+                {
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            }
+        };
+        match result {
+            Ok(()) => return rejected,
+            Err(error) => {
+                tracing::error!(%error, path = %path.display(), label, "retrying durable dead-letter move");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
+async fn retire_pending_request(
+    runtime: &QuestionRuntime,
+    request_event_id: &str,
+) -> Result<(), String> {
+    let directory = pending_request_outbox_dir(runtime)?;
     let path = directory.join(format!("{request_event_id}.json"));
     if let Err(error) = tokio::fs::remove_file(&path).await {
         if error.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!(%error, path = %path.display(), "failed to retire pending user-input request ledger entry");
+            return Err(format!(
+                "failed to retire pending user-input request ledger entry {}: {error}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn retire_acknowledged_resolution(
+    runtime: &QuestionRuntime,
+    request_event_id: &str,
+    resolution_path: &Path,
+) {
+    loop {
+        match retire_pending_request(runtime, request_event_id).await {
+            Ok(()) => break,
+            Err(error) => {
+                tracing::error!(%error, request_event_id, "retaining acknowledged resolution until request cleanup succeeds");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+    loop {
+        let result = {
+            let _guard = resolution_outbox_lock().lock().await;
+            tokio::fs::remove_file(resolution_path).await
+        };
+        match result {
+            Ok(()) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                tracing::error!(%error, path = %resolution_path.display(), "retrying acknowledged resolution cleanup");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
         }
     }
 }
@@ -101,12 +258,7 @@ async fn dead_letter_pending_request(runtime: &QuestionRuntime, request_event_id
         return;
     };
     let path = directory.join(format!("{request_event_id}.json"));
-    let rejected = path.with_extension("rejected");
-    if let Err(error) = tokio::fs::rename(&path, &rejected).await {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!(%error, path = %path.display(), "failed to dead-letter pending user-input request ledger entry");
-        }
-    }
+    let _ = dead_letter_outbox_until_committed(&path, "pending user-input request").await;
 }
 
 fn resolution_request_event_id(event: &nostr::Event) -> Option<String> {
@@ -164,12 +316,16 @@ pub(crate) struct QuestionRuntime {
     owner_cache: Arc<OwnerCache>,
     rest_client: RestClient,
     pending: Mutex<HashMap<String, PendingRequest>>,
+    workers: TaskTracker,
+    #[cfg(test)]
+    test_worker_cancel: CancellationToken,
 }
 
 struct PendingRequest {
     channel_id: Uuid,
     intended_owner_pubkey: String,
     sender: oneshot::Sender<Result<Option<UserInputAnswers>, String>>,
+    admission_tx: watch::Sender<bool>,
     resolution_started: bool,
 }
 
@@ -208,10 +364,20 @@ impl QuestionRuntime {
             owner_cache,
             rest_client,
             pending: Mutex::new(HashMap::new()),
+            workers: TaskTracker::new(),
+            #[cfg(test)]
+            test_worker_cancel: CancellationToken::new(),
         })
     }
 
-    /// Resume exact-signed resolutions persisted by a prior process.
+    #[cfg(test)]
+    async fn stop_test_workers(&self) {
+        self.test_worker_cancel.cancel();
+        self.workers.close();
+        self.workers.wait().await;
+    }
+
+    /// Resume exact-signed resolutions that were persisted before a prior
     pub(crate) async fn resume_resolution_outbox(self: &Arc<Self>) {
         let runtime = Arc::clone(self);
         let outbox_dir = match resolution_outbox_dir(&runtime) {
@@ -282,17 +448,16 @@ impl QuestionRuntime {
         request_event_id: String,
     ) {
         let runtime = Arc::clone(self);
-        tokio::spawn(async move {
+        self.workers.spawn(async move {
             loop {
                 match runtime.publish_durable_event(event.clone()).await {
                     Ok(()) => {
-                        let _guard = resolution_outbox_lock().lock().await;
-                        if let Err(error) = tokio::fs::remove_file(&path).await {
-                            if error.kind() != std::io::ErrorKind::NotFound {
-                                tracing::warn!(%error, path = %path.display(), "failed to retire recovered resolution outbox entry");
-                            }
-                        }
-                        retire_pending_request(&runtime, &request_event_id).await;
+                        retire_acknowledged_resolution(
+                            &runtime,
+                            &request_event_id,
+                            &path,
+                        )
+                        .await;
                         break;
                     }
                     Err(error) if error.is_retryable_durable_publication() => {
@@ -300,10 +465,12 @@ impl QuestionRuntime {
                         tokio::time::sleep(RESOLUTION_OUTBOX_RETRY_DELAY).await;
                     }
                     Err(error) => {
-                        let rejected = path.with_extension("rejected");
-                        let _guard = resolution_outbox_lock().lock().await;
-                        let _ = tokio::fs::rename(&path, &rejected).await;
                         dead_letter_pending_request(&runtime, &request_event_id).await;
+                        let rejected = dead_letter_outbox_until_committed(
+                            &path,
+                            "user-input resolution",
+                        )
+                        .await;
                         tracing::error!(%error, event_id = %event.id, path = %rejected.display(), "dead-lettered permanently rejected user-input resolution");
                         break;
                     }
@@ -407,17 +574,32 @@ impl QuestionRuntime {
         owner_pubkey: String,
     ) {
         let runtime = Arc::clone(self);
-        tokio::spawn(async move {
+        self.workers.spawn(async move {
             loop {
-                match runtime.publish_durable_event(request_event.clone()).await {
+                #[cfg(test)]
+                let publication = tokio::select! {
+                    _ = runtime.test_worker_cancel.cancelled() => return,
+                    publication = runtime.publish_durable_event(request_event.clone()) => publication,
+                };
+                #[cfg(not(test))]
+                let publication = runtime.publish_durable_event(request_event.clone()).await;
+                match publication {
                     Ok(()) => break,
                     Err(error) if error.is_retryable_durable_publication() => {
+                        #[cfg(test)]
+                        tokio::select! {
+                            _ = runtime.test_worker_cancel.cancelled() => return,
+                            _ = tokio::time::sleep(RESOLUTION_OUTBOX_RETRY_DELAY) => {},
+                        }
+                        #[cfg(not(test))]
                         tokio::time::sleep(RESOLUTION_OUTBOX_RETRY_DELAY).await;
                     }
                     Err(error) => {
-                        let rejected = request_path.with_extension("rejected");
-                        let _guard = resolution_outbox_lock().lock().await;
-                        let _ = tokio::fs::rename(&request_path, &rejected).await;
+                        let rejected = dead_letter_outbox_until_committed(
+                            &request_path,
+                            "orphaned user-input request",
+                        )
+                        .await;
                         tracing::error!(%error, request_event_id = %request_event.id, path = %rejected.display(), "dead-lettered orphaned user-input request rejected during replay");
                         return;
                     }
@@ -522,20 +704,38 @@ impl QuestionRuntime {
             persist_outbox_event(&directory, &event).await?
         };
         let (tx, rx) = oneshot::channel();
+        let (admission_tx, _admission_rx) = watch::channel(false);
         self.pending.lock().await.insert(
             event_id.clone(),
             PendingRequest {
                 channel_id,
                 intended_owner_pubkey: owner_pubkey.to_owned(),
                 sender: tx,
+                admission_tx,
                 resolution_started: false,
             },
         );
-        if let Err(error) = self.publish_durable_event(event).await {
-            self.pending.lock().await.remove(&event_id);
-            let _guard = resolution_outbox_lock().lock().await;
-            let _ = tokio::fs::remove_file(pending_request_path).await;
-            return Err(error.to_string());
+        loop {
+            match self.publish_durable_event(event.clone()).await {
+                Ok(()) => break,
+                Err(error) if error.is_retryable_durable_publication() => {
+                    tracing::warn!(
+                        request_event_id = %event_id,
+                        error = %error,
+                        "durable user-input request admission is ambiguous; retrying the exact signed event"
+                    );
+                    tokio::time::sleep(REQUEST_ADMISSION_RETRY_DELAY).await;
+                }
+                Err(error) => {
+                    self.pending.lock().await.remove(&event_id);
+                    dead_letter_outbox_until_committed(&pending_request_path, "user-input request")
+                        .await;
+                    return Err(error.to_string());
+                }
+            }
+        }
+        if let Some(request) = self.pending.lock().await.get(&event_id) {
+            request.admission_tx.send_replace(true);
         }
         Ok((event_id, rx))
     }
@@ -566,7 +766,7 @@ impl QuestionRuntime {
     }
 
     /// Resolve every request still owned by this runtime during graceful shutdown.
-    pub(crate) async fn shutdown_pending(self: &Arc<Self>) {
+    pub(crate) async fn shutdown_pending(self: &Arc<Self>) -> bool {
         let event_ids = self
             .pending
             .lock()
@@ -577,6 +777,10 @@ impl QuestionRuntime {
         for event_id in event_ids {
             self.cancel(&event_id).await;
         }
+        self.workers.close();
+        tokio::time::timeout(RESOLUTION_SHUTDOWN_TIMEOUT, self.workers.wait())
+            .await
+            .is_ok()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -589,6 +793,18 @@ impl QuestionRuntime {
         completion: Option<UserInputAnswers>,
         retry_delays: &[Duration],
     ) -> Result<(), String> {
+        let mut admission_rx = {
+            let pending = self.pending.lock().await;
+            let Some(request) = pending.get(request_event_id) else {
+                return Ok(());
+            };
+            request.admission_tx.subscribe()
+        };
+        while !*admission_rx.borrow() {
+            admission_rx.changed().await.map_err(|_| {
+                "durable user-input request admission ended before exact ACK".to_string()
+            })?;
+        }
         let event = self.build_resolution_event(
             channel_id,
             request_event_id,
@@ -596,47 +812,43 @@ impl QuestionRuntime {
             outcome,
         )?;
         let outbox_dir = resolution_outbox_dir(self)?;
-        {
-            let mut pending = self.pending.lock().await;
-            let Some(request) = pending.get_mut(request_event_id) else {
-                return Ok(());
-            };
-            if request.resolution_started {
-                return Ok(());
-            }
-            request.resolution_started = true;
+        // Keep the per-request claim mutex held through durable persistence.
+        // A competing answer/cancel therefore waits. If persistence fails, it
+        // observes the rollback and can claim instead of being silently lost.
+        let mut pending = self.pending.lock().await;
+        let Some(request) = pending.get_mut(request_event_id) else {
+            return Ok(());
+        };
+        if request.resolution_started {
+            return Ok(());
         }
-
+        request.resolution_started = true;
         let outbox_path = {
             let _guard = resolution_outbox_lock().lock().await;
             match persist_outbox_event(&outbox_dir, &event).await {
                 Ok(path) => path,
                 Err(error) => {
-                    if let Some(request) = self.pending.lock().await.get_mut(request_event_id) {
-                        request.resolution_started = false;
-                    }
+                    request.resolution_started = false;
                     return Err(error);
                 }
             }
         };
+        drop(pending);
 
         let runtime = Arc::clone(self);
         let request_event_id = request_event_id.to_owned();
         let retry_delays = retry_delays.to_vec();
-        tokio::spawn(async move {
+        self.workers.spawn(async move {
             let mut retry_index = 0_usize;
             loop {
                 match runtime.publish_durable_event(event.clone()).await {
                     Ok(()) => {
-                        {
-                            let _guard = resolution_outbox_lock().lock().await;
-                            if let Err(error) = tokio::fs::remove_file(&outbox_path).await {
-                                if error.kind() != std::io::ErrorKind::NotFound {
-                                    tracing::warn!(%error, path = %outbox_path.display(), "failed to retire durable resolution outbox entry");
-                                }
-                            }
-                            retire_pending_request(&runtime, &request_event_id).await;
-                        }
+                        retire_acknowledged_resolution(
+                            &runtime,
+                            &request_event_id,
+                            &outbox_path,
+                        )
+                        .await;
                         if let Some(pending) =
                             runtime.pending.lock().await.remove(&request_event_id)
                         {
@@ -655,12 +867,12 @@ impl QuestionRuntime {
                         tokio::time::sleep(delay).await;
                     }
                     Err(error) => {
-                        let rejected = outbox_path.with_extension("rejected");
-                        {
-                            let _guard = resolution_outbox_lock().lock().await;
-                            let _ = tokio::fs::rename(&outbox_path, &rejected).await;
-                            dead_letter_pending_request(&runtime, &request_event_id).await;
-                        }
+                        dead_letter_pending_request(&runtime, &request_event_id).await;
+                        let rejected = dead_letter_outbox_until_committed(
+                            &outbox_path,
+                            "user-input resolution",
+                        )
+                        .await;
                         if let Some(pending) =
                             runtime.pending.lock().await.remove(&request_event_id)
                         {
@@ -1223,6 +1435,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ambiguous_request_admission_retries_exact_event_without_cancelling() {
+        let owner = Keys::generate();
+        let agent = Keys::generate();
+        let (base_url, server) =
+            sequenced_admission_server(vec![false, false, false, false, true]).await;
+        let (publisher, _published) = RelayEventPublisher::test_pair();
+        let runtime = QuestionRuntime::new(
+            publisher,
+            agent.clone(),
+            Arc::new(crate::OwnerCache::new(Some(owner.public_key().to_hex()))),
+            RestClient {
+                http: reqwest::Client::new(),
+                base_url,
+                keys: agent,
+                auth_tag_json: None,
+            },
+        );
+        let form = normalize_form(&serde_json::json!({
+            "type": "object",
+            "properties": {"question_0": {"type": "string"}}
+        }))
+        .expect("supported form");
+
+        let (_request_event_id, _receiver) = runtime
+            .publish(
+                Uuid::new_v4(),
+                &test_thread_ref(),
+                "session",
+                "turn-ambiguous",
+                Engine::Codex,
+                form,
+                "request",
+                Some("Need input"),
+                None,
+            )
+            .await
+            .expect("ambiguous admission must retry until exact ACK");
+        let submitted_ids = server.await.expect("transient server completes");
+        assert!(submitted_ids.windows(2).all(|ids| ids[0] == ids[1]));
+        let outbox_dir = pending_request_outbox_dir(&runtime).expect("request outbox");
+        let persisted = std::fs::read_dir(&outbox_dir)
+            .expect("read request outbox")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry.path().extension().and_then(|value| value.to_str()) == Some("json")
+            })
+            .count();
+        assert_eq!(persisted, 1, "ambiguous ACK must retain request authority");
+        assert_eq!(runtime.pending.lock().await.len(), 1);
+        runtime.stop_test_workers().await;
+        let _ = std::fs::remove_dir_all(outbox_dir);
+    }
+
+    #[tokio::test]
     async fn resolution_retries_the_same_signed_event_until_exact_ack() {
         let owner = Keys::generate();
         let agent = Keys::generate();
@@ -1281,12 +1547,14 @@ mod tests {
             },
         );
         let (sender, receiver) = oneshot::channel();
+        let (admission_tx, _admission_rx) = watch::channel(true);
         runtime.pending.lock().await.insert(
             request_event_id.clone(),
             PendingRequest {
                 channel_id: Uuid::new_v4(),
                 intended_owner_pubkey: owner.public_key().to_hex(),
                 sender,
+                admission_tx,
                 resolution_started: false,
             },
         );

@@ -243,7 +243,7 @@ pub struct RestClient {
 
 /// Whether an HTTP status code is retriable (transient server/rate-limit errors).
 fn is_retriable_status(status: reqwest::StatusCode) -> bool {
-    matches!(status.as_u16(), 429 | 502 | 503 | 504)
+    matches!(status.as_u16(), 408 | 425 | 429) || status.is_server_error()
 }
 
 /// Base retry delays for transient HTTP failures: 500ms, 1s, 2s.
@@ -455,10 +455,10 @@ fn validate_event_admission(event: &Event, response: &Value) -> Result<(), Relay
         .get("event_id")
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            RelayError::AdmissionRejected("event submission response omitted event_id".to_string())
+            RelayError::AdmissionAmbiguous("event submission response omitted event_id".to_string())
         })?;
     if acknowledged_id != event.id.to_hex() {
-        return Err(RelayError::AdmissionRejected(format!(
+        return Err(RelayError::AdmissionAmbiguous(format!(
             "event submission acknowledged {acknowledged_id}, expected {}",
             event.id
         )));
@@ -473,7 +473,7 @@ fn validate_event_admission(event: &Event, response: &Value) -> Result<(), Relay
                 .and_then(Value::as_str)
                 .unwrap_or("no reason supplied")
         ))),
-        None => Err(RelayError::AdmissionRejected(
+        None => Err(RelayError::AdmissionAmbiguous(
             "event submission response omitted accepted".to_string(),
         )),
     }
@@ -544,6 +544,9 @@ pub enum RelayError {
     #[error("Durable event admission rejected: {0}")]
     AdmissionRejected(String),
 
+    #[error("Durable event admission is ambiguous: {0}")]
+    AdmissionAmbiguous(String),
+
     #[error("Unexpected message: {0}")]
     UnexpectedMessage(String),
 }
@@ -553,7 +556,15 @@ impl RelayError {
     pub(crate) fn is_retryable_durable_publication(&self) -> bool {
         matches!(
             self,
-            Self::WebSocket(_) | Self::ConnectionClosed | Self::Timeout | Self::Http(_)
+            Self::WebSocket(_)
+                | Self::ConnectionClosed
+                | Self::Timeout
+                | Self::Http(_)
+                | Self::AdmissionAmbiguous(_)
+        ) || matches!(
+            self,
+            Self::HttpStatus { status, .. }
+                if matches!(*status, 408 | 425 | 429) || (500..=599).contains(status)
         )
     }
 }
@@ -3782,7 +3793,10 @@ fn is_terminal_connect_error(err: &RelayError) -> bool {
         | RelayError::UnexpectedMessage(_) => true,
         RelayError::WebSocket(e) => is_terminal_ws_error(e.as_ref()),
         RelayError::AuthFailed(message) => is_terminal_auth_failure(message),
-        RelayError::NoAuthChallenge | RelayError::ConnectionClosed | RelayError::Timeout => false,
+        RelayError::NoAuthChallenge
+        | RelayError::ConnectionClosed
+        | RelayError::Timeout
+        | RelayError::AdmissionAmbiguous(_) => false,
     }
 }
 
@@ -4134,24 +4148,55 @@ mod tests {
             }),
         )
         .is_ok());
-        for invalid in [
+        for ambiguous in [
             serde_json::json!({"accepted": true}),
             serde_json::json!({"event_id": event.id.to_hex()}),
             serde_json::json!({
                 "event_id": nostr::EventId::all_zeros().to_hex(),
                 "accepted": true,
             }),
-            serde_json::json!({
+        ] {
+            let error = validate_event_admission(&event, &ambiguous).expect_err("ambiguous ACK");
+            assert!(error.is_retryable_durable_publication());
+        }
+        let rejected = validate_event_admission(
+            &event,
+            &serde_json::json!({
                 "event_id": event.id.to_hex(),
                 "accepted": false,
                 "message": "rejected",
             }),
-        ] {
+        )
+        .expect_err("explicit rejection");
+        assert!(!rejected.is_retryable_durable_publication());
+    }
+
+    #[test]
+    fn durable_publication_retries_every_server_error() {
+        for status in [408, 425, 429] {
+            assert!(is_retriable_status(
+                reqwest::StatusCode::from_u16(status).expect("valid transient status")
+            ));
+        }
+        for status in 500..=599 {
+            let status = reqwest::StatusCode::from_u16(status).expect("valid server status");
             assert!(
-                validate_event_admission(&event, &invalid).is_err(),
-                "invalid ACK was accepted: {invalid}"
+                is_retriable_status(status),
+                "HTTP {status} is delivery-ambiguous for an idempotent exact-event submission"
             );
         }
+        assert!(RelayError::HttpStatus {
+            method: "POST".to_string(),
+            path: "/events".to_string(),
+            status: 500,
+        }
+        .is_retryable_durable_publication());
+        assert!(!RelayError::HttpStatus {
+            method: "POST".to_string(),
+            path: "/events".to_string(),
+            status: 401,
+        }
+        .is_retryable_durable_publication());
     }
 
     #[tokio::test(start_paused = true)]

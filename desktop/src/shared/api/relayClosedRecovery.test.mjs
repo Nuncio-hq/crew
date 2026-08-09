@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   handleRelayClosed,
   handleSubscriptionEose,
+  isCurrentLiveWireId,
 } from "./relayClosedRecovery.ts";
 import {
   requestFirstEventGated,
@@ -204,11 +205,23 @@ test("live subscription ignores stale EOSE and opens after replacement EOSE", as
 
   handleSubscriptionEose({
     subscriptions,
-    subId: "live-health",
+    subId: subscriptions.get("live-health").currentSubId,
     closeSubscription: async () => {},
   });
   assert.equal(subscriptions.get("live-health").ready, true);
   assert.deepEqual(statuses.at(-1), { state: "open" });
+});
+
+test("replacement wire ids reject stale EVENT/CLOSED generation authority", () => {
+  const subscription = {
+    mode: "live",
+    currentSubId: "live:recovery:2",
+    filter: { kinds: [46043], limit: 0 },
+    onEvent: () => {},
+    ready: false,
+  };
+  assert.equal(isCurrentLiveWireId(subscription, "live:recovery:1"), false);
+  assert.equal(isCurrentLiveWireId(subscription, "live:recovery:2"), true);
 });
 
 test("retryable CLOSED restores live overlap before durable history recovery", async () => {
@@ -274,7 +287,7 @@ test("replacement EOSE does not report open before durable history recovery comp
 
   handleSubscriptionEose({
     subscriptions,
-    subId: "durable-live",
+    subId: subscription.currentSubId,
     closeSubscription: async () => {},
   });
 
@@ -310,7 +323,7 @@ test("overlapping CLOSED recovery ignores stale send completion and EOSE", async
   const recover = () =>
     handleRelayClosed({
       subscriptions,
-      subId: "durable-live",
+      subId: subscription.currentSubId ?? "durable-live",
       message: "error: retryable subscription failure",
       sendReq: () => {
         sendCount++;
@@ -335,7 +348,7 @@ test("overlapping CLOSED recovery ignores stale send completion and EOSE", async
   for (let index = 0; index < 4; index++) await Promise.resolve();
   handleSubscriptionEose({
     subscriptions,
-    subId: "durable-live",
+    subId: subscription.currentSubId,
     closeSubscription: async () => {},
   });
   assert.equal(subscription.ready, true);
@@ -442,6 +455,7 @@ test("first-event request resolves null when EOSE arrives without an event", asy
 
 test("production CLOSED handler removes terminal live subscriptions", () => {
   let readyCalls = 0;
+  let rejectedMessage = "";
   const subscriptions = new Map([
     [
       "live-1",
@@ -451,6 +465,9 @@ test("production CLOSED handler removes terminal live subscriptions", () => {
         onEvent: () => {},
         resolveReady: () => {
           readyCalls += 1;
+        },
+        rejectReady: (error) => {
+          rejectedMessage = error.message;
         },
       },
     ],
@@ -462,7 +479,8 @@ test("production CLOSED handler removes terminal live subscriptions", () => {
     sendReq: () => Promise.resolve(),
   });
   assert.equal(subscriptions.has("live-1"), false);
-  assert.equal(readyCalls, 1);
+  assert.equal(readyCalls, 0);
+  assert.equal(rejectedMessage, "restricted: access revoked");
 });
 
 // ── Rate-limited CLOSED core behaviour (F5) ───────────────────────────────────

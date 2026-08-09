@@ -17,6 +17,7 @@ export type ActiveConversationTurnSummary = {
   progressKind: AgentProgressKind;
   progressLabel: string;
   triggeringEventIds: string[];
+  agentTriggerPairs: Array<{ agentPubkey: string; eventId: string }>;
 };
 
 const EMPTY: ActiveConversationTurnSummary[] = [];
@@ -32,10 +33,15 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
     string,
     Omit<
       ActiveConversationTurnSummary,
-      "conversationId" | "agentCount" | "agentPubkeys" | "triggeringEventIds"
+      | "conversationId"
+      | "agentCount"
+      | "agentPubkeys"
+      | "triggeringEventIds"
+      | "agentTriggerPairs"
     > & {
       agentPubkeys: Set<string>;
       triggeringEventIds: Set<string>;
+      agentTriggerPairs: Set<string>;
     }
   >();
   walkActiveAgentTurns((agentPubkey, turn, offset) => {
@@ -52,12 +58,18 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
         progressKind: turn.progressKind,
         progressLabel: turn.progressLabel,
         triggeringEventIds: new Set(turn.triggeringEventIds),
+        agentTriggerPairs: new Set(
+          turn.triggeringEventIds.map(
+            (eventId) => `${agentPubkey}\0${eventId}`,
+          ),
+        ),
       });
       return;
     }
     summary.agentPubkeys.add(agentPubkey);
     for (const eventId of turn.triggeringEventIds) {
       summary.triggeringEventIds.add(eventId);
+      summary.agentTriggerPairs.add(`${agentPubkey}\0${eventId}`);
     }
     if (anchorAt < summary.anchorAt) summary.anchorAt = anchorAt;
     if (turn.lastSeenAt < summary.lastSeenAt)
@@ -79,6 +91,15 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
             agentCount: summary.agentPubkeys.size,
             agentPubkeys: [...summary.agentPubkeys].sort(),
             triggeringEventIds: [...summary.triggeringEventIds].sort(),
+            agentTriggerPairs: [...summary.agentTriggerPairs]
+              .sort()
+              .map((pair) => {
+                const [agentPubkey, eventId] = pair.split("\0");
+                return {
+                  agentPubkey: agentPubkey ?? "",
+                  eventId: eventId ?? "",
+                };
+              }),
           }))
           .sort((a, b) => a.conversationId.localeCompare(b.conversationId));
   cachedGeneration = generation;

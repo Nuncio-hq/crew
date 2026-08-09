@@ -11,6 +11,26 @@ import {
 } from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
 
+export function isCurrentLiveWireId(
+  subscription: RelaySubscription,
+  subId: string,
+): boolean {
+  return (
+    subscription.mode !== "live" ||
+    subscription.currentSubId === undefined ||
+    subscription.currentSubId === subId
+  );
+}
+
+export function deleteSubscriptionAliases(
+  subscriptions: Map<string, RelaySubscription>,
+  target: RelaySubscription,
+): void {
+  for (const [id, subscription] of subscriptions) {
+    if (subscription === target) subscriptions.delete(id);
+  }
+}
+
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 30_000;
 
@@ -21,6 +41,7 @@ function markLiveSubscriptionOpen(subscription: LiveSubscription) {
   subscription.onStatus?.({ state: "open" });
   subscription.resolveReady?.();
   subscription.resolveReady = undefined;
+  subscription.rejectReady = undefined;
   subscription.closedRetryAttempt = 0;
   clearClosedRetry(subscription);
 }
@@ -105,6 +126,7 @@ export function handleRelayClosed({
     );
     return;
   }
+  if (!isCurrentLiveWireId(subscription, subId)) return;
   recoverLiveSubscriptionFromClosed({
     subscriptions,
     subId,
@@ -137,8 +159,6 @@ function recoverLiveSubscriptionFromClosed({
   isActive?: () => boolean;
 }) {
   subscription.ready = false;
-  subscription.resolveReady?.();
-  subscription.resolveReady = undefined;
 
   const closedClass = classifyRelayClosed(message);
   subscription.onStatus?.({
@@ -149,11 +169,24 @@ function recoverLiveSubscriptionFromClosed({
   if (closedClass === "terminal") {
     // Auth/access/filter failure — permanently remove the subscription so it
     // doesn't silently loop.
-    subscriptions.delete(subId);
+    subscription.rejectReady?.(
+      new Error(message || "Relay rejected the live subscription."),
+    );
+    subscription.resolveReady = undefined;
+    subscription.rejectReady = undefined;
+    deleteSubscriptionAliases(subscriptions, subscription);
     return;
   }
-
   const recoveryGeneration = beginLiveSubscriptionRecovery(subscription);
+  const baseSubId = subscription.baseSubId ?? subId;
+  const replacementSubId = `${baseSubId}:recovery:${recoveryGeneration}`;
+  subscription.baseSubId = baseSubId;
+  for (const [id, candidate] of subscriptions) {
+    if (candidate === subscription && id !== baseSubId)
+      subscriptions.delete(id);
+  }
+  subscription.currentSubId = replacementSubId;
+  subscriptions.set(replacementSubId, subscription);
   clearClosedRetry(subscription);
 
   const attempt = subscription.closedRetryAttempt ?? 0;
@@ -180,22 +213,24 @@ function recoverLiveSubscriptionFromClosed({
   subscription.closedRetryTimeout = window.setTimeout(() => {
     subscription.closedRetryTimeout = undefined;
     if (
-      subscriptions.get(subId) !== subscription ||
+      subscriptions.get(replacementSubId) !== subscription ||
       subscription.recoveryGeneration !== recoveryGeneration ||
       isActive?.() === false
     ) {
       return;
     }
-    void sendReq(subId, subscription.filter)
+    void sendReq(replacementSubId, subscription.filter)
       .then(() => {
         if (!markLiveRecoveryRequestSent(subscription, recoveryGeneration)) {
           return false;
         }
         if (isActive?.() === false) return false;
-        return recoverHistory ? recoverHistory(subId, subscription) : true;
+        return recoverHistory
+          ? recoverHistory(replacementSubId, subscription)
+          : true;
       })
       .then((completed) => {
-        if (subscriptions.get(subId) !== subscription) return;
+        if (subscriptions.get(replacementSubId) !== subscription) return;
         completeLiveSubscriptionRecovery(
           subscription,
           recoveryGeneration,
@@ -204,7 +239,7 @@ function recoverLiveSubscriptionFromClosed({
       })
       .catch((error) => {
         if (
-          subscriptions.get(subId) !== subscription ||
+          subscriptions.get(replacementSubId) !== subscription ||
           subscription.recoveryGeneration !== recoveryGeneration ||
           isActive?.() === false
         ) {
@@ -213,7 +248,7 @@ function recoverLiveSubscriptionFromClosed({
         console.error("Failed to restore closed relay subscription", error);
         recoverLiveSubscriptionFromClosed({
           subscriptions,
-          subId,
+          subId: replacementSubId,
           subscription,
           message,
           sendReq,
@@ -256,10 +291,11 @@ export function handleSubscriptionEose({
   const subscription = subscriptions.get(subId);
   if (!subscription) return;
   if (subscription.mode === "live") {
+    if (!isCurrentLiveWireId(subscription, subId)) return;
     if (subscription.recoveryInFlight) {
-      if (subscription.recoveryRequestSent) {
-        subscription.recoveryEoseReceived = true;
-      }
+      // The replacement wire id is generation-unique, so an early EOSE is
+      // already authoritative even if the send promise has not resolved yet.
+      subscription.recoveryEoseReceived = true;
       return;
     }
     markLiveSubscriptionOpen(subscription);
