@@ -173,7 +173,7 @@ const liveAgentsCache = new Map<
 /**
  * Live agents in one conversation with per-agent activity + turn ids.
  * Reference-stable while the live turn contents are unchanged. The active-turn
- * store updates `lastActivityAt` in place for ordinary observer activity, so
+ * store updates `lastSeenAt` in place for ordinary observer activity, so
  * this deliberately walks live turns on every snapshot rather than trusting
  * the store generation alone.
  */
@@ -191,14 +191,14 @@ export function getLiveAgentsForConversation(
     const prior = byAgent.get(agentKey);
     if (!prior) {
       byAgent.set(agentKey, {
-        lastActivityAt: turn.lastActivityAt,
+        lastActivityAt: turn.lastSeenAt,
         turnIds: [turn.turnId],
       });
       return;
     }
     prior.turnIds.push(turn.turnId);
-    if (turn.lastActivityAt > prior.lastActivityAt) {
-      prior.lastActivityAt = turn.lastActivityAt;
+    if (turn.lastSeenAt > prior.lastActivityAt) {
+      prior.lastActivityAt = turn.lastSeenAt;
     }
   });
 

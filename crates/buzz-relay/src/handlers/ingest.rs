@@ -38,6 +38,7 @@ use buzz_core::kind::{
     RELAY_ADMIN_REMOVE_MEMBER, RELAY_ADMIN_SET_WORKSPACE_PROFILE,
 };
 use buzz_core::tenant::TenantContext;
+use buzz_core::user_input::{UserInputAnswers, UserInputRequest, UserInputResolved};
 use buzz_core::verification::verify_event;
 use buzz_core::CommunityId;
 use nostr::Event;
@@ -1715,6 +1716,190 @@ fn validate_agent_turn_metric_envelope(event: &nostr::Event) -> Result<(), Strin
     Ok(())
 }
 
+fn single_user_input_tag<'a>(event: &'a Event, name: &str) -> Result<&'a str, String> {
+    let tags: Vec<_> = event
+        .tags
+        .iter()
+        .filter(|tag| tag.kind().to_string() == name)
+        .collect();
+    if tags.len() != 1 {
+        return Err(format!(
+            "agent user-input event must have exactly one `{name}` tag (got {})",
+            tags.len()
+        ));
+    }
+    tags[0]
+        .content()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("agent user-input `{name}` tag must have a value"))
+}
+
+fn agent_user_input_thread_ids(event: &Event) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let e_tags: Vec<&nostr::Tag> = event
+        .tags
+        .iter()
+        .filter(|tag| tag.kind().to_string() == "e")
+        .collect();
+    if !(1..=2).contains(&e_tags.len()) {
+        return Err(format!(
+            "agent user-input request must have one or two `e` tags (got {})",
+            e_tags.len()
+        ));
+    }
+    let mut root_id = None;
+    let mut parent_id = None;
+    for e_tag in e_tags {
+        let parts = e_tag.as_slice();
+        if parts.len() != 4 {
+            return Err(
+                "agent user-input request `e` tags must use the canonical four-field NIP-10 form"
+                    .to_string(),
+            );
+        }
+        let event_id = parts.get(1).map(String::as_str).ok_or_else(|| {
+            "agent user-input request `e` tag must contain an event id".to_string()
+        })?;
+        if event_id.len() != 64
+            || !event_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(
+                "agent user-input request `e` tag must contain a 64-character lowercase hex event id"
+                    .to_string(),
+            );
+        }
+        match parts.get(3).map(String::as_str) {
+            Some("root") if root_id.is_none() => root_id = Some(event_id),
+            Some("reply") if parent_id.is_none() => parent_id = Some(event_id),
+            Some("root") | Some("reply") => {
+                return Err(
+                    "agent user-input request must have at most one root and one reply e tag"
+                        .to_string(),
+                )
+            }
+            _ => {
+                return Err(
+                    "agent user-input request `e` tag must use a root or reply marker".to_string(),
+                )
+            }
+        }
+    }
+    let parent_id =
+        parent_id.ok_or_else(|| "agent user-input request must have a reply e tag".to_string())?;
+    let root_id = root_id.unwrap_or(parent_id);
+    Ok((
+        hex::decode(root_id)
+            .map_err(|_| "agent user-input request root must be valid hex".to_string())?,
+        hex::decode(parent_id)
+            .map_err(|_| "agent user-input request parent must be valid hex".to_string())?,
+    ))
+}
+
+struct ValidatedAgentUserInputRequest {
+    channel_id: Uuid,
+    owner: Vec<u8>,
+    root_event_id: Vec<u8>,
+    parent_event_id: Vec<u8>,
+}
+
+fn validate_agent_user_input_request_envelope(
+    event: &Event,
+) -> Result<ValidatedAgentUserInputRequest, String> {
+    if event_kind_u32(event) != KIND_AGENT_USER_INPUT_REQUESTED {
+        return Err("agent user-input request has the wrong kind".to_string());
+    }
+    let channel_value = single_user_input_tag(event, "h")?;
+    let channel_id = Uuid::parse_str(channel_value)
+        .map_err(|_| "agent user-input `h` tag must contain a channel UUID".to_string())?;
+    let owner = single_user_input_tag(event, "p")?;
+    if owner.len() != 64
+        || !owner
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(
+            "agent user-input `p` tag must contain a lowercase 64-hex owner pubkey".to_string(),
+        );
+    }
+    let request: UserInputRequest = serde_json::from_str(&event.content).map_err(|_| {
+        "agent user-input request content must match the request schema".to_string()
+    })?;
+    if request.channel_id != channel_value {
+        return Err("agent user-input request content channel does not match `h`".to_string());
+    }
+    let (root_event_id, parent_event_id) = agent_user_input_thread_ids(event)?;
+    let owner = hex::decode(owner)
+        .map_err(|_| "agent user-input `p` tag must contain valid hex".to_string())?;
+    Ok(ValidatedAgentUserInputRequest {
+        channel_id,
+        owner,
+        root_event_id,
+        parent_event_id,
+    })
+}
+
+fn validate_agent_user_input_transition_envelope(
+    event: &Event,
+    request_event: &Event,
+) -> Result<(Uuid, Vec<u8>, Vec<u8>), String> {
+    let request = validate_agent_user_input_request_envelope(request_event)?;
+    let channel = Uuid::parse_str(single_user_input_tag(event, "h")?)
+        .map_err(|_| "agent user-input `h` tag must contain a channel UUID".to_string())?;
+    if channel != request.channel_id {
+        return Err("agent user-input transition belongs to a different channel".to_string());
+    }
+    let request_id = single_user_input_tag(event, "e")?;
+    if request_id != request_event.id.to_hex() {
+        return Err("agent user-input transition targets a different request".to_string());
+    }
+    let declared_relation = hex::decode(single_user_input_tag(event, "p")?)
+        .map_err(|_| "agent user-input `p` tag must contain valid hex".to_string())?;
+    let request_author = request_event.pubkey.to_bytes().to_vec();
+    match event_kind_u32(event) {
+        KIND_AGENT_USER_INPUT_ANSWER => {
+            serde_json::from_str::<UserInputAnswers>(&event.content).map_err(|_| {
+                "agent user-input answer content must be a JSON answer object".to_string()
+            })?;
+            if declared_relation != request_author {
+                return Err(
+                    "agent user-input answer `p` tag must target the requesting agent".to_string(),
+                );
+            }
+        }
+        KIND_AGENT_USER_INPUT_RESOLVED => {
+            let resolved: UserInputResolved =
+                serde_json::from_str(&event.content).map_err(|_| {
+                    "agent user-input resolution content must match the resolution schema"
+                        .to_string()
+                })?;
+            if resolved.request_event_id != request_id {
+                return Err(
+                    "agent user-input resolution content targets a different request".to_string(),
+                );
+            }
+            if event.pubkey != request_event.pubkey {
+                return Err(
+                    "agent user-input resolution must be authored by the requesting agent"
+                        .to_string(),
+                );
+            }
+            if declared_relation != request.owner {
+                return Err(
+                    "agent user-input resolution `p` tag must target the intended owner"
+                        .to_string(),
+                );
+            }
+        }
+        _ => return Err("agent user-input transition has the wrong kind".to_string()),
+    }
+    Ok((channel, request_author, request.owner))
+}
+
+fn agent_user_input_answer_is_from_owner(event: &Event, request_owner: &[u8]) -> bool {
+    event.pubkey.to_bytes().as_slice() == request_owner
+}
+
 /// Validate the public JSON envelope of a channel-scoped agent receipt.
 fn validate_agent_receipt_envelope(
     event: &nostr::Event,
@@ -1831,24 +2016,25 @@ fn is_registered_agent_policy(policy: Option<(String, Option<Vec<u8>>)>) -> bool
 }
 
 fn receipt_parent_targets_agent(parent_event: &nostr::Event, agent_hex: &str) -> bool {
-    // The p-tag check is a multi-agent "this turn was aimed at me" guard.
-    // It only holds when the trigger actually targeted someone: harnesses in
-    // SubscribeMode::All / --no-mention-filter fire turns from mention-less
-    // channel messages, which carry no `p` tags at all. For those, registered
-    // agent authorship + same-channel parent existence (checked by the
-    // caller) are the authorization; a parent with p tags that omit this
-    // agent is still rejected.
-    let mut saw_p_tag = false;
+    let mut targets_agent = false;
     for tag in parent_event.tags.iter() {
         let parts = tag.as_slice();
-        if parts.len() >= 2 && parts[0] == "p" {
-            if parts[1] == agent_hex {
-                return true;
-            }
-            saw_p_tag = true;
+        if parts.first().is_none_or(|kind| kind != "p") {
+            continue;
         }
+        let Some(target) = parts.get(1) else {
+            return false;
+        };
+        if target.len() != 64
+            || !target
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return false;
+        }
+        targets_agent |= target == agent_hex;
     }
-    !saw_p_tag
+    targets_agent
 }
 
 /// Parse a NIP-ER `not_before` tag value into a Unix timestamp.
@@ -2659,8 +2845,110 @@ async fn ingest_event_inner(
         }
     }
 
+    if kind_u32 == KIND_AGENT_USER_INPUT_REQUESTED {
+        let request = validate_agent_user_input_request_envelope(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        let agent_pubkey = event.pubkey.to_bytes().to_vec();
+        let registered_owner = state
+            .db
+            .get_agent_channel_policy(tenant.community(), &agent_pubkey)
+            .await
+            .map_err(|e| {
+                IngestError::Internal(format!(
+                    "error: db error checking user-input request author: {e}"
+                ))
+            })?
+            .and_then(|(_, owner)| owner);
+        if registered_owner.as_deref() != Some(request.owner.as_slice()) {
+            return Err(IngestError::AuthFailed(
+                "restricted: user-input request must be authored by a registered agent and target its owner"
+                    .into(),
+            ));
+        }
+
+        let thread_meta =
+            resolve_nip10_thread_meta(tenant.community(), &event, request.channel_id, state)
+                .await
+                .map_err(|e| IngestError::Rejected(format!("invalid: user-input request {e}")))?
+                .ok_or_else(|| {
+                    IngestError::Rejected(
+                        "invalid: user-input request thread relationship is missing".into(),
+                    )
+                })?;
+        if thread_meta.root_event_id != request.root_event_id {
+            return Err(IngestError::Rejected(
+                "invalid: user-input request root does not match thread ancestry".into(),
+            ));
+        }
+        let parent_event = state
+            .db
+            .get_event_by_id(tenant.community(), &request.parent_event_id)
+            .await
+            .map_err(|e| {
+                IngestError::Internal(format!(
+                    "error: db error checking user-input request parent: {e}"
+                ))
+            })?
+            .ok_or_else(|| {
+                IngestError::Rejected("invalid: user-input request parent event not found".into())
+            })?;
+        if parent_event.channel_id != Some(request.channel_id) {
+            return Err(IngestError::Rejected(
+                "invalid: user-input request parent event belongs to a different channel".into(),
+            ));
+        }
+        let agent_hex = event.pubkey.to_hex();
+        if !receipt_parent_targets_agent(&parent_event.event, &agent_hex) {
+            return Err(IngestError::AuthFailed(
+                "restricted: user-input request signer was not targeted by the triggering event"
+                    .into(),
+            ));
+        }
+    }
+
+    if matches!(
+        kind_u32,
+        KIND_AGENT_USER_INPUT_ANSWER | KIND_AGENT_USER_INPUT_RESOLVED
+    ) {
+        let request_id = single_user_input_tag(&event, "e")
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        let request_id = hex::decode(request_id).map_err(|_| {
+            IngestError::Rejected(
+                "invalid: agent user-input `e` tag must contain a valid event id".into(),
+            )
+        })?;
+        let request = state
+            .db
+            .get_event_by_id(tenant.community(), &request_id)
+            .await
+            .map_err(|e| {
+                IngestError::Internal(format!(
+                    "error: db error checking user-input request target: {e}"
+                ))
+            })?
+            .ok_or_else(|| {
+                IngestError::Rejected("invalid: user-input request event not found".into())
+            })?;
+        let (channel_id, _, request_owner) =
+            validate_agent_user_input_transition_envelope(&event, &request.event)
+                .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        if request.channel_id != Some(channel_id) {
+            return Err(IngestError::Rejected(
+                "invalid: user-input request belongs to a different channel".into(),
+            ));
+        }
+        if kind_u32 == KIND_AGENT_USER_INPUT_ANSWER
+            && !agent_user_input_answer_is_from_owner(&event, &request_owner)
+        {
+            return Err(IngestError::AuthFailed(
+                "restricted: user-input answer must be authored by the intended owner".into(),
+            ));
+        }
+    }
+
+    let mut validated_receipt_thread_meta = None;
     if kind_u32 == KIND_AGENT_RECEIPT {
-        let (receipt_channel_id, _root_event_id, parent_event_id) =
+        let (receipt_channel_id, root_event_id, parent_event_id) =
             validate_agent_receipt_envelope(&event)
                 .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
 
@@ -2685,6 +2973,20 @@ async fn ingest_event_inner(
                 "restricted: agent receipt must be authored by a registered agent".into(),
             ));
         }
+
+        let thread_meta =
+            resolve_nip10_thread_meta(tenant.community(), &event, receipt_channel_id, state)
+                .await
+                .map_err(|e| IngestError::Rejected(format!("invalid: receipt {e}")))?
+                .ok_or_else(|| {
+                    IngestError::Rejected("invalid: receipt thread relationship is missing".into())
+                })?;
+        if thread_meta.root_event_id != root_event_id {
+            return Err(IngestError::Rejected(
+                "invalid: receipt root does not match thread ancestry".into(),
+            ));
+        }
+        validated_receipt_thread_meta = Some(thread_meta);
 
         let parent_event = state
             .db
@@ -2926,7 +3228,9 @@ async fn ingest_event_inner(
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
     }
 
-    let thread_meta = if requires_h_channel_scope(kind_u32) {
+    let thread_meta = if let Some(thread_meta) = validated_receipt_thread_meta {
+        Some(thread_meta)
+    } else if requires_h_channel_scope(kind_u32) {
         if let Some(ch_id) = channel_id {
             resolve_nip10_thread_meta(tenant.community(), &event, ch_id, state)
                 .await
@@ -4008,14 +4312,168 @@ mod tests {
 
     fn make_event_with_tags(kind: u32, content: &str, tags: &[&[&str]]) -> Event {
         let keys = nostr::Keys::generate();
+        make_event_with_keys(&keys, kind, content, tags)
+    }
+
+    fn make_event_with_keys(
+        keys: &nostr::Keys,
+        kind: u32,
+        content: &str,
+        tags: &[&[&str]],
+    ) -> Event {
         let nostr_tags: Vec<nostr::Tag> = tags
             .iter()
             .map(|t| nostr::Tag::parse(t.iter().copied()).unwrap())
             .collect();
         nostr::EventBuilder::new(nostr::Kind::Custom(kind as u16), content)
             .tags(nostr_tags)
-            .sign_with_keys(&keys)
+            .sign_with_keys(keys)
             .unwrap()
+    }
+
+    #[test]
+    fn agent_user_input_request_requires_registered_owner_envelope() {
+        let channel = Uuid::new_v4().to_string();
+        let owner = nostr::Keys::generate().public_key().to_hex();
+        let root = "a".repeat(64);
+        let parent = "b".repeat(64);
+        let content = format!(
+            r#"{{"request_id":"req","session_id":"session","turn_id":"turn","channel_id":"{channel}","tool_call_id":null,"engine":"codex","message":"Choose","questions":[]}}"#,
+        );
+        let valid = make_event_with_tags(
+            KIND_AGENT_USER_INPUT_REQUESTED,
+            &content,
+            &[
+                ["h", &channel].as_slice(),
+                ["p", &owner].as_slice(),
+                ["e", &root, "", "root"].as_slice(),
+                ["e", &parent, "", "reply"].as_slice(),
+            ],
+        );
+        let validated = validate_agent_user_input_request_envelope(&valid).unwrap();
+        assert_eq!(validated.owner, hex::decode(&owner).unwrap());
+        assert_eq!(validated.root_event_id, hex::decode(root).unwrap());
+        assert_eq!(validated.parent_event_id, hex::decode(&parent).unwrap());
+
+        let missing_owner = make_event_with_tags(
+            KIND_AGENT_USER_INPUT_REQUESTED,
+            &content,
+            &[["h", &channel].as_slice()],
+        );
+        assert!(validate_agent_user_input_request_envelope(&missing_owner).is_err());
+
+        let missing_trigger = make_event_with_tags(
+            KIND_AGENT_USER_INPUT_REQUESTED,
+            &content,
+            &[["h", &channel].as_slice(), ["p", &owner].as_slice()],
+        );
+        assert!(validate_agent_user_input_request_envelope(&missing_trigger).is_err());
+
+        let noncanonical_trigger = make_event_with_tags(
+            KIND_AGENT_USER_INPUT_REQUESTED,
+            &content,
+            &[
+                ["h", &channel].as_slice(),
+                ["p", &owner].as_slice(),
+                ["e", &parent, "", "reply", "unexpected"].as_slice(),
+            ],
+        );
+        assert!(validate_agent_user_input_request_envelope(&noncanonical_trigger).is_err());
+    }
+
+    #[test]
+    fn agent_user_input_transition_is_bound_to_request_authority() {
+        let channel_id = Uuid::new_v4();
+        let channel = channel_id.to_string();
+        let agent = nostr::Keys::generate();
+        let owner = nostr::Keys::generate();
+        let stranger = nostr::Keys::generate();
+        let agent_hex = agent.public_key().to_hex();
+        let owner_hex = owner.public_key().to_hex();
+        let request_content = format!(
+            r#"{{"request_id":"req","session_id":"session","turn_id":"turn","channel_id":"{channel}","tool_call_id":null,"engine":"codex","message":"Choose","questions":[]}}"#,
+        );
+        let trigger = nostr::EventId::from_hex(&"a".repeat(64)).unwrap();
+        let request = buzz_sdk::build_agent_user_input_request(
+            channel_id,
+            &buzz_sdk::ThreadRef {
+                root_event_id: trigger,
+                parent_event_id: trigger,
+            },
+            &owner_hex,
+            &request_content,
+        )
+        .unwrap()
+        .sign_with_keys(&agent)
+        .unwrap();
+        let request_id = request.id.to_hex();
+        let answer = buzz_sdk::build_agent_user_input_answer(
+            channel_id,
+            &request_id,
+            &agent_hex,
+            r#"{"q0":"yes"}"#,
+        )
+        .unwrap()
+        .sign_with_keys(&owner)
+        .unwrap();
+        let (_, request_author, request_owner) =
+            validate_agent_user_input_transition_envelope(&answer, &request).unwrap();
+        assert_eq!(request_author, agent.public_key().to_bytes());
+        assert_eq!(request_owner, owner.public_key().to_bytes());
+        assert!(agent_user_input_answer_is_from_owner(
+            &answer,
+            &request_owner
+        ));
+        let resolution = buzz_sdk::build_agent_user_input_resolved(
+            channel_id,
+            &request_id,
+            &owner_hex,
+            &format!(r#"{{"request_event_id":"{request_id}","outcome":"answered"}}"#),
+        )
+        .unwrap()
+        .sign_with_keys(&agent)
+        .unwrap();
+        assert!(validate_agent_user_input_transition_envelope(&resolution, &request).is_ok());
+
+        let sibling_answer = make_event_with_keys(
+            &stranger,
+            KIND_AGENT_USER_INPUT_ANSWER,
+            r#"{"q0":"yes"}"#,
+            &[
+                ["h", &channel].as_slice(),
+                ["e", &request_id].as_slice(),
+                ["p", &agent_hex].as_slice(),
+            ],
+        );
+        assert!(!agent_user_input_answer_is_from_owner(
+            &sibling_answer,
+            &request_owner
+        ));
+
+        let wrong_relation_answer = make_event_with_keys(
+            &owner,
+            KIND_AGENT_USER_INPUT_ANSWER,
+            r#"{"q0":"yes"}"#,
+            &[
+                ["h", &channel].as_slice(),
+                ["e", &request_id].as_slice(),
+                ["p", &owner_hex].as_slice(),
+            ],
+        );
+        assert!(
+            validate_agent_user_input_transition_envelope(&wrong_relation_answer, &request)
+                .is_err()
+        );
+
+        let forged_resolution = make_event_with_keys(
+            &stranger,
+            KIND_AGENT_USER_INPUT_RESOLVED,
+            &format!(r#"{{"request_event_id":"{request_id}","outcome":"cancelled"}}"#),
+            &[["h", &channel].as_slice(), ["e", &request_id].as_slice()],
+        );
+        assert!(
+            validate_agent_user_input_transition_envelope(&forged_resolution, &request).is_err()
+        );
     }
 
     fn make_receipt_event(h_tags: &[&str], e_tags: &[&str], content: &str) -> Event {
@@ -4148,18 +4606,27 @@ mod tests {
     }
 
     #[test]
-    fn agent_receipt_mentionless_trigger_authorizes_registered_agent() {
-        // SubscribeMode::All / --no-mention-filter turns fire from plain
-        // channel messages with no p tags at all. Authorization then rests on
-        // registered-agent authorship + same-channel parent (caller checks);
-        // the p-gate must not reject these.
+    fn agent_receipt_mentionless_trigger_does_not_authorize_registered_agent() {
         let agent = nostr::Keys::generate();
         let mentionless =
             EventBuilder::new(nostr::Kind::Custom(KIND_STREAM_MESSAGE as u16), "work")
                 .sign_with_keys(&nostr::Keys::generate())
                 .unwrap();
-        assert!(receipt_parent_targets_agent(
+        assert!(!receipt_parent_targets_agent(
             &mentionless,
+            &agent.public_key().to_hex()
+        ));
+    }
+
+    #[test]
+    fn agent_receipt_malformed_target_does_not_authorize_registered_agent() {
+        let agent = nostr::Keys::generate();
+        let malformed = EventBuilder::new(nostr::Kind::Custom(KIND_STREAM_MESSAGE as u16), "work")
+            .tags([nostr::Tag::parse(["p"]).unwrap()])
+            .sign_with_keys(&nostr::Keys::generate())
+            .unwrap();
+        assert!(!receipt_parent_targets_agent(
+            &malformed,
             &agent.public_key().to_hex()
         ));
     }

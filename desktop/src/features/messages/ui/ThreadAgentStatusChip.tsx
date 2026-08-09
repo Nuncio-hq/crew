@@ -23,12 +23,48 @@ import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { cn } from "@/shared/lib/cn";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
 import { useSharedNowWhen } from "@/features/agents/lib/sharedNow";
+import { deriveAgentAttention } from "@/features/agents/agentAttention";
+import {
+  type AgentReceiptSummary,
+  useLatestOwnedAgentReceiptForConversation,
+} from "@/features/agents/agentReceiptStore";
+import { mergeOwnedAgentPubkeys } from "@/features/agents/knownAgentPubkeys";
+import { useAgentObserverConnectionState } from "@/features/agents/useAgentObserverConnectionState";
+import type { ConnectionState } from "@/features/agents/ui/agentSessionTypes";
 
 const MAX_CHIP_AVATARS = 2;
+
+export function receiptForActiveTurns(
+  receipt: AgentReceiptSummary | null,
+  summaries: readonly Pick<
+    ActiveConversationAgentTurnSummary,
+    "agentPubkey" | "triggeringEventIds"
+  >[],
+): AgentReceiptSummary | null {
+  if (!receipt || summaries.length === 0) return receipt;
+  const activeReceiptAgentTurns = summaries.filter(
+    (summary) =>
+      normalizePubkey(summary.agentPubkey) ===
+      normalizePubkey(receipt.agentPubkey),
+  );
+  if (activeReceiptAgentTurns.length === 0) return receipt;
+  return activeReceiptAgentTurns.some((summary) =>
+    summary.triggeringEventIds.some(
+      (eventId) =>
+        eventId.toLowerCase() === receipt.parentEventId.toLowerCase(),
+    ),
+  )
+    ? receipt
+    : null;
+}
 
 export type ThreadAgentStatusChipState =
   | "needs-you"
   | "running"
+  | "possibly-stalled"
+  | "lost-contact"
+  | "telemetry-unavailable"
+  | "ready-to-review"
   | "done"
   | "failed";
 
@@ -75,6 +111,8 @@ export function buildThreadAgentStatusChipView(
   profiles: UserProfileLookup | undefined,
   now: number,
   needsYou: readonly NeedsYouRequest[] = [],
+  receipt: AgentReceiptSummary | null = null,
+  connectionState: ConnectionState = "open",
 ): ThreadAgentStatusChipView | null {
   if (needsYou.length > 0) {
     const earliest = needsYou.reduce((oldest, request) =>
@@ -95,43 +133,45 @@ export function buildThreadAgentStatusChipView(
     };
   }
 
-  // Priority: running > failed > done.
-  if (summaries.length > 0) {
-    let earliestAnchorAt = Number.POSITIVE_INFINITY;
-    for (const summary of summaries) {
-      if (summary.anchorAt < earliestAnchorAt) {
-        earliestAnchorAt = summary.anchorAt;
-      }
-    }
-    const { names, displayAgents } = buildAgentSlots(
-      summaries.map((summary) => summary.agentPubkey),
-      profiles,
-    );
-    const label =
-      summaries.length === 1
-        ? (names[0] ?? "Agent")
-        : `${summaries.length} agents`;
-    const elapsedLabel = formatElapsed(Math.max(0, now - earliestAnchorAt));
-    const title = `${names.join(", ")} working · ${elapsedLabel}`;
-    return {
-      state: "running",
-      displayAgents,
-      label,
-      elapsedLabel,
-      title,
-    };
-  }
-
-  if (!outcome) return null;
-
-  const { names, displayAgents } = buildAgentSlots(
-    [outcome.agentPubkey],
-    profiles,
-  );
+  const pubkeys =
+    summaries.length > 0
+      ? summaries.map((summary) => summary.agentPubkey)
+      : receipt
+        ? [receipt.agentPubkey]
+        : outcome
+          ? [outcome.agentPubkey]
+          : [];
+  if (pubkeys.length === 0) return null;
+  const { names, displayAgents } = buildAgentSlots(pubkeys, profiles);
   const name = names[0] ?? "Agent";
-  const ago = formatCompactAgo(Math.max(0, now - outcome.endedAt));
+  const attention = deriveAgentAttention({
+    connectionState,
+    needsYou: false,
+    now,
+    outcome: summaries.length > 0 ? null : (outcome?.outcome ?? null),
+    receipt,
+    turns: summaries.map((summary) => ({
+      agentPubkey: summary.agentPubkey,
+      anchorAt: summary.anchorAt,
+      lastSeenAt: summary.lastSeenAt ?? now,
+      lastSubstantiveProgressAt: summary.lastSubstantiveProgressAt ?? now,
+      progressKind: summary.progressKind ?? "progress",
+      progressLabel: summary.progressLabel ?? "Working",
+    })),
+  });
+  const activeElapsed = formatElapsed(
+    Math.max(
+      0,
+      now -
+        Math.min(
+          ...summaries.map((summary) => summary.anchorAt),
+          Number.POSITIVE_INFINITY,
+        ),
+    ),
+  );
 
-  if (outcome.outcome === "error") {
+  if (attention.state === "failed") {
+    const ago = formatCompactAgo(Math.max(0, now - (outcome?.endedAt ?? now)));
     return {
       state: "failed",
       displayAgents,
@@ -140,13 +180,70 @@ export function buildThreadAgentStatusChipView(
       title: `${name} failed ${ago}`,
     };
   }
-
+  if (attention.state === "telemetry-unavailable") {
+    return {
+      state: "telemetry-unavailable",
+      displayAgents,
+      label: "Telemetry unavailable",
+      elapsedLabel: activeElapsed,
+      title: `${name} observer telemetry is unavailable · ${activeElapsed}`,
+    };
+  }
+  if (attention.state === "lost-contact") {
+    const elapsedLabel = formatElapsed(
+      Math.max(0, now - (attention.lastSeenAt ?? now)),
+    );
+    return {
+      state: "lost-contact",
+      displayAgents,
+      label: "Lost contact",
+      elapsedLabel,
+      title: `${name} lost contact · ${elapsedLabel}`,
+    };
+  }
+  if (attention.state === "possibly-stalled") {
+    const elapsedLabel = formatElapsed(
+      Math.max(0, now - (attention.lastSubstantiveProgressAt ?? now)),
+    );
+    return {
+      state: "possibly-stalled",
+      displayAgents,
+      label: "Possibly stalled",
+      elapsedLabel,
+      title: `${name} may be stalled · ${elapsedLabel}`,
+    };
+  }
+  if (attention.state === "ready-to-review" && receipt) {
+    const elapsedLabel = formatCompactAgo(Math.max(0, now - receipt.createdAt));
+    return {
+      state: "ready-to-review",
+      displayAgents,
+      label: "Ready to review",
+      elapsedLabel,
+      title: `${name} is ready to review ${elapsedLabel}`,
+    };
+  }
+  if (attention.state === "done" && receipt?.reviewed) {
+    const elapsedLabel = formatCompactAgo(Math.max(0, now - receipt.createdAt));
+    return {
+      state: "done",
+      displayAgents,
+      label: "Done",
+      elapsedLabel,
+      title: `${name} was reviewed ${elapsedLabel}`,
+    };
+  }
+  if (summaries.length === 0) return null;
+  const label =
+    summaries.length === 1
+      ? (names[0] ?? "Agent")
+      : `${summaries.length} agents`;
   return {
-    state: "done",
+    state: "running",
     displayAgents,
-    label: "Done",
-    elapsedLabel: ago,
-    title: `${name} finished ${ago}`,
+    label,
+    elapsedLabel: activeElapsed,
+    title: `${names.join(", ")} working · ${activeElapsed}`,
   };
 }
 
@@ -172,20 +269,57 @@ const STATE_CHROME: Record<
     className: "border-destructive/25 bg-destructive/10 text-destructive",
     glyph: "✕",
   },
+  "possibly-stalled": {
+    className:
+      "border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    glyph: "!",
+  },
+  "lost-contact": {
+    className: "border-destructive/25 bg-destructive/10 text-destructive",
+    glyph: "!",
+  },
+  "telemetry-unavailable": {
+    className: "border-muted-foreground/30 bg-muted text-muted-foreground",
+    glyph: "?",
+  },
+  "ready-to-review": {
+    className:
+      "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    glyph: "✓",
+  },
 };
 
 export function ThreadAgentStatusChip({
   conversationId,
+  currentPubkey,
   profiles,
 }: {
   conversationId: string | null | undefined;
+  currentPubkey?: string;
   profiles?: UserProfileLookup;
 }) {
   const summaries = useActiveTurnSummariesForConversation(conversationId);
   const needsYou = useNeedsYouForConversation(conversationId);
   const outcome = useRecentOutcomeForConversation(conversationId);
+  const ownedAgentPubkeys = mergeOwnedAgentPubkeys(profiles, currentPubkey);
+  const receiptCandidate = useLatestOwnedAgentReceiptForConversation(
+    conversationId,
+    ownedAgentPubkeys,
+  );
+  const receipt = receiptForActiveTurns(receiptCandidate, summaries);
+  const connectionAgentPubkeys = summaries.map(
+    (summary) => summary.agentPubkey,
+  );
+  if (outcome) connectionAgentPubkeys.push(outcome.agentPubkey);
+  if (receipt) connectionAgentPubkeys.push(receipt.agentPubkey);
+  const connectionState = useAgentObserverConnectionState(
+    connectionAgentPubkeys,
+  );
   const enabled =
-    needsYou.length > 0 || summaries.length > 0 || outcome !== null;
+    needsYou.length > 0 ||
+    summaries.length > 0 ||
+    outcome !== null ||
+    receipt !== null;
   const now = useSharedNowWhen(enabled);
   const view = buildThreadAgentStatusChipView(
     summaries,
@@ -193,6 +327,8 @@ export function ThreadAgentStatusChip({
     profiles,
     now,
     needsYou,
+    receipt,
+    connectionState,
   );
   const isRunning = view?.state === "running";
   // Transcript subscription only while ≥1 running chip is mounted.

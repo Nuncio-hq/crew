@@ -5,10 +5,15 @@ import {
   getActiveTurnActivityBounds,
   subscribeActiveAgentTurns,
 } from "@/features/agents/activeAgentTurnsStore";
+import { deriveAgentAttention } from "@/features/agents/agentAttention";
 import {
-  ACTIVITY_STUCK_MS,
-  AGENT_ACTIVITY_CHROME,
-} from "@/features/agents/ui/agentActivityChrome";
+  getAgentAttentionSnoozeGeneration,
+  getAgentAttentionSnoozedUntil,
+  snoozeAgentAttention,
+  subscribeAgentAttentionSnoozes,
+} from "@/features/agents/agentAttentionSnoozeStore";
+import { useAgentObserverConnectionState } from "@/features/agents/useAgentObserverConnectionState";
+import { AGENT_ACTIVITY_CHROME } from "@/features/agents/ui/agentActivityChrome";
 import { formatElapsed } from "@/features/agents/ui/agentSessionUtils";
 import { useComposerAgentStop } from "@/features/channels/ui/useComposerAgentStop";
 import { useNeedsYouForConversation } from "@/features/agents/needsYouStore";
@@ -106,8 +111,8 @@ export function ProjectThreadWorkspacePanel({
   const workingPubkeys = model?.workingPubkeys ?? [];
   const now = useSharedNowWhen(workingPubkeys.length > 0);
   const conversationId = model?.conversationId ?? null;
-  // Real source for the amber "waiting on user" handoff phase: pending
-  // approval requests (kind 46010) blocking this conversation (#74 store).
+  // Real source for the amber handoff phase: durable workflow approvals
+  // (46010) and ACP user-input requests (46040), never tool permissions.
   const needsYou = useNeedsYouForConversation(conversationId);
   const { hasStoppableWork, stopAgent } = useComposerAgentStop({
     channelId,
@@ -145,6 +150,12 @@ export function ProjectThreadWorkspacePanel({
     channelId,
     conversationId,
   );
+  const connectionState = useAgentObserverConnectionState(workingPubkeys);
+  React.useSyncExternalStore(
+    subscribeAgentAttentionSnoozes,
+    getAgentAttentionSnoozeGeneration,
+    getAgentAttentionSnoozeGeneration,
+  );
 
   if (!model) return null;
 
@@ -162,9 +173,25 @@ export function ProjectThreadWorkspacePanel({
   const elapsedMs = activityBounds
     ? Math.max(0, now - activityBounds.anchorAt)
     : 0;
-  const stuck =
-    activityBounds != null &&
-    now - activityBounds.lastActivityAt >= ACTIVITY_STUCK_MS;
+  const attention = activityBounds
+    ? deriveAgentAttention({
+        connectionState,
+        needsYou: needsYou.length > 0,
+        now,
+        outcome: null,
+        receipt: null,
+        snoozedUntil: conversationId
+          ? getAgentAttentionSnoozedUntil(conversationId)
+          : 0,
+        turns: [
+          {
+            agentPubkey: workingPubkeys[0] ?? "",
+            ...activityBounds,
+          },
+        ],
+      })
+    : null;
+  const stuck = attention?.state === "possibly-stalled";
   const stepLabel = `${counts.done + counts.working}/${steps.length}`;
   const agentLabel =
     counts.working > 1
@@ -173,9 +200,15 @@ export function ProjectThreadWorkspacePanel({
         ? `${activeName} · ${stepLabel}`
         : `${activeName} · ${stepLabel}`;
   const timeLabel = activityBounds
-    ? stuck
-      ? AGENT_ACTIVITY_CHROME.seemsStuck
-      : formatElapsed(elapsedMs)
+    ? attention?.state === "needs-you"
+      ? "Needs you"
+      : attention?.state === "lost-contact"
+        ? "Lost contact"
+        : attention?.state === "telemetry-unavailable"
+          ? "Telemetry unavailable"
+          : stuck
+            ? "Possibly stalled"
+            : formatElapsed(elapsedMs)
     : null;
 
   const phases = deriveProjectThreadPhaseStates({
@@ -278,6 +311,17 @@ export function ProjectThreadWorkspacePanel({
             </>
           ) : null}
         </div>
+
+        {stuck && conversationId ? (
+          <button
+            className="shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-amber-400 transition-colors hover:bg-accent hover:text-amber-300"
+            data-testid="project-thread-status-wait"
+            onClick={() => snoozeAgentAttention(conversationId)}
+            type="button"
+          >
+            Wait 10m
+          </button>
+        ) : null}
 
         {stoppableCrew.length > 0 ? (
           <button
@@ -409,7 +453,7 @@ function useActiveTurnActivityBounds(
     agentKey: string;
     channelId: string | null;
     conversationId: string | null;
-    value: { anchorAt: number; lastActivityAt: number } | null;
+    value: ReturnType<typeof getActiveTurnActivityBounds>;
   } | null>(null);
 
   const getSnapshot = React.useCallback(() => {
@@ -428,7 +472,11 @@ function useActiveTurnActivityBounds(
         (prev.value != null &&
           next != null &&
           prev.value.anchorAt === next.anchorAt &&
-          prev.value.lastActivityAt === next.lastActivityAt))
+          prev.value.lastSeenAt === next.lastSeenAt &&
+          prev.value.lastSubstantiveProgressAt ===
+            next.lastSubstantiveProgressAt &&
+          prev.value.progressKind === next.progressKind &&
+          prev.value.progressLabel === next.progressLabel))
     ) {
       return prev.value;
     }

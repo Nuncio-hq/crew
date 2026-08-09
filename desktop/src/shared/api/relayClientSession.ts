@@ -15,6 +15,8 @@ import {
 import {
   getTextPayload,
   type ConnectionState,
+  type RelayLiveEventContext,
+  type RelayLiveSubscriptionStatus,
   type PendingEvent,
   type RelaySubscription,
   type RelaySubscriptionFilter,
@@ -28,11 +30,12 @@ import {
 } from "@/shared/api/relayChannelFilters";
 import {
   clearClosedRetry,
-  handleRelayClosed,
   handleSubscriptionEose,
   prepareSubscriptionEvent,
 } from "@/shared/api/relayClosedRecovery";
-import { replayLiveSubscriptions } from "@/shared/api/relayReconnectReplay";
+import * as reconnectReplay from "@/shared/api/relayReconnectReplay";
+import { handleSessionRelayClosed } from "@/shared/api/relayClientClosedRecovery";
+import * as liveBuffer from "@/shared/api/relayLiveEventBuffer";
 import {
   activateRateLimit,
   parseRateLimitHint,
@@ -85,7 +88,7 @@ export class RelayClient {
   } | null = null;
   private subscriptions = new Map<string, RelaySubscription>();
   private pendingEvents = new Map<string, PendingEvent>();
-  private eventBuffer: Array<{ subId: string; event: RelayEvent }> = [];
+  private eventBuffer: liveBuffer.BufferedLiveEvent[] = [];
   private flushTimeout: number | null = null;
   private reconnectListeners = new Set<() => void>();
   private hasConnectedOnce = false;
@@ -236,7 +239,6 @@ export class RelayClient {
     await this.ensureConnected();
     return this.requestHistory(filter);
   }
-
   private requestHistory(
     filter: RelaySubscriptionFilter,
   ): Promise<RelayEvent[]> {
@@ -248,7 +250,6 @@ export class RelayClient {
       HISTORY_TIMEOUT_MS,
     );
   }
-
   async sendMessage(
     channelId: string,
     content: string,
@@ -411,9 +412,10 @@ export class RelayClient {
 
   async subscribeLive(
     filter: RelaySubscriptionFilter,
-    onEvent: (event: RelayEvent) => void,
+    onEvent: (event: RelayEvent, context: RelayLiveEventContext) => void,
+    onStatus?: (status: RelayLiveSubscriptionStatus) => void,
   ) {
-    return this.subscribe(filter, onEvent);
+    return this.subscribe(filter, onEvent, onStatus);
   }
 
   async subscribeToChannelMentionEvents(
@@ -598,14 +600,12 @@ export class RelayClient {
 
   private async subscribe(
     filter: RelaySubscriptionFilter,
-    onEvent: (event: RelayEvent) => void,
+    onEvent: (event: RelayEvent, context: RelayLiveEventContext) => void,
+    onStatus?: (status: RelayLiveSubscriptionStatus) => void,
   ) {
     await this.ensureConnected();
-
     const subId = `live-${crypto.randomUUID()}`;
-    let resolveReady = () => {
-      return;
-    };
+    let resolveReady = () => {};
     const ready = new Promise<void>((resolve) => {
       resolveReady = () => {
         window.clearTimeout(fallbackTimeout);
@@ -620,9 +620,14 @@ export class RelayClient {
       mode: "live",
       filter,
       onEvent,
+      onStatus,
+      ready: false,
       resolveReady,
+      recoveryFloorCreatedAt: reconnectReplay.initialRecoveryFloor(
+        Math.floor(Date.now() / 1_000),
+        filter,
+      ),
     });
-
     try {
       await this.sendRawWithReconnectRetry(
         ["REQ", subId, filter],
@@ -780,9 +785,7 @@ export class RelayClient {
       return;
     }
 
-    if (!Array.isArray(data) || data.length === 0) {
-      return;
-    }
+    if (!Array.isArray(data) || data.length === 0) return;
 
     const [type, ...rest] = data;
     if (type === "AUTH" && typeof rest[0] === "string") {
@@ -793,7 +796,6 @@ export class RelayClient {
       this.handleEvent(rest[0], rest[1] as RelayEvent);
       return;
     }
-
     if (
       type === "OK" &&
       typeof rest[0] === "string" &&
@@ -813,15 +815,19 @@ export class RelayClient {
     }
 
     if (type === "CLOSED" && typeof rest[0] === "string") {
-      handleRelayClosed({
+      handleSessionRelayClosed({
         subscriptions: this.subscriptions,
         subId: rest[0],
         message: typeof rest[1] === "string" ? rest[1] : "",
+        generation: this.connectionGeneration,
+        isGenerationActive: (generation) =>
+          this.connectionGeneration === generation,
         sendReq: (subId, filter) =>
           this.sendRawWithReconnectRetry(
             ["REQ", subId, filter],
             "Failed to restore relay subscription after CLOSED.",
           ),
+        requestHistory: (filter) => this.requestHistory(filter),
       });
       return;
     }
@@ -863,9 +869,10 @@ export class RelayClient {
       subscription.onEvent(event);
       return;
     }
-
     if (!prepareSubscriptionEvent(subscription, event)) return;
-    this.eventBuffer.push({ subId, event });
+    this.eventBuffer.push(
+      liveBuffer.toBufferedLiveEvent(subId, event, subscription),
+    );
     this.flushTimeout ??= window.setTimeout(
       () => this.flushEventBuffer(),
       EVENT_BATCH_MS,
@@ -874,16 +881,8 @@ export class RelayClient {
 
   private flushEventBuffer() {
     this.flushTimeout = null;
-    const buffer = this.eventBuffer;
+    liveBuffer.dispatchBufferedLiveEvents(this.eventBuffer, this.subscriptions);
     this.eventBuffer = [];
-
-    // Re-lookup: subscriptions removed during batch window are intentionally skipped.
-    for (const { subId, event } of buffer) {
-      const subscription = this.subscriptions.get(subId);
-      if (subscription?.mode === "live") {
-        subscription.onEvent(event);
-      }
-    }
   }
 
   private handleEose(subId: string) {
@@ -935,7 +934,7 @@ export class RelayClient {
   private async replayLiveSubscriptions() {
     const generation = this.connectionGeneration;
     try {
-      await replayLiveSubscriptions({
+      await reconnectReplay.replayLiveSubscriptions({
         subscriptions: this.subscriptions,
         sendRaw: (payload) => this.sendRaw(payload),
         requestHistory: (filter) => this.requestHistory(filter),

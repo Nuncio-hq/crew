@@ -16,6 +16,53 @@ const RETRY_MAX_DELAY_MS = 30_000;
 
 type LiveSubscription = Extract<RelaySubscription, { mode: "live" }>;
 
+function markLiveSubscriptionOpen(subscription: LiveSubscription) {
+  subscription.ready = true;
+  subscription.onStatus?.({ state: "open" });
+  subscription.resolveReady?.();
+  subscription.resolveReady = undefined;
+  subscription.closedRetryAttempt = 0;
+  clearClosedRetry(subscription);
+}
+
+/** Begin one generation-scoped live/history recovery barrier. */
+export function beginLiveSubscriptionRecovery(
+  subscription: LiveSubscription,
+): number {
+  const generation = (subscription.recoveryGeneration ?? 0) + 1;
+  subscription.recoveryGeneration = generation;
+  subscription.ready = false;
+  subscription.recoveryInFlight = true;
+  subscription.recoveryRequestSent = false;
+  subscription.recoveryEoseReceived = false;
+  return generation;
+}
+
+/** Attribute EOSE only after this generation's replacement REQ was dispatched. */
+export function markLiveRecoveryRequestSent(
+  subscription: LiveSubscription,
+  generation: number,
+) {
+  if (subscription.recoveryGeneration !== generation) return false;
+  subscription.recoveryRequestSent = true;
+  return true;
+}
+
+/** Complete history only for the current generation; stale cycles stay closed. */
+export function completeLiveSubscriptionRecovery(
+  subscription: LiveSubscription,
+  generation: number,
+  completed: boolean,
+) {
+  if (subscription.recoveryGeneration !== generation || !completed)
+    return false;
+  subscription.recoveryInFlight = false;
+  if (subscription.recoveryEoseReceived) {
+    markLiveSubscriptionOpen(subscription);
+  }
+  return true;
+}
+
 export function clearClosedRetry(subscription: LiveSubscription) {
   if (subscription.closedRetryTimeout === undefined) return;
   window.clearTimeout(subscription.closedRetryTimeout);
@@ -27,11 +74,18 @@ export function handleRelayClosed({
   subId,
   message,
   sendReq,
+  recoverHistory,
+  isActive,
 }: {
   subscriptions: Map<string, RelaySubscription>;
   subId: string;
   message: string;
   sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
+  recoverHistory?: (
+    subId: string,
+    subscription: LiveSubscription,
+  ) => Promise<boolean>;
+  isActive?: () => boolean;
 }) {
   const subscription = subscriptions.get(subId);
   if (!subscription) return;
@@ -57,6 +111,8 @@ export function handleRelayClosed({
     subscription,
     message,
     sendReq,
+    recoverHistory,
+    isActive,
   });
 }
 
@@ -66,17 +122,29 @@ function recoverLiveSubscriptionFromClosed({
   subscription,
   message,
   sendReq,
+  recoverHistory,
+  isActive,
 }: {
   subscriptions: Map<string, RelaySubscription>;
   subId: string;
   subscription: LiveSubscription;
   message: string;
   sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
+  recoverHistory?: (
+    subId: string,
+    subscription: LiveSubscription,
+  ) => Promise<boolean>;
+  isActive?: () => boolean;
 }) {
+  subscription.ready = false;
   subscription.resolveReady?.();
   subscription.resolveReady = undefined;
 
   const closedClass = classifyRelayClosed(message);
+  subscription.onStatus?.({
+    state: closedClass === "terminal" ? "closed" : "recovering",
+    message: message || "Relay closed the live subscription.",
+  });
 
   if (closedClass === "terminal") {
     // Auth/access/filter failure — permanently remove the subscription so it
@@ -85,7 +153,8 @@ function recoverLiveSubscriptionFromClosed({
     return;
   }
 
-  if (subscription.closedRetryTimeout !== undefined) return;
+  const recoveryGeneration = beginLiveSubscriptionRecovery(subscription);
+  clearClosedRetry(subscription);
 
   const attempt = subscription.closedRetryAttempt ?? 0;
   const backoffMs = Math.min(
@@ -110,18 +179,48 @@ function recoverLiveSubscriptionFromClosed({
   subscription.closedRetryAttempt = attempt + 1;
   subscription.closedRetryTimeout = window.setTimeout(() => {
     subscription.closedRetryTimeout = undefined;
-    if (subscriptions.get(subId) !== subscription) return;
-    void sendReq(subId, subscription.filter).catch((error) => {
-      if (subscriptions.get(subId) !== subscription) return;
-      console.error("Failed to restore closed relay subscription", error);
-      recoverLiveSubscriptionFromClosed({
-        subscriptions,
-        subId,
-        subscription,
-        message,
-        sendReq,
+    if (
+      subscriptions.get(subId) !== subscription ||
+      subscription.recoveryGeneration !== recoveryGeneration ||
+      isActive?.() === false
+    ) {
+      return;
+    }
+    void sendReq(subId, subscription.filter)
+      .then(() => {
+        if (!markLiveRecoveryRequestSent(subscription, recoveryGeneration)) {
+          return false;
+        }
+        if (isActive?.() === false) return false;
+        return recoverHistory ? recoverHistory(subId, subscription) : true;
+      })
+      .then((completed) => {
+        if (subscriptions.get(subId) !== subscription) return;
+        completeLiveSubscriptionRecovery(
+          subscription,
+          recoveryGeneration,
+          completed !== false,
+        );
+      })
+      .catch((error) => {
+        if (
+          subscriptions.get(subId) !== subscription ||
+          subscription.recoveryGeneration !== recoveryGeneration ||
+          isActive?.() === false
+        ) {
+          return;
+        }
+        console.error("Failed to restore closed relay subscription", error);
+        recoverLiveSubscriptionFromClosed({
+          subscriptions,
+          subId,
+          subscription,
+          message,
+          sendReq,
+          recoverHistory,
+          isActive,
+        });
       });
-    });
   }, delayMs);
 }
 
@@ -157,10 +256,13 @@ export function handleSubscriptionEose({
   const subscription = subscriptions.get(subId);
   if (!subscription) return;
   if (subscription.mode === "live") {
-    subscription.resolveReady?.();
-    subscription.resolveReady = undefined;
-    subscription.closedRetryAttempt = 0;
-    clearClosedRetry(subscription);
+    if (subscription.recoveryInFlight) {
+      if (subscription.recoveryRequestSent) {
+        subscription.recoveryEoseReceived = true;
+      }
+      return;
+    }
+    markLiveSubscriptionOpen(subscription);
     return;
   }
   window.clearTimeout(subscription.timeout);

@@ -4,18 +4,19 @@ import type { ObserverEvent } from "./ui/agentSessionTypes";
 const NULL_CHANNEL_KEY = "\u0000null-channel";
 
 function watermarkChannelKey(event: ObserverEvent): string {
-  return event.channelId ?? NULL_CHANNEL_KEY;
+  return `${event.channelId ?? NULL_CHANNEL_KEY}\u0000${event.sessionId ?? "null-session"}`;
 }
 
-// Composite watermark per (agent, channel): the newest observer event
-// processed for that channel, by (timestamp, seq) ordering. An event is
+// Composite watermark per (agent, channel, session): the newest observer event
+// processed for that session. Within one producer session, its monotonic
+// sequence is authoritative even if the producer clock moves backwards. An event is
 // processed only if it is strictly newer than its channel's watermark,
 // making full-buffer replays idempotent and post-restart streams (seq
 // resets to 1, timestamp keeps climbing) handled for free.
 const lastProcessed = new Map<string, Map<string, ObserverEvent>>();
 
 /**
- * Return the previous event for this (agent, channel) pair if it is still
+ * Return the previous event for this (agent, channel, session) tuple if it is still
  * current enough that the given `event` should be ignored, or `undefined`
  * if the event should be processed.
  */
@@ -26,8 +27,17 @@ export function gateEventByWatermark(
   const channelKey = watermarkChannelKey(event);
   const agentWatermarks = lastProcessed.get(agentKey);
   const last = agentWatermarks?.get(channelKey);
-  if (last && compareObserverEvents(event, last) <= 0) {
-    return last;
+  if (last) {
+    if (event.sessionId && event.seq < last.seq) return last;
+    if (
+      event.sessionId &&
+      event.seq === last.seq &&
+      compareObserverEvents(event, last) <= 0
+    ) {
+      return last;
+    }
+    if (!event.sessionId && compareObserverEvents(event, last) <= 0)
+      return last;
   }
   return undefined;
 }

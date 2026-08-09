@@ -38,10 +38,10 @@ test("normalisesCaseAndWhitespace_dedupingAcrossSources", () => {
   assert.deepEqual([...merged], [MANAGED]);
 });
 
-test("owned agents include managed and profile-declared agents", () => {
+test("owned agents include only profile-verified agents", () => {
   const merged = mergeOwnedAgentPubkeys(
-    [{ pubkey: MANAGED }],
     {
+      [MANAGED]: { ownerPubkey: " owner " },
       [RELAY]: { ownerPubkey: " owner " },
       other: { ownerPubkey: "somebody-else" },
     },
@@ -51,9 +51,17 @@ test("owned agents include managed and profile-declared agents", () => {
   assert.deepEqual([...merged].sort(), [MANAGED, RELAY].sort());
 });
 
+test("owned agents exclude unverified managed records after identity switch", () => {
+  const merged = mergeOwnedAgentPubkeys(
+    { [MANAGED]: { ownerPubkey: "owner-a" } },
+    "owner-b",
+  );
+
+  assert.equal(merged.size, 0);
+});
+
 test("owned agents exclude agents controlled by somebody else", () => {
   const merged = mergeOwnedAgentPubkeys(
-    undefined,
     { [RELAY]: { ownerPubkey: "somebody-else" } },
     "owner",
   );

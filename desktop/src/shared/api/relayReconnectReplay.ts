@@ -1,4 +1,17 @@
-import { CHANNEL_EVENT_KINDS } from "@/shared/constants/kinds";
+import {
+  KIND_AGENT_OBSERVER_FRAME,
+  KIND_AGENT_RECEIPT,
+  KIND_AGENT_USER_INPUT_ANSWER,
+  KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_RESOLVED,
+  KIND_REACTION,
+} from "@/shared/constants/kinds";
+import { drainRelayTimestampBucket } from "@/shared/api/exhaustiveRelayPagination";
+import {
+  beginLiveSubscriptionRecovery,
+  completeLiveSubscriptionRecovery,
+  markLiveRecoveryRequestSent,
+} from "@/shared/api/relayClosedRecovery";
 import type {
   RelaySubscription,
   RelaySubscriptionFilter,
@@ -45,6 +58,34 @@ export const REPLAY_BATCH_SIZE = 8;
  */
 export const REPLAY_INTER_BATCH_DELAY_MS = 50;
 
+export function initialRecoveryFloor(
+  now: number,
+  filter?: RelaySubscriptionFilter,
+) {
+  const kinds = filter?.kinds ?? [];
+  if (
+    kinds.includes(KIND_AGENT_OBSERVER_FRAME) ||
+    (kinds.length > 0 && kinds.every((kind) => DURABLE_ACTION_KINDS.has(kind)))
+  ) {
+    return 0;
+  }
+  return Math.max(0, now - RECONNECT_REPLAY_SKEW_SECS);
+}
+const DURABLE_ACTION_KINDS = new Set([
+  KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_ANSWER,
+  KIND_AGENT_USER_INPUT_RESOLVED,
+  KIND_AGENT_RECEIPT,
+  KIND_REACTION,
+]);
+
+function isDurableActionFilter(filter: RelaySubscriptionFilter) {
+  const kinds = filter.kinds ?? [];
+  return (
+    kinds.length > 0 && kinds.every((kind) => DURABLE_ACTION_KINDS.has(kind))
+  );
+}
+
 async function runWithConcurrency<T>(
   items: T[],
   concurrency: number,
@@ -86,12 +127,63 @@ export function buildReconnectReplayFilter(
 }
 
 export function shouldPageReconnectReplay(filter: RelaySubscriptionFilter) {
+  const channelScoped =
+    Array.isArray(filter["#h"]) && filter["#h"].length === 1;
+  const observerOwnerScoped =
+    filter.kinds?.includes(KIND_AGENT_OBSERVER_FRAME) === true &&
+    Array.isArray(filter["#p"]) &&
+    filter["#p"].length === 1;
   return (
-    filter.limit > 0 &&
-    Array.isArray(filter["#h"]) &&
-    filter["#h"].length === 1 &&
-    CHANNEL_EVENT_KINDS.every((kind) => filter.kinds.includes(kind))
+    (channelScoped || observerOwnerScoped) && (filter.kinds?.length ?? 0) > 0
   );
+}
+
+function replaySinceForSubscription(
+  subscription: Extract<RelaySubscription, { mode: "live" }>,
+): number | undefined {
+  const cursorSince =
+    subscription.lastSeenCreatedAt === undefined
+      ? undefined
+      : Math.max(
+          0,
+          subscription.lastSeenCreatedAt - RECONNECT_REPLAY_SKEW_SECS,
+        );
+  const candidates = [
+    cursorSince,
+    subscription.pendingReplaySince,
+    subscription.recoveryFloorCreatedAt,
+  ].filter((value): value is number => value !== undefined);
+  return candidates.length === 0 ? undefined : Math.min(...candidates);
+}
+
+export async function recoverLiveSubscriptionHistory({
+  subscription,
+  now,
+  isActive,
+  requestHistory,
+}: {
+  subscription: Extract<RelaySubscription, { mode: "live" }>;
+  now: number;
+  isActive: () => boolean;
+  requestHistory: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
+}): Promise<boolean> {
+  const since = replaySinceForSubscription(subscription);
+  if (since === undefined || !shouldPageReconnectReplay(subscription.filter)) {
+    return true;
+  }
+  subscription.pendingReplaySince = since;
+  const completed = await replayReconnectHistoryPages({
+    subscription,
+    since,
+    until: now,
+    isActive,
+    requestHistory,
+  });
+  if (completed) {
+    subscription.pendingReplaySince = undefined;
+    subscription.recoveryFloorCreatedAt = now;
+  }
+  return completed;
 }
 
 /**
@@ -118,6 +210,37 @@ export async function replayReconnectHistoryPages({
   requestHistory: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
 }): Promise<boolean> {
   let pageUntil = until;
+  const deferDelivery = isDurableActionFilter(subscription.filter);
+  const deliveredEventIds = new Set<string>();
+  const deferredEventsById = new Map<string, RelayEvent>();
+
+  const deliver = (events: readonly RelayEvent[]) => {
+    for (const event of events) {
+      if (deliveredEventIds.has(event.id)) continue;
+      deliveredEventIds.add(event.id);
+      if (deferDelivery) deferredEventsById.set(event.id, event);
+      else subscription.onEvent(event, { replay: true });
+    }
+  };
+  const complete = () => {
+    if (deferDelivery) {
+      const events = [...deferredEventsById.values()].sort((left, right) => {
+        const leftPriority =
+          left.kind === KIND_AGENT_USER_INPUT_REQUESTED ? 0 : 1;
+        const rightPriority =
+          right.kind === KIND_AGENT_USER_INPUT_REQUESTED ? 0 : 1;
+        return (
+          leftPriority - rightPriority ||
+          left.created_at - right.created_at ||
+          left.id.localeCompare(right.id)
+        );
+      });
+      for (const event of events) {
+        subscription.onEvent(event, { replay: true });
+      }
+    }
+    return true;
+  };
 
   while (pageUntil >= since) {
     if (!isActive()) return false;
@@ -133,16 +256,23 @@ export async function replayReconnectHistoryPages({
 
     if (!isActive()) return false;
 
-    for (const event of events) subscription.onEvent(event);
-    if (events.length < RECONNECT_REPLAY_PAGE_LIMIT) return true;
+    deliver(events);
+    if (events.length < RECONNECT_REPLAY_PAGE_LIMIT) return complete();
 
     const oldestCreatedAt = events[0]?.created_at;
-    if (oldestCreatedAt === undefined || oldestCreatedAt <= since) return true;
-
-    pageUntil =
-      oldestCreatedAt < pageUntil ? oldestCreatedAt : oldestCreatedAt - 1;
+    if (oldestCreatedAt === undefined) return complete();
+    const boundary = await drainRelayTimestampBucket(
+      requestHistory,
+      subscription.filter,
+      oldestCreatedAt,
+      RECONNECT_REPLAY_PAGE_LIMIT,
+    );
+    if (!isActive()) return false;
+    deliver(boundary);
+    if (oldestCreatedAt <= since) return complete();
+    pageUntil = oldestCreatedAt - 1;
   }
-  return true;
+  return complete();
 }
 
 export async function replayLiveSubscriptions({
@@ -194,26 +324,19 @@ export async function replayLiveSubscriptions({
         entry[1].mode === "live",
     )
     .map(([subId, subscription]) => {
-      const cursorSince =
-        subscription.lastSeenCreatedAt === undefined
-          ? undefined
-          : Math.max(
-              0,
-              subscription.lastSeenCreatedAt - RECONNECT_REPLAY_SKEW_SECS,
-            );
-      // A pinned floor from a previously failed backfill takes precedence
-      // over the cursor: live events kept advancing `lastSeenCreatedAt`
-      // while the older window stayed unresolved, and starting from the
-      // cursor would skip it permanently.
-      const replaySince =
-        cursorSince === undefined
-          ? subscription.pendingReplaySince
-          : Math.min(cursorSince, subscription.pendingReplaySince ?? Infinity);
+      const recoveryGeneration = beginLiveSubscriptionRecovery(subscription);
+      const replaySince = replaySinceForSubscription(subscription);
       const shouldPageReplay =
         replaySince !== undefined &&
         shouldPageReconnectReplay(subscription.filter);
 
-      return { subId, subscription, replaySince, shouldPageReplay };
+      return {
+        subId,
+        subscription,
+        recoveryGeneration,
+        replaySince,
+        shouldPageReplay,
+      };
     });
 
   // Sort the visible channel's subscriptions first so the user sees their
@@ -244,14 +367,32 @@ export async function replayLiveSubscriptions({
     if (!isActive()) return;
     const batch = replayRequests.slice(i, i + replayBatchSize);
     await Promise.all(
-      batch.map(({ subId, subscription, replaySince, shouldPageReplay }) =>
-        sendRaw([
-          "REQ",
+      batch.map(
+        async ({
           subId,
-          shouldPageReplay
-            ? subscription.filter
-            : buildReconnectReplayFilter(subscription.filter, replaySince),
-        ]),
+          subscription,
+          recoveryGeneration,
+          replaySince,
+          shouldPageReplay,
+        }) => {
+          await sendRaw([
+            "REQ",
+            subId,
+            shouldPageReplay
+              ? subscription.filter
+              : buildReconnectReplayFilter(subscription.filter, replaySince),
+          ]);
+          if (!markLiveRecoveryRequestSent(subscription, recoveryGeneration)) {
+            return;
+          }
+          if (!shouldPageReplay) {
+            completeLiveSubscriptionRecovery(
+              subscription,
+              recoveryGeneration,
+              true,
+            );
+          }
+        },
       ),
     );
     if (i + replayBatchSize < replayRequests.length) {
@@ -271,7 +412,7 @@ export async function replayLiveSubscriptions({
       } => request.shouldPageReplay && request.replaySince !== undefined,
     ),
     pageReplayConcurrency,
-    async ({ subId, subscription, replaySince }) => {
+    async ({ subId, subscription, recoveryGeneration, replaySince }) => {
       // Backfill is best-effort: a failure here (typically a `rate-limited:`
       // CLOSED on a history REQ) must never escape to the session and tear
       // down the healthy, authenticated socket carrying the live REQs — that
@@ -304,7 +445,15 @@ export async function replayLiveSubscriptions({
           // connection shares this subscription object and still needs the
           // pinned floor for its own replay. Only a genuinely completed
           // window may release it.
-          if (completed) subscription.pendingReplaySince = undefined;
+          if (completed) {
+            subscription.pendingReplaySince = undefined;
+            subscription.recoveryFloorCreatedAt = now;
+            completeLiveSubscriptionRecovery(
+              subscription,
+              recoveryGeneration,
+              true,
+            );
+          }
           return;
         } catch (error) {
           console.warn(

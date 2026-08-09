@@ -215,7 +215,7 @@ pub struct AcpClient {
     /// Bounded text streamed by the agent during the current turn.
     turn_summary: String,
     user_input_runtime: Option<std::sync::Arc<crate::elicitation::QuestionRuntime>>,
-    user_input_context: Option<(uuid::Uuid, String)>,
+    user_input_context: Option<(uuid::Uuid, buzz_sdk::ThreadRef, String)>,
     user_input_harness: Option<String>,
     user_input_enabled: bool,
     pending_user_input_id: Option<serde_json::Value>,
@@ -978,11 +978,21 @@ impl AcpClient {
     pub fn set_user_input_context(
         &mut self,
         channel_id: uuid::Uuid,
+        thread_ref: buzz_sdk::ThreadRef,
         turn_id: String,
         harness_name: String,
     ) {
-        self.user_input_context = Some((channel_id, turn_id));
+        self.user_input_context = Some((channel_id, thread_ref, turn_id));
         self.user_input_harness = Some(harness_name);
+    }
+
+    /// Remove all per-turn user-input authority before the client is reused.
+    ///
+    /// The ACP process may live across many prompts, but a durable elicitation
+    /// must never inherit the previous prompt's channel or thread.
+    pub fn clear_user_input_context(&mut self) {
+        self.user_input_context = None;
+        self.user_input_harness = None;
     }
 
     /// Configure whether ACP form elicitation is advertised and handled.
@@ -997,6 +1007,12 @@ impl AcpClient {
     #[cfg(test)]
     pub fn steer_rx_is_none(&self) -> bool {
         self.steer_rx.is_none()
+    }
+
+    /// Returns `true` when no prior turn can authorize a durable elicitation.
+    #[cfg(test)]
+    pub fn user_input_context_is_none(&self) -> bool {
+        self.user_input_context.is_none() && self.user_input_harness.is_none()
     }
 
     /// Cancel a turn cleanly, handling any pending permission request first.
@@ -1577,12 +1593,17 @@ impl AcpClient {
                         continue;
                     };
                     let response = match answer {
-                        Some(Ok(None)) | Some(Err(_)) => serde_json::json!({
+                        Some(Ok(Ok(None))) | Some(Err(_)) => serde_json::json!({
                             "jsonrpc": "2.0",
                             "id": pending.request_id,
                             "result": { "action": "cancel" }
                         }),
-                        Some(Ok(Some(answers)))
+                        Some(Ok(Err(error))) => serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": pending.request_id,
+                            "error": {"code": -32000, "message": error}
+                        }),
+                        Some(Ok(Ok(Some(answers))))
                             if answers.values().all(Option::is_none) =>
                         {
                             serde_json::json!({
@@ -1591,7 +1612,7 @@ impl AcpClient {
                                 "result": { "action": "decline" }
                             })
                         }
-                        Some(Ok(Some(answers))) => {
+                        Some(Ok(Ok(Some(answers)))) => {
                             match crate::elicitation::reconstruct_content(
                                 &pending.form,
                                 &answers,
@@ -1922,7 +1943,7 @@ impl AcpClient {
             self.write_ndjson(&cancel()).await?;
             return Ok(None);
         };
-        let Some((channel_id, turn_id)) = self.user_input_context.clone() else {
+        let Some((channel_id, thread_ref, turn_id)) = self.user_input_context.clone() else {
             tracing::warn!(
                 "cancelling elicitation/create because the prompt has no channel/turn context"
             );
@@ -1936,6 +1957,7 @@ impl AcpClient {
         let receiver = runtime
             .publish(
                 channel_id,
+                &thread_ref,
                 session_id,
                 &turn_id,
                 engine,
@@ -3381,13 +3403,31 @@ done
 "#;
         let mut client = spawn_script(script).await;
         client.set_user_input_runtime(runtime.clone());
-        client.set_user_input_context(channel_id, "turn-1".to_string(), "claude".to_string());
+        let triggering_event_id =
+            nostr::EventId::from_hex(&"a".repeat(64)).expect("triggering event id");
+        client.set_user_input_context(
+            channel_id,
+            buzz_sdk::ThreadRef {
+                root_event_id: triggering_event_id,
+                parent_event_id: triggering_event_id,
+            },
+            "turn-1".to_string(),
+            "claude".to_string(),
+        );
 
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let answer_task = tokio::spawn(async move {
             let request_event = published.recv().await.expect("request was published");
+            assert!(request_event.tags.iter().any(|tag| {
+                tag.as_slice()
+                    == [
+                        "e".to_string(),
+                        triggering_event_id.to_hex(),
+                        "".to_string(),
+                        "reply".to_string(),
+                    ]
+            }));
             let _ = ready_tx.send(());
-            let _ = request_event;
             std::future::pending::<()>().await;
         });
 

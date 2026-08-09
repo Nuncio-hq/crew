@@ -14,8 +14,13 @@ import {
 } from "@/features/agents/needsYouStore.ts";
 import {
   buildThreadAgentStatusChipView,
+  receiptForActiveTurns,
   ThreadAgentStatusChip,
 } from "./ThreadAgentStatusChip.tsx";
+import {
+  injectObserverEventsForE2E,
+  resetAgentObserverStore,
+} from "@/features/agents/observerRelayStore.ts";
 
 const AGENT_A =
   "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111";
@@ -37,8 +42,67 @@ const PROFILE_A = {
   },
 };
 
+function TestThreadAgentStatusChip(props) {
+  return React.createElement(ThreadAgentStatusChip, props);
+}
+
+function setLiveAgents(agentPubkeys) {
+  resetAgentObserverStore();
+  for (const [index, agentPubkey] of agentPubkeys.entries()) {
+    injectObserverEventsForE2E(agentPubkey, [
+      {
+        seq: index + 1,
+        timestamp: "2026-07-31T00:00:00.000Z",
+        kind: "turn_liveness",
+        agentIndex: index,
+        channelId: "channel-a",
+        sessionId: "session-a",
+        turnId: `turn-${index}`,
+        payload: null,
+        replayed: false,
+      },
+    ]);
+  }
+}
+
 test("buildThreadAgentStatusChipView returns null with no agents or outcome", () => {
   assert.equal(buildThreadAgentStatusChipView([], null, undefined, NOW), null);
+});
+
+test("an active turn accepts only a receipt bound to its triggering event", () => {
+  const receipt = {
+    id: "receipt",
+    agentPubkey: AGENT_A,
+    channelId: "channel",
+    conversationId: "thread-a",
+    createdAt: NOW + 86_400_000,
+    reviewed: false,
+    rootEventId: null,
+    parentEventId: "prior-trigger",
+    summary: "Old result",
+    verify: "pnpm test",
+  };
+  assert.equal(
+    receiptForActiveTurns(receipt, [
+      {
+        agentPubkey: AGENT_A,
+        anchorAt: NOW,
+        triggeringEventIds: ["current-trigger"],
+      },
+    ]),
+    null,
+  );
+  assert.equal(
+    receiptForActiveTurns({ ...receipt, parentEventId: "current-trigger" }, [
+      {
+        agentPubkey: AGENT_A,
+        anchorAt: NOW,
+        triggeringEventIds: ["current-trigger"],
+      },
+    ])?.id,
+    receipt.id,
+  );
+  assert.equal(receiptForActiveTurns(receipt, []), receipt);
 });
 
 test("buildThreadAgentStatusChipView labels a single agent by display name", () => {
@@ -150,7 +214,7 @@ test("buildThreadAgentStatusChipView prioritizes needs-you over running", () => 
   assert.match(view.title, /Claude Opus is waiting for your approval · 9m 0s/);
 });
 
-test("buildThreadAgentStatusChipView builds done view model", () => {
+test("observer completion alone does not claim durable Done", () => {
   const view = buildThreadAgentStatusChipView(
     [],
     {
@@ -162,12 +226,36 @@ test("buildThreadAgentStatusChipView builds done view model", () => {
     PROFILE_A,
     NOW,
   );
-  assert.ok(view);
-  assert.equal(view.state, "done");
-  assert.equal(view.label, "Done");
-  assert.equal(view.elapsedLabel, "12m ago");
-  assert.equal(view.title, "Claude Opus finished 12m ago");
-  assert.equal(view.displayAgents.length, 1);
+  assert.equal(view, null);
+});
+
+test("receipt authority drives Ready to review and reviewed Done", () => {
+  const receipt = {
+    id: "d".repeat(64),
+    channelId: "chan-1",
+    conversationId: "thread-a",
+    rootEventId: "e".repeat(64),
+    agentPubkey: AGENT_A,
+    createdAt: NOW - 12 * 60_000,
+    summary: "Completed",
+    verify: "pnpm check",
+    reviewed: false,
+  };
+  const ready = buildThreadAgentStatusChipView(
+    [],
+    null,
+    PROFILE_A,
+    NOW,
+    [],
+    receipt,
+  );
+  assert.equal(ready?.state, "ready-to-review");
+  assert.equal(ready?.label, "Ready to review");
+  const done = buildThreadAgentStatusChipView([], null, PROFILE_A, NOW, [], {
+    ...receipt,
+    reviewed: true,
+  });
+  assert.equal(done?.state, "done");
 });
 
 test("buildThreadAgentStatusChipView builds failed view model", () => {
@@ -192,7 +280,7 @@ test("buildThreadAgentStatusChipView builds failed view model", () => {
 test("ThreadAgentStatusChip renders nothing when conversation has no agents", () => {
   resetActiveAgentTurnsStore();
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-empty",
     }),
   );
@@ -201,6 +289,7 @@ test("ThreadAgentStatusChip renders nothing when conversation has no agents", ()
 
 test("ThreadAgentStatusChip renders chip for a single active agent", () => {
   resetActiveAgentTurnsStore();
+  setLiveAgents([AGENT_A]);
   syncAgentTurnsFromEvents(AGENT_A, [
     {
       seq: 1,
@@ -216,7 +305,7 @@ test("ThreadAgentStatusChip renders chip for a single active agent", () => {
   ]);
 
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-a",
       profiles: {
         [AGENT_A]: {
@@ -237,6 +326,7 @@ test("ThreadAgentStatusChip renders chip for a single active agent", () => {
 
 test("ThreadAgentStatusChip renders N agents label for multiple", () => {
   resetActiveAgentTurnsStore();
+  setLiveAgents([AGENT_A, AGENT_B]);
   syncAgentTurnsFromEvents(AGENT_A, [
     {
       seq: 1,
@@ -265,7 +355,7 @@ test("ThreadAgentStatusChip renders N agents label for multiple", () => {
   ]);
 
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-a",
     }),
   );
@@ -274,7 +364,7 @@ test("ThreadAgentStatusChip renders N agents label for multiple", () => {
   assert.match(html, /2 agents/);
 });
 
-test("ThreadAgentStatusChip renders done after turn_completed", () => {
+test("ThreadAgentStatusChip does not claim Done from observer completion alone", () => {
   resetActiveAgentTurnsStore();
   syncAgentTurnsFromEvents(AGENT_A, [
     {
@@ -302,14 +392,12 @@ test("ThreadAgentStatusChip renders done after turn_completed", () => {
   ]);
 
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-a",
       profiles: PROFILE_A,
     }),
   );
-  assert.match(html, /data-testid="thread-agent-status-chip"/);
-  assert.match(html, /data-state="done"/);
-  assert.match(html, /Done/);
+  assert.equal(html, "");
 });
 
 test("ThreadAgentStatusChip renders failed after turn_error", () => {
@@ -340,7 +428,7 @@ test("ThreadAgentStatusChip renders failed after turn_error", () => {
   ]);
 
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-a",
       profiles: PROFILE_A,
     }),
@@ -351,6 +439,7 @@ test("ThreadAgentStatusChip renders failed after turn_error", () => {
 
 test("ThreadAgentStatusChip stays running when a sibling agent is still active", () => {
   resetActiveAgentTurnsStore();
+  setLiveAgents([AGENT_B]);
   syncAgentTurnsFromEvents(AGENT_A, [
     {
       seq: 1,
@@ -390,7 +479,7 @@ test("ThreadAgentStatusChip stays running when a sibling agent is still active",
   ]);
 
   const html = renderToStaticMarkup(
-    React.createElement(ThreadAgentStatusChip, {
+    React.createElement(TestThreadAgentStatusChip, {
       conversationId: "thread-a",
     }),
   );

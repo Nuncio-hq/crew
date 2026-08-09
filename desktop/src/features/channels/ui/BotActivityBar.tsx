@@ -5,6 +5,14 @@ import {
   getActiveTurnActivityBounds,
   subscribeActiveAgentTurns,
 } from "@/features/agents/activeAgentTurnsStore";
+import { deriveAgentAttention } from "@/features/agents/agentAttention";
+import {
+  getAgentAttentionSnoozeGeneration,
+  getAgentAttentionSnoozedUntil,
+  snoozeAgentAttention,
+  subscribeAgentAttentionSnoozes,
+} from "@/features/agents/agentAttentionSnoozeStore";
+import { useAgentObserverConnectionState } from "@/features/agents/useAgentObserverConnectionState";
 import {
   getRetryingTurn,
   getRetryingTurnsForChannel,
@@ -13,7 +21,6 @@ import {
 } from "@/features/agents/retryingTurnsStore";
 import {
   ACTIVITY_SILENCE_MS,
-  ACTIVITY_STUCK_MS,
   AGENT_ACTIVITY_CHROME,
 } from "@/features/agents/ui/agentActivityChrome";
 import { formatElapsed } from "@/features/agents/ui/agentSessionUtils";
@@ -89,6 +96,12 @@ export function BotActivityComposerAction({
     channelId,
     conversationId,
   );
+  const connectionState = useAgentObserverConnectionState(workingBotPubkeys);
+  React.useSyncExternalStore(
+    subscribeAgentAttentionSnoozes,
+    getAgentAttentionSnoozeGeneration,
+    getAgentAttentionSnoozeGeneration,
+  );
 
   React.useEffect(() => {
     if (workingAgents.length === 0) return;
@@ -157,9 +170,33 @@ export function BotActivityComposerAction({
     return null;
   }
 
-  const stuck =
-    activityBounds != null &&
-    now - activityBounds.lastActivityAt >= ACTIVITY_STUCK_MS;
+  const attention = activityBounds
+    ? deriveAgentAttention({
+        connectionState,
+        needsYou: false,
+        now,
+        outcome: null,
+        receipt: null,
+        snoozedUntil: conversationId
+          ? getAgentAttentionSnoozedUntil(conversationId)
+          : 0,
+        turns: [
+          {
+            agentPubkey: singleWorkingAgent?.pubkey ?? "",
+            ...activityBounds,
+          },
+        ],
+      })
+    : null;
+  const stuck = attention?.state === "possibly-stalled";
+  const attentionLabel =
+    attention?.state === "lost-contact"
+      ? "Lost contact"
+      : attention?.state === "telemetry-unavailable"
+        ? "Telemetry unavailable"
+        : stuck
+          ? "Possibly stalled"
+          : null;
   const agentAvatarUrl = (agent: BotActivityAgent) =>
     profiles?.[agent.pubkey.toLowerCase()]?.avatarUrl ?? null;
   const selectedPubkey = openAgentSessionPubkey?.toLowerCase() ?? null;
@@ -182,12 +219,27 @@ export function BotActivityComposerAction({
     ? workingAgents.length === 1
       ? `${workingAgents[0]?.name ?? "Agent"} · ${retryingLabel}`
       : retryingLabel
-    : stuck
-      ? `${triggerLabel} · ${AGENT_ACTIVITY_CHROME.seemsStuck}`
+    : attentionLabel
+      ? `${triggerLabel} · ${attentionLabel}`
       : activityBounds
         ? `${triggerLabel} · ${formatElapsed(elapsedMs)}`
         : triggerLabel;
   const isInline = variant === "inline";
+  const inlineWait =
+    isInline && stuck && conversationId ? (
+      <button
+        className="shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-amber-500 transition-colors hover:bg-accent hover:text-amber-400"
+        data-testid="bot-activity-wait"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          snoozeAgentAttention(conversationId);
+        }}
+        type="button"
+      >
+        Wait 10m
+      </button>
+    ) : null;
   const inlineStop =
     isInline &&
     singleWorkingAgent &&
@@ -355,6 +407,7 @@ export function BotActivityComposerAction({
           </div>
         </PopoverContent>
       </Popover>
+      {inlineWait}
       {inlineStop}
     </div>
   );
@@ -410,7 +463,7 @@ function useActiveTurnActivityBounds(
     agentKey: string;
     channelId: string | null;
     conversationId: string | null;
-    value: { anchorAt: number; lastActivityAt: number } | null;
+    value: ReturnType<typeof getActiveTurnActivityBounds>;
   } | null>(null);
 
   const getSnapshot = React.useCallback(() => {
@@ -429,7 +482,11 @@ function useActiveTurnActivityBounds(
         (prev.value != null &&
           next != null &&
           prev.value.anchorAt === next.anchorAt &&
-          prev.value.lastActivityAt === next.lastActivityAt))
+          prev.value.lastSeenAt === next.lastSeenAt &&
+          prev.value.lastSubstantiveProgressAt ===
+            next.lastSubstantiveProgressAt &&
+          prev.value.progressKind === next.progressKind &&
+          prev.value.progressLabel === next.progressLabel))
     ) {
       return prev.value;
     }

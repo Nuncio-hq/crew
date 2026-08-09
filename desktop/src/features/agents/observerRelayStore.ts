@@ -1,6 +1,8 @@
 import * as React from "react";
 
 import { subscribeToAgentObserverFrames } from "@/shared/api/observerRelay";
+import { relayClient } from "@/shared/api/relayClient";
+import type { RelayLiveEventContext } from "@/shared/api/relayClientShared";
 import type { RelayEvent, ManagedAgent } from "@/shared/api/types";
 import type { ControlResultFrame } from "@/shared/api/types";
 import { putAgentSessionConfig } from "@/shared/api/tauri";
@@ -35,22 +37,16 @@ import {
   ingestProjectThreadWorkspaceEvent,
   resetProjectThreadWorkspaceStore,
 } from "./projectThreadWorkspaceStore";
+import { logObserverDrop, resetObserverDropLogger } from "./observerDropLogger";
+import { prepareAgentSessionObservation } from "./activeAgentSessionGeneration";
+import {
+  observerEventIdentity,
+  unwrapObserverBatch,
+} from "./observerEventIdentity";
+export { getObserverDropCountsForTest as _testGetObserverDropCounts } from "./observerDropLogger";
 
 const MAX_OBSERVER_EVENTS = 3000;
 const MAX_PENDING_UNKNOWN_AGENT_FRAMES = 100;
-const OBSERVER_DROP_LOG_INTERVAL_MS = 10_000;
-
-type ObserverDropReason =
-  | "missing_telemetry_tag"
-  | "unknown_agent"
-  | "sender_agent_mismatch"
-  | "stale_generation"
-  | "decrypt_failed";
-
-type ObserverDropLogState = {
-  count: number;
-  lastLoggedAt: number;
-};
 
 export type ObserverSnapshot = {
   connectionState: ConnectionState;
@@ -71,6 +67,8 @@ const listeners = new Set<() => void>();
 const eventsByAgent = new Map<string, ObserverEvent[]>();
 const transcriptByAgent = new Map<string, TranscriptState>();
 const snapshotByAgent = new Map<string, ObserverSnapshot>();
+const connectionErrorByAgent = new Map<string, string>();
+const agentsWithCurrentLiveContact = new Set<string>();
 
 // Channel-scoped archive event journal — holds paged history loaded from the local
 // SQLite archive without the MAX_OBSERVER_EVENTS live-relay cap. Keyed by
@@ -138,44 +136,10 @@ const agentManagementListeners = new Set<
 // recompute the union, so co-mounted callers no longer clobber each other.
 const knownAgentPubkeys = new Set<string>();
 const knownAgentsBySubscription = new Map<string, Set<string>>();
-const pendingUnknownAgentFrames: RelayEvent[] = [];
-const observerDropLogState = new Map<
-  ObserverDropReason,
-  ObserverDropLogState
->();
-
-function logObserverDrop(
-  reason: ObserverDropReason,
-  event: RelayEvent,
-  activeGeneration: number,
-) {
-  const previous = observerDropLogState.get(reason) ?? {
-    count: 0,
-    lastLoggedAt: 0,
-  };
-  const count = previous.count + 1;
-  const now = Date.now();
-  const shouldLog =
-    count === 1 ||
-    now - previous.lastLoggedAt >= OBSERVER_DROP_LOG_INTERVAL_MS ||
-    count % 100 === 0;
-  observerDropLogState.set(reason, {
-    count,
-    lastLoggedAt: shouldLog ? now : previous.lastLoggedAt,
-  });
-  if (!shouldLog) return;
-
-  const agentTag = observerTag(event, "agent");
-  console.debug("[observerRelayStore] observer frame dropped", {
-    reason,
-    count,
-    eventId: event.id,
-    agentTag,
-    senderPubkey: event.pubkey,
-    currentGeneration: generation,
-    eventGeneration: activeGeneration,
-  });
-}
+const pendingUnknownAgentFrames: Array<{
+  event: RelayEvent;
+  context: RelayLiveEventContext;
+}> = [];
 
 // Callback invoked when session_config_captured is received, so React Query
 // can invalidate the config-surface query for the affected agent. Wired up
@@ -208,9 +172,9 @@ function registerKnownAgents(
   recomputeKnownAgentPubkeys();
   if (knownAgentPubkeys.size > 0 && pendingUnknownAgentFrames.length > 0) {
     const pending = pendingUnknownAgentFrames.splice(0);
-    for (const event of pending) {
+    for (const { event, context } of pending) {
       eventProcessingQueue = eventProcessingQueue.then(() =>
-        handleRelayObserverEvent(event, generation),
+        handleRelayObserverEvent(event, generation, context),
       );
     }
   }
@@ -225,9 +189,12 @@ function unregisterKnownAgents(subscriptionId: string) {
 let connectionState: ConnectionState = "idle";
 let errorMessage: string | null = null;
 let unsubscribeRelay: (() => Promise<void>) | null = null;
+let unsubscribeRelayState: (() => void) | null = null;
 let startPromise: Promise<void> | null = null;
 let eventProcessingQueue: Promise<void> = Promise.resolve();
 let generation = 0;
+let relayConnectionHealthy = false;
+let observerSubscriptionReady = false;
 
 function notifyListeners() {
   for (const listener of listeners) {
@@ -239,13 +206,45 @@ function invalidateSnapshot(key: string) {
   snapshotByAgent.delete(key);
 }
 
+/** Whether a relay-state transition invalidates current-session contact proof. */
+export function shouldResetObserverLiveContacts(
+  currentState: ConnectionState,
+  nextState: ConnectionState,
+) {
+  return (
+    (nextState === "connecting" && currentState !== "connecting") ||
+    (nextState !== "open" && nextState !== "connecting")
+  );
+}
+
 function setConnectionState(
   nextState: ConnectionState,
   nextErrorMessage: string | null = errorMessage,
 ) {
+  if (shouldResetObserverLiveContacts(connectionState, nextState)) {
+    agentsWithCurrentLiveContact.clear();
+  }
   connectionState = nextState;
   errorMessage = nextErrorMessage;
   snapshotByAgent.clear();
+  notifyListeners();
+}
+
+function markAgentLiveContact(agentPubkey: string) {
+  const key = normalizePubkey(agentPubkey);
+  if (agentsWithCurrentLiveContact.has(key)) return;
+  agentsWithCurrentLiveContact.add(key);
+  invalidateSnapshot(key);
+  notifyListeners();
+}
+
+function setAgentConnectionError(agentPubkey: string, message: string | null) {
+  const key = normalizePubkey(agentPubkey);
+  const prior = connectionErrorByAgent.get(key) ?? null;
+  if (prior === message) return;
+  if (message) connectionErrorByAgent.set(key, message);
+  else connectionErrorByAgent.delete(key);
+  invalidateSnapshot(key);
   notifyListeners();
 }
 
@@ -259,7 +258,7 @@ function appendAgentEvent(agentPubkey: string, event: ObserverEvent) {
   if (
     current.some(
       (existing) =>
-        existing.seq === event.seq && existing.timestamp === event.timestamp,
+        observerEventIdentity(existing) === observerEventIdentity(event),
     )
   ) {
     return;
@@ -326,20 +325,7 @@ function archiveChannelKey(agentPubkey: string, channelId: string): string {
   return `${normalizePubkey(agentPubkey)}:${channelId}`;
 }
 
-/**
- * Append a decoded archived observer event to the channel-scoped archive
- * event journal. Unlike `appendAgentEvent`, this path does NOT cap or trim —
- * the channel archive window grows only by explicit paged loads from SQLite,
- * so unbounded growth from live relay events is impossible.
- *
- * Deduplicates on `(seq, timestamp)` — identical to `appendAgentEvent` — so
- * events that arrive on the live relay before the archive page is loaded are
- * silently skipped. The archive window and the live transcript are kept
- * strictly separate: live events never write here.
- *
- * Returns `true` if the event was added (state changed), `false` if it was a
- * duplicate and was skipped. The caller batches notifications.
- */
+/** Append one identity-deduplicated event to the uncapped archive window. */
 function appendArchivedChannelEvent(
   agentPubkey: string,
   channelId: string,
@@ -348,11 +334,10 @@ function appendArchivedChannelEvent(
   const key = archiveChannelKey(agentPubkey, channelId);
   const current = archiveEventsByChannel.get(key) ?? [];
 
-  // Dedup: skip if (seq, timestamp) already present in the archive window.
   if (
     current.some(
       (existing) =>
-        existing.seq === event.seq && existing.timestamp === event.timestamp,
+        observerEventIdentity(existing) === observerEventIdentity(event),
     )
   ) {
     return false;
@@ -399,7 +384,10 @@ export function compareObserverEvents(
     }
   }
 
-  return left.seq - right.seq;
+  return (
+    left.seq - right.seq ||
+    observerEventIdentity(left).localeCompare(observerEventIdentity(right))
+  );
 }
 
 /**
@@ -422,31 +410,16 @@ export function isObserverEventAfter(
   return candidate.seq > stored.seq;
 }
 
-// Observer event kind for a batch envelope wrapping multiple events. The ACP
-// harness publishes one frame per second; everything that accumulated between
-// ticks arrives as `{ kind: "batch", payload: { events: [...] } }` with every
-// inner event carrying its own seq/timestamp. Inner events are processed
-// exactly as unbatched ones; the envelope itself is never stored.
-const OBSERVER_BATCH_KIND = "batch";
-
-// Expand a decrypted observer event into its inner events when it is a batch
-// envelope; a non-batch event passes through as a single-element array. A
-// malformed envelope (no events array) degrades to the envelope itself so a
-// harness bug cannot silently blank the session viewer.
-function unwrapObserverBatch(parsed: ObserverEvent): ObserverEvent[] {
-  if (parsed.kind !== OBSERVER_BATCH_KIND) {
-    return [parsed];
-  }
-  const payload = parsed.payload as { events?: unknown } | null;
-  const events = Array.isArray(payload?.events)
-    ? (payload.events as ObserverEvent[])
-    : null;
-  return events && events.length > 0 ? events : [parsed];
-}
-
 // Per-event processing shared by every event a live frame carries (one for a
 // plain frame, many for a batch envelope).
 function processLiveObserverEvent(agentPubkey: string, parsed: ObserverEvent) {
+  if (
+    prepareAgentSessionObservation(normalizePubkey(agentPubkey), parsed) ===
+    "retired"
+  ) {
+    return false;
+  }
+  if (!parsed.replayed) markAgentLiveContact(agentPubkey);
   // Track the latest-live-session-id per (agent, channel) on the live path.
   // Only set when the parsed event carries both a sessionId and channelId,
   // so we never attribute a session to the wrong channel.
@@ -485,11 +458,43 @@ function processLiveObserverEvent(agentPubkey: string, parsed: ObserverEvent) {
       },
     );
   }
+  return true;
 }
+
+export { processLiveObserverEvent as _testProcessLiveObserverEvent };
+
+function processDecryptedObserverFrame(
+  agentPubkey: string,
+  parsed: ObserverEvent,
+  context: RelayLiveEventContext,
+  sourceEventId?: string,
+) {
+  let accepted = false;
+  for (const inner of unwrapObserverBatch(parsed)) {
+    accepted =
+      processLiveObserverEvent(agentPubkey, {
+        ...inner,
+        sourceEventId,
+        replayed: context.replay,
+      }) || accepted;
+  }
+  if (!accepted) return false;
+  setAgentConnectionError(agentPubkey, null);
+  if (relayConnectionHealthy && observerSubscriptionReady) {
+    setConnectionState("open", null);
+  }
+  return true;
+}
+
+export {
+  processDecryptedObserverFrame as _testProcessDecryptedObserverFrame,
+  setAgentConnectionError as _testSetAgentConnectionError,
+};
 
 async function handleRelayObserverEvent(
   event: RelayEvent,
   activeGeneration: number,
+  context: RelayLiveEventContext = { replay: false },
 ) {
   const agentPubkey = observerTag(event, "agent");
   const frame = observerTag(event, "frame");
@@ -504,7 +509,7 @@ async function handleRelayObserverEvent(
   // same gate. Once initialized, unknown agents are rejected immediately.
   if (!knownAgentPubkeys.has(normalizePubkey(agentPubkey))) {
     if (knownAgentsBySubscription.size === 0 || knownAgentPubkeys.size === 0) {
-      pendingUnknownAgentFrames.push(event);
+      pendingUnknownAgentFrames.push({ event, context });
       if (pendingUnknownAgentFrames.length > MAX_PENDING_UNKNOWN_AGENT_FRAMES) {
         pendingUnknownAgentFrames.shift();
       }
@@ -527,17 +532,15 @@ async function handleRelayObserverEvent(
       logObserverDrop("stale_generation", event, activeGeneration);
       return;
     }
-    for (const inner of unwrapObserverBatch(parsed)) {
-      processLiveObserverEvent(agentPubkey, inner);
-    }
+    processDecryptedObserverFrame(agentPubkey, parsed, context, event.id);
   } catch (error) {
     if (activeGeneration !== generation) {
       logObserverDrop("stale_generation", event, activeGeneration);
       return;
     }
     logObserverDrop("decrypt_failed", event, activeGeneration);
-    setConnectionState(
-      "error",
+    setAgentConnectionError(
+      agentPubkey,
       error instanceof Error
         ? `Observer event decrypt failed: ${error.message}`
         : "Observer event decrypt failed.",
@@ -556,12 +559,30 @@ export function ensureRelayObserverSubscription() {
   const activeGeneration = generation;
   setConnectionState("connecting", null);
   startPromise = (async () => {
+    unsubscribeRelayState ??= relayClient.subscribeToConnectionState(
+      (state) => {
+        if (activeGeneration !== generation) return;
+        relayConnectionHealthy = state === "connected";
+        if (state === "connected") {
+          if (observerSubscriptionReady) setConnectionState("open", null);
+          return;
+        }
+        observerSubscriptionReady = false;
+        if (state === "idle" || state === "connecting") {
+          setConnectionState("connecting", null);
+          return;
+        }
+        setConnectionState("error", `Observer relay is ${state}.`);
+      },
+    );
     const identity = await getIdentity();
     const unsubscribe = await subscribeToAgentObserverFrames(
       identity.pubkey,
-      (event) => {
+      (event, context) => {
         eventProcessingQueue = eventProcessingQueue
-          .then(() => handleRelayObserverEvent(event, activeGeneration))
+          .then(() =>
+            handleRelayObserverEvent(event, activeGeneration, context),
+          )
           .catch((error) => {
             if (activeGeneration !== generation) {
               return;
@@ -574,13 +595,23 @@ export function ensureRelayObserverSubscription() {
             );
           });
       },
+      (status) => {
+        if (activeGeneration !== generation) return;
+        observerSubscriptionReady = status.state === "open";
+        if (status.state === "open" && relayConnectionHealthy) {
+          setConnectionState("open", null);
+          return;
+        }
+        if (status.state !== "open") {
+          setConnectionState("error", status.message);
+        }
+      },
     );
     if (activeGeneration !== generation) {
       await unsubscribe();
       return;
     }
     unsubscribeRelay = unsubscribe;
-    setConnectionState("open", null);
   })()
     .catch((error) => {
       if (activeGeneration === generation) {
@@ -686,17 +717,25 @@ export function getAgentObserverSnapshot(
     return IDLE_SNAPSHOT;
   }
   const key = normalizePubkey(agentPubkey);
+  const agentError = connectionErrorByAgent.get(key) ?? null;
+  const effectiveConnectionState =
+    connectionState === "open" && agentError
+      ? "error"
+      : connectionState === "open" && !agentsWithCurrentLiveContact.has(key)
+        ? "connecting"
+        : connectionState;
+  const effectiveErrorMessage = agentError ?? errorMessage;
   const cached = snapshotByAgent.get(key);
   if (
     cached &&
-    cached.connectionState === connectionState &&
-    cached.errorMessage === errorMessage
+    cached.connectionState === effectiveConnectionState &&
+    cached.errorMessage === effectiveErrorMessage
   ) {
     return cached;
   }
   const snapshot: ObserverSnapshot = {
-    connectionState,
-    errorMessage,
+    connectionState: effectiveConnectionState,
+    errorMessage: effectiveErrorMessage,
     events: eventsByAgent.get(key) ?? [],
   };
   snapshotByAgent.set(key, snapshot);
@@ -813,20 +852,21 @@ export async function ingestArchivedObserverEvents(
     try {
       const parsed = (await _decryptFn(event)) as ObserverEvent;
       for (const inner of unwrapObserverBatch(parsed)) {
+        const archived = { ...inner, sourceEventId: event.id };
         // Route archived events to the channel-scoped archive window (no cap)
         // rather than the per-agent live-relay store (MAX_OBSERVER_EVENTS cap).
         // Events without a channelId fall through to the live store so they
         // remain visible in the agent's general transcript.
-        if (inner.channelId) {
+        if (archived.channelId) {
           const added = appendArchivedChannelEvent(
             agentPubkey,
-            inner.channelId,
-            inner,
+            archived.channelId,
+            archived,
           );
           if (added) archiveChanged = true;
         } else {
           // Live path already calls notifyListeners() inside appendAgentEvent.
-          appendAgentEvent(agentPubkey, inner);
+          appendAgentEvent(agentPubkey, archived);
         }
       }
     } catch {
@@ -854,9 +894,17 @@ export function injectObserverEventsForE2E(
   agentPubkey: string,
   events: ObserverEvent[],
 ) {
+  setConnectionState("open", null);
   for (const event of events) {
+    if (!event.replayed) markAgentLiveContact(agentPubkey);
     appendAgentEvent(agentPubkey, event);
   }
+  notifyListeners();
+}
+
+/** E2E-only: drive observer telemetry health through the production store. */
+export function setObserverConnectionStateForE2E(state: ConnectionState) {
+  setConnectionState(state, state === "error" ? "Mock observer error" : null);
   notifyListeners();
 }
 
@@ -877,18 +925,24 @@ export function resetAgentObserverStore() {
   generation += 1;
   const unsubscribe = unsubscribeRelay;
   unsubscribeRelay = null;
+  unsubscribeRelayState?.();
+  unsubscribeRelayState = null;
+  relayConnectionHealthy = false;
+  observerSubscriptionReady = false;
   startPromise = null;
   eventProcessingQueue = Promise.resolve();
   eventsByAgent.clear();
   transcriptByAgent.clear();
   snapshotByAgent.clear();
+  connectionErrorByAgent.clear();
+  agentsWithCurrentLiveContact.clear();
   archiveEventsByChannel.clear();
   resetProjectThreadWorkspaceStore();
   resetDispatchedEventIdsStore();
   knownAgentPubkeys.clear();
   knownAgentsBySubscription.clear();
   pendingUnknownAgentFrames.length = 0;
-  observerDropLogState.clear();
+  resetObserverDropLogger();
   latestLiveSessionByAgentChannel.clear();
   agentManagementListeners.clear();
   onSessionConfigCaptured = null;
@@ -903,6 +957,8 @@ export function resetAgentObserverLiveEventsForE2E() {
   eventsByAgent.clear();
   transcriptByAgent.clear();
   snapshotByAgent.clear();
+  connectionErrorByAgent.clear();
+  agentsWithCurrentLiveContact.clear();
   notifyListeners();
 }
 
@@ -930,16 +986,4 @@ export function _testGetArchivedChannelEvents(
   return (
     archiveEventsByChannel.get(archiveChannelKey(agentPubkey, channelId)) ?? []
   );
-}
-
-/** Test-only: read the aggregated live observer drop counters. */
-export function _testGetObserverDropCounts(): Record<
-  ObserverDropReason,
-  number
-> {
-  const counts = {} as Record<ObserverDropReason, number>;
-  for (const [reason, state] of observerDropLogState) {
-    counts[reason] = state.count;
-  }
-  return counts;
 }

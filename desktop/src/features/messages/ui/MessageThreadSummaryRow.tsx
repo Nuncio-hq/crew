@@ -70,6 +70,7 @@ export function MessageThreadSummaryRow({
   badge: badgeProp,
   channelId,
   collapseDepthGuideActions,
+  currentPubkey,
   depth = 0,
   depthGuideDepths,
   highlightThreadLineDepths,
@@ -87,6 +88,7 @@ export function MessageThreadSummaryRow({
   badge?: ProjectThreadBadge | null;
   channelId?: string | null;
   collapseDepthGuideActions?: ReadonlyArray<ThreadDepthGuideAction>;
+  currentPubkey?: string;
   depth?: number;
   depthGuideDepths?: ReadonlyArray<number>;
   highlightThreadLineDepths?: ReadonlyArray<number>;
@@ -366,6 +368,7 @@ export function MessageThreadSummaryRow({
             {badge ? <ProjectThreadBadgeChips badge={badge} /> : null}
             <ThreadAgentStatusChip
               conversationId={conversationId}
+              currentPubkey={currentPubkey}
               profiles={profiles}
             />
           </div>

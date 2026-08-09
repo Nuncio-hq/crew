@@ -22,7 +22,7 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use buzz_worktree::SharedLease;
@@ -42,7 +42,7 @@ use crate::queue::{
     CancelReason, ContextMessage, ConversationContext, FlushBatch, PromptChannelInfo,
     PromptProfile, PromptProfileLookup, ThreadTags,
 };
-use crate::relay::{ChannelInfo, RelayEventPublisher, RestClient};
+use crate::relay::{ChannelInfo, RestClient};
 
 /// Window within which agent activity before a hard-cap death qualifies
 /// the turn as "recently active" (eligible for requeue instead of dead-letter).
@@ -621,8 +621,6 @@ pub struct PromptContext {
     pub relay_url: String,
     /// Shared durable user-input request/answer transport.
     pub user_input_runtime: Option<Arc<crate::elicitation::QuestionRuntime>>,
-    /// Shared event transport used for successful terminal agent receipts.
-    pub receipt_publisher: RelayEventPublisher,
     /// Feature gate for durable terminal agent receipts.
     pub agent_receipts_enabled: bool,
 }
@@ -1431,6 +1429,7 @@ fn send_prompt_result(
     batch: Option<FlushBatch>,
 ) {
     agent.acp.clear_steer_rx();
+    agent.acp.clear_user_input_context();
     let _ = result_tx.send(PromptResult {
         agent,
         source,
@@ -1468,6 +1467,13 @@ pub async fn run_prompt_task(
     };
     let observer_channel_id = batch.as_ref().map(FlushBatch::routing_channel_id);
     let observer_conversation_id = batch.as_ref().map(|batch| batch.channel_id);
+    // Freeze every signed triggering-event relationship before the agent turn
+    // starts. Receipt publication must not infer causality later from whichever
+    // event happens to be last in a merged/requeued batch.
+    let receipt_causal_contexts = batch
+        .as_ref()
+        .map(|batch| agent_receipt_causal_contexts(batch, &ctx.agent_keys.public_key()))
+        .unwrap_or_default();
     let turn_started_at = chrono::Utc::now().to_rfc3339();
     agent
         .acp
@@ -1481,9 +1487,17 @@ pub async fn run_prompt_task(
     if let Some(runtime) = ctx.user_input_runtime.clone() {
         agent.acp.set_user_input_runtime(runtime);
     }
-    if let Some(ref batch) = batch {
+    // AcpClient instances are reused. Fail closed before installing authority
+    // from this exact turn so heartbeat/non-targeting prompts cannot inherit a
+    // previous conversation's durable elicitation context.
+    agent.acp.clear_user_input_context();
+    if let Some(user_input_context) = receipt_causal_contexts.last() {
         agent.acp.set_user_input_context(
-            batch.routing_channel_id(),
+            user_input_context.routing_channel_id,
+            buzz_sdk::ThreadRef {
+                root_event_id: user_input_context.root_event_id,
+                parent_event_id: user_input_context.parent_event_id,
+            },
             turn_id.clone(),
             ctx.harness_name.clone(),
         );
@@ -2257,9 +2271,25 @@ pub async fn run_prompt_task(
                             &source,
                             &control_signal,
                         );
-                        if let Some(receipt_batch) = batch.as_ref() {
+                        if batch.is_some() {
                             let summary = agent.acp.take_turn_summary();
-                            publish_agent_receipt(&ctx, receipt_batch, summary).await;
+                            if let Err(error) = publish_agent_receipts(
+                                &ctx,
+                                &receipt_causal_contexts,
+                                summary,
+                            )
+                            .await
+                            {
+                                send_prompt_result(
+                                    &result_tx,
+                                    &turn_id,
+                                    agent,
+                                    source,
+                                    PromptOutcome::Error(AcpError::Protocol(error)),
+                                    None,
+                                );
+                                return;
+                            }
                         }
                         let usage = agent.acp.take_turn_usage();
                         publish_agent_turn_metric(
@@ -2322,10 +2352,20 @@ pub async fn run_prompt_task(
                 agent.state.invalidate(&source);
             }
 
-            if should_publish_agent_receipt(&stop_reason) {
-                if let Some(receipt_batch) = batch.as_ref() {
-                    let summary = agent.acp.take_turn_summary();
-                    publish_agent_receipt(&ctx, receipt_batch, summary).await;
+            if should_publish_agent_receipt(&stop_reason) && batch.is_some() {
+                let summary = agent.acp.take_turn_summary();
+                if let Err(error) =
+                    publish_agent_receipts(&ctx, &receipt_causal_contexts, summary).await
+                {
+                    send_prompt_result(
+                        &result_tx,
+                        &turn_id,
+                        agent,
+                        source,
+                        PromptOutcome::Error(AcpError::Protocol(error)),
+                        None,
+                    );
+                    return;
                 }
             }
             let core_stop = acp_stop_to_core(&stop_reason);
@@ -4551,40 +4591,314 @@ async fn publish_agent_turn_metric(
     }
 }
 
-/// Best-effort publication of a durable receipt for a successful channel turn.
-///
-/// Receipts use the same signed-event publisher as ACP user-input requests and
-/// are gated off by default. A missing streamed summary or thread batch is a
-/// no-op; all publishing failures remain observational and never alter turn
-/// success.
-async fn publish_agent_receipt(ctx: &PromptContext, batch: &FlushBatch, summary: Option<String>) {
-    if !ctx.agent_receipts_enabled {
-        return;
-    }
-    let Some(summary) = summary else {
-        return;
-    };
-    let Some(last_event) = batch.events.last() else {
-        return;
-    };
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentReceiptCausalContext {
+    routing_channel_id: Uuid,
+    root_event_id: nostr::EventId,
+    parent_event_id: nostr::EventId,
+}
 
-    let thread = crate::queue::parse_thread_tags(&last_event.event);
-    // The receipt replies TO the triggering event: parent is always the
-    // trigger itself (never the trigger's own parent — that would attach the
-    // receipt one level up and break the relay's parent-targeting check).
-    // Root is the trigger's thread root, or the trigger when it is the root.
-    let root_event_id = thread
-        .root_event_id
-        .unwrap_or_else(|| last_event.event.id.to_hex());
-    let parent_event_id = last_event.event.id.to_hex();
-    let Some(root_event_id) = nostr::EventId::from_hex(&root_event_id).ok() else {
-        tracing::warn!(target: "pool::receipt", "triggering event has invalid root id");
-        return;
+fn event_explicitly_targets_agent(event: &nostr::Event, agent: &nostr::PublicKey) -> bool {
+    let mut targets_agent = false;
+    for tag in event
+        .tags
+        .iter()
+        .filter(|tag| tag.as_slice().first().is_some_and(|name| name == "p"))
+    {
+        let Some(pubkey) = tag
+            .as_slice()
+            .get(1)
+            .and_then(|value| nostr::PublicKey::from_hex(value).ok())
+        else {
+            return false;
+        };
+        targets_agent |= pubkey == *agent;
+    }
+    targets_agent
+}
+
+/// Freeze every signed trigger completed by this turn in causal order.
+fn agent_receipt_causal_contexts(
+    batch: &FlushBatch,
+    agent: &nostr::PublicKey,
+) -> Vec<AgentReceiptCausalContext> {
+    let include_cancelled = batch.cancel_reason != Some(CancelReason::Interrupt);
+    let mut triggers = batch
+        .events
+        .iter()
+        .chain(
+            include_cancelled
+                .then_some(batch.cancelled_events.iter())
+                .into_iter()
+                .flatten(),
+        )
+        .filter(|event| event_explicitly_targets_agent(&event.event, agent))
+        .collect::<Vec<_>>();
+    triggers.sort_by_key(|event| (event.event.created_at, event.event.id));
+    triggers.dedup_by_key(|event| event.event.id);
+    triggers
+        .into_iter()
+        .filter_map(|trigger| {
+            let thread = crate::queue::parse_thread_tags(&trigger.event);
+            let root_event_id = match thread.root_event_id {
+                Some(root) => nostr::EventId::from_hex(&root).ok()?,
+                None => trigger.event.id,
+            };
+            Some(AgentReceiptCausalContext {
+                routing_channel_id: crate::conversation::routing_channel_id(&trigger.event)
+                    .unwrap_or(batch.channel_id),
+                root_event_id,
+                parent_event_id: trigger.event.id,
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn agent_receipt_causal_context(
+    batch: &FlushBatch,
+    agent: &nostr::PublicKey,
+) -> Option<AgentReceiptCausalContext> {
+    agent_receipt_causal_contexts(batch, agent).pop()
+}
+
+#[cfg(test)]
+async fn publish_signed_receipt_events<F, Fut>(
+    events: Vec<nostr::Event>,
+    retry_delays: &[Duration],
+    mut submit: F,
+) -> Result<(), String>
+where
+    F: FnMut(nostr::Event) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    let mut failures = Vec::new();
+    for event in events {
+        let event_id = event.id;
+        if let Err(error) =
+            crate::relay::retry_signed_event(&event, retry_delays, &mut submit).await
+        {
+            failures.push(format!("{event_id}: {error}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "agent receipt publication failed: {}",
+            failures.join("; ")
+        ))
+    }
+}
+
+const RECEIPT_TIMEOUT: Duration = Duration::from_secs(15);
+const RECEIPT_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+];
+const RECEIPT_OUTBOX_RETRY_DELAY: Duration = Duration::from_secs(30);
+static RECEIPT_OUTBOX_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+fn receipt_outbox_lock() -> &'static tokio::sync::Mutex<()> {
+    RECEIPT_OUTBOX_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn receipt_outbox_dir(ctx: &PromptContext) -> Result<PathBuf, String> {
+    use sha2::{Digest, Sha256};
+
+    let base = match std::env::var_os("BUZZ_ACP_RECEIPT_OUTBOX_DIR") {
+        Some(path) => PathBuf::from(path),
+        None => PathBuf::from(std::env::var_os("HOME").ok_or_else(|| {
+            "HOME or BUZZ_ACP_RECEIPT_OUTBOX_DIR is required for receipt durability".to_string()
+        })?)
+        .join(".local/share/nunciocrew/buzz-acp/receipt-outbox"),
     };
-    let Some(parent_event_id) = nostr::EventId::from_hex(&parent_event_id).ok() else {
-        tracing::warn!(target: "pool::receipt", "triggering event has invalid parent id");
-        return;
-    };
+    let relay_hash = hex::encode(Sha256::digest(ctx.relay_url.as_bytes()));
+    Ok(base
+        .join(&relay_hash[..16])
+        .join(ctx.agent_keys.public_key().to_hex()))
+}
+
+async fn persist_receipt_events(outbox_dir: &Path, events: &[nostr::Event]) -> Result<(), String> {
+    tokio::fs::create_dir_all(outbox_dir)
+        .await
+        .map_err(|error| format!("failed to create receipt outbox: {error}"))?;
+    for event in events {
+        let path = outbox_dir.join(format!("{}.json", event.id));
+        if tokio::fs::try_exists(&path)
+            .await
+            .map_err(|error| format!("failed to inspect receipt outbox: {error}"))?
+        {
+            continue;
+        }
+        let temporary = outbox_dir.join(format!("{}.{}.tmp", event.id, std::process::id()));
+        let bytes = serde_json::to_vec(event)
+            .map_err(|error| format!("failed to encode receipt for outbox: {error}"))?;
+        tokio::fs::write(&temporary, bytes)
+            .await
+            .map_err(|error| format!("failed to write receipt outbox: {error}"))?;
+        if let Err(error) = tokio::fs::rename(&temporary, &path).await {
+            let _ = tokio::fs::remove_file(&temporary).await;
+            if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+                return Err(format!("failed to commit receipt outbox entry: {error}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn flush_receipt_outbox(
+    outbox_dir: &Path,
+    rest_client: &RestClient,
+    agent_pubkey: nostr::PublicKey,
+    retry_delays: &[Duration],
+) -> Result<usize, String> {
+    if !tokio::fs::try_exists(outbox_dir)
+        .await
+        .map_err(|error| format!("failed to inspect receipt outbox: {error}"))?
+    {
+        return Ok(0);
+    }
+    let mut entries = tokio::fs::read_dir(outbox_dir)
+        .await
+        .map_err(|error| format!("failed to read receipt outbox: {error}"))?;
+    let mut remaining = 0_usize;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|error| format!("failed to enumerate receipt outbox: {error}"))?
+    {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let event = match tokio::fs::read(&path)
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| {
+                serde_json::from_slice::<nostr::Event>(&bytes).map_err(|e| e.to_string())
+            }) {
+            Ok(event)
+                if event.id.to_hex()
+                    == path
+                        .file_stem()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("")
+                    && event.kind.as_u16() as u32 == buzz_core::kind::KIND_AGENT_RECEIPT
+                    && event.pubkey == agent_pubkey
+                    && event.verify().is_ok() =>
+            {
+                event
+            }
+            Ok(_) | Err(_) => {
+                let invalid = path.with_extension("invalid");
+                let _ = tokio::fs::rename(&path, invalid).await;
+                tracing::error!(path = %path.display(), "quarantined invalid agent receipt outbox entry");
+                continue;
+            }
+        };
+        let mut retry_index = 0_usize;
+        let publication = loop {
+            let result =
+                tokio::time::timeout(RECEIPT_TIMEOUT, rest_client.submit_event_accepted(&event))
+                    .await
+                    .unwrap_or(Err(crate::relay::RelayError::Timeout));
+            match result {
+                Ok(()) => break Ok(()),
+                Err(error) if !error.is_retryable_durable_publication() => break Err(error),
+                Err(error) => {
+                    let Some(delay) = retry_delays.get(retry_index).copied() else {
+                        break Err(error);
+                    };
+                    retry_index = retry_index.saturating_add(1);
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        };
+        match publication {
+            Ok(()) => tokio::fs::remove_file(&path)
+                .await
+                .map_err(|error| format!("failed to acknowledge receipt outbox entry: {error}"))?,
+            Err(error) if error.is_retryable_durable_publication() => {
+                remaining = remaining.saturating_add(1);
+                tracing::warn!(event_id = %event.id, %error, "agent receipt remains queued in durable outbox");
+            }
+            Err(error) => {
+                let rejected = path.with_extension("rejected");
+                tokio::fs::rename(&path, &rejected)
+                    .await
+                    .map_err(|rename_error| {
+                        format!(
+                            "failed to dead-letter permanently rejected receipt {}: {rename_error}",
+                            event.id
+                        )
+                    })?;
+                tracing::error!(event_id = %event.id, %error, path = %rejected.display(), "dead-lettered permanently rejected agent receipt");
+            }
+        }
+    }
+    Ok(remaining)
+}
+
+fn spawn_receipt_outbox_worker(
+    outbox_dir: PathBuf,
+    rest_client: RestClient,
+    agent_pubkey: nostr::PublicKey,
+) {
+    tokio::spawn(async move {
+        loop {
+            let remaining = {
+                let _guard = receipt_outbox_lock().lock().await;
+                flush_receipt_outbox(
+                    &outbox_dir,
+                    &rest_client,
+                    agent_pubkey,
+                    &RECEIPT_RETRY_DELAYS,
+                )
+                .await
+            };
+            match remaining {
+                Ok(0) => break,
+                Ok(_) | Err(_) => tokio::time::sleep(RECEIPT_OUTBOX_RETRY_DELAY).await,
+            }
+        }
+    });
+}
+
+/// Resume exact-signed receipt publication left by a prior process.
+pub(crate) fn resume_receipt_outbox(ctx: Arc<PromptContext>) {
+    if ctx.agent_receipts_enabled {
+        match receipt_outbox_dir(&ctx) {
+            Ok(outbox_dir) => spawn_receipt_outbox_worker(
+                outbox_dir,
+                ctx.rest_client.clone(),
+                ctx.agent_keys.public_key(),
+            ),
+            Err(error) => {
+                tracing::error!(%error, "cannot resume durable agent receipt outbox");
+            }
+        }
+    }
+}
+
+/// Publish one relay-acknowledged receipt for every completed signed trigger.
+async fn publish_agent_receipts(
+    ctx: &PromptContext,
+    causals: &[AgentReceiptCausalContext],
+    summary: Option<String>,
+) -> Result<(), String> {
+    if !ctx.agent_receipts_enabled {
+        return Ok(());
+    }
+    if causals.is_empty() {
+        // Mentionless/all-mode work has no signed p-target that can authorize a
+        // receipt. Zero applicable triggers therefore means zero receipts, not
+        // a failed completed turn. Elicitation still fails closed because its
+        // per-turn context was cleared before dispatch.
+        return Ok(());
+    }
+    let summary = summary.unwrap_or_else(|| "Agent turn completed; review the thread.".to_string());
     let content = serde_json::json!({
         "summary": summary,
         "verify": "Review the checks below and reply in this thread to continue.",
@@ -4592,35 +4906,45 @@ async fn publish_agent_receipt(ctx: &PromptContext, batch: &FlushBatch, summary:
         "engineering": {}
     })
     .to_string();
-    let builder = match buzz_sdk::build_agent_receipt(
-        batch.routing_channel_id(),
-        &buzz_sdk::ThreadRef {
-            root_event_id,
-            parent_event_id,
-        },
-        &content,
-    ) {
-        Ok(builder) => builder,
-        Err(error) => {
-            tracing::warn!(target: "pool::receipt", "failed to build agent receipt: {error}");
-            return;
-        }
+    let events = causals
+        .iter()
+        .map(|causal| {
+            buzz_sdk::build_agent_receipt(
+                causal.routing_channel_id,
+                &buzz_sdk::ThreadRef {
+                    root_event_id: causal.root_event_id,
+                    parent_event_id: causal.parent_event_id,
+                },
+                &content,
+            )
+            .map_err(|error| format!("failed to build agent receipt: {error}"))?
+            .sign_with_keys(&ctx.agent_keys)
+            .map_err(|error| format!("failed to sign agent receipt: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let outbox_dir = receipt_outbox_dir(ctx)?;
+    let remaining = {
+        let _guard = receipt_outbox_lock().lock().await;
+        // Persistence precedes the first network attempt. A completed turn is
+        // never rerun just because relay admission is unavailable, while its
+        // exact signed receipts survive process restart and keep retrying.
+        persist_receipt_events(&outbox_dir, &events).await?;
+        flush_receipt_outbox(
+            &outbox_dir,
+            &ctx.rest_client,
+            ctx.agent_keys.public_key(),
+            &RECEIPT_RETRY_DELAYS,
+        )
+        .await?
     };
-    let event = match builder.sign_with_keys(&ctx.agent_keys) {
-        Ok(event) => event,
-        Err(error) => {
-            tracing::warn!(target: "pool::receipt", "failed to sign agent receipt: {error}");
-            return;
-        }
-    };
-    const RECEIPT_TIMEOUT: Duration = Duration::from_secs(3);
-    match tokio::time::timeout(RECEIPT_TIMEOUT, ctx.receipt_publisher.publish_event(event)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => {
-            tracing::warn!(target: "pool::receipt", "failed to publish agent receipt: {error}");
-        }
-        Err(_) => tracing::warn!(target: "pool::receipt", "agent receipt publish timed out"),
+    if remaining > 0 {
+        spawn_receipt_outbox_worker(
+            outbox_dir,
+            ctx.rest_client.clone(),
+            ctx.agent_keys.public_key(),
+        );
     }
+    Ok(())
 }
 
 fn should_publish_agent_receipt(stop_reason: &StopReason) -> bool {
@@ -7330,6 +7654,17 @@ mod tests {
             protocol_version: 2,
         };
 
+        let trigger = nostr::EventId::from_hex(&"a".repeat(64)).expect("event id");
+        agent.acp.set_user_input_context(
+            Uuid::new_v4(),
+            buzz_sdk::ThreadRef {
+                root_event_id: trigger,
+                parent_event_id: trigger,
+            },
+            "previous-turn".to_string(),
+            "test-harness".to_string(),
+        );
+
         // Simulate dispatch: install a steer receiver (normally done by
         // `dispatch_pending` before `run_prompt_task` is spawned).
         let (_steer_tx, steer_rx) = tokio::sync::mpsc::channel::<SteerRequest>(1);
@@ -7355,6 +7690,10 @@ mod tests {
         assert!(
             result.agent.acp.steer_rx_is_none(),
             "steer_rx must be None after send_prompt_result on error path"
+        );
+        assert!(
+            result.agent.acp.user_input_context_is_none(),
+            "per-turn elicitation authority must be cleared before client reuse"
         );
 
         // The next dispatch can now install a fresh receiver without panicking.
@@ -7450,6 +7789,164 @@ mod tests {
         assert!(!should_publish_agent_receipt(&StopReason::MaxTokens));
         assert!(!should_publish_agent_receipt(&StopReason::MaxTurnRequests));
         assert!(!should_publish_agent_receipt(&StopReason::Refusal));
+    }
+
+    #[test]
+    fn agent_receipt_causality_uses_newest_explicitly_targeted_trigger() {
+        let owner = Keys::generate();
+        let agent = Keys::generate();
+        let channel_id = Uuid::new_v4();
+        let targeted = EventBuilder::new(Kind::Custom(9), "targeted")
+            .tags([
+                Tag::parse(["h", channel_id.to_string().as_str()]).expect("channel tag"),
+                Tag::parse(["p", agent.public_key().to_hex().as_str()]).expect("agent tag"),
+            ])
+            .sign_with_keys(&owner)
+            .expect("sign targeted trigger");
+        let untargeted = EventBuilder::new(Kind::Custom(9), "later but unrelated")
+            .tags([Tag::parse(["h", channel_id.to_string().as_str()]).expect("channel tag")])
+            .sign_with_keys(&owner)
+            .expect("sign untargeted event");
+        let as_batch_event = |event| crate::queue::BatchEvent {
+            event,
+            prompt_tag: "test".into(),
+            received_at: std::time::Instant::now(),
+            edited_content: None,
+        };
+        let batch = FlushBatch {
+            channel_id: Uuid::new_v4(),
+            events: vec![as_batch_event(targeted.clone()), as_batch_event(untargeted)],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+
+        let causal = agent_receipt_causal_context(&batch, &agent.public_key())
+            .expect("targeted trigger establishes receipt causality");
+        assert_eq!(causal.parent_event_id, targeted.id);
+        assert_eq!(causal.root_event_id, targeted.id);
+        assert_eq!(causal.routing_channel_id, channel_id);
+
+        let unrelated_agent = Keys::generate();
+        assert!(agent_receipt_causal_context(&batch, &unrelated_agent.public_key()).is_none());
+    }
+
+    #[test]
+    fn agent_receipt_causality_covers_all_active_and_steer_requeued_triggers() {
+        let owner = Keys::generate();
+        let agent = Keys::generate();
+        let channel_id = Uuid::new_v4();
+        let targeted = |content: &str, created_at: u64| {
+            EventBuilder::new(Kind::Custom(9), content)
+                .tags([
+                    Tag::parse(["h", channel_id.to_string().as_str()]).expect("channel tag"),
+                    Tag::parse(["p", agent.public_key().to_hex().as_str()]).expect("agent tag"),
+                ])
+                .custom_created_at(Timestamp::from(created_at))
+                .sign_with_keys(&owner)
+                .expect("sign targeted trigger")
+        };
+        let requeued = targeted("requeued", 10);
+        let active = targeted("active", 20);
+        let ordinary = EventBuilder::new(Kind::Custom(9), "ordinary steer")
+            .tags([Tag::parse(["h", channel_id.to_string().as_str()]).expect("channel tag")])
+            .custom_created_at(Timestamp::from(30))
+            .sign_with_keys(&owner)
+            .expect("sign ordinary event");
+        let as_batch_event = |event| crate::queue::BatchEvent {
+            event,
+            prompt_tag: "test".into(),
+            received_at: std::time::Instant::now(),
+            edited_content: None,
+        };
+        let mut batch = FlushBatch {
+            channel_id,
+            events: vec![as_batch_event(active.clone()), as_batch_event(ordinary)],
+            cancelled_events: vec![as_batch_event(requeued.clone())],
+            cancel_reason: Some(CancelReason::Steer),
+        };
+
+        let contexts = agent_receipt_causal_contexts(&batch, &agent.public_key());
+        assert_eq!(
+            contexts
+                .iter()
+                .map(|context| context.parent_event_id)
+                .collect::<Vec<_>>(),
+            vec![requeued.id, active.id]
+        );
+
+        batch.cancel_reason = Some(CancelReason::Interrupt);
+        assert_eq!(
+            agent_receipt_causal_contexts(&batch, &agent.public_key())
+                .iter()
+                .map(|context| context.parent_event_id)
+                .collect::<Vec<_>>(),
+            vec![active.id]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn agent_receipt_publication_attempts_sibling_events_after_failure() {
+        let keys = Keys::generate();
+        let first = EventBuilder::text_note("first")
+            .sign_with_keys(&keys)
+            .expect("sign first receipt");
+        let second = EventBuilder::text_note("second")
+            .sign_with_keys(&keys)
+            .expect("sign second receipt");
+        let first_id = first.id;
+        let second_id = second.id;
+        let attempts = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&attempts);
+
+        let result = publish_signed_receipt_events(
+            vec![first, second],
+            &[Duration::from_millis(1)],
+            move |event| {
+                let recorded = Arc::clone(&recorded);
+                async move {
+                    recorded.lock().expect("record attempts").push(event.id);
+                    (event.id == second_id)
+                        .then_some(())
+                        .ok_or_else(|| "rejected".to_string())
+                }
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            attempts.lock().expect("read attempts").as_slice(),
+            &[first_id, first_id, second_id]
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_receipt_outbox_persists_exact_signed_event_idempotently() {
+        let keys = Keys::generate();
+        let event = EventBuilder::text_note("durable receipt")
+            .sign_with_keys(&keys)
+            .expect("sign receipt");
+        let outbox = std::env::temp_dir().join(format!("buzz-acp-receipt-{}", Uuid::new_v4()));
+
+        persist_receipt_events(&outbox, std::slice::from_ref(&event))
+            .await
+            .expect("persist receipt");
+        persist_receipt_events(&outbox, std::slice::from_ref(&event))
+            .await
+            .expect("repeat persistence is idempotent");
+
+        let path = outbox.join(format!("{}.json", event.id));
+        let stored: nostr::Event = serde_json::from_slice(
+            &tokio::fs::read(&path)
+                .await
+                .expect("read persisted receipt"),
+        )
+        .expect("decode persisted receipt");
+        assert_eq!(stored, event);
+
+        tokio::fs::remove_dir_all(outbox)
+            .await
+            .expect("clean receipt outbox");
     }
 
     /// `publish_agent_turn_metric` is a no-op when `usage` is `None`.
@@ -7862,7 +8359,6 @@ mod tests {
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
             user_input_runtime: None,
-            receipt_publisher: crate::relay::RelayEventPublisher::test_noop(),
             agent_receipts_enabled: false,
         }
     }

@@ -5,11 +5,17 @@ import {
   subscribeActiveAgentTurns,
   walkActiveAgentTurns,
 } from "@/features/agents/activeAgentTurnsStore";
+import type { AgentProgressKind } from "@/features/agents/agentAttention";
 
 /** Per-agent active turn summary scoped to one conversation/thread. */
 export type ActiveConversationAgentTurnSummary = {
   agentPubkey: string;
   anchorAt: number;
+  lastSeenAt: number;
+  lastSubstantiveProgressAt: number;
+  progressKind: AgentProgressKind;
+  progressLabel: string;
+  triggeringEventIds: string[];
 };
 
 const EMPTY: ActiveConversationAgentTurnSummary[] = [];
@@ -36,22 +42,41 @@ export function getActiveTurnSummariesForConversation(
   const cached = cache.get(conversationId);
   if (cached) return cached;
 
-  const earliestByAgent = new Map<string, number>();
+  const byAgent = new Map<string, ActiveConversationAgentTurnSummary>();
   walkActiveAgentTurns((agentKey, turn, offset) => {
     if (turn.conversationId !== conversationId) return;
     const anchorAt = turn.startedAt + offset;
-    const prior = earliestByAgent.get(agentKey);
-    if (prior === undefined || anchorAt < prior) {
-      earliestByAgent.set(agentKey, anchorAt);
+    const prior = byAgent.get(agentKey);
+    if (!prior) {
+      byAgent.set(agentKey, {
+        agentPubkey: agentKey,
+        anchorAt,
+        lastSeenAt: turn.lastSeenAt,
+        lastSubstantiveProgressAt: turn.lastSubstantiveProgressAt,
+        progressKind: turn.progressKind,
+        progressLabel: turn.progressLabel,
+        triggeringEventIds: [...turn.triggeringEventIds],
+      });
+      return;
     }
+    if (anchorAt < prior.anchorAt) prior.anchorAt = anchorAt;
+    if (turn.lastSeenAt < prior.lastSeenAt) prior.lastSeenAt = turn.lastSeenAt;
+    if (turn.lastSubstantiveProgressAt < prior.lastSubstantiveProgressAt) {
+      prior.lastSubstantiveProgressAt = turn.lastSubstantiveProgressAt;
+      prior.progressKind = turn.progressKind;
+      prior.progressLabel = turn.progressLabel;
+    }
+    prior.triggeringEventIds = [
+      ...new Set([...prior.triggeringEventIds, ...turn.triggeringEventIds]),
+    ];
   });
 
   const result =
-    earliestByAgent.size === 0
+    byAgent.size === 0
       ? EMPTY
-      : [...earliestByAgent.entries()]
-          .map(([agentPubkey, anchorAt]) => ({ agentPubkey, anchorAt }))
-          .sort((a, b) => a.agentPubkey.localeCompare(b.agentPubkey));
+      : [...byAgent.values()].sort((a, b) =>
+          a.agentPubkey.localeCompare(b.agentPubkey),
+        );
   cache.set(conversationId, result);
   return result;
 }

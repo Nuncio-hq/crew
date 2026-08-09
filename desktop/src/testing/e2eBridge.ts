@@ -23,8 +23,10 @@ import {
   injectObserverEventsForE2E,
   _testRegisterKnownAgents,
   resetAgentObserverLiveEventsForE2E,
+  setObserverConnectionStateForE2E,
   syncAgentObserverEvents,
 } from "@/features/agents/observerRelayStore";
+import type { ConnectionState as ObserverConnectionState } from "@/features/agents/ui/agentSessionTypes";
 import {
   CUSTOM_EMOJI_SET_D_TAG,
   KIND_EMOJI_SET,
@@ -1167,9 +1169,14 @@ declare global {
       agentPubkey: string;
       events: Parameters<typeof injectObserverEventsForE2E>[1];
     }) => void;
+    __BUZZ_E2E_SET_OBSERVER_CONNECTION_STATE__?: (
+      state: ObserverConnectionState,
+    ) => void;
     __BUZZ_E2E_EMIT_MOCK_USER_INPUT__?: (input: {
       channelName: string;
       requestId?: string;
+      rootEventId: string;
+      parentEventId?: string;
       content: string;
       pubkey?: string;
     }) => RelayEvent;
@@ -1177,11 +1184,13 @@ declare global {
       channelName: string;
       requestEventId: string;
       content?: string;
+      requestAgentPubkey?: string;
     }) => RelayEvent;
     __BUZZ_E2E_EMIT_MOCK_USER_INPUT_RESOLVED__?: (input: {
       channelName: string;
       requestEventId: string;
       outcome: "answered" | "declined" | "cancelled";
+      requestAgentPubkey?: string;
     }) => RelayEvent;
     /** Prepend `count` synthetic older messages to a channel's mock store so
      *  an older-history fetch has something to paginate. Mirrors how the real
@@ -9512,9 +9521,9 @@ function findMockEventChannel(eventId: string): string | undefined {
  * Mock the `add_reaction` Tauri command. Mirrors the real Rust command: a
  * kind:7 whose content is the emoji, plus — for a custom emoji — the NIP-30
  * `["emoji", shortcode, url]` tag (shortcode normalized to match the relay).
- * Recorded into the target's channel store and emitted live so the timeline's
- * reaction aggregation renders the pill (the channel subscription includes
- * kind:7). Unicode reactions carry no emoji tag, like the real command.
+ * Recorded into the target's channel store, projected into home-feed activity,
+ * and emitted live so timeline reactions and durable inbox projections observe
+ * the same event. Unicode reactions carry no emoji tag, like the real command.
  */
 async function handleAddReaction(
   args: { eventId: string; emoji: string; emojiUrl?: string | null },
@@ -9546,6 +9555,18 @@ async function handleAddReaction(
     mockEventId(),
   );
   recordMockMessage(channelId, event);
+  const channel = getMockChannel(channelId);
+  mockFeedOverrides.activity.unshift({
+    id: event.id,
+    kind: event.kind,
+    pubkey: event.pubkey,
+    content: event.content,
+    created_at: event.created_at,
+    channel_id: channelId,
+    channel_name: channel.name,
+    tags: event.tags,
+    category: "activity",
+  });
   emitMockLiveEvent(channelId, event);
 }
 
@@ -9981,6 +10002,33 @@ function sendToMockSocket(args: {
       }
     }
     if (!channelId) {
+      // Exact/prefix id lookups are how production callers independently
+      // validate a signed relationship (for example, a receipt's parent).
+      // Serve them across channel stores just like the relay instead of
+      // silently treating every id-only query as an empty global history.
+      const requestedIds = filter.ids;
+      if (requestedIds && requestedIds.length > 0) {
+        const authors = filter.authors?.map((author) => author.toLowerCase());
+        const limit = Math.max(0, filter.limit ?? Number.POSITIVE_INFINITY);
+        let emitted = 0;
+        for (const events of mockMessages.values()) {
+          for (const event of events) {
+            if (emitted >= limit) break;
+            if (!requestedIds.some((prefix) => event.id.startsWith(prefix))) {
+              continue;
+            }
+            if (filter.kinds && !filter.kinds.includes(event.kind)) continue;
+            if (authors && !authors.includes(event.pubkey.toLowerCase())) {
+              continue;
+            }
+            sendWsText(socket.handler, ["EVENT", subId, event]);
+            emitted += 1;
+          }
+          if (emitted >= limit) break;
+        }
+        sendWsText(socket.handler, ["EOSE", subId]);
+        return;
+      }
       // Aux-backfill filters (reactions/deletions) are `#e`-keyed with no
       // channel tag — serve them across all channel stores like the relay.
       const referencedIds = filter["#e"];
@@ -10348,9 +10396,14 @@ export function maybeInstallE2eTauriMocks() {
     injectObserverEventsForE2E(agentPubkey, events);
     syncAgentTurnsFromEvents(agentPubkey, events);
   };
+  window.__BUZZ_E2E_SET_OBSERVER_CONNECTION_STATE__ = (state) => {
+    setObserverConnectionStateForE2E(state);
+  };
   window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__ = ({
     channelName,
     requestId,
+    rootEventId,
+    parentEventId = rootEventId,
     content,
     pubkey,
   }) => {
@@ -10361,8 +10414,17 @@ export function maybeInstallE2eTauriMocks() {
     const event = createMockEvent(
       KIND_AGENT_USER_INPUT_REQUESTED,
       content,
-      [["h", channel.id]],
-      pubkey,
+      [
+        ["h", channel.id],
+        ["p", DEFAULT_MOCK_IDENTITY.pubkey],
+        ...(rootEventId === parentEventId
+          ? [["e", parentEventId, "", "reply"]]
+          : [
+              ["e", rootEventId, "", "root"],
+              ["e", parentEventId, "", "reply"],
+            ]),
+      ],
+      pubkey ?? OWNED_RELAY_AGENT_PUBKEY,
       Math.floor(Date.now() / 1000),
       requestId,
     );
@@ -10373,6 +10435,7 @@ export function maybeInstallE2eTauriMocks() {
     channelName,
     requestEventId,
     content = "{}",
+    requestAgentPubkey = OWNED_RELAY_AGENT_PUBKEY,
   }) => {
     const channel = mockChannels.find(
       (candidate) => candidate.name === channelName,
@@ -10384,6 +10447,7 @@ export function maybeInstallE2eTauriMocks() {
       [
         ["h", channel.id],
         ["e", requestEventId],
+        ["p", requestAgentPubkey],
       ],
       DEFAULT_MOCK_IDENTITY.pubkey,
     );
@@ -10394,6 +10458,7 @@ export function maybeInstallE2eTauriMocks() {
     channelName,
     requestEventId,
     outcome,
+    requestAgentPubkey = OWNED_RELAY_AGENT_PUBKEY,
   }) => {
     const channel = mockChannels.find(
       (candidate) => candidate.name === channelName,
@@ -10405,8 +10470,9 @@ export function maybeInstallE2eTauriMocks() {
       [
         ["h", channel.id],
         ["e", requestEventId],
+        ["p", DEFAULT_MOCK_IDENTITY.pubkey],
       ],
-      DEFAULT_MOCK_IDENTITY.pubkey,
+      requestAgentPubkey,
     );
     recordMockMessage(channel.id, event);
     emitMockLiveEvent(channel.id, event);

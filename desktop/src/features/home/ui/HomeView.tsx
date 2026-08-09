@@ -17,7 +17,7 @@ import {
 } from "@/features/home/lib/inbox";
 import { useInboxSelectionAnchor } from "@/features/home/useInboxSelectionAnchor";
 import { useHomeInboxEdit } from "@/features/home/useHomeInboxEdit";
-import { useOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
+import { useCurrentOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
 import {
   filterInboxItems,
   matchesInboxFilter,
@@ -330,11 +330,7 @@ export function HomeView({
     enabled: feedProfilePubkeys.length > 0,
   });
   const feedProfiles = feedProfilesQuery.data?.profiles;
-  const ownedAgentPubkeys = useOwnedAgentPubkeys(
-    true,
-    feedProfiles,
-    currentPubkey,
-  );
+  const ownedAgentPubkeys = useCurrentOwnedAgentPubkeys(currentPubkey);
   const feedOwnerPubkeys = React.useMemo(
     () => [
       ...new Set(
@@ -404,9 +400,11 @@ export function HomeView({
     });
   const missionSections = useMissionInboxSections({
     channels,
+    currentPubkey,
     effectiveDoneSet,
     feed,
     inboxItems,
+    ownedAgentPubkeys,
   });
   // Resolve selection before filtering so unread-only can retain its active row.
   const selectedItemFromAll = React.useMemo(

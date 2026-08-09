@@ -1621,10 +1621,17 @@ pub fn build_workflow_approval(
 /// Build a durable channel-scoped agent question request.
 pub fn build_agent_user_input_request(
     channel_id: Uuid,
+    thread_ref: &ThreadRef,
+    owner_pubkey: &str,
     content: &str,
 ) -> Result<EventBuilder, SdkError> {
     check_content(content, 256 * 1024)?;
-    let tags = vec![tag(&["h", &channel_id.to_string()])?];
+    let owner_pubkey = check_hex_exact(owner_pubkey, 64, "owner_pubkey")?;
+    let mut tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["p", &owner_pubkey])?,
+    ];
+    thread_tags(thread_ref, &mut tags)?;
     Ok(EventBuilder::new(
         Kind::Custom(KIND_AGENT_USER_INPUT_REQUESTED as u16),
         content,
@@ -1633,31 +1640,42 @@ pub fn build_agent_user_input_request(
 }
 
 /// Build an owner-authored answer to an agent question request.
+///
+/// The `p` relationship targets the agent that authored the request.
 pub fn build_agent_user_input_answer(
     channel_id: Uuid,
     request_event_id: &str,
+    requesting_agent_pubkey: &str,
     content: &str,
 ) -> Result<EventBuilder, SdkError> {
     check_content(content, 64 * 1024)?;
     let request_event_id = check_hex_exact(request_event_id, 64, "request_event_id")?;
+    let requesting_agent_pubkey =
+        check_pubkey_hex(requesting_agent_pubkey, "requesting_agent_pubkey")?;
     let tags = vec![
         tag(&["h", &channel_id.to_string()])?,
         tag(&["e", &request_event_id])?,
+        tag(&["p", &requesting_agent_pubkey])?,
     ];
     Ok(EventBuilder::new(Kind::Custom(KIND_AGENT_USER_INPUT_ANSWER as u16), content).tags(tags))
 }
 
 /// Build a terminal resolution event for an agent question request.
+///
+/// The `p` relationship targets the request's intended owner.
 pub fn build_agent_user_input_resolved(
     channel_id: Uuid,
     request_event_id: &str,
+    intended_owner_pubkey: &str,
     content: &str,
 ) -> Result<EventBuilder, SdkError> {
     check_content(content, 16 * 1024)?;
     let request_event_id = check_hex_exact(request_event_id, 64, "request_event_id")?;
+    let intended_owner_pubkey = check_pubkey_hex(intended_owner_pubkey, "intended_owner_pubkey")?;
     let tags = vec![
         tag(&["h", &channel_id.to_string()])?,
         tag(&["e", &request_event_id])?,
+        tag(&["p", &intended_owner_pubkey])?,
     ];
     Ok(EventBuilder::new(Kind::Custom(KIND_AGENT_USER_INPUT_RESOLVED as u16), content).tags(tags))
 }
@@ -4571,7 +4589,21 @@ mod tests {
     #[test]
     fn agent_user_input_request_builder_sets_kind_and_channel() {
         let channel = Uuid::new_v4();
-        let event = sign(build_agent_user_input_request(channel, r#"{"q0":"Pick"}"#).unwrap());
+        let owner = "c".repeat(64);
+        let root = nostr::EventId::from_hex(&"a".repeat(64)).unwrap();
+        let parent = nostr::EventId::from_hex(&"b".repeat(64)).unwrap();
+        let event = sign(
+            build_agent_user_input_request(
+                channel,
+                &ThreadRef {
+                    root_event_id: root,
+                    parent_event_id: parent,
+                },
+                &owner,
+                r#"{"q0":"Pick"}"#,
+            )
+            .unwrap(),
+        );
         assert_eq!(
             event.kind,
             Kind::Custom(KIND_AGENT_USER_INPUT_REQUESTED as u16)
@@ -4580,14 +4612,39 @@ mod tests {
             .tags
             .iter()
             .any(|tag| { tag.as_slice() == ["h".to_string(), channel.to_string()] }));
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["p".to_string(), owner.clone()] }));
+        assert!(event.tags.iter().any(|tag| {
+            tag.as_slice()
+                == [
+                    "e".to_string(),
+                    root.to_hex(),
+                    "".to_string(),
+                    "root".to_string(),
+                ]
+        }));
+        assert!(event.tags.iter().any(|tag| {
+            tag.as_slice()
+                == [
+                    "e".to_string(),
+                    parent.to_hex(),
+                    "".to_string(),
+                    "reply".to_string(),
+                ]
+        }));
     }
 
     #[test]
     fn agent_user_input_answer_builder_sets_channel_and_request_link() {
         let channel = Uuid::new_v4();
         let request = "a".repeat(64);
-        let event =
-            sign(build_agent_user_input_answer(channel, &request, r#"{"q0":"Pick"}"#).unwrap());
+        let requesting_agent = "c".repeat(64);
+        let event = sign(
+            build_agent_user_input_answer(channel, &request, &requesting_agent, r#"{"q0":"Pick"}"#)
+                .unwrap(),
+        );
         assert_eq!(
             event.kind,
             Kind::Custom(KIND_AGENT_USER_INPUT_ANSWER as u16)
@@ -4600,16 +4657,22 @@ mod tests {
             .tags
             .iter()
             .any(|tag| { tag.as_slice() == ["e".to_string(), request.clone()] }));
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["p".to_string(), requesting_agent.clone()] }));
     }
 
     #[test]
     fn agent_user_input_resolved_builder_sets_kind_and_request_link() {
         let channel = Uuid::new_v4();
         let request = "b".repeat(64);
+        let intended_owner = "d".repeat(64);
         let event = sign(
             build_agent_user_input_resolved(
                 channel,
                 &request,
+                &intended_owner,
                 r#"{"request_event_id":"bbbb","outcome":"cancelled"}"#,
             )
             .unwrap(),
@@ -4626,6 +4689,10 @@ mod tests {
             .tags
             .iter()
             .any(|tag| { tag.as_slice() == ["e".to_string(), request.clone()] }));
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["p".to_string(), intended_owner.clone()] }));
     }
 
     #[test]

@@ -19,9 +19,18 @@ export type NeedsYouRequest = {
   agentPubkey: string;
   createdAt: number;
   approvalReferences: string[];
+  /** Present for durable 46040 requests; omitted for workflow approvals. */
+  ownerPubkey?: string;
 };
 
-type UserInputNeedsYouRequest = NeedsYouRequest & { kind: "user-input" };
+// Entries in `requests` are durable workflow-human approvals (kind 46010),
+// not ACP tool permission prompts. Tool permissions stay on the established
+// permission/bypass path and never enter Agent Attention's `Needs you` state.
+
+type UserInputNeedsYouRequest = NeedsYouRequest & {
+  kind: "user-input";
+  ownerPubkey: string;
+};
 
 const requests = new Map<string, NeedsYouRequest>();
 const userInputRequests = new Map<string, UserInputNeedsYouRequest>();
@@ -47,11 +56,15 @@ function notify() {
 }
 
 export function ingestUserInputRequest(
-  input: Omit<UserInputNeedsYouRequest, "kind" | "approvalReferences">,
+  input: Omit<
+    UserInputNeedsYouRequest,
+    "kind" | "approvalReferences" | "ownerPubkey"
+  > & { ownerPubkey?: string },
 ) {
   if (resolvedUserInputRequestIds.has(input.id)) return null;
   const entry: UserInputNeedsYouRequest = {
     ...input,
+    ownerPubkey: input.ownerPubkey?.trim().toLowerCase() ?? "",
     kind: "user-input",
     approvalReferences: [],
   };
@@ -60,6 +73,25 @@ export function ingestUserInputRequest(
   scheduleExpiry();
   if (!prior || JSON.stringify(prior) !== JSON.stringify(entry)) notify();
   return entry;
+}
+
+export function reconcileUserInputRequestAuthority(
+  currentPubkey: string,
+  ownedAgentPubkeys: ReadonlySet<string>,
+): boolean {
+  const current = currentPubkey.trim().toLowerCase();
+  let changed = false;
+  for (const [id, request] of userInputRequests) {
+    if (
+      request.ownerPubkey !== current ||
+      !ownedAgentPubkeys.has(request.agentPubkey.trim().toLowerCase())
+    ) {
+      userInputRequests.delete(id);
+      changed = true;
+    }
+  }
+  if (changed) notify();
+  return changed;
 }
 
 export function resolveUserInputRequest(requestId: string) {
@@ -76,17 +108,17 @@ export function resolveUserInputRequest(requestId: string) {
   return true;
 }
 
+export function getPendingUserInputRequest(
+  requestId: string,
+): NeedsYouRequest | null {
+  return userInputRequests.get(requestId) ?? null;
+}
+
 function prune(now: number): boolean {
   let changed = false;
   for (const [id, request] of requests) {
     if (now - request.createdAt >= NEEDS_YOU_TTL_MS) {
       requests.delete(id);
-      changed = true;
-    }
-  }
-  for (const [id, request] of userInputRequests) {
-    if (now - request.createdAt >= NEEDS_YOU_TTL_MS) {
-      userInputRequests.delete(id);
       changed = true;
     }
   }
@@ -99,7 +131,7 @@ function scheduleExpiry() {
     expiryTimer = null;
   }
   const nextExpiry = Math.min(
-    ...[...requests.values(), ...userInputRequests.values()].map(
+    ...[...requests.values()].map(
       (request) => request.createdAt + NEEDS_YOU_TTL_MS,
     ),
   );

@@ -11,6 +11,10 @@ export type ObserverEvent = {
   turnId: string | null;
   startedAt?: string | null;
   payload: unknown;
+  /** Signed outer relay event that carried this frame, when available. */
+  sourceEventId?: string;
+  /** True when recovered from a subscription history/reconnect window. */
+  replayed?: boolean;
 };
 
 export type ConnectionState =

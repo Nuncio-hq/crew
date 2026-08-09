@@ -72,6 +72,7 @@ export function MessageThreadPanelHead({
         <MessageRow
           actionBarPlacement="inside"
           channelId={channelId}
+          currentPubkey={currentPubkey}
           huddleMemberPubkeys={huddleMemberPubkeys}
           huddleMemberPubkeysPending={huddleMemberPubkeysPending}
           isFollowingThread={isFollowingThread}

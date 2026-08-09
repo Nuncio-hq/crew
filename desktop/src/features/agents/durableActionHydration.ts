@@ -1,0 +1,143 @@
+import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
+import type { RelayEvent } from "@/shared/api/types";
+import { drainRelayTimestampBucket } from "@/shared/api/exhaustiveRelayPagination";
+import {
+  KIND_AGENT_RECEIPT,
+  KIND_AGENT_USER_INPUT_ANSWER,
+  KIND_AGENT_USER_INPUT_REQUESTED,
+  KIND_AGENT_USER_INPUT_RESOLVED,
+  KIND_REACTION,
+} from "@/shared/constants/kinds";
+
+type FetchPage = (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
+
+export function createHydrationRetryController<TTimer>({
+  hydrate,
+  onError,
+  retryDelayMs,
+  setTimeoutFn,
+  clearTimeoutFn,
+}: {
+  hydrate: () => Promise<void>;
+  onError: (error: unknown) => void;
+  retryDelayMs: number;
+  setTimeoutFn: (callback: () => void, delayMs: number) => TTimer;
+  clearTimeoutFn: (timer: TTimer) => void;
+}) {
+  let stopped = false;
+  let retryTimer: TTimer | undefined;
+  let running: Promise<void> | null = null;
+
+  const run = (): Promise<void> => {
+    if (stopped) return Promise.resolve();
+    if (running) return running;
+    running = hydrate()
+      .catch((error) => {
+        if (stopped) return;
+        onError(error);
+        if (retryTimer !== undefined) return;
+        retryTimer = setTimeoutFn(() => {
+          retryTimer = undefined;
+          void run();
+        }, retryDelayMs);
+      })
+      .finally(() => {
+        running = null;
+      });
+    return running;
+  };
+
+  return {
+    run,
+    stop() {
+      stopped = true;
+      if (retryTimer !== undefined) {
+        clearTimeoutFn(retryTimer);
+        retryTimer = undefined;
+      }
+    },
+  };
+}
+
+function byDurableOrder(left: RelayEvent, right: RelayEvent): number {
+  return left.created_at - right.created_at || left.id.localeCompare(right.id);
+}
+
+function byUserInputAuthorityOrder(
+  left: RelayEvent,
+  right: RelayEvent,
+): number {
+  const leftPriority = left.kind === KIND_AGENT_USER_INPUT_REQUESTED ? 0 : 1;
+  const rightPriority = right.kind === KIND_AGENT_USER_INPUT_REQUESTED ? 0 : 1;
+  return leftPriority - rightPriority || byDurableOrder(left, right);
+}
+
+/** Merge a completed history snapshot with events buffered by its live overlap. */
+export function mergeDurableActionEvents(
+  userInputEvents: readonly RelayEvent[],
+  receiptEvents: readonly RelayEvent[],
+  reviewEvents: readonly RelayEvent[],
+  bufferedEvents: readonly RelayEvent[],
+) {
+  const byId = new Map<string, RelayEvent>();
+  for (const event of [
+    ...userInputEvents,
+    ...receiptEvents,
+    ...reviewEvents,
+    ...bufferedEvents,
+  ]) {
+    byId.set(event.id, event);
+  }
+  const merged = [...byId.values()];
+  return {
+    userInputEvents: merged
+      .filter((event) =>
+        [
+          KIND_AGENT_USER_INPUT_REQUESTED,
+          KIND_AGENT_USER_INPUT_ANSWER,
+          KIND_AGENT_USER_INPUT_RESOLVED,
+        ].includes(event.kind),
+      )
+      .sort(byUserInputAuthorityOrder),
+    receiptEvents: merged
+      .filter((event) => event.kind === KIND_AGENT_RECEIPT)
+      .sort(byDurableOrder),
+    reviewEvents: merged
+      .filter((event) => event.kind === KIND_REACTION)
+      .sort(byDurableOrder),
+  };
+}
+
+/** Exhaustively enumerate immutable durable events without skipping timestamp ties. */
+export async function enumerateDurableActionEvents(
+  fetchPage: FetchPage,
+  baseFilter: Omit<RelaySubscriptionFilter, "limit" | "since" | "until">,
+  pageSize: number,
+): Promise<RelayEvent[]> {
+  if (!Number.isSafeInteger(pageSize) || pageSize <= 0) {
+    throw new Error("Durable action page size must be a positive integer.");
+  }
+
+  const byId = new Map<string, RelayEvent>();
+  let until: number | undefined;
+  for (;;) {
+    const page = await fetchPage({
+      ...baseFilter,
+      limit: pageSize,
+      ...(until === undefined ? {} : { until }),
+    });
+    for (const event of page) byId.set(event.id, event);
+    if (page.length < pageSize) return [...byId.values()];
+
+    const oldest = Math.min(...page.map((event) => event.created_at));
+    const boundary = await drainRelayTimestampBucket(
+      fetchPage,
+      baseFilter,
+      oldest,
+      pageSize,
+    );
+    for (const event of boundary) byId.set(event.id, event);
+    if (oldest <= 0) return [...byId.values()];
+    until = oldest - 1;
+  }
+}

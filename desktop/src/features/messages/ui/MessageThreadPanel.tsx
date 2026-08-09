@@ -644,6 +644,7 @@ export function MessageThreadPanel({
               >
                 <MessageThreadSummaryRow
                   {...{ channelId, profiles }}
+                  currentPubkey={currentPubkey}
                   depth={threadHead.depth}
                   message={threadHead}
                   onOpenThread={expandThreadHeadReplies}
@@ -679,8 +680,6 @@ export function MessageThreadPanel({
                   const isDirectChildOfHighlightedBranch =
                     isInsideHighlightedBranch &&
                     highlightedBranch != null &&
-                    index > highlightedBranch.startIndex &&
-                    index <= highlightedBranch.endIndex &&
                     entry.message.depth === highlightedBranch.depth + 1;
                   const highlightedLineDepths =
                     shouldShowThreadBranchGuides &&
@@ -700,6 +699,7 @@ export function MessageThreadPanel({
                       {showUnreadDivider ? <UnreadDivider /> : null}
                       <MessageRow
                         channelId={channelId}
+                        currentPubkey={currentPubkey}
                         collapseDepthGuideActions={collapseDepthGuideActions}
                         collapseDescendantsLabel="Collapse replies"
                         connectDescendants={

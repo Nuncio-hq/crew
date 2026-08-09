@@ -31,12 +31,18 @@ export function isRelayConnectionDegraded(state: ConnectionState): boolean {
 
 export type RelaySubscriptionFilter = {
   ids?: string[];
-  kinds: number[];
+  kinds?: number[];
   limit: number;
   authors?: string[];
   since?: number;
   until?: number;
 } & Partial<Record<`#${string}`, string[]>>;
+
+export type RelayLiveEventContext = { replay: boolean };
+export type RelayLiveSubscriptionStatus =
+  | { state: "open" }
+  | { state: "recovering"; message: string }
+  | { state: "closed"; message: string };
 
 type HistorySubscription = {
   mode: "history";
@@ -57,9 +63,13 @@ type FirstEventSubscription = {
 type LiveSubscription = {
   mode: "live";
   filter: RelaySubscriptionFilter;
-  onEvent: (event: RelayEvent) => void;
+  onEvent: (event: RelayEvent, context: RelayLiveEventContext) => void;
+  onStatus?: (status: RelayLiveSubscriptionStatus) => void;
+  ready: boolean;
   resolveReady?: () => void;
   lastSeenCreatedAt?: number;
+  /** Oldest wall-clock second not yet proved complete by reconnect backfill. */
+  recoveryFloorCreatedAt?: number;
   /**
    * Lower bound of a reconnect backfill window that has not yet completed.
    *
@@ -71,6 +81,14 @@ type LiveSubscription = {
    * `min(pendingReplaySince, cursor window)`.
    */
   pendingReplaySince?: number;
+  /** Replacement REQ was sent but its durable history window is not complete. */
+  recoveryInFlight?: boolean;
+  /** The replacement REQ has been dispatched; later EOSE belongs to recovery. */
+  recoveryRequestSent?: boolean;
+  /** Replacement REQ reached EOSE while durable history recovery was pending. */
+  recoveryEoseReceived?: boolean;
+  /** Token preventing stale recovery promises from reopening a newer cycle. */
+  recoveryGeneration?: number;
   closedRetryAttempt?: number;
   closedRetryTimeout?: number;
 };

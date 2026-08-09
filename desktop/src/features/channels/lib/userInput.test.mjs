@@ -5,6 +5,7 @@ import {
   canSubmitUserInput,
   buildSkippedAnswers,
   buildUserInputAnswers,
+  deriveAnsweredUserInputs,
   derivePendingUserInputs,
   publishUserInputAnswer,
   selectUserInputOption,
@@ -51,13 +52,12 @@ const answer = (id, pubkey = "owner") => ({
   sig: "",
 });
 
-test("accepted answer resolves request", () => {
-  assert.equal(
-    derivePendingUserInputs(
-      [request("request-1"), answer("request-1")],
-      "owner",
-    ).length,
-    0,
+test("accepted answer waits for the agent's terminal resolution", () => {
+  const lifecycle = [request("request-1"), answer("request-1")];
+  assert.equal(derivePendingUserInputs(lifecycle, "owner").length, 0);
+  assert.deepEqual(
+    deriveAnsweredUserInputs(lifecycle, "owner").map(({ event }) => event.id),
+    ["request-1"],
   );
 });
 
@@ -92,6 +92,29 @@ test("optimistic resolution hides the card", () => {
   );
 });
 
+test("an unresolved request survives more than 200 newer lifecycle rows", () => {
+  const newerRows = Array.from({ length: 201 }, (_, index) => ({
+    id: `noise-${index}`,
+    pubkey: "agent",
+    created_at: 100 + index,
+    kind: 46042,
+    tags: [["e", `other-${index}`]],
+    content: JSON.stringify({
+      request_event_id: `other-${index}`,
+      outcome: "cancelled",
+    }),
+    sig: "",
+  }));
+
+  assert.deepEqual(
+    derivePendingUserInputs(
+      [request("old-request", 1), ...newerRows],
+      "owner",
+    ).map(({ event }) => event.id),
+    ["old-request"],
+  );
+});
+
 test("resolved requests become terminal and stay out of pending questions", () => {
   const requestEvent = request("request-1");
   const resolvedEvent = {
@@ -110,6 +133,13 @@ test("resolved requests become terminal and stay out of pending questions", () =
   };
   assert.equal(
     derivePendingUserInputs([requestEvent, resolvedEvent], "owner").length,
+    0,
+  );
+  assert.equal(
+    deriveAnsweredUserInputs(
+      [requestEvent, answer("request-1"), resolvedEvent],
+      "owner",
+    ).length,
     0,
   );
   assert.deepEqual(
