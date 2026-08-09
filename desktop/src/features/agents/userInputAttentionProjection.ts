@@ -2,6 +2,7 @@ import { deriveAgentConversationIdOrNull } from "@/features/agents/conversationI
 import {
   getPendingUserInputRequest,
   ingestUserInputRequest,
+  reconcileUserInputRequestAuthority,
   resolveUserInputRequest,
 } from "@/features/agents/needsYouStore";
 import {
@@ -46,6 +47,16 @@ export type AuthorizedUserInputRequest = {
   rootEventId: string;
 };
 
+export function reconcileAuthorizedUserInputRequests(
+  currentPubkey: string,
+  ownedAgentPubkeys: ReadonlySet<string>,
+): boolean {
+  return reconcileUserInputRequestAuthority(
+    normalizePubkey(currentPubkey),
+    ownedAgentPubkeys,
+  );
+}
+
 export function validateAuthorizedUserInputRequest(
   event: RelayEvent,
   currentPubkey: string,
@@ -55,10 +66,12 @@ export function validateAuthorizedUserInputRequest(
   const channelId = singleTag(event, "h");
   const request = parseUserInputRequest(event);
   const owner = singleTag(event, "p");
+  const rootEventId = deriveUserInputRootEventId(event);
   if (
     !current ||
     !channelId ||
     !request ||
+    !rootEventId ||
     request.channel_id !== channelId ||
     normalizePubkey(owner ?? "") !== current ||
     !ownedAgent(event.pubkey, ownedAgentPubkeys)
@@ -69,7 +82,7 @@ export function validateAuthorizedUserInputRequest(
     id: event.id,
     channelId,
     agentPubkey: normalizePubkey(event.pubkey),
-    rootEventId: deriveUserInputRootEventId(event),
+    rootEventId,
   };
 }
 
@@ -141,6 +154,7 @@ export function projectAuthorizedUserInputEvent(
       rootEventId: request.rootEventId,
       conversationId,
       agentPubkey: request.agentPubkey,
+      ownerPubkey: current,
       createdAt: event.created_at * 1_000,
     });
     return true;

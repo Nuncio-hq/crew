@@ -69,23 +69,38 @@ test("buildThreadAgentStatusChipView returns null with no agents or outcome", ()
   assert.equal(buildThreadAgentStatusChipView([], null, undefined, NOW), null);
 });
 
-test("a newer active turn suppresses a stale receipt from a prior run", () => {
+test("an active turn accepts only a receipt bound to its triggering event", () => {
   const receipt = {
     id: "receipt",
     agentPubkey: AGENT_A,
     channelId: "channel",
     conversationId: "thread-a",
-    createdAt: NOW - 10_000,
+    createdAt: NOW + 86_400_000,
     reviewed: false,
     rootEventId: null,
+    parentEventId: "prior-trigger",
     summary: "Old result",
     verify: "pnpm test",
   };
   assert.equal(
     receiptForActiveTurns(receipt, [
-      { agentPubkey: AGENT_A, anchorAt: NOW, turnCount: 1 },
+      {
+        agentPubkey: AGENT_A,
+        anchorAt: NOW,
+        triggeringEventIds: ["current-trigger"],
+      },
     ]),
     null,
+  );
+  assert.equal(
+    receiptForActiveTurns({ ...receipt, parentEventId: "current-trigger" }, [
+      {
+        agentPubkey: AGENT_A,
+        anchorAt: NOW,
+        triggeringEventIds: ["current-trigger"],
+      },
+    ])?.id,
+    receipt.id,
   );
   assert.equal(receiptForActiveTurns(receipt, []), receipt);
 });

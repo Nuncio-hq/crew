@@ -36,13 +36,26 @@ const MAX_CHIP_AVATARS = 2;
 
 export function receiptForActiveTurns(
   receipt: AgentReceiptSummary | null,
-  summaries: readonly Pick<ActiveConversationAgentTurnSummary, "anchorAt">[],
+  summaries: readonly Pick<
+    ActiveConversationAgentTurnSummary,
+    "agentPubkey" | "triggeringEventIds"
+  >[],
 ): AgentReceiptSummary | null {
   if (!receipt || summaries.length === 0) return receipt;
-  const latestTurnAnchor = Math.max(
-    ...summaries.map((summary) => summary.anchorAt),
+  const activeReceiptAgentTurns = summaries.filter(
+    (summary) =>
+      normalizePubkey(summary.agentPubkey) ===
+      normalizePubkey(receipt.agentPubkey),
   );
-  return receipt.createdAt + 1_000 >= latestTurnAnchor ? receipt : null;
+  if (activeReceiptAgentTurns.length === 0) return receipt;
+  return activeReceiptAgentTurns.some((summary) =>
+    summary.triggeringEventIds.some(
+      (eventId) =>
+        eventId.toLowerCase() === receipt.parentEventId.toLowerCase(),
+    ),
+  )
+    ? receipt
+    : null;
 }
 
 export type ThreadAgentStatusChipState =

@@ -25,7 +25,10 @@ export type NeedsYouRequest = {
 // not ACP tool permission prompts. Tool permissions stay on the established
 // permission/bypass path and never enter Agent Attention's `Needs you` state.
 
-type UserInputNeedsYouRequest = NeedsYouRequest & { kind: "user-input" };
+type UserInputNeedsYouRequest = NeedsYouRequest & {
+  kind: "user-input";
+  ownerPubkey: string;
+};
 
 const requests = new Map<string, NeedsYouRequest>();
 const userInputRequests = new Map<string, UserInputNeedsYouRequest>();
@@ -51,11 +54,15 @@ function notify() {
 }
 
 export function ingestUserInputRequest(
-  input: Omit<UserInputNeedsYouRequest, "kind" | "approvalReferences">,
+  input: Omit<
+    UserInputNeedsYouRequest,
+    "kind" | "approvalReferences" | "ownerPubkey"
+  > & { ownerPubkey?: string },
 ) {
   if (resolvedUserInputRequestIds.has(input.id)) return null;
   const entry: UserInputNeedsYouRequest = {
     ...input,
+    ownerPubkey: input.ownerPubkey?.trim().toLowerCase() ?? "",
     kind: "user-input",
     approvalReferences: [],
   };
@@ -64,6 +71,25 @@ export function ingestUserInputRequest(
   scheduleExpiry();
   if (!prior || JSON.stringify(prior) !== JSON.stringify(entry)) notify();
   return entry;
+}
+
+export function reconcileUserInputRequestAuthority(
+  currentPubkey: string,
+  ownedAgentPubkeys: ReadonlySet<string>,
+): boolean {
+  const current = currentPubkey.trim().toLowerCase();
+  let changed = false;
+  for (const [id, request] of userInputRequests) {
+    if (
+      request.ownerPubkey !== current ||
+      !ownedAgentPubkeys.has(request.agentPubkey.trim().toLowerCase())
+    ) {
+      userInputRequests.delete(id);
+      changed = true;
+    }
+  }
+  if (changed) notify();
+  return changed;
 }
 
 export function resolveUserInputRequest(requestId: string) {

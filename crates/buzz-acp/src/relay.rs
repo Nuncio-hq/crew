@@ -437,6 +437,67 @@ impl RestClient {
         }
         serde_json::from_str(&text).map_err(|e| RelayError::Http(e.to_string()))
     }
+
+    /// Submit a signed durable event and require the relay to acknowledge the
+    /// exact event id with `accepted=true`.
+    ///
+    /// A successful HTTP status alone is not durable admission: the bridge
+    /// response is part of the protocol contract and must be checked before a
+    /// caller advances terminal state.
+    pub async fn submit_event_accepted(&self, event: &Event) -> Result<(), RelayError> {
+        let response = self.submit_event(event).await?;
+        validate_event_admission(event, &response)
+    }
+}
+
+fn validate_event_admission(event: &Event, response: &Value) -> Result<(), RelayError> {
+    let acknowledged_id = response
+        .get("event_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            RelayError::Http("event submission response omitted event_id".to_string())
+        })?;
+    if acknowledged_id != event.id.to_hex() {
+        return Err(RelayError::Http(format!(
+            "event submission acknowledged {acknowledged_id}, expected {}",
+            event.id
+        )));
+    }
+    match response.get("accepted").and_then(Value::as_bool) {
+        Some(true) => Ok(()),
+        Some(false) => Err(RelayError::Http(format!(
+            "relay rejected event {}: {}",
+            event.id,
+            response
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("no reason supplied")
+        ))),
+        None => Err(RelayError::Http(
+            "event submission response omitted accepted".to_string(),
+        )),
+    }
+}
+
+/// Retry one already-signed durable event without changing its id.
+pub(crate) async fn retry_signed_event<F, Fut, Error>(
+    event: &Event,
+    retry_delays: &[Duration],
+    mut submit: F,
+) -> Result<(), Error>
+where
+    F: FnMut(Event) -> Fut,
+    Fut: std::future::Future<Output = Result<(), Error>>,
+{
+    let mut result = submit(event.clone()).await;
+    for delay in retry_delays {
+        if result.is_ok() {
+            return result;
+        }
+        tokio::time::sleep(*delay).await;
+        result = submit(event.clone()).await;
+    }
+    result
 }
 
 /// Events the harness cares about.
@@ -601,13 +662,6 @@ impl RelayEventPublisher {
             }
         });
         (Self { cmd_tx }, event_rx)
-    }
-
-    /// Test-only publisher that does not spawn a Tokio task.
-    #[cfg(test)]
-    pub(crate) fn test_noop() -> Self {
-        let (cmd_tx, _cmd_rx) = mpsc::channel(1);
-        Self { cmd_tx }
     }
 }
 
@@ -4038,6 +4092,71 @@ async fn wait_for_any_ok(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durable_event_admission_requires_exact_accepted_ack() {
+        let keys = nostr::Keys::generate();
+        let event = nostr::EventBuilder::text_note("durable")
+            .sign_with_keys(&keys)
+            .expect("sign durable event");
+
+        assert!(validate_event_admission(
+            &event,
+            &serde_json::json!({
+                "event_id": event.id.to_hex(),
+                "accepted": true,
+                "message": "stored",
+            }),
+        )
+        .is_ok());
+        for invalid in [
+            serde_json::json!({"accepted": true}),
+            serde_json::json!({"event_id": event.id.to_hex()}),
+            serde_json::json!({
+                "event_id": nostr::EventId::all_zeros().to_hex(),
+                "accepted": true,
+            }),
+            serde_json::json!({
+                "event_id": event.id.to_hex(),
+                "accepted": false,
+                "message": "rejected",
+            }),
+        ] {
+            assert!(
+                validate_event_admission(&event, &invalid).is_err(),
+                "invalid ACK was accepted: {invalid}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn durable_retry_reuses_the_same_signed_event() {
+        let event = EventBuilder::text_note("receipt")
+            .sign_with_keys(&Keys::generate())
+            .expect("sign receipt");
+        let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = std::sync::Arc::clone(&attempts);
+
+        retry_signed_event(&event, &[Duration::from_millis(1)], move |candidate| {
+            let recorded = std::sync::Arc::clone(&recorded);
+            async move {
+                let mut ids = recorded.lock().expect("record attempts");
+                ids.push(candidate.id);
+                if ids.len() == 1 {
+                    Err("temporary relay failure")
+                } else {
+                    Ok(())
+                }
+            }
+        })
+        .await
+        .expect("second attempt succeeds");
+
+        assert_eq!(
+            attempts.lock().expect("read attempts").as_slice(),
+            &[event.id, event.id]
+        );
+    }
 
     #[test]
     fn relay_ws_to_http_plain() {

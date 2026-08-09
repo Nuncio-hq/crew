@@ -16,6 +16,15 @@ const RETRY_MAX_DELAY_MS = 30_000;
 
 type LiveSubscription = Extract<RelaySubscription, { mode: "live" }>;
 
+function markLiveSubscriptionOpen(subscription: LiveSubscription) {
+  subscription.ready = true;
+  subscription.onStatus?.({ state: "open" });
+  subscription.resolveReady?.();
+  subscription.resolveReady = undefined;
+  subscription.closedRetryAttempt = 0;
+  clearClosedRetry(subscription);
+}
+
 export function clearClosedRetry(subscription: LiveSubscription) {
   if (subscription.closedRetryTimeout === undefined) return;
   window.clearTimeout(subscription.closedRetryTimeout);
@@ -27,11 +36,16 @@ export function handleRelayClosed({
   subId,
   message,
   sendReq,
+  recoverHistory,
 }: {
   subscriptions: Map<string, RelaySubscription>;
   subId: string;
   message: string;
   sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
+  recoverHistory?: (
+    subId: string,
+    subscription: LiveSubscription,
+  ) => Promise<void>;
 }) {
   const subscription = subscriptions.get(subId);
   if (!subscription) return;
@@ -57,6 +71,7 @@ export function handleRelayClosed({
     subscription,
     message,
     sendReq,
+    recoverHistory,
   });
 }
 
@@ -66,12 +81,17 @@ function recoverLiveSubscriptionFromClosed({
   subscription,
   message,
   sendReq,
+  recoverHistory,
 }: {
   subscriptions: Map<string, RelaySubscription>;
   subId: string;
   subscription: LiveSubscription;
   message: string;
   sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
+  recoverHistory?: (
+    subId: string,
+    subscription: LiveSubscription,
+  ) => Promise<void>;
 }) {
   subscription.ready = false;
   subscription.resolveReady?.();
@@ -89,6 +109,10 @@ function recoverLiveSubscriptionFromClosed({
     subscriptions.delete(subId);
     return;
   }
+
+  subscription.recoveryInFlight = true;
+  subscription.recoveryRequestSent = false;
+  subscription.recoveryEoseReceived = false;
 
   if (subscription.closedRetryTimeout !== undefined) return;
 
@@ -116,17 +140,28 @@ function recoverLiveSubscriptionFromClosed({
   subscription.closedRetryTimeout = window.setTimeout(() => {
     subscription.closedRetryTimeout = undefined;
     if (subscriptions.get(subId) !== subscription) return;
-    void sendReq(subId, subscription.filter).catch((error) => {
-      if (subscriptions.get(subId) !== subscription) return;
-      console.error("Failed to restore closed relay subscription", error);
-      recoverLiveSubscriptionFromClosed({
-        subscriptions,
-        subId,
-        subscription,
-        message,
-        sendReq,
+    subscription.recoveryRequestSent = true;
+    void sendReq(subId, subscription.filter)
+      .then(() => recoverHistory?.(subId, subscription))
+      .then(() => {
+        if (subscriptions.get(subId) !== subscription) return;
+        subscription.recoveryInFlight = false;
+        if (subscription.recoveryEoseReceived) {
+          markLiveSubscriptionOpen(subscription);
+        }
+      })
+      .catch((error) => {
+        if (subscriptions.get(subId) !== subscription) return;
+        console.error("Failed to restore closed relay subscription", error);
+        recoverLiveSubscriptionFromClosed({
+          subscriptions,
+          subId,
+          subscription,
+          message,
+          sendReq,
+          recoverHistory,
+        });
       });
-    });
   }, delayMs);
 }
 
@@ -162,12 +197,13 @@ export function handleSubscriptionEose({
   const subscription = subscriptions.get(subId);
   if (!subscription) return;
   if (subscription.mode === "live") {
-    subscription.ready = true;
-    subscription.onStatus?.({ state: "open" });
-    subscription.resolveReady?.();
-    subscription.resolveReady = undefined;
-    subscription.closedRetryAttempt = 0;
-    clearClosedRetry(subscription);
+    if (subscription.recoveryInFlight) {
+      if (subscription.recoveryRequestSent) {
+        subscription.recoveryEoseReceived = true;
+      }
+      return;
+    }
+    markLiveSubscriptionOpen(subscription);
     return;
   }
   window.clearTimeout(subscription.timeout);

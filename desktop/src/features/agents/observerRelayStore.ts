@@ -38,6 +38,11 @@ import {
   resetProjectThreadWorkspaceStore,
 } from "./projectThreadWorkspaceStore";
 import { logObserverDrop, resetObserverDropLogger } from "./observerDropLogger";
+import { prepareAgentSessionObservation } from "./activeAgentSessionGeneration";
+import {
+  observerEventIdentity,
+  unwrapObserverBatch,
+} from "./observerEventIdentity";
 export { getObserverDropCountsForTest as _testGetObserverDropCounts } from "./observerDropLogger";
 
 const MAX_OBSERVER_EVENTS = 3000;
@@ -253,7 +258,7 @@ function appendAgentEvent(agentPubkey: string, event: ObserverEvent) {
   if (
     current.some(
       (existing) =>
-        existing.seq === event.seq && existing.timestamp === event.timestamp,
+        observerEventIdentity(existing) === observerEventIdentity(event),
     )
   ) {
     return;
@@ -320,20 +325,7 @@ function archiveChannelKey(agentPubkey: string, channelId: string): string {
   return `${normalizePubkey(agentPubkey)}:${channelId}`;
 }
 
-/**
- * Append a decoded archived observer event to the channel-scoped archive
- * event journal. Unlike `appendAgentEvent`, this path does NOT cap or trim —
- * the channel archive window grows only by explicit paged loads from SQLite,
- * so unbounded growth from live relay events is impossible.
- *
- * Deduplicates on `(seq, timestamp)` — identical to `appendAgentEvent` — so
- * events that arrive on the live relay before the archive page is loaded are
- * silently skipped. The archive window and the live transcript are kept
- * strictly separate: live events never write here.
- *
- * Returns `true` if the event was added (state changed), `false` if it was a
- * duplicate and was skipped. The caller batches notifications.
- */
+/** Append one identity-deduplicated event to the uncapped archive window. */
 function appendArchivedChannelEvent(
   agentPubkey: string,
   channelId: string,
@@ -342,11 +334,10 @@ function appendArchivedChannelEvent(
   const key = archiveChannelKey(agentPubkey, channelId);
   const current = archiveEventsByChannel.get(key) ?? [];
 
-  // Dedup: skip if (seq, timestamp) already present in the archive window.
   if (
     current.some(
       (existing) =>
-        existing.seq === event.seq && existing.timestamp === event.timestamp,
+        observerEventIdentity(existing) === observerEventIdentity(event),
     )
   ) {
     return false;
@@ -393,7 +384,10 @@ export function compareObserverEvents(
     }
   }
 
-  return left.seq - right.seq;
+  return (
+    left.seq - right.seq ||
+    observerEventIdentity(left).localeCompare(observerEventIdentity(right))
+  );
 }
 
 /**
@@ -416,31 +410,15 @@ export function isObserverEventAfter(
   return candidate.seq > stored.seq;
 }
 
-// Observer event kind for a batch envelope wrapping multiple events. The ACP
-// harness publishes one frame per second; everything that accumulated between
-// ticks arrives as `{ kind: "batch", payload: { events: [...] } }` with every
-// inner event carrying its own seq/timestamp. Inner events are processed
-// exactly as unbatched ones; the envelope itself is never stored.
-const OBSERVER_BATCH_KIND = "batch";
-
-// Expand a decrypted observer event into its inner events when it is a batch
-// envelope; a non-batch event passes through as a single-element array. A
-// malformed envelope (no events array) degrades to the envelope itself so a
-// harness bug cannot silently blank the session viewer.
-function unwrapObserverBatch(parsed: ObserverEvent): ObserverEvent[] {
-  if (parsed.kind !== OBSERVER_BATCH_KIND) {
-    return [parsed];
-  }
-  const payload = parsed.payload as { events?: unknown } | null;
-  const events = Array.isArray(payload?.events)
-    ? (payload.events as ObserverEvent[])
-    : null;
-  return events && events.length > 0 ? events : [parsed];
-}
-
 // Per-event processing shared by every event a live frame carries (one for a
 // plain frame, many for a batch envelope).
 function processLiveObserverEvent(agentPubkey: string, parsed: ObserverEvent) {
+  if (
+    prepareAgentSessionObservation(normalizePubkey(agentPubkey), parsed) ===
+    "retired"
+  ) {
+    return false;
+  }
   if (!parsed.replayed) markAgentLiveContact(agentPubkey);
   // Track the latest-live-session-id per (agent, channel) on the live path.
   // Only set when the parsed event carries both a sessionId and channelId,
@@ -480,7 +458,38 @@ function processLiveObserverEvent(agentPubkey: string, parsed: ObserverEvent) {
       },
     );
   }
+  return true;
 }
+
+export { processLiveObserverEvent as _testProcessLiveObserverEvent };
+
+function processDecryptedObserverFrame(
+  agentPubkey: string,
+  parsed: ObserverEvent,
+  context: RelayLiveEventContext,
+  sourceEventId?: string,
+) {
+  let accepted = false;
+  for (const inner of unwrapObserverBatch(parsed)) {
+    accepted =
+      processLiveObserverEvent(agentPubkey, {
+        ...inner,
+        sourceEventId,
+        replayed: context.replay,
+      }) || accepted;
+  }
+  if (!accepted) return false;
+  setAgentConnectionError(agentPubkey, null);
+  if (relayConnectionHealthy && observerSubscriptionReady) {
+    setConnectionState("open", null);
+  }
+  return true;
+}
+
+export {
+  processDecryptedObserverFrame as _testProcessDecryptedObserverFrame,
+  setAgentConnectionError as _testSetAgentConnectionError,
+};
 
 async function handleRelayObserverEvent(
   event: RelayEvent,
@@ -523,16 +532,7 @@ async function handleRelayObserverEvent(
       logObserverDrop("stale_generation", event, activeGeneration);
       return;
     }
-    for (const inner of unwrapObserverBatch(parsed)) {
-      processLiveObserverEvent(agentPubkey, {
-        ...inner,
-        replayed: context.replay,
-      });
-    }
-    setAgentConnectionError(agentPubkey, null);
-    if (relayConnectionHealthy && observerSubscriptionReady) {
-      setConnectionState("open", null);
-    }
+    processDecryptedObserverFrame(agentPubkey, parsed, context, event.id);
   } catch (error) {
     if (activeGeneration !== generation) {
       logObserverDrop("stale_generation", event, activeGeneration);
@@ -852,20 +852,21 @@ export async function ingestArchivedObserverEvents(
     try {
       const parsed = (await _decryptFn(event)) as ObserverEvent;
       for (const inner of unwrapObserverBatch(parsed)) {
+        const archived = { ...inner, sourceEventId: event.id };
         // Route archived events to the channel-scoped archive window (no cap)
         // rather than the per-agent live-relay store (MAX_OBSERVER_EVENTS cap).
         // Events without a channelId fall through to the live store so they
         // remain visible in the agent's general transcript.
-        if (inner.channelId) {
+        if (archived.channelId) {
           const added = appendArchivedChannelEvent(
             agentPubkey,
-            inner.channelId,
-            inner,
+            archived.channelId,
+            archived,
           );
           if (added) archiveChanged = true;
         } else {
           // Live path already calls notifyListeners() inside appendAgentEvent.
-          appendAgentEvent(agentPubkey, inner);
+          appendAgentEvent(agentPubkey, archived);
         }
       }
     } catch {

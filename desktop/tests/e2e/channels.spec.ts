@@ -512,12 +512,14 @@ test("channel question card accepts an answer", async ({ page }) => {
       __BUZZ_E2E_EMIT_MOCK_USER_INPUT__?: (input: {
         channelName: string;
         requestId?: string;
+        rootEventId: string;
         content: string;
       }) => unknown;
     };
     win.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__?.({
       channelName: "general",
       requestId: "a".repeat(64),
+      rootEventId: "b".repeat(64),
       content: JSON.stringify({
         request_id: "elicit-1",
         session_id: "session-1",

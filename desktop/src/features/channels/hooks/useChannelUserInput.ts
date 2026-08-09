@@ -2,6 +2,10 @@ import * as React from "react";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { relayClient } from "@/shared/api/relayClient";
 import { buildChannelUserInputFilter } from "@/shared/api/relayChannelFilters";
+import {
+  createHydrationRetryController,
+  enumerateDurableActionEvents,
+} from "@/features/agents/durableActionHydration";
 import type { RelayEvent } from "@/shared/api/types";
 import { sendChannelUserInputAnswer } from "@/shared/api/tauriUserInput";
 import { KIND_AGENT_USER_INPUT_REQUESTED } from "@/shared/constants/kinds";
@@ -16,13 +20,15 @@ import {
 } from "@/features/channels/lib/userInput";
 import {
   projectAuthorizedUserInputEvent,
+  reconcileAuthorizedUserInputRequests,
   type AuthorizedUserInputRequest,
   validateAuthorizedUserInputRequest,
   validateAuthorizedUserInputTransition,
 } from "@/features/agents/userInputAttentionProjection";
 import { useCurrentOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
 
-const RETAINED_EVENTS = 200;
+const USER_INPUT_PAGE_SIZE = 200;
+const USER_INPUT_HYDRATION_RETRY_MS = 5_000;
 
 export function useChannelUserInput(channelId: string | null) {
   const identityQuery = useIdentityQuery();
@@ -47,6 +53,7 @@ export function useChannelUserInput(channelId: string | null) {
   );
 
   React.useEffect(() => {
+    reconcileAuthorizedUserInputRequests(currentPubkey, ownedAgentPubkeys);
     setEvents([]);
     setOptimisticallyResolved(new Set());
     setSentRequestIds(new Set());
@@ -58,7 +65,9 @@ export function useChannelUserInput(channelId: string | null) {
     let cancelled = false;
     let dispose: (() => Promise<void>) | undefined;
     const authorizedRequests = new Map<string, AuthorizedUserInputRequest>();
-    const filter = buildChannelUserInputFilter(channelId, RETAINED_EVENTS);
+    const candidates = new Map<string, RelayEvent>();
+    const liveFilter = buildChannelUserInputFilter(channelId, 0);
+    const { limit: _liveLimit, ...historyFilter } = liveFilter;
     const authorizeEvent = (event: RelayEvent) => {
       const request = validateAuthorizedUserInputRequest(
         event,
@@ -97,65 +106,79 @@ export function useChannelUserInput(channelId: string | null) {
       );
       return true;
     };
+    const rebuildAuthorizedEvents = () => {
+      authorizedRequests.clear();
+      const ordered = [...candidates.values()].sort(
+        (left, right) =>
+          Number(right.kind === KIND_AGENT_USER_INPUT_REQUESTED) -
+            Number(left.kind === KIND_AGENT_USER_INPUT_REQUESTED) ||
+          left.created_at - right.created_at ||
+          left.id.localeCompare(right.id),
+      );
+      const authorized = ordered.filter(authorizeEvent);
+      const pendingIds = new Set(
+        derivePendingUserInputs(authorized, currentPubkey).map(
+          ({ event }) => event.id,
+        ),
+      );
+      setVisibleRequestIds((current) => {
+        const next = new Set(current);
+        for (const id of pendingIds) next.add(id);
+        return next;
+      });
+      setEvents(
+        authorized.sort(
+          (left, right) =>
+            right.created_at - left.created_at ||
+            right.id.localeCompare(left.id),
+        ),
+      );
+    };
     const onEvent = (event: RelayEvent) => {
-      if (cancelled || !authorizeEvent(event)) return;
+      if (cancelled || candidates.has(event.id)) return;
+      candidates.set(event.id, event);
       if (event.kind === KIND_AGENT_USER_INPUT_REQUESTED) {
         setVisibleRequestIds((current) => {
           if (current.has(event.id)) return current;
           return new Set(current).add(event.id);
         });
       }
-      setEvents((current) => {
-        if (current.some((existing) => existing.id === event.id))
-          return current;
-        return [event, ...current].slice(0, RETAINED_EVENTS);
-      });
+      rebuildAuthorizedEvents();
     };
 
-    const load = async () => {
-      try {
-        dispose = await relayClient.subscribeLive(filter, onEvent);
+    const hydrate = async () => {
+      if (!dispose) {
+        dispose = await relayClient.subscribeLive(liveFilter, onEvent);
         if (cancelled) {
           await dispose();
           dispose = undefined;
           return;
         }
-        const history = await relayClient.fetchEvents(filter);
-        if (!cancelled) {
-          const ordered = [...history].sort(
-            (left, right) =>
-              Number(right.kind === KIND_AGENT_USER_INPUT_REQUESTED) -
-                Number(left.kind === KIND_AGENT_USER_INPUT_REQUESTED) ||
-              left.created_at - right.created_at ||
-              left.id.localeCompare(right.id),
-          );
-          const authorizedHistory = ordered.filter(authorizeEvent);
-          const pendingIds = new Set(
-            derivePendingUserInputs(authorizedHistory, currentPubkey).map(
-              ({ event }) => event.id,
-            ),
-          );
-          setVisibleRequestIds((current) => {
-            const next = new Set(current);
-            for (const id of pendingIds) next.add(id);
-            return next;
-          });
-          setEvents((current) => {
-            const byId = new Map(current.map((event) => [event.id, event]));
-            for (const event of authorizedHistory) byId.set(event.id, event);
-            return [...byId.values()]
-              .sort((left, right) => right.created_at - left.created_at)
-              .slice(0, RETAINED_EVENTS);
-          });
-        }
-      } catch (error) {
-        console.error("Failed to load agent questions", error);
+      }
+      const history = await enumerateDurableActionEvents(
+        (pageFilter) => relayClient.fetchEvents(pageFilter),
+        historyFilter,
+        USER_INPUT_PAGE_SIZE,
+      );
+      if (!cancelled) {
+        for (const event of history) candidates.set(event.id, event);
+        rebuildAuthorizedEvents();
       }
     };
+    const hydrationRetry = createHydrationRetryController({
+      hydrate,
+      onError: (error) =>
+        console.error("Failed to load agent questions", error),
+      retryDelayMs: USER_INPUT_HYDRATION_RETRY_MS,
+      setTimeoutFn: (callback, delayMs) =>
+        globalThis.setTimeout(callback, delayMs),
+      clearTimeoutFn: (timer) => globalThis.clearTimeout(timer),
+    });
 
-    void load();
+    void hydrationRetry.run();
     return () => {
       cancelled = true;
+      hydrationRetry.stop();
       void dispose?.();
     };
   }, [channelId, currentPubkey, ownedAgentPubkeys]);

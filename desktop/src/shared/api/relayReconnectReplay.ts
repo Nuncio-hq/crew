@@ -1,5 +1,4 @@
 import {
-  CHANNEL_EVENT_KINDS,
   KIND_AGENT_RECEIPT,
   KIND_AGENT_USER_INPUT_ANSWER,
   KIND_AGENT_USER_INPUT_REQUESTED,
@@ -52,6 +51,10 @@ export const REPLAY_BATCH_SIZE = 8;
  * can absorb each batch without triggering rate-limiting on the next.
  */
 export const REPLAY_INTER_BATCH_DELAY_MS = 50;
+
+export function initialRecoveryFloor(now: number) {
+  return Math.max(0, now - RECONNECT_REPLAY_SKEW_SECS);
+}
 const DURABLE_ACTION_KINDS = new Set([
   KIND_AGENT_USER_INPUT_REQUESTED,
   KIND_AGENT_USER_INPUT_ANSWER,
@@ -60,10 +63,10 @@ const DURABLE_ACTION_KINDS = new Set([
   KIND_REACTION,
 ]);
 
-function shouldDrainTimestampBuckets(filter: RelaySubscriptionFilter) {
+function isDurableActionFilter(filter: RelaySubscriptionFilter) {
+  const kinds = filter.kinds ?? [];
   return (
-    filter.kinds.length > 0 &&
-    filter.kinds.every((kind) => DURABLE_ACTION_KINDS.has(kind))
+    kinds.length > 0 && kinds.every((kind) => DURABLE_ACTION_KINDS.has(kind))
   );
 }
 
@@ -111,9 +114,56 @@ export function shouldPageReconnectReplay(filter: RelaySubscriptionFilter) {
   return (
     Array.isArray(filter["#h"]) &&
     filter["#h"].length === 1 &&
-    (CHANNEL_EVENT_KINDS.every((kind) => filter.kinds.includes(kind)) ||
-      shouldDrainTimestampBuckets(filter))
+    (filter.kinds?.length ?? 0) > 0
   );
+}
+
+function replaySinceForSubscription(
+  subscription: Extract<RelaySubscription, { mode: "live" }>,
+): number | undefined {
+  const cursorSince =
+    subscription.lastSeenCreatedAt === undefined
+      ? undefined
+      : Math.max(
+          0,
+          subscription.lastSeenCreatedAt - RECONNECT_REPLAY_SKEW_SECS,
+        );
+  const candidates = [
+    cursorSince,
+    subscription.pendingReplaySince,
+    subscription.recoveryFloorCreatedAt,
+  ].filter((value): value is number => value !== undefined);
+  return candidates.length === 0 ? undefined : Math.min(...candidates);
+}
+
+export async function recoverLiveSubscriptionHistory({
+  subscription,
+  now,
+  isActive,
+  requestHistory,
+}: {
+  subscription: Extract<RelaySubscription, { mode: "live" }>;
+  now: number;
+  isActive: () => boolean;
+  requestHistory: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
+}): Promise<boolean> {
+  const since = replaySinceForSubscription(subscription);
+  if (since === undefined || !shouldPageReconnectReplay(subscription.filter)) {
+    return true;
+  }
+  subscription.pendingReplaySince = since;
+  const completed = await replayReconnectHistoryPages({
+    subscription,
+    since,
+    until: now,
+    isActive,
+    requestHistory,
+  });
+  if (completed) {
+    subscription.pendingReplaySince = undefined;
+    subscription.recoveryFloorCreatedAt = now;
+  }
+  return completed;
 }
 
 /**
@@ -140,7 +190,7 @@ export async function replayReconnectHistoryPages({
   requestHistory: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
 }): Promise<boolean> {
   let pageUntil = until;
-  const deferDelivery = shouldDrainTimestampBuckets(subscription.filter);
+  const deferDelivery = isDurableActionFilter(subscription.filter);
   const deliveredEventIds = new Set<string>();
   const deferredEventsById = new Map<string, RelayEvent>();
 
@@ -191,22 +241,16 @@ export async function replayReconnectHistoryPages({
 
     const oldestCreatedAt = events[0]?.created_at;
     if (oldestCreatedAt === undefined) return complete();
-    if (shouldDrainTimestampBuckets(subscription.filter)) {
-      const boundary = await drainRelayTimestampBucket(
-        requestHistory,
-        subscription.filter,
-        oldestCreatedAt,
-        RECONNECT_REPLAY_PAGE_LIMIT,
-      );
-      if (!isActive()) return false;
-      deliver(boundary);
-    }
+    const boundary = await drainRelayTimestampBucket(
+      requestHistory,
+      subscription.filter,
+      oldestCreatedAt,
+      RECONNECT_REPLAY_PAGE_LIMIT,
+    );
+    if (!isActive()) return false;
+    deliver(boundary);
     if (oldestCreatedAt <= since) return complete();
-    pageUntil = shouldDrainTimestampBuckets(subscription.filter)
-      ? oldestCreatedAt - 1
-      : oldestCreatedAt < pageUntil
-        ? oldestCreatedAt
-        : oldestCreatedAt - 1;
+    pageUntil = oldestCreatedAt - 1;
   }
   return complete();
 }
@@ -261,21 +305,7 @@ export async function replayLiveSubscriptions({
     )
     .map(([subId, subscription]) => {
       subscription.ready = false;
-      const cursorSince =
-        subscription.lastSeenCreatedAt === undefined
-          ? undefined
-          : Math.max(
-              0,
-              subscription.lastSeenCreatedAt - RECONNECT_REPLAY_SKEW_SECS,
-            );
-      // A pinned floor from a previously failed backfill takes precedence
-      // over the cursor: live events kept advancing `lastSeenCreatedAt`
-      // while the older window stayed unresolved, and starting from the
-      // cursor would skip it permanently.
-      const replaySince =
-        cursorSince === undefined
-          ? subscription.pendingReplaySince
-          : Math.min(cursorSince, subscription.pendingReplaySince ?? Infinity);
+      const replaySince = replaySinceForSubscription(subscription);
       const shouldPageReplay =
         replaySince !== undefined &&
         shouldPageReconnectReplay(subscription.filter);
@@ -371,7 +401,10 @@ export async function replayLiveSubscriptions({
           // connection shares this subscription object and still needs the
           // pinned floor for its own replay. Only a genuinely completed
           // window may release it.
-          if (completed) subscription.pendingReplaySince = undefined;
+          if (completed) {
+            subscription.pendingReplaySince = undefined;
+            subscription.recoveryFloorCreatedAt = now;
+          }
           return;
         } catch (error) {
           console.warn(

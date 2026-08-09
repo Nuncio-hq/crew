@@ -145,6 +145,46 @@ describe("activeAgentTurnsStore", () => {
     );
   });
 
+  it("keeps concurrent producer sessions isolated within one channel", () => {
+    syncAgentTurnsFromEvents(AGENT, [
+      makeEvent({
+        seq: 1,
+        sessionId: "session-a",
+        agentIndex: 0,
+        channelId: "shared-channel",
+        conversationId: "thread-a",
+        turnId: "turn-a",
+      }),
+      makeEvent({
+        seq: 1,
+        timestamp: "2024-01-01T00:00:01Z",
+        sessionId: "session-b",
+        agentIndex: 1,
+        channelId: "shared-channel",
+        conversationId: "thread-b",
+        turnId: "turn-b",
+      }),
+      makeEvent({
+        seq: 2,
+        timestamp: "2024-01-01T00:00:02Z",
+        kind: "turn_completed",
+        sessionId: "session-a",
+        agentIndex: 0,
+        channelId: "shared-channel",
+        conversationId: "thread-a",
+        turnId: "turn-a",
+      }),
+    ]);
+
+    assert.deepEqual(getActiveTurnControlTargetsForAgent(AGENT), [
+      {
+        channelId: "shared-channel",
+        conversationId: "thread-b",
+        turnId: "turn-b",
+      },
+    ]);
+  });
+
   describe("seq restart detection", () => {
     it("processes post-restart events whose timestamp climbs past the watermark", () => {
       // Process events up to seq 50.
@@ -230,7 +270,7 @@ describe("activeAgentTurnsStore", () => {
           sessionId: "session-new",
           turnId: "turn-new",
           channelId: "c1",
-          conversationId: "conversation-new",
+          conversationId: "conversation-old",
           timestamp: "2024-01-01T00:00:00Z",
         }),
       ]);
@@ -244,7 +284,7 @@ describe("activeAgentTurnsStore", () => {
       assert.equal(
         getActiveTurnActivityBounds({
           agentPubkeys: [AGENT],
-          conversationId: "conversation-new",
+          conversationId: "conversation-old",
         })?.anchorAt,
         epoch,
         "the previous session's skew sample must not poison a new session",
@@ -256,7 +296,7 @@ describe("activeAgentTurnsStore", () => {
           sessionId: "session-old",
           turnId: "delayed-old-turn",
           channelId: "c1",
-          conversationId: "delayed-old-conversation",
+          conversationId: "conversation-old",
           timestamp: "2024-01-01T02:00:00Z",
         }),
       ]);

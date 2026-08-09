@@ -1175,6 +1175,8 @@ declare global {
     __BUZZ_E2E_EMIT_MOCK_USER_INPUT__?: (input: {
       channelName: string;
       requestId?: string;
+      rootEventId: string;
+      parentEventId?: string;
       content: string;
       pubkey?: string;
     }) => RelayEvent;
@@ -10400,6 +10402,8 @@ export function maybeInstallE2eTauriMocks() {
   window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__ = ({
     channelName,
     requestId,
+    rootEventId,
+    parentEventId = rootEventId,
     content,
     pubkey,
   }) => {
@@ -10413,6 +10417,12 @@ export function maybeInstallE2eTauriMocks() {
       [
         ["h", channel.id],
         ["p", DEFAULT_MOCK_IDENTITY.pubkey],
+        ...(rootEventId === parentEventId
+          ? [["e", parentEventId, "", "reply"]]
+          : [
+              ["e", rootEventId, "", "root"],
+              ["e", parentEventId, "", "reply"],
+            ]),
       ],
       pubkey ?? OWNED_RELAY_AGENT_PUBKEY,
       Math.floor(Date.now() / 1000),

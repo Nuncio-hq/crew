@@ -15,6 +15,7 @@ export type ActiveConversationAgentTurnSummary = {
   lastSubstantiveProgressAt: number;
   progressKind: AgentProgressKind;
   progressLabel: string;
+  triggeringEventIds: string[];
 };
 
 const EMPTY: ActiveConversationAgentTurnSummary[] = [];
@@ -54,6 +55,7 @@ export function getActiveTurnSummariesForConversation(
         lastSubstantiveProgressAt: turn.lastSubstantiveProgressAt,
         progressKind: turn.progressKind,
         progressLabel: turn.progressLabel,
+        triggeringEventIds: [...turn.triggeringEventIds],
       });
       return;
     }
@@ -64,6 +66,9 @@ export function getActiveTurnSummariesForConversation(
       prior.progressKind = turn.progressKind;
       prior.progressLabel = turn.progressLabel;
     }
+    prior.triggeringEventIds = [
+      ...new Set([...prior.triggeringEventIds, ...turn.triggeringEventIds]),
+    ];
   });
 
   const result =

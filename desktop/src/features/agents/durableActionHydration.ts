@@ -11,6 +11,54 @@ import {
 
 type FetchPage = (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
 
+export function createHydrationRetryController<TTimer>({
+  hydrate,
+  onError,
+  retryDelayMs,
+  setTimeoutFn,
+  clearTimeoutFn,
+}: {
+  hydrate: () => Promise<void>;
+  onError: (error: unknown) => void;
+  retryDelayMs: number;
+  setTimeoutFn: (callback: () => void, delayMs: number) => TTimer;
+  clearTimeoutFn: (timer: TTimer) => void;
+}) {
+  let stopped = false;
+  let retryTimer: TTimer | undefined;
+  let running: Promise<void> | null = null;
+
+  const run = (): Promise<void> => {
+    if (stopped) return Promise.resolve();
+    if (running) return running;
+    running = hydrate()
+      .catch((error) => {
+        if (stopped) return;
+        onError(error);
+        if (retryTimer !== undefined) return;
+        retryTimer = setTimeoutFn(() => {
+          retryTimer = undefined;
+          void run();
+        }, retryDelayMs);
+      })
+      .finally(() => {
+        running = null;
+      });
+    return running;
+  };
+
+  return {
+    run,
+    stop() {
+      stopped = true;
+      if (retryTimer !== undefined) {
+        clearTimeoutFn(retryTimer);
+        retryTimer = undefined;
+      }
+    },
+  };
+}
+
 function byDurableOrder(left: RelayEvent, right: RelayEvent): number {
   return left.created_at - right.created_at || left.id.localeCompare(right.id);
 }

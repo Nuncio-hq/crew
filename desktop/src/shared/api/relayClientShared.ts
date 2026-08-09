@@ -31,7 +31,7 @@ export function isRelayConnectionDegraded(state: ConnectionState): boolean {
 
 export type RelaySubscriptionFilter = {
   ids?: string[];
-  kinds: number[];
+  kinds?: number[];
   limit: number;
   authors?: string[];
   since?: number;
@@ -68,6 +68,8 @@ type LiveSubscription = {
   ready: boolean;
   resolveReady?: () => void;
   lastSeenCreatedAt?: number;
+  /** Oldest wall-clock second not yet proved complete by reconnect backfill. */
+  recoveryFloorCreatedAt?: number;
   /**
    * Lower bound of a reconnect backfill window that has not yet completed.
    *
@@ -79,6 +81,12 @@ type LiveSubscription = {
    * `min(pendingReplaySince, cursor window)`.
    */
   pendingReplaySince?: number;
+  /** Replacement REQ was sent but its durable history window is not complete. */
+  recoveryInFlight?: boolean;
+  /** The replacement REQ has been dispatched; later EOSE belongs to recovery. */
+  recoveryRequestSent?: boolean;
+  /** Replacement REQ reached EOSE while durable history recovery was pending. */
+  recoveryEoseReceived?: boolean;
   closedRetryAttempt?: number;
   closedRetryTimeout?: number;
 };

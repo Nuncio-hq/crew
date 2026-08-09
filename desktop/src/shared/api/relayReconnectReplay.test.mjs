@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildReconnectReplayFilter,
+  initialRecoveryFloor,
   PAGE_REPLAY_MAX_ATTEMPTS,
   replayReconnectHistoryPages,
   replayLiveSubscriptions,
@@ -77,7 +78,10 @@ function event(id, createdAt) {
 
 function eventRange(prefix, start, count) {
   return Array.from({ length: count }, (_, index) =>
-    event(`${prefix}-${index}`, start + index),
+    event(
+      `${prefix.charCodeAt(0).toString(16)}${index.toString(16).padStart(62, "0")}`,
+      start + index,
+    ),
   );
 }
 
@@ -132,14 +136,14 @@ test("reconnect replay preserves the live-only zero-history contract", () => {
   });
 });
 
-test("live-only subscriptions do not page reconnect history", () => {
+test("channel-scoped live-only subscriptions page reconnect history", () => {
   const filter = {
     kinds: [9],
     "#h": ["channel-1"],
     limit: 0,
   };
 
-  assert.equal(shouldPageReconnectReplay(filter), false);
+  assert.equal(shouldPageReconnectReplay(filter), true);
 });
 
 test("durable action subscriptions page missed reconnect history even when live-only", () => {
@@ -160,6 +164,47 @@ test("durable action subscriptions page missed reconnect history even when live-
     }),
     true,
   );
+});
+
+test("durable live-only subscription with no event watermark replays from its recovery floor", async () => {
+  resetGate(0);
+  const delivered = [];
+  const historyFilters = [];
+  const subscription = {
+    mode: "live",
+    filter: {
+      kinds: [46043],
+      "#h": ["channel-1"],
+      limit: 0,
+    },
+    onEvent: (received) => delivered.push(received),
+    ready: true,
+    recoveryFloorCreatedAt: 100,
+  };
+
+  await replayLiveSubscriptions({
+    subscriptions: new Map([["receipt-live", subscription]]),
+    now: 200,
+    sendRaw: async () => {},
+    requestHistory: async (filter) => {
+      historyFilters.push(filter);
+      return [event("missed-receipt", 150)];
+    },
+  });
+
+  assert.equal(historyFilters.length, 1);
+  assert.equal(historyFilters[0].since, 100);
+  assert.equal(historyFilters[0].limit, 500);
+  assert.deepEqual(
+    delivered.map(({ id }) => id),
+    ["missed-receipt"],
+  );
+  assert.equal(subscription.recoveryFloorCreatedAt, 200);
+});
+
+test("initial recovery floor overlaps producer clock skew", () => {
+  assert.equal(initialRecoveryFloor(100), 95);
+  assert.equal(initialRecoveryFloor(3), 0);
 });
 
 test("reconnect replay keeps the stricter existing since window", () => {
@@ -415,9 +460,10 @@ test("channel reconnect replay pages the missed window until a short page", asyn
   const sentPayloads = [];
   const pages = [
     eventRange("newest", 1501, 500),
-    eventRange("middle", 1002, 500),
-    eventRange("oldest", 995, 8),
+    eventRange("middle", 1001, 500),
+    eventRange("oldest", 995, 6),
   ];
+  const allEvents = pages.flat();
   const filter = buildChannelFilter("channel-1", 50);
   const subscriptions = new Map([
     [
@@ -438,6 +484,13 @@ test("channel reconnect replay pages the missed window until a short page", asyn
       sentPayloads.push(payload);
     },
     requestHistory: async (filter) => {
+      if (filter.ids) {
+        return allEvents.filter(
+          (candidate) =>
+            candidate.created_at === filter.since &&
+            filter.ids.some((prefix) => candidate.id.startsWith(prefix)),
+        );
+      }
       historyFilters.push(filter);
       return pages.shift() ?? [];
     },
@@ -467,17 +520,17 @@ test("channel reconnect replay pages the missed window until a short page", asyn
       "#h": ["channel-1"],
       limit: 500,
       since: 995,
-      until: 1501,
+      until: 1500,
     },
     {
       kinds: filter.kinds,
       "#h": ["channel-1"],
       limit: 500,
       since: 995,
-      until: 1002,
+      until: 1000,
     },
   ]);
-  assert.equal(delivered.length, 1008);
+  assert.equal(delivered.length, 1006);
 });
 
 test("durable reconnect replay drains a full timestamp bucket by id prefix", async () => {
@@ -496,6 +549,49 @@ test("durable reconnect replay drains a full timestamp bucket by id prefix", asy
     subscription: {
       mode: "live",
       filter: { kinds: [46043], "#h": ["channel-1"], limit: 0 },
+      onEvent: (received) => delivered.push(received),
+    },
+    since: 90,
+    until: 100,
+    isActive: () => true,
+    requestHistory: async (filter) => {
+      if (filter.ids) {
+        return bucket
+          .filter((candidate) =>
+            filter.ids.some((prefix) => candidate.id.startsWith(prefix)),
+          )
+          .slice(0, filter.limit);
+      }
+      if (!initialPageSent) {
+        initialPageSent = true;
+        return bucket.slice(0, filter.limit);
+      }
+      return filter.until === 99 ? [older] : [];
+    },
+  });
+
+  assert.equal(completed, true);
+  assert.equal(new Set(delivered.map((received) => received.id)).size, 502);
+  assert.ok(delivered.some((received) => received.id === bucket.at(-1).id));
+  assert.ok(delivered.some((received) => received.id === older.id));
+});
+
+test("ordinary channel reconnect replay drains a full timestamp bucket by id prefix", async () => {
+  const bucket = Array.from({ length: 501 }, (_, index) => {
+    const prefix = (index % 16).toString(16);
+    const suffix = Math.floor(index / 16)
+      .toString(16)
+      .padStart(63, "0");
+    return event(`${prefix}${suffix}`, 100);
+  });
+  const older = event("f".repeat(64), 99);
+  const delivered = [];
+  let initialPageSent = false;
+
+  const completed = await replayReconnectHistoryPages({
+    subscription: {
+      mode: "live",
+      filter: { kinds: [9], "#h": ["channel-1"], limit: 0 },
       onEvent: (received) => delivered.push(received),
     },
     since: 90,
@@ -599,6 +695,7 @@ test("reconnect replay starts live REQs in parallel and preserves per-sub page o
     },
     requestHistory: async (filter) => {
       const channelId = filter["#h"]?.[0];
+      if (filter.ids) return [];
       historyFiltersByChannel[channelId].push(filter.until);
       return pagesByChannel[channelId].shift() ?? [];
     },
@@ -622,8 +719,8 @@ test("reconnect replay starts live REQs in parallel and preserves per-sub page o
   await replayPromise;
 
   assert.deepEqual(historyFiltersByChannel, {
-    "channel-1": [2000, 1501],
-    "channel-2": [2000, 1701],
+    "channel-1": [2000, 1500],
+    "channel-2": [2000, 1700],
   });
 });
 

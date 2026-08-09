@@ -3,6 +3,7 @@ import { beforeEach, describe, it } from "node:test";
 
 import { deriveAgentConversationId } from "./conversationId.ts";
 import {
+  _testPendingAgentReceiptReviewCount,
   getAgentReceipts,
   getLatestAgentReceiptForConversation,
   getLatestOwnedAgentReceiptForConversation,
@@ -67,6 +68,7 @@ describe("agentReceiptStore", () => {
       channelId: CHANNEL,
       conversationId: deriveAgentConversationId(CHANNEL, ROOT),
       rootEventId: ROOT,
+      parentEventId: ROOT,
       agentPubkey: AGENT,
       createdAt: 100_000,
       summary: "Implemented recovery",
@@ -87,6 +89,27 @@ describe("agentReceiptStore", () => {
           ],
         }),
       ),
+      false,
+    );
+  });
+
+  it("rejects a receipt when its parent has no canonical agent target", () => {
+    const event = receiptEvent();
+    const parent = {
+      id: ROOT,
+      pubkey: OWNER,
+      created_at: 99,
+      kind: 9,
+      tags: [["h", CHANNEL]],
+      content: "trigger",
+      sig: "",
+    };
+    assert.equal(ingestValidatedAgentReceiptEvent(event, parent), false);
+    assert.equal(
+      ingestValidatedAgentReceiptEvent(event, {
+        ...parent,
+        tags: [["h", CHANNEL], ["p"]],
+      }),
       false,
     );
   });
@@ -138,6 +161,63 @@ describe("agentReceiptStore", () => {
       getLatestAgentReceiptForConversation(CONVERSATION)?.reviewed,
       true,
     );
+  });
+
+  it("does not evict an authorized review before its receipt arrives", () => {
+    ingestAgentReceiptReviewEvent(
+      {
+        id: "1".repeat(64),
+        pubkey: OWNER,
+        created_at: 101,
+        kind: 7,
+        tags: [["e", RECEIPT]],
+        content: "✅",
+        sig: "",
+      },
+      OWNER,
+      OWNED_AGENTS,
+    );
+    for (let index = 1; index <= 500; index += 1) {
+      ingestAgentReceiptReviewEvent(
+        {
+          id: index.toString(16).padStart(64, "0"),
+          pubkey: OWNER,
+          created_at: 101 + index,
+          kind: 7,
+          tags: [["e", (index + 1).toString(16).padStart(64, "0")]],
+          content: "✅",
+          sig: "",
+        },
+        OWNER,
+        OWNED_AGENTS,
+      );
+    }
+
+    assert.equal(ingestAgentReceiptEvent(receiptEvent()), true);
+    assert.equal(
+      getLatestAgentReceiptForConversation(CONVERSATION)?.reviewed,
+      true,
+    );
+  });
+
+  it("bounds unknown review candidates that arrive before receipts", () => {
+    for (let index = 0; index < 1_000; index += 1) {
+      ingestAgentReceiptReviewEvent(
+        {
+          id: (index + 1).toString(16).padStart(64, "0"),
+          pubkey: OWNER,
+          created_at: 101 + index,
+          kind: 7,
+          tags: [["e", (index + 2_000).toString(16).padStart(64, "0")]],
+          content: "✅",
+          sig: "",
+        },
+        OWNER,
+        OWNED_AGENTS,
+      );
+    }
+
+    assert.ok(_testPendingAgentReceiptReviewCount() <= 512);
   });
 
   it("rejects malformed receipts and another user's reactions", () => {
@@ -228,6 +308,29 @@ describe("agentReceiptStore", () => {
     assert.equal(
       getLatestAgentReceiptForConversation(CONVERSATION).reviewed,
       false,
+    );
+  });
+
+  it("skips a malformed trailing e tag when finding the direct target", () => {
+    ingestAgentReceiptEvent(receiptEvent());
+    assert.equal(
+      ingestAgentReceiptReviewEvent(
+        {
+          id: "4".repeat(64),
+          pubkey: OWNER,
+          created_at: 101,
+          kind: 7,
+          tags: [
+            ["e", RECEIPT],
+            ["e", "not-an-event-id"],
+          ],
+          content: "✅",
+          sig: "",
+        },
+        OWNER,
+        OWNED_AGENTS,
+      ),
+      true,
     );
   });
 });

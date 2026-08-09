@@ -1,7 +1,10 @@
 import * as React from "react";
 
 import { ingestApprovalRequestFeedItem } from "@/features/agents/needsYouStore";
-import { projectAuthorizedUserInputEvent } from "@/features/agents/userInputAttentionProjection";
+import {
+  projectAuthorizedUserInputEvent,
+  reconcileAuthorizedUserInputRequests,
+} from "@/features/agents/userInputAttentionProjection";
 import {
   deriveMissionInboxSections,
   useMissionInboxActiveTurns,
@@ -50,6 +53,10 @@ export function useMissionInboxSections({
   ownedAgentPubkeys,
 }: UseMissionInboxSectionsInput): MissionInboxSections {
   React.useEffect(() => {
+    reconcileAuthorizedUserInputRequests(
+      currentPubkey ?? "",
+      ownedAgentPubkeys,
+    );
     for (const item of feed?.feed.needsAction ?? []) {
       if (item.kind === 46010) {
         ingestApprovalRequestFeedItem(item);

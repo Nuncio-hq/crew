@@ -25,6 +25,7 @@ pub use buzz_core::kind;
 ///
 /// - Direct reply (root == parent): emits `["e", root, "", "reply"]`
 /// - Nested reply (root ≠ parent): emits `["e", root, "", "root"]` + `["e", parent, "", "reply"]`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadRef {
     /// The root event of the thread.
     pub root_event_id: nostr::EventId,

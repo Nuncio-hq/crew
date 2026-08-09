@@ -6,7 +6,7 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 const SHOTS = "test-results/mission-inbox";
 const CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const ROOT_ID = "1".repeat(64);
-const REQUEST_ID = ROOT_ID;
+const REQUEST_ID = "4".repeat(64);
 const CONVERSATION_ID = "2096b1ca-3834-7197-6a2a-bc5b580e07e6";
 
 const MOCK_PUBKEY = "deadbeef".repeat(8);
@@ -47,12 +47,22 @@ test.describe("mission inbox", () => {
       )
       .toBe(true);
     await page.evaluate(
-      ({ channelId, id, pubkey }) => {
+      ({ channelId, id, ownerPubkey, pubkey, rootEventId }) => {
         const emit = window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__;
-        if (!emit) throw new Error("Mock user-input helper is unavailable.");
+        const emitMessage = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+        if (!emit || !emitMessage)
+          throw new Error("Mock user-input helpers are unavailable.");
+        emitMessage({
+          channelName: "general",
+          content: "Agent mission trigger",
+          id: rootEventId,
+          mentionPubkeys: [pubkey],
+          pubkey: ownerPubkey,
+        });
         emit({
           channelName: "general",
           requestId: id,
+          rootEventId,
           pubkey,
           content: JSON.stringify({
             channel_id: channelId,
@@ -68,7 +78,9 @@ test.describe("mission inbox", () => {
       {
         channelId: CHANNEL_ID,
         id: REQUEST_ID,
+        ownerPubkey: MOCK_PUBKEY,
         pubkey: TEST_IDENTITIES.alice.pubkey,
+        rootEventId: ROOT_ID,
       },
     );
 
@@ -264,7 +276,7 @@ test.describe("mission inbox", () => {
       .toBe(true);
 
     await page.evaluate(
-      ({ agentPubkey, channelId, receiptId, rootId }) => {
+      ({ agentPubkey, channelId, ownerPubkey, receiptId, rootId }) => {
         const emit = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
         const push = window.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__;
         if (!emit || !push)
@@ -273,7 +285,8 @@ test.describe("mission inbox", () => {
           channelName: "general",
           content: "Reviewable mission root",
           id: rootId,
-          pubkey: agentPubkey,
+          mentionPubkeys: [agentPubkey],
+          pubkey: ownerPubkey,
         });
         const receipt = emit({
           channelName: "general",
@@ -308,6 +321,7 @@ test.describe("mission inbox", () => {
       {
         agentPubkey: TEST_IDENTITIES.alice.pubkey,
         channelId: CHANNEL_ID,
+        ownerPubkey: MOCK_PUBKEY,
         receiptId: RECEIPT_ID,
         rootId: RECEIPT_ROOT_ID,
       },

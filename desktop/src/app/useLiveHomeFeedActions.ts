@@ -4,7 +4,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { remindersQueryKey } from "@/features/reminders/hooks";
 import { relayClient } from "@/shared/api/relayClient";
 import {
-  CHANNEL_EVENT_KINDS,
   KIND_APPROVAL_REQUEST,
   KIND_APPROVAL_GRANT,
   KIND_APPROVAL_DENY,
@@ -20,7 +19,10 @@ import {
   ingestApprovalRequestEvent,
   resolveApprovalRequestEvent,
 } from "@/features/agents/needsYouStore";
-import { projectAuthorizedUserInputEvent } from "@/features/agents/userInputAttentionProjection";
+import {
+  projectAuthorizedUserInputEvent,
+  reconcileAuthorizedUserInputRequests,
+} from "@/features/agents/userInputAttentionProjection";
 import { useCurrentOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
 import { buildChannelUserInputFilter } from "@/shared/api/relayChannelFilters";
 import {
@@ -28,22 +30,17 @@ import {
   ingestAgentReceiptReviewEvent,
 } from "@/features/agents/agentReceiptStore";
 import {
+  createHydrationRetryController,
   enumerateDurableActionEvents,
   mergeDurableActionEvents,
 } from "@/features/agents/durableActionHydration";
 import type { RelayEvent } from "@/shared/api/types";
+import { buildReceiptParentFilter } from "@/features/agents/receiptParentLookup";
 
 const LIVE_HOME_FEED_RETRY_BASE_MS = 1_000;
 const LIVE_HOME_FEED_RETRY_MAX_MS = 30_000;
 const DURABLE_ACTION_PAGE_SIZE = 500;
 const RECEIPT_PARENT_BATCH_SIZE = 100;
-const RECEIPT_PARENT_KINDS = [
-  ...new Set([
-    ...CHANNEL_EVENT_KINDS,
-    KIND_APPROVAL_REQUEST,
-    KIND_AGENT_USER_INPUT_REQUESTED,
-  ]),
-];
 
 export function useLiveHomeFeedActions(
   pubkey: string | undefined,
@@ -71,6 +68,7 @@ export function useLiveHomeFeedActions(
 
   React.useEffect(() => {
     const normalizedPubkey = pubkey?.trim().toLowerCase() ?? "";
+    reconcileAuthorizedUserInputRequests(normalizedPubkey, ownedAgentPubkeys);
     if (!normalizedPubkey) {
       return;
     }
@@ -80,8 +78,6 @@ export function useLiveHomeFeedActions(
     let isCancelled = false;
     let disposers: Array<() => Promise<void>> = [];
     let retryTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
-    let hydrationRetryTimer: ReturnType<typeof globalThis.setTimeout> | null =
-      null;
     let retryAttempt = 0;
     const since = Math.floor(Date.now() / 1_000);
     let durableHydrationReady = false;
@@ -116,11 +112,9 @@ export function useLiveHomeFeedActions(
         offset += RECEIPT_PARENT_BATCH_SIZE
       ) {
         const ids = parentIds.slice(offset, offset + RECEIPT_PARENT_BATCH_SIZE);
-        const parents = await relayClient.fetchEvents({
-          ids,
-          kinds: RECEIPT_PARENT_KINDS,
-          limit: ids.length,
-        });
+        const parents = await relayClient.fetchEvents(
+          buildReceiptParentFilter(ids),
+        );
         for (const parent of parents) parentsById.set(parent.id, parent);
       }
       return parentsById;
@@ -203,19 +197,18 @@ export function useLiveHomeFeedActions(
       }
       handleLiveHomeFeedEvent();
     };
-    const hydrateDurableActionsWithRetry = () => {
-      void hydrateDurableActions().catch((error) => {
-        if (isCancelled) return;
+    const hydrationRetry = createHydrationRetryController({
+      hydrate: hydrateDurableActions,
+      onError: (error) =>
         console.error(
           "Failed to hydrate durable agent attention events",
           error,
-        );
-        hydrationRetryTimer = globalThis.setTimeout(
-          hydrateDurableActionsWithRetry,
-          LIVE_HOME_FEED_RETRY_MAX_MS,
-        );
-      });
-    };
+        ),
+      retryDelayMs: LIVE_HOME_FEED_RETRY_MAX_MS,
+      setTimeoutFn: (callback, delayMs) =>
+        globalThis.setTimeout(callback, delayMs),
+      clearTimeoutFn: (timer) => globalThis.clearTimeout(timer),
+    });
     const scheduleRetry = () => {
       if (isCancelled) {
         return;
@@ -266,12 +259,7 @@ export function useLiveHomeFeedActions(
                 bufferedDurableEvents.set(event.id, event);
                 durableHydrationReady = false;
                 console.error("Failed to validate agent receipt parent", error);
-                if (hydrationRetryTimer === null) {
-                  hydrationRetryTimer = globalThis.setTimeout(() => {
-                    hydrationRetryTimer = null;
-                    hydrateDurableActionsWithRetry();
-                  }, LIVE_HOME_FEED_RETRY_BASE_MS);
-                }
+                void hydrationRetry.run();
               });
           },
         ),
@@ -366,7 +354,7 @@ export function useLiveHomeFeedActions(
       });
     };
 
-    hydrateDurableActionsWithRetry();
+    void hydrationRetry.run();
     startSubscriptions();
 
     return () => {
@@ -374,9 +362,7 @@ export function useLiveHomeFeedActions(
       if (retryTimer !== null) {
         globalThis.clearTimeout(retryTimer);
       }
-      if (hydrationRetryTimer !== null) {
-        globalThis.clearTimeout(hydrationRetryTimer);
-      }
+      hydrationRetry.stop();
       const currentDisposers = disposers;
       disposers = [];
       disposeAll(currentDisposers);

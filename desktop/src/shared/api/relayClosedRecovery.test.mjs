@@ -162,7 +162,7 @@ test("non-rate-limited history CLOSED does not arm the gate", () => {
   );
 });
 
-test("live subscription reports recovery on CLOSED and open only after EOSE", () => {
+test("live subscription ignores stale EOSE and opens after replacement EOSE", async () => {
   resetAll(0);
   const statuses = [];
   const subscriptions = new Map([
@@ -194,7 +194,102 @@ test("live subscription reports recovery on CLOSED and open only after EOSE", ()
     subId: "live-health",
     closeSubscription: async () => {},
   });
+  assert.equal(subscriptions.get("live-health").ready, false);
+
+  tickTo(1_001);
+  for (let index = 0; index < 4; index++) {
+    await Promise.resolve();
+  }
+  assert.equal(subscriptions.get("live-health").ready, false);
+
+  handleSubscriptionEose({
+    subscriptions,
+    subId: "live-health",
+    closeSubscription: async () => {},
+  });
   assert.equal(subscriptions.get("live-health").ready, true);
+  assert.deepEqual(statuses.at(-1), { state: "open" });
+});
+
+test("retryable CLOSED restores live overlap before durable history recovery", async () => {
+  resetAll(0);
+  const calls = [];
+  const subscriptions = new Map([
+    [
+      "durable-live",
+      {
+        mode: "live",
+        filter: { kinds: [46_043], "#h": ["channel-1"], limit: 0 },
+        onEvent: () => {},
+        ready: true,
+        recoveryFloorCreatedAt: 100,
+      },
+    ],
+  ]);
+
+  handleRelayClosed({
+    subscriptions,
+    subId: "durable-live",
+    message: "error: retryable subscription failure",
+    sendReq: async () => {
+      calls.push("live");
+    },
+    recoverHistory: async () => {
+      calls.push("history");
+    },
+  });
+  tickTo(1_001);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(calls, ["live", "history"]);
+});
+
+test("replacement EOSE does not report open before durable history recovery completes", async () => {
+  resetAll(0);
+  const statuses = [];
+  let resolveHistory;
+  const historyBarrier = new Promise((resolve) => {
+    resolveHistory = resolve;
+  });
+  const subscription = {
+    mode: "live",
+    filter: { kinds: [46_043], "#h": ["channel-1"], limit: 0 },
+    onEvent: () => {},
+    onStatus: (status) => statuses.push(status),
+    ready: true,
+    recoveryFloorCreatedAt: 100,
+  };
+  const subscriptions = new Map([["durable-live", subscription]]);
+
+  handleRelayClosed({
+    subscriptions,
+    subId: "durable-live",
+    message: "error: retryable subscription failure",
+    sendReq: async () => {},
+    recoverHistory: async () => historyBarrier,
+  });
+  tickTo(1_001);
+  await Promise.resolve();
+
+  handleSubscriptionEose({
+    subscriptions,
+    subId: "durable-live",
+    closeSubscription: async () => {},
+  });
+
+  assert.equal(subscription.ready, false);
+  assert.equal(
+    statuses.some((status) => status.state === "open"),
+    false,
+  );
+
+  resolveHistory();
+  for (let index = 0; index < 4; index++) {
+    await Promise.resolve();
+  }
+
+  assert.equal(subscription.ready, true);
   assert.deepEqual(statuses.at(-1), { state: "open" });
 });
 

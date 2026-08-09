@@ -2,9 +2,43 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createHydrationRetryController,
   enumerateDurableActionEvents,
   mergeDurableActionEvents,
 } from "./durableActionHydration.ts";
+
+test("hydration retry controller retries a failed exhaustive load", async () => {
+  let attempts = 0;
+  const timers = [];
+  const errors = [];
+  const controller = createHydrationRetryController({
+    hydrate: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("history unavailable");
+    },
+    onError: (error) => errors.push(error),
+    retryDelayMs: 5_000,
+    setTimeoutFn: (callback, delayMs) => {
+      timers.push({ callback, delayMs });
+      return timers.length;
+    },
+    clearTimeoutFn: () => {},
+  });
+
+  await controller.run();
+  assert.equal(attempts, 1);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delayMs, 5_000);
+  assert.equal(errors.length, 1);
+
+  timers[0].callback();
+  for (let index = 0; index < 3; index++) {
+    await Promise.resolve();
+  }
+  assert.equal(attempts, 2);
+
+  controller.stop();
+});
 
 function event(id, createdAt) {
   return {

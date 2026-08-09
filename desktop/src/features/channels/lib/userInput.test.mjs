@@ -92,6 +92,29 @@ test("optimistic resolution hides the card", () => {
   );
 });
 
+test("an unresolved request survives more than 200 newer lifecycle rows", () => {
+  const newerRows = Array.from({ length: 201 }, (_, index) => ({
+    id: `noise-${index}`,
+    pubkey: "agent",
+    created_at: 100 + index,
+    kind: 46042,
+    tags: [["e", `other-${index}`]],
+    content: JSON.stringify({
+      request_event_id: `other-${index}`,
+      outcome: "cancelled",
+    }),
+    sig: "",
+  }));
+
+  assert.deepEqual(
+    derivePendingUserInputs(
+      [request("old-request", 1), ...newerRows],
+      "owner",
+    ).map(({ event }) => event.id),
+    ["old-request"],
+  );
+});
+
 test("resolved requests become terminal and stay out of pending questions", () => {
   const requestEvent = request("request-1");
   const resolvedEvent = {

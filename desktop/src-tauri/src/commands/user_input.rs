@@ -111,8 +111,13 @@ mod tests {
             "questions": [],
         })
         .to_string();
+        let trigger = nostr::EventId::from_hex(&"a".repeat(64)).unwrap();
         let event = buzz_sdk_pkg::build_agent_user_input_request(
             channel_id,
+            &buzz_sdk_pkg::ThreadRef {
+                root_event_id: trigger,
+                parent_event_id: trigger,
+            },
             &owner.public_key().to_hex(),
             &content,
         )

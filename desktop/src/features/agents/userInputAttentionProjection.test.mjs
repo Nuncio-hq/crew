@@ -7,7 +7,10 @@ import {
   KIND_AGENT_USER_INPUT_RESOLVED,
 } from "@/shared/constants/kinds";
 import { getNeedsYouForAll, resetNeedsYouStore } from "./needsYouStore.ts";
-import { projectAuthorizedUserInputEvent } from "./userInputAttentionProjection.ts";
+import {
+  projectAuthorizedUserInputEvent,
+  reconcileAuthorizedUserInputRequests,
+} from "./userInputAttentionProjection.ts";
 
 const CHANNEL = "11111111-1111-4111-8111-111111111111";
 const OWNER = "a".repeat(64);
@@ -15,6 +18,7 @@ const AGENT = "b".repeat(64);
 const SIBLING = "c".repeat(64);
 const STRANGER = "d".repeat(64);
 const REQUEST_ID = "e".repeat(64);
+const TRIGGER_ID = "f".repeat(64);
 const ownedAgents = new Set([AGENT, SIBLING]);
 
 function event({
@@ -43,6 +47,7 @@ function request(pubkey = AGENT, owner = OWNER) {
     tags: [
       ["h", CHANNEL],
       ["p", owner],
+      ["e", TRIGGER_ID, "", "reply"],
     ],
     content: JSON.stringify({
       request_id: "q0",
@@ -98,6 +103,52 @@ test("projects only requests from an owned agent addressed to the current owner"
     true,
   );
   assert.equal(getNeedsYouForAll().length, 1);
+  assert.equal(getNeedsYouForAll()[0]?.rootEventId, TRIGGER_ID);
+});
+
+test("rejects requests without a canonical triggering thread reference", () => {
+  const missingTrigger = request();
+  missingTrigger.tags = missingTrigger.tags.filter(([name]) => name !== "e");
+  assert.equal(
+    projectAuthorizedUserInputEvent(
+      missingTrigger,
+      CHANNEL,
+      OWNER,
+      ownedAgents,
+    ),
+    false,
+  );
+
+  const malformedMarker = request();
+  malformedMarker.tags = malformedMarker.tags.map((tag) =>
+    tag[0] === "e" ? ["e", TRIGGER_ID, "", "mention"] : tag,
+  );
+  assert.equal(
+    projectAuthorizedUserInputEvent(
+      malformedMarker,
+      CHANNEL,
+      OWNER,
+      ownedAgents,
+    ),
+    false,
+  );
+  assert.equal(getNeedsYouForAll().length, 0);
+});
+
+test("revalidates projected requests when identity or verified ownership changes", () => {
+  projectAuthorizedUserInputEvent(request(), "", OWNER, ownedAgents);
+  assert.equal(getNeedsYouForAll().length, 1);
+
+  assert.equal(
+    reconcileAuthorizedUserInputRequests(STRANGER, new Set([AGENT])),
+    true,
+  );
+  assert.equal(getNeedsYouForAll().length, 0);
+
+  projectAuthorizedUserInputEvent(request(), "", OWNER, ownedAgents);
+  assert.equal(getNeedsYouForAll().length, 1);
+  assert.equal(reconcileAuthorizedUserInputRequests(OWNER, new Set()), true);
+  assert.equal(getNeedsYouForAll().length, 0);
 });
 
 test("accepts answers only from the intended owner", () => {

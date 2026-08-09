@@ -4,7 +4,6 @@ import {
   KIND_AGENT_USER_INPUT_RESOLVED,
 } from "@/shared/constants/kinds";
 import type { RelayEvent } from "@/shared/api/types";
-import { getThreadReference } from "@/features/messages/lib/threading";
 
 export type UserInputOption = {
   value: string;
@@ -165,13 +164,33 @@ export function parseUserInputRequest(
   }
 }
 
-/** Resolve the same thread-root fallback used by the approval lifecycle. */
-export function deriveUserInputRootEventId(event: RelayEvent): string {
-  const thread = getThreadReference(event.tags);
-  const fallbackEventTag = [...event.tags]
-    .reverse()
-    .find((tag) => tag[0] === "e" && tag[1])?.[1];
-  return thread.rootId ?? thread.parentId ?? fallbackEventTag ?? event.id;
+/** Resolve the canonical triggering thread root carried by a durable request. */
+export function deriveUserInputRootEventId(event: RelayEvent): string | null {
+  const eventTags = event.tags.filter((tag) => tag[0] === "e");
+  if (eventTags.length < 1 || eventTags.length > 2) return null;
+  if (
+    eventTags.some(
+      (tag) =>
+        tag.length !== 4 ||
+        !/^[0-9a-f]{64}$/.test(tag[1] ?? "") ||
+        !["root", "reply"].includes(tag[3] ?? ""),
+    )
+  ) {
+    return null;
+  }
+  const rootTags = eventTags.filter((tag) => tag[3] === "root");
+  const replyTags = eventTags.filter((tag) => tag[3] === "reply");
+  if (eventTags.length === 1) {
+    return replyTags.length === 1 ? (replyTags[0]?.[1] ?? null) : null;
+  }
+  if (
+    rootTags.length !== 1 ||
+    replyTags.length !== 1 ||
+    rootTags[0]?.[1] === replyTags[0]?.[1]
+  ) {
+    return null;
+  }
+  return rootTags[0]?.[1] ?? null;
 }
 
 export function getAnswerRequestId(event: RelayEvent): string | null {
@@ -208,15 +227,17 @@ export function parseUserInputResolution(
 
 export function dedupeUserInputEvents(
   events: RelayEvent[],
-  limit = 200,
+  limit?: number,
 ): RelayEvent[] {
   const byId = new Map<string, RelayEvent>();
   for (const event of events) {
     if (!byId.has(event.id)) byId.set(event.id, event);
   }
-  return [...byId.values()]
-    .sort((left, right) => right.created_at - left.created_at)
-    .slice(0, limit);
+  const sorted = [...byId.values()].sort(
+    (left, right) =>
+      right.created_at - left.created_at || right.id.localeCompare(left.id),
+  );
+  return limit === undefined ? sorted : sorted.slice(0, limit);
 }
 
 export function derivePendingUserInputs(

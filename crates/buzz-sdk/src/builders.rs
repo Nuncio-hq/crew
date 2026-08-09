@@ -1621,15 +1621,17 @@ pub fn build_workflow_approval(
 /// Build a durable channel-scoped agent question request.
 pub fn build_agent_user_input_request(
     channel_id: Uuid,
+    thread_ref: &ThreadRef,
     owner_pubkey: &str,
     content: &str,
 ) -> Result<EventBuilder, SdkError> {
     check_content(content, 256 * 1024)?;
     let owner_pubkey = check_hex_exact(owner_pubkey, 64, "owner_pubkey")?;
-    let tags = vec![
+    let mut tags = vec![
         tag(&["h", &channel_id.to_string()])?,
         tag(&["p", &owner_pubkey])?,
     ];
+    thread_tags(thread_ref, &mut tags)?;
     Ok(EventBuilder::new(
         Kind::Custom(KIND_AGENT_USER_INPUT_REQUESTED as u16),
         content,
@@ -4588,8 +4590,20 @@ mod tests {
     fn agent_user_input_request_builder_sets_kind_and_channel() {
         let channel = Uuid::new_v4();
         let owner = "c".repeat(64);
-        let event =
-            sign(build_agent_user_input_request(channel, &owner, r#"{"q0":"Pick"}"#).unwrap());
+        let root = nostr::EventId::from_hex(&"a".repeat(64)).unwrap();
+        let parent = nostr::EventId::from_hex(&"b".repeat(64)).unwrap();
+        let event = sign(
+            build_agent_user_input_request(
+                channel,
+                &ThreadRef {
+                    root_event_id: root,
+                    parent_event_id: parent,
+                },
+                &owner,
+                r#"{"q0":"Pick"}"#,
+            )
+            .unwrap(),
+        );
         assert_eq!(
             event.kind,
             Kind::Custom(KIND_AGENT_USER_INPUT_REQUESTED as u16)
@@ -4602,6 +4616,24 @@ mod tests {
             .tags
             .iter()
             .any(|tag| { tag.as_slice() == ["p".to_string(), owner.clone()] }));
+        assert!(event.tags.iter().any(|tag| {
+            tag.as_slice()
+                == [
+                    "e".to_string(),
+                    root.to_hex(),
+                    "".to_string(),
+                    "root".to_string(),
+                ]
+        }));
+        assert!(event.tags.iter().any(|tag| {
+            tag.as_slice()
+                == [
+                    "e".to_string(),
+                    parent.to_hex(),
+                    "".to_string(),
+                    "reply".to_string(),
+                ]
+        }));
     }
 
     #[test]

@@ -1749,7 +1749,6 @@ async fn tokio_main() -> Result<()> {
     tracing::info!("subscribed to membership notifications");
 
     let presence_publisher = relay.event_publisher();
-    let receipt_publisher = relay.event_publisher();
     let presence_keys = config.keys.clone();
 
     // Priority: BUZZ_AUTH_TAG (NIP-OA attestation) → --agent-owner flag.
@@ -1959,7 +1958,6 @@ async fn tokio_main() -> Result<()> {
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
         user_input_runtime: Some(user_input_runtime.clone()),
-        receipt_publisher,
         agent_receipts_enabled: config.agent_receipts_enabled,
     });
 

@@ -12,6 +12,7 @@ export type AgentReceiptSummary = {
   channelId: string;
   conversationId: string;
   rootEventId: string | null;
+  parentEventId: string;
   agentPubkey: string;
   createdAt: number;
   summary: string;
@@ -21,11 +22,11 @@ export type AgentReceiptSummary = {
 
 const receiptsById = new Map<string, AgentReceiptSummary>();
 const reviewedReceiptIds = new Set<string>();
-const MAX_PENDING_RECEIPT_REVIEWS = 500;
 const pendingReviewOwnershipByReceiptId = new Map<
   string,
   ReadonlySet<string>
 >();
+const MAX_PENDING_RECEIPT_REVIEWS = 512;
 const listeners = new Set<() => void>();
 let generation = 0;
 let cachedAll: AgentReceiptSummary[] | null = null;
@@ -47,7 +48,7 @@ function receiptEventId(event: RelayEvent): string | null {
   // NIP-25 reactions target the last valid `e` tag. Keep this identical to
   // relay ingestion, which derives the reaction's channel from that target.
   const eventTags = event.tags.filter(
-    (tag) => tag[0] === "e" && Boolean(tag[1]?.trim()),
+    (tag) => tag[0] === "e" && /^[0-9a-f]{64}$/.test(tag[1]?.trim() ?? ""),
   );
   return eventTags.at(-1)?.[1]?.trim() || null;
 }
@@ -97,12 +98,15 @@ export function validateAgentReceiptThreadRelationship(
     getThreadReference(parentEvent.tags).rootId ?? parentEvent.id;
   if (parentRoot !== thread.rootId) return false;
 
-  const parentTargets = parentEvent.tags
-    .filter((tag) => tag[0] === "p")
-    .map((tag) => normalizePubkey(tag[1] ?? ""));
-  return (
+  const parentTargets = parentEvent.tags.filter((tag) => tag[0] === "p");
+  if (
     parentTargets.length === 0 ||
-    parentTargets.includes(normalizePubkey(event.pubkey))
+    parentTargets.some((tag) => !/^[0-9a-f]{64}$/.test(tag[1]?.trim() ?? ""))
+  ) {
+    return false;
+  }
+  return parentTargets.some(
+    (tag) => normalizePubkey(tag[1] ?? "") === normalizePubkey(event.pubkey),
   );
 }
 
@@ -117,11 +121,12 @@ export function ingestAgentReceiptEvent(
 ): boolean {
   if (event.kind !== KIND_AGENT_RECEIPT) return false;
   if (!validateAgentReceiptThreadRelationship(event, parentEvent)) return false;
+  const thread = receiptThreadIds(event);
   const parsed = parseAgentReceipt(event.content);
   const channelId = tagValue(event, "h");
   const rootId = getThreadReference(event.tags).rootId;
   const conversationId = deriveAgentConversationIdOrNull(channelId, rootId);
-  if (!parsed || !channelId || !conversationId) return false;
+  if (!thread || !parsed || !channelId || !conversationId) return false;
 
   const prior = receiptsById.get(event.id);
   const pendingReviewOwnership = pendingReviewOwnershipByReceiptId.get(
@@ -137,6 +142,7 @@ export function ingestAgentReceiptEvent(
     channelId,
     conversationId,
     rootEventId: rootId,
+    parentEventId: thread.parentId,
     agentPubkey: normalizePubkey(event.pubkey),
     createdAt: event.created_at * 1_000,
     summary: parsed.summary,
@@ -172,10 +178,11 @@ export function ingestAgentReceiptReviewEvent(
   const receiptId = receiptEventId(event);
   const receipt = receiptId ? receiptsById.get(receiptId) : null;
   if (receiptId && !receipt && ownedAgentPubkeys.size > 0) {
-    if (pendingReviewOwnershipByReceiptId.size >= MAX_PENDING_RECEIPT_REVIEWS) {
-      const oldest = pendingReviewOwnershipByReceiptId.keys().next().value;
-      if (oldest !== undefined)
-        pendingReviewOwnershipByReceiptId.delete(oldest);
+    if (
+      !pendingReviewOwnershipByReceiptId.has(receiptId) &&
+      pendingReviewOwnershipByReceiptId.size >= MAX_PENDING_RECEIPT_REVIEWS
+    ) {
+      return false;
     }
     pendingReviewOwnershipByReceiptId.set(
       receiptId,
@@ -253,6 +260,10 @@ export function getAgentReceipts(): AgentReceiptSummary[] {
 
 export function getAgentReceiptsGeneration(): number {
   return generation;
+}
+
+export function _testPendingAgentReceiptReviewCount(): number {
+  return pendingReviewOwnershipByReceiptId.size;
 }
 
 export function useLatestAgentReceiptForConversation(
