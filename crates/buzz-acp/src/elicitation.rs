@@ -759,6 +759,25 @@ impl QuestionRuntime {
         });
     }
 
+    fn retry_incomplete_pending_request_retirement(self: &Arc<Self>, request_event_id: String) {
+        let runtime = Arc::clone(self);
+        self.workers.spawn(async move {
+            loop {
+                match retire_pending_request(&runtime, &request_event_id).await {
+                    Ok(()) => break,
+                    Err(error) => tracing::warn!(
+                        %error,
+                        request_event_id,
+                        "retrying incomplete pending request retirement"
+                    ),
+                }
+                if !wait_resolution_recovery_delay(&runtime).await {
+                    break;
+                }
+            }
+        });
+    }
+
     fn retry_acknowledged_resolution_retirement(
         self: &Arc<Self>,
         request_event_id: String,
@@ -1058,6 +1077,7 @@ impl QuestionRuntime {
                 drop(pending_lease);
                 if let Err(cleanup_error) = retire_pending_request(self, &event_id).await {
                     tracing::error!(%cleanup_error, request_event_id = %event_id, "failed to retire incomplete pending request under the root recovery lock");
+                    self.retry_incomplete_pending_request_retirement(event_id.clone());
                 }
                 return Err(error);
             }
@@ -2190,10 +2210,34 @@ mod tests {
             .expect("join contended retirement")
             .expect_err("retirement must fail closed while recovery owns the root");
         assert_eq!(error, SECURE_SPOOL_LOCK_CONTENDED);
+        runtime.retry_incomplete_pending_request_retirement(request_event_id.to_owned());
         drop(root_lock);
-        retire_pending_request(&runtime, request_event_id)
-            .await
-            .expect("retire request after recovery releases root");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let request_absent = read_secure_entry(
+                    &pending,
+                    format!("{request_event_id}.json").as_ref(),
+                    MAX_SPOOL_BYTES,
+                )
+                .await
+                .expect("inspect request cleanup")
+                .is_none();
+                let lease_absent = read_secure_entry(
+                    &pending,
+                    pending_request_lease_name(request_event_id).as_ref(),
+                    MAX_SPOOL_BYTES,
+                )
+                .await
+                .expect("inspect lease cleanup")
+                .is_none();
+                if request_absent && lease_absent {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("tracked retirement removes request and lease after lock release");
 
         assert!(write_secure_entry_if_absent(
             &pending,

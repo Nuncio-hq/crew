@@ -1029,6 +1029,39 @@ test("stale terminal history failure cannot close a newer recovery generation", 
   assert.equal(statuses.length, 0);
 });
 
+test("stale successful history cannot deliver or clear a newer recovery floor", async () => {
+  resetGate(0);
+  const delivered = [];
+  const subscription = {
+    mode: "live",
+    filter: { kinds: [46_043], "#h": ["channel-1"], limit: 0 },
+    onEvent: (value) => delivered.push(value),
+    lastSeenCreatedAt: 1_000,
+    recoveryFloorCreatedAt: 1_111,
+  };
+  const subscriptions = new Map([["durable-live", subscription]]);
+  let resolveHistory;
+  const replay = replayLiveSubscriptions({
+    subscriptions,
+    now: 2_000,
+    sendRaw: async () => {},
+    requestHistory: () =>
+      new Promise((resolve) => {
+        resolveHistory = resolve;
+      }),
+  });
+  while (!resolveHistory) await Promise.resolve();
+  subscription.recoveryGeneration += 1;
+  subscription.pendingReplaySince = 777;
+  subscription.recoveryFloorCreatedAt = 1_500;
+  resolveHistory([event("stale-event", 1_500)]);
+  await replay;
+
+  assert.deepEqual(delivered, []);
+  assert.equal(subscription.pendingReplaySince, 777);
+  assert.equal(subscription.recoveryFloorCreatedAt, 1_500);
+});
+
 test("backfill retry waits out the armed gate, then succeeds", async () => {
   resetGate(0);
   const delivered = [];

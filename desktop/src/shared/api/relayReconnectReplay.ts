@@ -535,8 +535,7 @@ export async function replayLiveSubscriptions({
             // SAME subscription key and object survive in the map — identity
             // alone stays true and a stale pass could complete and clear the
             // floor the superseding connection needs.
-            isActive: () =>
-              isActive() && subscriptions.get(subId) === subscription,
+            isActive: isCurrentRecovery,
             requestHistory,
           });
           // A stale-connection abort is NOT completion: the superseding
@@ -557,6 +556,7 @@ export async function replayLiveSubscriptions({
           }
           return;
         } catch (error) {
+          if (!isCurrentRecovery()) return;
           lastFailureMessage =
             error instanceof Error ? error.message : String(error);
           console.warn(
@@ -579,7 +579,7 @@ export async function replayLiveSubscriptions({
           // rejecting; wait for it (no-op when the failure wasn't back-pressure)
           // and re-check that this replay's connection is still current.
           if (isRateLimited()) await waitForRateLimit();
-          if (subscriptions.get(subId) !== subscription || !isActive()) return;
+          if (!isCurrentRecovery()) return;
         }
       }
     },

@@ -724,29 +724,25 @@ export function HomeView({
               missionSections={missionSections}
               missionSelectedConversationId={selectedConversationId}
               onOpenMissionChannel={(row: MissionInboxRow) => {
-                const target = getMissionInboxEventTarget(row);
-                if (target) {
+                void getMissionInboxEventTarget(row).then((target) => {
+                  if (!target) return;
                   onOpenContext(
-                    row.channelId,
+                    target.channelId,
                     target.messageId,
                     target.threadRootId,
                   );
-                  return;
-                }
-                void goChannel(row.channelId);
+                });
               }}
               onSelectMission={(row: MissionInboxRow) => {
                 if (!row.inboxItem) {
-                  const target = getMissionInboxEventTarget(row);
-                  if (target) {
+                  void getMissionInboxEventTarget(row).then((target) => {
+                    if (!target) return;
                     onOpenContext(
-                      row.channelId,
+                      target.channelId,
                       target.messageId,
                       target.threadRootId,
                     );
-                  } else {
-                    void goChannel(row.channelId);
-                  }
+                  });
                   return;
                 }
                 setUnreadBoundary(null);

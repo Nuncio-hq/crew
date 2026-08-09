@@ -851,10 +851,8 @@ mod platform {
         let mut entries = Vec::new();
         let mut failures = Vec::new();
         let mut skipped_contended = 0_usize;
-        for name in names {
-            if entries.len() >= max_entries {
-                break;
-            }
+        let attempted = names.len().min(max_entries);
+        for name in names.into_iter().take(max_entries) {
             let name = OsString::from_vec(name);
             let mut file = match open_regular_file(&directory, &name, max_entry_bytes) {
                 Ok(file) => file,
@@ -890,7 +888,7 @@ mod platform {
         Ok(ClaimedSecureSpoolEntries {
             scan_has_more: skipped_contended > 0
                 || !failures.is_empty()
-                || entries.len() < total_matching,
+                || attempted < total_matching,
             entries,
             failures,
             skipped_contended,
@@ -931,17 +929,19 @@ mod platform {
             .collect::<Vec<_>>();
         matching_names.sort();
         let total_matching = matching_names.len();
+        let requested_matching_names = matching_names
+            .into_iter()
+            .filter(|name| {
+                let name = OsString::from_vec(name.clone());
+                requested_names.iter().any(|requested| requested == &name)
+            })
+            .collect::<Vec<_>>();
         let mut entries = Vec::new();
         let mut failures = Vec::new();
         let mut skipped_contended = 0_usize;
-        for name in matching_names {
-            if entries.len() >= max_entries {
-                break;
-            }
+        let attempted = requested_matching_names.len().min(max_entries);
+        for name in requested_matching_names.into_iter().take(max_entries) {
             let name = OsString::from_vec(name);
-            if !requested_names.iter().any(|requested| requested == &name) {
-                continue;
-            }
             let mut file = match open_regular_file(&directory, &name, max_entry_bytes) {
                 Ok(file) => file,
                 Err(error) => {
@@ -976,7 +976,7 @@ mod platform {
         Ok(ClaimedSecureSpoolEntries {
             scan_has_more: skipped_contended > 0
                 || !failures.is_empty()
-                || entries.len() < total_matching,
+                || attempted < total_matching,
             entries,
             failures,
             skipped_contended,
@@ -1194,12 +1194,19 @@ mod tests {
             .await
             .expect("invalid sibling is isolated");
 
-        assert_eq!(claimed.entries.len(), 1);
-        assert_eq!(claimed.entries[0].name, OsStr::new("b-healthy.json"));
+        assert!(claimed.entries.is_empty());
         assert_eq!(claimed.failures.len(), 1);
         assert_eq!(claimed.failures[0].0, OsStr::new("a-invalid.json"));
         assert!(claimed.scan_has_more);
         drop(claimed);
+
+        let next = claim_secure_entries_bounded(&directory, "json", 1_024, 1, 1)
+            .await
+            .expect("fair cursor reaches healthy sibling");
+        assert_eq!(next.entries.len(), 1);
+        assert_eq!(next.entries[0].name, OsStr::new("b-healthy.json"));
+        assert!(next.failures.is_empty());
+        drop(next);
         std::fs::remove_dir_all(directory).expect("clean secure spool");
     }
 

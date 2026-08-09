@@ -22,6 +22,14 @@ const needsYouSource = readFileSync(
   new URL("../agents/needsYouStore.ts", import.meta.url),
   "utf8",
 );
+const missionSource = readFileSync(
+  new URL("./lib/missionInbox.ts", import.meta.url),
+  "utf8",
+);
+const homeViewSource = readFileSync(
+  new URL("./ui/HomeView.tsx", import.meta.url),
+  "utf8",
+);
 
 test("feed summaries cannot be reconstructed as trusted relay events", () => {
   assert.doesNotMatch(inboxSource, /relayEventFromFeedItem/);
@@ -34,6 +42,14 @@ test("feed summaries cannot be reconstructed as trusted relay events", () => {
   assert.match(contextSource, /event\.id !== expectedEventId/);
   assert.doesNotMatch(contextSource, /getThreadReference\(item\.tags\)/);
   assert.doesNotMatch(contextSource, /item\?\.channelId/);
+  assert.doesNotMatch(
+    missionSource,
+    /getThreadReference\(row\.inboxItem\.item\.tags\)/,
+  );
+  assert.match(missionSource, /event\.id !== messageId/);
+  assert.match(missionSource, /tag\[0\] === "h"/);
+  assert.doesNotMatch(homeViewSource, /onOpenContext\(\s*row\.channelId/);
+  assert.match(homeViewSource, /onOpenContext\(\s*target\.channelId/);
 });
 
 test("unsigned feed rows cannot mutate durable approval authority", () => {

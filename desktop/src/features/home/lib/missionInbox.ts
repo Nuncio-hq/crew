@@ -20,6 +20,8 @@ import {
 import type { InboxItem } from "@/features/home/lib/inbox";
 import type { Channel } from "@/shared/api/types";
 import { getThreadReference } from "@/features/messages/lib/threading";
+import { isVerifiedRelayEvent } from "@/shared/api/relayEventVerification";
+import { getEventById } from "@/shared/api/tauri";
 import {
   deriveAgentAttention,
   type AgentAttentionState,
@@ -459,15 +461,27 @@ export function deriveMissionInboxSections(
   return lastSections;
 }
 
-export function getMissionInboxEventTarget(row: MissionInboxRow) {
+export async function getMissionInboxEventTarget(
+  row: MissionInboxRow,
+  fetchEvent: typeof getEventById = getEventById,
+  verifyEvent: typeof isVerifiedRelayEvent = isVerifiedRelayEvent,
+) {
   const messageId = row.messageEventId ?? row.inboxItem?.id ?? row.rootEventId;
   if (!messageId || !/^[0-9a-f]{64}$/i.test(messageId)) return null;
-  const itemRootId = row.inboxItem
-    ? getThreadReference(row.inboxItem.item.tags).rootId
-    : null;
+  let event: Awaited<ReturnType<typeof getEventById>>;
+  try {
+    event = await fetchEvent(messageId);
+  } catch {
+    return null;
+  }
+  if (!verifyEvent(event) || event.id !== messageId) return null;
+  const channelId = event.tags.find((tag) => tag[0] === "h" && tag[1])?.[1];
+  if (!channelId) return null;
+  const thread = getThreadReference(event.tags);
   return {
+    channelId,
     messageId,
-    threadRootId: itemRootId ?? row.rootEventId ?? messageId,
+    threadRootId: thread.rootId ?? thread.parentId ?? messageId,
   };
 }
 

@@ -170,7 +170,7 @@ test("read-state acknowledgement does not review a durable receipt", () => {
   );
 });
 
-test("receipt-only rows retain a direct message and thread target", () => {
+test("receipt-only rows resolve navigation from the exact verified event", async () => {
   const sections = deriveMissionInboxSections({
     ...attentionDefaults,
     acknowledgedConversationIds: new Set(),
@@ -193,10 +193,23 @@ test("receipt-only rows retain a direct message and thread target", () => {
       },
     ],
   });
-  assert.deepEqual(getMissionInboxEventTarget(sections.readyToReview[0]), {
-    messageId: "a".repeat(64),
-    threadRootId: "b".repeat(64),
-  });
+  const messageId = "a".repeat(64);
+  const threadRootId = "b".repeat(64);
+  assert.deepEqual(
+    await getMissionInboxEventTarget(
+      sections.readyToReview[0],
+      async () => ({
+        id: messageId,
+        tags: [
+          ["h", "channel-a"],
+          ["e", threadRootId, "", "root"],
+          ["e", messageId, "", "reply"],
+        ],
+      }),
+      () => true,
+    ),
+    { channelId: "channel-a", messageId, threadRootId },
+  );
 });
 
 test("non-owned receipts never enter the owner's review queue", () => {
@@ -570,7 +583,7 @@ test("same inputs return a reference-stable snapshot", () => {
   );
 });
 
-test("mission rows use real roots and never promote conversation UUIDs to event ids", () => {
+test("mission rows use real roots and never promote conversation UUIDs to event ids", async () => {
   const root = "a".repeat(64);
   const [needsYouRow] = deriveMissionInboxSections({
     ...attentionDefaults,
@@ -591,12 +604,16 @@ test("mission rows use real roots and never promote conversation UUIDs to event 
     acknowledgedConversationIds: new Set(),
   }).needsYou;
 
-  assert.deepEqual(getMissionInboxEventTarget(needsYouRow), {
-    messageId: root,
-    threadRootId: root,
-  });
+  assert.deepEqual(
+    await getMissionInboxEventTarget(
+      needsYouRow,
+      async () => ({ id: root, tags: [["h", "channel-a"]] }),
+      () => true,
+    ),
+    { channelId: "channel-a", messageId: root, threadRootId: root },
+  );
   assert.equal(
-    getMissionInboxEventTarget({ ...needsYouRow, rootEventId: null }),
+    await getMissionInboxEventTarget({ ...needsYouRow, rootEventId: null }),
     null,
   );
 });
