@@ -1,10 +1,7 @@
 import * as React from "react";
 
 import { ingestApprovalRequestFeedItem } from "@/features/agents/needsYouStore";
-import {
-  projectAuthorizedUserInputEvent,
-  reconcileAuthorizedUserInputRequests,
-} from "@/features/agents/userInputAttentionProjection";
+import { reconcileAuthorizedUserInputRequests } from "@/features/agents/userInputAttentionProjection";
 import {
   deriveMissionInboxSections,
   useMissionInboxActiveTurns,
@@ -12,16 +9,10 @@ import {
   useMissionInboxOutcomes,
   type MissionInboxSections,
 } from "@/features/home/lib/missionInbox";
-import {
-  relayEventFromFeedItem,
-  type InboxItem,
-} from "@/features/home/lib/inbox";
-import { getThreadReference } from "@/features/messages/lib/threading";
+import type { InboxItem } from "@/features/home/lib/inbox";
 import type { Channel, HomeFeedResponse } from "@/shared/api/types";
 import {
   getAgentReceipts,
-  ingestAgentReceiptEvent,
-  ingestAgentReceiptReviewEvent,
   subscribeAgentReceipts,
 } from "@/features/agents/agentReceiptStore";
 import {
@@ -33,8 +24,6 @@ import {
   useAgentObserverConnectionState,
   useAgentObserverConnectionStates,
 } from "@/features/agents/useAgentObserverConnectionState";
-import { KIND_AGENT_RECEIPT, KIND_REACTION } from "@/shared/constants/kinds";
-
 type UseMissionInboxSectionsInput = {
   channels?: readonly Pick<Channel, "id" | "name">[];
   effectiveDoneSet: ReadonlySet<string>;
@@ -60,41 +49,9 @@ export function useMissionInboxSections({
     for (const item of feed?.feed.needsAction ?? []) {
       if (item.kind === 46010) {
         ingestApprovalRequestFeedItem(item);
-        continue;
       }
-      const event = relayEventFromFeedItem(item);
-      projectAuthorizedUserInputEvent(
-        event,
-        item.channelId ?? "",
-        currentPubkey ?? "",
-        ownedAgentPubkeys,
-      );
     }
   }, [currentPubkey, feed?.feed.needsAction, ownedAgentPubkeys]);
-
-  React.useEffect(() => {
-    const activity = feed?.feed.activity ?? [];
-    const relayEvents = activity.map(relayEventFromFeedItem);
-    const eventById = new Map(relayEvents.map((event) => [event.id, event]));
-    // Receipts must exist before review authority can be checked. A two-pass
-    // replay is deterministic even when relay rows share a created_at second.
-    for (const event of relayEvents) {
-      if (event.kind === KIND_AGENT_RECEIPT) {
-        const parentId = getThreadReference(event.tags).parentId;
-        ingestAgentReceiptEvent(
-          event,
-          eventById.get(parentId ?? ""),
-          eventById,
-        );
-      }
-    }
-    if (!currentPubkey) return;
-    for (const event of relayEvents) {
-      if (event.kind === KIND_REACTION) {
-        ingestAgentReceiptReviewEvent(event, currentPubkey, ownedAgentPubkeys);
-      }
-    }
-  }, [currentPubkey, feed?.feed.activity, ownedAgentPubkeys]);
 
   const storedNeedsYou = useMissionInboxNeedsYou();
   // Cleanup effects cannot be the authority boundary: an identity switch

@@ -100,7 +100,14 @@ export function useLiveHomeFeedActions(
     let durableProjectionGeneration = 0;
     let durableBufferOverflowGeneration = 0;
     const bufferedDurableEvents = new Map<string, RelayEvent>();
+    const isCoarselyAuthorizedDurableEvent = (event: RelayEvent) => {
+      const author = event.pubkey.toLowerCase();
+      return event.kind === KIND_REACTION
+        ? author === normalizedPubkey
+        : ownedAgentPubkeys.has(author);
+    };
     const bufferDurableEvent = (event: RelayEvent) => {
+      if (!isCoarselyAuthorizedDurableEvent(event)) return false;
       if (
         !bufferedDurableEvents.has(event.id) &&
         bufferedDurableEvents.size >= MAX_DURABLE_HYDRATION_BUFFER
@@ -113,6 +120,7 @@ export function useLiveHomeFeedActions(
         markAgentReceiptProjectionUnavailable();
       }
       bufferedDurableEvents.set(event.id, event);
+      return true;
     };
 
     const disposeAll = (currentDisposers: Array<() => Promise<void>>) => {
@@ -176,7 +184,13 @@ export function useLiveHomeFeedActions(
       durableProjectionGeneration += 1;
       const overflowGenerationAtStart = durableBufferOverflowGeneration;
       if (subscribedChannelIds.length === 0) return;
-      const [userInputEvents, receiptEvents, reviewEvents] = await Promise.all([
+      const [
+        userInputEvents,
+        receiptEvents,
+        reviewEvents,
+        approvalRequestEvents,
+        approvalTerminalEvents,
+      ] = await Promise.all([
         enumerateDurableActionEvents(
           (filter) => relayClient.fetchEvents(filter),
           {
@@ -206,8 +220,29 @@ export function useLiveHomeFeedActions(
           },
           DURABLE_ACTION_PAGE_SIZE,
         ),
+        enumerateDurableActionEvents(
+          (filter) => relayClient.fetchEvents(filter),
+          {
+            kinds: [KIND_APPROVAL_REQUEST],
+            "#p": [normalizedPubkey],
+          },
+          DURABLE_ACTION_PAGE_SIZE,
+        ),
+        enumerateDurableActionEvents(
+          (filter) => relayClient.fetchEvents(filter),
+          {
+            authors: [normalizedPubkey],
+            kinds: [KIND_APPROVAL_GRANT, KIND_APPROVAL_DENY],
+          },
+          DURABLE_ACTION_PAGE_SIZE,
+        ),
       ]);
       if (isCancelled) return;
+      for (const event of approvalRequestEvents)
+        ingestApprovalRequestEvent(event);
+      for (const event of approvalTerminalEvents) {
+        await resolveApprovalRequestEvent(event);
+      }
       let merged = mergeDurableActionEvents(
         userInputEvents,
         receiptEvents,
@@ -320,16 +355,25 @@ export function useLiveHomeFeedActions(
         return Promise.resolve();
       }
 
+      const subscribeCritical = (
+        filter: Parameters<typeof relayClient.subscribeLive>[0],
+        onEvent: Parameters<typeof relayClient.subscribeLive>[1],
+      ) =>
+        relayClient.subscribeLive(filter, onEvent, (status) => {
+          if (status.state === "closed") {
+            markPermanentHydrationFailure(new Error(status.message));
+          }
+        });
       const userInputSubscriptions = subscribedChannelIds.map((channelId) =>
-        relayClient.subscribeLive(
+        subscribeCritical(
           buildChannelUserInputFilter(channelId, 50, since),
           (event) => {
+            if (durableHydrationTerminal) return;
+            if (!bufferDurableEvent(event)) return;
             if (!durableHydrationReady) {
-              if (!durableHydrationTerminal) bufferDurableEvent(event);
               return;
             }
             const eventGeneration = durableProjectionGeneration;
-            bufferDurableEvent(event);
             void fetchCausalParents([event])
               .then((parents) => {
                 if (
@@ -361,7 +405,7 @@ export function useLiveHomeFeedActions(
         ),
       );
       const receiptSubscriptions = subscribedChannelIds.flatMap((channelId) => [
-        relayClient.subscribeLive(
+        subscribeCritical(
           {
             kinds: [KIND_AGENT_RECEIPT],
             "#h": [channelId],
@@ -369,12 +413,12 @@ export function useLiveHomeFeedActions(
             since,
           },
           (event) => {
+            if (durableHydrationTerminal) return;
+            if (!bufferDurableEvent(event)) return;
             if (!durableHydrationReady) {
-              if (!durableHydrationTerminal) bufferDurableEvent(event);
               return;
             }
             const eventGeneration = durableProjectionGeneration;
-            bufferDurableEvent(event);
             const ownsGeneration = () =>
               durableHydrationReady &&
               durableProjectionGeneration === eventGeneration;
@@ -394,7 +438,7 @@ export function useLiveHomeFeedActions(
               });
           },
         ),
-        relayClient.subscribeLive(
+        subscribeCritical(
           {
             authors: [normalizedPubkey],
             kinds: [KIND_REACTION],
@@ -403,12 +447,12 @@ export function useLiveHomeFeedActions(
             since,
           },
           (event) => {
+            if (durableHydrationTerminal) return;
+            if (!bufferDurableEvent(event)) return;
             if (!durableHydrationReady) {
-              if (!durableHydrationTerminal) bufferDurableEvent(event);
               return;
             }
             const eventGeneration = durableProjectionGeneration;
-            bufferDurableEvent(event);
             const ownsGeneration = () =>
               durableHydrationReady &&
               durableProjectionGeneration === eventGeneration;
@@ -432,7 +476,7 @@ export function useLiveHomeFeedActions(
       return Promise.allSettled([
         ...userInputSubscriptions,
         ...receiptSubscriptions,
-        relayClient.subscribeLive(
+        subscribeCritical(
           {
             kinds: [KIND_APPROVAL_REQUEST],
             "#p": [normalizedPubkey],
@@ -444,7 +488,7 @@ export function useLiveHomeFeedActions(
             handleLiveHomeFeedEvent();
           },
         ),
-        relayClient.subscribeLive(
+        subscribeCritical(
           {
             authors: [normalizedPubkey],
             kinds: [KIND_APPROVAL_GRANT, KIND_APPROVAL_DENY],
@@ -459,17 +503,22 @@ export function useLiveHomeFeedActions(
             );
           },
         ),
-        relayClient.subscribeLive(
-          {
-            authors: [normalizedPubkey],
-            kinds: [KIND_EVENT_REMINDER],
-            limit: 50,
-            since,
-          },
-          () => {
-            handleLiveReminderEvent(normalizedPubkey);
-          },
-        ),
+        relayClient
+          .subscribeLive(
+            {
+              authors: [normalizedPubkey],
+              kinds: [KIND_EVENT_REMINDER],
+              limit: 50,
+              since,
+            },
+            () => {
+              handleLiveReminderEvent(normalizedPubkey);
+            },
+          )
+          .catch((error) => {
+            console.error("Optional reminder subscription unavailable", error);
+            return async () => {};
+          }),
       ]).then((results) => {
         const nextDisposers = results.flatMap((result) =>
           result.status === "fulfilled" ? [result.value] : [],
