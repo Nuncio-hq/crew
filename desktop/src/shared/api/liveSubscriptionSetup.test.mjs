@@ -56,7 +56,7 @@ test("live setup timeout fails closed, removes aliases, and requests CLOSE", asy
   await Promise.resolve();
 
   assert.equal(input.subscriptions.size, 0);
-  assert.deepEqual(closed, ["live-1", "live-1"]);
+  assert.deepEqual(closed, ["live-1"]);
   assert.deepEqual(timer.cleared, [41]);
 });
 
@@ -97,11 +97,33 @@ test("a request that settles after timeout is closed again after its late send",
   const setup = establishLiveSubscription(input);
   timer.fire();
   await assert.rejects(setup, /readiness timed out/);
-  assert.deepEqual(closed, ["live-1"]);
+  assert.deepEqual(closed, []);
   finishSend();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(closed, ["live-1"]);
+});
+
+test("stale setup timeout closes only its original wire and preserves a recovery replacement", async () => {
+  const timer = installTimerHarness();
+  const closed = [];
+  const input = setupInput({
+    closeSubscription: async (subId) => {
+      closed.push(subId);
+    },
+  });
+
+  const setup = establishLiveSubscription(input);
   await Promise.resolve();
+  const subscription = input.subscriptions.get("live-1");
+  subscription.currentSubId = "live-1:recovery:1";
+  input.subscriptions.set(subscription.currentSubId, subscription);
+  timer.fire();
+  await assert.rejects(setup, /readiness timed out/);
   await Promise.resolve();
-  assert.deepEqual(closed, ["live-1", "live-1"]);
+
+  assert.deepEqual(closed, ["live-1"]);
+  assert.equal(input.subscriptions.size, 1);
+  assert.equal(input.subscriptions.get("live-1:recovery:1"), subscription);
 });
 
 test("replacement EOSE readiness clears the deadline without closing", async () => {

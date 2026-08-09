@@ -219,39 +219,33 @@ async fn persist_outbox_event(outbox_dir: &Path, event: &nostr::Event) -> Result
     Ok(path)
 }
 
-async fn dead_letter_outbox_until_committed(path: &Path, label: &str) -> Option<PathBuf> {
+async fn dead_letter_outbox_once(path: &Path, label: &str) -> Result<PathBuf, String> {
     let rejected = path.with_extension("rejected");
-    let Some(directory) = path.parent() else {
-        tracing::error!(path = %path.display(), label, "durable outbox entry has no parent directory");
-        return None;
-    };
-    let Some(source_name) = path.file_name() else {
-        tracing::error!(path = %path.display(), label, "durable outbox entry has no filename");
-        return None;
-    };
-    let Some(rejected_name) = rejected.file_name() else {
-        tracing::error!(path = %path.display(), label, "durable rejected entry has no filename");
-        return None;
-    };
+    let directory = path
+        .parent()
+        .ok_or_else(|| format!("{label} durable outbox entry has no parent directory"))?;
+    let source_name = path
+        .file_name()
+        .ok_or_else(|| format!("{label} durable outbox entry has no filename"))?;
+    let rejected_name = rejected
+        .file_name()
+        .ok_or_else(|| format!("{label} durable rejected entry has no filename"))?;
+    let _guard = resolution_outbox_lock().lock().await;
+    match rename_secure_entry(directory, source_name, rejected_name).await {
+        Ok(true) => Ok(rejected),
+        Ok(false) => match read_secure_entry(directory, rejected_name, MAX_SPOOL_BYTES).await {
+            Ok(Some(_)) => Ok(rejected),
+            Ok(None) => Err("source and rejected durable entries are both absent".to_owned()),
+            Err(error) => Err(error),
+        },
+        Err(error) => Err(error),
+    }
+}
+
+async fn dead_letter_outbox_until_committed(path: &Path, label: &str) -> Option<PathBuf> {
     for attempt in 1..=FILESYSTEM_RETRY_ATTEMPTS {
-        let result = {
-            let _guard = resolution_outbox_lock().lock().await;
-            match rename_secure_entry(directory, source_name, rejected_name).await {
-                Ok(true) => Ok(()),
-                Ok(false) => {
-                    match read_secure_entry(directory, rejected_name, MAX_SPOOL_BYTES).await {
-                        Ok(Some(_)) => Ok(()),
-                        Ok(None) => {
-                            Err("source and rejected durable entries are both absent".to_owned())
-                        }
-                        Err(error) => Err(error),
-                    }
-                }
-                Err(error) => Err(error),
-            }
-        };
-        match result {
-            Ok(()) => return Some(rejected),
+        match dead_letter_outbox_once(path, label).await {
+            Ok(rejected) => return Some(rejected),
             Err(error) => {
                 if attempt == FILESYSTEM_RETRY_ATTEMPTS {
                     tracing::error!(%error, path = %path.display(), label, "leaving durable entry queued after bounded dead-letter retries");
@@ -269,7 +263,9 @@ async fn retire_pending_request(
     runtime: &QuestionRuntime,
     request_event_id: &str,
 ) -> Result<(), String> {
+    let capacity_root = resolution_outbox_dir(runtime)?;
     let directory = pending_request_outbox_dir(runtime)?;
+    let _capacity_lock = lock_secure_directory(&capacity_root).await?;
     let file_name = format!("{request_event_id}.json");
     remove_secure_entry(&directory, file_name.as_ref()).await?;
     let lease_name = pending_request_lease_name(request_event_id);
@@ -322,24 +318,34 @@ async fn retire_acknowledged_resolution(
 }
 
 async fn dead_letter_pending_request(runtime: &QuestionRuntime, request_event_id: &str) -> bool {
+    let Ok(capacity_root) = resolution_outbox_dir(runtime) else {
+        return false;
+    };
     let Ok(directory) = pending_request_outbox_dir(runtime) else {
         return false;
     };
     let path = directory.join(format!("{request_event_id}.json"));
-    if dead_letter_outbox_until_committed(&path, "pending user-input request")
-        .await
-        .is_none()
-    {
-        return false;
-    }
     let lease_name = pending_request_lease_name(request_event_id);
-    match remove_secure_entry(&directory, lease_name.as_ref()).await {
-        Ok(true) | Ok(false) => true,
-        Err(error) => {
-            tracing::error!(%error, request_event_id, "failed to retire pending user-input request lease");
-            false
+    for attempt in 1..=FILESYSTEM_RETRY_ATTEMPTS {
+        let result = async {
+            let _capacity_lock = lock_secure_directory(&capacity_root).await?;
+            dead_letter_outbox_once(&path, "pending user-input request").await?;
+            remove_secure_entry(&directory, lease_name.as_ref()).await?;
+            Ok::<(), String>(())
+        }
+        .await;
+        match result {
+            Ok(()) => return true,
+            Err(error) if attempt == FILESYSTEM_RETRY_ATTEMPTS => {
+                tracing::error!(%error, request_event_id, "failed to dead-letter pending user-input request under the root recovery lock");
+            }
+            Err(error) => {
+                tracing::error!(%error, request_event_id, attempt, "retrying pending user-input dead-letter under the root recovery lock");
+                tokio::time::sleep(FILESYSTEM_RETRY_DELAY).await;
+            }
         }
     }
+    false
 }
 
 async fn quarantine_recovery_entry(directory: &Path, name: &std::ffi::OsStr, label: &str) -> bool {
@@ -670,6 +676,7 @@ impl QuestionRuntime {
                 Ok(lease) => lease,
                 Err(error) if error == SECURE_SPOOL_LOCK_CONTENDED => {
                     live_request_ids.insert(request_event_id);
+                    recovery_complete = false;
                     continue;
                 }
                 Err(error) => {
@@ -1049,9 +1056,9 @@ impl QuestionRuntime {
             Ok(path) => path,
             Err(error) => {
                 drop(pending_lease);
-                let directory = pending_request_outbox_dir(self)?;
-                let lease_name = pending_request_lease_name(&event_id);
-                let _ = remove_secure_entry(&directory, lease_name.as_ref()).await;
+                if let Err(cleanup_error) = retire_pending_request(self, &event_id).await {
+                    tracing::error!(%cleanup_error, request_event_id = %event_id, "failed to retire incomplete pending request under the root recovery lock");
+                }
                 return Err(error);
             }
         };
@@ -2129,6 +2136,95 @@ mod tests {
         runtime.stop_test_workers().await;
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pending_request_retirement_serializes_with_root_wide_recovery() {
+        let owner = Keys::generate();
+        let agent = Keys::generate();
+        let (publisher, _published) = RelayEventPublisher::test_pair();
+        let runtime = QuestionRuntime::new(
+            publisher,
+            agent.clone(),
+            Arc::new(crate::OwnerCache::new(Some(owner.public_key().to_hex()))),
+            RestClient {
+                http: reqwest::Client::new(),
+                base_url: format!("http://retirement-lock-{}", Uuid::new_v4()),
+                keys: agent,
+                auth_tag_json: None,
+            },
+        );
+        let request_event_id = "retirement-lock-request";
+        let root = resolution_outbox_dir(&runtime).expect("resolution root");
+        let pending = pending_request_outbox_dir(&runtime).expect("pending root");
+        ensure_secure_spool_dir(&root).await.expect("secure root");
+        ensure_secure_spool_dir(&pending)
+            .await
+            .expect("secure pending root");
+        assert!(write_secure_entry_if_absent(
+            &pending,
+            format!("{request_event_id}.json").as_ref(),
+            format!("{request_event_id}.tmp").as_ref(),
+            b"{}",
+        )
+        .await
+        .expect("persist request"));
+        drop(
+            lock_secure_entry_lease(
+                &pending,
+                pending_request_lease_name(request_event_id).as_ref(),
+            )
+            .await
+            .expect("create lease"),
+        );
+
+        let root_lock = lock_secure_directory(&root)
+            .await
+            .expect("hold recovery lock");
+        let retire_runtime = Arc::clone(&runtime);
+        let retire =
+            tokio::spawn(
+                async move { retire_pending_request(&retire_runtime, request_event_id).await },
+            );
+        let error = retire
+            .await
+            .expect("join contended retirement")
+            .expect_err("retirement must fail closed while recovery owns the root");
+        assert_eq!(error, SECURE_SPOOL_LOCK_CONTENDED);
+        drop(root_lock);
+        retire_pending_request(&runtime, request_event_id)
+            .await
+            .expect("retire request after recovery releases root");
+
+        assert!(write_secure_entry_if_absent(
+            &pending,
+            format!("{request_event_id}.json").as_ref(),
+            format!("{request_event_id}.retry.tmp").as_ref(),
+            b"{}",
+        )
+        .await
+        .expect("repersist request"));
+        drop(
+            lock_secure_entry_lease(
+                &pending,
+                pending_request_lease_name(request_event_id).as_ref(),
+            )
+            .await
+            .expect("recreate lease"),
+        );
+        let root_lock = lock_secure_directory(&root)
+            .await
+            .expect("hold recovery lock");
+        assert!(
+            !dead_letter_pending_request(&runtime, request_event_id).await,
+            "dead-letter cleanup must fail closed while recovery owns the root"
+        );
+        drop(root_lock);
+        assert!(dead_letter_pending_request(&runtime, request_event_id).await);
+
+        runtime.stop_test_workers().await;
+        std::fs::remove_dir_all(root).expect("clean retirement spool");
+    }
+
     #[tokio::test]
     async fn restart_replays_and_cancels_an_orphaned_pending_request() {
         let owner = Keys::generate();
@@ -2258,7 +2354,10 @@ mod tests {
             Arc::new(crate::OwnerCache::new(Some(owner.public_key().to_hex()))),
             rest_client,
         );
-        assert!(overlapping.resume_resolution_outbox().await);
+        assert!(
+            !overlapping.resume_resolution_outbox().await,
+            "a contended live lease must keep tracked recovery ownership active"
+        );
         assert!(
             tokio::time::timeout(Duration::from_millis(50), recovered.recv())
                 .await
@@ -2277,6 +2376,20 @@ mod tests {
             .is_some(),
             "overlapping recovery must preserve the live pending ledger"
         );
+
+        let abandoned = runtime
+            .pending
+            .lock()
+            .await
+            .remove(&request_event_id)
+            .expect("release simulated crashed owner lease");
+        drop(abandoned);
+        assert!(overlapping.resume_resolution_outbox().await);
+        let replayed = tokio::time::timeout(Duration::from_secs(1), recovered.recv())
+            .await
+            .expect("surviving process rescans released lease")
+            .expect("replayed abandoned request");
+        assert_eq!(replayed.id.to_hex(), request_event_id);
 
         runtime.stop_test_workers().await;
         overlapping.stop_test_workers().await;
@@ -2913,8 +3026,10 @@ mod tests {
         let source = directory.join("request.json");
         std::fs::write(&source, b"persisted").expect("write durable source");
 
+        // The helper's own attempt count and retry delays define boundedness.
+        // Leave CI scheduling headroom for descriptor validation and fsync work.
         let rejected = tokio::time::timeout(
-            Duration::from_millis(250),
+            Duration::from_secs(1),
             dead_letter_outbox_until_committed(&source, "bounded test"),
         )
         .await

@@ -209,6 +209,7 @@ export async function recoverLiveSubscriptionHistory({
   isActive: () => boolean;
   requestHistory: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
 }): Promise<boolean> {
+  if (!isActive()) return false;
   const since = replaySinceForSubscription(subscription);
   if (since === undefined || !shouldPageReconnectReplay(subscription.filter)) {
     return true;
@@ -459,7 +460,12 @@ export async function replayLiveSubscriptions({
     ),
     pageReplayConcurrency,
     async ({ subId, subscription, recoveryGeneration, replaySince }) => {
+      const isCurrentRecovery = () =>
+        isActive() &&
+        subscriptions.get(subId) === subscription &&
+        subscription.recoveryGeneration === recoveryGeneration;
       const closeTerminalRecovery = (message: string) => {
+        if (!isCurrentRecovery()) return;
         const currentSubId = subscription.currentSubId ?? subId;
         deleteSubscriptionAliases(subscriptions, subscription);
         clearClosedRetry(subscription);
@@ -476,18 +482,16 @@ export async function replayLiveSubscriptions({
       const scheduleTransientRecovery = () => {
         setTimeoutFn(() => {
           void (async () => {
-            if (!isActive() || subscriptions.get(subId) !== subscription)
-              return;
+            if (!isCurrentRecovery()) return;
             try {
               const retryNow = Math.max(now, Math.floor(Date.now() / 1_000));
               const completed = await recoverLiveSubscriptionHistory({
                 subscription,
                 now: retryNow,
-                isActive: () =>
-                  isActive() && subscriptions.get(subId) === subscription,
+                isActive: isCurrentRecovery,
                 requestHistory,
               });
-              if (!completed) return;
+              if (!completed || !isCurrentRecovery()) return;
               completeLiveSubscriptionRecovery(
                 subscription,
                 recoveryGeneration,

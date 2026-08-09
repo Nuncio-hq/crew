@@ -46,8 +46,9 @@ use crate::queue::{
 };
 use crate::relay::{ChannelInfo, RestClient};
 use crate::secure_spool::{
-    claim_secure_entries, ensure_secure_directory, lock_secure_directory, measure_secure_directory,
-    read_secure_entry, remove_secure_entry, rename_secure_entry, write_secure_entry_if_absent,
+    claim_secure_entries_bounded, claim_secure_named_entries, ensure_secure_directory,
+    lock_secure_directory, measure_secure_directory, read_secure_entry, remove_secure_entry,
+    rename_secure_entry, write_secure_entry_if_absent,
 };
 
 /// Window within which agent activity before a hard-cap death qualifies
@@ -4709,6 +4710,7 @@ const RECEIPT_OUTBOX_RETRY_DELAY: Duration = Duration::from_secs(30);
 const RECEIPT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const RECEIPT_MAX_SPOOL_ENTRIES: usize = 4_096;
 const RECEIPT_MAX_SPOOL_BYTES: u64 = 64 * 1024 * 1024;
+const RECEIPT_MAX_FLUSH_ENTRIES: usize = 64;
 static RECEIPT_OUTBOX_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 static RECEIPT_RECOVERY_CURSOR: AtomicUsize = AtomicUsize::new(0);
 static RECEIPT_DEAD_LETTER_IDS: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
@@ -4751,6 +4753,7 @@ struct ReceiptFlushReport {
     failed: HashSet<String>,
     scan_failed: bool,
     scan_has_more: bool,
+    progressed: bool,
 }
 
 impl ReceiptFlushReport {
@@ -4761,6 +4764,7 @@ impl ReceiptFlushReport {
         self.failed.extend(other.failed);
         self.scan_failed |= other.scan_failed;
         self.scan_has_more |= other.scan_has_more;
+        self.progressed |= other.progressed;
     }
 }
 
@@ -4913,11 +4917,39 @@ async fn flush_receipt_outbox(
         tracing::error!(%error, "failed closed while securing receipt outbox");
         return Ok(report);
     }
+    let recovery_cursor = RECEIPT_RECOVERY_CURSOR.fetch_add(1, Ordering::Relaxed);
+    let target_names = target_event_ids.map(|event_ids| {
+        event_ids
+            .iter()
+            .map(|event_id| std::ffi::OsString::from(format!("{event_id}.json")))
+            .collect::<Vec<_>>()
+    });
     let claimed_entries = {
         let _guard = receipt_outbox_lock().lock().await;
         match lock_secure_directory(outbox_dir).await {
             Ok(_capacity_lock) => match validate_receipt_spool_capacity(outbox_dir).await {
-                Ok(()) => claim_secure_entries(outbox_dir, "json", RECEIPT_MAX_SPOOL_BYTES).await,
+                Ok(()) => match target_names.as_deref() {
+                    Some(names) => {
+                        claim_secure_named_entries(
+                            outbox_dir,
+                            "json",
+                            RECEIPT_MAX_SPOOL_BYTES,
+                            names,
+                            max_entries.min(RECEIPT_MAX_FLUSH_ENTRIES),
+                        )
+                        .await
+                    }
+                    None => {
+                        claim_secure_entries_bounded(
+                            outbox_dir,
+                            "json",
+                            RECEIPT_MAX_SPOOL_BYTES,
+                            recovery_cursor,
+                            max_entries.min(RECEIPT_MAX_FLUSH_ENTRIES),
+                        )
+                        .await
+                    }
+                },
                 Err(error) => Err(error),
             },
             Err(error) => Err(error),
@@ -4931,23 +4963,25 @@ async fn flush_receipt_outbox(
             return Ok(report);
         }
     };
-    let skipped_contended = claimed_entries.skipped_contended;
+    tracing::debug!(
+        total_matching = claimed_entries.total_matching,
+        skipped_contended = claimed_entries.skipped_contended,
+        "claimed bounded durable receipt spool batch"
+    );
+    if !claimed_entries.failures.is_empty() {
+        report.scan_failed = true;
+        for (name, error) in &claimed_entries.failures {
+            report.failed.insert(name.to_string_lossy().into_owned());
+            tracing::warn!(
+                entry = %name.to_string_lossy(),
+                error,
+                "isolated invalid durable receipt spool sibling"
+            );
+        }
+    }
+    report.scan_has_more = claimed_entries.scan_has_more;
     let mut entries = claimed_entries.entries;
-    if let Some(target_event_ids) = target_event_ids {
-        entries.retain(|entry| {
-            Path::new(&entry.name)
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .is_some_and(|event_id| target_event_ids.contains(event_id))
-        });
-    }
     entries.sort_by(|left, right| left.name.cmp(&right.name));
-    report.scan_has_more = skipped_contended > 0 || entries.len() > max_entries;
-    if max_entries > 0 && entries.len() > max_entries {
-        let cursor = RECEIPT_RECOVERY_CURSOR.fetch_add(1, Ordering::Relaxed) % entries.len();
-        entries.rotate_left(cursor);
-    }
-    entries.truncate(max_entries);
     let mut permanent_deadletters = Vec::new();
     for entry in entries {
         let path = outbox_dir.join(&entry.name);
@@ -4981,6 +5015,7 @@ async fn flush_receipt_outbox(
                 let invalid = Path::new(&entry.name).with_extension("invalid");
                 match rename_secure_entry(outbox_dir, &entry.name, invalid.as_os_str()).await {
                     Ok(true) => {
+                        report.progressed = true;
                         tracing::error!(path = %path.display(), "quarantined invalid agent receipt outbox entry")
                     }
                     Ok(false) => {
@@ -5018,7 +5053,7 @@ async fn flush_receipt_outbox(
             Ok(()) => {
                 report.acked.insert(event.id.to_hex());
                 match remove_secure_entry(outbox_dir, &entry.name).await {
-                    Ok(true) => {}
+                    Ok(true) => report.progressed = true,
                     Ok(false) => {
                         report.queued.insert(event.id.to_hex());
                         tracing::error!(event_id = %event.id, "exact receipt ACK received but durable entry retirement was not observed");
@@ -5064,6 +5099,7 @@ async fn flush_receipt_outbox(
             }
         };
         if moved {
+            report.progressed = true;
             receipt_dead_letter_ids().lock().await.remove(&event_id);
             report.rejected.insert(event_id.clone());
             let rejected = outbox_dir.join(&rejected_name);
@@ -5073,14 +5109,45 @@ async fn flush_receipt_outbox(
     Ok(report)
 }
 
+fn receipt_worker_should_backoff(persistence_progress: bool, report: &ReceiptFlushReport) -> bool {
+    !persistence_progress && !report.progressed
+}
+
+fn retain_receipt_persistence_failures(
+    events: &mut Vec<nostr::Event>,
+    failures: &HashMap<String, String>,
+) -> bool {
+    let before = events.len();
+    events.retain(|event| failures.contains_key(&event.id.to_hex()));
+    events.len() < before
+}
+
 fn spawn_receipt_outbox_worker(
     tracker: &TaskTracker,
     outbox_dir: PathBuf,
     rest_client: RestClient,
     agent_pubkey: nostr::PublicKey,
+    mut unpersisted_events: Vec<nostr::Event>,
 ) {
     tracker.spawn(async move {
         loop {
+            let persistence_progress = if unpersisted_events.is_empty() {
+                false
+            } else {
+                let failures = {
+                    let _guard = receipt_outbox_lock().lock().await;
+                    persist_receipt_events(&outbox_dir, &unpersisted_events).await
+                };
+                let progressed =
+                    retain_receipt_persistence_failures(&mut unpersisted_events, &failures);
+                if !failures.is_empty() {
+                    tracing::error!(
+                        ?failures,
+                        "durable receipt handoff still has exact events awaiting persistence"
+                    );
+                }
+                progressed
+            };
             let remaining = flush_receipt_outbox(
                 &outbox_dir,
                 &rest_client,
@@ -5092,9 +5159,15 @@ fn spawn_receipt_outbox_worker(
             .await;
             match remaining {
                 Ok(report)
-                    if report.queued.is_empty() && !report.scan_failed && !report.scan_has_more =>
+                    if unpersisted_events.is_empty()
+                        && report.queued.is_empty()
+                        && !report.scan_failed
+                        && !report.scan_has_more =>
                 {
                     break;
+                }
+                Ok(report) if !receipt_worker_should_backoff(persistence_progress, &report) => {
+                    continue;
                 }
                 Ok(_) | Err(_) => tokio::time::sleep(RECEIPT_OUTBOX_RETRY_DELAY).await,
             }
@@ -5110,6 +5183,7 @@ pub(crate) fn resume_receipt_outbox(ctx: Arc<PromptContext>) {
             outbox_dir,
             ctx.rest_client.clone(),
             ctx.agent_keys.public_key(),
+            Vec::new(),
         ),
         Err(error) => {
             tracing::error!(%error, "cannot resume durable agent receipt outbox");
@@ -5188,6 +5262,7 @@ async fn publish_agent_receipts(
         )
         .await?;
         report.absorb(flushed);
+        retain_receipt_persistence_failures(&mut events_needing_persistence, &failures);
         if failures.is_empty() {
             break;
         }
@@ -5197,19 +5272,23 @@ async fn publish_agent_receipts(
             ));
             break;
         }
-        events_needing_persistence.retain(|event| failures.contains_key(&event.id.to_hex()));
         tracing::error!(
             ?failures,
             "retrying durable persistence for mandatory agent receipts"
         );
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    if !report.queued.is_empty() || report.scan_failed || report.scan_has_more {
+    if !events_needing_persistence.is_empty()
+        || !report.queued.is_empty()
+        || report.scan_failed
+        || report.scan_has_more
+    {
         spawn_receipt_outbox_worker(
             &ctx.receipt_outbox_workers,
             outbox_dir,
             ctx.rest_client.clone(),
             ctx.agent_keys.public_key(),
+            events_needing_persistence,
         );
     }
     if let Some(error) = persistence_error {
@@ -8212,6 +8291,38 @@ mod tests {
         assert!(current_receipt_publication_error(&current, &rejected)
             .expect("rejected current receipt must fail the turn")
             .contains("lack exact accepted ACK"));
+    }
+
+    #[test]
+    fn receipt_recovery_only_backs_off_after_a_no_progress_cycle() {
+        let mut progress = ReceiptFlushReport {
+            scan_has_more: true,
+            ..ReceiptFlushReport::default()
+        };
+        assert!(receipt_worker_should_backoff(false, &progress));
+        progress.progressed = true;
+        assert!(!receipt_worker_should_backoff(false, &progress));
+        progress.progressed = false;
+        assert!(!receipt_worker_should_backoff(true, &progress));
+    }
+
+    #[test]
+    fn receipt_handoff_retains_only_exact_events_that_are_not_yet_persisted() {
+        let keys = Keys::generate();
+        let persisted = EventBuilder::text_note("persisted")
+            .sign_with_keys(&keys)
+            .expect("sign persisted receipt");
+        let pending = EventBuilder::text_note("pending")
+            .sign_with_keys(&keys)
+            .expect("sign pending receipt");
+        let mut exact_events = vec![persisted, pending.clone()];
+        let failures = HashMap::from([(pending.id.to_hex(), "fsync failed".to_owned())]);
+
+        assert!(retain_receipt_persistence_failures(
+            &mut exact_events,
+            &failures
+        ));
+        assert_eq!(exact_events, vec![pending]);
     }
 
     #[tokio::test]

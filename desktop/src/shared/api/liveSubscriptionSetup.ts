@@ -59,27 +59,38 @@ export async function establishLiveSubscription({
     );
   }, LIVE_SUBSCRIPTION_READY_TIMEOUT_MS);
   let request: Promise<void> | undefined;
+  let requestSettled = false;
   try {
-    request = sendRequest();
+    request = sendRequest().finally(() => {
+      requestSettled = true;
+    });
     await Promise.race([Promise.all([request, ready]), deadline]);
   } catch (error) {
     const active = subscriptions.get(subId);
     if (active?.mode === "live") {
-      deleteSubscriptionAliases(subscriptions, active);
-      clearClosedRetry(active);
-      active.onStatus?.({
-        state: "closed",
-        message: error instanceof Error ? error.message : String(error),
-      });
-      const wireSubId = active.currentSubId ?? subId;
-      const closeAfterFailure = () => closeSubscription(wireSubId);
-      void closeAfterFailure().catch((closeError) => {
+      if ((active.currentSubId ?? subId) === subId) {
+        deleteSubscriptionAliases(subscriptions, active);
+        clearClosedRetry(active);
+        active.onStatus?.({
+          state: "closed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } else if (subscriptions.get(subId) === active) {
+        subscriptions.delete(subId);
+      }
+    }
+    const closeOriginalWire = () =>
+      closeSubscription(subId).catch((closeError) => {
         console.warn(
           "Failed to close timed-out relay subscription",
           closeError,
         );
       });
-      void request?.then(closeAfterFailure).catch(() => {});
+    if (requestSettled) void closeOriginalWire();
+    else {
+      // The REQ may be written after the timeout. Close its exact wire once,
+      // after that send settles, without touching any recovery replacement.
+      void request?.then(closeOriginalWire).catch(() => {});
     }
     throw error;
   } finally {

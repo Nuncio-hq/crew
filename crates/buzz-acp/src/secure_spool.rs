@@ -21,7 +21,10 @@ pub(crate) struct ClaimedSecureSpoolEntry {
 #[derive(Debug)]
 pub(crate) struct ClaimedSecureSpoolEntries {
     pub(crate) entries: Vec<ClaimedSecureSpoolEntry>,
+    pub(crate) failures: Vec<(OsString, String)>,
     pub(crate) skipped_contended: usize,
+    pub(crate) total_matching: usize,
+    pub(crate) scan_has_more: bool,
 }
 
 #[derive(Debug)]
@@ -97,6 +100,7 @@ pub(crate) async fn read_secure_entry(
     run_blocking(move || platform::read_secure_entry(&path, &name, max_entry_bytes)).await
 }
 
+#[cfg(test)]
 pub(crate) async fn claim_secure_entries(
     path: &Path,
     extension: &str,
@@ -105,6 +109,49 @@ pub(crate) async fn claim_secure_entries(
     let path = path.to_owned();
     let extension = extension.to_owned();
     run_blocking(move || platform::claim_secure_entries(&path, &extension, max_entry_bytes)).await
+}
+
+pub(crate) async fn claim_secure_entries_bounded(
+    path: &Path,
+    extension: &str,
+    max_entry_bytes: u64,
+    cursor: usize,
+    max_entries: usize,
+) -> Result<ClaimedSecureSpoolEntries, String> {
+    let path = path.to_owned();
+    let extension = extension.to_owned();
+    run_blocking(move || {
+        platform::claim_secure_entries_bounded(
+            &path,
+            &extension,
+            max_entry_bytes,
+            cursor,
+            max_entries,
+        )
+    })
+    .await
+}
+
+pub(crate) async fn claim_secure_named_entries(
+    path: &Path,
+    extension: &str,
+    max_entry_bytes: u64,
+    names: &[OsString],
+    max_entries: usize,
+) -> Result<ClaimedSecureSpoolEntries, String> {
+    let path = path.to_owned();
+    let extension = extension.to_owned();
+    let names = names.to_vec();
+    run_blocking(move || {
+        platform::claim_secure_named_entries(
+            &path,
+            &extension,
+            max_entry_bytes,
+            &names,
+            max_entries,
+        )
+    })
+    .await
 }
 
 pub(crate) async fn write_secure_entry_if_absent(
@@ -758,44 +805,82 @@ mod platform {
         read_bounded_file(&mut file, name, max_entry_bytes).map(Some)
     }
 
+    #[cfg(test)]
     pub(super) fn claim_secure_entries(
         path: &Path,
         extension: &str,
         max_entry_bytes: u64,
     ) -> Result<ClaimedSecureSpoolEntries, String> {
+        claim_secure_entries_bounded(path, extension, max_entry_bytes, 0, usize::MAX)
+    }
+
+    pub(super) fn claim_secure_entries_bounded(
+        path: &Path,
+        extension: &str,
+        max_entry_bytes: u64,
+        cursor: usize,
+        max_entries: usize,
+    ) -> Result<ClaimedSecureSpoolEntries, String> {
         use fs4::fs_std::FileExt;
 
         let mut directory = open_validated_directory(path)?;
-        let names = directory
+        let mut names = directory
             .iter()
             .map(|entry| {
                 entry
                     .map(|entry| entry.file_name().to_bytes().to_vec())
                     .map_err(|error| format!("failed to enumerate durable spool: {error}"))
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|name| {
+                name != b"."
+                    && name != b".."
+                    && Path::new(&OsString::from_vec(name.clone()))
+                        .extension()
+                        .and_then(OsStr::to_str)
+                        == Some(extension)
+            })
+            .collect::<Vec<_>>();
+        names.sort();
+        let total_matching = names.len();
+        if !names.is_empty() {
+            let offset = cursor % names.len();
+            names.rotate_left(offset);
+        }
         let mut entries = Vec::new();
+        let mut failures = Vec::new();
         let mut skipped_contended = 0_usize;
         for name in names {
-            if name == b"." || name == b".." {
-                continue;
+            if entries.len() >= max_entries {
+                break;
             }
             let name = OsString::from_vec(name);
-            if Path::new(&name).extension().and_then(OsStr::to_str) != Some(extension) {
-                continue;
-            }
-            let mut file = open_regular_file(&directory, &name, max_entry_bytes)?;
+            let mut file = match open_regular_file(&directory, &name, max_entry_bytes) {
+                Ok(file) => file,
+                Err(error) => {
+                    failures.push((name, error));
+                    continue;
+                }
+            };
             if let Err(error) = file.try_lock_exclusive() {
                 if error.raw_os_error() == fs4::lock_contended_error().raw_os_error() {
                     skipped_contended = skipped_contended.saturating_add(1);
                     continue;
                 }
-                return Err(format!(
-                    "failed to claim durable spool entry {}: {error}",
-                    name.to_string_lossy()
+                failures.push((
+                    name,
+                    format!("failed to claim durable spool entry: {error}"),
                 ));
+                continue;
             }
-            let bytes = read_bounded_file(&mut file, &name, max_entry_bytes)?;
+            let bytes = match read_bounded_file(&mut file, &name, max_entry_bytes) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    failures.push((name, error));
+                    continue;
+                }
+            };
             entries.push(ClaimedSecureSpoolEntry {
                 name,
                 bytes,
@@ -803,8 +888,99 @@ mod platform {
             });
         }
         Ok(ClaimedSecureSpoolEntries {
+            scan_has_more: skipped_contended > 0
+                || !failures.is_empty()
+                || entries.len() < total_matching,
             entries,
+            failures,
             skipped_contended,
+            total_matching,
+        })
+    }
+
+    pub(super) fn claim_secure_named_entries(
+        path: &Path,
+        extension: &str,
+        max_entry_bytes: u64,
+        requested_names: &[OsString],
+        max_entries: usize,
+    ) -> Result<ClaimedSecureSpoolEntries, String> {
+        use fs4::fs_std::FileExt;
+
+        for name in requested_names {
+            validate_entry_name(name)?;
+        }
+        let mut directory = open_validated_directory(path)?;
+        let mut matching_names = directory
+            .iter()
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.file_name().to_bytes().to_vec())
+                    .map_err(|error| format!("failed to enumerate durable spool: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|name| {
+                name != b"."
+                    && name != b".."
+                    && Path::new(&OsString::from_vec(name.clone()))
+                        .extension()
+                        .and_then(OsStr::to_str)
+                        == Some(extension)
+            })
+            .collect::<Vec<_>>();
+        matching_names.sort();
+        let total_matching = matching_names.len();
+        let mut entries = Vec::new();
+        let mut failures = Vec::new();
+        let mut skipped_contended = 0_usize;
+        for name in matching_names {
+            if entries.len() >= max_entries {
+                break;
+            }
+            let name = OsString::from_vec(name);
+            if !requested_names.iter().any(|requested| requested == &name) {
+                continue;
+            }
+            let mut file = match open_regular_file(&directory, &name, max_entry_bytes) {
+                Ok(file) => file,
+                Err(error) => {
+                    failures.push((name, error));
+                    continue;
+                }
+            };
+            if let Err(error) = file.try_lock_exclusive() {
+                if error.raw_os_error() == fs4::lock_contended_error().raw_os_error() {
+                    skipped_contended = skipped_contended.saturating_add(1);
+                    continue;
+                }
+                failures.push((
+                    name,
+                    format!("failed to claim durable spool entry: {error}"),
+                ));
+                continue;
+            }
+            let bytes = match read_bounded_file(&mut file, &name, max_entry_bytes) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    failures.push((name, error));
+                    continue;
+                }
+            };
+            entries.push(ClaimedSecureSpoolEntry {
+                name,
+                bytes,
+                _claim: file,
+            });
+        }
+        Ok(ClaimedSecureSpoolEntries {
+            scan_has_more: skipped_contended > 0
+                || !failures.is_empty()
+                || entries.len() < total_matching,
+            entries,
+            failures,
+            skipped_contended,
+            total_matching,
         })
     }
 }
@@ -855,10 +1031,31 @@ mod platform {
         unsupported()
     }
 
+    #[cfg(test)]
     pub(super) fn claim_secure_entries(
         _path: &Path,
         _extension: &str,
         _max_entry_bytes: u64,
+    ) -> Result<ClaimedSecureSpoolEntries, String> {
+        unsupported()
+    }
+
+    pub(super) fn claim_secure_entries_bounded(
+        _path: &Path,
+        _extension: &str,
+        _max_entry_bytes: u64,
+        _cursor: usize,
+        _max_entries: usize,
+    ) -> Result<ClaimedSecureSpoolEntries, String> {
+        unsupported()
+    }
+
+    pub(super) fn claim_secure_named_entries(
+        _path: &Path,
+        _extension: &str,
+        _max_entry_bytes: u64,
+        _requested_names: &[OsString],
+        _max_entries: usize,
     ) -> Result<ClaimedSecureSpoolEntries, String> {
         unsupported()
     }
@@ -931,6 +1128,78 @@ mod tests {
         assert_eq!(reclaimed.entries.len(), 1);
         assert_eq!(reclaimed.skipped_contended, 0);
         drop(reclaimed);
+        std::fs::remove_dir_all(directory).expect("clean secure spool");
+    }
+
+    #[tokio::test]
+    async fn bounded_claims_select_before_opening_the_spool() {
+        let directory = secure_test_dir("bounded-claims");
+        ensure_secure_directory(&directory)
+            .await
+            .expect("create secure spool");
+        for name in ["a.json", "b.json", "c.json"] {
+            assert!(write_secure_entry_if_absent(
+                &directory,
+                OsStr::new(name),
+                OsStr::new(&format!("{name}.tmp")),
+                b"{}",
+            )
+            .await
+            .expect("persist entry"));
+        }
+
+        let claimed = claim_secure_entries_bounded(&directory, "json", 1024, 1, 1)
+            .await
+            .expect("bounded claim");
+
+        assert_eq!(claimed.total_matching, 3);
+        assert_eq!(claimed.entries.len(), 1);
+        assert_eq!(claimed.entries[0].name, OsStr::new("b.json"));
+        assert!(claimed.scan_has_more);
+        drop(claimed);
+
+        let named =
+            claim_secure_named_entries(&directory, "json", 1024, &[OsString::from("c.json")], 1)
+                .await
+                .expect("named claim");
+        assert_eq!(named.total_matching, 3);
+        assert_eq!(named.entries.len(), 1);
+        assert_eq!(named.entries[0].name, OsStr::new("c.json"));
+        assert!(named.scan_has_more, "unclaimed siblings remain visible");
+        drop(named);
+        std::fs::remove_dir_all(directory).expect("clean secure spool");
+    }
+
+    #[tokio::test]
+    async fn bounded_claims_isolate_an_invalid_sibling() {
+        let directory = secure_test_dir("invalid-sibling");
+        ensure_secure_directory(&directory)
+            .await
+            .expect("create secure spool");
+        for (name, bytes) in [
+            ("a-invalid.json", vec![0_u8; 2_048]),
+            ("b-healthy.json", b"{}".to_vec()),
+        ] {
+            assert!(write_secure_entry_if_absent(
+                &directory,
+                OsStr::new(name),
+                OsStr::new(&format!("{name}.tmp")),
+                &bytes,
+            )
+            .await
+            .expect("persist entry"));
+        }
+
+        let claimed = claim_secure_entries_bounded(&directory, "json", 1_024, 0, 1)
+            .await
+            .expect("invalid sibling is isolated");
+
+        assert_eq!(claimed.entries.len(), 1);
+        assert_eq!(claimed.entries[0].name, OsStr::new("b-healthy.json"));
+        assert_eq!(claimed.failures.len(), 1);
+        assert_eq!(claimed.failures[0].0, OsStr::new("a-invalid.json"));
+        assert!(claimed.scan_has_more);
+        drop(claimed);
         std::fs::remove_dir_all(directory).expect("clean secure spool");
     }
 

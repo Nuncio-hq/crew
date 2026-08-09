@@ -31,6 +31,7 @@ describe("activeAgentSessionGeneration", () => {
     const current = event({
       seq: 1,
       timestamp: "2024-01-01T00:00:01Z",
+      startedAt: "2024-01-01T00:00:01Z",
       sessionId: "session-current",
     });
     const retired = event({
@@ -58,6 +59,7 @@ describe("activeAgentSessionGeneration", () => {
     const current = event({
       seq: 2,
       timestamp: "2024-01-01T00:00:01Z",
+      startedAt: "2024-01-01T00:00:01Z",
       sessionId: "session-current",
     });
     const replayedOld = event({
@@ -123,6 +125,43 @@ describe("activeAgentSessionGeneration", () => {
     );
   });
 
+  it("uses live producer startedAt rather than later emission time", () => {
+    const live = event({
+      sessionId: "session-live",
+      startedAt: "2024-01-01T00:00:10Z",
+      timestamp: "2024-01-01T00:00:20Z",
+    });
+    const concurrentReplay = event({
+      sessionId: "session-concurrent",
+      startedAt: "2024-01-01T00:00:15Z",
+      timestamp: "2024-01-01T00:01:00Z",
+      replayed: true,
+    });
+
+    assert.equal(observeAgentSession("agent", live), "current");
+    assert.equal(
+      observeAgentSession("agent", concurrentReplay),
+      "changed",
+      "producer chronology proves the concurrent replay is newer than the live session start",
+    );
+  });
+
+  it("rejects a delayed live frame whose producer start predates the current session", () => {
+    const current = event({
+      sessionId: "session-current",
+      startedAt: "2024-01-01T00:00:10Z",
+    });
+    const delayedOlder = event({
+      sessionId: "session-older",
+      startedAt: "2024-01-01T00:00:05Z",
+      timestamp: "2024-01-01T00:01:00Z",
+    });
+
+    assert.equal(observeAgentSession("agent", current), "current");
+    assert.equal(observeAgentSession("agent", delayedOlder), "retired");
+    assert.equal(observeAgentSession("agent", current), "current");
+  });
+
   it("revalidates a staged frame after a newer session retires it", () => {
     const old = event({ sessionId: "session-old" });
     const prepared = prepareAgentSessionObservation("agent", old);
@@ -130,7 +169,11 @@ describe("activeAgentSessionGeneration", () => {
     assert.equal(
       observeAgentSession(
         "agent",
-        event({ seq: 1, sessionId: "session-current" }),
+        event({
+          seq: 1,
+          sessionId: "session-current",
+          startedAt: "2024-01-01T00:00:01Z",
+        }),
       ),
       "changed",
     );

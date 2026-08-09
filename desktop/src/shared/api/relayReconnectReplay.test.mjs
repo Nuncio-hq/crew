@@ -926,6 +926,43 @@ test("history backfill rejection never escapes replayLiveSubscriptions", async (
   assert.equal(subscriptions.get("live-1").pendingReplaySince, undefined);
 });
 
+test("scheduled backfill retry cannot mutate a newer recovery generation", async () => {
+  resetGate(0);
+  const filter = buildChannelFilter("channel-1", 50);
+  const subscription = {
+    mode: "live",
+    filter,
+    onEvent: () => {},
+    lastSeenCreatedAt: 1000,
+  };
+  const subscriptions = new Map([["live-1", subscription]]);
+  let historyCalls = 0;
+  let scheduledRetry;
+
+  await replayLiveSubscriptions({
+    subscriptions,
+    now: 2000,
+    sendRaw: async () => {},
+    requestHistory: async () => {
+      historyCalls += 1;
+      throw new Error("rate-limited: generation fence");
+    },
+    setTimeoutFn: (callback) => {
+      scheduledRetry = callback;
+      return 1;
+    },
+  });
+
+  assert.equal(historyCalls, PAGE_REPLAY_MAX_ATTEMPTS);
+  subscription.recoveryGeneration += 1;
+  subscription.pendingReplaySince = 777;
+  scheduledRetry();
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+
+  assert.equal(historyCalls, PAGE_REPLAY_MAX_ATTEMPTS);
+  assert.equal(subscription.pendingReplaySince, 777);
+});
+
 test("terminal history backfill rejection closes the durable subscription immediately", async () => {
   resetGate(0);
   const statuses = [];
@@ -960,6 +997,36 @@ test("terminal history backfill rejection closes the durable subscription immedi
     state: "closed",
     message: "restricted: durable history denied",
   });
+});
+
+test("stale terminal history failure cannot close a newer recovery generation", async () => {
+  resetGate(0);
+  const statuses = [];
+  const subscription = {
+    mode: "live",
+    filter: { kinds: [46_043], "#h": ["channel-1"], limit: 0 },
+    onEvent: () => {},
+    onStatus: (status) => statuses.push(status),
+    lastSeenCreatedAt: 1_000,
+  };
+  const subscriptions = new Map([["durable-live", subscription]]);
+  let rejectHistory;
+  const replay = replayLiveSubscriptions({
+    subscriptions,
+    now: 2_000,
+    sendRaw: async () => {},
+    requestHistory: () =>
+      new Promise((_, reject) => {
+        rejectHistory = reject;
+      }),
+  });
+  while (!rejectHistory) await Promise.resolve();
+  subscription.recoveryGeneration += 1;
+  rejectHistory(new Error("restricted: stale durable history denied"));
+  await replay;
+
+  assert.equal(subscriptions.get("durable-live"), subscription);
+  assert.equal(statuses.length, 0);
 });
 
 test("backfill retry waits out the armed gate, then succeeds", async () => {

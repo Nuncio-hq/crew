@@ -19,7 +19,7 @@ export type AgentSessionGenerationSnapshot = {
 };
 
 function eventStartedAt(event: ObserverEvent): number | null {
-  const source = event.startedAt ?? (event.replayed ? null : event.timestamp);
+  const source = event.startedAt;
   if (!source) return null;
   const parsed = Date.parse(source);
   return Number.isFinite(parsed) ? parsed : null;
@@ -56,19 +56,20 @@ function commitAgentSessionObservation(
   const current = liveSessionByAgentChannel.get(key);
   const retired = retiredSessionsByAgentChannel.get(key);
   const startedAt = eventStartedAt(event);
+  const currentStartedAt = liveSessionStartedAtByAgentChannel.get(key);
   if (retired?.has(event.sessionId)) return "retired";
   if (
-    event.replayed &&
     current &&
     current !== event.sessionId &&
-    (startedAt === null ||
-      startedAt <= (liveSessionStartedAtByAgentChannel.get(key) ?? 0))
+    currentStartedAt !== undefined &&
+    (startedAt === null || startedAt <= currentStartedAt)
   ) {
     return "retired";
   }
   if (!current) {
     liveSessionByAgentChannel.set(key, event.sessionId);
-    liveSessionStartedAtByAgentChannel.set(key, startedAt ?? 0);
+    if (startedAt !== null)
+      liveSessionStartedAtByAgentChannel.set(key, startedAt);
     return "current";
   }
   if (current === event.sessionId) return "current";
@@ -81,7 +82,8 @@ function commitAgentSessionObservation(
   }
   retiredSessionsByAgentChannel.set(key, nextRetired);
   liveSessionByAgentChannel.set(key, event.sessionId);
-  liveSessionStartedAtByAgentChannel.set(key, startedAt ?? 0);
+  if (startedAt === null) liveSessionStartedAtByAgentChannel.delete(key);
+  else liveSessionStartedAtByAgentChannel.set(key, startedAt);
   return "changed";
 }
 

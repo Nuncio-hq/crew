@@ -86,3 +86,36 @@ test("approval hydration cannot terminally disable durable attention", async () 
   assert.match(source, /const approvalHydrationRetry =/);
   assert.doesNotMatch(durableHydration, /approvalRequestEvents/);
 });
+
+test("auxiliary CLOSED recovery resubscribes the disposed family", async () => {
+  const source = await readFile(sourcePath, "utf8");
+  const auxiliaryClosed = source.match(
+    /const subscribeAuxiliary =[\s\S]*?const auxiliarySubscriptions =/,
+  )?.[0];
+
+  assert.ok(
+    auxiliaryClosed,
+    "auxiliary CLOSED handler must remain discoverable",
+  );
+  assert.match(
+    auxiliaryClosed,
+    /disposeAll\(currentDisposers\);[\s\S]*scheduleRetry\(\);/,
+  );
+});
+
+test("stale async validation failures cannot close a newer projection generation", async () => {
+  const source = await readFile(sourcePath, "utf8");
+  const userInputFailure = source.match(
+    /\.catch\(\(error\) => \{[\s\S]*?Failed to validate user-input parent[\s\S]*?\}\);/,
+  )?.[0];
+
+  assert.ok(userInputFailure, "user-input validation failure path must exist");
+  assert.match(
+    userInputFailure,
+    /durableProjectionGeneration !== eventGeneration[\s\S]*return;/,
+  );
+  assert.match(
+    source,
+    /\.catch\(\(error\) => \{[\s\S]*?!ownsGeneration\(\)[\s\S]*?Failed to validate agent receipt parent/,
+  );
+});

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { beforeEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
   beginExhaustiveApprovalProjection,
@@ -15,6 +15,7 @@ import {
   resolveApprovalRequest,
   resolveUserInputRequest,
   resolveApprovalRequestEvent,
+  settlePendingApprovalResolutions,
   subscribeNeedsYou,
 } from "./needsYouStore.ts";
 import {
@@ -59,6 +60,7 @@ function event(overrides = {}) {
 
 describe("needsYouStore", () => {
   beforeEach(() => resetNeedsYouStore());
+  afterEach(() => resetNeedsYouStore());
 
   it("maps an approval request to its conversation and channel", () => {
     const entry = ingestApprovalRequest(request());
@@ -98,6 +100,41 @@ describe("needsYouStore", () => {
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
   });
 
+  it("settles a hashed live terminal before committing its exhaustive generation", async () => {
+    const approvalReference = "approval-reference-uuid";
+    const referenceHash = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(approvalReference),
+    );
+    const requestId = [...new Uint8Array(referenceHash)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const projection = beginExhaustiveApprovalProjection();
+    await resolveApprovalRequestEvent(
+      event({
+        id: "terminal-first",
+        kind: KIND_APPROVAL_GRANT,
+        tags: [["t", approvalReference]],
+      }),
+      projection,
+    );
+    ingestApprovalRequestEvent(
+      event({
+        id: requestId,
+        tags: [
+          ["h", CHANNEL],
+          ["e", ROOT, "", "root"],
+          ["d", requestId],
+        ],
+      }),
+      projection,
+    );
+
+    assert.equal(await settlePendingApprovalResolutions(projection), true);
+    assert.equal(endExhaustiveApprovalProjection(projection, true), true);
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
+  });
+
   it("fails closed on terminal overflow until verified exhaustive hydration", async () => {
     for (let index = 0; index <= 1_000; index += 1) {
       await resolveApprovalRequestEvent(
@@ -109,24 +146,38 @@ describe("needsYouStore", () => {
       );
     }
     assert.equal(ingestApprovalRequestEvent(event({ id: "request-0" })), null);
-    beginExhaustiveApprovalProjection();
+    const projection = beginExhaustiveApprovalProjection();
     assert.notEqual(
       ingestApprovalRequestEvent(event({ id: "f".repeat(64) })),
       null,
     );
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
-    assert.equal(endExhaustiveApprovalProjection(true), true);
+    assert.equal(endExhaustiveApprovalProjection(projection, true), true);
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 1);
   });
 
-  it("preserves verified live approvals that overlap exhaustive hydration", () => {
+  it("atomically replaces prior approvals with the exhaustive snapshot", () => {
     assert.notEqual(ingestApprovalRequestEvent(event()), null);
 
-    beginExhaustiveApprovalProjection();
+    const projection = beginExhaustiveApprovalProjection();
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
-    assert.equal(endExhaustiveApprovalProjection(true), true);
+    assert.equal(endExhaustiveApprovalProjection(projection, true), true);
+
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
+  });
+
+  it("ignores completion from an older overlapping approval projection", () => {
+    const older = beginExhaustiveApprovalProjection();
+    ingestApprovalRequestEvent(event({ id: "1".repeat(64) }), older);
+    const newer = beginExhaustiveApprovalProjection();
+    ingestApprovalRequestEvent(event({ id: "2".repeat(64) }), newer);
+
+    assert.equal(endExhaustiveApprovalProjection(older, true), false);
+    assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
+    assert.equal(endExhaustiveApprovalProjection(newer, true), true);
 
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 1);
+    assert.equal(getNeedsYouForChannel(CHANNEL)[0].id, "2".repeat(64));
   });
 
   it("correlates a t-tag deny with the request token", async () => {
@@ -147,10 +198,10 @@ describe("needsYouStore", () => {
     // Requests reference sha256(token); the desktop grant_approval command
     // publishes the RAW token in a `t` tag (src-tauri events.rs). The store
     // hashes grant references before giving up.
-    const rawToken = "approval-token-uuid";
+    const rawReference = "approval-token-uuid";
     const digest = await globalThis.crypto.subtle.digest(
       "SHA-256",
-      new TextEncoder().encode(rawToken),
+      new TextEncoder().encode(rawReference),
     );
     const tokenHash = [...new Uint8Array(digest)]
       .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -169,12 +220,97 @@ describe("needsYouStore", () => {
         event({
           id: "grant-raw",
           kind: KIND_APPROVAL_GRANT,
-          tags: [["t", rawToken]],
+          tags: [["t", rawReference]],
         }),
       ),
       true,
     );
     assert.equal(getNeedsYouForChannel(CHANNEL).length, 0);
+  });
+
+  it("fences a late hashed terminal from a newer approval projection", async () => {
+    const rawReference = "overlapping-approval-token";
+    const digest = await globalThis.crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(rawReference),
+    );
+    const tokenHash = [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const older = beginExhaustiveApprovalProjection();
+    ingestApprovalRequestEvent(
+      event({
+        id: "1".repeat(64),
+        tags: [
+          ["h", CHANNEL],
+          ["d", tokenHash],
+        ],
+      }),
+      older,
+    );
+    const staleResolution = resolveApprovalRequestEvent(
+      event({
+        id: "stale-hashed-grant",
+        kind: KIND_APPROVAL_GRANT,
+        tags: [["t", rawReference]],
+      }),
+      older,
+    );
+    const newer = beginExhaustiveApprovalProjection();
+    ingestApprovalRequestEvent(
+      event({
+        id: "2".repeat(64),
+        tags: [
+          ["h", CHANNEL],
+          ["d", tokenHash],
+        ],
+      }),
+      newer,
+    );
+
+    assert.equal(await staleResolution, false);
+    assert.equal(endExhaustiveApprovalProjection(newer, true), true);
+    assert.equal(getNeedsYouForChannel(CHANNEL)[0]?.id, "2".repeat(64));
+  });
+
+  it("fences a late hashed terminal across a store reset", async () => {
+    const rawReference = "community-boundary-approval-token";
+    const digest = await globalThis.crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(rawReference),
+    );
+    const tokenHash = [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    ingestApprovalRequestEvent(
+      event({
+        id: "1".repeat(64),
+        tags: [
+          ["h", CHANNEL],
+          ["d", tokenHash],
+        ],
+      }),
+    );
+    const staleResolution = resolveApprovalRequestEvent(
+      event({
+        id: "stale-reset-grant",
+        kind: KIND_APPROVAL_GRANT,
+        tags: [["t", rawReference]],
+      }),
+    );
+    resetNeedsYouStore();
+    ingestApprovalRequestEvent(
+      event({
+        id: "2".repeat(64),
+        tags: [
+          ["h", CHANNEL],
+          ["d", tokenHash],
+        ],
+      }),
+    );
+
+    assert.equal(await staleResolution, false);
+    assert.equal(getNeedsYouForChannel(CHANNEL)[0]?.id, "2".repeat(64));
   });
 
   it("does not resurrect a live-resolved request from delayed verified replay", async () => {

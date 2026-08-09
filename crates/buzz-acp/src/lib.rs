@@ -1682,6 +1682,12 @@ async fn tokio_main() -> Result<()> {
         return setup_mode::run_setup_listener(config, payload).await;
     }
 
+    if !cfg!(unix) {
+        return Err(anyhow::anyhow!(
+            "buzz-acp durable attention recovery requires Unix descriptor-relative filesystem security; this platform is unsupported"
+        ));
+    }
+
     tracing::info!("buzz-acp starting: {}", config.summary());
 
     let observer = config

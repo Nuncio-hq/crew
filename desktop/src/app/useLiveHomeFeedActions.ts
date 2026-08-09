@@ -19,7 +19,9 @@ import {
   beginExhaustiveApprovalProjection,
   endExhaustiveApprovalProjection,
   ingestApprovalRequestEvent,
+  isExhaustiveApprovalProjectionCurrent,
   resolveApprovalRequestEvent,
+  settlePendingApprovalResolutions,
 } from "@/features/agents/needsYouStore";
 import {
   beginExhaustiveUserInputProjection,
@@ -402,9 +404,10 @@ export function useLiveHomeFeedActions(
       handleLiveHomeFeedEvent();
     };
     const hydrateApprovals = async () => {
-      beginExhaustiveApprovalProjection();
+      const projectionGeneration = beginExhaustiveApprovalProjection();
       let hydrationCompleted = false;
       let projectionReady = false;
+      let ownedProjection = false;
       try {
         const [approvalRequestEvents, approvalTerminalEvents] =
           await Promise.all([
@@ -425,16 +428,28 @@ export function useLiveHomeFeedActions(
               DURABLE_ACTION_PAGE_SIZE,
             ),
           ]);
-        if (isCancelled) return;
+        if (
+          isCancelled ||
+          !isExhaustiveApprovalProjectionCurrent(projectionGeneration)
+        )
+          return;
         for (const event of approvalRequestEvents)
-          ingestApprovalRequestEvent(event);
+          ingestApprovalRequestEvent(event, projectionGeneration);
         for (const event of approvalTerminalEvents) {
-          await resolveApprovalRequestEvent(event);
+          await resolveApprovalRequestEvent(event, projectionGeneration);
         }
-        hydrationCompleted = true;
+        hydrationCompleted =
+          await settlePendingApprovalResolutions(projectionGeneration);
       } finally {
-        projectionReady = endExhaustiveApprovalProjection(hydrationCompleted);
+        ownedProjection =
+          isExhaustiveApprovalProjectionCurrent(projectionGeneration);
+        if (ownedProjection)
+          projectionReady = endExhaustiveApprovalProjection(
+            projectionGeneration,
+            hydrationCompleted,
+          );
       }
+      if (!ownedProjection) return;
       if (!projectionReady) {
         throw new Error(
           "approval projection overflowed during exhaustive hydration",
@@ -589,7 +604,12 @@ export function useLiveHomeFeedActions(
                       handleLiveHomeFeedEvent();
                     })
                     .catch((error) => {
-                      if (isCancelled) return;
+                      if (
+                        isCancelled ||
+                        terminalFamilies.has("userInput") ||
+                        durableProjectionGeneration !== eventGeneration
+                      )
+                        return;
                       bufferDurableEvent(event);
                       familyHydrationReady.userInput = false;
                       durableProjectionGeneration += 1;
@@ -631,7 +651,7 @@ export function useLiveHomeFeedActions(
                       handleLiveHomeFeedEvent();
                     })
                     .catch((error) => {
-                      if (isCancelled) return;
+                      if (isCancelled || !ownsGeneration()) return;
                       bufferDurableEvent(event);
                       familyHydrationReady.receipt = false;
                       durableProjectionGeneration += 1;
@@ -669,8 +689,7 @@ export function useLiveHomeFeedActions(
                       handleLiveHomeFeedEvent();
                     })
                     .catch(() => {
-                      if (isCancelled || terminalFamilies.has("receipt"))
-                        return;
+                      if (isCancelled || !ownsGeneration()) return;
                       bufferDurableEvent(event);
                       familyHydrationReady.receipt = false;
                       durableProjectionGeneration += 1;
@@ -705,6 +724,7 @@ export function useLiveHomeFeedActions(
           const currentDisposers = auxiliaryDisposers;
           auxiliaryDisposers = [];
           disposeAll(currentDisposers);
+          scheduleRetry();
         });
       const auxiliarySubscriptions =
         auxiliaryDisposers.length > 0

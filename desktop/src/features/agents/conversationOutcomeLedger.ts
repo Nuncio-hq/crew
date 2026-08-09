@@ -83,6 +83,14 @@ export function recordConversationOutcome(
 ): boolean {
   const prior = outcomeByConversation.get(conversationId);
   if (prior) {
+    const priorIsInferred = prior.outcome === "lost-contact";
+    const entryIsInferred = entry.outcome === "lost-contact";
+    if (!priorIsInferred && entryIsInferred) return false;
+    if (priorIsInferred && !entryIsInferred) {
+      outcomeByConversation.set(conversationId, entry);
+      enforceOutcomeCap();
+      return true;
+    }
     const priorHasOrder = Number.isFinite(prior.terminalAt);
     const entryHasOrder = Number.isFinite(entry.terminalAt);
     if (priorHasOrder && !entryHasOrder) return false;

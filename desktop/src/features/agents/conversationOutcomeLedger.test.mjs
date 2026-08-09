@@ -62,3 +62,29 @@ test("equal terminal timestamps use a stable producer key, not arrival order", (
     "z-producer",
   );
 });
+
+test("authoritative terminal evidence replaces newer inferred lost-contact", () => {
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      outcome: "lost-contact",
+      endedAt: 5_000,
+      terminalAt: 5_000,
+      terminalOrderKey: "local-prune",
+    }),
+  );
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      outcome: "completed",
+      endedAt: 6_000,
+      terminalAt: 3_000,
+      terminalOrderKey: "signed-terminal",
+    }),
+  );
+
+  assert.equal(
+    getConversationOutcomeEntry("conversation")?.outcome,
+    "completed",
+  );
+});
