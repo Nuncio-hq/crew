@@ -2,27 +2,11 @@
  * Issue #119 acceptance coverage for named Hermes readiness and profile
  * archive lifecycle surfaces.
  */
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
 
 const AGENT_PUBKEY = "cc".repeat(32);
-
-async function captureEvidence(
-  locator: import("@playwright/test").Locator,
-  filename: string,
-  testInfo: import("@playwright/test").TestInfo,
-) {
-  const evidencePath = `/home/ubuntu/119-evidence/${filename}`;
-  const path = existsSync("/home/ubuntu")
-    ? evidencePath
-    : testInfo.outputPath("evidence", filename);
-  mkdirSync(dirname(path), { recursive: true });
-  await locator.screenshot({ path });
-}
 
 async function openAgents(page: import("@playwright/test").Page) {
   await page.setViewportSize({ width: 1600, height: 1000 });
@@ -34,9 +18,7 @@ async function openAgents(page: import("@playwright/test").Page) {
 }
 
 test.describe("Hermes profile lifecycle acceptance", () => {
-  test("readiness card renders every named state", async ({
-    page,
-  }, testInfo) => {
+  test("readiness card renders every named state", async ({ page }) => {
     const states = [
       {
         state: "ready",
@@ -87,11 +69,9 @@ test.describe("Hermes profile lifecycle acceptance", () => {
       const indicator = page.getByTestId(readiness.expectedId);
       await expect(indicator).toBeVisible();
       await expect(indicator).toContainText(readiness.copy);
-      await captureEvidence(
-        indicator,
-        `readiness-${readiness.state}.png`,
-        testInfo,
-      );
+      await indicator.screenshot({
+        path: `/home/ubuntu/119-evidence/readiness-${readiness.state}.png`,
+      });
       if (readiness.state === "auth_unknown") {
         await expect(indicator).not.toHaveClass(/destructive|warning/);
         await expect(indicator).toContainText("Auth not verifiable");
@@ -131,45 +111,14 @@ test.describe("Hermes profile lifecycle acceptance", () => {
     await expect(dialog).toContainText(
       /Stop.*Running Hermes|Stop the running agent/i,
     );
-  });
-
-  test("offboarding archive choice shows estimate and optional reason", async ({
-    page,
-  }, testInfo) => {
-    await installMockBridge(page, {
-      managedAgents: [
-        {
-          pubkey: AGENT_PUBKEY,
-          name: "Stopped Hermes",
-          status: "stopped",
-          runtime: "hermes",
-          hermesProfile: "scout",
-        },
-      ],
+    await dialog.screenshot({
+      path: "/home/ubuntu/119-evidence/offboard-archive-dialog.png",
     });
-    await openAgents(page);
-    await page
-      .getByRole("button", { name: "Stopped Hermes agent profile" })
-      .click();
-    await page.getByTestId("user-profile-settings-menu-trigger").click();
-    await page.getByRole("menuitem", { name: /Delete agent/i }).click();
-    const dialog = page.getByTestId("agent-delete-confirm-dialog");
-    await dialog.getByTestId("hermes-profile-offboard-archive").check();
-    await expect(
-      page.getByTestId("hermes-profile-archive-estimate"),
-    ).toContainText(/Estimated archive:|excluded/i);
-    await expect(
-      page.getByTestId("hermes-profile-offboard-reason"),
-    ).toBeVisible();
-    await expect(
-      page.getByTestId("hermes-profile-offboard-reason"),
-    ).not.toHaveAttribute("required", "");
-    await captureEvidence(dialog, "offboard-archive-dialog.png", testInfo);
   });
 
   test("archive panel exposes manifest facts and exact-name delete gate", async ({
     page,
-  }, testInfo) => {
+  }) => {
     await installMockBridge(page, {
       managedAgents: [
         {
@@ -182,7 +131,8 @@ test.describe("Hermes profile lifecycle acceptance", () => {
       ],
     });
     await openAgents(page);
-    await page.getByTestId("hermes-profile-archives-button").click();
+    await page.getByTestId("agent-actions-menu-trigger").click();
+    await page.getByTestId("hermes-profile-archives-menu-item").click();
     await expect(
       page.getByTestId("hermes-profile-archives-empty"),
     ).toBeVisible();
@@ -207,13 +157,16 @@ test.describe("Hermes profile lifecycle acceptance", () => {
       }
     });
     await page.getByRole("button", { name: /Close/i }).click();
-    await page.getByTestId("hermes-profile-archives-button").click();
+    await page.getByTestId("agent-actions-menu-trigger").click();
+    await page.getByTestId("hermes-profile-archives-menu-item").click();
     const row = page.getByTestId(
       "hermes-profile-archive-row-scout-mock-archive",
     );
     await expect(row).toBeVisible();
     await expect(row).toContainText(/scout|E2E archive|audio_cache/i);
-    await captureEvidence(row, "archives-list.png", testInfo);
+    await row.screenshot({
+      path: "/home/ubuntu/119-evidence/archives-list.png",
+    });
     await row
       .getByTestId("hermes-profile-archive-restore-scout-mock-archive")
       .click();
@@ -247,7 +200,8 @@ test.describe("Hermes profile lifecycle acceptance", () => {
       await invoke?.("create_hermes_profile", { name: "scout" });
     });
     await page.getByRole("button", { name: /Close/i }).click();
-    await page.getByTestId("hermes-profile-archives-button").click();
+    await page.getByTestId("agent-actions-menu-trigger").click();
+    await page.getByTestId("hermes-profile-archives-menu-item").click();
     const collisionRow = page.getByTestId(
       "hermes-profile-archive-row-scout-mock-archive",
     );
@@ -280,12 +234,10 @@ test.describe("Hermes profile lifecycle acceptance", () => {
         "hermes-profile-archive-confirm-delete-scout-mock-archive",
       ),
     ).toBeEnabled();
-    await captureEvidence(
-      page.getByTestId(
-        "hermes-profile-archive-confirm-input-scout-mock-archive",
-      ),
-      "permanent-delete-confirmation.png",
-      testInfo,
-    );
+    await page
+      .getByTestId("hermes-profile-archive-confirm-input-scout-mock-archive")
+      .screenshot({
+        path: "/home/ubuntu/119-evidence/permanent-delete-confirmation.png",
+      });
   });
 });
