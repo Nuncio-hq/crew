@@ -182,7 +182,8 @@ After capture`.
   relay half proves the kind-7 actually lands and is agent-readable. A
   single-process "click in the app → event on the relay" chain remains
   unverified and would need either a relay-backed `add_reaction` in the bridge
-  or a real Tauri run (which needs computer-use).
+  or a real Tauri run (which needs computer-use); issue #133 tracks adding the
+  relay-backed bridge path to close this gap.
 - `just ci` was not run in this session; only the evidence specs and the CLI
   probes above were executed.
 - The relay used is the shared local dev relay on `:3000`, isolated per probe by

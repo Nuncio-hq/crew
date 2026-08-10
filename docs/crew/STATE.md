@@ -138,7 +138,8 @@ Out of scope for this slice:
   [`verification/0010-evidence-on-thread-log-probes.md`](verification/0010-evidence-on-thread-log-probes.md).
   Probe 1 is explicitly split between the mock desktop command-payload check
   and the separate real-relay reaction read-back; the single-process
-  click-to-relay chain remains unverified.
+  click-to-relay chain remains unverified; issue #133 tracks the relay-backed
+  `add_reaction` bridge follow-up.
 - The desktop unit suite passes with 5045 tests passing, one skipped, and zero
   failures.
 - `buzz-acp` uses the process cwd for ordinary sessions and one validated,
