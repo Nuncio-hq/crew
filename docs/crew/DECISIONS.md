@@ -416,3 +416,54 @@ This decision supersedes D-019 item 1 only where “1:1” could be read as glob
 uniqueness, and supersedes D-019 item 7's possible future public path for a
 profile-bound agent. The profile still owns the model and credentials, and the
 named-profile requirement remains unchanged.
+
+## D-025 — Build on Buzz contracts; Hermes-first without parallel protocol
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Product doc:** [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md)
+
+Crew keeps the Buzz backend (relay, Nostr identity, channels/threads, ACP
+harness) and continues to fetch/sync upstream. Product work builds **on top**
+of existing Buzz contracts.
+
+Hermes is the **default optimized** agent runtime (profile-per-agent, memory
+and skills on the profile). Other ACP engines remain welcome through the same
+Buzz/ACP room contracts. Implementers:
+
+1. Prefer existing kinds, mentions, sessions, and publish-back paths.
+2. Extend wire contracts only when generic Buzz is proven insufficient;
+   record the extension here.
+3. Must not invent a Hermes-only parallel system for assignment or results.
+4. Must not claim non-Hermes engines have Hermes profile memory.
+
+Anti-lock-in (swap engines later) is enough; local-AI product investment is
+out of scope unless a later decision supersedes this.
+
+## D-026 — Mobile continues the same company; not a second product myth
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Product doc:** [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md)
+
+Desktop is the main office. The mobile app continues the same workspace
+(Need you, read threads, keep work moving). Do not split planning into
+“Crew mobile product” vs “unrelated mobile app” as two identities: the first
+mobile surface that matters is continuing this company on a phone.
+
+Early mobile slices do not require desktop parity (Projects/PR/agent admin).
+Do not rewrite Flutter → React Native solely for install/test ergonomics;
+fix distribution or implement features on the existing client unless a later
+decision supersedes this.
+
+## D-027 — Plain-language agent collaboration with the founder
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Working agreement:** [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md)
+
+The founder is not a practiced company manager. Agents and implementers must
+explain simply, label uncertainty about “real company” practice, refuse silent
+mis-assignment when roles exist, and treat shared thread reports as the human
+record. Spikes are not automatic law. Full text of MUST/MUST NOT lives in the
+working agreement doc.

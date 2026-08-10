@@ -31,9 +31,12 @@ Crew-specific product rules live under [`docs/crew/`](README.md).
 
 1. This file (`docs/crew/IDENTITY.md`).
 2. [`docs/crew/README.md`](README.md) — Crew reading order and workflow.
-3. Root [`AGENTS.md`](../../AGENTS.md) — upstream Buzz contributor guide
+3. [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md) and
+   [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md) — product
+   north star and how to work with this founder (plain language).
+4. Root [`AGENTS.md`](../../AGENTS.md) — upstream Buzz contributor guide
    (still accurate for crates, quality gates, and patterns).
-4. [`STATE.md`](STATE.md) / [`DECISIONS.md`](DECISIONS.md) — current fork state.
+5. [`STATE.md`](STATE.md) / [`DECISIONS.md`](DECISIONS.md) — current fork state.
 
 If Crew docs and upstream docs conflict, **stop and surface the conflict**.
 Do not silently prefer upstream "Buzz" wording for fork product decisions.
