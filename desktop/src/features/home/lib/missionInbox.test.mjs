@@ -120,6 +120,44 @@ test("one completed receipt cannot hide an unrelated active sibling", () => {
   assert.equal(sections.working[0].conversationId, "conversation-siblings");
 });
 
+test("completed multi-trigger outcomes require one receipt per trigger", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    channels,
+    inboxItems: [item("conversation-completed-siblings", "channel-a", 100)],
+    needsYou: [],
+    activeTurns: [],
+    outcomes: [
+      [
+        "conversation-completed-siblings",
+        {
+          outcome: "completed",
+          channelId: "channel-a",
+          agentPubkey: "agent-1",
+          endedAt: 200,
+          triggeringEventIds: ["trigger-1", "trigger-2"],
+        },
+      ],
+    ],
+    receipts: [
+      {
+        id: "receipt-1",
+        channelId: "channel-a",
+        conversationId: "conversation-completed-siblings",
+        agentPubkey: "agent-1",
+        parentEventId: "trigger-1",
+        createdAt: 201,
+        summary: "Only one trigger completed",
+        verify: "done",
+        reviewed: false,
+      },
+    ],
+    acknowledgedConversationIds: new Set(),
+  });
+
+  assert.equal(sections.readyToReview.length, 0);
+});
+
 test("read-state acknowledgement does not review a durable receipt", () => {
   const input = {
     ...attentionDefaults,
@@ -208,7 +246,12 @@ test("receipt-only rows resolve navigation from the exact verified event", async
       }),
       () => true,
     ),
-    { channelId: "channel-a", messageId, threadRootId },
+    {
+      channelId: "channel-a",
+      messageId,
+      parentEventId: messageId,
+      threadRootId,
+    },
   );
 });
 
@@ -610,7 +653,12 @@ test("mission rows use real roots and never promote conversation UUIDs to event 
       async () => ({ id: root, tags: [["h", "channel-a"]] }),
       () => true,
     ),
-    { channelId: "channel-a", messageId: root, threadRootId: root },
+    {
+      channelId: "channel-a",
+      messageId: root,
+      parentEventId: root,
+      threadRootId: root,
+    },
   );
   assert.equal(
     await getMissionInboxEventTarget({ ...needsYouRow, rootEventId: null }),

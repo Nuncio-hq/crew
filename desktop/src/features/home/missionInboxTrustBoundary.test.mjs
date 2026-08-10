@@ -30,6 +30,10 @@ const homeViewSource = readFileSync(
   new URL("./ui/HomeView.tsx", import.meta.url),
   "utf8",
 );
+const verifiedMissionSource = readFileSync(
+  new URL("./useVerifiedMissionSelection.ts", import.meta.url),
+  "utf8",
+);
 
 test("feed summaries cannot be reconstructed as trusted relay events", () => {
   assert.doesNotMatch(inboxSource, /relayEventFromFeedItem/);
@@ -49,7 +53,31 @@ test("feed summaries cannot be reconstructed as trusted relay events", () => {
   assert.match(missionSource, /event\.id !== messageId/);
   assert.match(missionSource, /tag\[0\] === "h"/);
   assert.doesNotMatch(homeViewSource, /onOpenContext\(\s*row\.channelId/);
-  assert.match(homeViewSource, /onOpenContext\(\s*target\.channelId/);
+  assert.match(
+    verifiedMissionSource,
+    /openMissionContext\(\s*target\.channelId/,
+  );
+  assert.match(homeViewSource, /activeVerifiedMissionTarget\?\.channelId/);
+});
+
+test("stale verified row lookups cannot supersede a newer selection", () => {
+  assert.match(verifiedMissionSource, /selectionGenerationRef/);
+  assert.match(
+    verifiedMissionSource,
+    /await getMissionInboxEventTarget\(row\);[\s\S]*selectionGenerationRef\.current !== generation[\s\S]*openMissionContext\(/,
+  );
+  assert.match(
+    verifiedMissionSource,
+    /await getMissionInboxEventTarget\(row\);[\s\S]*selectionGenerationRef\.current !== generation[\s\S]*setVerifiedTarget\(target\)/,
+  );
+  assert.match(
+    homeViewSource,
+    /handleOpenProfilePanel[\s\S]*clearVerifiedTarget\(\)/,
+  );
+  assert.match(
+    homeViewSource,
+    /handleFilterChange[\s\S]*clearVerifiedTarget\(\)/,
+  );
 });
 
 test("unsigned feed rows cannot mutate durable approval authority", () => {

@@ -4,12 +4,15 @@ import { beforeEach, describe, it } from "node:test";
 import { deriveAgentConversationId } from "./conversationId.ts";
 import {
   _testPendingAgentReceiptReviewCount,
+  beginExhaustiveAgentReceiptProjection,
+  endExhaustiveAgentReceiptProjection,
   getAgentReceipts,
   getLatestAgentReceiptForConversation,
   getLatestOwnedAgentReceiptForActiveTurns,
   getLatestOwnedAgentReceiptForConversation,
   ingestAgentReceiptEvent as ingestValidatedAgentReceiptEvent,
   ingestAgentReceiptReviewEvent,
+  markAgentReceiptProjectionUnavailable,
   resetAgentReceiptStore,
 } from "./agentReceiptStore.ts";
 
@@ -363,5 +366,13 @@ describe("agentReceiptStore", () => {
       ),
       true,
     );
+  });
+
+  it("rejects stale exhaustive receipt projection owners", () => {
+    const older = beginExhaustiveAgentReceiptProjection(OWNER, OWNED_AGENTS);
+    const newer = beginExhaustiveAgentReceiptProjection(OWNER, OWNED_AGENTS);
+    assert.equal(endExhaustiveAgentReceiptProjection(older), false);
+    assert.equal(markAgentReceiptProjectionUnavailable(older), false);
+    assert.equal(endExhaustiveAgentReceiptProjection(newer), true);
   });
 });

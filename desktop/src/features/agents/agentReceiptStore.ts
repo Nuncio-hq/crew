@@ -27,6 +27,8 @@ const MAX_PENDING_RECEIPT_REVIEWS = 1_000;
 const pendingReviewEventsByReceiptId = new Map<string, RelayEvent>();
 let pendingReviewProjectionUnavailable = false;
 let exhaustiveReviewProjection = false;
+let nextReviewProjectionOwner = 0;
+let exhaustiveReviewProjectionOwner = 0;
 let reviewAuthority: {
   currentPubkey: string;
   ownedAgentPubkeys: ReadonlySet<string>;
@@ -37,10 +39,16 @@ let cachedAll: AgentReceiptSummary[] | null = null;
 const cachedByConversation = new Map<string, AgentReceiptSummary | null>();
 const EMPTY: AgentReceiptSummary[] = [];
 
+function ownsReviewProjection(owner?: number): boolean {
+  return owner === undefined || owner === exhaustiveReviewProjectionOwner;
+}
+
 export function beginExhaustiveAgentReceiptProjection(
   currentPubkey = "",
   ownedAgentPubkeys: ReadonlySet<string> = new Set(),
-): void {
+): number {
+  nextReviewProjectionOwner += 1;
+  exhaustiveReviewProjectionOwner = nextReviewProjectionOwner;
   pendingReviewEventsByReceiptId.clear();
   pendingReviewProjectionUnavailable = false;
   exhaustiveReviewProjection = true;
@@ -48,23 +56,28 @@ export function beginExhaustiveAgentReceiptProjection(
     currentPubkey: normalizePubkey(currentPubkey),
     ownedAgentPubkeys: new Set([...ownedAgentPubkeys].map(normalizePubkey)),
   };
+  return exhaustiveReviewProjectionOwner;
 }
 
-export function endExhaustiveAgentReceiptProjection(): void {
+export function endExhaustiveAgentReceiptProjection(owner?: number): boolean {
+  if (!ownsReviewProjection(owner)) return false;
   exhaustiveReviewProjection = false;
+  return true;
 }
 
 export function isAgentReceiptProjectionUnavailable(): boolean {
   return pendingReviewProjectionUnavailable;
 }
 
-export function markAgentReceiptProjectionUnavailable(): void {
+export function markAgentReceiptProjectionUnavailable(owner?: number): boolean {
+  if (!ownsReviewProjection(owner)) return false;
   pendingReviewEventsByReceiptId.clear();
   pendingReviewProjectionUnavailable = true;
   exhaustiveReviewProjection = false;
   receiptsById.clear();
   reviewedReceiptIds.clear();
   notify();
+  return true;
 }
 
 function notify() {
@@ -170,7 +183,9 @@ export function ingestAgentReceiptEvent(
   causalEvents: ReadonlyMap<string, RelayEvent> = new Map(
     parentEvent ? [[parentEvent.id, parentEvent]] : [],
   ),
+  projectionOwner?: number,
 ): boolean {
+  if (!ownsReviewProjection(projectionOwner)) return false;
   if (pendingReviewProjectionUnavailable) return false;
   if (event.kind !== KIND_AGENT_RECEIPT) return false;
   if (!/^[0-9a-f]{64}$/.test(event.id) || !/^[0-9a-f]{64}$/.test(event.pubkey))
@@ -228,7 +243,9 @@ export function ingestAgentReceiptReviewEvent(
   event: RelayEvent,
   currentPubkey: string,
   ownedAgentPubkeys: ReadonlySet<string>,
+  projectionOwner?: number,
 ): boolean {
+  if (!ownsReviewProjection(projectionOwner)) return false;
   reviewAuthority = {
     currentPubkey: normalizePubkey(currentPubkey),
     ownedAgentPubkeys: new Set([...ownedAgentPubkeys].map(normalizePubkey)),
@@ -423,6 +440,8 @@ export function useLatestOwnedAgentReceiptForActiveTurns(
 }
 
 export function resetAgentReceiptStore(): void {
+  nextReviewProjectionOwner += 1;
+  exhaustiveReviewProjectionOwner = nextReviewProjectionOwner;
   exhaustiveReviewProjection = false;
   if (
     receiptsById.size === 0 &&

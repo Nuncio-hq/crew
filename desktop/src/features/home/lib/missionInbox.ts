@@ -284,13 +284,23 @@ export function deriveMissionInboxSections(
   }
   for (const [conversationId, outcome] of input.outcomes) {
     if (outcome.outcome !== "completed") continue;
-    const receipt = receiptsByConversation
-      .get(conversationId)
-      ?.find(
-        (candidate) =>
-          candidate.agentPubkey === outcome.agentPubkey &&
-          (outcome.triggeringEventIds ?? []).includes(candidate.parentEventId),
-      );
+    const triggeringEventIds = outcome.triggeringEventIds ?? [];
+    const matchingReceipts = (
+      receiptsByConversation.get(conversationId) ?? []
+    ).filter(
+      (candidate) =>
+        candidate.agentPubkey === outcome.agentPubkey &&
+        triggeringEventIds.includes(candidate.parentEventId),
+    );
+    const receipt =
+      triggeringEventIds.length > 0 &&
+      triggeringEventIds.every((eventId) =>
+        matchingReceipts.some(
+          (candidate) => candidate.parentEventId === eventId,
+        ),
+      )
+        ? (matchingReceipts[0] ?? null)
+        : null;
     if (receipt) {
       latestReceiptByConversation.set(conversationId, receipt);
     } else {
@@ -461,11 +471,18 @@ export function deriveMissionInboxSections(
   return lastSections;
 }
 
+export type MissionInboxEventTarget = {
+  channelId: string;
+  messageId: string;
+  parentEventId: string;
+  threadRootId: string;
+};
+
 export async function getMissionInboxEventTarget(
   row: MissionInboxRow,
   fetchEvent: typeof getEventById = getEventById,
   verifyEvent: typeof isVerifiedRelayEvent = isVerifiedRelayEvent,
-) {
+): Promise<MissionInboxEventTarget | null> {
   const messageId = row.messageEventId ?? row.inboxItem?.id ?? row.rootEventId;
   if (!messageId || !/^[0-9a-f]{64}$/i.test(messageId)) return null;
   let event: Awaited<ReturnType<typeof getEventById>>;
@@ -478,10 +495,14 @@ export async function getMissionInboxEventTarget(
   const channelId = event.tags.find((tag) => tag[0] === "h" && tag[1])?.[1];
   if (!channelId) return null;
   const thread = getThreadReference(event.tags);
+  const threadRootId = thread.rootId ?? thread.parentId ?? messageId;
+  if (row.channelId && row.channelId !== channelId) return null;
+  if (row.rootEventId && row.rootEventId !== threadRootId) return null;
   return {
     channelId,
     messageId,
-    threadRootId: thread.rootId ?? thread.parentId ?? messageId,
+    parentEventId: thread.parentId ?? messageId,
+    threadRootId,
   };
 }
 

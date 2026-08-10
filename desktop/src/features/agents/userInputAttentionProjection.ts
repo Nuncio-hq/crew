@@ -85,6 +85,12 @@ const MAX_PENDING_TRANSITIONS_PER_REQUEST = 8;
 const pendingTransitionsByRequestId = new Map<string, RelayEvent[]>();
 let projectionUnavailable = false;
 let exhaustiveProjection = false;
+let nextProjectionOwner = 0;
+let exhaustiveProjectionOwner = 0;
+
+function ownsExhaustiveProjection(owner?: number): boolean {
+  return owner === undefined || owner === exhaustiveProjectionOwner;
+}
 
 function validatesRequestTrigger(
   event: RelayEvent,
@@ -165,22 +171,31 @@ function retainPendingTransition(requestId: string, event: RelayEvent): void {
   }
 }
 
-export function beginExhaustiveUserInputProjection(): void {
+export function beginExhaustiveUserInputProjection(): number {
+  nextProjectionOwner += 1;
+  exhaustiveProjectionOwner = nextProjectionOwner;
   pendingTransitionsByRequestId.clear();
   projectionUnavailable = false;
   exhaustiveProjection = true;
   clearUserInputRequests();
+  return exhaustiveProjectionOwner;
 }
 
-export function markUserInputAttentionProjectionUnavailable(): void {
+export function markUserInputAttentionProjectionUnavailable(
+  owner?: number,
+): boolean {
+  if (!ownsExhaustiveProjection(owner)) return false;
   pendingTransitionsByRequestId.clear();
   projectionUnavailable = true;
   exhaustiveProjection = false;
   clearUserInputRequests();
+  return true;
 }
 
-export function endExhaustiveUserInputProjection(): void {
+export function endExhaustiveUserInputProjection(owner?: number): boolean {
+  if (!ownsExhaustiveProjection(owner)) return false;
   exhaustiveProjection = false;
+  return true;
 }
 
 export function isUserInputAttentionProjectionUnavailable(): boolean {
@@ -198,7 +213,9 @@ export type AuthorizedUserInputRequest = {
 export function reconcileAuthorizedUserInputRequests(
   currentPubkey: string,
   ownedAgentPubkeys: ReadonlySet<string>,
+  projectionOwner?: number,
 ): boolean {
+  if (!ownsExhaustiveProjection(projectionOwner)) return false;
   return reconcileUserInputRequestAuthority(
     normalizePubkey(currentPubkey),
     ownedAgentPubkeys,
@@ -292,7 +309,9 @@ export function projectAuthorizedUserInputEvent(
   ownedAgentPubkeys: ReadonlySet<string>,
   parentEvent?: RelayEvent | null,
   ancestryById?: ReadonlyMap<string, RelayEvent>,
+  projectionOwner?: number,
 ): boolean {
+  if (!ownsExhaustiveProjection(projectionOwner)) return false;
   if (projectionUnavailable) return false;
   const current = normalizePubkey(currentPubkey);
   const channelId = singleTag(event, "h");
@@ -389,6 +408,8 @@ export function projectAuthorizedUserInputEvent(
 }
 
 export function resetUserInputAttentionProjection(): void {
+  nextProjectionOwner += 1;
+  exhaustiveProjectionOwner = nextProjectionOwner;
   pendingTransitionsByRequestId.clear();
   projectionUnavailable = false;
   exhaustiveProjection = false;

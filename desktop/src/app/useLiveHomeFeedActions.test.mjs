@@ -67,7 +67,7 @@ test("terminal subscription failures are isolated to their projection family", a
   assert.doesNotMatch(source, /durableHydrationReady/);
   assert.match(
     source,
-    /await handleReceiptEvent\(event\);[\s\S]*durableProjectionGeneration !== projectionGenerationAtStart[\s\S]*familyHydrationReady\.userInput = true[\s\S]*familyHydrationReady\.receipt = true/,
+    /await handleReceiptEvent\(\s*event,[\s\S]*?\);[\s\S]*durableProjectionGeneration !== projectionGenerationAtStart[\s\S]*familyHydrationReady\.userInput = true[\s\S]*familyHydrationReady\.receipt = true/,
     "stale async hydration cannot reopen a failed family while healthy siblings recover",
   );
 });

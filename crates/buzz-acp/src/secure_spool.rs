@@ -154,6 +154,27 @@ pub(crate) async fn claim_secure_named_entries(
     .await
 }
 
+/// Remove bounded crash-residue temporary files while the caller owns the
+/// containing spool's root lock. Returns `false` when contended or excess
+/// candidates remain for a later pass.
+pub(crate) async fn cleanup_secure_temporary_entries(
+    path: &Path,
+    max_entry_bytes: u64,
+    max_entries: usize,
+) -> Result<bool, String> {
+    let claimed =
+        claim_secure_entries_bounded(path, "tmp", max_entry_bytes, 0, max_entries).await?;
+    let attempted = claimed.entries.len().saturating_add(claimed.failures.len());
+    let complete = claimed.skipped_contended == 0 && attempted == claimed.total_matching;
+    for entry in &claimed.entries {
+        remove_secure_entry(path, &entry.name).await?;
+    }
+    for (name, _) in &claimed.failures {
+        remove_secure_entry(path, name).await?;
+    }
+    Ok(complete)
+}
+
 pub(crate) async fn write_secure_entry_if_absent(
     path: &Path,
     name: &OsStr,
@@ -1207,6 +1228,24 @@ mod tests {
         assert_eq!(next.entries[0].name, OsStr::new("b-healthy.json"));
         assert!(next.failures.is_empty());
         drop(next);
+        std::fs::remove_dir_all(directory).expect("clean secure spool");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn temporary_cleanup_removes_crash_residue_without_reading_payloads() {
+        let directory = secure_test_dir("tmp-cleanup");
+        ensure_secure_directory(&directory)
+            .await
+            .expect("create secure spool");
+        let temporary = directory.join("entry.json.crash.tmp");
+        std::fs::write(&temporary, vec![7_u8; 1024]).expect("seed crash residue");
+
+        assert!(cleanup_secure_temporary_entries(&directory, 0, 1)
+            .await
+            .expect("clean temporary residue"));
+        assert!(!temporary.exists());
+
         std::fs::remove_dir_all(directory).expect("clean secure spool");
     }
 

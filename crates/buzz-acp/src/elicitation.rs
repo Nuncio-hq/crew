@@ -24,10 +24,10 @@ use uuid::Uuid;
 
 use crate::relay::{BuzzEvent, RelayEventPublisher, RestClient};
 use crate::secure_spool::{
-    ensure_secure_directory, lock_secure_directory, lock_secure_entry_lease,
-    measure_secure_directory, read_secure_entries, read_secure_entry, remove_secure_entry,
-    rename_secure_entry, write_secure_entry_if_absent, SecureSpoolEntryLease,
-    SECURE_SPOOL_LOCK_CONTENDED,
+    claim_secure_entries_bounded, cleanup_secure_temporary_entries, ensure_secure_directory,
+    lock_secure_directory, lock_secure_entry_lease, measure_secure_directory, read_secure_entries,
+    read_secure_entry, remove_secure_entry, rename_secure_entry, write_secure_entry_if_absent,
+    SecureSpoolEntryLease, SECURE_SPOOL_LOCK_CONTENDED,
 };
 use crate::OwnerCache;
 
@@ -164,6 +164,34 @@ async fn validate_spool_capacity(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+async fn cleanup_orphan_pending_request_leases(pending_directory: &Path) -> Result<bool, String> {
+    let claimed =
+        claim_secure_entries_bounded(pending_directory, "lease", 0, 0, MAX_SPOOL_ENTRIES).await?;
+    let attempted = claimed.entries.len().saturating_add(claimed.failures.len());
+    let complete = claimed.skipped_contended == 0 && attempted == claimed.total_matching;
+    let mut names = claimed
+        .entries
+        .iter()
+        .map(|entry| entry.name.clone())
+        .collect::<Vec<_>>();
+    names.extend(claimed.failures.iter().map(|(name, _)| name.clone()));
+    for name in names {
+        let Some(request_event_id) = name.to_str().and_then(|value| value.strip_suffix(".lease"))
+        else {
+            remove_secure_entry(pending_directory, &name).await?;
+            continue;
+        };
+        let request_name = format!("{request_event_id}.json");
+        if read_secure_entry(pending_directory, request_name.as_ref(), MAX_SPOOL_BYTES)
+            .await?
+            .is_none()
+        {
+            remove_secure_entry(pending_directory, &name).await?;
+        }
+    }
+    Ok(complete)
+}
+
 async fn persist_outbox_event(outbox_dir: &Path, event: &nostr::Event) -> Result<PathBuf, String> {
     let capacity_root =
         if outbox_dir.file_name().and_then(|value| value.to_str()) == Some("pending-requests") {
@@ -177,6 +205,9 @@ async fn persist_outbox_event(outbox_dir: &Path, event: &nostr::Event) -> Result
         };
     ensure_secure_spool_dir(outbox_dir).await?;
     let _capacity_lock = lock_secure_directory(capacity_root).await?;
+    if !cleanup_secure_temporary_entries(outbox_dir, 0, MAX_SPOOL_ENTRIES).await? {
+        return Err("resolution outbox temporary cleanup is incomplete".to_string());
+    }
     let file_name = format!("{}.json", event.id);
     let path = outbox_dir.join(&file_name);
     if let Some(existing) =
@@ -519,6 +550,37 @@ impl QuestionRuntime {
                 return false;
             }
         };
+        let pending_directory = match pending_request_outbox_dir(&runtime) {
+            Ok(directory) => directory,
+            Err(error) => {
+                tracing::error!(%error, "cannot resume durable pending user-input requests");
+                return false;
+            }
+        };
+        if let Err(error) = ensure_secure_spool_dir(&pending_directory).await {
+            tracing::error!(%error, path = %pending_directory.display(), "cannot secure pending user-input request ledger");
+            return false;
+        }
+        let cleanup_complete: Result<bool, String> = async {
+            let root_complete =
+                cleanup_secure_temporary_entries(&outbox_dir, 0, MAX_SPOOL_ENTRIES).await?;
+            let pending_complete =
+                cleanup_secure_temporary_entries(&pending_directory, 0, MAX_SPOOL_ENTRIES).await?;
+            let lease_complete = cleanup_orphan_pending_request_leases(&pending_directory).await?;
+            Ok(root_complete && pending_complete && lease_complete)
+        }
+        .await;
+        match cleanup_complete {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!("durable user-input crash-artifact cleanup remains incomplete");
+                return false;
+            }
+            Err(error) => {
+                tracing::error!(%error, "failed closed while cleaning durable user-input crash artifacts");
+                return false;
+            }
+        }
         if let Err(error) = validate_spool_capacity(&outbox_dir).await {
             tracing::error!(%error, path = %outbox_dir.display(), "unsafe resolution outbox entry blocks startup recovery");
             return false;
@@ -574,17 +636,6 @@ impl QuestionRuntime {
             recovered_resolutions.push((event, path, request_event_id));
         }
 
-        let pending_directory = match pending_request_outbox_dir(&runtime) {
-            Ok(directory) => directory,
-            Err(error) => {
-                tracing::error!(%error, "cannot resume durable pending user-input requests");
-                return false;
-            }
-        };
-        if let Err(error) = ensure_secure_spool_dir(&pending_directory).await {
-            tracing::error!(%error, path = %pending_directory.display(), "cannot secure pending user-input request ledger");
-            return false;
-        }
         if let Err(error) = validate_spool_capacity(&outbox_dir).await {
             tracing::error!(%error, path = %outbox_dir.display(), "unsafe paired user-input ledger blocks startup recovery");
             return false;
@@ -2180,6 +2231,24 @@ mod tests {
         ensure_secure_spool_dir(&pending)
             .await
             .expect("secure pending root");
+        let orphan_request_event_id = "orphan-retirement-lock-request";
+        drop(
+            lock_secure_entry_lease(
+                &pending,
+                pending_request_lease_name(orphan_request_event_id).as_ref(),
+            )
+            .await
+            .expect("create orphan lease"),
+        );
+        assert!(runtime.resume_resolution_outbox().await);
+        assert!(read_secure_entry(
+            &pending,
+            pending_request_lease_name(orphan_request_event_id).as_ref(),
+            MAX_SPOOL_BYTES,
+        )
+        .await
+        .expect("inspect orphan lease cleanup")
+        .is_none());
         assert!(write_secure_entry_if_absent(
             &pending,
             format!("{request_event_id}.json").as_ref(),

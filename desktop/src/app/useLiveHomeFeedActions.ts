@@ -186,6 +186,7 @@ export function useLiveHomeFeedActions(
       event: RelayEvent,
       fallbackChannelId: string,
       knownParents?: ReadonlyMap<string, RelayEvent>,
+      projectionOwner?: number,
     ) => {
       const parentId = causalParentId(event);
       projectAuthorizedUserInputEvent(
@@ -195,6 +196,7 @@ export function useLiveHomeFeedActions(
         ownedAgentPubkeys,
         knownParents?.get(parentId ?? ""),
         knownParents,
+        projectionOwner,
       );
     };
     const fetchCausalParents = async (events: readonly RelayEvent[]) => {
@@ -215,6 +217,7 @@ export function useLiveHomeFeedActions(
       event: RelayEvent,
       knownParents?: ReadonlyMap<string, RelayEvent>,
       shouldCommit: () => boolean = () => true,
+      projectionOwner?: number,
     ) => {
       if (event.kind === KIND_AGENT_RECEIPT) {
         const parentId = causalParentId(event);
@@ -222,13 +225,14 @@ export function useLiveHomeFeedActions(
           knownParents ?? (await fetchCausalParents([event]));
         const parent = causalEvents.get(parentId ?? "");
         if (!isCancelled && shouldCommit())
-          ingestAgentReceiptEvent(event, parent, causalEvents);
+          ingestAgentReceiptEvent(event, parent, causalEvents, projectionOwner);
       } else if (event.kind === KIND_REACTION) {
         if (!shouldCommit()) return;
         ingestAgentReceiptReviewEvent(
           event,
           normalizedPubkey,
           ownedAgentPubkeys,
+          projectionOwner,
         );
         if (isAgentReceiptProjectionUnavailable()) {
           throw new Error("agent receipt review projection capacity exceeded");
@@ -313,6 +317,8 @@ export function useLiveHomeFeedActions(
         [],
       );
       let projectionStarted = false;
+      let userInputProjectionOwner: number | undefined;
+      let receiptProjectionOwner: number | undefined;
       for (;;) {
         const overlap = [...bufferedDurableEvents.values()];
         bufferedDurableEvents.clear();
@@ -339,9 +345,10 @@ export function useLiveHomeFeedActions(
           );
         }
         if (!projectionStarted) {
-          if (userInputActive) beginExhaustiveUserInputProjection();
+          if (userInputActive)
+            userInputProjectionOwner = beginExhaustiveUserInputProjection();
           if (receiptActive)
-            beginExhaustiveAgentReceiptProjection(
+            receiptProjectionOwner = beginExhaustiveAgentReceiptProjection(
               normalizedPubkey,
               ownedAgentPubkeys,
             );
@@ -352,15 +359,26 @@ export function useLiveHomeFeedActions(
             event,
             event.tags.find((tag) => tag[0] === "h")?.[1] ?? "",
             causalParents,
+            userInputProjectionOwner,
           );
         }
         // Receipts establish authority before reactions are projected, even if
         // relay pages or same-second ids arrive in the opposite order.
         for (const event of merged.receiptEvents) {
-          await handleReceiptEvent(event, causalParents);
+          await handleReceiptEvent(
+            event,
+            causalParents,
+            () => true,
+            receiptProjectionOwner,
+          );
         }
         for (const event of merged.reviewEvents) {
-          await handleReceiptEvent(event);
+          await handleReceiptEvent(
+            event,
+            undefined,
+            () => true,
+            receiptProjectionOwner,
+          );
         }
         if (
           isCancelled ||
@@ -371,16 +389,16 @@ export function useLiveHomeFeedActions(
             !terminalFamilies.has("userInput") &&
             !isUserInputAttentionProjectionUnavailable()
           ) {
-            endExhaustiveUserInputProjection();
-            familyHydrationReady.userInput = true;
+            if (endExhaustiveUserInputProjection(userInputProjectionOwner))
+              familyHydrationReady.userInput = true;
           }
           if (
             receiptActive &&
             !terminalFamilies.has("receipt") &&
             !isAgentReceiptProjectionUnavailable()
           ) {
-            endExhaustiveAgentReceiptProjection();
-            familyHydrationReady.receipt = true;
+            if (endExhaustiveAgentReceiptProjection(receiptProjectionOwner))
+              familyHydrationReady.receipt = true;
           }
           return;
         }
@@ -391,12 +409,12 @@ export function useLiveHomeFeedActions(
         }
         if (bufferedDurableEvents.size === 0) {
           if (userInputActive) {
-            endExhaustiveUserInputProjection();
-            familyHydrationReady.userInput = true;
+            if (endExhaustiveUserInputProjection(userInputProjectionOwner))
+              familyHydrationReady.userInput = true;
           }
           if (receiptActive) {
-            endExhaustiveAgentReceiptProjection();
-            familyHydrationReady.receipt = true;
+            if (endExhaustiveAgentReceiptProjection(receiptProjectionOwner))
+              familyHydrationReady.receipt = true;
           }
           break;
         }

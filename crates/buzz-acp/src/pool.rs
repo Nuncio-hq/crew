@@ -22,7 +22,6 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -46,9 +45,9 @@ use crate::queue::{
 };
 use crate::relay::{ChannelInfo, RestClient};
 use crate::secure_spool::{
-    claim_secure_entries_bounded, claim_secure_named_entries, ensure_secure_directory,
-    lock_secure_directory, measure_secure_directory, read_secure_entry, remove_secure_entry,
-    rename_secure_entry, write_secure_entry_if_absent,
+    claim_secure_entries_bounded, claim_secure_named_entries, cleanup_secure_temporary_entries,
+    ensure_secure_directory, lock_secure_directory, measure_secure_directory, read_secure_entry,
+    remove_secure_entry, rename_secure_entry, write_secure_entry_if_absent,
 };
 
 /// Window within which agent activity before a hard-cap death qualifies
@@ -4712,8 +4711,20 @@ const RECEIPT_MAX_SPOOL_ENTRIES: usize = 4_096;
 const RECEIPT_MAX_SPOOL_BYTES: u64 = 64 * 1024 * 1024;
 const RECEIPT_MAX_FLUSH_ENTRIES: usize = 64;
 static RECEIPT_OUTBOX_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-static RECEIPT_RECOVERY_CURSOR: AtomicUsize = AtomicUsize::new(0);
+static RECEIPT_RECOVERY_CURSORS: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
 static RECEIPT_DEAD_LETTER_IDS: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
+
+fn next_receipt_recovery_cursor(outbox_dir: &Path, candidate_budget: usize) -> usize {
+    let cursors = RECEIPT_RECOVERY_CURSORS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cursors = match cursors.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let cursor = cursors.entry(outbox_dir.to_path_buf()).or_default();
+    let current = *cursor;
+    *cursor = cursor.wrapping_add(candidate_budget.max(1));
+    current
+}
 
 fn receipt_dead_letter_ids() -> &'static tokio::sync::Mutex<HashSet<String>> {
     RECEIPT_DEAD_LETTER_IDS.get_or_init(|| tokio::sync::Mutex::new(HashSet::new()))
@@ -4728,16 +4739,6 @@ async fn ensure_receipt_spool_capacity(path: &Path, additional_bytes: u64) -> Re
     if count.saturating_add(1) > RECEIPT_MAX_SPOOL_ENTRIES
         || bytes.saturating_add(additional_bytes) > RECEIPT_MAX_SPOOL_BYTES
     {
-        return Err(format!(
-            "receipt outbox capacity exceeded ({count} entries, {bytes} bytes)"
-        ));
-    }
-    Ok(())
-}
-
-async fn validate_receipt_spool_capacity(path: &Path) -> Result<(), String> {
-    let (count, bytes) = measure_secure_directory(path, RECEIPT_MAX_SPOOL_BYTES).await?;
-    if count > RECEIPT_MAX_SPOOL_ENTRIES || bytes > RECEIPT_MAX_SPOOL_BYTES {
         return Err(format!(
             "receipt outbox capacity exceeded ({count} entries, {bytes} bytes)"
         ));
@@ -4835,6 +4836,27 @@ async fn persist_receipt_events(
             return failures;
         }
     };
+    match cleanup_secure_temporary_entries(outbox_dir, 0, RECEIPT_MAX_SPOOL_ENTRIES).await {
+        Ok(true) => {}
+        Ok(false) => {
+            for event in events {
+                failures.insert(
+                    event.id.to_hex(),
+                    "receipt outbox temporary cleanup is incomplete".to_string(),
+                );
+            }
+            return failures;
+        }
+        Err(error) => {
+            for event in events {
+                failures.insert(
+                    event.id.to_hex(),
+                    format!("failed to clean receipt outbox temporaries: {error}"),
+                );
+            }
+            return failures;
+        }
+    }
     for event in events {
         let event_id = event.id.to_hex();
         let file_name = format!("{}.json", event.id);
@@ -4917,41 +4939,51 @@ async fn flush_receipt_outbox(
         tracing::error!(%error, "failed closed while securing receipt outbox");
         return Ok(report);
     }
-    let recovery_cursor = RECEIPT_RECOVERY_CURSOR.fetch_add(1, Ordering::Relaxed);
+    let candidate_budget = max_entries.min(RECEIPT_MAX_FLUSH_ENTRIES);
     let target_names = target_event_ids.map(|event_ids| {
         event_ids
             .iter()
             .map(|event_id| std::ffi::OsString::from(format!("{event_id}.json")))
             .collect::<Vec<_>>()
     });
+    let recovery_cursor = if target_names.is_none() {
+        next_receipt_recovery_cursor(outbox_dir, candidate_budget)
+    } else {
+        0
+    };
     let claimed_entries = {
         let _guard = receipt_outbox_lock().lock().await;
         match lock_secure_directory(outbox_dir).await {
-            Ok(_capacity_lock) => match validate_receipt_spool_capacity(outbox_dir).await {
-                Ok(()) => match target_names.as_deref() {
-                    Some(names) => {
-                        claim_secure_named_entries(
-                            outbox_dir,
-                            "json",
-                            RECEIPT_MAX_SPOOL_BYTES,
-                            names,
-                            max_entries.min(RECEIPT_MAX_FLUSH_ENTRIES),
-                        )
-                        .await
-                    }
-                    None => {
-                        claim_secure_entries_bounded(
-                            outbox_dir,
-                            "json",
-                            RECEIPT_MAX_SPOOL_BYTES,
-                            recovery_cursor,
-                            max_entries.min(RECEIPT_MAX_FLUSH_ENTRIES),
-                        )
-                        .await
-                    }
-                },
-                Err(error) => Err(error),
-            },
+            Ok(_capacity_lock) => {
+                match cleanup_secure_temporary_entries(outbox_dir, 0, RECEIPT_MAX_SPOOL_ENTRIES)
+                    .await
+                {
+                    Ok(true) => match target_names.as_deref() {
+                        Some(names) => {
+                            claim_secure_named_entries(
+                                outbox_dir,
+                                "json",
+                                RECEIPT_MAX_SPOOL_BYTES,
+                                names,
+                                candidate_budget,
+                            )
+                            .await
+                        }
+                        None => {
+                            claim_secure_entries_bounded(
+                                outbox_dir,
+                                "json",
+                                RECEIPT_MAX_SPOOL_BYTES,
+                                recovery_cursor,
+                                candidate_budget,
+                            )
+                            .await
+                        }
+                    },
+                    Ok(false) => Err("receipt outbox temporary cleanup is incomplete".to_string()),
+                    Err(error) => Err(error),
+                }
+            }
             Err(error) => Err(error),
         }
     };
@@ -5154,7 +5186,7 @@ fn spawn_receipt_outbox_worker(
                 agent_pubkey,
                 &RECEIPT_RETRY_DELAYS,
                 None,
-                1,
+                RECEIPT_MAX_FLUSH_ENTRIES,
             )
             .await;
             match remaining {
@@ -8304,6 +8336,16 @@ mod tests {
         assert!(!receipt_worker_should_backoff(false, &progress));
         progress.progressed = false;
         assert!(!receipt_worker_should_backoff(true, &progress));
+    }
+
+    #[test]
+    fn receipt_recovery_cursor_is_scoped_per_spool() {
+        let first = PathBuf::from(format!("first-{}", Uuid::new_v4()));
+        let second = PathBuf::from(format!("second-{}", Uuid::new_v4()));
+
+        assert_eq!(next_receipt_recovery_cursor(&first, 64), 0);
+        assert_eq!(next_receipt_recovery_cursor(&first, 64), 64);
+        assert_eq!(next_receipt_recovery_cursor(&second, 64), 0);
     }
 
     #[test]

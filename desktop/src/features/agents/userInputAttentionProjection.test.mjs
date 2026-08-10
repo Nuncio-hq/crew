@@ -9,6 +9,9 @@ import {
 import { getNeedsYouForAll, resetNeedsYouStore } from "./needsYouStore.ts";
 import {
   _testPendingUserInputTransitionCount,
+  beginExhaustiveUserInputProjection,
+  endExhaustiveUserInputProjection,
+  markUserInputAttentionProjectionUnavailable,
   projectAuthorizedUserInputEvent,
   reconcileAuthorizedUserInputRequests,
   resetUserInputAttentionProjection,
@@ -361,4 +364,16 @@ test("rejects transitions whose relationship target does not match the request",
     false,
   );
   assert.equal(getNeedsYouForAll().length, 1);
+});
+
+test("stale exhaustive owners cannot mutate a newer user-input projection", () => {
+  const older = beginExhaustiveUserInputProjection();
+  const newer = beginExhaustiveUserInputProjection();
+  assert.equal(endExhaustiveUserInputProjection(older), false);
+  assert.equal(markUserInputAttentionProjectionUnavailable(older), false);
+  assert.equal(
+    reconcileAuthorizedUserInputRequests(OWNER, ownedAgents, older),
+    false,
+  );
+  assert.equal(endExhaustiveUserInputProjection(newer), true);
 });

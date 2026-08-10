@@ -498,6 +498,7 @@ export async function replayLiveSubscriptions({
                 true,
               );
             } catch (error) {
+              if (!isCurrentRecovery()) return;
               const message =
                 error instanceof Error ? error.message : String(error);
               if (classifyRelayClosed(message) === "terminal") {
