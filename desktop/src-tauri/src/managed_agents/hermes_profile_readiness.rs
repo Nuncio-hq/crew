@@ -40,6 +40,7 @@ pub enum HermesProfileReadiness {
 
 impl HermesProfileReadiness {
     /// Human-readable state copy for status and setup surfaces.
+    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Ready => "Hermes profile is ready to run.".to_string(),
@@ -62,6 +63,7 @@ impl HermesProfileReadiness {
     }
 
     /// Whether this state must block a normal agent start.
+    #[allow(dead_code)]
     pub fn is_blocking(&self) -> bool {
         matches!(
             self,
