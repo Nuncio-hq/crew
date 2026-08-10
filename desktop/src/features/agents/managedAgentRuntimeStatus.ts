@@ -30,7 +30,9 @@ export function agentCommunityStatusDetail(
 ): string | null {
   if (runtime.profileReadiness) {
     const readiness = presentHermesProfileReadiness(runtime.profileReadiness);
-    return `${readiness.explanation} ${readiness.repair}`;
+    if (readiness.tone === "blocking") {
+      return `${readiness.explanation} ${readiness.repair}`;
+    }
   }
   if (!runtime.localSetup)
     return "Set up this agent on this device to start it.";
