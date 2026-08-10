@@ -46,7 +46,7 @@ export function presentHermesProfileReadiness(
       };
     case "auth_unknown":
       return {
-        label: "Auth not verified",
+        label: "Auth not verifiable",
         tone: "neutral",
         explanation: "Hermes authentication cannot be verified locally.",
         repair: "Confirm authentication in Hermes before starting.",

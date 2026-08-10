@@ -28,4 +28,5 @@ test("auth unknown is neutral and explicitly not verifiable", () => {
   });
   assert.equal(presentation.tone, "neutral");
   assert.match(presentation.explanation, /cannot be verified/i);
+  assert.equal(presentation.label, "Auth not verifiable");
 });
