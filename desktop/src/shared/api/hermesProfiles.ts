@@ -147,7 +147,7 @@ export async function archiveHermesProfile(
 }
 
 export async function listHermesProfileArchives(): Promise<
-  HermesProfileArchiveListing[]
+  HermesProfileArchiveManifest[]
 > {
   return invokeTauri("list_hermes_profile_archives");
 }
