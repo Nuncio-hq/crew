@@ -25,6 +25,7 @@ type PersonaDeleteDialogProps = {
   instanceCount?: number;
   /** Unique Hermes profile names bound on cascade-deleted instances. */
   hermesProfiles?: string[];
+  runningHermesProfiles?: string[];
   onConfirm: (
     persona: AgentPersona,
     options?: { archiveHermesProfiles?: boolean; hermesProfileReason?: string },
@@ -61,6 +62,7 @@ export function PersonaDeleteDialog({
   persona,
   instanceCount = 0,
   hermesProfiles = [],
+  runningHermesProfiles = [],
   onConfirm,
   onOpenChange,
 }: PersonaDeleteDialogProps) {
@@ -100,6 +102,7 @@ export function PersonaDeleteDialog({
               onReasonChange={setProfileReason}
               profileName={primaryProfile}
               reason={profileReason}
+              isRunning={runningHermesProfiles.includes(primaryProfile)}
               showPublicAgentWarning={showPublicWarning}
             />
             {uniqueProfiles.length > 1 ? (

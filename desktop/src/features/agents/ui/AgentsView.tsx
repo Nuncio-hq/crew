@@ -409,6 +409,12 @@ export function AgentsView() {
               .map((a) => a.hermesProfile)
               .filter((p): p is string => Boolean(p?.trim())) as string[]
           }
+          runningHermesProfiles={agents.managedAgents
+            .filter(
+              (agent) =>
+                agent.hermesProfile?.trim() && isManagedAgentActive(agent),
+            )
+            .map((agent) => agent.hermesProfile?.trim() as string)}
           instanceCount={
             (agents.managedAgents ?? []).filter(
               (a) => a.personaId === personas.personaToDelete?.id,
@@ -434,6 +440,7 @@ export function AgentsView() {
         />
       ) : null}
       <HermesProfileArchivesPanel
+        managedAgents={agents.managedAgents}
         onOpenChange={setIsHermesArchivesOpen}
         open={isHermesArchivesOpen}
       />

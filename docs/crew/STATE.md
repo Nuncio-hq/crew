@@ -335,3 +335,9 @@ and in flight.
 - Next gates: Slice 2 (binding/readiness/no-model UI + RED contracts),
   Slice 3 (upstream tier-1 PR to block/buzz), Slice 4 (profile lifecycle
   UI).
+- Issue #119 profile lifecycle hardening now includes named Hermes readiness
+  projection, generic preflight/nudge routing, Crew-owned archive/restore and
+  permanent-delete backend contracts, readiness indicators, archive
+  offboarding, and an Agents-page archive browser. Archive semantics follow
+  D-035 and spike 0015; real Hermes authentication remains unverified here
+  because no Hermes binary is installed.

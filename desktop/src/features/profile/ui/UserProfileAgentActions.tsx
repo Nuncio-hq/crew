@@ -36,6 +36,7 @@ import {
   type HermesProfileOffboardChoice,
 } from "@/features/agents/ui/HermesProfileOffboardFields";
 import { isNonOwnerOnlyRespondTo } from "@/features/agents/ui/HermesProfileCreateAffordance";
+import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 
 export function UserProfileAgentSettingsMenu({
   archiveActions,
@@ -360,6 +361,7 @@ function AgentDeleteConfirmDialog({
             onReasonChange={setProfileReason}
             profileName={hermesProfile}
             reason={profileReason}
+            isRunning={isManagedAgentActive(agent)}
             showPublicAgentWarning={isNonOwnerOnlyRespondTo(agent.respondTo)}
           />
         ) : null}

@@ -39,9 +39,10 @@ export function useProfileHermesAwareDeletes({
         const result = await deleteManagedAgentRecord(managedAgent);
         if (result.cancelled) return;
         if (profileToDelete) {
-          const profileError = await archiveHermesProfilesAfterAgentRemoval([
-            profileToDelete,
-          ]);
+          const profileError = await archiveHermesProfilesAfterAgentRemoval(
+            [profileToDelete],
+            options?.hermesProfileReason,
+          );
           if (profileError) {
             toast.error(
               `Agent deleted, but profile cleanup failed: ${profileError}`,
@@ -84,8 +85,10 @@ export function useProfileHermesAwareDeletes({
             : [];
         await deletePersona(personaToConfirm.id);
         if (profilesToDelete.length > 0) {
-          const profileError =
-            await archiveHermesProfilesAfterAgentRemoval(profilesToDelete);
+          const profileError = await archiveHermesProfilesAfterAgentRemoval(
+            profilesToDelete,
+            options?.hermesProfileReason,
+          );
           if (profileError) {
             toast.error(
               `Deleted ${personaToConfirm.displayName}, but profile cleanup failed: ${profileError}`,

@@ -1,6 +1,6 @@
 /**
- * Keep vs delete Hermes profile choice for agent offboarding (C-13 / C-14).
- * Profile-delete is never preselected.
+ * Keep vs archive Hermes profile choice for agent offboarding (C-13 / C-14).
+ * Profile archive is never preselected.
  */
 import * as React from "react";
 import {
@@ -95,7 +95,7 @@ export function HermesProfileOffboardFields({
           checked={choice === "archive"}
           disabled={isRunning}
           className="mt-0.5"
-          data-testid="hermes-profile-offboard-delete"
+          data-testid="hermes-profile-offboard-archive"
           name="hermes-profile-offboard"
           onChange={() => onChoiceChange("archive")}
           type="radio"
@@ -128,7 +128,9 @@ export function HermesProfileOffboardFields({
               Estimated archive: {formatArchiveBytes(estimate.included_bytes)}{" "}
               included; {formatArchiveBytes(estimate.excluded_bytes)} excluded (
               {estimate.entry_count} entries). Excludes:{" "}
-              {estimate.excluded_bytes > 0 ? "cache directories" : "none found"}
+              {estimate.excluded_bytes > 0
+                ? "audio_cache, image_cache, logs"
+                : "audio_cache, image_cache, logs (none present)"}
               .
             </p>
           ) : estimateError ? (
