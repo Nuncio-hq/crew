@@ -45,15 +45,6 @@ For explicit changes to an existing personal agent, use `buzz agents draft-updat
 
 ## Communication Patterns
 
-## Evidence on completion
-
-- Match evidence to the change: UI → before/after visual; behavior/API → test-run; performance → metrics; docs/config → diff-stat; refactor → test-run; data/schema → test-run; research → cited excerpt.
-- Capture in place while the work is visible; text-first; excerpt, don't dump.
-- Be proportional: if no cheap evidence exists, state what is unproven and how to verify it; never add a decorative screenshot for compliance.
-- Do not use computer interaction to manufacture evidence when the task does not require it.
-
-**Crew tooling:** `just desktop-screenshot` for UI capture; `buzz messages send --file` for artifacts; `buzz messages send --evidence <kind>` to attach the result.
-
 ### Mentions
 
 - Use the person's **exact full display name** after `@` (e.g., `@Will Pfleger`, not `@Will`). Partial names fail silently.
@@ -128,6 +119,19 @@ Your `core` memory is auto-injected into your context every turn — it holds id
 - **Evict completed work.** When a tracked item ships (PR merged, task done, decision made) and has no open follow-up, remove its line from `core` the same turn — don't leave merged work tracked as if it's live. The detail already lives in its cold `mem/` slug if you need it later.
 - **Treat `core` as load-bearing.** Follow it unless newer explicit user instructions override it.
 - Cite sources with paths, links, or command outputs. No unsupported claims.
+
+## Evidence on completion
+
+- Bugfix → failing test (before) → passing (after), excerpted text; performance → before/after numbers such as time, query count, or memory (text).
+- UI/visual → before/after capture (image); refactor → `git diff --stat` + green CI + a behavior-preserving note (text).
+- New feature → new tests passing, plus one capture of the new state if visual (text + image).
+- Docs/config → diff or link (text).
+- No cheap proof exists → state honestly what is unproven and how to verify it (text).
+- Capture in place while the work is visible; text-first; excerpt, don't dump.
+- Be proportional: never add a decorative screenshot for compliance.
+- Do not use computer interaction to manufacture evidence when the task does not require it.
+
+**Crew tooling:** `just desktop-screenshot` for UI capture; `buzz messages send --file` for artifacts; `buzz messages send --evidence <kind>` to attach the result.
 
 ## Engineering Discipline
 

@@ -565,6 +565,7 @@ pub struct SendMessageParams {
     pub channel_id: String,
     pub content: String,
     pub kind: Option<u16>,
+    pub evidence: Option<crate::commands::evidence::EvidenceKind>,
     pub reply_to: Option<String>,
     pub broadcast: bool,
     pub files: Vec<String>,
@@ -677,6 +678,12 @@ pub async fn cmd_send_message(
         }
     };
 
+    let builder = if let Some(kind) = p.evidence {
+        kind.append_tag(builder)
+            .map_err(|error| CliError::Other(format!("evidence tag failed: {error}")))?
+    } else {
+        builder
+    };
     let event = client.sign_event(builder)?;
     let emitted_mentions = event_mention_pubkeys(&event);
     let resp = client.submit_event(event).await?;
@@ -876,6 +883,7 @@ pub async fn dispatch(
             channel,
             content,
             kind,
+            evidence,
             reply_to,
             broadcast,
             files,
@@ -887,6 +895,7 @@ pub async fn dispatch(
                     channel_id: channel,
                     content,
                     kind,
+                    evidence,
                     reply_to,
                     broadcast,
                     files,
@@ -1060,6 +1069,9 @@ mod tests {
             "report.txt",
             "--reply-to",
             ID_A,
+            "--mention",
+            PK_VALID_A,
+            "--broadcast",
         ]));
         assert!(
             parsed.is_ok(),

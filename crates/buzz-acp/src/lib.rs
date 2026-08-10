@@ -4596,15 +4596,15 @@ mod agent_draft_prompt_tests {
         let section = prompt
             .split_once("## Evidence on completion\n")
             .and_then(|(_, rest)| {
-                rest.split_once("\n### Mentions")
+                rest.split_once("\n## Engineering Discipline")
                     .map(|(section, _)| section)
             })
             .expect("evidence section must exist");
-        assert!(section.contains("UI → before/after visual"));
+        assert!(section.contains("UI/visual → before/after capture"));
         assert!(section.contains("Capture in place"));
         assert!(section.contains("text-first"));
         assert!(section.contains("excerpt, don't dump"));
-        assert!(section.contains("no cheap evidence exists"));
+        assert!(section.contains("No cheap proof exists"));
         assert!(section.contains("never add a decorative screenshot"));
         assert!(section.contains("Do not use computer interaction"));
         assert!(section.contains("just desktop-screenshot"));

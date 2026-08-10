@@ -38,6 +38,10 @@ The local upstream push URL is deliberately disabled. Never push to
 | `crates/buzz-acp/src/base_prompt.md` | office-level behavioral rule belongs in the office-level prompt | self-contained Markdown section — on conflict, keep it and re-place it after Communication Patterns |
 | `crates/buzz-acp/src/lib.rs` | machine-check the shared prompt contract | retain the focused prompt assertion alongside the existing upstream prompt tests |
 | `crates/buzz-cli/src/commands/messages.rs` | CLI contract tests pin the existing message-build seam | keep tests local to the command module; preserve upstream send behavior |
+| `crates/buzz-cli/src/lib.rs` | expose the Crew evidence flag on `messages send` | retain the additive clap field; preserve upstream command variants and help text |
+| `crates/buzz-cli/src/commands/mod.rs` | register the Crew-owned evidence kind module | retain the module declaration; do not move validation into upstream command code |
+| `crates/buzz-cli/src/commands/evidence.rs` | Crew-owned exact evidence-kind parsing and tag construction | keep canonical wire strings and enum-only validation in this module |
+| `crates/buzz-cli/TESTING.md` | document the additive evidence flag in the CLI test inventory | retain the one-row flag inventory update; do not rewrite unrelated runbook steps |
 | `desktop/playwright.config.ts` | register Crew evidence contracts in the smoke project | retain the narrow test-match addition; do not reorder unrelated entries |
 
 ## Before feature work

@@ -41,6 +41,8 @@ In scope:
 - per-thread ACP scheduling and isolated Git worktree cwd;
 - owner-scoped worktree-ready/error telemetry and a root-scoped Project-thread
   workspace surface;
+- office-level completion evidence guidance and the `messages send
+  --evidence <kind>` tag surface;
 - ordered Project-thread handoff state from mentions, active-turn telemetry,
   and signed agent replies;
 - ordered multi-agent Project task routing through normal composer mentions;
