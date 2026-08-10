@@ -111,6 +111,39 @@ test.describe("Hermes profile lifecycle acceptance", () => {
     await expect(dialog).toContainText(
       /Stop.*Running Hermes|Stop the running agent/i,
     );
+  });
+
+  test("offboarding archive choice shows estimate and optional reason", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      managedAgents: [
+        {
+          pubkey: AGENT_PUBKEY,
+          name: "Stopped Hermes",
+          status: "stopped",
+          runtime: "hermes",
+          hermesProfile: "scout",
+        },
+      ],
+    });
+    await openAgents(page);
+    await page
+      .getByRole("button", { name: "Stopped Hermes agent profile" })
+      .click();
+    await page.getByTestId("user-profile-settings-menu-trigger").click();
+    await page.getByRole("menuitem", { name: /Delete agent/i }).click();
+    const dialog = page.getByTestId("agent-delete-confirm-dialog");
+    await dialog.getByTestId("hermes-profile-offboard-archive").check();
+    await expect(
+      page.getByTestId("hermes-profile-archive-estimate"),
+    ).toContainText(/Estimated archive:|excluded/i);
+    await expect(
+      page.getByTestId("hermes-profile-offboard-reason"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("hermes-profile-offboard-reason"),
+    ).not.toHaveAttribute("required", "");
     await dialog.screenshot({
       path: "/home/ubuntu/119-evidence/offboard-archive-dialog.png",
     });
