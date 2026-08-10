@@ -67,7 +67,7 @@ test("terminal subscription failures are isolated to their projection family", a
   assert.doesNotMatch(source, /durableHydrationReady/);
   assert.match(
     source,
-    /await handleReceiptEvent\(\s*event,[\s\S]*?\);[\s\S]*durableProjectionGeneration !== projectionGenerationAtStart[\s\S]*familyHydrationReady\.userInput = true[\s\S]*familyHydrationReady\.receipt = true/,
+    /await handleReceiptEvent\(\s*event,[\s\S]*?\);[\s\S]*!ownsHydrationGeneration\(\)[\s\S]*familyHydrationReady\.userInput = true[\s\S]*familyHydrationReady\.receipt = true/,
     "stale async hydration cannot reopen a failed family while healthy siblings recover",
   );
 });
@@ -87,7 +87,7 @@ test("approval hydration cannot terminally disable durable attention", async () 
   assert.doesNotMatch(durableHydration, /approvalRequestEvents/);
 });
 
-test("auxiliary CLOSED recovery resubscribes the disposed family", async () => {
+test("auxiliary terminal CLOSED fails only its exact authority family", async () => {
   const source = await readFile(sourcePath, "utf8");
   const auxiliaryClosed = source.match(
     /const subscribeAuxiliary =[\s\S]*?const auxiliarySubscriptions =/,
@@ -97,10 +97,14 @@ test("auxiliary CLOSED recovery resubscribes the disposed family", async () => {
     auxiliaryClosed,
     "auxiliary CLOSED handler must remain discoverable",
   );
+  assert.match(auxiliaryClosed, /key === "reminder"/);
   assert.match(
     auxiliaryClosed,
-    /disposeAll\(currentDisposers\);[\s\S]*scheduleRetry\(\);/,
+    /failApprovalSubscriptions\(auxiliaryDisposers\)/,
   );
+  assert.doesNotMatch(auxiliaryClosed, /scheduleRetry\(\)/);
+  assert.match(source, /auxiliaryDisposers\[key\] = \[dispose\]/);
+  assert.doesNotMatch(source, /disposeAll\(fulfilledAuxiliary\)/);
 });
 
 test("stale async validation failures cannot close a newer projection generation", async () => {
@@ -112,7 +116,7 @@ test("stale async validation failures cannot close a newer projection generation
   assert.ok(userInputFailure, "user-input validation failure path must exist");
   assert.match(
     userInputFailure,
-    /durableProjectionGeneration !== eventGeneration[\s\S]*return;/,
+    /durableProjectionGeneration\.userInput !==\s*eventGeneration[\s\S]*return;/,
   );
   assert.match(
     source,

@@ -49,14 +49,19 @@ import {
 } from "@/features/agents/durableActionHydration";
 import type { RelayEvent } from "@/shared/api/types";
 import { fetchRelayEventAncestry } from "@/features/agents/receiptParentLookup";
+import { failApprovalSubscriptions } from "./failApprovalSubscriptions";
+import {
+  activeFamilyStateIsCurrent,
+  createDurableProjectionFamilyCounters,
+  eventBelongsToActiveProjection,
+  type DurableProjectionFamily,
+} from "@/app/durableProjectionFamily";
 
 const LIVE_HOME_FEED_RETRY_BASE_MS = 1_000;
 const LIVE_HOME_FEED_RETRY_MAX_MS = 30_000;
 const DURABLE_ACTION_PAGE_SIZE = 500;
 const RECEIPT_PARENT_BATCH_SIZE = 100;
 const MAX_DURABLE_HYDRATION_BUFFER = 5_000;
-
-type DurableProjectionFamily = "receipt" | "userInput";
 
 class DurableProjectionHydrationError extends Error {
   constructor(
@@ -84,9 +89,7 @@ export function useLiveHomeFeedActions(
 ) {
   const queryClient = useQueryClient();
   const ownedAgentPubkeys = useCurrentOwnedAgentPubkeys(pubkey);
-  // Joined-string key: an unstable array identity from a caller can never
-  // thrash the subscription lifecycle — only a real membership change
-  // re-subscribes. The effect re-derives the array from this key.
+  // Re-subscribe only when channel membership actually changes.
   const channelIdsKey = channelIds.join(",");
 
   const handleLiveHomeFeedEvent = React.useEffectEvent(() => {
@@ -103,7 +106,6 @@ export function useLiveHomeFeedActions(
 
   React.useEffect(() => {
     const normalizedPubkey = pubkey?.trim().toLowerCase() ?? "";
-    reconcileAuthorizedUserInputRequests(normalizedPubkey, ownedAgentPubkeys);
     if (!normalizedPubkey) {
       return;
     }
@@ -118,7 +120,14 @@ export function useLiveHomeFeedActions(
       receipt: [],
       userInput: [],
     };
-    let auxiliaryDisposers: Array<() => Promise<void>> = [];
+    type AuxiliarySubscriptionKey =
+      | "approvalRequest"
+      | "approvalTerminal"
+      | "reminder";
+    const auxiliaryDisposers: Record<
+      AuxiliarySubscriptionKey,
+      Array<() => Promise<void>>
+    > = { approvalRequest: [], approvalTerminal: [], reminder: [] };
     let retryTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
     let retryAttempt = 0;
     const since = Math.floor(Date.now() / 1_000);
@@ -127,9 +136,27 @@ export function useLiveHomeFeedActions(
       userInput: false,
     };
     const terminalFamilies = new Set<DurableProjectionFamily>();
-    let durableProjectionGeneration = 0;
-    let durableBufferOverflowGeneration = 0;
+    const durableProjectionGeneration = createDurableProjectionFamilyCounters();
+    const durableBufferOverflowGeneration =
+      createDurableProjectionFamilyCounters();
     const bufferedDurableEvents = new Map<string, RelayEvent>();
+    const projectionOwnerByFamily: Record<
+      DurableProjectionFamily,
+      number | null
+    > = { receipt: null, userInput: null };
+    const beginFamilyProjection = (family: DurableProjectionFamily) => {
+      const owner =
+        family === "userInput"
+          ? beginExhaustiveUserInputProjection()
+          : beginExhaustiveAgentReceiptProjection(
+              normalizedPubkey,
+              ownedAgentPubkeys,
+            );
+      projectionOwnerByFamily[family] = owner;
+      return owner;
+    };
+    const ensureFamilyProjectionOwner = (family: DurableProjectionFamily) =>
+      projectionOwnerByFamily[family] ?? beginFamilyProjection(family);
     const familyForEvent = (
       event: RelayEvent,
     ): DurableProjectionFamily | null => {
@@ -167,12 +194,13 @@ export function useLiveHomeFeedActions(
           if (familyForEvent(candidate) === family)
             bufferedDurableEvents.delete(eventId);
         }
-        durableBufferOverflowGeneration += 1;
-        durableProjectionGeneration += 1;
+        durableBufferOverflowGeneration[family] += 1;
+        durableProjectionGeneration[family] += 1;
         familyHydrationReady[family] = false;
+        const owner = ensureFamilyProjectionOwner(family);
         if (family === "userInput")
-          markUserInputAttentionProjectionUnavailable();
-        else markAgentReceiptProjectionUnavailable();
+          markUserInputAttentionProjectionUnavailable(owner);
+        else markAgentReceiptProjectionUnavailable(owner);
         void hydrationRetry.run();
       }
       bufferedDurableEvents.set(event.id, event);
@@ -185,8 +213,8 @@ export function useLiveHomeFeedActions(
     const handleUserInputEvent = (
       event: RelayEvent,
       fallbackChannelId: string,
-      knownParents?: ReadonlyMap<string, RelayEvent>,
-      projectionOwner?: number,
+      knownParents: ReadonlyMap<string, RelayEvent> | undefined,
+      projectionOwner: number,
     ) => {
       const parentId = causalParentId(event);
       projectAuthorizedUserInputEvent(
@@ -215,9 +243,9 @@ export function useLiveHomeFeedActions(
     };
     const handleReceiptEvent = async (
       event: RelayEvent,
-      knownParents?: ReadonlyMap<string, RelayEvent>,
-      shouldCommit: () => boolean = () => true,
-      projectionOwner?: number,
+      knownParents: ReadonlyMap<string, RelayEvent> | undefined,
+      shouldCommit: () => boolean,
+      projectionOwner: number,
     ) => {
       if (event.kind === KIND_AGENT_RECEIPT) {
         const parentId = causalParentId(event);
@@ -240,21 +268,43 @@ export function useLiveHomeFeedActions(
       }
     };
     const hydrateDurableActions = async () => {
-      durableProjectionGeneration += 1;
-      const projectionGenerationAtStart = durableProjectionGeneration;
-      const overflowGenerationAtStart = durableBufferOverflowGeneration;
       if (subscribedChannelIds.length === 0) return;
-      const userInputActive =
+      let userInputActive =
         familyDisposers.userInput.length > 0 &&
+        !familyHydrationReady.userInput &&
         !terminalFamilies.has("userInput");
-      const receiptActive =
-        familyDisposers.receipt.length > 0 && !terminalFamilies.has("receipt");
+      let receiptActive =
+        familyDisposers.receipt.length > 0 &&
+        !familyHydrationReady.receipt &&
+        !terminalFamilies.has("receipt");
       if (!userInputActive && !receiptActive) return;
+      if (userInputActive) durableProjectionGeneration.userInput += 1;
+      if (receiptActive) durableProjectionGeneration.receipt += 1;
+      const projectionGenerationAtStart = { ...durableProjectionGeneration };
+      const overflowGenerationAtStart = {
+        ...durableBufferOverflowGeneration,
+      };
+      const activeFamilies = {
+        receipt: receiptActive,
+        userInput: userInputActive,
+      };
+      const ownsHydrationGeneration = () =>
+        activeFamilyStateIsCurrent(
+          durableProjectionGeneration,
+          projectionGenerationAtStart,
+          activeFamilies,
+        );
+      const activeFamilyOverflowed = () =>
+        !activeFamilyStateIsCurrent(
+          durableBufferOverflowGeneration,
+          overflowGenerationAtStart,
+          activeFamilies,
+        );
       if (userInputActive) familyHydrationReady.userInput = false;
       if (receiptActive) familyHydrationReady.receipt = false;
-      const enumerateFamily = async (
+      const enumerateFamily = async <T>(
         family: DurableProjectionFamily,
-        enumerate: () => Promise<RelayEvent[]>,
+        enumerate: () => Promise<T>,
       ) => {
         try {
           return await enumerate();
@@ -262,7 +312,7 @@ export function useLiveHomeFeedActions(
           throw new DurableProjectionHydrationError(family, error);
         }
       };
-      const [userInputEvents, receiptEvents, reviewEvents] = await Promise.all([
+      const [userInputResult, receiptResult] = await Promise.allSettled([
         userInputActive
           ? enumerateFamily("userInput", () =>
               enumerateDurableActionEvents(
@@ -280,36 +330,47 @@ export function useLiveHomeFeedActions(
             )
           : Promise.resolve([]),
         receiptActive
-          ? enumerateFamily("receipt", () =>
-              enumerateDurableActionEvents(
-                (filter) => relayClient.fetchEvents(filter),
-                {
-                  kinds: [KIND_AGENT_RECEIPT],
-                  "#h": subscribedChannelIds,
-                },
-                DURABLE_ACTION_PAGE_SIZE,
-              ),
-            )
-          : Promise.resolve([]),
-        receiptActive
-          ? enumerateFamily("receipt", () =>
-              enumerateDurableActionEvents(
-                (filter) => relayClient.fetchEvents(filter),
-                {
-                  authors: [normalizedPubkey],
-                  kinds: [KIND_REACTION],
-                  "#h": subscribedChannelIds,
-                },
-                DURABLE_ACTION_PAGE_SIZE,
-              ),
-            )
-          : Promise.resolve([]),
+          ? enumerateFamily("receipt", async () => {
+              const [receipts, reviews] = await Promise.all([
+                enumerateDurableActionEvents(
+                  (filter) => relayClient.fetchEvents(filter),
+                  {
+                    kinds: [KIND_AGENT_RECEIPT],
+                    "#h": subscribedChannelIds,
+                  },
+                  DURABLE_ACTION_PAGE_SIZE,
+                ),
+                enumerateDurableActionEvents(
+                  (filter) => relayClient.fetchEvents(filter),
+                  {
+                    authors: [normalizedPubkey],
+                    kinds: [KIND_REACTION],
+                    "#h": subscribedChannelIds,
+                  },
+                  DURABLE_ACTION_PAGE_SIZE,
+                ),
+              ]);
+              return { receipts, reviews };
+            })
+          : Promise.resolve({ receipts: [], reviews: [] }),
       ]);
-      if (
-        isCancelled ||
-        durableProjectionGeneration !== projectionGenerationAtStart
-      )
-        return;
+      let hydrationRetryError: unknown = null;
+      const userInputEvents =
+        userInputResult.status === "fulfilled" ? userInputResult.value : [];
+      if (userInputResult.status === "rejected") {
+        userInputActive = false;
+        hydrationRetryError = userInputResult.reason;
+      }
+      const { receipts: receiptEvents, reviews: reviewEvents } =
+        receiptResult.status === "fulfilled"
+          ? receiptResult.value
+          : { receipts: [], reviews: [] };
+      if (receiptResult.status === "rejected") {
+        receiptActive = false;
+        hydrationRetryError ??= receiptResult.reason;
+      }
+      if (!userInputActive && !receiptActive) throw hydrationRetryError;
+      if (isCancelled || !ownsHydrationGeneration()) return;
       let merged = mergeDurableActionEvents(
         userInputEvents,
         receiptEvents,
@@ -317,11 +378,17 @@ export function useLiveHomeFeedActions(
         [],
       );
       let projectionStarted = false;
-      let userInputProjectionOwner: number | undefined;
-      let receiptProjectionOwner: number | undefined;
+      let userInputProjectionOwner: number | null = null;
+      let receiptProjectionOwner: number | null = null;
+      const isActiveHydrationEvent = (event: RelayEvent) =>
+        eventBelongsToActiveProjection(event, familyForEvent, activeFamilies);
       for (;;) {
-        const overlap = [...bufferedDurableEvents.values()];
-        bufferedDurableEvents.clear();
+        const overlap: RelayEvent[] = [];
+        for (const [eventId, event] of bufferedDurableEvents) {
+          if (!isActiveHydrationEvent(event)) continue;
+          overlap.push(event);
+          bufferedDurableEvents.delete(eventId);
+        }
         merged = mergeDurableActionEvents(
           merged.userInputEvents,
           merged.receiptEvents,
@@ -334,92 +401,83 @@ export function useLiveHomeFeedActions(
           ),
           ...merged.receiptEvents,
         ]);
-        if (
-          isCancelled ||
-          durableProjectionGeneration !== projectionGenerationAtStart
-        )
-          return;
-        if (durableBufferOverflowGeneration !== overflowGenerationAtStart) {
+        if (isCancelled || !ownsHydrationGeneration()) return;
+        if (activeFamilyOverflowed()) {
           throw new Error(
             "Durable live-overlap capacity exceeded before projection commit",
           );
         }
         if (!projectionStarted) {
           if (userInputActive)
-            userInputProjectionOwner = beginExhaustiveUserInputProjection();
+            userInputProjectionOwner = beginFamilyProjection("userInput");
           if (receiptActive)
-            receiptProjectionOwner = beginExhaustiveAgentReceiptProjection(
-              normalizedPubkey,
-              ownedAgentPubkeys,
-            );
+            receiptProjectionOwner = beginFamilyProjection("receipt");
           projectionStarted = true;
         }
+        const userInputOwner = userInputProjectionOwner;
+        const receiptOwner = receiptProjectionOwner;
+        if (
+          (userInputActive && userInputOwner === null) ||
+          (receiptActive && receiptOwner === null)
+        ) {
+          throw new Error("durable projection owner was not established");
+        }
         for (const event of merged.userInputEvents) {
+          if (userInputOwner === null) break;
           handleUserInputEvent(
             event,
             event.tags.find((tag) => tag[0] === "h")?.[1] ?? "",
             causalParents,
-            userInputProjectionOwner,
+            userInputOwner,
           );
         }
+        if (userInputOwner !== null)
+          reconcileAuthorizedUserInputRequests(
+            normalizedPubkey,
+            ownedAgentPubkeys,
+            userInputOwner,
+          );
         // Receipts establish authority before reactions are projected, even if
         // relay pages or same-second ids arrive in the opposite order.
         for (const event of merged.receiptEvents) {
+          if (receiptOwner === null) break;
           await handleReceiptEvent(
             event,
             causalParents,
             () => true,
-            receiptProjectionOwner,
+            receiptOwner,
           );
         }
         for (const event of merged.reviewEvents) {
-          await handleReceiptEvent(
-            event,
-            undefined,
-            () => true,
-            receiptProjectionOwner,
-          );
+          if (receiptOwner === null) break;
+          await handleReceiptEvent(event, undefined, () => true, receiptOwner);
         }
-        if (
-          isCancelled ||
-          durableProjectionGeneration !== projectionGenerationAtStart
-        ) {
-          if (
-            userInputActive &&
-            !terminalFamilies.has("userInput") &&
-            !isUserInputAttentionProjectionUnavailable()
-          ) {
-            if (endExhaustiveUserInputProjection(userInputProjectionOwner))
-              familyHydrationReady.userInput = true;
-          }
-          if (
-            receiptActive &&
-            !terminalFamilies.has("receipt") &&
-            !isAgentReceiptProjectionUnavailable()
-          ) {
-            if (endExhaustiveAgentReceiptProjection(receiptProjectionOwner))
-              familyHydrationReady.receipt = true;
-          }
+        if (isCancelled || !ownsHydrationGeneration()) {
+          if (userInputOwner !== null && userInputActive)
+            markUserInputAttentionProjectionUnavailable(userInputOwner);
+          if (receiptOwner !== null && receiptActive)
+            markAgentReceiptProjectionUnavailable(receiptOwner);
           return;
         }
-        if (durableBufferOverflowGeneration !== overflowGenerationAtStart) {
+        if (activeFamilyOverflowed()) {
           throw new Error(
             "Durable live-overlap capacity exceeded; exhaustive recovery required",
           );
         }
-        if (bufferedDurableEvents.size === 0) {
-          if (userInputActive) {
-            if (endExhaustiveUserInputProjection(userInputProjectionOwner))
+        if (![...bufferedDurableEvents.values()].some(isActiveHydrationEvent)) {
+          if (userInputOwner !== null && userInputActive) {
+            if (endExhaustiveUserInputProjection(userInputOwner))
               familyHydrationReady.userInput = true;
           }
-          if (receiptActive) {
-            if (endExhaustiveAgentReceiptProjection(receiptProjectionOwner))
+          if (receiptOwner !== null && receiptActive) {
+            if (endExhaustiveAgentReceiptProjection(receiptOwner))
               familyHydrationReady.receipt = true;
           }
           break;
         }
       }
       handleLiveHomeFeedEvent();
+      if (hydrationRetryError) throw hydrationRetryError;
     };
     const hydrateApprovals = async () => {
       const projectionGeneration = beginExhaustiveApprovalProjection();
@@ -482,17 +540,19 @@ export function useLiveHomeFeedActions(
       if (terminalFamilies.has(family)) return;
       terminalFamilies.add(family);
       familyHydrationReady[family] = false;
-      durableProjectionGeneration += 1;
+      durableProjectionGeneration[family] += 1;
       for (const [eventId, event] of bufferedDurableEvents) {
         if (familyForEvent(event) === family)
           bufferedDurableEvents.delete(eventId);
       }
       if (family === "userInput") {
-        markUserInputAttentionProjectionUnavailable();
-        endExhaustiveUserInputProjection();
+        const owner = ensureFamilyProjectionOwner("userInput");
+        markUserInputAttentionProjectionUnavailable(owner);
+        endExhaustiveUserInputProjection(owner);
       } else {
-        markAgentReceiptProjectionUnavailable();
-        endExhaustiveAgentReceiptProjection();
+        const owner = ensureFamilyProjectionOwner("receipt");
+        markAgentReceiptProjectionUnavailable(owner);
+        endExhaustiveAgentReceiptProjection(owner);
       }
       const currentDisposers = familyDisposers[family];
       familyDisposers[family] = [];
@@ -601,20 +661,26 @@ export function useLiveHomeFeedActions(
                   if (!familyHydrationReady.userInput) {
                     return;
                   }
-                  const eventGeneration = durableProjectionGeneration;
+                  const eventGeneration = durableProjectionGeneration.userInput;
                   void fetchCausalParents([event])
                     .then((parents) => {
                       if (
                         isCancelled ||
                         !familyHydrationReady.userInput ||
-                        durableProjectionGeneration !== eventGeneration
+                        durableProjectionGeneration.userInput !==
+                          eventGeneration
                       )
                         return;
-                      handleUserInputEvent(event, channelId, parents);
+                      handleUserInputEvent(
+                        event,
+                        channelId,
+                        parents,
+                        ensureFamilyProjectionOwner("userInput"),
+                      );
                       if (isUserInputAttentionProjectionUnavailable()) {
                         bufferDurableEvent(event);
                         familyHydrationReady.userInput = false;
-                        durableProjectionGeneration += 1;
+                        durableProjectionGeneration.userInput += 1;
                         void hydrationRetry.run();
                         return;
                       }
@@ -625,12 +691,13 @@ export function useLiveHomeFeedActions(
                       if (
                         isCancelled ||
                         terminalFamilies.has("userInput") ||
-                        durableProjectionGeneration !== eventGeneration
+                        durableProjectionGeneration.userInput !==
+                          eventGeneration
                       )
                         return;
                       bufferDurableEvent(event);
                       familyHydrationReady.userInput = false;
-                      durableProjectionGeneration += 1;
+                      durableProjectionGeneration.userInput += 1;
                       console.error(
                         "Failed to validate user-input parent",
                         error,
@@ -658,11 +725,16 @@ export function useLiveHomeFeedActions(
                   if (!familyHydrationReady.receipt) {
                     return;
                   }
-                  const eventGeneration = durableProjectionGeneration;
+                  const eventGeneration = durableProjectionGeneration.receipt;
                   const ownsGeneration = () =>
                     familyHydrationReady.receipt &&
-                    durableProjectionGeneration === eventGeneration;
-                  void handleReceiptEvent(event, undefined, ownsGeneration)
+                    durableProjectionGeneration.receipt === eventGeneration;
+                  void handleReceiptEvent(
+                    event,
+                    undefined,
+                    ownsGeneration,
+                    ensureFamilyProjectionOwner("receipt"),
+                  )
                     .then(() => {
                       if (!ownsGeneration()) return;
                       bufferedDurableEvents.delete(event.id);
@@ -672,7 +744,7 @@ export function useLiveHomeFeedActions(
                       if (isCancelled || !ownsGeneration()) return;
                       bufferDurableEvent(event);
                       familyHydrationReady.receipt = false;
-                      durableProjectionGeneration += 1;
+                      durableProjectionGeneration.receipt += 1;
                       console.error(
                         "Failed to validate agent receipt parent",
                         error,
@@ -696,11 +768,16 @@ export function useLiveHomeFeedActions(
                   if (!familyHydrationReady.receipt) {
                     return;
                   }
-                  const eventGeneration = durableProjectionGeneration;
+                  const eventGeneration = durableProjectionGeneration.receipt;
                   const ownsGeneration = () =>
                     familyHydrationReady.receipt &&
-                    durableProjectionGeneration === eventGeneration;
-                  void handleReceiptEvent(event, undefined, ownsGeneration)
+                    durableProjectionGeneration.receipt === eventGeneration;
+                  void handleReceiptEvent(
+                    event,
+                    undefined,
+                    ownsGeneration,
+                    ensureFamilyProjectionOwner("receipt"),
+                  )
                     .then(() => {
                       if (!ownsGeneration()) return;
                       bufferedDurableEvents.delete(event.id);
@@ -710,7 +787,7 @@ export function useLiveHomeFeedActions(
                       if (isCancelled || !ownsGeneration()) return;
                       bufferDurableEvent(event);
                       familyHydrationReady.receipt = false;
-                      durableProjectionGeneration += 1;
+                      durableProjectionGeneration.receipt += 1;
                       void hydrationRetry.run();
                     });
                 },
@@ -731,7 +808,9 @@ export function useLiveHomeFeedActions(
           family: "receipt",
           promises: receiptSubscriptions,
         });
+
       const subscribeAuxiliary = (
+        key: AuxiliarySubscriptionKey,
         label: string,
         filter: Parameters<typeof relayClient.subscribeLive>[0],
         onEvent: Parameters<typeof relayClient.subscribeLive>[1],
@@ -739,57 +818,63 @@ export function useLiveHomeFeedActions(
         relayClient.subscribeLive(filter, onEvent, (status) => {
           if (status.state !== "closed") return;
           console.error(`${label} subscription closed`, status.message);
-          const currentDisposers = auxiliaryDisposers;
-          auxiliaryDisposers = [];
-          disposeAll(currentDisposers);
-          scheduleRetry();
+          if (key === "reminder") {
+            disposeAll(auxiliaryDisposers.reminder);
+            auxiliaryDisposers.reminder = [];
+          } else {
+            failApprovalSubscriptions(auxiliaryDisposers);
+          }
         });
-      const auxiliarySubscriptions =
-        auxiliaryDisposers.length > 0
-          ? []
-          : [
-              subscribeAuxiliary(
-                "Approval request",
-                {
-                  kinds: [KIND_APPROVAL_REQUEST],
-                  "#p": [normalizedPubkey],
-                  limit: 50,
-                  since,
-                },
-                (event) => {
-                  ingestApprovalRequestEvent(event);
-                  handleLiveHomeFeedEvent();
-                },
-              ),
-              subscribeAuxiliary(
-                "Approval terminal",
-                {
-                  authors: [normalizedPubkey],
-                  kinds: [KIND_APPROVAL_GRANT, KIND_APPROVAL_DENY],
-                  limit: 50,
-                  since,
-                },
-                (event) => {
-                  // Refresh only after resolution settles so refetch cannot
-                  // race the authoritative store update.
-                  void resolveApprovalRequestEvent(event).finally(
-                    handleLiveHomeFeedEvent,
-                  );
-                },
-              ),
-              subscribeAuxiliary(
-                "Reminder",
-                {
-                  authors: [normalizedPubkey],
-                  kinds: [KIND_EVENT_REMINDER],
-                  limit: 50,
-                  since,
-                },
-                () => {
-                  handleLiveReminderEvent(normalizedPubkey);
-                },
-              ),
-            ];
+      const auxiliarySetups = [
+        {
+          key: "approvalRequest" as const,
+          label: "Approval request",
+          filter: {
+            kinds: [KIND_APPROVAL_REQUEST],
+            "#p": [normalizedPubkey],
+            limit: 50,
+            since,
+          },
+          onEvent: (event: RelayEvent) => {
+            ingestApprovalRequestEvent(event);
+            handleLiveHomeFeedEvent();
+          },
+        },
+        {
+          key: "approvalTerminal" as const,
+          label: "Approval terminal",
+          filter: {
+            authors: [normalizedPubkey],
+            kinds: [KIND_APPROVAL_GRANT, KIND_APPROVAL_DENY],
+            limit: 50,
+            since,
+          },
+          onEvent: (event: RelayEvent) => {
+            void resolveApprovalRequestEvent(event).finally(
+              handleLiveHomeFeedEvent,
+            );
+          },
+        },
+        {
+          key: "reminder" as const,
+          label: "Reminder",
+          filter: {
+            authors: [normalizedPubkey],
+            kinds: [KIND_EVENT_REMINDER],
+            limit: 50,
+            since,
+          },
+          onEvent: () => handleLiveReminderEvent(normalizedPubkey),
+        },
+      ];
+      const auxiliarySubscriptions = auxiliarySetups
+        .filter(({ key }) => auxiliaryDisposers[key].length === 0)
+        .map(({ key, label, filter, onEvent }) =>
+          subscribeAuxiliary(key, label, filter, onEvent).then(
+            (dispose) => ({ dispose, key, error: null }),
+            (error) => ({ dispose: null, key, error }),
+          ),
+        );
 
       return Promise.all([
         Promise.all(
@@ -802,6 +887,7 @@ export function useLiveHomeFeedActions(
       ]).then(([familyResults, auxiliaryResults]) => {
         let hydrationNeeded = false;
         let retryNeeded = false;
+        let approvalSetupPermanent = false;
         for (const { family, results } of familyResults) {
           const fulfilled = results.flatMap((result) =>
             result.status === "fulfilled" ? [result.value] : [],
@@ -838,33 +924,36 @@ export function useLiveHomeFeedActions(
           }
         }
 
-        const fulfilledAuxiliary = auxiliaryResults.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : [],
-        );
-        const rejectedAuxiliary = auxiliaryResults.filter(
-          (result) => result.status === "rejected",
-        );
-        if (isCancelled) {
-          disposeAll(fulfilledAuxiliary);
-          return;
-        }
-        for (const result of rejectedAuxiliary) {
-          console.error(
-            "Auxiliary home-feed subscription unavailable",
-            result.reason,
-          );
-        }
-        if (rejectedAuxiliary.length > 0) {
-          disposeAll(fulfilledAuxiliary);
-          if (
-            !rejectedAuxiliary.some((result) =>
-              isPermanentHydrationError(result.reason),
-            )
-          ) {
+        for (const result of auxiliaryResults) {
+          if (result.status === "rejected") {
+            console.error(
+              "Auxiliary home-feed subscription unavailable",
+              result.reason,
+            );
             retryNeeded = true;
+            continue;
           }
-        } else if (fulfilledAuxiliary.length > 0) {
-          auxiliaryDisposers = fulfilledAuxiliary;
+          const { dispose, error, key } = result.value;
+          if (error) {
+            console.error(`Auxiliary ${key} subscription unavailable`, error);
+            if (!isPermanentHydrationError(error)) retryNeeded = true;
+            else if (key !== "reminder") approvalSetupPermanent = true;
+            continue;
+          }
+          if (!dispose) continue;
+          if (isCancelled) {
+            disposeAll([dispose]);
+            continue;
+          }
+          auxiliaryDisposers[key] = [dispose];
+        }
+        if (approvalSetupPermanent) {
+          failApprovalSubscriptions(auxiliaryDisposers);
+        }
+        if (
+          auxiliaryDisposers.approvalRequest.length > 0 &&
+          auxiliaryDisposers.approvalTerminal.length > 0
+        ) {
           void approvalHydrationRetry.run();
         }
 
@@ -891,9 +980,15 @@ export function useLiveHomeFeedActions(
         familyDisposers[family] = [];
         disposeAll(currentDisposers);
       }
-      const currentAuxiliaryDisposers = auxiliaryDisposers;
-      auxiliaryDisposers = [];
-      disposeAll(currentAuxiliaryDisposers);
+      for (const key of [
+        "approvalRequest",
+        "approvalTerminal",
+        "reminder",
+      ] as const) {
+        const currentDisposers = auxiliaryDisposers[key];
+        auxiliaryDisposers[key] = [];
+        disposeAll(currentDisposers);
+      }
     };
   }, [channelIdsKey, ownedAgentPubkeys, pubkey]);
 }

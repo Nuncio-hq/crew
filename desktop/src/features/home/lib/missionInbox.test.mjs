@@ -2,9 +2,38 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  deriveMissionInboxSections,
+  deriveMissionInboxSections as deriveTrustedMissionInboxSections,
   getMissionInboxEventTarget,
 } from "./missionInbox.ts";
+
+function deriveMissionInboxSections(input) {
+  return deriveTrustedMissionInboxSections({
+    ...input,
+    activeTurns: input.activeTurns.map((turn) => ({
+      ...turn,
+      agentTriggerPairs: turn.agentTriggerPairs?.map((pair) => ({
+        ...pair,
+        sessionId: pair.sessionId ?? "session",
+        turnId: pair.turnId ?? "turn",
+      })),
+    })),
+    outcomes: input.outcomes.map(([conversationId, outcome]) => [
+      conversationId,
+      outcome.outcome === "completed"
+        ? {
+            sessionId: "session",
+            turnId: "turn",
+            ...outcome,
+          }
+        : outcome,
+    ]),
+    receipts: input.receipts.map((receipt) => ({
+      sessionId: "session",
+      turnId: "turn",
+      ...receipt,
+    })),
+  });
+}
 
 function item(conversationId, channelId, createdAt, overrides = {}) {
   return {
@@ -37,7 +66,7 @@ const attentionDefaults = {
 };
 
 function activeTurn(conversationId, overrides = {}) {
-  return {
+  const turn = {
     conversationId,
     channelId: "channel-a",
     agentPubkeys: ["agent-1"],
@@ -48,6 +77,19 @@ function activeTurn(conversationId, overrides = {}) {
     progressLabel: "Running tests",
     triggeringEventIds: ["current-trigger"],
     ...overrides,
+  };
+  return {
+    ...turn,
+    agentTriggerPairs:
+      turn.agentTriggerPairs ??
+      (turn.agentPubkeys.length === 1
+        ? turn.triggeringEventIds.map((eventId) => ({
+            agentPubkey: turn.agentPubkeys[0],
+            eventId,
+            sessionId: "session",
+            turnId: "turn",
+          }))
+        : []),
   };
 }
 
@@ -664,4 +706,46 @@ test("mission rows use real roots and never promote conversation UUIDs to event 
     await getMissionInboxEventTarget({ ...needsYouRow, rootEventId: null }),
     null,
   );
+});
+
+test("a same-trigger rerun requires the receipt from the exact producer turn", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [],
+    channels,
+    inboxItems: [item("same-trigger-rerun", "channel-a", 100)],
+    needsYou: [],
+    outcomes: [
+      [
+        "same-trigger-rerun",
+        {
+          outcome: "completed",
+          channelId: "channel-a",
+          agentPubkey: "agent-1",
+          sessionId: "session-new",
+          turnId: "turn-new",
+          endedAt: 300,
+          triggeringEventIds: ["same-trigger"],
+        },
+      ],
+    ],
+    receipts: [
+      {
+        id: "receipt-old-turn",
+        channelId: "channel-a",
+        conversationId: "same-trigger-rerun",
+        agentPubkey: "agent-1",
+        parentEventId: "same-trigger",
+        sessionId: "session-old",
+        turnId: "turn-old",
+        createdAt: 200,
+        summary: "Old turn",
+        verify: "old",
+        reviewed: false,
+      },
+    ],
+  });
+
+  assert.equal(sections.readyToReview.length, 0);
 });

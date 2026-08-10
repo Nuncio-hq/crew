@@ -987,13 +987,13 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' }}
       # Tauri validates externalBin at compile time, so the Tauri-crate steps
       # below fail without these stubs. Mirrors scripts/bundle-sidecars.sh's
-      # Windows naming (binaries/<bin>-<triple>.exe); empty files suffice for a
-      # type-check since nothing executes them.
+      # Windows packages only the sidecars supported at runtime. Empty files
+      # suffice for Tauri's config type-check since nothing executes them.
       - name: Create sidecar placeholders
         shell: bash
         run: |
           mkdir -p desktop/src-tauri/binaries
-          for bin in buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr buzz; do
+          for bin in git-credential-nostr buzz; do
             touch "desktop/src-tauri/binaries/${bin}-${TARGET}.exe"
           done
       - name: Clippy (workspace)

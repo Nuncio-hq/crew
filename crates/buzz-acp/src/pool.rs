@@ -1521,7 +1521,7 @@ pub async fn run_prompt_task(
                 PromptSource::Channel(_) => "channel",
                 PromptSource::Heartbeat => "heartbeat",
             },
-            "triggeringEventIds": triggering_event_ids,
+            "triggeringEventIds": triggering_event_ids.clone(),
         }),
     );
 
@@ -1529,12 +1529,13 @@ pub async fn run_prompt_task(
     // metadata now, before the agent is moved into PromptResult. It must be
     // declared before `liveness_guard`: Rust drops locals in reverse order, so
     // liveness is aborted before completion makes the turn terminal.
-    let _turn_guard = TurnCompletionGuard::new(
+    let mut turn_guard = TurnCompletionGuard::new(
         agent.acp.observer_handle(),
         agent.acp.observer_agent_index(),
         observer_channel_id,
         observer_conversation_id,
         turn_id.clone(),
+        triggering_event_ids,
     );
 
     // Start liveness with `turn_started`, not the final session/prompt call:
@@ -1874,6 +1875,7 @@ pub async fn run_prompt_task(
     // Backfill liveness's shared session ID so ticks after this point carry
     // it too, matching every other observer frame for this turn.
     liveness_guard.set_session_id(session_id.clone());
+    turn_guard.set_session_id(session_id.clone());
     agent.acp.observe(
         "session_resolved",
         serde_json::json!({
@@ -2284,6 +2286,8 @@ pub async fn run_prompt_task(
                             if let Err(error) = publish_agent_receipts(
                                 &ctx,
                                 &receipt_causal_contexts,
+                                &session_id,
+                                &turn_id,
                                 summary,
                             )
                             .await
@@ -2362,8 +2366,14 @@ pub async fn run_prompt_task(
 
             if should_publish_agent_receipt(&stop_reason) && batch.is_some() {
                 let summary = agent.acp.take_turn_summary();
-                if let Err(error) =
-                    publish_agent_receipts(&ctx, &receipt_causal_contexts, summary).await
+                if let Err(error) = publish_agent_receipts(
+                    &ctx,
+                    &receipt_causal_contexts,
+                    &session_id,
+                    &turn_id,
+                    summary,
+                )
+                .await
                 {
                     send_prompt_result(
                         &result_tx,
@@ -4390,6 +4400,8 @@ struct TurnCompletionGuard {
     channel_id: Option<uuid::Uuid>,
     conversation_id: Option<uuid::Uuid>,
     turn_id: String,
+    session_id: Option<String>,
+    triggering_event_ids: Vec<String>,
 }
 
 impl TurnCompletionGuard {
@@ -4399,6 +4411,7 @@ impl TurnCompletionGuard {
         channel_id: Option<uuid::Uuid>,
         conversation_id: Option<uuid::Uuid>,
         turn_id: String,
+        triggering_event_ids: Vec<String>,
     ) -> Self {
         Self {
             observer,
@@ -4406,7 +4419,13 @@ impl TurnCompletionGuard {
             channel_id,
             conversation_id,
             turn_id,
+            session_id: None,
+            triggering_event_ids,
         }
+    }
+
+    fn set_session_id(&mut self, session_id: String) {
+        self.session_id = Some(session_id);
     }
 }
 
@@ -4416,14 +4435,16 @@ impl Drop for TurnCompletionGuard {
             let context = observer::context_for_conversation(
                 self.channel_id,
                 self.conversation_id,
-                None,
+                self.session_id.clone(),
                 Some(self.turn_id.clone()),
             );
             observer.emit(
                 "turn_completed",
                 self.agent_index,
                 &context,
-                serde_json::json!({}),
+                serde_json::json!({
+                    "triggeringEventIds": self.triggering_event_ids.clone(),
+                }),
             );
         }
     }
@@ -4707,23 +4728,72 @@ const RECEIPT_RETRY_DELAYS: [Duration; 3] = [
 ];
 const RECEIPT_OUTBOX_RETRY_DELAY: Duration = Duration::from_secs(30);
 const RECEIPT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const RECEIPT_FLUSH_CYCLE_TIMEOUT: Duration = Duration::from_secs(30);
 const RECEIPT_MAX_SPOOL_ENTRIES: usize = 4_096;
 const RECEIPT_MAX_SPOOL_BYTES: u64 = 64 * 1024 * 1024;
 const RECEIPT_MAX_FLUSH_ENTRIES: usize = 64;
 static RECEIPT_OUTBOX_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 static RECEIPT_RECOVERY_CURSORS: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
 static RECEIPT_DEAD_LETTER_IDS: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
+static RECEIPT_OUTBOX_WORKERS: OnceLock<Mutex<HashMap<PathBuf, Arc<ReceiptWorkerState>>>> =
+    OnceLock::new();
 
-fn next_receipt_recovery_cursor(outbox_dir: &Path, candidate_budget: usize) -> usize {
+#[derive(Default)]
+struct ReceiptWorkerState {
+    pending: Mutex<Vec<nostr::Event>>,
+    wake: tokio::sync::Notify,
+}
+
+struct ReceiptWorkerRegistration {
+    outbox_dir: PathBuf,
+    state: Arc<ReceiptWorkerState>,
+}
+
+impl Drop for ReceiptWorkerRegistration {
+    fn drop(&mut self) {
+        let workers = receipt_outbox_workers();
+        let mut workers = match workers.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if workers
+            .get(&self.outbox_dir)
+            .is_some_and(|current| Arc::ptr_eq(current, &self.state))
+        {
+            workers.remove(&self.outbox_dir);
+        }
+    }
+}
+
+fn receipt_outbox_workers() -> &'static Mutex<HashMap<PathBuf, Arc<ReceiptWorkerState>>> {
+    RECEIPT_OUTBOX_WORKERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn append_unique_receipt_events(target: &mut Vec<nostr::Event>, events: Vec<nostr::Event>) {
+    let mut ids = target.iter().map(|event| event.id).collect::<HashSet<_>>();
+    target.extend(events.into_iter().filter(|event| ids.insert(event.id)));
+}
+
+fn receipt_recovery_cursor(outbox_dir: &Path) -> usize {
+    let cursors = RECEIPT_RECOVERY_CURSORS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cursors = match cursors.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *cursors.entry(outbox_dir.to_path_buf()).or_default()
+}
+
+fn advance_receipt_recovery_cursor(outbox_dir: &Path, attempted: usize) {
+    if attempted == 0 {
+        return;
+    }
     let cursors = RECEIPT_RECOVERY_CURSORS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut cursors = match cursors.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
     let cursor = cursors.entry(outbox_dir.to_path_buf()).or_default();
-    let current = *cursor;
-    *cursor = cursor.wrapping_add(candidate_budget.max(1));
-    current
+    *cursor = cursor.wrapping_add(attempted);
 }
 
 fn receipt_dead_letter_ids() -> &'static tokio::sync::Mutex<HashSet<String>> {
@@ -4735,9 +4805,10 @@ async fn ensure_secure_receipt_spool(path: &Path) -> Result<(), String> {
 }
 
 async fn ensure_receipt_spool_capacity(path: &Path, additional_bytes: u64) -> Result<(), String> {
-    let (count, bytes) = measure_secure_directory(path, RECEIPT_MAX_SPOOL_BYTES).await?;
-    if count.saturating_add(1) > RECEIPT_MAX_SPOOL_ENTRIES
-        || bytes.saturating_add(additional_bytes) > RECEIPT_MAX_SPOOL_BYTES
+    let (count, bytes) =
+        measure_secure_directory(path, RECEIPT_MAX_SPOOL_BYTES, RECEIPT_MAX_SPOOL_ENTRIES).await?;
+    if count.saturating_add(2) > RECEIPT_MAX_SPOOL_ENTRIES
+        || bytes.saturating_add(additional_bytes.saturating_mul(2)) > RECEIPT_MAX_SPOOL_BYTES
     {
         return Err(format!(
             "receipt outbox capacity exceeded ({count} entries, {bytes} bytes)"
@@ -4836,7 +4907,13 @@ async fn persist_receipt_events(
             return failures;
         }
     };
-    match cleanup_secure_temporary_entries(outbox_dir, 0, RECEIPT_MAX_SPOOL_ENTRIES).await {
+    match cleanup_secure_temporary_entries(
+        outbox_dir,
+        0,
+        RECEIPT_MAX_SPOOL_ENTRIES.saturating_add(1),
+    )
+    .await
+    {
         Ok(true) => {}
         Ok(false) => {
             for event in events {
@@ -4947,7 +5024,7 @@ async fn flush_receipt_outbox(
             .collect::<Vec<_>>()
     });
     let recovery_cursor = if target_names.is_none() {
-        next_receipt_recovery_cursor(outbox_dir, candidate_budget)
+        receipt_recovery_cursor(outbox_dir)
     } else {
         0
     };
@@ -4955,31 +5032,49 @@ async fn flush_receipt_outbox(
         let _guard = receipt_outbox_lock().lock().await;
         match lock_secure_directory(outbox_dir).await {
             Ok(_capacity_lock) => {
-                match cleanup_secure_temporary_entries(outbox_dir, 0, RECEIPT_MAX_SPOOL_ENTRIES)
-                    .await
+                match cleanup_secure_temporary_entries(
+                    outbox_dir,
+                    0,
+                    RECEIPT_MAX_SPOOL_ENTRIES.saturating_add(1),
+                )
+                .await
                 {
-                    Ok(true) => match target_names.as_deref() {
-                        Some(names) => {
-                            claim_secure_named_entries(
-                                outbox_dir,
-                                "json",
-                                RECEIPT_MAX_SPOOL_BYTES,
-                                names,
-                                candidate_budget,
-                            )
-                            .await
+                    Ok(true) => {
+                        let (count, bytes) = measure_secure_directory(
+                            outbox_dir,
+                            RECEIPT_MAX_SPOOL_BYTES,
+                            RECEIPT_MAX_SPOOL_ENTRIES,
+                        )
+                        .await?;
+                        if count > RECEIPT_MAX_SPOOL_ENTRIES || bytes > RECEIPT_MAX_SPOOL_BYTES {
+                            Err(format!(
+                                "receipt outbox capacity exceeded ({count} entries, {bytes} bytes)"
+                            ))
+                        } else {
+                            match target_names.as_deref() {
+                                Some(names) => {
+                                    claim_secure_named_entries(
+                                        outbox_dir,
+                                        "json",
+                                        RECEIPT_MAX_SPOOL_BYTES,
+                                        names,
+                                        candidate_budget,
+                                    )
+                                    .await
+                                }
+                                None => {
+                                    claim_secure_entries_bounded(
+                                        outbox_dir,
+                                        "json",
+                                        RECEIPT_MAX_SPOOL_BYTES,
+                                        recovery_cursor,
+                                        candidate_budget,
+                                    )
+                                    .await
+                                }
+                            }
                         }
-                        None => {
-                            claim_secure_entries_bounded(
-                                outbox_dir,
-                                "json",
-                                RECEIPT_MAX_SPOOL_BYTES,
-                                recovery_cursor,
-                                candidate_budget,
-                            )
-                            .await
-                        }
-                    },
+                    }
                     Ok(false) => Err("receipt outbox temporary cleanup is incomplete".to_string()),
                     Err(error) => Err(error),
                 }
@@ -4995,6 +5090,9 @@ async fn flush_receipt_outbox(
             return Ok(report);
         }
     };
+    if target_names.is_none() {
+        advance_receipt_recovery_cursor(outbox_dir, claimed_entries.attempted);
+    }
     tracing::debug!(
         total_matching = claimed_entries.total_matching,
         skipped_contended = claimed_entries.skipped_contended,
@@ -5015,7 +5113,12 @@ async fn flush_receipt_outbox(
     let mut entries = claimed_entries.entries;
     entries.sort_by(|left, right| left.name.cmp(&right.name));
     let mut permanent_deadletters = Vec::new();
+    let cycle_deadline = tokio::time::Instant::now() + RECEIPT_FLUSH_CYCLE_TIMEOUT;
     for entry in entries {
+        if tokio::time::Instant::now() >= cycle_deadline {
+            report.scan_has_more = true;
+            break;
+        }
         let path = outbox_dir.join(&entry.name);
         let entry_id = path
             .file_stem()
@@ -5065,10 +5168,16 @@ async fn flush_receipt_outbox(
         };
         let mut retry_index = 0_usize;
         let publication = loop {
-            let result =
-                tokio::time::timeout(RECEIPT_TIMEOUT, rest_client.submit_event_accepted(&event))
-                    .await
-                    .unwrap_or(Err(crate::relay::RelayError::Timeout));
+            let attempt_deadline = std::cmp::min(
+                cycle_deadline,
+                tokio::time::Instant::now() + RECEIPT_TIMEOUT,
+            );
+            let result = tokio::time::timeout_at(
+                attempt_deadline,
+                rest_client.submit_event_accepted(&event),
+            )
+            .await
+            .unwrap_or(Err(crate::relay::RelayError::Timeout));
             match result {
                 Ok(()) => break Ok(()),
                 Err(error) if !error.is_retryable_durable_publication() => break Err(error),
@@ -5077,7 +5186,12 @@ async fn flush_receipt_outbox(
                         break Err(error);
                     };
                     retry_index = retry_index.saturating_add(1);
-                    tokio::time::sleep(delay).await;
+                    if tokio::time::timeout_at(cycle_deadline, tokio::time::sleep(delay))
+                        .await
+                        .is_err()
+                    {
+                        break Err(error);
+                    }
                 }
             }
         };
@@ -5159,10 +5273,47 @@ fn spawn_receipt_outbox_worker(
     outbox_dir: PathBuf,
     rest_client: RestClient,
     agent_pubkey: nostr::PublicKey,
-    mut unpersisted_events: Vec<nostr::Event>,
+    unpersisted_events: Vec<nostr::Event>,
 ) {
+    let state = {
+        let workers = receipt_outbox_workers();
+        let mut workers = match workers.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(state) = workers.get(&outbox_dir) {
+            let mut pending = match state.pending.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            append_unique_receipt_events(&mut pending, unpersisted_events);
+            state.wake.notify_one();
+            return;
+        }
+        let state = Arc::new(ReceiptWorkerState {
+            pending: Mutex::new(unpersisted_events),
+            wake: tokio::sync::Notify::new(),
+        });
+        workers.insert(outbox_dir.clone(), Arc::clone(&state));
+        state
+    };
     tracker.spawn(async move {
+        let _registration = ReceiptWorkerRegistration {
+            outbox_dir: outbox_dir.clone(),
+            state: Arc::clone(&state),
+        };
+        let mut unpersisted_events = Vec::new();
         loop {
+            {
+                let mut pending = match state.pending.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                append_unique_receipt_events(
+                    &mut unpersisted_events,
+                    std::mem::take(&mut *pending),
+                );
+            }
             let persistence_progress = if unpersisted_events.is_empty() {
                 false
             } else {
@@ -5196,12 +5347,39 @@ fn spawn_receipt_outbox_worker(
                         && !report.scan_failed
                         && !report.scan_has_more =>
                 {
-                    break;
+                    let workers = receipt_outbox_workers();
+                    let mut workers = match workers.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    let mut pending = match state.pending.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    if pending.is_empty() {
+                        if workers
+                            .get(&outbox_dir)
+                            .is_some_and(|current| Arc::ptr_eq(current, &state))
+                        {
+                            workers.remove(&outbox_dir);
+                        }
+                        break;
+                    }
+                    append_unique_receipt_events(
+                        &mut unpersisted_events,
+                        std::mem::take(&mut *pending),
+                    );
+                    continue;
                 }
                 Ok(report) if !receipt_worker_should_backoff(persistence_progress, &report) => {
                     continue;
                 }
-                Ok(_) | Err(_) => tokio::time::sleep(RECEIPT_OUTBOX_RETRY_DELAY).await,
+                Ok(_) | Err(_) => {
+                    tokio::select! {
+                        () = tokio::time::sleep(RECEIPT_OUTBOX_RETRY_DELAY) => {}
+                        () = state.wake.notified() => {}
+                    }
+                }
             }
         }
     });
@@ -5223,9 +5401,45 @@ pub(crate) fn resume_receipt_outbox(ctx: Arc<PromptContext>) {
     }
 }
 
+pub(crate) async fn prepare_receipt_outbox(ctx: &PromptContext) -> Result<(), String> {
+    let outbox_dir = receipt_outbox_dir(ctx)?;
+    ensure_secure_receipt_spool(&outbox_dir).await?;
+    let _capacity_lock = lock_secure_directory(&outbox_dir).await?;
+    if !cleanup_secure_temporary_entries(
+        &outbox_dir,
+        0,
+        RECEIPT_MAX_SPOOL_ENTRIES.saturating_add(1),
+    )
+    .await?
+    {
+        return Err("receipt outbox temporary cleanup is incomplete".to_string());
+    }
+    let (count, bytes) = measure_secure_directory(
+        &outbox_dir,
+        RECEIPT_MAX_SPOOL_BYTES,
+        RECEIPT_MAX_SPOOL_ENTRIES,
+    )
+    .await?;
+    if count > RECEIPT_MAX_SPOOL_ENTRIES || bytes > RECEIPT_MAX_SPOOL_BYTES {
+        return Err(format!(
+            "receipt outbox capacity exceeded ({count} entries, {bytes} bytes)"
+        ));
+    }
+    Ok(())
+}
+
 /// Wait for tracked durable receipt workers during graceful shutdown.
 pub(crate) async fn shutdown_receipt_outbox(ctx: &PromptContext) -> bool {
     ctx.receipt_outbox_workers.close();
+    {
+        let workers = match receipt_outbox_workers().lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        for state in workers.values() {
+            state.wake.notify_one();
+        }
+    }
     tokio::time::timeout(RECEIPT_SHUTDOWN_TIMEOUT, ctx.receipt_outbox_workers.wait())
         .await
         .is_ok()
@@ -5235,6 +5449,8 @@ pub(crate) async fn shutdown_receipt_outbox(ctx: &PromptContext) -> bool {
 async fn publish_agent_receipts(
     ctx: &PromptContext,
     causals: &[AgentReceiptCausalContext],
+    session_id: &str,
+    turn_id: &str,
     summary: Option<String>,
 ) -> Result<(), String> {
     if !ctx.agent_receipts_enabled {
@@ -5252,7 +5468,11 @@ async fn publish_agent_receipts(
         "summary": summary,
         "verify": "Review the checks below and reply in this thread to continue.",
         "lights": [{"label": "turn", "status": "passed"}],
-        "engineering": {}
+        "engineering": {},
+        "run": {
+            "session_id": session_id,
+            "turn_id": turn_id
+        }
     })
     .to_string();
     let events = causals
@@ -7722,6 +7942,32 @@ mod tests {
         }))
     }
 
+    #[test]
+    fn turn_completion_guard_emits_exact_session_and_trigger_authority() {
+        let observer = observer::ObserverHandle::in_process();
+        {
+            let mut guard = TurnCompletionGuard::new(
+                Some(observer.clone()),
+                Some(0),
+                None,
+                None,
+                "turn-a".into(),
+                vec!["trigger-a".into(), "trigger-b".into()],
+            );
+            guard.set_session_id("session-a".into());
+        }
+
+        let events = observer.snapshot();
+        let completion = events.last().expect("completion event");
+        assert_eq!(completion.kind, "turn_completed");
+        assert_eq!(completion.session_id.as_deref(), Some("session-a"));
+        assert_eq!(completion.turn_id.as_deref(), Some("turn-a"));
+        assert_eq!(
+            completion.payload["triggeringEventIds"],
+            serde_json::json!(["trigger-a", "trigger-b"]),
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_liveness_stops_before_completion_frame() {
         let observer = observer::ObserverHandle::in_process();
@@ -8343,9 +8589,12 @@ mod tests {
         let first = PathBuf::from(format!("first-{}", Uuid::new_v4()));
         let second = PathBuf::from(format!("second-{}", Uuid::new_v4()));
 
-        assert_eq!(next_receipt_recovery_cursor(&first, 64), 0);
-        assert_eq!(next_receipt_recovery_cursor(&first, 64), 64);
-        assert_eq!(next_receipt_recovery_cursor(&second, 64), 0);
+        assert_eq!(receipt_recovery_cursor(&first), 0);
+        advance_receipt_recovery_cursor(&first, 0);
+        assert_eq!(receipt_recovery_cursor(&first), 0);
+        advance_receipt_recovery_cursor(&first, 64);
+        assert_eq!(receipt_recovery_cursor(&first), 64);
+        assert_eq!(receipt_recovery_cursor(&second), 0);
     }
 
     #[test]

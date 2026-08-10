@@ -23,6 +23,7 @@ pub(crate) struct ClaimedSecureSpoolEntries {
     pub(crate) entries: Vec<ClaimedSecureSpoolEntry>,
     pub(crate) failures: Vec<(OsString, String)>,
     pub(crate) skipped_contended: usize,
+    pub(crate) attempted: usize,
     pub(crate) total_matching: usize,
     pub(crate) scan_has_more: bool,
 }
@@ -53,9 +54,11 @@ pub(crate) async fn ensure_secure_directory(path: &Path) -> Result<(), String> {
 pub(crate) async fn measure_secure_directory(
     path: &Path,
     max_entry_bytes: u64,
+    max_entries: usize,
 ) -> Result<(usize, u64), String> {
     let path = path.to_owned();
-    run_blocking(move || platform::measure_secure_directory(&path, max_entry_bytes)).await
+    run_blocking(move || platform::measure_secure_directory(&path, max_entry_bytes, max_entries))
+        .await
 }
 
 pub(crate) async fn lock_secure_directory(path: &Path) -> Result<SecureSpoolDirectoryLock, String> {
@@ -219,25 +222,28 @@ mod platform {
     use std::fs::File;
     use std::os::unix::ffi::OsStringExt;
 
+    const MAX_SECURE_DIRECTORY_ENUMERATION: usize = 4_099;
+
     fn directory_flags() -> OFlag {
         OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC
     }
 
     fn anchor_directory(path: &Path) -> Result<Dir, String> {
-        Dir::open(
-            if path.is_absolute() {
-                Path::new("/")
-            } else {
-                Path::new(".")
-            },
-            directory_flags(),
-            Mode::empty(),
-        )
-        .map_err(|error| format!("failed to anchor durable spool path: {error}"))
+        if !path.is_absolute() {
+            return Err(format!(
+                "durable spool path must be absolute: {}",
+                path.display()
+            ));
+        }
+        let directory = Dir::open(Path::new("/"), directory_flags(), Mode::empty())
+            .map_err(|error| format!("failed to anchor durable spool path: {error}"))?;
+        validate_directory_component(&directory, path, OsStr::new("/"), false)?;
+        Ok(directory)
     }
 
     fn path_components(path: &Path) -> Result<Vec<&OsStr>, String> {
-        path.components()
+        let components = path
+            .components()
             .filter_map(|component| match component {
                 Component::RootDir | Component::CurDir => None,
                 Component::Normal(name) => Some(Ok(name)),
@@ -246,7 +252,11 @@ mod platform {
                     path.display()
                 ))),
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        if components.is_empty() {
+            return Err("durable spool cannot use the filesystem root".to_string());
+        }
+        Ok(components)
     }
 
     fn validate_directory_component(
@@ -593,25 +603,33 @@ mod platform {
     pub(super) fn measure_secure_directory(
         path: &Path,
         max_entry_bytes: u64,
+        max_entries: usize,
     ) -> Result<(usize, u64), String> {
         fn measure_recursive(
             mut directory: Dir,
             max_entry_bytes: u64,
+            max_entries: usize,
             depth: usize,
+            count: &mut usize,
+            total: &mut u64,
         ) -> Result<(usize, u64), String> {
             if depth > 4 {
                 return Err("durable spool directory nesting exceeds the safety limit".to_owned());
             }
-            let mut count = 0_usize;
-            let mut total = 0_u64;
-            let names = directory
-                .iter()
-                .map(|entry| {
+            let remaining = max_entries.saturating_sub(*count).saturating_add(1);
+            let scan_limit = remaining.saturating_add(3);
+            let mut names = Vec::with_capacity(scan_limit.min(4_096));
+            for entry in directory.iter() {
+                if names.len() >= scan_limit {
+                    *count = max_entries.saturating_add(1);
+                    return Ok((*count, *total));
+                }
+                names.push(
                     entry
                         .map(|entry| entry.file_name().to_bytes().to_vec())
-                        .map_err(|error| format!("failed to enumerate durable spool: {error}"))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                        .map_err(|error| format!("failed to enumerate durable spool: {error}"))?,
+                );
+            }
             for name in names {
                 if name == b"." || name == b".." {
                     continue;
@@ -648,6 +666,10 @@ mod platform {
                             name.to_string_lossy()
                         ));
                     }
+                    *count = count.saturating_add(1);
+                    if *count > max_entries {
+                        return Ok((*count, *total));
+                    }
                     drop(fd);
                     let nested = Dir::openat(
                         &directory,
@@ -661,10 +683,14 @@ mod platform {
                             name.to_string_lossy()
                         )
                     })?;
-                    let (nested_count, nested_total) =
-                        measure_recursive(nested, max_entry_bytes, depth + 1)?;
-                    count = count.saturating_add(nested_count);
-                    total = total.saturating_add(nested_total);
+                    measure_recursive(
+                        nested,
+                        max_entry_bytes,
+                        max_entries,
+                        depth + 1,
+                        count,
+                        total,
+                    )?;
                     continue;
                 }
                 if !file_type.contains(SFlag::S_IFREG)
@@ -680,14 +706,26 @@ mod platform {
                         name.to_string_lossy()
                     ));
                 }
-                count = count.saturating_add(1);
-                total = total.saturating_add(metadata.st_size.max(0) as u64);
+                *count = count.saturating_add(1);
+                *total = total.saturating_add(metadata.st_size.max(0) as u64);
+                if *count > max_entries || *total > max_entry_bytes {
+                    return Ok((*count, *total));
+                }
             }
-            Ok((count, total))
+            Ok((*count, *total))
         }
 
         let directory = open_validated_directory(path)?;
-        measure_recursive(directory, max_entry_bytes, 0)
+        let mut count = 0;
+        let mut total = 0;
+        measure_recursive(
+            directory,
+            max_entry_bytes,
+            max_entries,
+            0,
+            &mut count,
+            &mut total,
+        )
     }
 
     pub(super) fn lock_secure_directory(path: &Path) -> Result<File, String> {
@@ -845,14 +883,22 @@ mod platform {
         use fs4::fs_std::FileExt;
 
         let mut directory = open_validated_directory(path)?;
-        let mut names = directory
-            .iter()
-            .map(|entry| {
+        let mut enumerated = Vec::new();
+        for entry in directory.iter() {
+            if enumerated.len() >= MAX_SECURE_DIRECTORY_ENUMERATION {
+                return Err(format!(
+                    "durable spool exceeds the bounded directory scan of {MAX_SECURE_DIRECTORY_ENUMERATION} entries"
+                ));
+            }
+            enumerated.push(
                 entry
-                    .map(|entry| entry.file_name().to_bytes().to_vec())
-                    .map_err(|error| format!("failed to enumerate durable spool: {error}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?
+                    .map_err(|error| format!("failed to enumerate durable spool: {error}"))?
+                    .file_name()
+                    .to_bytes()
+                    .to_vec(),
+            );
+        }
+        let mut names = enumerated
             .into_iter()
             .filter(|name| {
                 name != b"."
@@ -913,6 +959,7 @@ mod platform {
             entries,
             failures,
             skipped_contended,
+            attempted,
             total_matching,
         })
     }
@@ -1001,6 +1048,7 @@ mod platform {
             entries,
             failures,
             skipped_contended,
+            attempted,
             total_matching,
         })
     }
@@ -1021,6 +1069,7 @@ mod platform {
     pub(super) fn measure_secure_directory(
         _path: &Path,
         _max_entry_bytes: u64,
+        _max_entries: usize,
     ) -> Result<(usize, u64), String> {
         unsupported()
     }
@@ -1112,6 +1161,27 @@ mod tests {
         std::fs::canonicalize(std::env::temp_dir())
             .unwrap_or_else(|_| std::env::temp_dir())
             .join(format!("buzz-acp-secure-spool-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn relative_spool_roots_fail_before_the_first_side_effect() {
+        let first = format!("buzz-acp-relative-spool-{}", Uuid::new_v4());
+        let path = std::path::PathBuf::from(&first).join("child");
+
+        let error = ensure_secure_directory(&path)
+            .await
+            .expect_err("relative spool roots must fail closed");
+
+        assert!(error.contains("absolute"));
+        assert!(
+            !Path::new(&first).exists(),
+            "anchor validation must precede mkdirat"
+        );
+        assert!(ensure_secure_directory(Path::new("/"))
+            .await
+            .expect_err("filesystem root must not be accepted as a spool")
+            .contains("filesystem root"));
     }
 
     #[tokio::test]
@@ -1298,7 +1368,7 @@ mod tests {
         .await
         .expect("write nested entry"));
 
-        assert_eq!(measure_secure_directory(&root, 1024).await, Ok((2, 17)));
+        assert_eq!(measure_secure_directory(&root, 1024, 16).await, Ok((3, 17)));
         std::fs::remove_dir_all(root).expect("clean nested capacity probe");
     }
 

@@ -15,6 +15,10 @@ export type AgentReceiptModel = {
   verify: string;
   lights: AgentReceiptLight[];
   engineering: AgentReceiptEngineering;
+  run: {
+    sessionId: string;
+    turnId: string;
+  } | null;
 };
 
 export function parseAgentReceipt(content: string): AgentReceiptModel | null;

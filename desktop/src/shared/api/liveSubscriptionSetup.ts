@@ -5,6 +5,7 @@ import type {
   RelaySubscriptionFilter,
 } from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
+import { classifyRelayClosed } from "./relayClosedPolicy";
 import {
   clearClosedRetry,
   deleteSubscriptionAliases,
@@ -48,10 +49,12 @@ export async function establishLiveSubscription({
     recoveryFloorCreatedAt,
   });
   let rejectDeadline = (_error: Error) => {};
+  let readinessTimedOut = false;
   const deadline = new Promise<never>((_resolve, reject) => {
     rejectDeadline = reject;
   });
   const setupTimeout = window.setTimeout(() => {
+    readinessTimedOut = true;
     rejectDeadline(
       new Error(
         `Relay subscription readiness timed out after ${LIVE_SUBSCRIPTION_READY_TIMEOUT_MS}ms`,
@@ -66,13 +69,55 @@ export async function establishLiveSubscription({
     });
     await Promise.race([Promise.all([request, ready]), deadline]);
   } catch (error) {
+    if (readinessTimedOut) {
+      console.warn(
+        `Relay subscription readiness remains pending: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      onStatus?.({
+        state: "recovering",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      // The REQ may still be in flight and the relay may still send EOSE. Keep
+      // the exact live owner installed so eventual readiness and buffered live
+      // events remain authoritative. A late send failure still terminalizes
+      // this owner through the normal failure path below.
+      void request?.catch((lateError) => {
+        const active = subscriptions.get(subId);
+        if (
+          active?.mode === "live" &&
+          (active.currentSubId ?? subId) === subId
+        ) {
+          const message =
+            lateError instanceof Error ? lateError.message : String(lateError);
+          const terminal = classifyRelayClosed(message) === "terminal";
+          if (terminal) {
+            deleteSubscriptionAliases(subscriptions, active);
+            clearClosedRetry(active);
+          } else {
+            active.ready = false;
+          }
+          active.onStatus?.({
+            state: terminal ? "closed" : "recovering",
+            message,
+          });
+        }
+      });
+      return;
+    }
     const active = subscriptions.get(subId);
     if (active?.mode === "live") {
       if ((active.currentSubId ?? subId) === subId) {
         deleteSubscriptionAliases(subscriptions, active);
         clearClosedRetry(active);
         active.onStatus?.({
-          state: "closed",
+          state:
+            classifyRelayClosed(
+              error instanceof Error ? error.message : String(error),
+            ) === "terminal"
+              ? "closed"
+              : "recovering",
           message: error instanceof Error ? error.message : String(error),
         });
       } else if (subscriptions.get(subId) === active) {

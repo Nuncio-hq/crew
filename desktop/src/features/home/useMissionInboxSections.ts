@@ -1,6 +1,5 @@
 import * as React from "react";
 
-import { reconcileAuthorizedUserInputRequests } from "@/features/agents/userInputAttentionProjection";
 import {
   deriveMissionInboxSections,
   useMissionInboxActiveTurns,
@@ -38,13 +37,6 @@ export function useMissionInboxSections({
   currentPubkey,
   ownedAgentPubkeys,
 }: UseMissionInboxSectionsInput): MissionInboxSections {
-  React.useEffect(() => {
-    reconcileAuthorizedUserInputRequests(
-      currentPubkey ?? "",
-      ownedAgentPubkeys,
-    );
-  }, [currentPubkey, ownedAgentPubkeys]);
-
   const storedNeedsYou = useMissionInboxNeedsYou();
   // Cleanup effects cannot be the authority boundary: an identity switch
   // renders once before they run. Filter synchronously on every snapshot.

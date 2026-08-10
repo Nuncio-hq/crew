@@ -22,14 +22,26 @@ const MAX_OUTCOME_ENTRIES = 512;
 export type ConversationOutcomeEntry = {
   outcome: "completed" | "error" | "lost-contact";
   agentPubkey: string;
+  sessionId?: string;
+  turnId?: string;
   channelId: string;
   endedAt: number;
   /** Producer terminal time used for replay-stable causal ordering. */
   terminalAt?: number;
   /** Stable tie-breaker when distinct producers terminate at the same time. */
   terminalOrderKey?: string;
+  terminalAgentIndex?: number | null;
+  terminalSeq?: number;
+  terminalSessionId?: string | null;
+  terminalTurnId?: string | null;
   failedEventIds?: string[];
   triggeringEventIds?: string[];
+  agentTriggerPairs?: Array<{
+    agentPubkey: string;
+    eventId: string;
+    sessionId: string;
+    turnId: string;
+  }>;
 };
 
 const outcomeByConversation = new Map<string, ConversationOutcomeEntry>();
@@ -40,13 +52,55 @@ export function conversationOutcomeTerminalOrderKey(
   resolvedTurnId: string | null,
 ): string {
   return [
+    event.sessionId ?? "null-session",
+    event.seq.toString().padStart(16, "0"),
     agentKey,
     event.agentIndex ?? "null-agent",
-    event.sessionId ?? "null-session",
     resolvedTurnId ?? "null-turn",
-    event.seq.toString().padStart(16, "0"),
     event.kind,
   ].join("\u0000");
+}
+
+/** Build one exact producer/run-scoped terminal outcome from a signed frame. */
+export function buildSignedConversationOutcome(input: {
+  agentKey: string;
+  event: ObserverEvent;
+  resolvedTurnId: string;
+  channelId: string;
+  endedAt: number;
+  terminalAt: number;
+  triggeringEventIds: string[];
+  sessionId?: string;
+}): ConversationOutcomeEntry {
+  const triggers = [...input.triggeringEventIds];
+  return {
+    outcome: input.event.kind === "turn_completed" ? "completed" : "error",
+    agentPubkey: input.agentKey,
+    sessionId: input.sessionId,
+    turnId: input.resolvedTurnId,
+    channelId: input.channelId,
+    endedAt: input.endedAt,
+    terminalAt: input.terminalAt,
+    terminalOrderKey: conversationOutcomeTerminalOrderKey(
+      input.agentKey,
+      input.event,
+      input.resolvedTurnId,
+    ),
+    terminalAgentIndex: input.event.agentIndex,
+    terminalSeq: input.event.seq,
+    terminalSessionId: input.event.sessionId,
+    terminalTurnId: input.event.turnId,
+    failedEventIds: triggers,
+    triggeringEventIds: triggers,
+    agentTriggerPairs: input.sessionId
+      ? triggers.map((eventId) => ({
+          agentPubkey: input.agentKey,
+          eventId,
+          sessionId: input.sessionId ?? "",
+          turnId: input.resolvedTurnId,
+        }))
+      : undefined,
+  };
 }
 
 /** Drop oldest-by-endedAt entries once past the hard cap. */
@@ -73,15 +127,63 @@ export function clearConversationOutcome(conversationId: string): boolean {
   return outcomeByConversation.delete(conversationId);
 }
 
+export function retireConversationOutcomeAgent(
+  conversationId: string,
+  agentPubkey: string,
+): boolean {
+  const existing = outcomeByConversation.get(conversationId);
+  if (!existing) return false;
+  if (
+    existing.outcome !== "completed" ||
+    !existing.agentTriggerPairs ||
+    existing.agentTriggerPairs.length === 0
+  ) {
+    return existing.agentPubkey === agentPubkey
+      ? outcomeByConversation.delete(conversationId)
+      : false;
+  }
+  const remaining = existing.agentTriggerPairs.filter(
+    (pair) => pair.agentPubkey !== agentPubkey,
+  );
+  if (remaining.length === existing.agentTriggerPairs.length) return false;
+  if (remaining.length === 0)
+    return outcomeByConversation.delete(conversationId);
+  outcomeByConversation.set(conversationId, {
+    ...existing,
+    agentPubkey: remaining.at(-1)?.agentPubkey ?? existing.agentPubkey,
+    agentTriggerPairs: remaining,
+  });
+  return true;
+}
+
 /**
  * Record the causally latest terminal outcome for a conversation.
  * Returns whether the ledger changed so callers can bump their generation.
  */
 export function recordConversationOutcome(
   conversationId: string,
-  entry: ConversationOutcomeEntry,
+  incoming: ConversationOutcomeEntry,
 ): boolean {
   const prior = outcomeByConversation.get(conversationId);
+  const entry =
+    prior?.outcome === "completed" &&
+    incoming.outcome === "completed" &&
+    prior.agentTriggerPairs?.length
+      ? {
+          ...incoming,
+          agentTriggerPairs: [
+            ...new Map(
+              [
+                ...prior.agentTriggerPairs,
+                ...(incoming.agentTriggerPairs ?? []),
+              ].map((pair) => [
+                [pair.agentPubkey, pair.eventId].join("\u0000"),
+                pair,
+              ]),
+            ).values(),
+          ],
+        }
+      : incoming;
   if (prior) {
     const priorIsInferred = prior.outcome === "lost-contact";
     const entryIsInferred = entry.outcome === "lost-contact";
@@ -95,14 +197,27 @@ export function recordConversationOutcome(
     const entryHasOrder = Number.isFinite(entry.terminalAt);
     if (priorHasOrder && !entryHasOrder) return false;
     if (priorHasOrder && entryHasOrder) {
-      const priorAt = prior.terminalAt ?? 0;
-      const entryAt = entry.terminalAt ?? 0;
-      if (entryAt < priorAt) return false;
-      if (
-        entryAt === priorAt &&
-        (entry.terminalOrderKey ?? "") <= (prior.terminalOrderKey ?? "")
-      ) {
-        return false;
+      const sameProducerGeneration =
+        prior.agentPubkey === entry.agentPubkey &&
+        prior.terminalAgentIndex === entry.terminalAgentIndex &&
+        ((prior.terminalSessionId &&
+          prior.terminalSessionId === entry.terminalSessionId) ||
+          (prior.terminalTurnId &&
+            prior.terminalTurnId === entry.terminalTurnId));
+      if (sameProducerGeneration) {
+        if ((entry.terminalSeq ?? -1) <= (prior.terminalSeq ?? -1)) {
+          return false;
+        }
+      } else {
+        const priorAt = prior.terminalAt ?? 0;
+        const entryAt = entry.terminalAt ?? 0;
+        if (entryAt < priorAt) return false;
+        if (
+          entryAt === priorAt &&
+          (entry.terminalOrderKey ?? "") <= (prior.terminalOrderKey ?? "")
+        ) {
+          return false;
+        }
       }
     }
   }
@@ -166,6 +281,7 @@ export function cloneConversationOutcomeLedger(): Map<
       triggeringEventIds: entry.triggeringEventIds
         ? [...entry.triggeringEventIds]
         : undefined,
+      agentTriggerPairs: entry.agentTriggerPairs?.map((pair) => ({ ...pair })),
     });
   }
   return outcomes;
@@ -185,6 +301,7 @@ export function restoreConversationOutcomeLedger(
       triggeringEventIds: entry.triggeringEventIds
         ? [...entry.triggeringEventIds]
         : undefined,
+      agentTriggerPairs: entry.agentTriggerPairs?.map((pair) => ({ ...pair })),
     });
   }
 }

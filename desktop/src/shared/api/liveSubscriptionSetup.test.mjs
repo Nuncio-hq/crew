@@ -28,6 +28,7 @@ function installTimerHarness() {
 }
 
 function setupInput(overrides = {}) {
+  const statuses = [];
   return {
     subscriptions: new Map(),
     subId: "live-1",
@@ -36,11 +37,13 @@ function setupInput(overrides = {}) {
     recoveryFloorCreatedAt: 1,
     sendRequest: async () => {},
     closeSubscription: async () => {},
+    onStatus: (status) => statuses.push(status),
+    statuses,
     ...overrides,
   };
 }
 
-test("live setup timeout fails closed, removes aliases, and requests CLOSE", async () => {
+test("readiness deadline returns control without terminalizing the live owner", async () => {
   const timer = installTimerHarness();
   const closed = [];
   const input = setupInput({
@@ -52,11 +55,17 @@ test("live setup timeout fails closed, removes aliases, and requests CLOSE", asy
   const setup = establishLiveSubscription(input);
   await Promise.resolve();
   timer.fire();
-  await assert.rejects(setup, /readiness timed out/);
+  await setup;
   await Promise.resolve();
 
-  assert.equal(input.subscriptions.size, 0);
-  assert.deepEqual(closed, ["live-1"]);
+  assert.equal(input.subscriptions.size, 1);
+  assert.deepEqual(closed, []);
+  assert.deepEqual(input.statuses, [
+    {
+      state: "recovering",
+      message: "Relay subscription readiness timed out after 25000ms",
+    },
+  ]);
   assert.deepEqual(timer.cleared, [41]);
 });
 
@@ -68,19 +77,16 @@ test("setup deadline also bounds a send request that never settles", async () =>
 
   const setup = establishLiveSubscription(input);
   timer.fire();
-  await assert.rejects(
-    Promise.race([
-      setup,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("setup remained blocked")), 50),
-      ),
-    ]),
-    /readiness timed out/,
-  );
-  assert.equal(input.subscriptions.size, 0);
+  await Promise.race([
+    setup,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("setup remained blocked")), 50),
+    ),
+  ]);
+  assert.equal(input.subscriptions.size, 1);
 });
 
-test("a request that settles after timeout is closed again after its late send", async () => {
+test("a request that settles after timeout keeps its exact live owner", async () => {
   const timer = installTimerHarness();
   const closed = [];
   let finishSend;
@@ -96,14 +102,15 @@ test("a request that settles after timeout is closed again after its late send",
 
   const setup = establishLiveSubscription(input);
   timer.fire();
-  await assert.rejects(setup, /readiness timed out/);
+  await setup;
   assert.deepEqual(closed, []);
   finishSend();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(closed, ["live-1"]);
+  assert.deepEqual(closed, []);
+  assert.equal(input.subscriptions.size, 1);
 });
 
-test("stale setup timeout closes only its original wire and preserves a recovery replacement", async () => {
+test("stale setup timeout preserves the generation-owned recovery replacement", async () => {
   const timer = installTimerHarness();
   const closed = [];
   const input = setupInput({
@@ -118,11 +125,11 @@ test("stale setup timeout closes only its original wire and preserves a recovery
   subscription.currentSubId = "live-1:recovery:1";
   input.subscriptions.set(subscription.currentSubId, subscription);
   timer.fire();
-  await assert.rejects(setup, /readiness timed out/);
+  await setup;
   await Promise.resolve();
 
-  assert.deepEqual(closed, ["live-1"]);
-  assert.equal(input.subscriptions.size, 1);
+  assert.deepEqual(closed, []);
+  assert.equal(input.subscriptions.size, 2);
   assert.equal(input.subscriptions.get("live-1:recovery:1"), subscription);
 });
 

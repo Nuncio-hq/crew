@@ -69,6 +69,7 @@ import {
 import { closeWebSocket } from "@/shared/api/relayWebSocketClose";
 import { AuthOkTracker } from "@/shared/api/relayAuthPolicy";
 import { buildThreadReferenceTags } from "@/features/messages/lib/threading";
+import { RelayTransportLeaseAuthority } from "@/shared/api/relayTransportLease";
 
 export class RelayClient {
   private wsId: number | null = null;
@@ -93,6 +94,10 @@ export class RelayClient {
   private notifyReconnectListeners = false;
   private onMessageChannel: Channel<unknown> | null = null;
   private connectionGeneration = 0;
+  private readonly transportAuthority = new RelayTransportLeaseAuthority(
+    () => ({ wsId: this.wsId, generation: this.connectionGeneration }),
+    (error) => this.resetConnection(error),
+  );
   private stabilityTimer: number | null = null;
   private visibleChannelId: string | null = null;
   private authOkTracker = new AuthOkTracker();
@@ -632,13 +637,12 @@ export class RelayClient {
     };
   }
 
-  private async sendRaw(payload: unknown[]) {
-    if (this.wsId === null) {
-      throw new Error("Relay socket is not connected.");
-    }
-
+  private async sendRaw(
+    payload: unknown[],
+    lease = this.transportAuthority.capture(),
+  ) {
     await invoke("plugin:websocket|send", {
-      id: this.wsId,
+      id: lease.wsId,
       message: {
         type: "Text",
         data: JSON.stringify(payload),
@@ -650,36 +654,16 @@ export class RelayClient {
     return error instanceof Error ? error : new Error(fallbackMessage);
   }
 
-  private recoverFromSocketFailure(
-    error: unknown,
-    fallbackMessage: string,
-  ): Error {
-    const normalizedError = this.normalizeRelayError(error, fallbackMessage);
-    this.resetConnection(normalizedError);
-    return normalizedError;
-  }
-
   private async sendRawWithReconnectRetry(
     payload: unknown[],
     fallbackMessage: string,
   ) {
-    try {
-      await this.sendRaw(payload);
-    } catch (error) {
-      const normalizedError = this.recoverFromSocketFailure(
-        error,
-        fallbackMessage,
-      );
-      try {
-        await this.ensureConnected();
-        await this.sendRaw(payload);
-      } catch (retryError) {
-        throw this.recoverFromSocketFailure(
-          retryError,
-          normalizedError.message,
-        );
-      }
-    }
+    await this.transportAuthority.sendWithReconnectRetry(
+      payload,
+      fallbackMessage,
+      (retryPayload, lease) => this.sendRaw(retryPayload, lease),
+      () => this.ensureConnected(),
+    );
   }
 
   private async closeSubscription(subId: string) {
@@ -711,13 +695,21 @@ export class RelayClient {
         timeout,
       });
 
-      void this.sendRaw(["EVENT", event]).catch(async (error) => {
+      const initialLease = this.transportAuthority.capture();
+      void this.sendRaw(["EVENT", event], initialLease).catch(async (error) => {
         const pendingEvent = this.pendingEvents.get(event.id);
         this.pendingEvents.delete(event.id);
-        const normalizedError = this.recoverFromSocketFailure(
+        const ownsInitialLease = this.transportAuthority.owns(initialLease);
+        const normalizedError = this.transportAuthority.recover(
           error,
           sendErrorMessage,
+          initialLease,
         );
+        if (!ownsInitialLease) {
+          window.clearTimeout(timeout);
+          reject(normalizedError);
+          return;
+        }
 
         try {
           await this.ensureConnected();
@@ -726,13 +718,20 @@ export class RelayClient {
           }
 
           this.pendingEvents.set(event.id, pendingEvent);
-          await this.sendRaw(["EVENT", event]);
+          const retryLease = this.transportAuthority.capture();
+          try {
+            await this.sendRaw(["EVENT", event], retryLease);
+          } catch (retryError) {
+            throw this.transportAuthority.recover(
+              retryError,
+              normalizedError.message,
+              retryLease,
+            );
+          }
         } catch (retryError) {
           window.clearTimeout(timeout);
           this.pendingEvents.delete(event.id);
-          reject(
-            this.recoverFromSocketFailure(retryError, normalizedError.message),
-          );
+          reject(this.normalizeRelayError(retryError, normalizedError.message));
         }
       });
     });
@@ -930,7 +929,9 @@ export class RelayClient {
         error instanceof Error
           ? error
           : new Error("Failed to restore relay subscriptions.");
-      this.resetConnection(reconnectError);
+      if (this.connectionGeneration === generation) {
+        this.resetConnection(reconnectError);
+      }
       throw reconnectError;
     }
   }

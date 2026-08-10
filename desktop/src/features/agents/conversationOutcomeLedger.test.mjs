@@ -5,6 +5,7 @@ import {
   clearConversationOutcomeLedger,
   getConversationOutcomeEntry,
   recordConversationOutcome,
+  conversationOutcomeTerminalOrderKey,
 } from "./conversationOutcomeLedger.ts";
 
 beforeEach(() => {
@@ -86,5 +87,100 @@ test("authoritative terminal evidence replaces newer inferred lost-contact", () 
   assert.equal(
     getConversationOutcomeEntry("conversation")?.outcome,
     "completed",
+  );
+});
+
+test("same-session producer sequence orders sibling terminals before agent identity", () => {
+  const event = (seq, agentIndex) => ({
+    kind: "turn_completed",
+    seq,
+    sessionId: "shared-session",
+    agentIndex,
+    timestamp: "1970-01-01T00:00:03.000Z",
+  });
+  const earlierKey = conversationOutcomeTerminalOrderKey(
+    "f".repeat(64),
+    event(10, "z-agent"),
+    "turn",
+  );
+  const laterKey = conversationOutcomeTerminalOrderKey(
+    "0".repeat(64),
+    event(11, "a-agent"),
+    "turn",
+  );
+
+  assert.ok(laterKey > earlierKey);
+});
+
+test("same-session terminal sequence overrides a producer clock rollback", () => {
+  const producer = {
+    agentPubkey: "agent",
+    terminalAgentIndex: 0,
+    terminalSessionId: "session",
+    terminalTurnId: "turn",
+  };
+  assert.equal(
+    recordConversationOutcome(
+      "conversation",
+      outcome({
+        ...producer,
+        terminalAt: 2_000,
+        terminalOrderKey: "completed",
+        terminalSeq: 41,
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    recordConversationOutcome(
+      "conversation",
+      outcome({
+        ...producer,
+        outcome: "error",
+        terminalAt: 1_000,
+        terminalOrderKey: "error",
+        terminalSeq: 42,
+      }),
+    ),
+    true,
+  );
+  assert.equal(getConversationOutcomeEntry("conversation")?.outcome, "error");
+});
+
+test("a newer run replaces only its matching agent-trigger obligation", () => {
+  const pair = (agentPubkey, eventId, sessionId, turnId) => ({
+    agentPubkey,
+    eventId,
+    sessionId,
+    turnId,
+  });
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      agentTriggerPairs: [
+        pair("agent-a", "trigger-a", "session-a1", "turn-a1"),
+        pair("agent-b", "trigger-b", "session-b", "turn-b"),
+      ],
+      terminalAt: 1_000,
+      terminalOrderKey: "first",
+    }),
+  );
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      agentTriggerPairs: [
+        pair("agent-a", "trigger-a", "session-a2", "turn-a2"),
+      ],
+      terminalAt: 2_000,
+      terminalOrderKey: "second",
+    }),
+  );
+
+  assert.deepEqual(
+    getConversationOutcomeEntry("conversation")?.agentTriggerPairs,
+    [
+      pair("agent-a", "trigger-a", "session-a2", "turn-a2"),
+      pair("agent-b", "trigger-b", "session-b", "turn-b"),
+    ],
   );
 });

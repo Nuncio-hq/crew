@@ -227,6 +227,13 @@ NSIS installer (its filename includes `_alpha-unsigned`), and Linux `.deb` and
 to the same `desktop-v<version>` release. Intel users
 download the `_x64.dmg`.
 
+The Windows package intentionally excludes the ACP, agent, and developer-MCP
+sidecars. Durable agent attention uses a descriptor-walked, no-follow secure
+spool backend that is currently implemented only on Unix; packaging a Windows
+sidecar that exits at startup would misrepresent agent availability. Windows
+chat remains supported, while managed local agents require macOS or Linux until
+an equivalent Windows handle/ACL backend is implemented and runtime-tested.
+
 The Linux AppImage is post-processed by `desktop/scripts/fix-appimage.sh`,
 which strips infra libraries over-bundled by linuxdeploy (they crash on
 Mesa 25+ / GLib 2.88 distros; see

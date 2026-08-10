@@ -68,5 +68,18 @@ export function parseAgentReceipt(content) {
         : [],
       ci: normalizeCi(payload.engineering.ci),
     },
+    run:
+      payload.run &&
+      typeof payload.run === "object" &&
+      !Array.isArray(payload.run) &&
+      typeof payload.run.session_id === "string" &&
+      payload.run.session_id.length > 0 &&
+      typeof payload.run.turn_id === "string" &&
+      payload.run.turn_id.length > 0
+        ? {
+            sessionId: payload.run.session_id,
+            turnId: payload.run.turn_id,
+          }
+        : null,
   };
 }

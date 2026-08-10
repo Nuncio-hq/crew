@@ -11,7 +11,7 @@ import {
   getLatestOwnedAgentReceiptForActiveTurns,
   getLatestOwnedAgentReceiptForConversation,
   ingestAgentReceiptEvent as ingestValidatedAgentReceiptEvent,
-  ingestAgentReceiptReviewEvent,
+  ingestAgentReceiptReviewEvent as ingestValidatedAgentReceiptReviewEvent,
   markAgentReceiptProjectionUnavailable,
   resetAgentReceiptStore,
 } from "./agentReceiptStore.ts";
@@ -24,6 +24,7 @@ const OWNER = "d".repeat(64);
 const OTHER_AGENT = "8".repeat(64);
 const CONVERSATION = deriveAgentConversationId(CHANNEL, ROOT);
 const OWNED_AGENTS = new Set([AGENT]);
+let projectionOwner;
 
 function receiptEvent(overrides = {}) {
   return {
@@ -41,6 +42,7 @@ function receiptEvent(overrides = {}) {
       verify: "pnpm check passed",
       lights: [{ label: "Desktop", status: "passed" }],
       engineering: {},
+      run: { session_id: "session", turn_id: "turn" },
     }),
     sig: "",
     ...overrides,
@@ -48,7 +50,7 @@ function receiptEvent(overrides = {}) {
 }
 
 function ingestAgentReceiptEvent(event) {
-  return ingestValidatedAgentReceiptEvent(event, {
+  const parent = {
     id: ROOT,
     pubkey: OWNER,
     created_at: 99,
@@ -59,11 +61,37 @@ function ingestAgentReceiptEvent(event) {
     ],
     content: "trigger",
     sig: "",
-  });
+  };
+  return ingestValidatedAgentReceiptEvent(
+    event,
+    parent,
+    new Map([[parent.id, parent]]),
+    projectionOwner,
+  );
+}
+
+function ingestAgentReceiptReviewEvent(
+  event,
+  currentPubkey,
+  ownedAgentPubkeys,
+) {
+  return ingestValidatedAgentReceiptReviewEvent(
+    event,
+    currentPubkey,
+    ownedAgentPubkeys,
+    projectionOwner,
+  );
 }
 
 describe("agentReceiptStore", () => {
-  beforeEach(() => resetAgentReceiptStore());
+  beforeEach(() => {
+    resetAgentReceiptStore();
+    projectionOwner = beginExhaustiveAgentReceiptProjection(
+      OWNER,
+      OWNED_AGENTS,
+    );
+    endExhaustiveAgentReceiptProjection(projectionOwner);
+  });
 
   it("projects a durable receipt onto its conversation", () => {
     assert.equal(ingestAgentReceiptEvent(receiptEvent()), true);
@@ -74,6 +102,8 @@ describe("agentReceiptStore", () => {
       rootEventId: ROOT,
       parentEventId: ROOT,
       agentPubkey: AGENT,
+      sessionId: "session",
+      turnId: "turn",
       createdAt: 100_000,
       summary: "Implemented recovery",
       verify: "pnpm check passed",
@@ -91,6 +121,22 @@ describe("agentReceiptStore", () => {
             ["e", "f".repeat(64), "", "root"],
             ["e", ROOT, "", "reply"],
           ],
+        }),
+      ),
+      false,
+    );
+  });
+
+  it("rejects legacy receipts that cannot prove their producer run", () => {
+    assert.equal(
+      ingestAgentReceiptEvent(
+        receiptEvent({
+          content: JSON.stringify({
+            summary: "Legacy completion",
+            verify: "manual",
+            lights: [],
+            engineering: {},
+          }),
         }),
       ),
       false,

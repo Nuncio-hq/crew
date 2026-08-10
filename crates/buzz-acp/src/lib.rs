@@ -1792,7 +1792,9 @@ async fn tokio_main() -> Result<()> {
         relay.rest_client(),
     );
     if !user_input_runtime.resume_resolution_outbox().await {
-        user_input_runtime.retry_resolution_outbox();
+        return Err(anyhow::anyhow!(
+            "durable user-input startup recovery is incomplete; refusing prompt admission"
+        ));
     }
 
     let mut relay_observer_control_rx = None;
@@ -1971,6 +1973,9 @@ async fn tokio_main() -> Result<()> {
         agent_receipts_enabled: config.agent_receipts_enabled,
         receipt_outbox_workers: tokio_util::task::TaskTracker::new(),
     });
+    pool::prepare_receipt_outbox(&ctx)
+        .await
+        .map_err(anyhow::Error::msg)?;
     pool::resume_receipt_outbox(Arc::clone(&ctx));
 
     if !config.memory_enabled {

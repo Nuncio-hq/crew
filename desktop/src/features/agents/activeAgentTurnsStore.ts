@@ -7,13 +7,13 @@ import {
   snapshotTurnsWatermarks,
 } from "@/features/agents/turnsWatermarkStore";
 import {
-  clearConversationOutcome,
+  buildSignedConversationOutcome,
   clearConversationOutcomeLedger,
   cloneConversationOutcomeLedger,
   conversationOutcomeLedgerSize,
-  conversationOutcomeTerminalOrderKey,
   pruneExpiredConversationOutcomes,
   recordConversationOutcome,
+  retireConversationOutcomeAgent,
   restoreConversationOutcomeLedger,
   type ConversationOutcomeEntry,
 } from "@/features/agents/conversationOutcomeLedger";
@@ -119,11 +119,6 @@ function invalidateCache(agentKey: string) {
   bumpActiveTurnsGeneration();
 }
 
-function clearOutcomeAndBump(conversationId: string) {
-  if (!clearConversationOutcome(conversationId)) return;
-  bumpActiveTurnsGeneration();
-}
-
 function recordOutcomeAndBump(
   conversationId: string,
   entry: ConversationOutcomeEntry,
@@ -198,11 +193,14 @@ function startTurn(
   channelId: string,
   conversationId: string,
   turnId: string,
+  sessionId: string | null,
   timestamp: string,
   observedAt: number,
   triggerIds: string[] = [],
 ) {
   const key = normalizePubkey(agentPubkey);
+  if (retireConversationOutcomeAgent(conversationId, key))
+    bumpActiveTurnsGeneration();
   let agentTurns = activeTurnsByAgent.get(key);
   if (!agentTurns) {
     agentTurns = new Map();
@@ -228,6 +226,7 @@ function startTurn(
     turnId,
     createActiveTurn({
       turnId,
+      sessionId,
       channelId,
       conversationId,
       startedAt: parseTimestamp(timestamp) ?? observedAt,
@@ -235,8 +234,6 @@ function startTurn(
       triggeringEventIds: triggerIds,
     }),
   );
-  // A new turn for this conversation supersedes any prior terminal outcome.
-  clearOutcomeAndBump(conversationId);
   invalidateCache(key);
 }
 
@@ -294,6 +291,7 @@ function resurrectTurn(agentPubkey: string, event: ObserverEvent): boolean {
     event.channelId,
     event.conversationId ?? event.channelId,
     event.turnId,
+    event.sessionId,
     safeStartedAt,
     eventObservedAt(key, event),
   );
@@ -453,6 +451,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
           event.channelId,
           event.conversationId ?? event.channelId,
           event.turnId ?? `seq-${event.seq}`,
+          event.sessionId,
           event.timestamp,
           observedAt,
           triggeringEventIds(event),
@@ -493,10 +492,8 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
     case "turn_completed":
     case "turn_error":
     case "agent_panic": {
-      // Do not clear retrying here: automatic requeue emits `turn_retrying`
-      // in the same failure path, and clearing on turn_error would wipe it.
-      // Retrying state clears on the next `turn_started` (or a later
-      // turn_retrying overwrite).
+      // A failure may immediately emit `turn_retrying`; preserve it until the
+      // next `turn_started` or retrying overwrite.
       // Reuse the event's already-resolved channel/conversation ids — do not
       // re-derive from the live turn map (the turn may already be pruned).
       const conversationId = event.conversationId ?? event.channelId;
@@ -506,20 +503,19 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
         terminalTurn?.triggeringEventIds ?? triggeringEventIds(event);
       const terminalAt = parseTimestamp(event.timestamp) ?? 0;
       if (event.channelId && conversationId && resolvedTurnId) {
-        recordOutcomeAndBump(conversationId, {
-          outcome: event.kind === "turn_completed" ? "completed" : "error",
-          agentPubkey: key,
-          channelId: event.channelId,
-          endedAt: observedAt,
-          terminalAt,
-          terminalOrderKey: conversationOutcomeTerminalOrderKey(
-            key,
+        recordOutcomeAndBump(
+          conversationId,
+          buildSignedConversationOutcome({
+            agentKey: key,
             event,
             resolvedTurnId,
-          ),
-          failedEventIds: [...terminalTriggers],
-          triggeringEventIds: [...terminalTriggers],
-        });
+            channelId: event.channelId,
+            endedAt: observedAt,
+            terminalAt,
+            triggeringEventIds: terminalTriggers,
+            sessionId: event.sessionId ?? terminalTurn?.sessionId ?? undefined,
+          }),
+        );
       }
       endTurn(agentPubkey, resolvedTurnId, terminalAt);
       notifyListeners();

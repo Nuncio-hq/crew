@@ -284,19 +284,36 @@ export function deriveMissionInboxSections(
   }
   for (const [conversationId, outcome] of input.outcomes) {
     if (outcome.outcome !== "completed") continue;
-    const triggeringEventIds = outcome.triggeringEventIds ?? [];
+    const exactPairs =
+      outcome.agentTriggerPairs ??
+      (outcome.sessionId && outcome.turnId
+        ? (outcome.triggeringEventIds ?? []).map((eventId) => ({
+            agentPubkey: outcome.agentPubkey,
+            eventId,
+            sessionId: outcome.sessionId ?? "",
+            turnId: outcome.turnId ?? "",
+          }))
+        : []);
     const matchingReceipts = (
       receiptsByConversation.get(conversationId) ?? []
-    ).filter(
-      (candidate) =>
-        candidate.agentPubkey === outcome.agentPubkey &&
-        triggeringEventIds.includes(candidate.parentEventId),
+    ).filter((candidate) =>
+      exactPairs.some(
+        (pair) =>
+          candidate.agentPubkey === pair.agentPubkey &&
+          candidate.parentEventId === pair.eventId &&
+          candidate.sessionId === pair.sessionId &&
+          candidate.turnId === pair.turnId,
+      ),
     );
     const receipt =
-      triggeringEventIds.length > 0 &&
-      triggeringEventIds.every((eventId) =>
+      exactPairs.length > 0 &&
+      exactPairs.every((pair) =>
         matchingReceipts.some(
-          (candidate) => candidate.parentEventId === eventId,
+          (candidate) =>
+            candidate.agentPubkey === pair.agentPubkey &&
+            candidate.parentEventId === pair.eventId &&
+            candidate.sessionId === pair.sessionId &&
+            candidate.turnId === pair.turnId,
         ),
       )
         ? (matchingReceipts[0] ?? null)
@@ -312,21 +329,16 @@ export function deriveMissionInboxSections(
     if (blocked.has(turn.conversationId) || !channelIds.has(turn.channelId)) {
       continue;
     }
-    const exactPairs =
-      turn.agentTriggerPairs ??
-      (turn.agentPubkeys.length === 1
-        ? turn.triggeringEventIds.map((eventId) => ({
-            agentPubkey: turn.agentPubkeys[0] ?? "",
-            eventId,
-          }))
-        : []);
+    const exactPairs = turn.agentTriggerPairs ?? [];
     const conversationReceipts =
       receiptsByConversation.get(turn.conversationId) ?? [];
     const matchingReceipts = conversationReceipts.filter((candidate) =>
       exactPairs.some(
         (pair) =>
           pair.agentPubkey === candidate.agentPubkey &&
-          pair.eventId === candidate.parentEventId,
+          pair.eventId === candidate.parentEventId &&
+          pair.sessionId === candidate.sessionId &&
+          pair.turnId === candidate.turnId,
       ),
     );
     const receipt =
@@ -335,7 +347,9 @@ export function deriveMissionInboxSections(
         matchingReceipts.some(
           (candidate) =>
             pair.agentPubkey === candidate.agentPubkey &&
-            pair.eventId === candidate.parentEventId,
+            pair.eventId === candidate.parentEventId &&
+            pair.sessionId === candidate.sessionId &&
+            pair.turnId === candidate.turnId,
         ),
       )
         ? (matchingReceipts[0] ?? null)

@@ -497,6 +497,42 @@ describe("activeAgentTurnsStore", () => {
       assert.equal(getActiveTurnsForAgent(AGENT).length, 0);
     });
 
+    it("a later sibling start preserves an already-completed receipt obligation", () => {
+      syncAgentTurnsFromEvents(AGENT, [
+        makeEvent({
+          seq: 1,
+          sessionId: "session-a",
+          turnId: "turn-a",
+          channelId: "c1",
+          payload: { triggeringEventIds: ["trigger-a"] },
+        }),
+        makeEvent({
+          seq: 2,
+          kind: "turn_completed",
+          sessionId: "session-a",
+          turnId: "turn-a",
+          channelId: "c1",
+          payload: { triggeringEventIds: ["trigger-a"] },
+        }),
+      ]);
+      syncAgentTurnsFromEvents("b".repeat(64), [
+        makeEvent({
+          seq: 1,
+          sessionId: "session-b",
+          turnId: "turn-b",
+          channelId: "c1",
+          payload: { triggeringEventIds: ["trigger-b"] },
+        }),
+      ]);
+
+      assert.deepEqual(
+        getConversationOutcomeEntry("c1")?.agentTriggerPairs?.map(
+          ({ agentPubkey, eventId }) => ({ agentPubkey, eventId }),
+        ),
+        [{ agentPubkey: AGENT, eventId: "trigger-a" }],
+      );
+    });
+
     it("falls back to channelId when turnId is null", () => {
       syncAgentTurnsFromEvents(AGENT, [
         makeEvent({ seq: 1, turnId: "t1", channelId: "c1" }),

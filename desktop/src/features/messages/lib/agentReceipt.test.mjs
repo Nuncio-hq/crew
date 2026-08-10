@@ -15,6 +15,7 @@ test("maps lights and engineering details", () => {
         files_changed: ["src/a.ts"],
         ci: [{ label: "CI", status: "green" }],
       },
+      run: { session_id: "session-1", turn_id: "turn-1" },
     }),
   );
 
@@ -28,6 +29,7 @@ test("maps lights and engineering details", () => {
       filesChanged: ["src/a.ts"],
       ci: [{ label: "CI", status: "green" }],
     },
+    run: { sessionId: "session-1", turnId: "turn-1" },
   });
 });
 
@@ -38,6 +40,7 @@ test("keeps engineering details available for collapsed rendering", () => {
       verify: "Review the diff",
       lights: [],
       engineering: { branch: "main", files_changed: ["a", 2] },
+      run: { session_id: "session-2", turn_id: "turn-2" },
     }),
   );
 

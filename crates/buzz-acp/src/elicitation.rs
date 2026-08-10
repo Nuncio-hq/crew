@@ -143,7 +143,7 @@ async fn ensure_spool_capacity(
     additional_entries: usize,
     additional_bytes: u64,
 ) -> Result<(), String> {
-    let (count, bytes) = measure_secure_directory(path, MAX_SPOOL_BYTES).await?;
+    let (count, bytes) = measure_secure_directory(path, MAX_SPOOL_BYTES, MAX_SPOOL_ENTRIES).await?;
     if count.saturating_add(additional_entries) > MAX_SPOOL_ENTRIES
         || bytes.saturating_add(additional_bytes) > MAX_SPOOL_BYTES
     {
@@ -155,7 +155,7 @@ async fn ensure_spool_capacity(
 }
 
 async fn validate_spool_capacity(path: &Path) -> Result<(), String> {
-    let (count, bytes) = measure_secure_directory(path, MAX_SPOOL_BYTES).await?;
+    let (count, bytes) = measure_secure_directory(path, MAX_SPOOL_BYTES, MAX_SPOOL_ENTRIES).await?;
     if count > MAX_SPOOL_ENTRIES || bytes > MAX_SPOOL_BYTES {
         return Err(format!(
             "durable spool capacity exceeded ({count} entries, {bytes} bytes)"
@@ -224,7 +224,7 @@ async fn persist_outbox_event(outbox_dir: &Path, event: &nostr::Event) -> Result
     }
     let bytes = serde_json::to_vec(event)
         .map_err(|error| format!("failed to encode resolution outbox entry: {error}"))?;
-    ensure_spool_capacity(capacity_root, 1, bytes.len() as u64).await?;
+    ensure_spool_capacity(capacity_root, 2, (bytes.len() as u64).saturating_mul(2)).await?;
     let temporary_name = format!("{}.{}.tmp", event.id, Uuid::new_v4());
     if !write_secure_entry_if_absent(
         outbox_dir,
@@ -785,18 +785,6 @@ impl QuestionRuntime {
             );
         }
         recovery_complete
-    }
-
-    pub(crate) fn retry_resolution_outbox(self: &Arc<Self>) {
-        let runtime = Arc::clone(self);
-        self.workers.spawn(async move {
-            loop {
-                tokio::time::sleep(RESOLUTION_OUTBOX_RETRY_DELAY).await;
-                if runtime.resume_resolution_outbox().await {
-                    break;
-                }
-            }
-        });
     }
 
     fn retry_pending_dead_letter(self: &Arc<Self>, request_event_id: String) {

@@ -88,8 +88,8 @@ let exhaustiveProjection = false;
 let nextProjectionOwner = 0;
 let exhaustiveProjectionOwner = 0;
 
-function ownsExhaustiveProjection(owner?: number): boolean {
-  return owner === undefined || owner === exhaustiveProjectionOwner;
+function ownsExhaustiveProjection(owner: number): boolean {
+  return owner === exhaustiveProjectionOwner;
 }
 
 function validatesRequestTrigger(
@@ -182,7 +182,7 @@ export function beginExhaustiveUserInputProjection(): number {
 }
 
 export function markUserInputAttentionProjectionUnavailable(
-  owner?: number,
+  owner: number,
 ): boolean {
   if (!ownsExhaustiveProjection(owner)) return false;
   pendingTransitionsByRequestId.clear();
@@ -192,7 +192,7 @@ export function markUserInputAttentionProjectionUnavailable(
   return true;
 }
 
-export function endExhaustiveUserInputProjection(owner?: number): boolean {
+export function endExhaustiveUserInputProjection(owner: number): boolean {
   if (!ownsExhaustiveProjection(owner)) return false;
   exhaustiveProjection = false;
   return true;
@@ -213,7 +213,7 @@ export type AuthorizedUserInputRequest = {
 export function reconcileAuthorizedUserInputRequests(
   currentPubkey: string,
   ownedAgentPubkeys: ReadonlySet<string>,
-  projectionOwner?: number,
+  projectionOwner: number,
 ): boolean {
   if (!ownsExhaustiveProjection(projectionOwner)) return false;
   return reconcileUserInputRequestAuthority(
@@ -307,9 +307,9 @@ export function projectAuthorizedUserInputEvent(
   fallbackChannelId: string,
   currentPubkey: string,
   ownedAgentPubkeys: ReadonlySet<string>,
-  parentEvent?: RelayEvent | null,
-  ancestryById?: ReadonlyMap<string, RelayEvent>,
-  projectionOwner?: number,
+  parentEvent: RelayEvent | null | undefined,
+  ancestryById: ReadonlyMap<string, RelayEvent> | undefined,
+  projectionOwner: number,
 ): boolean {
   if (!ownsExhaustiveProjection(projectionOwner)) return false;
   if (projectionUnavailable) return false;
