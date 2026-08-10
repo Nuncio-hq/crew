@@ -5436,6 +5436,8 @@ async fn handoff_receipt_events(
             agent_pubkey,
         );
         let capacity = state.capacity.notified();
+        tokio::pin!(capacity);
+        capacity.as_mut().enable();
         {
             let workers = match receipt_outbox_workers().lock() {
                 Ok(guard) => guard,
