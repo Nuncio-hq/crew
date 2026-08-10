@@ -468,7 +468,44 @@ mis-assignment when roles exist, and treat shared thread reports as the human
 record. Spikes are not automatic law. Full text of MUST/MUST NOT lives in the
 working agreement doc.
 
-## D-036 — Evidence stays on existing message events as a tolerant tag
+## D-035 — Offboarding archives a Hermes profile; deletion is archive-only
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Runbook:** [`HERMES.md`](HERMES.md)
+- **Spike:** [`spikes/0015-profile-readiness-and-archive.md`](spikes/0015-profile-readiness-and-archive.md)
+
+Offboarding a Hermes agent no longer runs `hermes profile delete -y`. The
+destructive branch archives the profile to `<nest>/profile-archives` as a
+`tar.gz` plus a sidecar manifest (profile, timestamp, bound agent name and
+pubkey, optional reason, exclusions, sizes), excluding caches. Archiving is
+copy → verify → remove: the live profile is removed only after the archive is
+written and read back.
+
+Permanent deletion exists only as an action on an archive and is gated in Rust
+by an exact profile-name confirmation token, not by the dialog. Restore refuses
+to overwrite a live profile of the same name. Every profile-destructive action
+refuses while a runtime pair bound to that profile is alive — Crew does not
+stop a working agent on the owner's behalf to complete a destructive action.
+
+The reserved `default` profile and the `~/.hermes` root remain untouchable.
+
+## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
+
+- **Status:** Accepted
+- **Date:** 2026-08-11
+- **Issue:** [#135](https://github.com/Nuncio-hq/crew/issues/135)
+
+`deriveMissionInboxSections` memoizes on a key built from its inputs. An
+explicitly supplied `now` is part of that key; the implicit `Date.now()`
+fallback is not. Identical inputs therefore always return the identical
+snapshot object, which is what a `getSnapshot`-shaped selector must do.
+
+The accepted consequence: without an explicit clock input, row `age` values
+stay fixed until another input changes. The desktop caller passes no clock and
+the home surface has no ticker, so ages already only refresh when a store
+changes. A caller that wants clock-driven recomputation passes `now`.
+## D-031 — Keep shipped state in sync with STATE.md
 
 - **Status:** Accepted
 - **Date:** 2026-08-10
