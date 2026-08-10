@@ -47,37 +47,44 @@ function MetricsLayout({ message }: { message: TimelineMessage }) {
   }
   return (
     <div className="grid gap-2">
-      <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-        <span>before</span>
-        <span>after</span>
-        <span>delta</span>
-      </div>
-      <div className="grid grid-cols-3 gap-2 font-medium">
-        <span>{values.get("before") ?? "—"}</span>
-        <span>{values.get("after") ?? "—"}</span>
-        <span>{values.get("delta") ?? "—"}</span>
-      </div>
+      {values.size > 0 ? (
+        <>
+          <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+            <span>before</span>
+            <span>after</span>
+            <span>delta</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 font-medium">
+            <span>{values.get("before") ?? "—"}</span>
+            <span>{values.get("after") ?? "—"}</span>
+            <span>{values.get("delta") ?? "—"}</span>
+          </div>
+        </>
+      ) : null}
       {bodyMarkdown(message)}
     </div>
   );
 }
 
 function TestRunLayout({ message }: { message: TimelineMessage }) {
-  const failed = message.body.match(/failed[^|,\n]*/i)?.[0] ?? "No failures";
-  const passed =
-    message.body.match(/passed[^|,\n]*/i)?.[0] ?? "No passing count";
+  const failed = message.body.match(/failed[^|,\n]*/i)?.[0];
+  const passed = message.body.match(/passed[^|,\n]*/i)?.[0];
   return (
     <div className="grid gap-2">
-      <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2">
-        <p className="text-xs font-medium text-destructive">Failing</p>
-        <Markdown content={failed} className="text-sm" />
-      </div>
-      <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2">
-        <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
-          Passing
-        </p>
-        <Markdown content={passed} className="text-sm" />
-      </div>
+      {failed ? (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2">
+          <p className="text-xs font-medium text-destructive">Failing</p>
+          <Markdown content={failed} className="text-sm" />
+        </div>
+      ) : null}
+      {passed ? (
+        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2">
+          <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+            Passing
+          </p>
+          <Markdown content={passed} className="text-sm" />
+        </div>
+      ) : null}
       {bodyMarkdown(message)}
     </div>
   );

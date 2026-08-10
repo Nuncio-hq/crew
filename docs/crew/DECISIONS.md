@@ -468,7 +468,7 @@ mis-assignment when roles exist, and treat shared thread reports as the human
 record. Spikes are not automatic law. Full text of MUST/MUST NOT lives in the
 working agreement doc.
 
-## D-031 — Evidence stays on existing message events as a tolerant tag
+## D-033 — Evidence stays on existing message events as a tolerant tag
 
 - **Status:** Accepted
 - **Date:** 2026-08-10
