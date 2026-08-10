@@ -68,3 +68,4 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0012-one-profile-concurrent-acp.md`](0012-one-profile-concurrent-acp.md)
 - [`0013-buzz-acp-model-leak-suppression.md`](0013-buzz-acp-model-leak-suppression.md)
 - [`0014-agent-attention-recovery.md`](0014-agent-attention-recovery.md)
+- [`0021-evidence-tag-roundtrip.md`](0021-evidence-tag-roundtrip.md)
