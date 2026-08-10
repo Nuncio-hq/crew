@@ -113,10 +113,7 @@ fn probe_binary(path: &Path) -> bool {
 }
 
 fn is_hermes_command(command: &str) -> bool {
-    Path::new(command)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, "hermes" | "hermes-acp"))
+    crate::managed_agents::known_acp_runtime(command).is_some_and(|runtime| runtime.id == "hermes")
 }
 
 /// Evaluate one Hermes command and its optional bound profile.

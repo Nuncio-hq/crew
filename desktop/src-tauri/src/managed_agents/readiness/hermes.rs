@@ -21,6 +21,11 @@ pub(super) fn hermes_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirem
             missing.push(Requirement::NormalizedField {
                 field: "hermesProfile".to_string(),
             });
+            if let Some(HermesProfileReadiness::BinaryMissing { command }) =
+                hermes_profile_readiness(&effective.effective_command, None)
+            {
+                missing.push(Requirement::MissingBinary { command });
+            }
         }
         Some(profile) => {
             match hermes_profile_readiness(&effective.effective_command, Some(profile)) {
@@ -97,6 +102,36 @@ mod tests {
             "expected hermesProfile requirement; got {:?}",
             readiness.requirements()
         );
+    }
+
+    #[test]
+    fn unbound_hermes_with_missing_binary_reports_both_requirements() {
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let original_path = std::env::var("PATH").ok();
+        std::env::set_var("PATH", temp.path());
+        crate::managed_agents::clear_resolve_cache();
+
+        let env = EffectiveAgentEnv {
+            env: BTreeMap::new(),
+            config_file_path: None,
+            effective_command: "hermes".to_string(),
+            hermes_profile: None,
+        };
+        let readiness = agent_readiness(&env);
+        let requirements = readiness.requirements();
+        assert!(requirements.contains(&Requirement::NormalizedField {
+            field: "hermesProfile".to_string(),
+        }));
+        assert!(requirements.contains(&Requirement::MissingBinary {
+            command: "hermes".to_string(),
+        }));
+
+        match original_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+        crate::managed_agents::clear_resolve_cache();
     }
 
     #[test]

@@ -43,13 +43,13 @@ post-spawn breakage and clears repaired state without an app restart.
 
 ### I6 — Liveness correction
 
-The issue's cited graceful-stop premise does not match the current
-`managed_agents/runtime/stop.rs` call sites: stop uses `Child::kill()` and
-`terminate_process` rather than implementing the cited SIGTERM → wait →
-SIGKILL sequence there. The only direct SIGTERM use found in
-`managed_agents/discovery.rs:927` is the auth-probe timeout. (The lower-level
-Unix process helper contains signal escalation, but `stop.rs` does not expose
-the issue's claimed graceful contract.)
+`managed_agents/runtime/stop.rs` calls the Unix process helper, which performs
+SIGTERM → one-second wait → SIGKILL process-group escalation; the helper is
+also used by the legacy scalar-PID path. The direct SIGTERM at
+`managed_agents/discovery.rs:927` is separately used by the auth-probe
+timeout. Archive, restore-over, and permanent-delete therefore refuse while
+any runtime pair for the profile is alive: a destructive profile action must
+never stop a working agent implicitly on the owner's behalf.
 
 ## Evidence and limitations
 
