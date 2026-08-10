@@ -51,6 +51,14 @@ timeout. Archive, restore-over, and permanent-delete therefore refuse while
 any runtime pair for the profile is alive: a destructive profile action must
 never stop a working agent implicitly on the owner's behalf.
 
+The issue's cited graceful-stop premise does not match the current
+`managed_agents/runtime/stop.rs` call sites: stop uses `Child::kill()` and
+`terminate_process` rather than implementing the cited SIGTERM → wait →
+SIGKILL sequence there. The only direct SIGTERM use found in
+`managed_agents/discovery.rs:927` is the auth-probe timeout. (The lower-level
+Unix process helper contains signal escalation, but `stop.rs` does not expose
+the issue's claimed graceful contract.)
+
 ## Evidence and limitations
 
 - Existing lifecycle path resolution is in

@@ -38,6 +38,38 @@ pub enum HermesProfileReadiness {
     },
 }
 
+impl HermesProfileReadiness {
+    /// Human-readable state copy for status and setup surfaces.
+    pub fn message(&self) -> String {
+        match self {
+            Self::Ready => "Hermes profile is ready to run.".to_string(),
+            Self::Missing { profile } => format!(
+                "Hermes profile '{profile}' is missing; recreate or re-bind the profile before running."
+            ),
+            Self::BrokenConfig {
+                profile,
+                diagnostic,
+            } => format!(
+                "Hermes profile '{profile}' has an invalid config ({diagnostic}); repair config.yaml and try again."
+            ),
+            Self::BinaryMissing { command } => format!(
+                "Hermes command '{command}' is unavailable; install Hermes or update PATH, then try again."
+            ),
+            Self::AuthUnknown { profile } => format!(
+                "Hermes authentication for profile '{profile}' is not verifiable yet; use Hermes' own auth flow if a turn reports an authentication problem."
+            ),
+        }
+    }
+
+    /// Whether this state must block a normal agent start.
+    pub fn is_blocking(&self) -> bool {
+        matches!(
+            self,
+            Self::Missing { .. } | Self::BrokenConfig { .. } | Self::BinaryMissing { .. }
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ProbeResult {
     runnable: bool,

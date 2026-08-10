@@ -221,6 +221,36 @@ mod tests {
     }
 
     #[test]
+
+fn readiness_contract_names_all_states_and_keeps_auth_unknown_advisory() {
+        let states = [
+            HermesProfileReadiness::Ready,
+            HermesProfileReadiness::Missing {
+                profile: "ghost".into(),
+            },
+            HermesProfileReadiness::BrokenConfig {
+                profile: "broken".into(),
+                diagnostic: "invalid YAML".into(),
+            },
+            HermesProfileReadiness::BinaryMissing {
+                command: "hermes".into(),
+            },
+            HermesProfileReadiness::AuthUnknown {
+                profile: "scout".into(),
+            },
+        ];
+        assert_eq!(states.len(), 5);
+        assert!(states[0].message().contains("ready"));
+        for state in &states[1..4] {
+            assert!(state.is_blocking());
+        }
+        assert!(states[1].message().contains("recreate"));
+        assert!(states[2].message().contains("repair"));
+        assert!(states[3].message().contains("install"));
+        assert!(!states[4].is_blocking());
+    }
+
+    #[test]
     fn healthy_profile_is_auth_unknown_without_a_requirement() {
         let _path_guard = crate::managed_agents::lock_path_mutex();
         let temp = tempfile::tempdir().expect("tempdir");
