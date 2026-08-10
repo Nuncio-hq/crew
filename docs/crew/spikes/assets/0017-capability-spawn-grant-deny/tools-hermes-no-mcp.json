@@ -1,0 +1,159 @@
+{
+  "label": "hermes-no-mcp",
+  "has_buzz_dev_mcp_in_stderr": false,
+  "session_new": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "_meta": {
+        "hermes": {
+          "sessionProvenance": {
+            "acpSessionId": "0f2c5a07-330f-45e6-a1a9-a1806016dd63",
+            "currentHermesSessionId": "0f2c5a07-330f-45e6-a1a9-a1806016dd63",
+            "rootHermesSessionId": "0f2c5a07-330f-45e6-a1a9-a1806016dd63",
+            "parentHermesSessionId": null,
+            "sessionKind": "root",
+            "compressionDepth": 0
+          }
+        }
+      },
+      "models": {
+        "availableModels": [
+          {
+            "description": "Provider: OpenAI Codex",
+            "modelId": "openai-codex:gpt-5.6-sol",
+            "name": "OpenAI Codex \u00b7 gpt-5.6-sol"
+          },
+          {
+            "description": "Provider: OpenAI Codex",
+            "modelId": "openai-codex:gpt-5.6-terra",
+            "name": "OpenAI Codex \u00b7 gpt-5.6-terra"
+          },
+          {
+            "description": "Provider: OpenAI Codex \u2022 current",
+            "modelId": "openai-codex:gpt-5.6-luna",
+            "name": "OpenAI Codex \u00b7 gpt-5.6-luna"
+          },
+          {
+            "description": "Provider: OpenAI Codex",
+            "modelId": "openai-codex:gpt-5.5",
+            "name": "OpenAI Codex \u00b7 gpt-5.5"
+          },
+          {
+            "description": "Provider: OpenAI Codex",
+            "modelId": "openai-codex:gpt-5.4",
+            "name": "OpenAI Codex \u00b7 gpt-5.4"
+          },
+          {
+            "description": "Provider: OpenAI Codex",
+            "modelId": "openai-codex:gpt-5.4-mini",
+            "name": "OpenAI Codex \u00b7 gpt-5.4-mini"
+          },
+          {
+            "description": "Provider: OpenAI Codex",
+            "modelId": "openai-codex:gpt-5.3-codex-spark",
+            "name": "OpenAI Codex \u00b7 gpt-5.3-codex-spark"
+          },
+          {
+            "description": "Provider: OpenAI Codex",
+            "modelId": "openai-codex:gpt-5.6-sol-pro",
+            "name": "OpenAI Codex \u00b7 gpt-5.6-sol-pro"
+          },
+          {
+            "description": "Provider: OpenAI Codex",
+            "modelId": "openai-codex:gpt-5.6-terra-pro",
+            "name": "OpenAI Codex \u00b7 gpt-5.6-terra-pro"
+          },
+          {
+            "description": "Provider: OpenAI Codex",
+            "modelId": "openai-codex:gpt-5.6-luna-pro",
+            "name": "OpenAI Codex \u00b7 gpt-5.6-luna-pro"
+          },
+          {
+            "description": "Provider: OpenAI Codex",
+            "modelId": "openai-codex:gpt-5.3-codex",
+            "name": "OpenAI Codex \u00b7 gpt-5.3-codex"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-build-0.1",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-build-0.1"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-composer-2.5-fast",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-composer-2.5-fast"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.20-0309-non-reasoning",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-4.20-0309-non-reasoning"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.20-0309-reasoning",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-4.20-0309-reasoning"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.20-multi-agent-0309",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-4.20-multi-agent-0309"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.3",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-4.3"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.5",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-4.5"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-image",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-imagine-image"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-image-quality",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-imagine-image-quality"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-video",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-imagine-video"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-video-1.5",
+            "name": "xAI Grok OAuth (SuperGrok / Premium+) \u00b7 grok-imagine-video-1.5"
+          }
+        ],
+        "currentModelId": "openai-codex:gpt-5.6-luna"
+      },
+      "modes": {
+        "availableModes": [
+          {
+            "description": "Ask before edits.",
+            "id": "default",
+            "name": "Default"
+          },
+          {
+            "description": "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+            "id": "accept_edits",
+            "name": "Accept Edits"
+          },
+          {
+            "description": "Auto-allow file edits for this session except sensitive paths.",
+            "id": "dont_ask",
+            "name": "Don't Ask"
+          }
+        ],
+        "currentModeId": "default"
+      },
+      "sessionId": "0f2c5a07-330f-45e6-a1a9-a1806016dd63"
+    }
+  },
+  "stderr_tail": []
+}

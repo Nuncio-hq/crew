@@ -1,0 +1,9 @@
+total 8
+drwxr-xr-x@  3 a1241968  wheel    96 Aug 10 14:48 .
+drwxr-xr-x@ 56 a1241968  wheel  1792 Aug 10 14:48 ..
+-rw-r--r--@  1 a1241968  wheel     5 Aug 10 14:48 keep.txt
+total 16
+drwxr-xr-x@  4 a1241968  wheel   128 Aug 10 14:48 .
+drwxr-xr-x@ 56 a1241968  wheel  1792 Aug 10 14:48 ..
+-rw-r--r--@  1 a1241968  wheel     6 Aug 10 14:48 SPIKE-WW.txt
+-rw-r--r--@  1 a1241968  wheel     5 Aug 10 14:48 keep.txt
