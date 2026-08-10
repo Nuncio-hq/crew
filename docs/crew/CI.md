@@ -15,6 +15,9 @@ unchanged.
 A green `NuncioCrew Gate` is not evidence that the Desktop Smoke E2E suite
 passed.
 
+This advisory posture is recorded in [`verification/0007`](verification/0007-gate-e2e-shard-relationship.md)
+and D-032; revisit making the shards required once #109 and #110 are closed.
+
 | Job | Runs when | Proves |
 | --- | --- | --- |
 | `CI Policy` | Always | Workflow contract and relevant-path classification |

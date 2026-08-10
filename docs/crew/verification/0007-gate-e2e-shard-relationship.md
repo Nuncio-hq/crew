@@ -94,4 +94,5 @@ half of this audit is complete.
 contract-tested, and the upstream contrast is explicit. The defect found here
 was the documentation gap: `docs/crew/CI.md:15-23` listed the gate jobs without
 mentioning Desktop Smoke E2E. This record and the CI table now state that a
-green `NuncioCrew Gate` is not E2E evidence.
+green `NuncioCrew Gate` is not E2E evidence. The founder's decision to keep
+the shards advisory is recorded in D-032.

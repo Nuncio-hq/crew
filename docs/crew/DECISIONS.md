@@ -493,3 +493,17 @@ changes. A caller that wants clock-driven recomputation passes `now`.
 When a release is published, a slice merges, or the gate changes, update
 `STATE.md` in the same PR. Repeated drift is costly because agents sequence
 work from that file. Enforcement is review-visible prose, not a CI guard.
+
+## D-032 — Keep Desktop Smoke E2E advisory until known failures close
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Verification:** [`verification/0007`](verification/0007-gate-e2e-shard-relationship.md)
+
+The founder decided that Desktop Smoke E2E shards stay advisory and excluded
+from `NuncioCrew Gate`. The trade-off is that `main` can merge with red E2E;
+making a known-broken lane required would red-wall every desktop PR without
+fixing a test. Over the last 10 `main` runs, shard 1 failed `8/8`, shard 4
+cancelled at the 30-minute timeout `8/8`, shard 3 failed `2/8`, shard 2 passed
+`8/8`, and the Gate was green `10/10`. Revisit making the shards required once
+#109 and #110 are closed.
