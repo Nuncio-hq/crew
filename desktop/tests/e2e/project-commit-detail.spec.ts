@@ -797,13 +797,17 @@ test("adding a repository blocks when a standalone 30617 already exists at that 
             ["name", "Existing Standalone"],
             ["clone", "https://git.example.com/standalone.git"],
           ],
+          sig: "mocksig".repeat(20).slice(0, 128),
         },
       ];
     },
     { owner: MOCK_OWNER, dtag: STANDALONE_DTAG },
   );
-  await installMockBridge(page);
+  await installMockBridge(page, undefined, { autoConnectDefaultRelay: true });
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(
+    () => window.__BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?.() === "connected",
+  );
   await page.getByTestId("open-projects-view").click();
   await page.getByTestId("projects-section-projects").click();
   await page
@@ -819,6 +823,9 @@ test("adding a repository blocks when a standalone 30617 already exists at that 
   await page
     .getByTestId("add-project-repository-name")
     .fill("Existing Standalone");
+  await page.waitForFunction(
+    () => window.__BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?.() === "connected",
+  );
   await page.getByTestId("add-project-repository-submit").click();
 
   // The dialog must remain open with a clobber error.
@@ -903,6 +910,8 @@ test("navigating via a 30617 entity-link route opens the correct non-primary rep
   const picker = page.getByTestId("project-repository-picker");
   await expect(picker).toContainText("relay-tools", { timeout: 10_000 });
   await expect(picker).not.toContainText("buzz");
+
+  await expandProjectPlumbing(page);
 
   // The PR detail panel must render from the relay-tools repository — not blank.
   // Use `first()` to avoid Playwright strict-mode violations: the text appears
