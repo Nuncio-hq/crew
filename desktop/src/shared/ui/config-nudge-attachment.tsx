@@ -42,6 +42,8 @@ function requirementKey(
       return `missing_binary:${req.command}:${index}`;
     case "hermes_profile_directory_missing":
       return `hermes_profile_directory_missing:${req.profile}:${index}`;
+    case "hermes_profile_config_invalid":
+      return `hermes_profile_config_invalid:${req.profile}:${index}`;
   }
 }
 

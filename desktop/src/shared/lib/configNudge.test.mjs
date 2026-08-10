@@ -142,6 +142,22 @@ test("extractConfigNudge parses multiple requirements of mixed types", () => {
   assert.equal(result?.agent_pubkey, ATLAS_PUBKEY);
 });
 
+test("extractConfigNudge accepts both Hermes requirement surfaces", () => {
+  const payload = {
+    agent_name: "Scout",
+    agent_pubkey: "a".repeat(64),
+    requirements: [
+      { surface: "hermes_profile_directory_missing", profile: "scout" },
+      {
+        surface: "hermes_profile_config_invalid",
+        profile: "scout",
+        diagnostic: "invalid YAML",
+      },
+    ],
+  };
+  assert.deepEqual(extractConfigNudge(withSentinel("prose", payload)), payload);
+});
+
 test("extractConfigNudge returns null for malformed JSON", () => {
   const content = "prose\n\n```buzz:config-nudge\nnot{valid}json\n```";
   assert.equal(extractConfigNudge(content), null);

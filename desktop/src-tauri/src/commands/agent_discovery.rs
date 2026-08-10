@@ -26,6 +26,7 @@ pub async fn discover_acp_providers(
     tokio::task::spawn_blocking(move || {
         use tauri::Manager;
         crate::managed_agents::clear_resolve_cache();
+        crate::managed_agents::invalidate_hermes_binary_probe_cache();
         crate::managed_agents::refresh_login_shell_path();
         let custom_dir = app
             .path()
@@ -197,11 +198,10 @@ pub async fn install_acp_runtime(
     })
     .await
     .map_err(|e| format!("install task panicked: {e}"))??;
-
     if !install_result.success {
         return Ok(install_result);
     }
-
+    crate::managed_agents::invalidate_hermes_binary_probe_cache();
     // ── Phase 2: async restart of stuck agents ───────────────────────────────
     //
     // Mirror set_global_agent_config: after a successful install, restart any

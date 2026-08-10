@@ -88,6 +88,8 @@ pub struct ManagedAgentRuntimeStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requested_relay_url: Option<String>,
     pub local_setup: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_readiness: Option<super::HermesProfileReadiness>,
     pub lifecycle: ManagedAgentRuntimeLifecycle,
     pub pid: Option<u32>,
     pub error: Option<String>,

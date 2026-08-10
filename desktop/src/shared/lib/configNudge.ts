@@ -68,6 +68,11 @@ export type ConfigNudgeRequirement =
        */
       surface: "hermes_profile_directory_missing";
       profile: string;
+    }
+  | {
+      surface: "hermes_profile_config_invalid";
+      profile: string;
+      diagnostic: string;
     };
 
 /**
@@ -175,6 +180,10 @@ function isConfigNudgeRequirement(v: unknown): v is ConfigNudgeRequirement {
       );
     case "missing_binary":
       return typeof r.command === "string";
+    case "hermes_profile_directory_missing":
+      return typeof r.profile === "string";
+    case "hermes_profile_config_invalid":
+      return typeof r.profile === "string" && typeof r.diagnostic === "string";
     default:
       return false;
   }

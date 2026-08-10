@@ -509,6 +509,8 @@ pub struct ManagedAgentSummary {
     pub agent_args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes_profile: Option<String>, // D-019; catalog-derived mcp below
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_readiness: Option<super::HermesProfileReadiness>,
     pub mcp_command: String,
     /// Deprecated passthrough of the stored record value; the harness ignores
     /// it. Kept for wire compatibility.
