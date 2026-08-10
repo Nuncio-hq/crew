@@ -112,6 +112,27 @@ export type HermesProfileArchiveResult =
       message: string;
     };
 
+export function hermesProfileArchiveSuccess(
+  result: HermesProfileArchiveResult,
+): boolean {
+  return result.status === "archived";
+}
+
+export function hermesProfileArchiveMessage(
+  result: HermesProfileArchiveResult,
+): string {
+  switch (result.status) {
+    case "archived":
+      return `Hermes profile '${result.profile}' archived.`;
+    case "restored":
+      return `Hermes profile '${result.profile}' restored.`;
+    case "permanently_deleted":
+      return `Hermes profile '${result.profile}' permanently deleted.`;
+    default:
+      return result.message;
+  }
+}
+
 export async function estimateHermesProfileArchive(
   profile: string,
 ): Promise<HermesProfileArchiveEstimate> {

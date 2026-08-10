@@ -11,6 +11,7 @@ import { AgentDialog } from "./AgentDialog";
 import { PersonaCatalogDialog } from "./PersonaCatalogDialog";
 import { PersonaDeleteDialog } from "./PersonaDeleteDialog";
 import { PersonaShareDialog } from "./PersonaShareDialog";
+import { HermesProfileArchivesPanel } from "./HermesProfileArchivesPanel";
 import { AgentSnapshotExportDialog } from "./AgentSnapshotExportDialog";
 import { AgentSnapshotImportDialog } from "./AgentSnapshotImportDialog";
 import { TeamSnapshotExportDialog } from "./TeamSnapshotExportDialog";
@@ -52,6 +53,7 @@ export function AgentsView() {
   // Exclusivity: create never sets `personaDialogState` (edit/dup/import do),
   // so the create-mode and definition-edit AgentDialog mounts never coexist.
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false);
+  const [isHermesArchivesOpen, setIsHermesArchivesOpen] = React.useState(false);
 
   function openUnifiedCreate() {
     personas.prepareCreate();
@@ -203,6 +205,12 @@ export function AgentsView() {
                         Stop running agents
                       </DropdownMenuItem>
                     ) : null}
+                    <DropdownMenuItem
+                      data-testid="hermes-profile-archives-menu-item"
+                      onSelect={() => setIsHermesArchivesOpen(true)}
+                    >
+                      Archived Hermes profiles
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </>
@@ -425,6 +433,10 @@ export function AgentsView() {
           persona={personas.personaToDelete}
         />
       ) : null}
+      <HermesProfileArchivesPanel
+        onOpenChange={setIsHermesArchivesOpen}
+        open={isHermesArchivesOpen}
+      />
       {personas.personaToShare ? (
         <PersonaShareDialog
           catalogShareLevel={personas.getPersonaCatalogShareLevel(

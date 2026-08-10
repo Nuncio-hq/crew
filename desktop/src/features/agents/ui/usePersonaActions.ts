@@ -38,9 +38,9 @@ import { useCreatedAgentChannelAttachment } from "@/features/agents/useCreatedAg
 import { useCommunities } from "@/features/communities/useCommunities";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import {
-  deleteHermesProfile,
-  hermesProfileLifecycleMessage,
-  hermesProfileLifecycleSuccess,
+  archiveHermesProfile,
+  hermesProfileArchiveMessage,
+  hermesProfileArchiveSuccess,
 } from "@/shared/api/hermesProfiles";
 import type {
   SnapshotFormat,
@@ -294,14 +294,15 @@ export function usePersonaActions() {
   async function handleDelete(
     persona: AgentPersona,
     options?: {
-      deleteHermesProfiles?: boolean;
+      archiveHermesProfiles?: boolean;
+      hermesProfileReason?: string;
       hermesProfiles?: string[];
     },
   ) {
     clearFeedback("library");
     try {
       const profilesToDelete =
-        options?.deleteHermesProfiles === true
+        options?.archiveHermesProfiles === true
           ? [
               ...new Set(
                 (options.hermesProfiles ?? [])
@@ -314,10 +315,13 @@ export function usePersonaActions() {
       await deletePersonaMutation.mutateAsync(persona.id);
 
       for (const profile of profilesToDelete) {
-        const result = await deleteHermesProfile(profile);
-        if (!hermesProfileLifecycleSuccess(result)) {
+        const result = await archiveHermesProfile(
+          profile,
+          options?.hermesProfileReason,
+        );
+        if (!hermesProfileArchiveSuccess(result)) {
           setPersonaErrorMessage(
-            `Deleted ${persona.displayName}, but profile '${profile}' cleanup failed: ${hermesProfileLifecycleMessage(result)}`,
+            `Deleted ${persona.displayName}, but profile '${profile}' cleanup failed: ${hermesProfileArchiveMessage(result)}`,
           );
           setPersonaToDelete(null);
           return;

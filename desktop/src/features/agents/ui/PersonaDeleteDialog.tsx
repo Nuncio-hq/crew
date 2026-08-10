@@ -27,7 +27,7 @@ type PersonaDeleteDialogProps = {
   hermesProfiles?: string[];
   onConfirm: (
     persona: AgentPersona,
-    options?: { deleteHermesProfiles?: boolean },
+    options?: { archiveHermesProfiles?: boolean; hermesProfileReason?: string },
   ) => void;
   onOpenChange: (open: boolean) => void;
 };
@@ -71,10 +71,12 @@ export function PersonaDeleteDialog({
   );
   const [profileChoice, setProfileChoice] =
     React.useState<HermesProfileOffboardChoice>("keep");
+  const [profileReason, setProfileReason] = React.useState("");
 
   React.useEffect(() => {
     if (open) {
       setProfileChoice("keep");
+      setProfileReason("");
     }
   }, [open]);
 
@@ -95,7 +97,9 @@ export function PersonaDeleteDialog({
             <HermesProfileOffboardFields
               choice={profileChoice}
               onChoiceChange={setProfileChoice}
+              onReasonChange={setProfileReason}
               profileName={primaryProfile}
+              reason={profileReason}
               showPublicAgentWarning={showPublicWarning}
             />
             {uniqueProfiles.length > 1 ? (
@@ -118,7 +122,10 @@ export function PersonaDeleteDialog({
                   onConfirm(
                     persona,
                     primaryProfile
-                      ? { deleteHermesProfiles: profileChoice === "delete" }
+                      ? {
+                          archiveHermesProfiles: profileChoice === "archive",
+                          hermesProfileReason: profileReason,
+                        }
                       : undefined,
                   );
                 }

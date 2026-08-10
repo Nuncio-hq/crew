@@ -1544,6 +1544,25 @@ const mockAgentPubkeys = new Set([
 ]);
 /** In-memory Hermes profiles for Phase 03 lifecycle IPC mocks. */
 const mockHermesProfiles = new Set<string>();
+const mockHermesArchives = new Map<
+  string,
+  {
+    id: string;
+    archive_bytes: number;
+    manifest: {
+      schema_version: number;
+      profile: string;
+      archived_at: string;
+      bound_agent_name: string | null;
+      bound_agent_pubkey: string | null;
+      offboard_reason: string | null;
+      exclusions: string[];
+      skipped_links: string[];
+      entry_count: number;
+      included_bytes: number;
+    };
+  }
+>();
 // Kind-0 `name` aliases, distinct from the display name, for exercising the
 // alias-tolerant mention resolution path (e.g. a message that says "@bobby"
 // while bob's display name is "bob").
@@ -2354,6 +2373,7 @@ function resetMockRelayAgents(config?: E2eConfig) {
 function resetMockManagedAgents(config?: E2eConfig) {
   mockManagedAgents = [];
   mockHermesProfiles.clear();
+  mockHermesArchives.clear();
   mockManagedAgentRuntimes = (config?.mock?.managedAgentRuntimes ?? []).map(
     (seed) => ({
       pubkey: seed.pubkey,
@@ -12726,6 +12746,99 @@ export function maybeInstallE2eTauriMocks() {
         }
         mockHermesProfiles.delete(trimmed);
         return { status: "ok", name: trimmed };
+      }
+      case "estimate_hermes_profile_archive": {
+        const profile = String((payload as { profile?: string }).profile ?? "");
+        return {
+          included_bytes: profile.length * 1024,
+          excluded_bytes: 0,
+          entry_count: 1,
+        };
+      }
+      case "archive_hermes_profile": {
+        const profile = String(
+          (payload as { profile?: string }).profile ?? "",
+        ).trim();
+        if (!profile || profile === "default") {
+          return {
+            status: "invalid_name",
+            profile,
+            message: `Invalid profile name '${profile}'`,
+          };
+        }
+        const id = `${profile}-mock-archive`;
+        mockHermesProfiles.delete(profile);
+        mockHermesArchives.set(id, {
+          id,
+          archive_bytes: profile.length * 1024,
+          manifest: {
+            schema_version: 1,
+            profile,
+            archived_at: new Date().toISOString(),
+            bound_agent_name: null,
+            bound_agent_pubkey: null,
+            offboard_reason: (payload as { reason?: string }).reason ?? null,
+            exclusions: ["audio_cache", "image_cache", "logs"],
+            skipped_links: [],
+            entry_count: 1,
+            included_bytes: profile.length * 1024,
+          },
+        });
+        return {
+          status: "archived",
+          id,
+          profile,
+          included_bytes: profile.length * 1024,
+          archive_bytes: profile.length * 1024,
+          skipped_link_count: 0,
+        };
+      }
+      case "list_hermes_profile_archives":
+        return [...mockHermesArchives.values()];
+      case "restore_hermes_profile_archive": {
+        const id = String((payload as { id?: string }).id ?? "");
+        const archive = mockHermesArchives.get(id);
+        if (!archive)
+          return {
+            status: "does_not_exist",
+            id,
+            message: "archive id does not exist",
+          };
+        if (mockHermesProfiles.has(archive.manifest.profile)) {
+          return {
+            status: "collision",
+            profile: archive.manifest.profile,
+            message: "profile already exists",
+          };
+        }
+        mockHermesProfiles.add(archive.manifest.profile);
+        return { status: "restored", id, profile: archive.manifest.profile };
+      }
+      case "permanently_delete_hermes_profile_archive": {
+        const { id, confirmationToken } = payload as {
+          id?: string;
+          confirmationToken?: string;
+        };
+        const archive = mockHermesArchives.get(id ?? "");
+        if (!archive)
+          return {
+            status: "does_not_exist",
+            id: id ?? "",
+            message: "archive id does not exist",
+          };
+        if (confirmationToken !== archive.manifest.profile) {
+          return {
+            status: "confirmation_mismatch",
+            profile: archive.manifest.profile,
+            message: "confirmation token does not match profile name",
+          };
+        }
+        mockHermesArchives.delete(id ?? "");
+        return {
+          status: "permanently_deleted",
+          id: id ?? "",
+          profile: archive.manifest.profile,
+        };
       }
       case "start_managed_agent":
         return handleStartManagedAgent(
