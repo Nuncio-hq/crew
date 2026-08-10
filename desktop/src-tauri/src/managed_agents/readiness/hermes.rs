@@ -240,14 +240,23 @@ fn readiness_contract_names_all_states_and_keeps_auth_unknown_advisory() {
             },
         ];
         assert_eq!(states.len(), 5);
-        assert!(states[0].message().contains("ready"));
-        for state in &states[1..4] {
-            assert!(state.is_blocking());
-        }
-        assert!(states[1].message().contains("recreate"));
-        assert!(states[2].message().contains("repair"));
-        assert!(states[3].message().contains("install"));
-        assert!(!states[4].is_blocking());
+        assert!(matches!(states[0], HermesProfileReadiness::Ready));
+        assert!(matches!(
+            states[1],
+            HermesProfileReadiness::Missing { .. }
+        ));
+        assert!(matches!(
+            states[2],
+            HermesProfileReadiness::BrokenConfig { .. }
+        ));
+        assert!(matches!(
+            states[3],
+            HermesProfileReadiness::BinaryMissing { .. }
+        ));
+        assert!(matches!(
+            states[4],
+            HermesProfileReadiness::AuthUnknown { .. }
+        ));
     }
 
     #[test]
