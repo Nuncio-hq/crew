@@ -1,6 +1,3 @@
-use nostr::{Keys, ToBech32};
-use tauri::{AppHandle, State};
-
 use crate::{
     app_state::AppState,
     managed_agents::{
@@ -17,14 +14,14 @@ use crate::{
     relay::{relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
 };
-
+use nostr::{Keys, ToBech32};
+use tauri::{AppHandle, State};
 /// Read the workspace owner pubkey without holding the lock. Used to populate `BUZZ_ACP_AGENT_OWNER`
 /// as a fallback for legacy agent records that have no NIP-OA `auth_tag`.
 pub(super) fn workspace_owner_hex(state: &AppState) -> Result<String, String> {
     let keys = state.keys.lock().map_err(|e| e.to_string())?;
     Ok(keys.public_key().to_hex())
 }
-
 /// Retain a freshly authored managed-agent event in the local store, flagged
 /// for relay sync. MUST be called inside the `managed_agents_store_lock`-held
 /// body after `save_managed_agents`, NEVER across an `.await`: it acquires
@@ -847,6 +844,9 @@ pub async fn create_managed_agent(
             agent_command_override,
             agent_args,
             hermes_profile: hermes_profile.clone(),
+            crew_role: crate::managed_agents::crew_role::parse_crew_role(
+                input.crew_role.as_deref(),
+            )?,
             mcp_command,
             // BUZZ_ACP_TURN_TIMEOUT is deprecated and ignored by the harness;
             // store the schema default only. Use idle_timeout_seconds or

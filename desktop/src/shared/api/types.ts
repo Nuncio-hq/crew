@@ -395,6 +395,8 @@ export type ManagedAgent = {
   /** Hermes profile binding (D-019); null when unbound / no profileArg. */
   hermesProfile: string | null;
   profileReadiness?: HermesProfileReadiness | null;
+  /** Owner-assigned Crew role (issue #116); null when unassigned. */
+  crewRole: string | null;
 };
 
 /** Inbound author gate mode. Mirrors buzz-acp's --respond-to CLI flag. */
@@ -456,6 +458,8 @@ export type CreateManagedAgentInput = {
   relayMesh?: RelayMeshConfig;
   /** Hermes profile binding (D-019); server-validated. */
   hermesProfile?: string;
+  /** Owner-assigned Crew role (issue #116); server-validated taxonomy. */
+  crewRole?: string;
 };
 
 export type CreateManagedAgentResponse = {
@@ -660,6 +664,10 @@ export type UpdateManagedAgentInput = {
    * Absent = don't touch. `null` = clear. string = set (validated server-side).
    */
   hermesProfile?: string | null;
+  /**
+   * Absent = don't touch. `null` = clear. string = set (validated taxonomy).
+   */
+  crewRole?: string | null;
 };
 export type AgentPersona = {
   id: string;

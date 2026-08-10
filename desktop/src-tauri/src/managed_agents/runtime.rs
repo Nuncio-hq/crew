@@ -312,6 +312,7 @@ pub fn build_managed_agent_summary(
             &descriptor.command,
             record.hermes_profile.as_deref(),
         ),
+        crew_role: record.crew_role.clone(),
         mcp_command: effective_mcp_command,
         turn_timeout_seconds: record.turn_timeout_seconds,
         idle_timeout_seconds: record.idle_timeout_seconds,
@@ -782,6 +783,18 @@ pub fn spawn_agent_child(
         &mut command,
         effective_command,
     );
+    // Crew role: write live file + env so next session/new re-reads without respawn.
+    if let Ok(role_path) = crate::managed_agents::crew_role::write_crew_role_file(
+        app,
+        &record.pubkey,
+        record.crew_role.as_deref(),
+    ) {
+        crate::managed_agents::crew_role::apply_crew_role_spawn_env(
+            &mut command,
+            record.crew_role.as_deref(),
+            &role_path,
+        );
+    }
     // Buzz shared compute: derive OpenAI-compatible transport; scrub ambient key.
     // Gate on `mesh_model_id` (same trim as preflight callers).
     #[cfg(feature = "mesh-llm")]

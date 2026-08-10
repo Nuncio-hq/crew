@@ -347,3 +347,15 @@ and in flight.
   offboarding, and an Agents-page archive browser. Archive semantics follow
   D-035 and spike 0015; real Hermes authentication remains unverified here
   because no Hermes binary is installed.
+
+## Agent roles track (issue #116)
+
+- Plan:
+  [`plans/20260810-agent-roles-routing-capability/plan.md`](../../plans/20260810-agent-roles-routing-capability/plan.md)
+- Slice 0 spikes **0015–0017 PASS** (records under `docs/crew/spikes/`).
+- **Slice 1 (role per agent) — implemented on branch** `feat/issue-116-agent-roles`:
+  owner-assigned `crew_role` on the managed-agent record; `10100` `crew-role`
+  projection; buzz-acp role-section injection on fresh session via role file
+  re-read; edit UI + chip; taxonomy `code|content|research|ops`; decisions
+  D-028–D-030. Slice 2 (presets) and Slice 3 (capability) not started.
+- Next: orchestrator review → PR; then Slice 2/3 per plan.

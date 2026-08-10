@@ -171,6 +171,7 @@ fn local_agent() -> ManagedAgentRecord {
         agent_command_override: Some("claude".to_string()),
         agent_args: vec![],
         hermes_profile: None,
+        crew_role: None,
         mcp_command: "buzz-dev-mcp".to_string(),
         turn_timeout_seconds: 320,
         idle_timeout_seconds: None,

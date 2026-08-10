@@ -24,6 +24,7 @@ import { PubKey } from "@/shared/ui/PubKey";
 import { SubsectionLabel } from "@/shared/ui/PageHeader";
 import { RestartDiffBadge } from "./RestartDiffBadge";
 import { HermesProfileReadinessIndicator } from "./HermesProfileReadinessIndicator";
+import { CrewRoleChip } from "./CrewRoleFields";
 
 export function ManagedAgentRow({
   agent,
@@ -242,6 +243,7 @@ function AgentSummary({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="truncate font-medium text-foreground">{agent.name}</p>
+            <CrewRoleChip role={agent.crewRole} />
             {personaLabel ? (
               <Badge variant="secondary">{personaLabel}</Badge>
             ) : null}

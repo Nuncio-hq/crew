@@ -39,7 +39,6 @@ import type {
   GitBashPrerequisite,
   RuntimeConfigSurface,
 } from "@/shared/api/types";
-
 export * from "@/shared/api/tauriChannels";
 type RawPresenceLookup = Record<string, PresenceStatus>;
 type RawAddChannelMembersResult = {
@@ -160,6 +159,7 @@ export type RawManagedAgent = {
   respond_to_allowlist?: string[];
   hermes_profile?: string | null;
   profile_readiness?: ManagedAgent["profileReadiness"];
+  crew_role?: string | null;
 };
 
 type RawCreateManagedAgentResponse = {
@@ -690,6 +690,7 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     respondToAllowlist: agent.respond_to_allowlist ?? [],
     hermesProfile: agent.hermes_profile ?? null,
     profileReadiness: agent.profile_readiness ?? null,
+    crewRole: agent.crew_role ?? null,
   };
 }
 
@@ -797,6 +798,7 @@ export async function createManagedAgent(input: CreateManagedAgentInput) {
         respondToAllowlist: input.respondToAllowlist,
         relayMesh: input.relayMesh,
         hermesProfile: input.hermesProfile,
+        crewRole: input.crewRole,
       },
     },
   );

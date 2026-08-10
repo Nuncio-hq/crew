@@ -150,6 +150,9 @@ pub struct CreateManagedAgentRequest {
     /// Hermes profile binding (D-019). Validated when `Some`.
     #[serde(default)]
     pub hermes_profile: Option<String>,
+    /// Owner-assigned Crew role (issue #116). Validated against taxonomy.
+    #[serde(default)]
+    pub crew_role: Option<String>,
     /// Accepted for wire compatibility; not applied to the record. The
     /// effective MCP command is always derived from the runtime catalog at
     /// spawn time — a per-record override is never read.
@@ -242,6 +245,9 @@ pub struct UpdateManagedAgentRequest {
     /// Absent = don't touch. null = clear. "name" = set (validated).
     #[serde(default, deserialize_with = "crate::util::double_option")]
     pub hermes_profile: Option<Option<String>>,
+    /// Absent = don't touch. null = clear. "code" = set (validated taxonomy).
+    #[serde(default, deserialize_with = "crate::util::double_option")]
+    pub crew_role: Option<Option<String>>,
     /// Accepted for wire compatibility; not applied to the stored record.
     /// The effective MCP command is always catalog-derived at spawn time.
     ///

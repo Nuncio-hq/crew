@@ -525,6 +525,12 @@ pub struct Config {
     pub turn_liveness_secs: u64,
     pub heartbeat_prompt: Option<String>,
     pub system_prompt: Option<String>,
+    /// Crew role snapshot from `BUZZ_ACP_CREW_ROLE` (spawn-time). Prefer the
+    /// role file when set — re-read on every fresh session.
+    pub crew_role: Option<String>,
+    /// Path from `BUZZ_ACP_CREW_ROLE_FILE`. Re-read on each session/new so role
+    /// changes take effect without respawn (same semantics as `!rotate`).
+    pub crew_role_file: Option<std::path::PathBuf>,
     /// Team-owned instructions layered separately from the agent system prompt.
     pub team_instructions: Option<String>,
     pub initial_message: Option<String>,
@@ -1094,6 +1100,8 @@ impl Config {
             turn_liveness_secs,
             heartbeat_prompt,
             system_prompt,
+            crew_role: crate::crew_role::role_config_from_env().0,
+            crew_role_file: crate::crew_role::role_config_from_env().1,
             team_instructions: args
                 .team_instructions
                 .as_deref()
@@ -1482,6 +1490,8 @@ mod tests {
             turn_liveness_secs: 10,
             heartbeat_prompt: None,
             system_prompt: None,
+            crew_role: None,
+            crew_role_file: None,
             team_instructions: None,
             initial_message: None,
             subscribe_mode: mode,

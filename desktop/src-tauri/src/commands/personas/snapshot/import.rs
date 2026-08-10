@@ -611,6 +611,7 @@ pub async fn confirm_agent_snapshot_import(
             agent_command_override: None,
             agent_args: vec![],
             hermes_profile: None,
+            crew_role: None,
             mcp_command: String::new(),
             turn_timeout_seconds: 0,
             idle_timeout_seconds: snapshot.definition.idle_timeout_seconds,

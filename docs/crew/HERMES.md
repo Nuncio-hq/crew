@@ -249,3 +249,28 @@ Hermes-side ask lands.
 - Live session model in the "decided by profile" row — optional follow-up
   when a clean ACP session-catalog read path exists from create/edit.
 - Credential isolation for public agents — blocked on Hermes-side ask.
+
+## Crew roles (issue #116 Slice 1)
+
+- **Taxonomy (day one):** `code`, `content`, `research`, `ops` — one validated
+  list in `managed_agents::crew_role::TAXONOMY` / `features/agents/lib/crewRole.ts`.
+  Stored as a free string after validation.
+- **Assignment:** founder/owner only via the managed-agent edit UI (Crew role
+  control). Agents cannot self-assign. Non-owner role claims are ignored
+  (D-028).
+- **Storage:** `ManagedAgentRecord.crew_role` locally; private forward-compat
+  path `30179` `extensions["crew:role"]` (spike 0015). Public projection:
+  kind `10100` tag `["crew-role", <role>]`.
+- **Prompt:** buzz-acp injects a role section (allowed / not-allowed /
+  refuse-and-redirect + mandatory first-line `ROLE-CHECK`) on each **fresh
+  session** when a verified owner-assigned role is present. No role ⇒ no
+  section (byte-identical to prior behavior).
+- **Change semantics:** same as profile model changes / `!rotate` — desktop
+  writes `{app_data}/agents/<pubkey>.crew-role` and sets
+  `BUZZ_ACP_CREW_ROLE_FILE`; the harness re-reads the file on the next
+  session/new. **No respawn required.**
+- **Display:** role chip on the managed-agent row; edit control on the instance
+  edit dialog. Display-name convention for multi-role teams: prefer
+  handle = role (`code`, `content`, …) or `name (role)` when the handle is a
+  persona name.
+- **Capability flags / presets:** not Slice 1 (see plan Slices 2–3).

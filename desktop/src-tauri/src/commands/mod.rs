@@ -16,6 +16,7 @@ mod channel_templates;
 mod channel_window;
 mod channels;
 mod clipboard;
+mod crew_role_publish;
 mod dms;
 mod engrams;
 mod export_util;

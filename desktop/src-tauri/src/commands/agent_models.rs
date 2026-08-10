@@ -1,10 +1,8 @@
-use std::collections::{BTreeMap, HashSet};
-
+use super::agent_model_process::run_agent_models_command;
 use nostr::Keys;
 use serde::Deserialize;
+use std::collections::{BTreeMap, HashSet};
 use tauri::{AppHandle, State};
-
-use super::agent_model_process::run_agent_models_command;
 // The map-only lookup is reached solely from the base-URL helpers that exist for
 // their unit tests; discovery itself always goes through the process-env variant.
 #[cfg(test)]
@@ -13,7 +11,6 @@ use super::agent_models_env::{
     effective_discovery_provider, env_or_process_value, redaction_env_with_value, DiscoveryProvider,
 };
 use super::agent_update_rollback::{rollback_failed_agent_update, AgentUpdateRollback};
-
 use crate::{
     app_state::AppState,
     managed_agents::{
@@ -27,7 +24,6 @@ use crate::{
     relay::{relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
 };
-
 /// Query available models from an agent via `buzz-acp models --json`.
 ///
 /// Spawns a short-lived subprocess (no relay connection needed). The subprocess
@@ -56,15 +52,12 @@ pub async fn get_agent_models(
         for pubkey in &exited_pubkeys {
             state.clear_agent_session_caches(pubkey);
         }
-
         let record = records
             .iter()
             .find(|r| r.pubkey == pubkey)
             .ok_or_else(|| format!("agent {pubkey} not found"))?;
-
         let resolved = resolve_command(&record.acp_command)
             .ok_or_else(|| missing_command_message(&record.acp_command, "ACP harness command"))?;
-
         // Resolve the effective harness from the linked persona (mirrors spawn),
         // so model discovery runs against the persona's current harness, not the
         // frozen record snapshot. An explicit per-agent override wins.
@@ -734,7 +727,7 @@ pub async fn update_managed_agent(
     state: State<'_, AppState>,
 ) -> Result<UpdateManagedAgentResponse, String> {
     // Phase 1: local save (synchronous, under lock)
-    let (summary, sync_params, rollback) = {
+    let (summary, sync_params, rollback, role_projection) = {
         let _store_guard = state
             .managed_agents_store_lock
             .lock()
@@ -805,9 +798,8 @@ pub async fn update_managed_agent(
         if let Some(p) = hermes_profile_update {
             record.hermes_profile = p;
         }
-        // mcp_command is intentionally not applied here — the effective MCP
-        // command is always catalog-derived (known_acp_runtime at spawn time)
-        // and the per-record field is never read by the runtime.
+        let role_changed =
+            super::crew_role_publish::apply_crew_role_patch(record, &input.crew_role)?;
         if let Some(env_vars) = input.env_vars {
             crate::managed_agents::validate_user_env_keys(&env_vars)?;
             record.env_vars = env_vars;
@@ -860,10 +852,9 @@ pub async fn update_managed_agent(
             .find(|r| r.pubkey == input.pubkey)
             .ok_or_else(|| format!("agent {} not found", input.pubkey))?;
 
-        // Publish the edit to the relay. After-save, inside the lock, before
-        // any .await. The retention upsert hashes the opt-IN projection, so an
-        // update that touched only runtime/local fields is a no-op publish.
         super::agents::retain_managed_agent_pending(&app, &state, record);
+        let role_projection =
+            super::crew_role_publish::finish_role_save(&app, &state, role_changed, record);
 
         let sync_params = if name_changed {
             let agent_keys = Keys::parse(&record.private_key_nsec)
@@ -901,7 +892,7 @@ pub async fn update_managed_agent(
             )?
         };
         let rollback = name_changed.then(|| AgentUpdateRollback::new(previous_record, record));
-        (summary, sync_params, rollback)
+        (summary, sync_params, rollback, role_projection)
     }; // lock dropped here
 
     try_regenerate_nest(&app);
@@ -929,7 +920,16 @@ pub async fn update_managed_agent(
             ));
         }
     }
-
+    if let Some((_pk, name, role, nsec, relay_url)) = role_projection {
+        super::crew_role_publish::publish_role_side_effects(
+            &state,
+            &name,
+            role.as_deref(),
+            &nsec,
+            &relay_url,
+        )
+        .await;
+    }
     Ok(UpdateManagedAgentResponse {
         agent: summary,
         profile_sync_error: None,

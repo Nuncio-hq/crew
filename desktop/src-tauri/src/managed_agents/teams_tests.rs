@@ -176,6 +176,7 @@ fn managed_agent(name: &str) -> ManagedAgentRecord {
         agent_command_override: None,
         agent_args: vec![],
         hermes_profile: None,
+        crew_role: None,
         mcp_command: String::new(),
         turn_timeout_seconds: 300,
         idle_timeout_seconds: None,

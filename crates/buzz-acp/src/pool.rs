@@ -583,6 +583,10 @@ pub struct PromptContext {
     pub turn_liveness_interval: Duration,
     pub dedup_mode: DedupMode,
     pub system_prompt: Option<String>,
+    /// Owner-assigned Crew role snapshot (env). Prefer `crew_role_file` re-read.
+    pub crew_role: Option<String>,
+    /// Role file re-read on every fresh session (no respawn).
+    pub crew_role_file: Option<std::path::PathBuf>,
     /// Sanitized title for each new ACP session, sent as `_meta.sessionTitle`
     /// on `session/new`. Never part of the prompt.
     pub session_title: Option<String>,
@@ -969,10 +973,20 @@ async fn create_session_and_apply_model(
     // its own `[Agent Memory — core]` header, and canvas carries its own
     // `[Channel Canvas]` header; both are appended with a blank-line separator.
     let is_goose = agent.agent_name == "goose";
+    // Re-read role on every fresh session so assignment changes take effect
+    // without respawning the harness (same model as !rotate).
+    let session_role = crate::crew_role::resolve_role_for_session(
+        ctx.crew_role.as_deref(),
+        ctx.crew_role_file.as_deref(),
+    );
+    let system_with_role = crate::crew_role::compose_system_prompt_with_role(
+        ctx.system_prompt.as_deref(),
+        session_role.as_deref(),
+    );
     let combined_system_prompt = with_canvas(
         with_core(
             with_team(
-                framed_system_prompt(session_cwd, ctx.base_prompt, ctx.system_prompt.as_deref()),
+                framed_system_prompt(session_cwd, ctx.base_prompt, system_with_role.as_deref()),
                 ctx.team_instructions.as_deref(),
             ),
             agent_core,
@@ -2075,6 +2089,14 @@ pub async fn run_prompt_task(
             );
         }
 
+        let legacy_role = crate::crew_role::resolve_role_for_session(
+            ctx.crew_role.as_deref(),
+            ctx.crew_role_file.as_deref(),
+        );
+        let legacy_system = crate::crew_role::compose_system_prompt_with_role(
+            ctx.system_prompt.as_deref(),
+            legacy_role.as_deref(),
+        );
         crate::queue::format_prompt(
             b,
             &crate::queue::FormatPromptArgs {
@@ -2084,7 +2106,7 @@ pub async fn run_prompt_task(
                 profile_lookup: profile_lookup.as_ref(),
                 has_system_prompt_support: agent.has_system_prompt_support(),
                 base_prompt: ctx.base_prompt,
-                system_prompt: ctx.system_prompt.as_deref(),
+                system_prompt: legacy_system.as_deref(),
                 team_instructions: ctx.team_instructions.as_deref(),
                 agent_canvas: agent_canvas.as_deref(),
             },
@@ -9265,6 +9287,8 @@ mod tests {
             turn_liveness_interval: Duration::ZERO,
             dedup_mode: DedupMode::Drop,
             system_prompt: None,
+            crew_role: None,
+            crew_role_file: None,
             session_title: None,
             team_instructions: None,
             heartbeat_prompt: None,
