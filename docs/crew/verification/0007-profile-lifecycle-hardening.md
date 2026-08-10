@@ -99,7 +99,7 @@ All eight PNG hashes are distinct:
 
 | Screenshot | SHA-1 |
 | --- | --- |
-| `archives-list.png` | `fa7e63c83593c98f4160befd9f971b80389e220e` |
+| `archives-list.png` | `54abcfc0296b4629aaa6c7d8989018ecc4dc5da9` |
 | `offboard-archive-dialog.png` | `5cc54af016c30b0ec71bef7e124ffcb094e6ec72` |
 | `permanent-delete-confirmation.png` | `c03fbd2c08d61b56a7c34212a41d5f47c99ef775` |
 | `readiness-auth_unknown.png` | `8dbc53357533f721a0616a033efd816949245174` |

@@ -164,8 +164,7 @@ test.describe("Hermes profile lifecycle acceptance", () => {
       ],
     });
     await openAgents(page);
-    await page.getByTestId("agent-actions-menu-trigger").click();
-    await page.getByTestId("hermes-profile-archives-menu-item").click();
+    await page.getByTestId("hermes-profile-archives-button").click();
     await expect(
       page.getByTestId("hermes-profile-archives-empty"),
     ).toBeVisible();
@@ -190,8 +189,7 @@ test.describe("Hermes profile lifecycle acceptance", () => {
       }
     });
     await page.getByRole("button", { name: /Close/i }).click();
-    await page.getByTestId("agent-actions-menu-trigger").click();
-    await page.getByTestId("hermes-profile-archives-menu-item").click();
+    await page.getByTestId("hermes-profile-archives-button").click();
     const row = page.getByTestId(
       "hermes-profile-archive-row-scout-mock-archive",
     );
@@ -233,8 +231,7 @@ test.describe("Hermes profile lifecycle acceptance", () => {
       await invoke?.("create_hermes_profile", { name: "scout" });
     });
     await page.getByRole("button", { name: /Close/i }).click();
-    await page.getByTestId("agent-actions-menu-trigger").click();
-    await page.getByTestId("hermes-profile-archives-menu-item").click();
+    await page.getByTestId("hermes-profile-archives-button").click();
     const collisionRow = page.getByTestId(
       "hermes-profile-archive-row-scout-mock-archive",
     );

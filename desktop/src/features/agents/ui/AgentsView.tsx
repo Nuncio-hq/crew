@@ -167,13 +167,21 @@ export function AgentsView() {
                       Stop running agents
                     </Button>
                   ) : null}
+                  <Button
+                    data-testid="hermes-profile-archives-button"
+                    onClick={() => setIsHermesArchivesOpen(true)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Archived Hermes profiles
+                  </Button>
                 </div>
 
                 <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
                     <Button
                       aria-label="Agent actions"
-                      className="inline-flex"
+                      className="hidden [@container(max-width:40rem)]:inline-flex"
                       data-testid="agent-actions-menu-trigger"
                       ref={compactActionsTriggerRef}
                       size="icon"
