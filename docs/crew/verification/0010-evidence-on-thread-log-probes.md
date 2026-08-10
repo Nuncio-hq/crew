@@ -187,3 +187,30 @@ After capture`.
   probes above were executed.
 - The relay used is the shared local dev relay on `:3000`, isolated per probe by
   a freshly created channel rather than a separate database.
+
+## CI evidence
+
+PR #128's CI run `31389233419` on this branch recorded these lanes as passing:
+Desktop Smoke E2E (2), `buzz-acp`, macOS ARM Package, Project Relay, Desktop
+Fast, CI Policy, and Desktop Release Candidate.
+
+Desktop Smoke E2E (4) was cancelled at the known 30-minute timeout associated
+with issue #109. The failures in Desktop Smoke E2E (1) and (3) were the
+following smoke tests:
+
+- `channel-activity-popover.spec.ts:459`
+- `channels.spec.ts:500`
+- `inbox-edit.spec.ts:175`
+- `inbox-edit.spec.ts:325`
+- `inbox-reactions.spec.ts:36`
+- `messaging.spec.ts:1819`
+
+All of those failures reproduce on clean `origin/main` run `31362178966`, so
+they are preexisting rather than regressions from this change.
+
+Desktop Rust failed once while spawning the provider binary:
+`Text file busy (os error 26)`. The affected test passes locally and passed on
+`origin/main`. This is an unconfirmed transient: a same-head rerun was blocked
+by GitHub token permissions, so this record does not claim that the failure was
+resolved by a rerun. NuncioCrew Gate consequently failed on the Desktop Rust
+result.
