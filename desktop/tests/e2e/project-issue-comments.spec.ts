@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { expandProjectPlumbing } from "../helpers/projectPlumbing";
 
 const ISSUE_COMMENTS = [
   "First issue comment",
@@ -20,6 +21,7 @@ async function openBuzzProject(page: import("@playwright/test").Page) {
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
   await projectEntry.click();
+  await expandProjectPlumbing(page);
 }
 
 test("issue comments use the project activity timeline", async ({ page }) => {

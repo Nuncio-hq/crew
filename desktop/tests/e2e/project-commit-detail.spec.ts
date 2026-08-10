@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { expandProjectPlumbing } from "../helpers/projectPlumbing";
 
 const SHOTS = "test-results/project-commit-detail";
 const ALIGNMENT_TOLERANCE_PX = 2;
@@ -511,6 +512,7 @@ test("commit detail opens from the commits feed with a diff", async ({
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
   await projectEntry.click();
+  await expandProjectPlumbing(page);
 
   await page.getByRole("tab", { name: "Commits" }).click();
   const commitRows = page.getByTestId("project-activity-feed-item");
@@ -619,6 +621,7 @@ test("pull request and issue feeds share the commit row structure", async ({
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
   await projectEntry.click();
+  await expandProjectPlumbing(page);
 
   // PR rows use the shared feed row: title button + #id cluster cell.
   await page.getByRole("tab", { name: "Pull Request" }).click();
