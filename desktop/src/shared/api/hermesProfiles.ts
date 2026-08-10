@@ -66,9 +66,15 @@ export type HermesProfileArchiveManifest = {
   bound_agent_pubkey: string | null;
   offboard_reason: string | null;
   exclusions: string[];
+  skipped_links: string[];
   entry_count: number;
   included_bytes: number;
-  compressed_bytes: number;
+};
+
+export type HermesProfileArchiveListing = {
+  id: string;
+  archive_bytes: number;
+  manifest: HermesProfileArchiveManifest;
 };
 
 export type HermesProfileArchiveEstimate = {
@@ -83,7 +89,8 @@ export type HermesProfileArchiveResult =
       id: string;
       profile: string;
       included_bytes: number;
-      compressed_bytes: number;
+      archive_bytes: number;
+      skipped_link_count: number;
     }
   | { status: "restored"; id: string; profile: string }
   | { status: "permanently_deleted"; id: string; profile: string }
@@ -119,7 +126,7 @@ export async function archiveHermesProfile(
 }
 
 export async function listHermesProfileArchives(): Promise<
-  HermesProfileArchiveManifest[]
+  HermesProfileArchiveListing[]
 > {
   return invokeTauri("list_hermes_profile_archives");
 }

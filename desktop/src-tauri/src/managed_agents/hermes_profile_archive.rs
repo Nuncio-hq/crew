@@ -20,7 +20,7 @@ use super::{
     hermes_profile::{validate_hermes_profile_name, HERMES_FORBIDDEN_PROFILE_NAME},
     hermes_profile_lifecycle::{hermes_profile_dir, hermes_profiles_dir},
     nest::nest_dir,
-    ManagedAgentPairRuntime, ManagedAgentRecord, ManagedAgentRuntimeKey,
+    process_is_running, ManagedAgentPairRuntime, ManagedAgentRecord, ManagedAgentRuntimeKey,
 };
 
 pub const ARCHIVE_SCHEMA_VERSION: u32 = 1;
@@ -35,9 +35,16 @@ pub struct HermesProfileArchiveManifest {
     pub bound_agent_pubkey: Option<String>,
     pub offboard_reason: Option<String>,
     pub exclusions: Vec<String>,
+    pub skipped_links: Vec<String>,
     pub entry_count: u64,
     pub included_bytes: u64,
-    pub compressed_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HermesProfileArchiveListing {
+    pub id: String,
+    pub archive_bytes: u64,
+    pub manifest: HermesProfileArchiveManifest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -54,7 +61,8 @@ pub enum HermesProfileArchiveResult {
         id: String,
         profile: String,
         included_bytes: u64,
-        compressed_bytes: u64,
+        archive_bytes: u64,
+        skipped_link_count: u64,
     },
     Restored {
         id: String,
@@ -178,6 +186,7 @@ fn walk_profile(
     path: &Path,
     estimate: &mut HermesProfileArchiveEstimate,
     entries: &mut Vec<PathBuf>,
+    skipped_links: &mut Vec<String>,
 ) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if path != root {
@@ -193,13 +202,39 @@ fn walk_profile(
                 } else if metadata.is_dir() {
                     for child in fs::read_dir(path)? {
                         let child_path = child?.path();
-                        estimate.excluded_bytes = estimate
-                            .excluded_bytes
-                            .saturating_add(fs::symlink_metadata(child_path)?.len());
+                        let child_metadata = fs::symlink_metadata(&child_path)?;
+                        if child_metadata.is_dir() {
+                            let mut nested = HermesProfileArchiveEstimate {
+                                included_bytes: 0,
+                                excluded_bytes: 0,
+                                entry_count: 0,
+                            };
+                            let mut ignored_entries = Vec::new();
+                            let mut ignored_links = Vec::new();
+                            walk_profile(
+                                root,
+                                &child_path,
+                                &mut nested,
+                                &mut ignored_entries,
+                                &mut ignored_links,
+                            )?;
+                            estimate.excluded_bytes = estimate
+                                .excluded_bytes
+                                .saturating_add(nested.excluded_bytes)
+                                .saturating_add(nested.included_bytes);
+                        } else {
+                            estimate.excluded_bytes =
+                                estimate.excluded_bytes.saturating_add(child_metadata.len());
+                        }
                     }
                 }
                 return Ok(());
             }
+        }
+        if metadata.file_type().is_symlink() {
+            let relative = path.strip_prefix(root).unwrap_or(path);
+            skipped_links.push(relative.to_string_lossy().into_owned());
+            return Ok(());
         }
         estimate.entry_count += 1;
         if metadata.is_file() {
@@ -209,13 +244,15 @@ fn walk_profile(
     }
     if metadata.is_dir() {
         for child in fs::read_dir(path)? {
-            walk_profile(root, &child?.path(), estimate, entries)?;
+            walk_profile(root, &child?.path(), estimate, entries, skipped_links)?;
         }
     }
     Ok(())
 }
 
-fn profile_estimate(root: &Path) -> Result<(HermesProfileArchiveEstimate, Vec<PathBuf>), String> {
+fn profile_estimate(
+    root: &Path,
+) -> Result<(HermesProfileArchiveEstimate, Vec<PathBuf>, Vec<String>), String> {
     if !root.is_dir() {
         return Err("profile directory does not exist".to_string());
     }
@@ -225,9 +262,10 @@ fn profile_estimate(root: &Path) -> Result<(HermesProfileArchiveEstimate, Vec<Pa
         entry_count: 0,
     };
     let mut entries = Vec::new();
-    walk_profile(root, root, &mut estimate, &mut entries)
+    let mut skipped_links = Vec::new();
+    walk_profile(root, root, &mut estimate, &mut entries, &mut skipped_links)
         .map_err(|e| format!("failed to inspect profile: {e}"))?;
-    Ok((estimate, entries))
+    Ok((estimate, entries, skipped_links))
 }
 
 fn append_manifest(
@@ -265,12 +303,6 @@ fn pack(
         let archive_name = Path::new(profile).join(relative);
         let metadata =
             fs::symlink_metadata(entry).map_err(|e| format!("failed to inspect entry: {e}"))?;
-        if metadata.file_type().is_symlink() {
-            return Err(format!(
-                "symlink entry is not archivable: {}",
-                entry.display()
-            ));
-        }
         if metadata.is_dir() {
             builder
                 .append_dir(&archive_name, entry)
@@ -291,39 +323,6 @@ fn pack(
     Ok(())
 }
 
-fn compressed_profile_bytes(
-    profile: &str,
-    entries: &[PathBuf],
-    root: &Path,
-) -> Result<u64, String> {
-    let encoder = GzEncoder::new(Vec::new(), Compression::default());
-    let mut builder = Builder::new(encoder);
-    for entry in entries {
-        let relative = entry
-            .strip_prefix(root)
-            .map_err(|e| format!("archive path error: {e}"))?;
-        let archive_name = Path::new(profile).join(relative);
-        let metadata =
-            fs::symlink_metadata(entry).map_err(|e| format!("failed to inspect entry: {e}"))?;
-        if metadata.is_dir() {
-            builder
-                .append_dir(&archive_name, entry)
-                .map_err(|e| format!("failed to append directory: {e}"))?;
-        } else if metadata.is_file() {
-            builder
-                .append_path_with_name(entry, &archive_name)
-                .map_err(|e| format!("failed to append file: {e}"))?;
-        }
-    }
-    let encoder = builder
-        .into_inner()
-        .map_err(|e| format!("failed to finish size estimate: {e}"))?;
-    encoder
-        .finish()
-        .map(|bytes| bytes.len() as u64)
-        .map_err(|e| format!("failed to compress size estimate: {e}"))
-}
-
 fn read_manifest(path: &Path) -> Result<HermesProfileArchiveManifest, String> {
     let bytes = fs::read(path).map_err(|e| format!("failed to read manifest: {e}"))?;
     serde_json::from_slice(&bytes).map_err(|e| format!("invalid archive manifest: {e}"))
@@ -332,7 +331,7 @@ fn read_manifest(path: &Path) -> Result<HermesProfileArchiveManifest, String> {
 pub fn estimate_profile(profile: &str) -> Result<HermesProfileArchiveEstimate, String> {
     let profile = validate_name(profile).map_err(|r| r.message())?;
     let root = hermes_profile_dir(&profile).ok_or("could not resolve Hermes profile directory")?;
-    profile_estimate(&root).map(|(estimate, _)| estimate)
+    profile_estimate(&root).map(|(estimate, _, _)| estimate)
 }
 
 pub fn archive_profile(
@@ -373,7 +372,7 @@ pub fn archive_profile_with(
             }
         }
     };
-    let (estimate, entries) = match profile_estimate(&profile_dir) {
+    let (estimate, entries, skipped_links) = match profile_estimate(&profile_dir) {
         Ok(value) => value,
         Err(message) => {
             return HermesProfileArchiveResult::DoesNotExist {
@@ -401,16 +400,6 @@ pub fn archive_profile_with(
     };
     let archive_path = archive_dir.join(format!("{id}.tar.gz"));
     let manifest_path = archive_dir.join(format!("{id}.manifest.json"));
-    let compressed_bytes = match compressed_profile_bytes(&profile, &entries, &profile_dir) {
-        Ok(bytes) => bytes,
-        Err(message) => {
-            return HermesProfileArchiveResult::Failed {
-                profile: Some(profile),
-                id: Some(id),
-                message,
-            }
-        }
-    };
     let manifest = HermesProfileArchiveManifest {
         schema_version: ARCHIVE_SCHEMA_VERSION,
         profile: profile.clone(),
@@ -422,9 +411,9 @@ pub fn archive_profile_with(
             .iter()
             .map(|s| (*s).to_string())
             .collect(),
+        skipped_links,
         entry_count: estimate.entry_count,
         included_bytes: estimate.included_bytes,
-        compressed_bytes,
     };
     let temporary = archive_dir.join(format!(".{id}.tmp"));
     let result = (|| {
@@ -473,14 +462,24 @@ pub fn archive_profile_with(
             message,
         };
     }
+    let archive_bytes = match fs::metadata(&archive_path) {
+        Ok(metadata) => metadata.len(),
+        Err(error) => {
+            return HermesProfileArchiveResult::Failed {
+                profile: Some(profile),
+                id: Some(id),
+                message: format!("failed to stat published archive: {error}"),
+            }
+        }
+    };
     HermesProfileArchiveResult::Archived {
         id,
         profile,
         included_bytes: manifest.included_bytes,
-        compressed_bytes: manifest.compressed_bytes,
+        archive_bytes,
+        skipped_link_count: manifest.skipped_links.len() as u64,
     }
 }
-
 fn safe_archive_id(id: &str) -> Result<(), String> {
     if id.trim().is_empty()
         || id
@@ -496,12 +495,10 @@ fn safe_archive_id(id: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
-pub fn list_archives() -> Result<Vec<HermesProfileArchiveManifest>, String> {
+pub fn list_archives() -> Result<Vec<HermesProfileArchiveListing>, String> {
     list_archives_with(&archive_root()?)
 }
-
-pub fn list_archives_with(root: &Path) -> Result<Vec<HermesProfileArchiveManifest>, String> {
+pub fn list_archives_with(root: &Path) -> Result<Vec<HermesProfileArchiveListing>, String> {
     if !root.exists() {
         return Ok(Vec::new());
     }
@@ -510,14 +507,26 @@ pub fn list_archives_with(root: &Path) -> Result<Vec<HermesProfileArchiveManifes
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.extension().and_then(|e| e.to_str()) == Some("json") {
             if let Ok(manifest) = read_manifest(&path) {
-                manifests.push(manifest);
+                let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                let Some(id) = file_name.strip_suffix(".manifest.json") else {
+                    continue;
+                };
+                let archive_bytes = fs::metadata(root.join(format!("{id}.tar.gz")))
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0);
+                manifests.push(HermesProfileArchiveListing {
+                    id: id.to_string(),
+                    archive_bytes,
+                    manifest,
+                });
             }
         }
     }
-    manifests.sort_by(|a, b| b.archived_at.cmp(&a.archived_at));
+    manifests.sort_by(|a, b| b.manifest.archived_at.cmp(&a.manifest.archived_at));
     Ok(manifests)
 }
-
 fn validate_tar_path(path: &Path, profile: &str) -> Result<(), String> {
     if path == Path::new("manifest.json") {
         return Ok(());
@@ -534,7 +543,15 @@ fn validate_tar_path(path: &Path, profile: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
+macro_rules! restore_failure {
+    ($profile:expr, $id:expr, $message:expr) => {
+        HermesProfileArchiveResult::Failed {
+            profile: Some($profile.to_string()),
+            id: Some($id.to_string()),
+            message: $message.into(),
+        }
+    };
+}
 pub fn restore_archive(id: &str) -> HermesProfileArchiveResult {
     match archive_root() {
         Ok(root) => restore_archive_with(id, &root),
@@ -545,7 +562,6 @@ pub fn restore_archive(id: &str) -> HermesProfileArchiveResult {
         },
     }
 }
-
 pub fn restore_archive_with(id: &str, archive_dir: &Path) -> HermesProfileArchiveResult {
     if let Err(message) = safe_archive_id(id) {
         return HermesProfileArchiveResult::Failed {
@@ -573,11 +589,11 @@ pub fn restore_archive_with(id: &str, archive_dir: &Path) -> HermesProfileArchiv
     let profile_dir = match hermes_profile_dir(&manifest.profile) {
         Some(path) => path,
         None => {
-            return HermesProfileArchiveResult::Failed {
-                profile: Some(manifest.profile),
-                id: Some(id.to_string()),
-                message: "could not resolve Hermes profile directory".to_string(),
-            }
+            return restore_failure!(
+                &manifest.profile,
+                id,
+                "could not resolve Hermes profile directory"
+            );
         }
     };
     if fs::symlink_metadata(&profile_dir).is_ok() {
@@ -589,19 +605,15 @@ pub fn restore_archive_with(id: &str, archive_dir: &Path) -> HermesProfileArchiv
     let profiles = match hermes_profiles_dir() {
         Some(path) => path,
         None => {
-            return HermesProfileArchiveResult::Failed {
-                profile: Some(manifest.profile),
-                id: Some(id.to_string()),
-                message: "could not resolve Hermes profiles directory".to_string(),
-            }
+            return restore_failure!(
+                &manifest.profile,
+                id,
+                "could not resolve Hermes profiles directory"
+            );
         }
     };
     if let Err(error) = fs::create_dir_all(&profiles) {
-        return HermesProfileArchiveResult::Failed {
-            profile: Some(manifest.profile),
-            id: Some(id.to_string()),
-            message: error.to_string(),
-        };
+        return restore_failure!(&manifest.profile, id, error.to_string());
     }
     let file = match File::open(archive_dir.join(format!("{id}.tar.gz"))) {
         Ok(file) => file,
@@ -616,11 +628,7 @@ pub fn restore_archive_with(id: &str, archive_dir: &Path) -> HermesProfileArchiv
     let entries = match archive.entries() {
         Ok(entries) => entries,
         Err(error) => {
-            return HermesProfileArchiveResult::Failed {
-                profile: Some(manifest.profile),
-                id: Some(id.to_string()),
-                message: error.to_string(),
-            }
+            return restore_failure!(&manifest.profile, id, error.to_string());
         }
     };
     for entry in entries {
@@ -628,42 +636,26 @@ pub fn restore_archive_with(id: &str, archive_dir: &Path) -> HermesProfileArchiv
             Ok(entry) => entry,
             Err(error) => {
                 let _ = fs::remove_dir_all(&profile_dir);
-                return HermesProfileArchiveResult::Failed {
-                    profile: Some(manifest.profile),
-                    id: Some(id.to_string()),
-                    message: error.to_string(),
-                };
+                return restore_failure!(&manifest.profile, id, error.to_string());
             }
         };
         let path = match entry.path() {
             Ok(path) => path.into_owned(),
             Err(error) => {
                 let _ = fs::remove_dir_all(&profile_dir);
-                return HermesProfileArchiveResult::Failed {
-                    profile: Some(manifest.profile),
-                    id: Some(id.to_string()),
-                    message: error.to_string(),
-                };
+                return restore_failure!(&manifest.profile, id, error.to_string());
             }
         };
         if let Err(error) = validate_tar_path(&path, &manifest.profile) {
             let _ = fs::remove_dir_all(&profile_dir);
-            return HermesProfileArchiveResult::Failed {
-                profile: Some(manifest.profile),
-                id: Some(id.to_string()),
-                message: error,
-            };
+            return restore_failure!(&manifest.profile, id, error);
         }
         if matches!(
             entry.header().entry_type(),
             EntryType::Symlink | EntryType::Link
         ) {
             let _ = fs::remove_dir_all(&profile_dir);
-            return HermesProfileArchiveResult::Failed {
-                profile: Some(manifest.profile),
-                id: Some(id.to_string()),
-                message: "archive contains a link entry".to_string(),
-            };
+            return restore_failure!(&manifest.profile, id, "archive contains a link entry");
         }
         if path == Path::new("manifest.json") {
             continue;
@@ -672,20 +664,12 @@ pub fn restore_archive_with(id: &str, archive_dir: &Path) -> HermesProfileArchiv
         if let Some(parent) = destination.parent() {
             if let Err(error) = fs::create_dir_all(parent) {
                 let _ = fs::remove_dir_all(&profile_dir);
-                return HermesProfileArchiveResult::Failed {
-                    profile: Some(manifest.profile),
-                    id: Some(id.to_string()),
-                    message: error.to_string(),
-                };
+                return restore_failure!(&manifest.profile, id, error.to_string());
             }
         }
         if let Err(error) = entry.unpack(&destination) {
             let _ = fs::remove_dir_all(&profile_dir);
-            return HermesProfileArchiveResult::Failed {
-                profile: Some(manifest.profile),
-                id: Some(id.to_string()),
-                message: error.to_string(),
-            };
+            return restore_failure!(&manifest.profile, id, error.to_string());
         }
     }
     HermesProfileArchiveResult::Restored {
@@ -693,7 +677,6 @@ pub fn restore_archive_with(id: &str, archive_dir: &Path) -> HermesProfileArchiv
         profile: manifest.profile,
     }
 }
-
 pub fn permanently_delete_archive(id: &str, confirmation: &str) -> HermesProfileArchiveResult {
     match archive_root() {
         Ok(root) => permanently_delete_archive_with(id, confirmation, &root),
@@ -704,7 +687,6 @@ pub fn permanently_delete_archive(id: &str, confirmation: &str) -> HermesProfile
         },
     }
 }
-
 pub fn permanently_delete_archive_with(
     id: &str,
     confirmation: &str,
@@ -737,9 +719,23 @@ pub fn permanently_delete_archive_with(
         };
     }
     let archive_path = archive_dir.join(format!("{id}.tar.gz"));
-    if let Err(error) =
-        fs::remove_file(&archive_path).and_then(|()| fs::remove_file(&manifest_path))
-    {
+    let archive_result = fs::remove_file(&archive_path);
+    if let Err(error) = archive_result {
+        if error.kind() != io::ErrorKind::NotFound {
+            return HermesProfileArchiveResult::Failed {
+                profile: Some(manifest.profile),
+                id: Some(id.to_string()),
+                message: error.to_string(),
+            };
+        }
+    }
+    if let Err(error) = fs::remove_file(&manifest_path) {
+        if error.kind() == io::ErrorKind::NotFound {
+            return HermesProfileArchiveResult::PermanentlyDeleted {
+                id: id.to_string(),
+                profile: manifest.profile,
+            };
+        }
         return HermesProfileArchiveResult::Failed {
             profile: Some(manifest.profile),
             id: Some(id.to_string()),
@@ -751,7 +747,6 @@ pub fn permanently_delete_archive_with(
         profile: manifest.profile,
     }
 }
-
 pub fn running_agent_for_profile(
     profile: &str,
     records: &[ManagedAgentRecord],
@@ -769,9 +764,19 @@ pub fn running_agent_for_profile(
                 .then(|| key.clone())
         })
         .collect::<Vec<_>>();
-    running_agent_for_profile_with_keys(profile, records, &running_keys)
+    if let Some(agent) = running_agent_for_profile_with_keys(profile, records, &running_keys) {
+        return Some(agent);
+    }
+    records.iter().find_map(|record| {
+        let bound = record.hermes_profile.as_deref()?.trim();
+        (bound == profile && record.runtime_pid.is_some_and(process_is_running)).then(|| {
+            HermesProfileArchiveAgent {
+                name: record.name.clone(),
+                pubkey: record.pubkey.clone(),
+            }
+        })
+    })
 }
-
 pub fn running_agent_for_profile_with_keys(
     profile: &str,
     records: &[ManagedAgentRecord],
@@ -791,7 +796,6 @@ pub fn running_agent_for_profile_with_keys(
         })
     })
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -807,6 +811,9 @@ mod tests {
         fs::write(profile.join("audio_cache/data.bin"), "excluded").expect("cache file");
         fs::create_dir(profile.join("logs")).expect("logs");
         fs::write(profile.join("logs/run.log"), "excluded").expect("log");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(profile.join("notes.txt"), profile.join("shortcut"))
+            .expect("symlink");
         let original = std::env::var("HERMES_HOME").ok();
         std::env::set_var("HERMES_HOME", &home);
         f(&home, &temp.path().join("archives"));
@@ -815,10 +822,11 @@ mod tests {
             None => std::env::remove_var("HERMES_HOME"),
         }
     }
-
     #[test]
     fn archive_restore_round_trip_and_cache_exclusion() {
         with_home(|home, archives| {
+            let estimate = estimate_profile("scout").expect("estimate");
+            assert!(estimate.excluded_bytes >= b"excluded".len() as u64 * 2);
             let result = archive_profile_with(
                 "scout",
                 archives,
@@ -838,6 +846,15 @@ mod tests {
             .expect("parse manifest");
             assert_eq!(manifest.profile, "scout");
             assert_eq!(manifest.offboard_reason.as_deref(), Some("offboard"));
+            assert_eq!(manifest.skipped_links, vec!["shortcut".to_string()]);
+            let listing = list_archives_with(archives).expect("listing");
+            assert_eq!(listing[0].id, id);
+            assert_eq!(
+                listing[0].archive_bytes,
+                fs::metadata(archives.join(format!("{id}.tar.gz")))
+                    .expect("archive stat")
+                    .len()
+            );
             assert!(restore_archive_with(&id, archives)
                 .message()
                 .contains("restored"));
@@ -864,7 +881,6 @@ mod tests {
             ));
         });
     }
-
     #[test]
     fn invalid_name_and_confirmation_are_rejected() {
         with_home(|_, archives| {
@@ -880,9 +896,9 @@ mod tests {
                 bound_agent_pubkey: None,
                 offboard_reason: None,
                 exclusions: Vec::new(),
+                skipped_links: Vec::new(),
                 entry_count: 0,
                 included_bytes: 0,
-                compressed_bytes: 0,
             };
             fs::create_dir_all(archives).expect("archives");
             fs::write(
@@ -894,9 +910,12 @@ mod tests {
                 permanently_delete_archive_with("scout-archive", "scou", archives),
                 HermesProfileArchiveResult::ConfirmationMismatch { .. }
             ));
+            assert!(matches!(
+                estimate_profile("default"),
+                Err(message) if message.contains("default")
+            ));
         });
     }
-
     #[test]
     fn estimate_matches_archive_and_collision_is_non_destructive() {
         with_home(|home, archives| {
@@ -905,14 +924,16 @@ mod tests {
             let HermesProfileArchiveResult::Archived {
                 id,
                 included_bytes,
-                compressed_bytes,
+                archive_bytes,
+                skipped_link_count,
                 ..
             } = result
             else {
                 panic!("unexpected archive result: {result:?}");
             };
             assert_eq!(included_bytes, estimate.included_bytes);
-            assert!(compressed_bytes > 0);
+            assert!(archive_bytes > 0);
+            assert_eq!(skipped_link_count, 1);
             fs::create_dir_all(home.join("profiles/scout")).expect("collision profile");
             fs::write(home.join("profiles/scout/keep.txt"), "keep").expect("keep");
             assert!(matches!(
@@ -925,7 +946,6 @@ mod tests {
             );
         });
     }
-
     #[test]
     fn archive_failure_leaves_live_profile_intact() {
         with_home(|home, temp_archives| {
@@ -937,39 +957,16 @@ mod tests {
             assert!(home.join("profiles/scout/notes.txt").exists());
         });
     }
-
     #[test]
     fn restore_rejects_traversal_entry() {
-        assert!(validate_tar_path(Path::new("../escape.txt"), "scout").is_err());
-        assert!(validate_tar_path(Path::new("/tmp/escape.txt"), "scout").is_err());
-        assert!(validate_tar_path(Path::new("other/escape.txt"), "scout").is_err());
+        for path in ["../escape.txt", "/tmp/escape.txt", "other/escape.txt"] {
+            assert!(validate_tar_path(Path::new(path), "scout").is_err());
+        }
     }
-
     #[test]
     fn running_agent_guard_matches_profile_and_runtime_pair() {
         let mut record: ManagedAgentRecord = serde_json::from_str(
-            r#"{
-                "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "name": "Scout",
-                "private_key_nsec": "nsec1fake",
-                "relay_url": "",
-                "acp_command": "buzz-acp",
-                "agent_command": "hermes",
-                "agent_args": [],
-                "hermes_profile": "scout",
-                "mcp_command": "",
-                "turn_timeout_seconds": 320,
-                "system_prompt": null,
-                "model": null,
-                "provider": null,
-                "env_vars": {},
-                "created_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z",
-                "last_started_at": null,
-                "last_stopped_at": null,
-                "last_exit_code": null,
-                "last_error": null
-            }"#,
+            r#"{"pubkey":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"Scout","private_key_nsec":"nsec1fake","relay_url":"","acp_command":"buzz-acp","agent_command":"hermes","agent_args":[],"hermes_profile":"scout","mcp_command":"","turn_timeout_seconds":320,"system_prompt":null,"model":null,"provider":null,"env_vars":{},"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","last_started_at":null,"last_stopped_at":null,"last_exit_code":null,"last_error":null}"#,
         )
         .expect("record");
         record.hermes_profile = Some("scout".to_string());
@@ -980,6 +977,22 @@ mod tests {
         .expect("runtime key");
         let blocked = running_agent_for_profile_with_keys("scout", &[record.clone()], &[key]);
         assert_eq!(blocked.map(|agent| agent.name), Some("Scout".to_string()));
-        assert!(running_agent_for_profile_with_keys("other", &[record], &[]).is_none());
+        assert!(running_agent_for_profile_with_keys("other", &[record.clone()], &[]).is_none());
+        let mut adopted = record.clone();
+        adopted.name = "Adopted".to_string();
+        adopted.runtime_pid = Some(std::process::id());
+        assert_eq!(
+            running_agent_for_profile("scout", &[adopted], &mut HashMap::new())
+                .map(|agent| agent.name),
+            Some("Adopted".to_string())
+        );
+    }
+    #[test]
+    fn corrupt_sidecar_is_skipped_by_archive_listing() {
+        with_home(|_, archives| {
+            fs::create_dir_all(archives).expect("archives");
+            fs::write(archives.join("broken.manifest.json"), b"{not json").expect("corrupt");
+            assert!(list_archives_with(archives).expect("listing").is_empty());
+        });
     }
 }
