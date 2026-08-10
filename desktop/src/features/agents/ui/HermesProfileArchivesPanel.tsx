@@ -14,6 +14,8 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { formatArchiveBytes } from "./HermesProfileOffboardFields";
+import { requestOpenEditAgent } from "@/features/agents/openEditAgentEvent";
+import type { ManagedAgent } from "@/shared/api/types";
 
 function archiveResultMessage(
   result: Awaited<ReturnType<typeof restoreHermesProfileArchive>>,
@@ -35,9 +37,11 @@ function archiveResultMessage(
 export function HermesProfileArchivesPanel({
   open,
   onOpenChange,
+  managedAgents = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  managedAgents?: readonly ManagedAgent[];
 }) {
   const [archives, setArchives] = React.useState<HermesProfileArchiveListing[]>(
     [],
@@ -46,6 +50,7 @@ export function HermesProfileArchivesPanel({
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [confirmId, setConfirmId] = React.useState<string | null>(null);
   const [token, setToken] = React.useState("");
+  const [restored, setRestored] = React.useState<string | null>(null);
 
   const refresh = React.useCallback(async () => {
     try {
@@ -73,6 +78,7 @@ export function HermesProfileArchivesPanel({
     try {
       const result = await restoreHermesProfileArchive(id);
       if (result.status === "restored") {
+        setRestored(id);
         await refresh();
       } else {
         setError(archiveResultMessage(result));
@@ -207,6 +213,36 @@ export function HermesProfileArchivesPanel({
                       Confirm permanent deletion
                     </Button>
                   </div>
+                ) : null}
+                {restored === id ? (
+                  manifest.bound_agent_pubkey &&
+                  managedAgents.some(
+                    (agent) => agent.pubkey === manifest.bound_agent_pubkey,
+                  ) ? (
+                    <button
+                      className="text-xs font-medium text-muted-foreground hover:underline"
+                      data-testid={`hermes-profile-archive-rebind-${id}`}
+                      onClick={() => {
+                        const pubkey = manifest.bound_agent_pubkey;
+                        if (!pubkey) return;
+                        requestOpenEditAgent(pubkey, {
+                          type: "normalized_field",
+                          field: "hermesProfile",
+                        });
+                      }}
+                      type="button"
+                    >
+                      Re-bind restored profile to {manifest.bound_agent_name}
+                    </button>
+                  ) : (
+                    <p
+                      className="text-xs text-muted-foreground"
+                      data-testid={`hermes-profile-archive-rebind-help-${id}`}
+                    >
+                      Profile restored. Bind it from the agent&apos;s Edit Agent
+                      profile field.
+                    </p>
+                  )
                 ) : null}
               </article>
             ))}
