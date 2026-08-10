@@ -31,7 +31,7 @@ async function openEvidence(
   await page.waitForFunction(
     () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
   );
-  await page.evaluate(
+  return page.evaluate(
     ({ pubkey, tags }) =>
       window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: "general",
@@ -46,9 +46,22 @@ async function openEvidence(
 test("owner Accept and Reject round-trip as reactions on the evidence card", async ({
   page,
 }) => {
-  await openEvidence(page);
+  const evidence = await openEvidence(page);
   const card = page.getByTestId("evidence-card-test-run");
   await expect(card).toBeVisible();
+
+  await page.evaluate(
+    ({ eventId, pubkey }) =>
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName: "general",
+        content: "❌",
+        kind: 7,
+        pubkey,
+        extraTags: [["e", eventId]],
+      }),
+    { eventId: evidence.id, pubkey: TEST_IDENTITIES.bob.pubkey },
+  );
+  await expect(card.getByTestId("evidence-reaction-rejected")).toHaveCount(0);
 
   await card.getByTestId("evidence-accept").click();
   await expect(card.getByTestId("evidence-reaction-accepted")).toBeVisible();

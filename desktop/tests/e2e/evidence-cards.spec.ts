@@ -87,13 +87,16 @@ test("each evidence kind renders a legible card", async ({ page }) => {
     await card.screenshot({ path: `test-results/evidence-cards/${kind}.png` });
   }
   await expect(page.getByTestId("evidence-card-test-run")).toContainText(
-    "1 passed",
+    "Tests: 1 failed → 1 passed",
+  );
+  await expect(page.getByTestId("evidence-card-test-run")).toContainText(
+    "Test run",
   );
   await expect(page.getByTestId("evidence-card-metrics")).toContainText(
-    "delta",
+    "before: 120ms | after: 80ms | delta: -40ms",
   );
   await expect(page.getByTestId("evidence-card-diff-stat")).toContainText(
-    "+42",
+    "Files: 4 | +42 −17",
   );
 });
 

@@ -27,6 +27,16 @@ Implementation slices below remain the code truth for what is built today.
 
 ## Current product slice
 
+Evidence on the thread log is shipped for this slice:
+
+- the CLI appends `["crew-evidence", "<kind>"]` for the four validated evidence
+  kinds to existing messages;
+- desktop renders Crew evidence cards for kind 9, preserves ordinary fallback,
+  and keeps kind 46043 receipt cards unchanged;
+- owners can Accept/Reject with existing kind-7 reactions, with Reject opening
+  the normal reply composer.
+- C2/C3 Playwright contracts and the desktop unit suite verify these behaviors.
+
 Make a Buzz Project record point to a local workspace directory while
 preserving NIP-34 identity.
 
@@ -121,6 +131,11 @@ Out of scope for this slice:
 
 ## Verified evidence
 
+- Evidence-card C2 and owner-reaction C3 Playwright contracts pass, including
+  full authored text excerpts for the text layouts and owner-consistent verdict
+  state.
+- The desktop unit suite passes with 5045 tests passing, one skipped, and zero
+  failures.
 - `buzz-acp` uses the process cwd for ordinary sessions and one validated,
   deterministic worktree cwd for each owner-authored Project task thread.
 - Project announcements already support `buzz-channel` binding.
@@ -257,6 +272,18 @@ and in flight.
   relay for the native exact-reader smoke belongs in the next
   release-verification Definition of Done, alongside the outstanding signed
   updater install/relaunch verification. It is not an open decision.
+
+- Phase 07's generic upstream contribution remains a draft only under D-020;
+  no upstream PR is open.
+
+- Whether a future non-local relay must hard-block local-path publication or
+  use a different privacy mechanism.
+- Final board event kind and tag schema.
+- Whether exact local snapshots should additionally refresh on app focus.
+- Whether symlink-selected workspaces should remain unsupported or get a
+  separately reviewed canonical-path flow.
+- When to publish or link a real Project on the manager relay for the final
+  native exact-reader smoke.
 
 ## Hermes runtime track (feature 0001)
 

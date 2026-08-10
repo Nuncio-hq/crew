@@ -57,7 +57,7 @@ function MetricsLayout({ message }: { message: TimelineMessage }) {
         <span>{values.get("after") ?? "—"}</span>
         <span>{values.get("delta") ?? "—"}</span>
       </div>
-      {values.size === 0 && bodyMarkdown(message)}
+      {bodyMarkdown(message)}
     </div>
   );
 }
@@ -78,6 +78,7 @@ function TestRunLayout({ message }: { message: TimelineMessage }) {
         </p>
         <Markdown content={passed} className="text-sm" />
       </div>
+      {bodyMarkdown(message)}
     </div>
   );
 }
@@ -175,7 +176,15 @@ export function EvidenceCard({
   );
   const showControls = isOwner && canToggleReactions && onToggleReaction;
   const accepted = reactionIsCurrentUser(reactions, "✅");
-  const rejected = reactions.some((reaction) => reaction.emoji === "❌");
+  const rejected = reactionIsCurrentUser(reactions, "❌");
+  const heading =
+    kind === "test-run"
+      ? "Test run"
+      : kind === "before-after-visual"
+        ? "Before/after visual"
+        : kind === "diff-stat"
+          ? "Diff stat"
+          : "Metrics";
   const layout =
     kind === "metrics" ? (
       <MetricsLayout message={message} />
@@ -193,7 +202,7 @@ export function EvidenceCard({
       data-testid={`evidence-card-${kind}`}
     >
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="font-medium text-foreground">{kind}</h3>
+        <h3 className="font-medium text-foreground">{heading}</h3>
         {rejected ? (
           <span data-testid="evidence-reaction-rejected">❌ Rejected</span>
         ) : accepted ? (
