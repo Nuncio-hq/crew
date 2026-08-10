@@ -12,8 +12,8 @@ The desktop E2E build was produced with `pnpm --filter buzz build:e2e`.
 Playwright ran headlessly under Xvfb against the deterministic mock bridge:
 
 ```text
-Running 3 tests using 1 worker
-3 passed (11.7s)
+Running 4 tests using 1 worker
+4 passed (13.7s)
 ```
 
 The Rust contract tests ran against temporary filesystem roots and injected
@@ -39,8 +39,8 @@ The five state screenshots and raw run output are attached below.
 
 The Playwright spec verifies keep is selected by default, archive is not
 preselected, the running-agent archive control is disabled with stop-first
-copy, and captures the dialog. The optional reason and estimate fields are
-part of the rendered dialog contract and are not required to confirm.
+copy, and captures the dialog. A stopped-agent fixture selects archive and
+asserts the estimate and optional reason field are rendered.
 
 ### Archive listing, restore, collision, re-bind, and permanent delete — PASS
 
@@ -99,8 +99,8 @@ All eight PNG hashes are distinct:
 
 | Screenshot | SHA-1 |
 | --- | --- |
-| `archives-list.png` | `1f74fcb66468f8ec2bcbbfd8c20e027f6a6965a5` |
-| `offboard-archive-dialog.png` | `6ce96deff1d5e0a453ba1cf348dcf65d865fd2ca` |
+| `archives-list.png` | `fa7e63c83593c98f4160befd9f971b80389e220e` |
+| `offboard-archive-dialog.png` | `5cc54af016c30b0ec71bef7e124ffcb094e6ec72` |
 | `permanent-delete-confirmation.png` | `c03fbd2c08d61b56a7c34212a41d5f47c99ef775` |
 | `readiness-auth_unknown.png` | `8dbc53357533f721a0616a033efd816949245174` |
 | `readiness-binary_missing.png` | `7b1042d046ec810f727d817f1b11cabcbb32e6d8` |
