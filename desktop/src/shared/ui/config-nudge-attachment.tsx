@@ -18,6 +18,7 @@ import {
 } from "@/shared/ui/attachment";
 import { HermesProfileOrphanRepairRow } from "@/shared/ui/HermesProfileOrphanRepairRow";
 import { HermesProfileConfigRepairRow } from "@/shared/ui/HermesProfileConfigRepairRow";
+import { HermesProfileBinaryRepairRow } from "@/shared/ui/HermesProfileBinaryRepairRow";
 
 /**
  * Stable key for a requirement row. The combination of surface + primary
@@ -414,17 +415,14 @@ function RequirementRow({
         </div>
       );
     case "missing_binary": {
-      // Missing-binary rows are purely informational — the user must install the
-      // binary or update their PATH. No in-app action can fix this.
       return (
-        <div className="flex items-center gap-2 text-xs leading-4 text-muted-foreground">
-          <span className="flex-1 [overflow-wrap:anywhere]">
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">
-              {requirement.command}
-            </code>{" "}
-            not found in PATH — install it or check your PATH settings
-          </span>
-        </div>
+        <HermesProfileBinaryRepairRow
+          command={requirement.command}
+          onOpenRuntimes={(event) => {
+            event.stopPropagation();
+            onOpenDoctor(event);
+          }}
+        />
       );
     }
     case "hermes_profile_directory_missing":
