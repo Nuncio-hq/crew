@@ -309,6 +309,14 @@ and in flight.
   projection: binary-missing, missing, broken-config, and neutral
   auth-unknown. Healthy profiles remain outside the generic setup
   requirement pipeline until Hermes provides a truthful headless auth probe.
+- Hermes profiles now have backend archive, restore, estimate, listing, and
+  confirmation-gated permanent-delete contracts. Archive is copy-verify-remove,
+  excludes recorded transient cache directories, and refuses while a bound
+  runtime pair is alive.
+- Hermes profiles now have backend archive, restore, estimate, listing, and
+  confirmation-gated permanent-delete contracts. Archive is copy-verify-remove,
+  excludes recorded transient cache directories, and refuses while a bound
+  runtime pair is alive.
 
 - Feature plan:
   [`features/0001-hermes-first-class-runtime.md`](features/0001-hermes-first-class-runtime.md);

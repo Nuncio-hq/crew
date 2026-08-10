@@ -58,6 +58,88 @@ export async function deleteHermesProfile(
   });
 }
 
+export type HermesProfileArchiveManifest = {
+  schema_version: number;
+  profile: string;
+  archived_at: string;
+  bound_agent_name: string | null;
+  bound_agent_pubkey: string | null;
+  offboard_reason: string | null;
+  exclusions: string[];
+  entry_count: number;
+  included_bytes: number;
+  compressed_bytes: number;
+};
+
+export type HermesProfileArchiveEstimate = {
+  included_bytes: number;
+  excluded_bytes: number;
+  entry_count: number;
+};
+
+export type HermesProfileArchiveResult =
+  | {
+      status: "archived";
+      id: string;
+      profile: string;
+      included_bytes: number;
+      compressed_bytes: number;
+    }
+  | { status: "restored"; id: string; profile: string }
+  | { status: "permanently_deleted"; id: string; profile: string }
+  | { status: "invalid_name"; profile: string; message: string }
+  | { status: "does_not_exist"; id: string; message: string }
+  | { status: "collision"; profile: string; message: string }
+  | {
+      status: "agent_running";
+      profile: string;
+      agent_name: string;
+      agent_pubkey: string;
+      message: string;
+    }
+  | { status: "confirmation_mismatch"; profile: string; message: string }
+  | {
+      status: "failed";
+      profile: string | null;
+      id: string | null;
+      message: string;
+    };
+
+export async function estimateHermesProfileArchive(
+  profile: string,
+): Promise<HermesProfileArchiveEstimate> {
+  return invokeTauri("estimate_hermes_profile_archive", { profile });
+}
+
+export async function archiveHermesProfile(
+  profile: string,
+  reason?: string,
+): Promise<HermesProfileArchiveResult> {
+  return invokeTauri("archive_hermes_profile", { profile, reason });
+}
+
+export async function listHermesProfileArchives(): Promise<
+  HermesProfileArchiveManifest[]
+> {
+  return invokeTauri("list_hermes_profile_archives");
+}
+
+export async function restoreHermesProfileArchive(
+  id: string,
+): Promise<HermesProfileArchiveResult> {
+  return invokeTauri("restore_hermes_profile_archive", { id });
+}
+
+export async function permanentlyDeleteHermesProfileArchive(
+  id: string,
+  confirmationToken: string,
+): Promise<HermesProfileArchiveResult> {
+  return invokeTauri("permanently_delete_hermes_profile_archive", {
+    id,
+    confirmationToken,
+  });
+}
+
 /** Auditable command line shown next to create-in-place (D-019 / P-6). */
 export function hermesProfileCreateCommandLine(name: string): string {
   const trimmed = name.trim() || "<name>";

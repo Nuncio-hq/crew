@@ -19,6 +19,7 @@ pub(crate) mod global_config;
 pub(crate) mod hermes_profile;
 pub(crate) mod hermes_profile_lifecycle;
 pub(crate) mod hermes_profile_readiness;
+pub(crate) mod hermes_profile_archive;
 mod managed_node_paths;
 mod nest;
 pub(crate) mod parallelism;

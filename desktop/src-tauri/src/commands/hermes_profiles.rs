@@ -2,9 +2,17 @@
 //!
 //! Explicit manager actions only (D-019 item 6). Never touches `default`.
 
+use crate::app_state::AppState;
+use crate::managed_agents::hermes_profile_archive::{
+    archive_profile, estimate_profile, list_archives, permanently_delete_archive, restore_archive,
+    running_agent_for_profile, HermesProfileArchiveAgent, HermesProfileArchiveEstimate,
+    HermesProfileArchiveManifest, HermesProfileArchiveResult,
+};
 use crate::managed_agents::hermes_profile_lifecycle::{
     create_profile, delete_profile, list_profiles, HermesProfileLifecycleResult,
 };
+use crate::managed_agents::load_managed_agents;
+use tauri::{AppHandle, Manager};
 
 /// List named Hermes profiles under `~/.hermes/profiles/` (directory read).
 #[tauri::command]
@@ -34,4 +42,169 @@ pub fn delete_hermes_profile(name: String) -> HermesProfileLifecycleResult {
         "delete_hermes_profile"
     );
     result
+}
+
+#[tauri::command]
+pub fn estimate_hermes_profile_archive(
+    profile: String,
+) -> Result<HermesProfileArchiveEstimate, String> {
+    estimate_profile(&profile)
+}
+
+#[tauri::command]
+pub fn archive_hermes_profile(
+    profile: String,
+    reason: Option<String>,
+    app: AppHandle,
+) -> HermesProfileArchiveResult {
+    let state = app.state::<AppState>();
+    let records = match load_managed_agents(&app) {
+        Ok(records) => records,
+        Err(message) => {
+            return HermesProfileArchiveResult::Failed {
+                profile: Some(profile),
+                id: None,
+                message,
+            }
+        }
+    };
+    let mut runtimes = match state.managed_agent_processes.lock() {
+        Ok(runtimes) => runtimes,
+        Err(error) => {
+            return HermesProfileArchiveResult::Failed {
+                profile: Some(profile),
+                id: None,
+                message: error.to_string(),
+            }
+        }
+    };
+    if let Some(agent) = running_agent_for_profile(&profile, &records, &mut runtimes) {
+        return HermesProfileArchiveResult::AgentRunning {
+            profile,
+            agent_name: agent.name,
+            agent_pubkey: agent.pubkey,
+            message: "stop the running agent before archiving its Hermes profile".to_string(),
+        };
+    }
+    let agent = records.iter().find_map(|record| {
+        record
+            .hermes_profile
+            .as_deref()
+            .is_some_and(|bound| bound.trim() == profile.trim())
+            .then(|| HermesProfileArchiveAgent {
+                name: record.name.clone(),
+                pubkey: record.pubkey.clone(),
+            })
+    });
+    archive_profile(&profile, agent.as_ref(), reason.as_deref())
+}
+
+#[tauri::command]
+pub fn list_hermes_profile_archives() -> Result<Vec<HermesProfileArchiveManifest>, String> {
+    list_archives()
+}
+
+#[tauri::command]
+pub fn restore_hermes_profile_archive(id: String, app: AppHandle) -> HermesProfileArchiveResult {
+    let state = app.state::<AppState>();
+    let records = match load_managed_agents(&app) {
+        Ok(records) => records,
+        Err(message) => {
+            return HermesProfileArchiveResult::Failed {
+                profile: None,
+                id: Some(id),
+                message,
+            }
+        }
+    };
+    let manifests = match list_archives() {
+        Ok(manifests) => manifests,
+        Err(message) => {
+            return HermesProfileArchiveResult::Failed {
+                profile: None,
+                id: Some(id),
+                message,
+            }
+        }
+    };
+    let Some(manifest) = manifests
+        .into_iter()
+        .find(|manifest| id.starts_with(&format!("{}-", manifest.profile)) && !id.is_empty())
+    else {
+        return restore_archive(&id);
+    };
+    let mut runtimes = match state.managed_agent_processes.lock() {
+        Ok(runtimes) => runtimes,
+        Err(error) => {
+            return HermesProfileArchiveResult::Failed {
+                profile: Some(manifest.profile),
+                id: Some(id),
+                message: error.to_string(),
+            }
+        }
+    };
+    if let Some(agent) = running_agent_for_profile(&manifest.profile, &records, &mut runtimes) {
+        return HermesProfileArchiveResult::AgentRunning {
+            profile: manifest.profile,
+            agent_name: agent.name,
+            agent_pubkey: agent.pubkey,
+            message: "stop the running agent before restoring this Hermes profile".to_string(),
+        };
+    }
+    restore_archive(&id)
+}
+
+#[tauri::command]
+pub fn permanently_delete_hermes_profile_archive(
+    id: String,
+    confirmation_token: String,
+    app: AppHandle,
+) -> HermesProfileArchiveResult {
+    let state = app.state::<AppState>();
+    let records = match load_managed_agents(&app) {
+        Ok(records) => records,
+        Err(message) => {
+            return HermesProfileArchiveResult::Failed {
+                profile: None,
+                id: Some(id),
+                message,
+            }
+        }
+    };
+    let manifests = match list_archives() {
+        Ok(manifests) => manifests,
+        Err(message) => {
+            return HermesProfileArchiveResult::Failed {
+                profile: None,
+                id: Some(id),
+                message,
+            }
+        }
+    };
+    let profile = manifests
+        .iter()
+        .find(|manifest| id.starts_with(&format!("{}-", manifest.profile)))
+        .map(|manifest| manifest.profile.clone());
+    let Some(profile) = profile else {
+        return permanently_delete_archive(&id, &confirmation_token);
+    };
+    let mut runtimes = match state.managed_agent_processes.lock() {
+        Ok(runtimes) => runtimes,
+        Err(error) => {
+            return HermesProfileArchiveResult::Failed {
+                profile: Some(profile),
+                id: Some(id),
+                message: error.to_string(),
+            }
+        }
+    };
+    if let Some(agent) = running_agent_for_profile(&profile, &records, &mut runtimes) {
+        return HermesProfileArchiveResult::AgentRunning {
+            profile,
+            agent_name: agent.name,
+            agent_pubkey: agent.pubkey,
+            message: "stop the running agent before permanently deleting its archive".to_string(),
+        };
+    }
+    permanently_delete_archive(&id, &confirmation_token)
 }
