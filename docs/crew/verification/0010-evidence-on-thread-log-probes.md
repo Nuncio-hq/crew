@@ -215,3 +215,9 @@ Desktop Rust failed once while spawning the provider binary:
 by GitHub token permissions, so this record does not claim that the failure was
 resolved by a rerun. NuncioCrew Gate consequently failed on the Desktop Rust
 result.
+
+Desktop Fast also failed once on `missionInbox.test.mjs` (`same inputs return a
+reference-stable snapshot`): clean `origin/main` @ `35af74019` passed 8/9 runs
+versus 7/9 on this branch, with an empty `git diff origin/main -- desktop/src/features/home/lib`.
+This is a preexisting merge-gating flake tracked in #135, not something this
+PR fixes or should fix.
