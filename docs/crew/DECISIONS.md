@@ -483,3 +483,13 @@ The accepted consequence: without an explicit clock input, row `age` values
 stay fixed until another input changes. The desktop caller passes no clock and
 the home surface has no ticker, so ages already only refresh when a store
 changes. A caller that wants clock-driven recomputation passes `now`.
+
+## D-031 — Keep shipped state in sync with STATE.md
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Working agreement:** [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md)
+
+When a release is published, a slice merges, or the gate changes, update
+`STATE.md` in the same PR. Repeated drift is costly because agents sequence
+work from that file. Enforcement is review-visible prose, not a CI guard.

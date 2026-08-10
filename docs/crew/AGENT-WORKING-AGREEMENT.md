@@ -84,6 +84,8 @@ Before a multi-step plan, confirm:
 - [ ] Agent-facing success = signed/published room updates where relevant
 - [ ] Wrong-role or out-of-scope work fails loudly or asks — not silent “done”
 - [ ] Docs updated only if user-visible behavior or durable rules change
+- [ ] Shipped state changed (release published, slice merged, gate changed)
+  → update [`STATE.md`](STATE.md) in the same PR
 - [ ] New sticky choice → append [`DECISIONS.md`](DECISIONS.md)
 
 ## When stuck with the founder
