@@ -18,15 +18,20 @@ rename those files.
 Before researching, planning, or changing Crew, an agent must read:
 
 1. [`IDENTITY.md`](IDENTITY.md) — fork vs upstream naming (read first).
-2. Upstream [`AGENTS.md`](../../AGENTS.md) and [`CLAUDE.md`](../../CLAUDE.md)
+2. [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md) — founder north star (Hermes-first,
+   Buzz contracts, mobile, what “company” means in plain language).
+3. [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md) — how to explain,
+   refuse mis-assignment, and stay honest with this founder.
+4. Upstream [`AGENTS.md`](../../AGENTS.md) and [`CLAUDE.md`](../../CLAUDE.md)
    (Buzz codebase conventions; this checkout is still the Buzz tree).
-3. This file.
-4. [`VISION.md`](VISION.md).
-5. [`ARCHITECTURE.md`](ARCHITECTURE.md).
-6. [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md).
-7. [`TESTING.md`](TESTING.md).
-8. [`STATE.md`](STATE.md) and [`DECISIONS.md`](DECISIONS.md).
-9. The relevant spike and feature plan.
+5. This file.
+6. [`VISION.md`](VISION.md) — older mission-control framing; if it conflicts
+   with `FOUNDER-PRODUCT.md`, surface the conflict (do not silently pick).
+7. [`ARCHITECTURE.md`](ARCHITECTURE.md).
+8. [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md).
+9. [`TESTING.md`](TESTING.md).
+10. [`STATE.md`](STATE.md) and [`DECISIONS.md`](DECISIONS.md).
+11. The relevant spike and feature plan.
 
 Upstream rules govern the Buzz codebase. Crew rules add stricter fork,
 product, and delivery constraints. If they conflict, stop and surface the
@@ -56,8 +61,11 @@ contract is visible, and the manager approves the plan.
 | Document                                             | Purpose                            | Update style                 |
 | ---------------------------------------------------- | ---------------------------------- | ---------------------------- |
 | [`IDENTITY.md`](IDENTITY.md)                         | Fork vs Buzz naming for agents     | When identity/CI/paths change |
-| [`VISION.md`](VISION.md)                             | Product intent and locked behavior | Rarely                       |
+| [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md)           | Founder north star; Hermes + Buzz  | When product direction locks |
+| [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md) | Plain-language agent collaboration | When communication rules change |
+| [`VISION.md`](VISION.md)                             | Mission-control intent (legacy framing) | Rarely; reconcile with founder product |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md)                 | Crew boundaries and data flow      | When architecture changes    |
+| [`HERMES.md`](HERMES.md)                             | Hermes hire/spawn runbook          | When Hermes ops change       |
 | [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md) | Mandatory delivery gates           | Rarely                       |
 | [`TESTING.md`](TESTING.md)                           | TDD and edge-case strategy         | As test surfaces evolve      |
 | [`LOCAL-BUILD.md`](LOCAL-BUILD.md)                   | Build and test NuncioCrew locally  | When packaging changes       |

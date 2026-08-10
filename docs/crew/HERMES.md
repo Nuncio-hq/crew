@@ -1,7 +1,9 @@
 # Hermes agents in Crew — runbook
 
 - **Feature:** [`features/0001-hermes-first-class-runtime.md`](features/0001-hermes-first-class-runtime.md)
-- **Decision:** [`DECISIONS.md`](DECISIONS.md) D-019, D-020, D-023, D-024
+- **Decision:** [`DECISIONS.md`](DECISIONS.md) D-019, D-020, D-023, D-024, D-025
+- **Product direction:** [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md) (Hermes-first,
+  still on Buzz contracts — do not invent a parallel Hermes protocol)
 - **Status of this flow:** tier-1 runtime on main; Phase 02 binding UI on
   main; Phase 03 profile lifecycle (create-in-place, keep/delete
   offboarding, orphan repair) on main. Issue #104 Phase 01 adds the trusted
@@ -12,7 +14,9 @@
 **An agent is a Hermes profile; Crew is the office it works in.** The
 profile (`~/.hermes/profiles/<name>`) owns the agent's model, provider,
 memory, skills, and credentials. Crew owns identity-on-relay, channel
-placement, scheduling, and display.
+placement, scheduling, and display. Room assignment and results still use
+**Buzz** (Nostr + ACP); Hermes is the richest employee implementation, not
+a second backend.
 
 ## Rules (D-019 + D-024 summary)
 

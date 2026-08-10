@@ -1,6 +1,19 @@
 # Crew State
 
-Last updated: 2026-07-31
+Last updated: 2026-08-10
+
+## Founder product direction (docs)
+
+Locked narrative for agents (not a shipped feature checklist):
+
+- [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md) — company-on-machine, Hermes-first
+  on Buzz contracts, mobile continuity, in/out scope
+- [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md) — plain language,
+  honesty, no assumed manager experience
+- Decisions **D-025**, **D-026**, **D-027** in [`DECISIONS.md`](DECISIONS.md)
+  (upstream **D-024** remains Hermes trusted/owner-only/local)
+
+Implementation slices below remain the code truth for what is built today.
 
 ## Repository
 
