@@ -9,9 +9,17 @@ const THREAD_ID = "project-outcome-thread";
 async function injectActiveProjectThread(
   page: Parameters<typeof installMockBridge>[0],
 ) {
+  await page.waitForFunction(
+    () =>
+      typeof (
+        window as Window & {
+          __BUZZ_E2E_INJECT_OBSERVER_EVENTS__?: unknown;
+        }
+      ).__BUZZ_E2E_INJECT_OBSERVER_EVENTS__ === "function",
+  );
   await page.evaluate(
     ({ agentPubkey, channelId, conversationId }) => {
-      (
+      const inject = (
         window as Window & {
           __BUZZ_E2E_INJECT_OBSERVER_EVENTS__?: (input: {
             agentPubkey: string;
@@ -28,7 +36,13 @@ async function injectActiveProjectThread(
             }>;
           }) => void;
         }
-      ).__BUZZ_E2E_INJECT_OBSERVER_EVENTS__?.({
+      ).__BUZZ_E2E_INJECT_OBSERVER_EVENTS__;
+      if (!inject) {
+        throw new Error(
+          "E2E observer event bridge is unavailable after page load",
+        );
+      }
+      inject({
         agentPubkey,
         events: [
           {
@@ -65,14 +79,26 @@ test("project outcomes stay page-local while opening an in-place thread panel", 
   await installMockBridge(page);
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(
+    () => typeof window.__BUZZ_E2E_SEED_MOCK_MESSAGE__ === "function",
+  );
   await page.evaluate(
     ({ channelName, id, pubkey }) => {
-      window.__BUZZ_E2E_SEED_MOCK_MESSAGE__?.({
+      const seed = window.__BUZZ_E2E_SEED_MOCK_MESSAGE__;
+      if (!seed) {
+        throw new Error("E2E seed message bridge is unavailable");
+      }
+      const event = seed({
         channelName,
         content: "Project thread root",
         id,
         pubkey,
       });
+      if (event.id !== id) {
+        throw new Error(
+          `E2E seed message returned unexpected id ${event.id}; expected ${id}`,
+        );
+      }
     },
     {
       channelName: "general",
