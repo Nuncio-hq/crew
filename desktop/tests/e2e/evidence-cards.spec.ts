@@ -16,9 +16,7 @@ const RECEIPT_BODY = JSON.stringify({
   },
 });
 
-async function openEvidenceChannel(
-  page: import("@playwright/test").Page,
-) {
+async function openEvidenceChannel(page: import("@playwright/test").Page) {
   await installMockBridge(page, {
     searchProfiles: [
       {

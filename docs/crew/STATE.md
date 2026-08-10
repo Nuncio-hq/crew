@@ -43,6 +43,8 @@ In scope:
   workspace surface;
 - office-level completion evidence guidance and the `messages send
   --evidence <kind>` tag surface;
+- desktop evidence cards with owner Accept/Reject reactions on ordinary kind-9
+  messages;
 - ordered Project-thread handoff state from mentions, active-turn telemetry,
   and signed agent replies;
 - ordered multi-agent Project task routing through normal composer mentions;

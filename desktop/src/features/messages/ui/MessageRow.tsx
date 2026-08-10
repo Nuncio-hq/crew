@@ -443,6 +443,13 @@ export const MessageRow = React.memo(
               searchQuery={searchQuery}
               snapshotSharedBy={snapshotSharedBy}
               isKnownAgentPubkey={isKnownAgentPubkey}
+              canToggleReactions={canToggleReactions}
+              currentPubkey={currentPubkey}
+              onReply={onReply}
+              onToggleEvidenceReaction={handleReactionSelect}
+              profiles={profiles}
+              reactionPending={reactionPending}
+              reactions={reactions}
             />
           );
         }

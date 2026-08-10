@@ -43,6 +43,9 @@ The local upstream push URL is deliberately disabled. Never push to
 | `crates/buzz-cli/src/commands/evidence.rs` | Crew-owned exact evidence-kind parsing and tag construction | keep canonical wire strings and enum-only validation in this module |
 | `crates/buzz-cli/TESTING.md` | document the additive evidence flag in the CLI test inventory | retain the one-row flag inventory update; do not rewrite unrelated runbook steps |
 | `desktop/playwright.config.ts` | register Crew evidence contracts in the smoke project | retain the narrow test-match addition; do not reorder unrelated entries |
+| `desktop/src/features/messages/ui/MessageRow.tsx` | pass evidence-card review props through the existing default-body seam | retain the seven-line prop pass-through only; keep evidence logic out of this upstream-derived file |
+| `desktop/src/features/messages/ui/MessageRowDefaultBody.tsx` | dispatch known Crew evidence tags before ordinary Markdown rendering | preserve ordinary body fallback and keep card implementation in Crew-owned files |
+| `desktop/src/features/messages/ui/AgentReceiptCard.tsx` | share PR-reference href resolution with the evidence card | retain the existing receipt card behavior; keep the resolver pure and additive |
 
 ## Before feature work
 

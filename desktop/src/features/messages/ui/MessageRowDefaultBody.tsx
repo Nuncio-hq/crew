@@ -12,6 +12,10 @@ import type { TimelineMessage } from "@/features/messages/types";
 import type { CustomEmoji } from "@/shared/lib/remarkCustomEmoji";
 import type { ImetaLookup } from "@/shared/ui/markdown/types";
 import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
+import type { TimelineReaction } from "@/features/messages/types";
+import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import { EvidenceCard } from "./EvidenceCard";
+import { parseEvidenceKind } from "@/features/messages/lib/evidenceTag";
 
 export function MessageRowDefaultBody({
   message,
@@ -30,6 +34,13 @@ export function MessageRowDefaultBody({
   searchQuery,
   snapshotSharedBy,
   isKnownAgentPubkey,
+  canToggleReactions,
+  currentPubkey,
+  onReply,
+  onToggleEvidenceReaction,
+  profiles,
+  reactionPending,
+  reactions,
 }: {
   message: TimelineMessage;
   channelId?: string | null;
@@ -47,6 +58,13 @@ export function MessageRowDefaultBody({
   searchQuery?: string;
   snapshotSharedBy?: string;
   isKnownAgentPubkey: (pubkey: string) => boolean;
+  canToggleReactions: boolean;
+  currentPubkey?: string;
+  onReply?: (message: TimelineMessage) => void;
+  onToggleEvidenceReaction?: (emoji: string) => Promise<void>;
+  profiles?: UserProfileLookup;
+  reactionPending: boolean;
+  reactions: readonly TimelineReaction[];
 }) {
   const openVideoReviewAt = useOpenVideoReviewAt();
   const linkPreviewsSuppressed = hasLinkPreviewSuppression(message.tags);
@@ -106,6 +124,24 @@ export function MessageRowDefaultBody({
       videoReviewContext={videoReviewContext}
     />
   );
+
+  const evidenceKind = parseEvidenceKind(message.tags);
+  if (evidenceKind) {
+    return (
+      <EvidenceCard
+        canToggleReactions={canToggleReactions}
+        currentPubkey={currentPubkey}
+        imetaByUrl={imetaByUrl}
+        kind={evidenceKind}
+        message={message}
+        onReply={onReply}
+        onToggleReaction={onToggleEvidenceReaction}
+        profiles={profiles}
+        reactionPending={reactionPending}
+        reactions={reactions}
+      />
+    );
+  }
 
   if (!reviewRootEventId || !reviewTimecode || !openVideoReviewAt) {
     return markdown;

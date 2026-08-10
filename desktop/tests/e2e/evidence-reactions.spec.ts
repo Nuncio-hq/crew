@@ -4,7 +4,7 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
 const EVIDENCE_TAG = [["crew-evidence", "test-run"]];
 const AGENT_PUBKEY = TEST_IDENTITIES.alice.pubkey;
-const OWNER_PUBKEY = TEST_IDENTITIES.tyler.pubkey;
+const OWNER_PUBKEY = "deadbeef".repeat(8);
 
 async function openEvidence(
   page: import("@playwright/test").Page,
@@ -54,12 +54,18 @@ test("owner Accept and Reject round-trip as reactions on the evidence card", asy
   await expect(card.getByTestId("evidence-reaction-accepted")).toBeVisible();
 
   await card.getByTestId("evidence-reject").click();
-  await expect(page.getByTestId("message-composer")).toBeVisible();
+  await expect(page.getByTestId("message-composer").last()).toBeVisible();
   await expect(card.getByTestId("evidence-reaction-rejected")).toBeVisible();
 });
 
-test("non-owner sees evidence card without review controls", async ({ page }) => {
-  await openEvidence(page, TEST_IDENTITIES.alice.pubkey, TEST_IDENTITIES.bob.pubkey);
+test("non-owner sees evidence card without review controls", async ({
+  page,
+}) => {
+  await openEvidence(
+    page,
+    TEST_IDENTITIES.alice.pubkey,
+    TEST_IDENTITIES.bob.pubkey,
+  );
   const card = page.getByTestId("evidence-card-test-run");
   await expect(card).toBeVisible();
   await expect(card.getByTestId("evidence-accept")).toHaveCount(0);
@@ -84,7 +90,5 @@ test("reactions on an ordinary message remain available", async ({ page }) => {
     .filter({ hasText: "ordinary reaction target" });
   await row.hover();
   await row.getByRole("button", { name: "React with :+1:" }).click();
-  await expect(
-    row.getByLabel("Toggle 👍 reaction"),
-  ).toBeVisible();
+  await expect(row.getByLabel("Toggle 👍 reaction")).toBeVisible();
 });
