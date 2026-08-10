@@ -6,7 +6,7 @@ use crate::app_state::AppState;
 use crate::managed_agents::hermes_profile_archive::{
     archive_profile, estimate_profile, list_archives, permanently_delete_archive, restore_archive,
     running_agent_for_profile, HermesProfileArchiveAgent, HermesProfileArchiveEstimate,
-    HermesProfileArchiveManifest, HermesProfileArchiveResult,
+    HermesProfileArchiveListing, HermesProfileArchiveResult,
 };
 use crate::managed_agents::hermes_profile_lifecycle::{
     create_profile, delete_profile, list_profiles, HermesProfileLifecycleResult,
@@ -100,7 +100,7 @@ pub fn archive_hermes_profile(
 }
 
 #[tauri::command]
-pub fn list_hermes_profile_archives() -> Result<Vec<HermesProfileArchiveManifest>, String> {
+pub fn list_hermes_profile_archives() -> Result<Vec<HermesProfileArchiveListing>, String> {
     list_archives()
 }
 
@@ -183,13 +183,13 @@ pub fn permanently_delete_hermes_profile_archive(
             }
         }
     };
-    let profile = manifests
-        .iter()
-        .find(|manifest| id.starts_with(&format!("{}-", manifest.profile)))
-        .map(|manifest| manifest.profile.clone());
-    let Some(profile) = profile else {
-        return permanently_delete_archive(&id, &confirmation_token);
+    let Some(listing) = manifests.into_iter().find(|listing| listing.id == id) else {
+        return HermesProfileArchiveResult::DoesNotExist {
+            id,
+            message: "archive id does not exist".to_string(),
+        };
     };
+    let profile = listing.manifest.profile;
     let mut runtimes = match state.managed_agent_processes.lock() {
         Ok(runtimes) => runtimes,
         Err(error) => {
