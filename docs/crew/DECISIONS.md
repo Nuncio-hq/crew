@@ -492,6 +492,33 @@ explain simply, label uncertainty about “real company” practice, refuse sile
 mis-assignment when roles exist, and treat shared thread reports as the human
 record. Spikes are not automatic law. Full text of MUST/MUST NOT lives in the
 working agreement doc.
+## D-034 — Adapt upstream Project E2E specs to the outcome-first UI
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+
+Crew adapts the upstream `project-*` Desktop Smoke E2E specs to the
+post-#95 outcome-first Projects UI instead of skipping them and replacing them
+with Crew-native tests under the #65 precedent. This is an accepted permanent
+fork delta. Future upstream syncs must keep the adaptations, including the
+Project Plumbing expansion helper and its call sites; resolve conflicts by
+re-adding the helper calls when upstream refreshes those specs.
+
+## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
+
+- **Status:** Accepted
+- **Date:** 2026-08-11
+- **Issue:** [#135](https://github.com/Nuncio-hq/crew/issues/135)
+
+`deriveMissionInboxSections` memoizes on a key built from its inputs. An
+explicitly supplied `now` is part of that key; the implicit `Date.now()`
+fallback is not. Identical inputs therefore always return the identical
+snapshot object, which is what a `getSnapshot`-shaped selector must do.
+
+The accepted consequence: without an explicit clock input, row `age` values
+stay fixed until another input changes. The desktop caller passes no clock and
+the home surface has no ticker, so ages already only refresh when a store
+changes. A caller that wants clock-driven recomputation passes `now`.
 
 
 ## D-028 — Roles are owner-assigned only ("email promote")
