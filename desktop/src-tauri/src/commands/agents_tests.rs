@@ -545,6 +545,14 @@ fn tauri_platform_configs_bundle_kubernetes_only_on_supported_hosts() {
 }
 
 #[test]
+fn windows_managed_agent_runtime_fails_closed_when_sidecars_are_not_bundled() {
+    let source = include_str!("../managed_agents/runtime.rs");
+    assert!(source.contains("#[cfg(windows)]"));
+    assert!(source.contains("managed agents are unavailable on Windows"));
+    assert!(source.contains("secure Windows backend"));
+}
+
+#[test]
 fn current_build_deploy_payload_forwards_compiled_policy() {
     use crate::managed_agents::{BackendKind, RespondTo};
 

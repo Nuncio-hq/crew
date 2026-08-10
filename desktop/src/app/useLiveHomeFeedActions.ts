@@ -359,6 +359,7 @@ export function useLiveHomeFeedActions(
         userInputResult.status === "fulfilled" ? userInputResult.value : [];
       if (userInputResult.status === "rejected") {
         userInputActive = false;
+        activeFamilies.userInput = false;
         hydrationRetryError = userInputResult.reason;
       }
       const { receipts: receiptEvents, reviews: reviewEvents } =
@@ -367,6 +368,7 @@ export function useLiveHomeFeedActions(
           : { receipts: [], reviews: [] };
       if (receiptResult.status === "rejected") {
         receiptActive = false;
+        activeFamilies.receipt = false;
         hydrationRetryError ??= receiptResult.reason;
       }
       if (!userInputActive && !receiptActive) throw hydrationRetryError;

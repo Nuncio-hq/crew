@@ -65,6 +65,14 @@ test("terminal subscription failures are isolated to their projection family", a
   assert.match(permanentFailure, /hydrationRetry\.run\(\)/);
   assert.match(
     source,
+    /userInputActive = false;[\s\S]*activeFamilies\.userInput = false;/,
+  );
+  assert.match(
+    source,
+    /receiptActive = false;[\s\S]*activeFamilies\.receipt = false;/,
+  );
+  assert.match(
+    source,
     /markFamilyPermanent\(family, new Error\(status\.message\)\)/,
   );
   assert.match(source, /const familyHydrationReady:/);

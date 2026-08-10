@@ -4742,6 +4742,7 @@ const RECEIPT_RETRY_DELAYS: [Duration; 3] = [
 const RECEIPT_OUTBOX_RETRY_DELAY: Duration = Duration::from_secs(30);
 const RECEIPT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const RECEIPT_FLUSH_CYCLE_TIMEOUT: Duration = Duration::from_secs(30);
+const RECEIPT_HANDOFF_TIMEOUT: Duration = Duration::from_secs(30);
 const RECEIPT_MAX_SPOOL_ENTRIES: usize = 4_096;
 const RECEIPT_MAX_SPOOL_BYTES: u64 = 64 * 1024 * 1024;
 const RECEIPT_MAX_FLUSH_ENTRIES: usize = 64;
@@ -5426,10 +5427,26 @@ async fn handoff_receipt_events(
             RECEIPT_MAX_IN_MEMORY_EVENTS
         ));
     }
-    let state = ensure_receipt_outbox_worker(tracker, outbox_dir, rest_client, agent_pubkey);
+    let deadline = tokio::time::Instant::now() + RECEIPT_HANDOFF_TIMEOUT;
     loop {
+        let state = ensure_receipt_outbox_worker(
+            tracker,
+            outbox_dir.clone(),
+            rest_client.clone(),
+            agent_pubkey,
+        );
         let capacity = state.capacity.notified();
         {
+            let workers = match receipt_outbox_workers().lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let Some(active_state) = workers.get(&outbox_dir) else {
+                continue;
+            };
+            if !Arc::ptr_eq(active_state, &state) {
+                continue;
+            }
             let mut pending = match state.pending.lock() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
@@ -5452,7 +5469,12 @@ async fn handoff_receipt_events(
                 return Ok(());
             }
         }
-        capacity.await;
+        if tokio::time::timeout_at(deadline, capacity).await.is_err() {
+            return Err(format!(
+                "receipt handoff capacity remained unavailable for {}s; completion stays failed closed",
+                RECEIPT_HANDOFF_TIMEOUT.as_secs()
+            ));
+        }
     }
 }
 

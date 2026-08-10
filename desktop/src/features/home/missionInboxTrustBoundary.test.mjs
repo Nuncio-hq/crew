@@ -86,6 +86,10 @@ test("stale verified row lookups cannot supersede a newer selection", () => {
     homeViewSource,
     /onRemindLater=\{\(item\) => \{[\s\S]*clearVerifiedTarget\(\)/,
   );
+  assert.match(
+    homeViewSource,
+    /onUnreadOnlyChange=\{\(nextUnreadOnly\) => \{[\s\S]*clearVerifiedTarget\(\)/,
+  );
 });
 
 test("unsigned feed rows cannot mutate durable approval authority", () => {

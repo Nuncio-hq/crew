@@ -361,24 +361,42 @@ export function getLatestOwnedAgentReceiptForActiveTurns(
   if (turns.length === 0) return null;
   const pairs = new Set(
     turns.flatMap((turn) =>
-      turn.runs.flatMap((run) =>
-        run.triggeringEventIds.map(
-          (eventId) =>
-            `${normalizePubkey(turn.agentPubkey)}\0${eventId}\0${run.sessionId}\0${run.turnId}`,
-        ),
-      ),
+      ownedAgentPubkeys.has(normalizePubkey(turn.agentPubkey))
+        ? turn.runs.flatMap((run) =>
+            run.triggeringEventIds.map(
+              (eventId) =>
+                `${normalizePubkey(turn.agentPubkey)}\0${eventId}\0${run.sessionId}\0${run.turnId}`,
+            ),
+          )
+        : [],
     ),
   );
-  return (
-    getAgentReceipts().find(
+  if (pairs.size === 0) return null;
+  const receipts = getAgentReceipts();
+  const matching = [...pairs].map((pair) =>
+    receipts.find(
       (receipt) =>
         receipt.conversationId === conversationId &&
         ownedAgentPubkeys.has(receipt.agentPubkey) &&
-        pairs.has(
-          `${receipt.agentPubkey}\0${receipt.parentEventId}\0${receipt.sessionId}\0${receipt.turnId}`,
-        ),
-    ) ?? null
+        `${receipt.agentPubkey}\0${receipt.parentEventId}\0${receipt.sessionId}\0${receipt.turnId}` ===
+          pair,
+    ),
   );
+  if (matching.some((receipt) => !receipt)) return null;
+  const covered = matching.filter(
+    (receipt): receipt is AgentReceiptSummary => receipt !== undefined,
+  );
+  const latest = covered.reduce((current, receipt) =>
+    receipt.createdAt > current.createdAt ||
+    (receipt.createdAt === current.createdAt && receipt.id > current.id)
+      ? receipt
+      : current,
+  );
+  const allReviewed = covered.every((receipt) => receipt.reviewed);
+  return {
+    ...latest,
+    reviewed: allReviewed,
+  };
 }
 
 export function getAgentReceipts(): AgentReceiptSummary[] {

@@ -369,6 +369,20 @@ describe("agentReceiptStore", () => {
       )?.id,
       higher,
     );
+    active[0].runs.push({
+      sessionId: "session-b",
+      turnId: "turn-b",
+      triggeringEventIds: ["b".repeat(64)],
+    });
+    assert.equal(
+      getLatestOwnedAgentReceiptForActiveTurns(
+        CONVERSATION,
+        OWNED_AGENTS,
+        active,
+      ),
+      null,
+      "every active run authority must have an exact receipt",
+    );
     assert.equal(
       getLatestOwnedAgentReceiptForActiveTurns(CONVERSATION, OWNED_AGENTS, []),
       null,

@@ -223,6 +223,44 @@ test("a sibling completion cannot erase another sibling failure", () => {
   assert.equal(entry?.agentTriggerPairs?.[0]?.eventId, "trigger-b");
 });
 
+test("a delayed sibling failure cannot be rejected by a newer sibling completion", () => {
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      agentPubkey: "agent-b",
+      triggeringEventIds: ["trigger-b"],
+      agentTriggerPairs: [
+        {
+          agentPubkey: "agent-b",
+          eventId: "trigger-b",
+          sessionId: "session-b",
+          turnId: "turn-b",
+        },
+      ],
+      terminalAt: 2_000,
+      terminalOrderKey: "completed-b",
+    }),
+  );
+  assert.equal(
+    recordConversationOutcome(
+      "conversation",
+      outcome({
+        outcome: "error",
+        agentPubkey: "agent-a",
+        triggeringEventIds: ["trigger-a"],
+        failedEventIds: ["trigger-a"],
+        terminalAt: 1_000,
+        terminalOrderKey: "failure-a",
+      }),
+    ),
+    true,
+  );
+  const entry = getConversationOutcomeEntry("conversation");
+  assert.equal(entry?.outcome, "error");
+  assert.deepEqual(entry?.failedEventIds, ["trigger-a"]);
+  assert.equal(entry?.agentTriggerPairs?.[0]?.eventId, "trigger-b");
+});
+
 test("a sessionless completion frame fails closed", () => {
   const entry = buildSignedConversationOutcome({
     agentKey: "agent-a",

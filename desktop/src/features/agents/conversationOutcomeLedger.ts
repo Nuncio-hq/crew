@@ -114,6 +114,33 @@ function outcomeSlotKey(agentPubkey: string, triggeringEventIds: string[]) {
   return `${agentPubkey}\u0000${[...triggeringEventIds].sort().join("\u0000")}`;
 }
 
+function latestOutcomePresentation(
+  prior: ConversationOutcomeEntry | undefined,
+  incoming: ConversationOutcomeEntry,
+): ConversationOutcomeEntry {
+  if (!prior) return incoming;
+  const sameProducerGeneration =
+    prior.agentPubkey === incoming.agentPubkey &&
+    prior.terminalAgentIndex === incoming.terminalAgentIndex &&
+    ((prior.terminalSessionId != null &&
+      prior.terminalSessionId === incoming.terminalSessionId) ||
+      (prior.terminalTurnId != null &&
+        prior.terminalTurnId === incoming.terminalTurnId));
+  if (
+    sameProducerGeneration &&
+    prior.terminalSeq != null &&
+    incoming.terminalSeq != null &&
+    prior.terminalSeq !== incoming.terminalSeq
+  )
+    return incoming.terminalSeq > prior.terminalSeq ? incoming : prior;
+  const incomingAt = incoming.terminalAt ?? incoming.endedAt;
+  const priorAt = prior.terminalAt ?? prior.endedAt;
+  if (incomingAt !== priorAt) return incomingAt > priorAt ? incoming : prior;
+  return (incoming.terminalOrderKey ?? "") > (prior.terminalOrderKey ?? "")
+    ? incoming
+    : prior;
+}
+
 function aggregateSignedOutcome(
   prior: ConversationOutcomeEntry | undefined,
   incoming: ConversationOutcomeEntry,
@@ -150,10 +177,10 @@ function aggregateSignedOutcome(
   );
   if (incoming.outcome === "completed")
     completedPairs.push(...(incoming.agentTriggerPairs ?? []));
+  const presentation = latestOutcomePresentation(prior, incoming);
   return {
-    ...incoming,
+    ...presentation,
     outcome: failedAgentSlots.length > 0 ? "error" : incoming.outcome,
-    agentPubkey: failedAgentSlots.at(-1)?.agentPubkey ?? incoming.agentPubkey,
     failedEventIds: failedAgentSlots.flatMap((slot) => slot.triggeringEventIds),
     failedAgentSlots,
     agentTriggerPairs: [
@@ -169,6 +196,36 @@ function aggregateSignedOutcome(
         left.eventId.localeCompare(right.eventId),
     ),
   };
+}
+
+function sharesOutcomeAuthoritySlot(
+  prior: ConversationOutcomeEntry,
+  incoming: ConversationOutcomeEntry,
+): boolean {
+  if (prior.outcome === "lost-contact") return true;
+  const incomingKey = outcomeSlotKey(
+    incoming.agentPubkey,
+    incoming.triggeringEventIds ?? [],
+  );
+  if (
+    prior.failedAgentSlots?.some(
+      (slot) =>
+        outcomeSlotKey(slot.agentPubkey, slot.triggeringEventIds) ===
+        incomingKey,
+    )
+  )
+    return true;
+  const incomingEvents = new Set(incoming.triggeringEventIds ?? []);
+  return (
+    prior.agentTriggerPairs?.some(
+      (pair) =>
+        pair.agentPubkey === incoming.agentPubkey &&
+        incomingEvents.has(pair.eventId),
+    ) ??
+    (prior.agentPubkey === incoming.agentPubkey &&
+      outcomeSlotKey(prior.agentPubkey, prior.triggeringEventIds ?? []) ===
+        incomingKey)
+  );
 }
 
 /** Drop oldest-by-endedAt entries once past the hard cap. */
@@ -243,7 +300,7 @@ export function recordConversationOutcome(
 ): boolean {
   const prior = outcomeByConversation.get(conversationId);
   const entry = incoming;
-  if (prior) {
+  if (prior && sharesOutcomeAuthoritySlot(prior, incoming)) {
     const priorIsInferred = prior.outcome === "lost-contact";
     const entryIsInferred = entry.outcome === "lost-contact";
     if (!priorIsInferred && entryIsInferred) return false;

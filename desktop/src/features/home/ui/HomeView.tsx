@@ -112,9 +112,6 @@ export function HomeView({
     homeInboxWidthPx < INBOX_SINGLE_COLUMN_BREAKPOINT_PX;
   const [filter, setFilter] = React.useState<InboxFilter>("all");
   const [unreadOnly, setUnreadOnly] = React.useState(false);
-  // Explicit selections use `?item=` so history and reload restore the detail.
-  // Default/automatic selection stays local-only —
-  // background data loads must never trigger navigations.
   const { applyPatch: applyInboxSearchPatch, values: inboxSearchValues } =
     useHistorySearchState(INBOX_SEARCH_KEYS);
   const isReminders = filter === "reminders";
@@ -746,7 +743,10 @@ export function HomeView({
                   if (target) markItemRead(target.messageId);
                 });
               }}
-              onUnreadOnlyChange={setUnreadOnly}
+              onUnreadOnlyChange={(nextUnreadOnly) => {
+                clearVerifiedTarget();
+                setUnreadOnly(nextUnreadOnly);
+              }}
               reminderPubkey={currentPubkey}
               reminders={pendingReminders}
               selectedConversationId={selectedConversationId}
