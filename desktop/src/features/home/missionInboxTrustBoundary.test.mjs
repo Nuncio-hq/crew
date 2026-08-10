@@ -78,6 +78,14 @@ test("stale verified row lookups cannot supersede a newer selection", () => {
     homeViewSource,
     /handleFilterChange[\s\S]*clearVerifiedTarget\(\)/,
   );
+  assert.match(
+    homeViewSource,
+    /onOpenDirect=\{\(item\) => \{[\s\S]*clearVerifiedTarget\(\)/,
+  );
+  assert.match(
+    homeViewSource,
+    /onRemindLater=\{\(item\) => \{[\s\S]*clearVerifiedTarget\(\)/,
+  );
 });
 
 test("unsigned feed rows cannot mutate durable approval authority", () => {

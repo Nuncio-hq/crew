@@ -42,6 +42,10 @@ export type ConversationOutcomeEntry = {
     sessionId: string;
     turnId: string;
   }>;
+  failedAgentSlots?: Array<{
+    agentPubkey: string;
+    triggeringEventIds: string[];
+  }>;
 };
 
 const outcomeByConversation = new Map<string, ConversationOutcomeEntry>();
@@ -74,7 +78,10 @@ export function buildSignedConversationOutcome(input: {
 }): ConversationOutcomeEntry {
   const triggers = [...input.triggeringEventIds];
   return {
-    outcome: input.event.kind === "turn_completed" ? "completed" : "error",
+    outcome:
+      input.event.kind === "turn_completed" && input.sessionId
+        ? "completed"
+        : "error",
     agentPubkey: input.agentKey,
     sessionId: input.sessionId,
     turnId: input.resolvedTurnId,
@@ -100,6 +107,67 @@ export function buildSignedConversationOutcome(input: {
           turnId: input.resolvedTurnId,
         }))
       : undefined,
+  };
+}
+
+function outcomeSlotKey(agentPubkey: string, triggeringEventIds: string[]) {
+  return `${agentPubkey}\u0000${[...triggeringEventIds].sort().join("\u0000")}`;
+}
+
+function aggregateSignedOutcome(
+  prior: ConversationOutcomeEntry | undefined,
+  incoming: ConversationOutcomeEntry,
+): ConversationOutcomeEntry {
+  if (incoming.outcome === "lost-contact") return incoming;
+  const incomingTriggers = incoming.triggeringEventIds ?? [];
+  const incomingSlot = outcomeSlotKey(incoming.agentPubkey, incomingTriggers);
+  const priorFailed =
+    prior?.failedAgentSlots ??
+    (prior?.outcome === "error"
+      ? [
+          {
+            agentPubkey: prior.agentPubkey,
+            triggeringEventIds: prior.triggeringEventIds ?? [],
+          },
+        ]
+      : []);
+  const failedAgentSlots = priorFailed.filter(
+    (slot) =>
+      outcomeSlotKey(slot.agentPubkey, slot.triggeringEventIds) !==
+      incomingSlot,
+  );
+  if (incoming.outcome === "error") {
+    failedAgentSlots.push({
+      agentPubkey: incoming.agentPubkey,
+      triggeringEventIds: incomingTriggers,
+    });
+  }
+  const incomingTriggerSet = new Set(incomingTriggers);
+  const completedPairs = (prior?.agentTriggerPairs ?? []).filter(
+    (pair) =>
+      pair.agentPubkey !== incoming.agentPubkey ||
+      !incomingTriggerSet.has(pair.eventId),
+  );
+  if (incoming.outcome === "completed")
+    completedPairs.push(...(incoming.agentTriggerPairs ?? []));
+  return {
+    ...incoming,
+    outcome: failedAgentSlots.length > 0 ? "error" : incoming.outcome,
+    agentPubkey: failedAgentSlots.at(-1)?.agentPubkey ?? incoming.agentPubkey,
+    failedEventIds: failedAgentSlots.flatMap((slot) => slot.triggeringEventIds),
+    failedAgentSlots,
+    agentTriggerPairs: [
+      ...new Map(
+        completedPairs.map((pair) => [
+          [pair.agentPubkey, pair.eventId].join("\u0000"),
+          pair,
+        ]),
+      ).values(),
+    ].sort(
+      (left, right) =>
+        left.agentPubkey.localeCompare(right.agentPubkey) ||
+        left.eventId.localeCompare(right.eventId),
+    ),
   };
 }
 
@@ -133,25 +201,34 @@ export function retireConversationOutcomeAgent(
 ): boolean {
   const existing = outcomeByConversation.get(conversationId);
   if (!existing) return false;
+  const remainingPairs = (existing.agentTriggerPairs ?? []).filter(
+    (pair) => pair.agentPubkey !== agentPubkey,
+  );
+  const remainingFailures = (existing.failedAgentSlots ?? []).filter(
+    (slot) => slot.agentPubkey !== agentPubkey,
+  );
   if (
-    existing.outcome !== "completed" ||
-    !existing.agentTriggerPairs ||
-    existing.agentTriggerPairs.length === 0
+    remainingPairs.length === (existing.agentTriggerPairs?.length ?? 0) &&
+    remainingFailures.length === (existing.failedAgentSlots?.length ?? 0)
   ) {
     return existing.agentPubkey === agentPubkey
       ? outcomeByConversation.delete(conversationId)
       : false;
   }
-  const remaining = existing.agentTriggerPairs.filter(
-    (pair) => pair.agentPubkey !== agentPubkey,
-  );
-  if (remaining.length === existing.agentTriggerPairs.length) return false;
-  if (remaining.length === 0)
+  if (remainingPairs.length === 0 && remainingFailures.length === 0)
     return outcomeByConversation.delete(conversationId);
   outcomeByConversation.set(conversationId, {
     ...existing,
-    agentPubkey: remaining.at(-1)?.agentPubkey ?? existing.agentPubkey,
-    agentTriggerPairs: remaining,
+    outcome: remainingFailures.length > 0 ? "error" : "completed",
+    agentPubkey:
+      remainingFailures.at(-1)?.agentPubkey ??
+      remainingPairs.at(-1)?.agentPubkey ??
+      existing.agentPubkey,
+    failedEventIds: remainingFailures.flatMap(
+      (slot) => slot.triggeringEventIds,
+    ),
+    failedAgentSlots: remainingFailures,
+    agentTriggerPairs: remainingPairs,
   });
   return true;
 }
@@ -165,25 +242,7 @@ export function recordConversationOutcome(
   incoming: ConversationOutcomeEntry,
 ): boolean {
   const prior = outcomeByConversation.get(conversationId);
-  const entry =
-    prior?.outcome === "completed" &&
-    incoming.outcome === "completed" &&
-    prior.agentTriggerPairs?.length
-      ? {
-          ...incoming,
-          agentTriggerPairs: [
-            ...new Map(
-              [
-                ...prior.agentTriggerPairs,
-                ...(incoming.agentTriggerPairs ?? []),
-              ].map((pair) => [
-                [pair.agentPubkey, pair.eventId].join("\u0000"),
-                pair,
-              ]),
-            ).values(),
-          ],
-        }
-      : incoming;
+  const entry = incoming;
   if (prior) {
     const priorIsInferred = prior.outcome === "lost-contact";
     const entryIsInferred = entry.outcome === "lost-contact";
@@ -221,7 +280,10 @@ export function recordConversationOutcome(
       }
     }
   }
-  outcomeByConversation.set(conversationId, entry);
+  outcomeByConversation.set(
+    conversationId,
+    aggregateSignedOutcome(prior, incoming),
+  );
   enforceOutcomeCap();
   return true;
 }
@@ -282,6 +344,10 @@ export function cloneConversationOutcomeLedger(): Map<
         ? [...entry.triggeringEventIds]
         : undefined,
       agentTriggerPairs: entry.agentTriggerPairs?.map((pair) => ({ ...pair })),
+      failedAgentSlots: entry.failedAgentSlots?.map((slot) => ({
+        ...slot,
+        triggeringEventIds: [...slot.triggeringEventIds],
+      })),
     });
   }
   return outcomes;
@@ -302,6 +368,10 @@ export function restoreConversationOutcomeLedger(
         ? [...entry.triggeringEventIds]
         : undefined,
       agentTriggerPairs: entry.agentTriggerPairs?.map((pair) => ({ ...pair })),
+      failedAgentSlots: entry.failedAgentSlots?.map((slot) => ({
+        ...slot,
+        triggeringEventIds: [...slot.triggeringEventIds],
+      })),
     });
   }
 }

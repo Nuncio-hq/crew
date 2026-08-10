@@ -537,7 +537,7 @@ export function useLiveHomeFeedActions(
       family: DurableProjectionFamily,
       error: unknown,
     ) => {
-      if (terminalFamilies.has(family)) return;
+      if (isCancelled || terminalFamilies.has(family)) return;
       terminalFamilies.add(family);
       familyHydrationReady[family] = false;
       durableProjectionGeneration[family] += 1;

@@ -57,6 +57,10 @@ test("terminal subscription failures are isolated to their projection family", a
     "family failure boundary must remain discoverable",
   );
   assert.match(permanentFailure, /family === "userInput"/);
+  assert.match(
+    permanentFailure,
+    /isCancelled \|\| terminalFamilies\.has\(family\)/,
+  );
   assert.match(permanentFailure, /familyDisposers\[candidate\]\.length > 0/);
   assert.match(permanentFailure, /hydrationRetry\.run\(\)/);
   assert.match(

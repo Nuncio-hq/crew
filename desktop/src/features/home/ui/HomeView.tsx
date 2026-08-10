@@ -112,9 +112,8 @@ export function HomeView({
     homeInboxWidthPx < INBOX_SINGLE_COLUMN_BREAKPOINT_PX;
   const [filter, setFilter] = React.useState<InboxFilter>("all");
   const [unreadOnly, setUnreadOnly] = React.useState(false);
-  // Explicit selections are mirrored to the URL (`?item=`), so back/forward
-  // restores the detail pane each history entry was showing and reloads
-  // restore it from the URL. Default/automatic selection stays local-only —
+  // Explicit selections use `?item=` so history and reload restore the detail.
+  // Default/automatic selection stays local-only —
   // background data loads must never trigger navigations.
   const { applyPatch: applyInboxSearchPatch, values: inboxSearchValues } =
     useHistorySearchState(INBOX_SEARCH_KEYS);
@@ -228,10 +227,11 @@ export function HomeView({
   const [isSendingReply, setIsSendingReply] = React.useState(false);
   const handleOpenDm = React.useCallback(
     async (pubkeys: string[]) => {
+      clearVerifiedTarget();
       const dm = await openDm({ pubkeys });
       await goChannel(dm.id);
     },
-    [goChannel, openDm],
+    [clearVerifiedTarget, goChannel, openDm],
   );
   const { activeReminderEventIds, openReminder } = useRemindLater();
   const [localRepliesByItemId, setLocalRepliesByItemId] = React.useState<
@@ -684,6 +684,7 @@ export function HomeView({
               onMarkRead={markItemRead}
               onMarkUnread={markItemUnread}
               onOpenDirect={(item) => {
+                clearVerifiedTarget();
                 const channelId = item.item.channelId;
                 if (!channelId) {
                   return;
@@ -695,6 +696,7 @@ export function HomeView({
                 );
               }}
               onRemindLater={(item) => {
+                clearVerifiedTarget();
                 const channelId = item.item.channelId;
                 if (!channelId) {
                   return;

@@ -1510,10 +1510,10 @@ pub async fn run_prompt_task(
             ctx.harness_name.clone(),
         );
     }
-    let triggering_event_ids: Vec<String> = batch
-        .as_ref()
-        .map(|b| b.events.iter().map(|be| be.event.id.to_hex()).collect())
-        .unwrap_or_default();
+    let triggering_event_ids = receipt_causal_contexts
+        .iter()
+        .map(|causal| causal.parent_event_id.to_hex())
+        .collect::<Vec<_>>();
     agent.acp.observe(
         "turn_started",
         serde_json::json!({
@@ -2313,6 +2313,7 @@ pub async fn run_prompt_task(
                             Some(buzz_core::agent_turn_metric::StopReason::EndTurn),
                         )
                         .await;
+                        turn_guard.mark_completed();
                         send_prompt_result(
                             &result_tx,
                             &turn_id,
@@ -2398,6 +2399,7 @@ pub async fn run_prompt_task(
             )
             .await;
 
+            turn_guard.mark_completed();
             send_prompt_result(
                 &result_tx,
                 &turn_id,
@@ -4389,8 +4391,9 @@ impl Drop for LivenessGuard {
     }
 }
 
-// Emits a `turn_completed` observer event on drop, covering ALL exit paths
-// (success, error, timeout, cancel, panic) from `run_prompt_task`. Captures
+// Emits an exact terminal observer event on every exit path from
+// `run_prompt_task`. It defaults fail-closed to `turn_error` and is marked
+// completed only after successful turn finalization. Captures
 // observer handle and metadata at creation time so it remains valid even after
 // the agent is moved into `PromptResult`.
 
@@ -4402,6 +4405,7 @@ struct TurnCompletionGuard {
     turn_id: String,
     session_id: Option<String>,
     triggering_event_ids: Vec<String>,
+    completed: bool,
 }
 
 impl TurnCompletionGuard {
@@ -4421,11 +4425,16 @@ impl TurnCompletionGuard {
             turn_id,
             session_id: None,
             triggering_event_ids,
+            completed: false,
         }
     }
 
     fn set_session_id(&mut self, session_id: String) {
         self.session_id = Some(session_id);
+    }
+
+    fn mark_completed(&mut self) {
+        self.completed = true;
     }
 }
 
@@ -4439,7 +4448,11 @@ impl Drop for TurnCompletionGuard {
                 Some(self.turn_id.clone()),
             );
             observer.emit(
-                "turn_completed",
+                if self.completed {
+                    "turn_completed"
+                } else {
+                    "turn_error"
+                },
                 self.agent_index,
                 &context,
                 serde_json::json!({
@@ -4732,6 +4745,7 @@ const RECEIPT_FLUSH_CYCLE_TIMEOUT: Duration = Duration::from_secs(30);
 const RECEIPT_MAX_SPOOL_ENTRIES: usize = 4_096;
 const RECEIPT_MAX_SPOOL_BYTES: u64 = 64 * 1024 * 1024;
 const RECEIPT_MAX_FLUSH_ENTRIES: usize = 64;
+const RECEIPT_MAX_IN_MEMORY_EVENTS: usize = 4_096;
 static RECEIPT_OUTBOX_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 static RECEIPT_RECOVERY_CURSORS: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
 static RECEIPT_DEAD_LETTER_IDS: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
@@ -4741,7 +4755,9 @@ static RECEIPT_OUTBOX_WORKERS: OnceLock<Mutex<HashMap<PathBuf, Arc<ReceiptWorker
 #[derive(Default)]
 struct ReceiptWorkerState {
     pending: Mutex<Vec<nostr::Event>>,
+    in_flight: std::sync::atomic::AtomicUsize,
     wake: tokio::sync::Notify,
+    capacity: tokio::sync::Notify,
 }
 
 struct ReceiptWorkerRegistration {
@@ -5268,13 +5284,12 @@ fn retain_receipt_persistence_failures(
     events.len() < before
 }
 
-fn spawn_receipt_outbox_worker(
+fn ensure_receipt_outbox_worker(
     tracker: &TaskTracker,
     outbox_dir: PathBuf,
     rest_client: RestClient,
     agent_pubkey: nostr::PublicKey,
-    unpersisted_events: Vec<nostr::Event>,
-) {
+) -> Arc<ReceiptWorkerState> {
     let state = {
         let workers = receipt_outbox_workers();
         let mut workers = match workers.lock() {
@@ -5282,21 +5297,18 @@ fn spawn_receipt_outbox_worker(
             Err(poisoned) => poisoned.into_inner(),
         };
         if let Some(state) = workers.get(&outbox_dir) {
-            let mut pending = match state.pending.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            append_unique_receipt_events(&mut pending, unpersisted_events);
-            state.wake.notify_one();
-            return;
+            return Arc::clone(state);
         }
         let state = Arc::new(ReceiptWorkerState {
-            pending: Mutex::new(unpersisted_events),
+            pending: Mutex::new(Vec::new()),
+            in_flight: std::sync::atomic::AtomicUsize::new(0),
             wake: tokio::sync::Notify::new(),
+            capacity: tokio::sync::Notify::new(),
         });
         workers.insert(outbox_dir.clone(), Arc::clone(&state));
         state
     };
+    let returned_state = Arc::clone(&state);
     tracker.spawn(async move {
         let _registration = ReceiptWorkerRegistration {
             outbox_dir: outbox_dir.clone(),
@@ -5313,6 +5325,11 @@ fn spawn_receipt_outbox_worker(
                     &mut unpersisted_events,
                     std::mem::take(&mut *pending),
                 );
+                state.in_flight.store(
+                    unpersisted_events.len(),
+                    std::sync::atomic::Ordering::Release,
+                );
+                state.capacity.notify_waiters();
             }
             let persistence_progress = if unpersisted_events.is_empty() {
                 false
@@ -5323,6 +5340,11 @@ fn spawn_receipt_outbox_worker(
                 };
                 let progressed =
                     retain_receipt_persistence_failures(&mut unpersisted_events, &failures);
+                state.in_flight.store(
+                    unpersisted_events.len(),
+                    std::sync::atomic::Ordering::Release,
+                );
+                state.capacity.notify_waiters();
                 if !failures.is_empty() {
                     tracing::error!(
                         ?failures,
@@ -5369,6 +5391,11 @@ fn spawn_receipt_outbox_worker(
                         &mut unpersisted_events,
                         std::mem::take(&mut *pending),
                     );
+                    state.in_flight.store(
+                        unpersisted_events.len(),
+                        std::sync::atomic::Ordering::Release,
+                    );
+                    state.capacity.notify_waiters();
                     continue;
                 }
                 Ok(report) if !receipt_worker_should_backoff(persistence_progress, &report) => {
@@ -5383,18 +5410,63 @@ fn spawn_receipt_outbox_worker(
             }
         }
     });
+    returned_state
+}
+
+async fn handoff_receipt_events(
+    tracker: &TaskTracker,
+    outbox_dir: PathBuf,
+    rest_client: RestClient,
+    agent_pubkey: nostr::PublicKey,
+    events: Vec<nostr::Event>,
+) -> Result<(), String> {
+    if events.len() > RECEIPT_MAX_IN_MEMORY_EVENTS {
+        return Err(format!(
+            "receipt handoff batch exceeds {} events",
+            RECEIPT_MAX_IN_MEMORY_EVENTS
+        ));
+    }
+    let state = ensure_receipt_outbox_worker(tracker, outbox_dir, rest_client, agent_pubkey);
+    loop {
+        let capacity = state.capacity.notified();
+        {
+            let mut pending = match state.pending.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let mut pending_ids = pending.iter().map(|event| event.id).collect::<HashSet<_>>();
+            let missing = events
+                .iter()
+                .filter(|event| pending_ids.insert(event.id))
+                .cloned()
+                .collect::<Vec<_>>();
+            let additional = missing.len();
+            let in_flight = state.in_flight.load(std::sync::atomic::Ordering::Acquire);
+            if in_flight
+                .saturating_add(pending.len())
+                .saturating_add(additional)
+                <= RECEIPT_MAX_IN_MEMORY_EVENTS
+            {
+                pending.extend(missing);
+                state.wake.notify_one();
+                return Ok(());
+            }
+        }
+        capacity.await;
+    }
 }
 
 /// Resume exact-signed receipt publication left by a prior process.
 pub(crate) fn resume_receipt_outbox(ctx: Arc<PromptContext>) {
     match receipt_outbox_dir(&ctx) {
-        Ok(outbox_dir) => spawn_receipt_outbox_worker(
-            &ctx.receipt_outbox_workers,
-            outbox_dir,
-            ctx.rest_client.clone(),
-            ctx.agent_keys.public_key(),
-            Vec::new(),
-        ),
+        Ok(outbox_dir) => {
+            ensure_receipt_outbox_worker(
+                &ctx.receipt_outbox_workers,
+                outbox_dir,
+                ctx.rest_client.clone(),
+                ctx.agent_keys.public_key(),
+            );
+        }
         Err(error) => {
             tracing::error!(%error, "cannot resume durable agent receipt outbox");
         }
@@ -5535,13 +5607,14 @@ async fn publish_agent_receipts(
         || report.scan_failed
         || report.scan_has_more
     {
-        spawn_receipt_outbox_worker(
+        handoff_receipt_events(
             &ctx.receipt_outbox_workers,
             outbox_dir,
             ctx.rest_client.clone(),
             ctx.agent_keys.public_key(),
             events_needing_persistence,
-        );
+        )
+        .await?;
     }
     if let Some(error) = persistence_error {
         return Err(error);
@@ -7955,6 +8028,7 @@ mod tests {
                 vec!["trigger-a".into(), "trigger-b".into()],
             );
             guard.set_session_id("session-a".into());
+            guard.mark_completed();
         }
 
         let events = observer.snapshot();
@@ -7965,6 +8039,28 @@ mod tests {
         assert_eq!(
             completion.payload["triggeringEventIds"],
             serde_json::json!(["trigger-a", "trigger-b"]),
+        );
+    }
+
+    #[test]
+    fn turn_completion_guard_fails_closed_before_session_resolution() {
+        let observer = observer::ObserverHandle::in_process();
+        {
+            let _guard = TurnCompletionGuard::new(
+                Some(observer.clone()),
+                Some(0),
+                None,
+                None,
+                "turn-a".into(),
+                vec!["trigger-a".into()],
+            );
+        }
+        let terminal = observer.snapshot().pop().expect("terminal event");
+        assert_eq!(terminal.kind, "turn_error");
+        assert_eq!(terminal.session_id, None);
+        assert_eq!(
+            terminal.payload["triggeringEventIds"],
+            serde_json::json!(["trigger-a"]),
         );
     }
 

@@ -345,7 +345,11 @@ export function getLatestOwnedAgentReceiptForConversation(
 
 type ActiveReceiptAuthority = {
   agentPubkey: string;
-  triggeringEventIds: readonly string[];
+  runs: ReadonlyArray<{
+    sessionId: string;
+    turnId: string;
+    triggeringEventIds: readonly string[];
+  }>;
 };
 
 export function getLatestOwnedAgentReceiptForActiveTurns(
@@ -357,8 +361,11 @@ export function getLatestOwnedAgentReceiptForActiveTurns(
   if (turns.length === 0) return null;
   const pairs = new Set(
     turns.flatMap((turn) =>
-      turn.triggeringEventIds.map(
-        (eventId) => `${normalizePubkey(turn.agentPubkey)}\0${eventId}`,
+      turn.runs.flatMap((run) =>
+        run.triggeringEventIds.map(
+          (eventId) =>
+            `${normalizePubkey(turn.agentPubkey)}\0${eventId}\0${run.sessionId}\0${run.turnId}`,
+        ),
       ),
     ),
   );
@@ -367,7 +374,9 @@ export function getLatestOwnedAgentReceiptForActiveTurns(
       (receipt) =>
         receipt.conversationId === conversationId &&
         ownedAgentPubkeys.has(receipt.agentPubkey) &&
-        pairs.has(`${receipt.agentPubkey}\0${receipt.parentEventId}`),
+        pairs.has(
+          `${receipt.agentPubkey}\0${receipt.parentEventId}\0${receipt.sessionId}\0${receipt.turnId}`,
+        ),
     ) ?? null
   );
 }

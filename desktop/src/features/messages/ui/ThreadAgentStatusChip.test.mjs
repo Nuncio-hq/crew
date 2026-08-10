@@ -79,6 +79,8 @@ test("an active turn accepts only a receipt bound to its triggering event", () =
     reviewed: false,
     rootEventId: null,
     parentEventId: "prior-trigger",
+    sessionId: "session-a",
+    turnId: "turn-a",
     summary: "Old result",
     verify: "pnpm test",
   };
@@ -87,7 +89,13 @@ test("an active turn accepts only a receipt bound to its triggering event", () =
       {
         agentPubkey: AGENT_A,
         anchorAt: NOW,
-        triggeringEventIds: ["current-trigger"],
+        runs: [
+          {
+            sessionId: "session-a",
+            turnId: "turn-a",
+            triggeringEventIds: ["current-trigger"],
+          },
+        ],
       },
     ]),
     null,
@@ -97,7 +105,13 @@ test("an active turn accepts only a receipt bound to its triggering event", () =
       {
         agentPubkey: AGENT_A,
         anchorAt: NOW,
-        triggeringEventIds: ["current-trigger"],
+        runs: [
+          {
+            sessionId: "session-a",
+            turnId: "turn-a",
+            triggeringEventIds: ["current-trigger"],
+          },
+        ],
       },
     ])?.id,
     receipt.id,
@@ -397,7 +411,7 @@ test("ThreadAgentStatusChip does not claim Done from observer completion alone",
       profiles: PROFILE_A,
     }),
   );
-  assert.equal(html, "");
+  assert.match(html, /data-state="failed"/);
 });
 
 test("ThreadAgentStatusChip renders failed after turn_error", () => {

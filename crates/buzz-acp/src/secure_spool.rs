@@ -1211,6 +1211,7 @@ mod tests {
             .expect("contended scan");
         assert!(contended.entries.is_empty());
         assert_eq!(contended.skipped_contended, 1);
+        assert_eq!(contended.attempted, 1);
 
         drop(first);
         let reclaimed = claim_secure_entries(&directory, "json", 1024)

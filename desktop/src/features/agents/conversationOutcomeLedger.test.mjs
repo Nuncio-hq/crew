@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 
 import {
+  buildSignedConversationOutcome,
   clearConversationOutcomeLedger,
   getConversationOutcomeEntry,
   recordConversationOutcome,
@@ -168,6 +169,8 @@ test("a newer run replaces only its matching agent-trigger obligation", () => {
   recordConversationOutcome(
     "conversation",
     outcome({
+      agentPubkey: "agent-a",
+      triggeringEventIds: ["trigger-a"],
       agentTriggerPairs: [
         pair("agent-a", "trigger-a", "session-a2", "turn-a2"),
       ],
@@ -183,4 +186,65 @@ test("a newer run replaces only its matching agent-trigger obligation", () => {
       pair("agent-b", "trigger-b", "session-b", "turn-b"),
     ],
   );
+});
+
+test("a sibling completion cannot erase another sibling failure", () => {
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      outcome: "error",
+      agentPubkey: "agent-a",
+      triggeringEventIds: ["trigger-a"],
+      failedEventIds: ["trigger-a"],
+      terminalAt: 1_000,
+      terminalOrderKey: "failure-a",
+    }),
+  );
+  recordConversationOutcome(
+    "conversation",
+    outcome({
+      agentPubkey: "agent-b",
+      triggeringEventIds: ["trigger-b"],
+      agentTriggerPairs: [
+        {
+          agentPubkey: "agent-b",
+          eventId: "trigger-b",
+          sessionId: "session-b",
+          turnId: "turn-b",
+        },
+      ],
+      terminalAt: 2_000,
+      terminalOrderKey: "completed-b",
+    }),
+  );
+  const entry = getConversationOutcomeEntry("conversation");
+  assert.equal(entry?.outcome, "error");
+  assert.deepEqual(entry?.failedEventIds, ["trigger-a"]);
+  assert.equal(entry?.agentTriggerPairs?.[0]?.eventId, "trigger-b");
+});
+
+test("a sessionless completion frame fails closed", () => {
+  const entry = buildSignedConversationOutcome({
+    agentKey: "agent-a",
+    event: {
+      seq: 2,
+      timestamp: "2026-08-10T00:00:00.000Z",
+      kind: "turn_completed",
+      agentIndex: 0,
+      channelId: "channel",
+      conversationId: "conversation",
+      sessionId: null,
+      turnId: "turn-a",
+      payload: { triggeringEventIds: ["trigger-a"] },
+      replayed: false,
+    },
+    resolvedTurnId: "turn-a",
+    sessionId: null,
+    channelId: "channel",
+    endedAt: 1_000,
+    terminalAt: 1_000,
+    triggeringEventIds: ["trigger-a"],
+  });
+  assert.equal(entry.outcome, "error");
+  assert.equal(entry.agentTriggerPairs?.length ?? 0, 0);
 });

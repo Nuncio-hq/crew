@@ -38,7 +38,7 @@ export function receiptForActiveTurns(
   receipt: AgentReceiptSummary | null,
   summaries: readonly Pick<
     ActiveConversationAgentTurnSummary,
-    "agentPubkey" | "triggeringEventIds"
+    "agentPubkey" | "runs"
   >[],
 ): AgentReceiptSummary | null {
   if (!receipt || summaries.length === 0) return receipt;
@@ -49,9 +49,14 @@ export function receiptForActiveTurns(
   );
   if (activeReceiptAgentTurns.length === 0) return receipt;
   return activeReceiptAgentTurns.some((summary) =>
-    summary.triggeringEventIds.some(
-      (eventId) =>
-        eventId.toLowerCase() === receipt.parentEventId.toLowerCase(),
+    summary.runs.some(
+      (run) =>
+        run.sessionId === receipt.sessionId &&
+        run.turnId === receipt.turnId &&
+        run.triggeringEventIds.some(
+          (eventId) =>
+            eventId.toLowerCase() === receipt.parentEventId.toLowerCase(),
+        ),
     ),
   )
     ? receipt

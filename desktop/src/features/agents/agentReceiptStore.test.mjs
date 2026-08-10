@@ -349,7 +349,18 @@ describe("agentReceiptStore", () => {
     const higher = "f".repeat(64);
     ingestAgentReceiptEvent(receiptEvent({ id: lower }));
     ingestAgentReceiptEvent(receiptEvent({ id: higher }));
-    const active = [{ agentPubkey: AGENT, triggeringEventIds: [ROOT] }];
+    const active = [
+      {
+        agentPubkey: AGENT,
+        runs: [
+          {
+            sessionId: "session",
+            turnId: "turn",
+            triggeringEventIds: [ROOT],
+          },
+        ],
+      },
+    ];
     assert.equal(
       getLatestOwnedAgentReceiptForActiveTurns(
         CONVERSATION,
