@@ -110,6 +110,12 @@ export type MockManagedAgentSeed = {
   envVars?: Record<string, string>;
   /** Hermes profile binding (D-019). */
   hermesProfile?: string | null;
+  profileReadiness?:
+    | { state: "ready" }
+    | { state: "missing"; profile: string }
+    | { state: "broken_config"; profile: string; diagnostic: string }
+    | { state: "binary_missing"; command: string }
+    | { state: "auth_unknown"; profile: string };
 };
 
 type MockManagedAgentRuntimeSeed = {
@@ -880,6 +886,7 @@ type RawManagedAgent = {
   respond_to_allowlist: string[];
   /** D-019 Hermes profile binding; null when unbound. */
   hermes_profile?: string | null;
+  profile_readiness?: MockManagedAgentSeed["profileReadiness"] | null;
 };
 
 type RawCreateManagedAgentResponse = {
@@ -1778,6 +1785,7 @@ function cloneManagedAgent(agent: MockManagedAgent): RawManagedAgent {
       ? [...agent.respond_to_allowlist]
       : [],
     hermes_profile: agent.hermes_profile ?? null,
+    profile_readiness: agent.profile_readiness ?? null,
   };
 }
 
@@ -2332,6 +2340,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     respond_to: seed.respondTo ?? "owner-only",
     respond_to_allowlist: seed.respondToAllowlist ?? [],
     hermes_profile: seed.hermesProfile ?? null,
+    profile_readiness: seed.profileReadiness ?? null,
     private_key_nsec: `nsec1mock${seed.pubkey.slice(0, 20)}`,
     log_lines: [
       `buzz-acp starting: relay=${DEFAULT_RELAY_WS_URL} agent_pubkey=${seed.pubkey} parallelism=1`,
@@ -12775,8 +12784,8 @@ export function maybeInstallE2eTauriMocks() {
             schema_version: 1,
             profile,
             archived_at: new Date().toISOString(),
-            bound_agent_name: null,
-            bound_agent_pubkey: null,
+            bound_agent_name: "Hermes Archive Fixture",
+            bound_agent_pubkey: "cc".repeat(32),
             offboard_reason: (payload as { reason?: string }).reason ?? null,
             exclusions: ["audio_cache", "image_cache", "logs"],
             skipped_links: [],

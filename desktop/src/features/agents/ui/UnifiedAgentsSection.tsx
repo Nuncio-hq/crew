@@ -24,6 +24,7 @@ import { IdentityCardSkeleton } from "@/shared/ui/identity-card-skeleton";
 import { AgentIdentityCard } from "./AgentIdentityCard";
 import { AgentRuntimeAvatarControl } from "./AgentRuntimeAvatarControl";
 import { CreateIdentityCard } from "./CreateIdentityCard";
+import { HermesProfileReadinessIndicator } from "./HermesProfileReadinessIndicator";
 import { PersonaActionsMenu } from "./PersonaActionsMenu";
 import { buildUnifiedGroups, pickProfileAgent } from "./unifiedAgentGroups";
 
@@ -437,12 +438,19 @@ function StandaloneAgentCard({
         );
       }}
       statusBadge={
-        agent.personaOrphaned ? (
-          <Badge className="gap-1" variant="warning">
-            <AlertTriangle className="h-3 w-3" />
-            Configuration missing
-          </Badge>
-        ) : null
+        <>
+          {agent.profileReadiness ? (
+            <HermesProfileReadinessIndicator
+              readiness={agent.profileReadiness}
+            />
+          ) : null}
+          {agent.personaOrphaned ? (
+            <Badge className="gap-1" variant="warning">
+              <AlertTriangle className="h-3 w-3" />
+              Configuration missing
+            </Badge>
+          ) : null}
+        </>
       }
     />
   );
