@@ -1,4 +1,5 @@
 import type { ManagedAgentRuntimeStatus } from "@/shared/api/types";
+import { presentHermesProfileReadiness } from "./hermesProfileReadinessPresenter";
 
 export type AgentCommunityAvailability =
   | "Here"
@@ -27,6 +28,10 @@ export function agentCommunityAvailability(
 export function agentCommunityStatusDetail(
   runtime: ManagedAgentRuntimeStatus,
 ): string | null {
+  if (runtime.profileReadiness) {
+    const readiness = presentHermesProfileReadiness(runtime.profileReadiness);
+    return `${readiness.explanation} ${readiness.repair}`;
+  }
   if (!runtime.localSetup)
     return "Set up this agent on this device to start it.";
   if (runtime.lifecycle === "stopped") return "Stopped by you";

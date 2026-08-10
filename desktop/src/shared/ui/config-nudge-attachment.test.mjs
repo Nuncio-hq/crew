@@ -78,6 +78,17 @@ test("focusTargetForRequirement_normalizedField_returnsNormalizedFieldTarget", (
   });
 });
 
+test("focusTargetForRequirement_hermesConfigInvalid_focusesProfileBinding", () => {
+  assert.deepEqual(
+    focusTargetForRequirement({
+      surface: "hermes_profile_config_invalid",
+      profile: "scout",
+      diagnostic: "bad yaml",
+    }),
+    { type: "normalized_field", field: "hermesProfile" },
+  );
+});
+
 test("focusTargetForRequirement_cliLogin_returnsUndefined", () => {
   const req = {
     surface: "cli_login",
