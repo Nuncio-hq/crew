@@ -992,6 +992,8 @@ pub async fn dispatch(
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+
     use super::{
         event_mention_pubkeys, find_root_from_tags, match_profiles_by_name, merge_message_mentions,
         missing_members, normalize_explicit_mentions, parse_member_pubkeys,
@@ -1011,6 +1013,62 @@ mod tests {
     const PK_VALID_A: &str = "35c18ae273fccfaf80d629e20e7f8721b90499379addff533054acc2504c12b4";
     const PK_VALID_B: &str = "c6237ef84fa537c78dcee78efd2d4e59f728859c7f194da42ac51ededfa0be05";
     const PK_VALID_C: &str = "f4a42a97e594b77bdbd8ee35191c8b28a94a4cb871d96f32921558275421fb68";
+
+    fn send_args(extra: &[&str]) -> Vec<String> {
+        let mut args = vec![
+            "buzz".to_string(),
+            "messages".to_string(),
+            "send".to_string(),
+            "--channel".to_string(),
+            "00000000-0000-0000-0000-000000000000".to_string(),
+            "--content".to_string(),
+            "evidence contract".to_string(),
+        ];
+        args.extend(extra.iter().map(|arg| (*arg).to_string()));
+        args
+    }
+
+    #[test]
+    fn evidence_flag_accepts_all_wire_kinds() {
+        for kind in ["test-run", "metrics", "before-after-visual", "diff-stat"] {
+            let parsed = crate::Cli::try_parse_from(send_args(&["--evidence", kind]));
+            assert!(
+                parsed.is_ok(),
+                "--evidence {kind} should parse: {}",
+                parsed
+                    .err()
+                    .map_or_else(String::new, |error| error.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn evidence_flag_rejects_unknown_kind_as_input_error() {
+        let error = match crate::Cli::try_parse_from(send_args(&["--evidence", "unknown"])) {
+            Ok(_) => panic!("unknown evidence kinds must be rejected"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("invalid value"));
+    }
+
+    #[test]
+    fn evidence_flag_composes_with_file_and_reply() {
+        let parsed = crate::Cli::try_parse_from(send_args(&[
+            "--evidence",
+            "test-run",
+            "--file",
+            "report.txt",
+            "--reply-to",
+            ID_A,
+        ]));
+        assert!(
+            parsed.is_ok(),
+            "evidence should compose with file and reply: {}",
+            parsed
+                .err()
+                .map_or_else(String::new, |error| error.to_string())
+        );
+    }
 
     #[test]
     fn root_marker_wins_over_reply_marker() {

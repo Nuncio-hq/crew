@@ -4589,6 +4589,29 @@ mod agent_draft_prompt_tests {
             .contains("add them explicitly with `buzz channels add-member` only when authorized"));
         assert!(prompt.contains("never changes membership automatically"));
     }
+
+    #[test]
+    fn shared_base_prompt_teaches_evidence_on_completion_within_budget() {
+        let prompt = include_str!("base_prompt.md");
+        let section = prompt
+            .split_once("## Evidence on completion\n")
+            .and_then(|(_, rest)| {
+                rest.split_once("\n### Mentions")
+                    .map(|(section, _)| section)
+            })
+            .expect("evidence section must exist");
+        assert!(section.contains("UI → before/after visual"));
+        assert!(section.contains("Capture in place"));
+        assert!(section.contains("text-first"));
+        assert!(section.contains("excerpt, don't dump"));
+        assert!(section.contains("no cheap evidence exists"));
+        assert!(section.contains("never add a decorative screenshot"));
+        assert!(section.contains("Do not use computer interaction"));
+        assert!(section.contains("just desktop-screenshot"));
+        assert!(section.contains("buzz messages send --file"));
+        assert!(section.contains("buzz messages send --evidence <kind>"));
+        assert!(section.lines().count() <= 18, "section exceeds 18-line cap");
+    }
 }
 
 fn default_heartbeat_prompt() -> String {

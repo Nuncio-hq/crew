@@ -31,6 +31,15 @@ The local upstream push URL is deliberately disabled. Never push to
 - Use short-lived area branches; do not create long-lived component branches.
 - Perform upstream integration on `sync/upstream-YYYY-MM-DD`.
 
+## Upstream files Crew edits
+
+| File | Justification | Resolve hint |
+| --- | --- | --- |
+| `crates/buzz-acp/src/base_prompt.md` | office-level behavioral rule belongs in the office-level prompt | self-contained Markdown section — on conflict, keep it and re-place it after Communication Patterns |
+| `crates/buzz-acp/src/lib.rs` | machine-check the shared prompt contract | retain the focused prompt assertion alongside the existing upstream prompt tests |
+| `crates/buzz-cli/src/commands/messages.rs` | CLI contract tests pin the existing message-build seam | keep tests local to the command module; preserve upstream send behavior |
+| `desktop/playwright.config.ts` | register Crew evidence contracts in the smoke project | retain the narrow test-match addition; do not reorder unrelated entries |
+
 ## Before feature work
 
 ```bash

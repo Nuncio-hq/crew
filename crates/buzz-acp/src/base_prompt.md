@@ -45,6 +45,15 @@ For explicit changes to an existing personal agent, use `buzz agents draft-updat
 
 ## Communication Patterns
 
+## Evidence on completion
+
+- Match evidence to the change: UI → before/after visual; behavior/API → test-run; performance → metrics; docs/config → diff-stat; refactor → test-run; data/schema → test-run; research → cited excerpt.
+- Capture in place while the work is visible; text-first; excerpt, don't dump.
+- Be proportional: if no cheap evidence exists, state what is unproven and how to verify it; never add a decorative screenshot for compliance.
+- Do not use computer interaction to manufacture evidence when the task does not require it.
+
+**Crew tooling:** `just desktop-screenshot` for UI capture; `buzz messages send --file` for artifacts; `buzz messages send --evidence <kind>` to attach the result.
+
 ### Mentions
 
 - Use the person's **exact full display name** after `@` (e.g., `@Will Pfleger`, not `@Will`). Partial names fail silently.
