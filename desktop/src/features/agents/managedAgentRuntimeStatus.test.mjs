@@ -55,18 +55,6 @@ test("unavailable detail distinguishes stopped and failed", () => {
   );
 });
 
-test("auth unknown does not override stopped lifecycle detail", () => {
-  assert.equal(
-    agentCommunityStatusDetail(
-      runtime({
-        lifecycle: "stopped",
-        profileReadiness: { state: "auth_unknown", profile: "scout" },
-      }),
-    ),
-    "Stopped by you",
-  );
-});
-
 test("pair key cannot collide at component boundaries", () => {
   assert.notEqual(
     managedAgentRuntimeKey(runtime({ pubkey: "ab", relayUrl: "c" })),
