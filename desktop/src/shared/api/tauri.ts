@@ -41,9 +41,7 @@ import type {
 } from "@/shared/api/types";
 
 export * from "@/shared/api/tauriChannels";
-
 type RawPresenceLookup = Record<string, PresenceStatus>;
-
 type RawAddChannelMembersResult = {
   added: string[];
   errors: Array<{
