@@ -161,12 +161,14 @@ export type RawManagedAgent = {
   hermes_profile?: string | null;
   profile_readiness?: ManagedAgent["profileReadiness"];
 };
+
 type RawCreateManagedAgentResponse = {
   agent: RawManagedAgent;
   private_key_nsec: string;
   profile_sync_error: string | null;
   spawn_error: string | null;
 };
+
 type RawManagedAgentLog = {
   content: string;
   log_path: string;

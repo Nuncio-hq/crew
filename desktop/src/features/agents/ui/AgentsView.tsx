@@ -181,7 +181,7 @@ export function AgentsView() {
                   <DropdownMenuTrigger asChild>
                     <Button
                       aria-label="Agent actions"
-                      className="inline-flex"
+                      className="hidden [@container(max-width:40rem)]:inline-flex"
                       data-testid="agent-actions-menu-trigger"
                       ref={compactActionsTriggerRef}
                       size="icon"
