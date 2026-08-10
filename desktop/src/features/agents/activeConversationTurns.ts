@@ -17,7 +17,12 @@ export type ActiveConversationTurnSummary = {
   progressKind: AgentProgressKind;
   progressLabel: string;
   triggeringEventIds: string[];
-  agentTriggerPairs: Array<{ agentPubkey: string; eventId: string }>;
+  agentTriggerPairs: Array<{
+    agentPubkey: string;
+    eventId: string;
+    sessionId: string;
+    turnId: string;
+  }>;
 };
 
 const EMPTY: ActiveConversationTurnSummary[] = [];
@@ -59,9 +64,12 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
         progressLabel: turn.progressLabel,
         triggeringEventIds: new Set(turn.triggeringEventIds),
         agentTriggerPairs: new Set(
-          turn.triggeringEventIds.map(
-            (eventId) => `${agentPubkey}\0${eventId}`,
-          ),
+          turn.sessionId
+            ? turn.triggeringEventIds.map(
+                (eventId) =>
+                  `${agentPubkey}\0${eventId}\0${turn.sessionId}\0${turn.turnId}`,
+              )
+            : [],
         ),
       });
       return;
@@ -69,7 +77,10 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
     summary.agentPubkeys.add(agentPubkey);
     for (const eventId of turn.triggeringEventIds) {
       summary.triggeringEventIds.add(eventId);
-      summary.agentTriggerPairs.add(`${agentPubkey}\0${eventId}`);
+      if (turn.sessionId)
+        summary.agentTriggerPairs.add(
+          `${agentPubkey}\0${eventId}\0${turn.sessionId}\0${turn.turnId}`,
+        );
     }
     if (anchorAt < summary.anchorAt) summary.anchorAt = anchorAt;
     if (turn.lastSeenAt < summary.lastSeenAt)
@@ -94,10 +105,13 @@ export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] 
             agentTriggerPairs: [...summary.agentTriggerPairs]
               .sort()
               .map((pair) => {
-                const [agentPubkey, eventId] = pair.split("\0");
+                const [agentPubkey, eventId, sessionId, turnId] =
+                  pair.split("\0");
                 return {
                   agentPubkey: agentPubkey ?? "",
                   eventId: eventId ?? "",
+                  sessionId: sessionId ?? "",
+                  turnId: turnId ?? "",
                 };
               }),
           }))

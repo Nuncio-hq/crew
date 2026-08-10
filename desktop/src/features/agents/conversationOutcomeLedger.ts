@@ -1,3 +1,5 @@
+import type { ObserverEvent } from "./ui/agentSessionTypes";
+
 /**
  * Terminal conversation-outcome ledger for the channel view.
  *
@@ -20,12 +22,211 @@ const MAX_OUTCOME_ENTRIES = 512;
 export type ConversationOutcomeEntry = {
   outcome: "completed" | "error" | "lost-contact";
   agentPubkey: string;
+  sessionId?: string;
+  turnId?: string;
   channelId: string;
   endedAt: number;
+  /** Producer terminal time used for replay-stable causal ordering. */
+  terminalAt?: number;
+  /** Stable tie-breaker when distinct producers terminate at the same time. */
+  terminalOrderKey?: string;
+  terminalAgentIndex?: number | null;
+  terminalSeq?: number;
+  terminalSessionId?: string | null;
+  terminalTurnId?: string | null;
   failedEventIds?: string[];
+  triggeringEventIds?: string[];
+  agentTriggerPairs?: Array<{
+    agentPubkey: string;
+    eventId: string;
+    sessionId: string;
+    turnId: string;
+  }>;
+  failedAgentSlots?: Array<{
+    agentPubkey: string;
+    triggeringEventIds: string[];
+  }>;
 };
 
 const outcomeByConversation = new Map<string, ConversationOutcomeEntry>();
+
+export function conversationOutcomeTerminalOrderKey(
+  agentKey: string,
+  event: ObserverEvent,
+  resolvedTurnId: string | null,
+): string {
+  return [
+    event.sessionId ?? "null-session",
+    event.seq.toString().padStart(16, "0"),
+    agentKey,
+    event.agentIndex ?? "null-agent",
+    resolvedTurnId ?? "null-turn",
+    event.kind,
+  ].join("\u0000");
+}
+
+/** Build one exact producer/run-scoped terminal outcome from a signed frame. */
+export function buildSignedConversationOutcome(input: {
+  agentKey: string;
+  event: ObserverEvent;
+  resolvedTurnId: string;
+  channelId: string;
+  endedAt: number;
+  terminalAt: number;
+  triggeringEventIds: string[];
+  sessionId?: string;
+}): ConversationOutcomeEntry {
+  const triggers = [...input.triggeringEventIds];
+  return {
+    outcome:
+      input.event.kind === "turn_completed" && input.sessionId
+        ? "completed"
+        : "error",
+    agentPubkey: input.agentKey,
+    sessionId: input.sessionId,
+    turnId: input.resolvedTurnId,
+    channelId: input.channelId,
+    endedAt: input.endedAt,
+    terminalAt: input.terminalAt,
+    terminalOrderKey: conversationOutcomeTerminalOrderKey(
+      input.agentKey,
+      input.event,
+      input.resolvedTurnId,
+    ),
+    terminalAgentIndex: input.event.agentIndex,
+    terminalSeq: input.event.seq,
+    terminalSessionId: input.event.sessionId,
+    terminalTurnId: input.event.turnId,
+    failedEventIds: triggers,
+    triggeringEventIds: triggers,
+    agentTriggerPairs: input.sessionId
+      ? triggers.map((eventId) => ({
+          agentPubkey: input.agentKey,
+          eventId,
+          sessionId: input.sessionId ?? "",
+          turnId: input.resolvedTurnId,
+        }))
+      : undefined,
+  };
+}
+
+function outcomeSlotKey(agentPubkey: string, triggeringEventIds: string[]) {
+  return `${agentPubkey}\u0000${[...triggeringEventIds].sort().join("\u0000")}`;
+}
+
+function latestOutcomePresentation(
+  prior: ConversationOutcomeEntry | undefined,
+  incoming: ConversationOutcomeEntry,
+): ConversationOutcomeEntry {
+  if (!prior) return incoming;
+  const sameProducerGeneration =
+    prior.agentPubkey === incoming.agentPubkey &&
+    prior.terminalAgentIndex === incoming.terminalAgentIndex &&
+    ((prior.terminalSessionId != null &&
+      prior.terminalSessionId === incoming.terminalSessionId) ||
+      (prior.terminalTurnId != null &&
+        prior.terminalTurnId === incoming.terminalTurnId));
+  if (
+    sameProducerGeneration &&
+    prior.terminalSeq != null &&
+    incoming.terminalSeq != null &&
+    prior.terminalSeq !== incoming.terminalSeq
+  )
+    return incoming.terminalSeq > prior.terminalSeq ? incoming : prior;
+  const incomingAt = incoming.terminalAt ?? incoming.endedAt;
+  const priorAt = prior.terminalAt ?? prior.endedAt;
+  if (incomingAt !== priorAt) return incomingAt > priorAt ? incoming : prior;
+  return (incoming.terminalOrderKey ?? "") > (prior.terminalOrderKey ?? "")
+    ? incoming
+    : prior;
+}
+
+function aggregateSignedOutcome(
+  prior: ConversationOutcomeEntry | undefined,
+  incoming: ConversationOutcomeEntry,
+): ConversationOutcomeEntry {
+  if (incoming.outcome === "lost-contact") return incoming;
+  const incomingTriggers = incoming.triggeringEventIds ?? [];
+  const incomingSlot = outcomeSlotKey(incoming.agentPubkey, incomingTriggers);
+  const priorFailed =
+    prior?.failedAgentSlots ??
+    (prior?.outcome === "error"
+      ? [
+          {
+            agentPubkey: prior.agentPubkey,
+            triggeringEventIds: prior.triggeringEventIds ?? [],
+          },
+        ]
+      : []);
+  const failedAgentSlots = priorFailed.filter(
+    (slot) =>
+      outcomeSlotKey(slot.agentPubkey, slot.triggeringEventIds) !==
+      incomingSlot,
+  );
+  if (incoming.outcome === "error") {
+    failedAgentSlots.push({
+      agentPubkey: incoming.agentPubkey,
+      triggeringEventIds: incomingTriggers,
+    });
+  }
+  const incomingTriggerSet = new Set(incomingTriggers);
+  const completedPairs = (prior?.agentTriggerPairs ?? []).filter(
+    (pair) =>
+      pair.agentPubkey !== incoming.agentPubkey ||
+      !incomingTriggerSet.has(pair.eventId),
+  );
+  if (incoming.outcome === "completed")
+    completedPairs.push(...(incoming.agentTriggerPairs ?? []));
+  const presentation = latestOutcomePresentation(prior, incoming);
+  return {
+    ...presentation,
+    outcome: failedAgentSlots.length > 0 ? "error" : incoming.outcome,
+    failedEventIds: failedAgentSlots.flatMap((slot) => slot.triggeringEventIds),
+    failedAgentSlots,
+    agentTriggerPairs: [
+      ...new Map(
+        completedPairs.map((pair) => [
+          [pair.agentPubkey, pair.eventId].join("\u0000"),
+          pair,
+        ]),
+      ).values(),
+    ].sort(
+      (left, right) =>
+        left.agentPubkey.localeCompare(right.agentPubkey) ||
+        left.eventId.localeCompare(right.eventId),
+    ),
+  };
+}
+
+function sharesOutcomeAuthoritySlot(
+  prior: ConversationOutcomeEntry,
+  incoming: ConversationOutcomeEntry,
+): boolean {
+  if (prior.outcome === "lost-contact") return true;
+  const incomingKey = outcomeSlotKey(
+    incoming.agentPubkey,
+    incoming.triggeringEventIds ?? [],
+  );
+  if (
+    prior.failedAgentSlots?.some(
+      (slot) =>
+        outcomeSlotKey(slot.agentPubkey, slot.triggeringEventIds) ===
+        incomingKey,
+    )
+  )
+    return true;
+  const incomingEvents = new Set(incoming.triggeringEventIds ?? []);
+  return (
+    prior.agentTriggerPairs?.some(
+      (pair) =>
+        pair.agentPubkey === incoming.agentPubkey &&
+        incomingEvents.has(pair.eventId),
+    ) ??
+    (prior.agentPubkey === incoming.agentPubkey &&
+      outcomeSlotKey(prior.agentPubkey, prior.triggeringEventIds ?? []) ===
+        incomingKey)
+  );
+}
 
 /** Drop oldest-by-endedAt entries once past the hard cap. */
 function enforceOutcomeCap() {
@@ -51,16 +252,97 @@ export function clearConversationOutcome(conversationId: string): boolean {
   return outcomeByConversation.delete(conversationId);
 }
 
+export function retireConversationOutcomeAgent(
+  conversationId: string,
+  agentPubkey: string,
+): boolean {
+  const existing = outcomeByConversation.get(conversationId);
+  if (!existing) return false;
+  const remainingPairs = (existing.agentTriggerPairs ?? []).filter(
+    (pair) => pair.agentPubkey !== agentPubkey,
+  );
+  const remainingFailures = (existing.failedAgentSlots ?? []).filter(
+    (slot) => slot.agentPubkey !== agentPubkey,
+  );
+  if (
+    remainingPairs.length === (existing.agentTriggerPairs?.length ?? 0) &&
+    remainingFailures.length === (existing.failedAgentSlots?.length ?? 0)
+  ) {
+    return existing.agentPubkey === agentPubkey
+      ? outcomeByConversation.delete(conversationId)
+      : false;
+  }
+  if (remainingPairs.length === 0 && remainingFailures.length === 0)
+    return outcomeByConversation.delete(conversationId);
+  outcomeByConversation.set(conversationId, {
+    ...existing,
+    outcome: remainingFailures.length > 0 ? "error" : "completed",
+    agentPubkey:
+      remainingFailures.at(-1)?.agentPubkey ??
+      remainingPairs.at(-1)?.agentPubkey ??
+      existing.agentPubkey,
+    failedEventIds: remainingFailures.flatMap(
+      (slot) => slot.triggeringEventIds,
+    ),
+    failedAgentSlots: remainingFailures,
+    agentTriggerPairs: remainingPairs,
+  });
+  return true;
+}
+
 /**
- * Record (or overwrite) the latest terminal outcome for a conversation.
- * Enforces the LRU cap. Always mutates — callers bump generation.
+ * Record the causally latest terminal outcome for a conversation.
+ * Returns whether the ledger changed so callers can bump their generation.
  */
 export function recordConversationOutcome(
   conversationId: string,
-  entry: ConversationOutcomeEntry,
-): void {
-  outcomeByConversation.set(conversationId, entry);
+  incoming: ConversationOutcomeEntry,
+): boolean {
+  const prior = outcomeByConversation.get(conversationId);
+  const entry = incoming;
+  if (prior && sharesOutcomeAuthoritySlot(prior, incoming)) {
+    const priorIsInferred = prior.outcome === "lost-contact";
+    const entryIsInferred = entry.outcome === "lost-contact";
+    if (!priorIsInferred && entryIsInferred) return false;
+    if (priorIsInferred && !entryIsInferred) {
+      outcomeByConversation.set(conversationId, entry);
+      enforceOutcomeCap();
+      return true;
+    }
+    const priorHasOrder = Number.isFinite(prior.terminalAt);
+    const entryHasOrder = Number.isFinite(entry.terminalAt);
+    if (priorHasOrder && !entryHasOrder) return false;
+    if (priorHasOrder && entryHasOrder) {
+      const sameProducerGeneration =
+        prior.agentPubkey === entry.agentPubkey &&
+        prior.terminalAgentIndex === entry.terminalAgentIndex &&
+        ((prior.terminalSessionId &&
+          prior.terminalSessionId === entry.terminalSessionId) ||
+          (prior.terminalTurnId &&
+            prior.terminalTurnId === entry.terminalTurnId));
+      if (sameProducerGeneration) {
+        if ((entry.terminalSeq ?? -1) <= (prior.terminalSeq ?? -1)) {
+          return false;
+        }
+      } else {
+        const priorAt = prior.terminalAt ?? 0;
+        const entryAt = entry.terminalAt ?? 0;
+        if (entryAt < priorAt) return false;
+        if (
+          entryAt === priorAt &&
+          (entry.terminalOrderKey ?? "") <= (prior.terminalOrderKey ?? "")
+        ) {
+          return false;
+        }
+      }
+    }
+  }
+  outcomeByConversation.set(
+    conversationId,
+    aggregateSignedOutcome(prior, incoming),
+  );
   enforceOutcomeCap();
+  return true;
 }
 
 /** Drop entries past the TTL. Returns true when anything was removed. */
@@ -115,6 +397,14 @@ export function cloneConversationOutcomeLedger(): Map<
       failedEventIds: entry.failedEventIds
         ? [...entry.failedEventIds]
         : undefined,
+      triggeringEventIds: entry.triggeringEventIds
+        ? [...entry.triggeringEventIds]
+        : undefined,
+      agentTriggerPairs: entry.agentTriggerPairs?.map((pair) => ({ ...pair })),
+      failedAgentSlots: entry.failedAgentSlots?.map((slot) => ({
+        ...slot,
+        triggeringEventIds: [...slot.triggeringEventIds],
+      })),
     });
   }
   return outcomes;
@@ -131,6 +421,14 @@ export function restoreConversationOutcomeLedger(
       failedEventIds: entry.failedEventIds
         ? [...entry.failedEventIds]
         : undefined,
+      triggeringEventIds: entry.triggeringEventIds
+        ? [...entry.triggeringEventIds]
+        : undefined,
+      agentTriggerPairs: entry.agentTriggerPairs?.map((pair) => ({ ...pair })),
+      failedAgentSlots: entry.failedAgentSlots?.map((slot) => ({
+        ...slot,
+        triggeringEventIds: [...slot.triggeringEventIds],
+      })),
     });
   }
 }

@@ -22,8 +22,6 @@ import {
   type UserInputEvent,
 } from "@/features/channels/lib/userInput";
 import {
-  projectAuthorizedUserInputEvent,
-  reconcileAuthorizedUserInputRequests,
   type AuthorizedUserInputRequest,
   validateAuthorizedUserInputRequest,
   validateAuthorizedUserInputTransition,
@@ -63,7 +61,6 @@ export function useChannelUserInput(channelId: string | null) {
   );
 
   React.useEffect(() => {
-    reconcileAuthorizedUserInputRequests(currentPubkey, ownedAgentPubkeys);
     setEvents([]);
     setOptimisticallyResolved(new Set());
     setSentRequestIds(new Set());
@@ -91,16 +88,8 @@ export function useChannelUserInput(channelId: string | null) {
         parentsById,
       );
       if (request) {
-        const projected = projectAuthorizedUserInputEvent(
-          event,
-          channelId,
-          currentPubkey,
-          ownedAgentPubkeys,
-          parentsById.get(causalParentId(event) ?? ""),
-          parentsById,
-        );
-        if (projected) authorizedRequests.set(request.id, request);
-        return projected;
+        authorizedRequests.set(request.id, request);
+        return true;
       }
       const eTags = event.tags.filter((tag) => tag[0] === "e");
       const target =
@@ -116,12 +105,6 @@ export function useChannelUserInput(channelId: string | null) {
       ) {
         return false;
       }
-      projectAuthorizedUserInputEvent(
-        event,
-        channelId,
-        currentPubkey,
-        ownedAgentPubkeys,
-      );
       return true;
     };
     const rebuildAuthorizedEvents = (compactHistory = false) => {

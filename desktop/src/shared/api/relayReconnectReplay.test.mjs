@@ -266,6 +266,37 @@ test("owner-scoped observer subscriptions page reconnect history", () => {
   );
 });
 
+test("empty observer recovery preserves the zero authority floor across reconnects", async () => {
+  resetGate(0);
+  const historyFilters = [];
+  const subscription = {
+    mode: "live",
+    filter: { kinds: [24200], "#p": ["owner"], limit: 1000 },
+    onEvent: () => {},
+    ready: true,
+    recoveryFloorCreatedAt: 0,
+  };
+  const replay = (now) =>
+    replayLiveSubscriptions({
+      subscriptions: new Map([["observer-live", subscription]]),
+      now,
+      sendRaw: async () => {},
+      requestHistory: async (filter) => {
+        historyFilters.push(filter);
+        return [];
+      },
+    });
+
+  await replay(1_000);
+  await replay(2_000);
+
+  assert.deepEqual(
+    historyFilters.map((filter) => filter.since),
+    [0, 0],
+  );
+  assert.equal(subscription.recoveryFloorCreatedAt, 0);
+});
+
 test("reconnect replay keeps the stricter existing since window", () => {
   const filter = {
     kinds: [9],
@@ -865,6 +896,7 @@ test("history backfill rejection never escapes replayLiveSubscriptions", async (
   ]);
 
   let historyCalls = 0;
+  let scheduledRetry;
   // Must resolve — a rejection here is the socket-killing flap regression.
   await replayLiveSubscriptions({
     subscriptions,
@@ -872,7 +904,12 @@ test("history backfill rejection never escapes replayLiveSubscriptions", async (
     sendRaw: async () => {},
     requestHistory: async () => {
       historyCalls++;
+      if (historyCalls > PAGE_REPLAY_MAX_ATTEMPTS) return [];
       throw new Error("rate-limited: quota exceeded; retry in 4s");
+    },
+    setTimeoutFn: (callback) => {
+      scheduledRetry = callback;
+      return 1;
     },
   });
 
@@ -881,6 +918,148 @@ test("history backfill rejection never escapes replayLiveSubscriptions", async (
     PAGE_REPLAY_MAX_ATTEMPTS,
     "backfill must retry a bounded number of times, then degrade",
   );
+  assert.equal(typeof scheduledRetry, "function");
+  scheduledRetry();
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+  assert.equal(historyCalls, PAGE_REPLAY_MAX_ATTEMPTS + 1);
+  assert.equal(subscriptions.get("live-1").recoveryInFlight, false);
+  assert.equal(subscriptions.get("live-1").pendingReplaySince, undefined);
+});
+
+test("scheduled backfill retry cannot mutate a newer recovery generation", async () => {
+  resetGate(0);
+  const filter = buildChannelFilter("channel-1", 50);
+  const subscription = {
+    mode: "live",
+    filter,
+    onEvent: () => {},
+    lastSeenCreatedAt: 1000,
+  };
+  const subscriptions = new Map([["live-1", subscription]]);
+  let historyCalls = 0;
+  let scheduledRetry;
+
+  await replayLiveSubscriptions({
+    subscriptions,
+    now: 2000,
+    sendRaw: async () => {},
+    requestHistory: async () => {
+      historyCalls += 1;
+      throw new Error("rate-limited: generation fence");
+    },
+    setTimeoutFn: (callback) => {
+      scheduledRetry = callback;
+      return 1;
+    },
+  });
+
+  assert.equal(historyCalls, PAGE_REPLAY_MAX_ATTEMPTS);
+  subscription.recoveryGeneration += 1;
+  subscription.pendingReplaySince = 777;
+  scheduledRetry();
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+
+  assert.equal(historyCalls, PAGE_REPLAY_MAX_ATTEMPTS);
+  assert.equal(subscription.pendingReplaySince, 777);
+});
+
+test("terminal history backfill rejection closes the durable subscription immediately", async () => {
+  resetGate(0);
+  const statuses = [];
+  let rejectedMessage = "";
+  const subscription = {
+    mode: "live",
+    filter: { kinds: [46_043], "#h": ["channel-1"], limit: 0 },
+    onEvent: () => {},
+    onStatus: (status) => statuses.push(status),
+    rejectReady: (error) => {
+      rejectedMessage = error.message;
+    },
+    lastSeenCreatedAt: 1_000,
+  };
+  const subscriptions = new Map([["durable-live", subscription]]);
+  let historyCalls = 0;
+
+  await replayLiveSubscriptions({
+    subscriptions,
+    now: 2_000,
+    sendRaw: async () => {},
+    requestHistory: async () => {
+      historyCalls += 1;
+      throw new Error("restricted: durable history denied");
+    },
+  });
+
+  assert.equal(historyCalls, 1, "terminal failures are not transient retries");
+  assert.equal(subscriptions.size, 0);
+  assert.equal(rejectedMessage, "restricted: durable history denied");
+  assert.deepEqual(statuses.at(-1), {
+    state: "closed",
+    message: "restricted: durable history denied",
+  });
+});
+
+test("stale terminal history failure cannot close a newer recovery generation", async () => {
+  resetGate(0);
+  const statuses = [];
+  const subscription = {
+    mode: "live",
+    filter: { kinds: [46_043], "#h": ["channel-1"], limit: 0 },
+    onEvent: () => {},
+    onStatus: (status) => statuses.push(status),
+    lastSeenCreatedAt: 1_000,
+  };
+  const subscriptions = new Map([["durable-live", subscription]]);
+  let rejectHistory;
+  const replay = replayLiveSubscriptions({
+    subscriptions,
+    now: 2_000,
+    sendRaw: async () => {},
+    requestHistory: () =>
+      new Promise((_, reject) => {
+        rejectHistory = reject;
+      }),
+  });
+  while (!rejectHistory) await Promise.resolve();
+  subscription.recoveryGeneration += 1;
+  rejectHistory(new Error("restricted: stale durable history denied"));
+  await replay;
+
+  assert.equal(subscriptions.get("durable-live"), subscription);
+  assert.equal(statuses.length, 0);
+});
+
+test("stale successful history cannot deliver or clear a newer recovery floor", async () => {
+  resetGate(0);
+  const delivered = [];
+  const subscription = {
+    mode: "live",
+    filter: { kinds: [46_043], "#h": ["channel-1"], limit: 0 },
+    onEvent: (value) => delivered.push(value),
+    lastSeenCreatedAt: 1_000,
+    recoveryFloorCreatedAt: 1_111,
+  };
+  const subscriptions = new Map([["durable-live", subscription]]);
+  let resolveHistory;
+  const replay = replayLiveSubscriptions({
+    subscriptions,
+    now: 2_000,
+    sendRaw: async () => {},
+    requestHistory: () =>
+      new Promise((resolve) => {
+        resolveHistory = resolve;
+      }),
+  });
+  while (!resolveHistory) await Promise.resolve();
+  subscription.recoveryGeneration += 1;
+  subscription.pendingReplaySince = 777;
+  subscription.recoveryFloorCreatedAt = 1_500;
+  resolveHistory([event("stale-event", 1_500)]);
+  await replay;
+
+  assert.deepEqual(delivered, []);
+  assert.equal(subscription.pendingReplaySince, 777);
+  assert.equal(subscription.recoveryFloorCreatedAt, 1_500);
 });
 
 test("backfill retry waits out the armed gate, then succeeds", async () => {
@@ -993,6 +1172,7 @@ test("exhausted backfill pins the floor: next replay still requests the original
     requestHistory: async () => {
       throw new Error("rate-limited: quota exceeded; retry in 4s");
     },
+    setTimeoutFn: () => 1,
   });
   assert.equal(
     subscription.pendingReplaySince,

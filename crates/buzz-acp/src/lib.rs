@@ -12,6 +12,7 @@ mod pool_lifecycle;
 mod queue;
 mod relay;
 mod retry_turn;
+mod secure_spool;
 mod setup_mode;
 mod thread_workspace;
 #[cfg(test)]
@@ -1681,6 +1682,12 @@ async fn tokio_main() -> Result<()> {
         return setup_mode::run_setup_listener(config, payload).await;
     }
 
+    if !cfg!(unix) {
+        return Err(anyhow::anyhow!(
+            "buzz-acp durable attention recovery requires Unix descriptor-relative filesystem security; this platform is unsupported"
+        ));
+    }
+
     tracing::info!("buzz-acp starting: {}", config.summary());
 
     let observer = config
@@ -1784,7 +1791,11 @@ async fn tokio_main() -> Result<()> {
         owner_cache.clone(),
         relay.rest_client(),
     );
-    user_input_runtime.resume_resolution_outbox().await;
+    if !user_input_runtime.resume_resolution_outbox().await {
+        return Err(anyhow::anyhow!(
+            "durable user-input startup recovery is incomplete; refusing prompt admission"
+        ));
+    }
 
     let mut relay_observer_control_rx = None;
     let mut relay_observer_publisher_task = None;
@@ -1962,6 +1973,9 @@ async fn tokio_main() -> Result<()> {
         agent_receipts_enabled: config.agent_receipts_enabled,
         receipt_outbox_workers: tokio_util::task::TaskTracker::new(),
     });
+    pool::prepare_receipt_outbox(&ctx)
+        .await
+        .map_err(anyhow::Error::msg)?;
     pool::resume_receipt_outbox(Arc::clone(&ctx));
 
     if !config.memory_enabled {

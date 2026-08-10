@@ -27,10 +27,8 @@ import { useHomeInboxReadState } from "@/features/home/useHomeInboxReadState";
 import { useHomeInboxAutoSelection } from "@/features/home/useHomeInboxAutoSelection";
 import { useHomeInboxContextMessages } from "@/features/home/useHomeInboxContextMessages";
 import { useHomePersonalInbox } from "@/features/home/useHomePersonalInbox";
-import {
-  getMissionInboxEventTarget,
-  type MissionInboxRow,
-} from "@/features/home/lib/missionInbox";
+import type { MissionInboxRow } from "@/features/home/lib/missionInbox";
+import { useVerifiedMissionSelection } from "@/features/home/useVerifiedMissionSelection";
 import { useMissionInboxSections } from "@/features/home/useMissionInboxSections";
 import { useInboxThreadContext } from "@/features/home/useInboxThreadContext";
 import {
@@ -114,10 +112,6 @@ export function HomeView({
     homeInboxWidthPx < INBOX_SINGLE_COLUMN_BREAKPOINT_PX;
   const [filter, setFilter] = React.useState<InboxFilter>("all");
   const [unreadOnly, setUnreadOnly] = React.useState(false);
-  // Explicit selections are mirrored to the URL (`?item=`), so back/forward
-  // restores the detail pane each history entry was showing and reloads
-  // restore it from the URL. Default/automatic selection stays local-only —
-  // background data loads must never trigger navigations.
   const { applyPatch: applyInboxSearchPatch, values: inboxSearchValues } =
     useHistorySearchState(INBOX_SEARCH_KEYS);
   const isReminders = filter === "reminders";
@@ -148,9 +142,7 @@ export function HomeView({
     isReminders,
     viewportWidthPx: homeInboxWidthPx,
   });
-  // `?item=` is Messages-mode-only machinery: a reminder never enters the
-  // FeedItem selection model, so reload while in Reminders mode keeps a stale
-  // `?item=` unconsumed and does not snap back to a feed-item detail view.
+  // Personal modes leave the Messages-only `?item=` selection unconsumed.
   const urlSelectedItemId = isMessagesMode ? inboxSearchValues.item : null;
   const profilePanelPubkey = inboxSearchValues.profile;
   const profilePanelTab = profilePanelTabFromSearch(
@@ -168,6 +160,17 @@ export function HomeView({
     eventId: string;
   } | null>(null);
   const selectedEventId = urlSelectedItemId ?? autoSelectedEventId;
+  const {
+    activeVerifiedTarget: activeVerifiedMissionTarget,
+    clearVerifiedTarget,
+    openMissionRow,
+    selectMissionRow: handleMissionSelect,
+  } = useVerifiedMissionSelection(
+    selectedEventId,
+    setAutoSelectedEventId,
+    applyInboxSearchPatch,
+    onOpenContext,
+  );
   const [managedChannelId, setManagedChannelId] = React.useState<string | null>(
     null,
   );
@@ -176,13 +179,15 @@ export function HomeView({
   const openDm = openDmMutation.mutateAsync;
   const handleUserSelectItem = React.useCallback(
     (itemId: string | null) => {
+      clearVerifiedTarget();
       setAutoSelectedEventId(null);
       applyInboxSearchPatch({ item: itemId });
     },
-    [applyInboxSearchPatch],
+    [applyInboxSearchPatch, clearVerifiedTarget],
   );
   const handleOpenProfilePanel = React.useCallback(
     (pubkey: string) => {
+      clearVerifiedTarget();
       setManagedChannelId(null);
       applyInboxSearchPatch({
         profile: pubkey,
@@ -190,15 +195,16 @@ export function HomeView({
         profileView: null,
       });
     },
-    [applyInboxSearchPatch],
+    [applyInboxSearchPatch, clearVerifiedTarget],
   );
   const handleCloseProfilePanel = React.useCallback(() => {
+    clearVerifiedTarget();
     applyInboxSearchPatch({
       profile: null,
       profileTab: null,
       profileView: null,
     });
-  }, [applyInboxSearchPatch]);
+  }, [applyInboxSearchPatch, clearVerifiedTarget]);
   const handleProfilePanelViewChange = React.useCallback(
     (view: ProfilePanelView, options?: { replace?: boolean }) =>
       applyInboxSearchPatch(
@@ -218,10 +224,11 @@ export function HomeView({
   const [isSendingReply, setIsSendingReply] = React.useState(false);
   const handleOpenDm = React.useCallback(
     async (pubkeys: string[]) => {
+      clearVerifiedTarget();
       const dm = await openDm({ pubkeys });
       await goChannel(dm.id);
     },
-    [goChannel, openDm],
+    [clearVerifiedTarget, goChannel, openDm],
   );
   const { activeReminderEventIds, openReminder } = useRemindLater();
   const [localRepliesByItemId, setLocalRepliesByItemId] = React.useState<
@@ -260,23 +267,23 @@ export function HomeView({
       selectedEventId,
       availableChannelIds,
     });
-
   const threadContextFeedItem = activeLatchedItem;
-  // Derive the default composer parent from the active anchor's own tags so
-  // that InboxDetailPane can recover the original reply target even when the
-  // anchor event has been displaced from the current groupItems. This is null
-  // until the active item is resolved (anchor not yet found in feedItems and
-  // no matching committed latch).
-  const latchedDefaultParentId =
-    activeLatchedItem !== null
+  // Preserve the signed anchor's reply target across feed-page displacement.
+  const latchedDefaultParentId = activeVerifiedMissionTarget
+    ? activeVerifiedMissionTarget.parentEventId
+    : activeLatchedItem !== null
       ? (getThreadReference(activeLatchedItem.tags).parentId ??
         activeLatchedItem.id)
       : null;
   const channelsQuery = useChannelsQuery();
   const channels = channelsQuery.data;
   const selectedChannelIdCandidate = React.useMemo(() => {
-    return threadContextFeedItem?.channelId ?? null;
-  }, [threadContextFeedItem]);
+    return (
+      activeVerifiedMissionTarget?.channelId ??
+      threadContextFeedItem?.channelId ??
+      null
+    );
+  }, [activeVerifiedMissionTarget, threadContextFeedItem]);
   const selectedChannel = React.useMemo(() => {
     if (!selectedChannelIdCandidate || !channels) return null;
     return (
@@ -402,7 +409,6 @@ export function HomeView({
     channels,
     currentPubkey,
     effectiveDoneSet,
-    feed,
     inboxItems,
     ownedAgentPubkeys,
   });
@@ -506,6 +512,7 @@ export function HomeView({
 
   const handleFilterChange = React.useCallback(
     (nextFilter: InboxFilter) => {
+      clearVerifiedTarget();
       const nextItems = inboxItems.filter(
         (item) =>
           matchesInboxFilter(item, nextFilter, ownedAgentPubkeys) &&
@@ -541,6 +548,7 @@ export function HomeView({
     },
     [
       applyInboxSearchPatch,
+      clearVerifiedTarget,
       effectiveDoneSet,
       inboxItems,
       isNarrowHomeViewport,
@@ -673,6 +681,7 @@ export function HomeView({
               onMarkRead={markItemRead}
               onMarkUnread={markItemUnread}
               onOpenDirect={(item) => {
+                clearVerifiedTarget();
                 const channelId = item.item.channelId;
                 if (!channelId) {
                   return;
@@ -684,6 +693,7 @@ export function HomeView({
                 );
               }}
               onRemindLater={(item) => {
+                clearVerifiedTarget();
                 const channelId = item.item.channelId;
                 if (!channelId) {
                   return;
@@ -724,39 +734,19 @@ export function HomeView({
               }}
               missionSections={missionSections}
               missionSelectedConversationId={selectedConversationId}
-              onOpenMissionChannel={(row: MissionInboxRow) => {
-                const target = getMissionInboxEventTarget(row);
-                if (target) {
-                  onOpenContext(
-                    row.channelId,
-                    target.messageId,
-                    target.threadRootId,
-                  );
-                  return;
-                }
-                void goChannel(row.channelId);
-              }}
+              onOpenMissionChannel={openMissionRow}
               onSelectMission={(row: MissionInboxRow) => {
-                if (!row.inboxItem) {
-                  const target = getMissionInboxEventTarget(row);
-                  if (target) {
-                    onOpenContext(
-                      row.channelId,
-                      target.messageId,
-                      target.threadRootId,
-                    );
-                  } else {
-                    void goChannel(row.channelId);
-                  }
-                  return;
-                }
                 setUnreadBoundary(null);
                 setSelectedDraftKey(null);
                 setSelectedReminderId(null);
-                setAutoSelectedEventId(row.inboxItem.id);
-                markItemRead(row.inboxItem.id);
+                void handleMissionSelect(row).then((target) => {
+                  if (target) markItemRead(target.messageId);
+                });
               }}
-              onUnreadOnlyChange={setUnreadOnly}
+              onUnreadOnlyChange={(nextUnreadOnly) => {
+                clearVerifiedTarget();
+                setUnreadOnly(nextUnreadOnly);
+              }}
               reminderPubkey={currentPubkey}
               reminders={pendingReminders}
               selectedConversationId={selectedConversationId}
@@ -827,18 +817,32 @@ export function HomeView({
               onDelete={inboxEdit.onDelete}
               onManageChannel={(channelId) => {
                 handleCloseProfilePanel();
-                setManagedChannelId(channelId);
+                setManagedChannelId(
+                  activeVerifiedMissionTarget?.channelId ?? channelId,
+                );
               }}
               onEditSave={inboxEdit.editMessage}
               onRequestEmptyEditDelete={inboxEdit.setEmptyDeleteId}
-              onOpenContext={onOpenContext}
+              onOpenContext={(channelId, messageId, threadRootId) => {
+                if (activeVerifiedMissionTarget) {
+                  onOpenContext(
+                    activeVerifiedMissionTarget.channelId,
+                    activeVerifiedMissionTarget.messageId,
+                    activeVerifiedMissionTarget.threadRootId,
+                  );
+                  return;
+                }
+                onOpenContext(channelId, messageId, threadRootId);
+              }}
               onSendReply={async ({
                 content,
                 mediaTags,
                 mentionPubkeys,
                 parentEventId,
               }) => {
-                const channelId = selectedItem?.item.channelId;
+                const channelId =
+                  activeVerifiedMissionTarget?.channelId ??
+                  selectedItem?.item.channelId;
                 if (!selectedItem || !channelId || !canReply) {
                   throw new Error("Replies are not available for this item.");
                 }

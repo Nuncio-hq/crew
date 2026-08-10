@@ -16,6 +16,7 @@ export type RecentConversationOutcome = {
   endedAt: number;
   channelId: string;
   failedEventIds?: string[];
+  triggeringEventIds?: string[];
 };
 
 const cache = new Map<string, RecentConversationOutcome | null>();
@@ -40,6 +41,7 @@ function toRecent(
     endedAt: entry.endedAt,
     channelId: entry.channelId,
     failedEventIds: entry.failedEventIds,
+    triggeringEventIds: entry.triggeringEventIds,
   };
 }
 

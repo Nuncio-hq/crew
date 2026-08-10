@@ -35,6 +35,7 @@ tokio-tungstenite = { workspace = true }
 tokio-util = { workspace = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 futures-util = { workspace = true }
+fs4 = { version = "0.12", default-features = false, features = ["sync"] }
 
 # HTTP (channel discovery REST API)
 reqwest = { workspace = true }
@@ -75,7 +76,7 @@ evalexpr = { workspace = true }
 # Process-group kill (safe wrapper around killpg) — Unix-only; kill_process_group
 # has a #[cfg(not(unix))] fallback in acp.rs.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["signal"] }
+nix = { version = "0.31", default-features = false, features = ["dir", "signal", "user"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

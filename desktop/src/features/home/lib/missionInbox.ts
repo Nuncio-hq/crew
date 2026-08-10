@@ -20,6 +20,8 @@ import {
 import type { InboxItem } from "@/features/home/lib/inbox";
 import type { Channel } from "@/shared/api/types";
 import { getThreadReference } from "@/features/messages/lib/threading";
+import { isVerifiedRelayEvent } from "@/shared/api/relayEventVerification";
+import { getEventById } from "@/shared/api/tauri";
 import {
   deriveAgentAttention,
   type AgentAttentionState,
@@ -280,29 +282,78 @@ export function deriveMissionInboxSections(
         right.createdAt - left.createdAt || right.id.localeCompare(left.id),
     );
   }
+  for (const [conversationId, outcome] of input.outcomes) {
+    if (outcome.outcome !== "completed") continue;
+    const exactPairs =
+      outcome.agentTriggerPairs ??
+      (outcome.sessionId && outcome.turnId
+        ? (outcome.triggeringEventIds ?? []).map((eventId) => ({
+            agentPubkey: outcome.agentPubkey,
+            eventId,
+            sessionId: outcome.sessionId ?? "",
+            turnId: outcome.turnId ?? "",
+          }))
+        : []);
+    const matchingReceipts = (
+      receiptsByConversation.get(conversationId) ?? []
+    ).filter((candidate) =>
+      exactPairs.some(
+        (pair) =>
+          candidate.agentPubkey === pair.agentPubkey &&
+          candidate.parentEventId === pair.eventId &&
+          candidate.sessionId === pair.sessionId &&
+          candidate.turnId === pair.turnId,
+      ),
+    );
+    const receipt =
+      exactPairs.length > 0 &&
+      exactPairs.every((pair) =>
+        matchingReceipts.some(
+          (candidate) =>
+            candidate.agentPubkey === pair.agentPubkey &&
+            candidate.parentEventId === pair.eventId &&
+            candidate.sessionId === pair.sessionId &&
+            candidate.turnId === pair.turnId,
+        ),
+      )
+        ? (matchingReceipts[0] ?? null)
+        : null;
+    if (receipt) {
+      latestReceiptByConversation.set(conversationId, receipt);
+    } else {
+      latestReceiptByConversation.delete(conversationId);
+    }
+  }
   const calmTurns: MissionInboxInput["activeTurns"][number][] = [];
   for (const turn of input.activeTurns) {
     if (blocked.has(turn.conversationId) || !channelIds.has(turn.channelId)) {
       continue;
     }
-    const exactPairs =
-      turn.agentTriggerPairs ??
-      (turn.agentPubkeys.length === 1
-        ? turn.triggeringEventIds.map((eventId) => ({
-            agentPubkey: turn.agentPubkeys[0] ?? "",
-            eventId,
-          }))
-        : []);
+    const exactPairs = turn.agentTriggerPairs ?? [];
+    const conversationReceipts =
+      receiptsByConversation.get(turn.conversationId) ?? [];
+    const matchingReceipts = conversationReceipts.filter((candidate) =>
+      exactPairs.some(
+        (pair) =>
+          pair.agentPubkey === candidate.agentPubkey &&
+          pair.eventId === candidate.parentEventId &&
+          pair.sessionId === candidate.sessionId &&
+          pair.turnId === candidate.turnId,
+      ),
+    );
     const receipt =
-      receiptsByConversation
-        .get(turn.conversationId)
-        ?.find((candidate) =>
-          exactPairs.some(
-            (pair) =>
-              pair.agentPubkey === candidate.agentPubkey &&
-              pair.eventId === candidate.parentEventId,
-          ),
-        ) ?? null;
+      exactPairs.length > 0 &&
+      exactPairs.every((pair) =>
+        matchingReceipts.some(
+          (candidate) =>
+            pair.agentPubkey === candidate.agentPubkey &&
+            pair.eventId === candidate.parentEventId &&
+            pair.sessionId === candidate.sessionId &&
+            pair.turnId === candidate.turnId,
+        ),
+      )
+        ? (matchingReceipts[0] ?? null)
+        : null;
     if (receipt) {
       latestReceiptByConversation.set(turn.conversationId, receipt);
     } else {
@@ -434,15 +485,38 @@ export function deriveMissionInboxSections(
   return lastSections;
 }
 
-export function getMissionInboxEventTarget(row: MissionInboxRow) {
+export type MissionInboxEventTarget = {
+  channelId: string;
+  messageId: string;
+  parentEventId: string;
+  threadRootId: string;
+};
+
+export async function getMissionInboxEventTarget(
+  row: MissionInboxRow,
+  fetchEvent: typeof getEventById = getEventById,
+  verifyEvent: typeof isVerifiedRelayEvent = isVerifiedRelayEvent,
+): Promise<MissionInboxEventTarget | null> {
   const messageId = row.messageEventId ?? row.inboxItem?.id ?? row.rootEventId;
   if (!messageId || !/^[0-9a-f]{64}$/i.test(messageId)) return null;
-  const itemRootId = row.inboxItem
-    ? getThreadReference(row.inboxItem.item.tags).rootId
-    : null;
+  let event: Awaited<ReturnType<typeof getEventById>>;
+  try {
+    event = await fetchEvent(messageId);
+  } catch {
+    return null;
+  }
+  if (!verifyEvent(event) || event.id !== messageId) return null;
+  const channelId = event.tags.find((tag) => tag[0] === "h" && tag[1])?.[1];
+  if (!channelId) return null;
+  const thread = getThreadReference(event.tags);
+  const threadRootId = thread.rootId ?? thread.parentId ?? messageId;
+  if (row.channelId && row.channelId !== channelId) return null;
+  if (row.rootEventId && row.rootEventId !== threadRootId) return null;
   return {
+    channelId,
     messageId,
-    threadRootId: itemRootId ?? row.rootEventId ?? messageId,
+    parentEventId: thread.parentId ?? messageId,
+    threadRootId,
   };
 }
 

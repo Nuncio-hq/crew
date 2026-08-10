@@ -9,6 +9,9 @@ import {
 import { getNeedsYouForAll, resetNeedsYouStore } from "./needsYouStore.ts";
 import {
   _testPendingUserInputTransitionCount,
+  beginExhaustiveUserInputProjection,
+  endExhaustiveUserInputProjection,
+  markUserInputAttentionProjectionUnavailable,
   projectAuthorizedUserInputEvent,
   reconcileAuthorizedUserInputRequests,
   resetUserInputAttentionProjection,
@@ -22,6 +25,7 @@ const STRANGER = "d".repeat(64);
 const REQUEST_ID = "e".repeat(64);
 const TRIGGER_ID = "f".repeat(64);
 const ownedAgents = new Set([AGENT, SIBLING]);
+let projectionOwner;
 
 function event({
   id = crypto.randomUUID().replaceAll("-", "").padEnd(64, "0"),
@@ -96,20 +100,26 @@ function triggerParent(target = AGENT) {
 }
 
 function project(candidate, fallbackChannelId, currentPubkey, agents) {
+  const parent =
+    candidate.kind === KIND_AGENT_USER_INPUT_REQUESTED
+      ? triggerParent(candidate.pubkey)
+      : undefined;
   return projectAuthorizedUserInputEvent(
     candidate,
     fallbackChannelId,
     currentPubkey,
     agents,
-    candidate.kind === KIND_AGENT_USER_INPUT_REQUESTED
-      ? triggerParent(candidate.pubkey)
-      : undefined,
+    parent,
+    parent ? new Map([[parent.id, parent]]) : undefined,
+    projectionOwner,
   );
 }
 
 test.beforeEach(() => {
   resetNeedsYouStore();
   resetUserInputAttentionProjection();
+  projectionOwner = beginExhaustiveUserInputProjection();
+  endExhaustiveUserInputProjection(projectionOwner);
 });
 
 test("projects only requests from an owned agent addressed to the current owner", () => {
@@ -244,14 +254,21 @@ test("revalidates projected requests when identity or verified ownership changes
   assert.equal(getNeedsYouForAll().length, 1);
 
   assert.equal(
-    reconcileAuthorizedUserInputRequests(STRANGER, new Set([AGENT])),
+    reconcileAuthorizedUserInputRequests(
+      STRANGER,
+      new Set([AGENT]),
+      projectionOwner,
+    ),
     true,
   );
   assert.equal(getNeedsYouForAll().length, 0);
 
   project(request(), "", OWNER, ownedAgents);
   assert.equal(getNeedsYouForAll().length, 1);
-  assert.equal(reconcileAuthorizedUserInputRequests(OWNER, new Set()), true);
+  assert.equal(
+    reconcileAuthorizedUserInputRequests(OWNER, new Set(), projectionOwner),
+    true,
+  );
   assert.equal(getNeedsYouForAll().length, 0);
 });
 
@@ -361,4 +378,16 @@ test("rejects transitions whose relationship target does not match the request",
     false,
   );
   assert.equal(getNeedsYouForAll().length, 1);
+});
+
+test("stale exhaustive owners cannot mutate a newer user-input projection", () => {
+  const older = beginExhaustiveUserInputProjection();
+  const newer = beginExhaustiveUserInputProjection();
+  assert.equal(endExhaustiveUserInputProjection(older), false);
+  assert.equal(markUserInputAttentionProjectionUnavailable(older), false);
+  assert.equal(
+    reconcileAuthorizedUserInputRequests(OWNER, ownedAgents, older),
+    false,
+  );
+  assert.equal(endExhaustiveUserInputProjection(newer), true);
 });

@@ -7,12 +7,13 @@ import {
   snapshotTurnsWatermarks,
 } from "@/features/agents/turnsWatermarkStore";
 import {
-  clearConversationOutcome,
+  buildSignedConversationOutcome,
   clearConversationOutcomeLedger,
   cloneConversationOutcomeLedger,
   conversationOutcomeLedgerSize,
   pruneExpiredConversationOutcomes,
   recordConversationOutcome,
+  retireConversationOutcomeAgent,
   restoreConversationOutcomeLedger,
   type ConversationOutcomeEntry,
 } from "@/features/agents/conversationOutcomeLedger";
@@ -118,16 +119,11 @@ function invalidateCache(agentKey: string) {
   bumpActiveTurnsGeneration();
 }
 
-function clearOutcomeAndBump(conversationId: string) {
-  if (!clearConversationOutcome(conversationId)) return;
-  bumpActiveTurnsGeneration();
-}
-
 function recordOutcomeAndBump(
   conversationId: string,
   entry: ConversationOutcomeEntry,
 ) {
-  recordConversationOutcome(conversationId, entry);
+  if (!recordConversationOutcome(conversationId, entry)) return;
   bumpActiveTurnsGeneration();
 }
 
@@ -169,16 +165,42 @@ function eventObservedAt(agentKey: string, event: ObserverEvent): number {
   return corrected <= Date.now() ? corrected : 0;
 }
 
+function resolveTerminalTurn(
+  agentKey: string,
+  event: ObserverEvent,
+  conversationId: string | null,
+): ActiveTurn | null {
+  const turns = activeTurnsByAgent.get(agentKey);
+  if (!turns) return null;
+  if (event.turnId) return turns.get(event.turnId) ?? null;
+  if (!event.channelId || !conversationId) return null;
+
+  const terminalTriggers = triggeringEventIds(event);
+  const candidates = [...turns.values()].filter(
+    (turn) =>
+      turn.channelId === event.channelId &&
+      turn.conversationId === conversationId &&
+      (terminalTriggers.length === 0 ||
+        terminalTriggers.every((trigger) =>
+          turn.triggeringEventIds.includes(trigger),
+        )),
+  );
+  return candidates.length === 1 ? (candidates[0] ?? null) : null;
+}
+
 function startTurn(
   agentPubkey: string,
   channelId: string,
   conversationId: string,
   turnId: string,
+  sessionId: string | null,
   timestamp: string,
   observedAt: number,
   triggerIds: string[] = [],
 ) {
   const key = normalizePubkey(agentPubkey);
+  if (retireConversationOutcomeAgent(conversationId, key))
+    bumpActiveTurnsGeneration();
   let agentTurns = activeTurnsByAgent.get(key);
   if (!agentTurns) {
     agentTurns = new Map();
@@ -204,6 +226,7 @@ function startTurn(
     turnId,
     createActiveTurn({
       turnId,
+      sessionId,
       channelId,
       conversationId,
       startedAt: parseTimestamp(timestamp) ?? observedAt,
@@ -211,8 +234,6 @@ function startTurn(
       triggeringEventIds: triggerIds,
     }),
   );
-  // A new turn for this conversation supersedes any prior terminal outcome.
-  clearOutcomeAndBump(conversationId);
   invalidateCache(key);
 }
 
@@ -270,6 +291,7 @@ function resurrectTurn(agentPubkey: string, event: ObserverEvent): boolean {
     event.channelId,
     event.conversationId ?? event.channelId,
     event.turnId,
+    event.sessionId,
     safeStartedAt,
     eventObservedAt(key, event),
   );
@@ -323,7 +345,6 @@ function recordTerminal(agentKey: string, turnId: string, terminalAt: number) {
 function endTurn(
   agentPubkey: string,
   turnId: string | null,
-  channelId: string | null,
   terminalAt: number,
 ) {
   const key = normalizePubkey(agentPubkey);
@@ -338,19 +359,7 @@ function endTurn(
   const agentTurns = activeTurnsByAgent.get(key);
   if (!agentTurns) return;
 
-  if (turnId) {
-    agentTurns.delete(turnId);
-  } else if (channelId) {
-    // Fallback: remove by channelId if turnId not available. Tombstone the
-    // resolved turn so a later stale liveness for it can't resurrect a badge.
-    for (const [tid, turn] of agentTurns) {
-      if (turn.channelId === channelId) {
-        agentTurns.delete(tid);
-        recordTerminal(key, tid, terminalAt);
-        break;
-      }
-    }
-  }
+  if (turnId) agentTurns.delete(turnId);
   if (agentTurns.size === 0) {
     activeTurnsByAgent.delete(key);
   }
@@ -374,6 +383,8 @@ function pruneExpired() {
           agentPubkey: agentKey,
           channelId: turn.channelId,
           endedAt: now,
+          terminalAt: now,
+          terminalOrderKey: `${agentKey}\u0000${turnId}\u0000lost-contact`,
           failedEventIds: [...turn.triggeringEventIds],
         });
         agentTurns.delete(turnId);
@@ -440,6 +451,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
           event.channelId,
           event.conversationId ?? event.channelId,
           event.turnId ?? `seq-${event.seq}`,
+          event.sessionId,
           event.timestamp,
           observedAt,
           triggeringEventIds(event),
@@ -480,33 +492,32 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
     case "turn_completed":
     case "turn_error":
     case "agent_panic": {
-      // Do not clear retrying here: automatic requeue emits `turn_retrying`
-      // in the same failure path, and clearing on turn_error would wipe it.
-      // Retrying state clears on the next `turn_started` (or a later
-      // turn_retrying overwrite).
+      // A failure may immediately emit `turn_retrying`; preserve it until the
+      // next `turn_started` or retrying overwrite.
       // Reuse the event's already-resolved channel/conversation ids — do not
       // re-derive from the live turn map (the turn may already be pruned).
       const conversationId = event.conversationId ?? event.channelId;
-      const terminalTurn = event.turnId
-        ? activeTurnsByAgent.get(key)?.get(event.turnId)
-        : [...(activeTurnsByAgent.get(key)?.values() ?? [])].find(
-            (turn) => turn.channelId === event.channelId,
-          );
-      if (event.channelId && conversationId) {
-        recordOutcomeAndBump(conversationId, {
-          outcome: event.kind === "turn_completed" ? "completed" : "error",
-          agentPubkey: key,
-          channelId: event.channelId,
-          endedAt: observedAt,
-          failedEventIds: [...(terminalTurn?.triggeringEventIds ?? [])],
-        });
+      const terminalTurn = resolveTerminalTurn(key, event, conversationId);
+      const resolvedTurnId = event.turnId ?? terminalTurn?.turnId ?? null;
+      const terminalTriggers =
+        terminalTurn?.triggeringEventIds ?? triggeringEventIds(event);
+      const terminalAt = parseTimestamp(event.timestamp) ?? 0;
+      if (event.channelId && conversationId && resolvedTurnId) {
+        recordOutcomeAndBump(
+          conversationId,
+          buildSignedConversationOutcome({
+            agentKey: key,
+            event,
+            resolvedTurnId,
+            channelId: event.channelId,
+            endedAt: observedAt,
+            terminalAt,
+            triggeringEventIds: terminalTriggers,
+            sessionId: event.sessionId ?? terminalTurn?.sessionId ?? undefined,
+          }),
+        );
       }
-      endTurn(
-        agentPubkey,
-        event.turnId ?? null,
-        event.channelId ?? null,
-        Date.parse(event.timestamp),
-      );
+      endTurn(agentPubkey, resolvedTurnId, terminalAt);
       notifyListeners();
       return;
     }

@@ -625,6 +625,15 @@ impl EventQueue {
         // Preserve any already-cancelled events from a prior cancel (double-cancel).
         entry.extend(batch.cancelled_events);
         entry.extend(batch.events);
+        if entry.len() > MAX_PENDING_PER_CHANNEL {
+            let overflow = entry.len() - MAX_PENDING_PER_CHANNEL;
+            entry.drain(..overflow);
+            tracing::warn!(
+                channel_id = %batch.channel_id,
+                limit = MAX_PENDING_PER_CHANNEL,
+                "cancelled requeue overflow — dropped oldest pre-completion events"
+            );
+        }
         self.cancel_reasons.insert(batch.channel_id, reason);
     }
 

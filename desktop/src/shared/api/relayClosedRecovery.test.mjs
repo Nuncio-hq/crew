@@ -306,6 +306,42 @@ test("replacement EOSE does not report open before durable history recovery comp
   assert.deepEqual(statuses.at(-1), { state: "open" });
 });
 
+test("terminal history rejection closes recovery instead of reusing the transient live CLOSED", async () => {
+  resetAll(0);
+  const statuses = [];
+  const subscription = {
+    mode: "live",
+    filter: { kinds: [46_043], "#h": ["channel-1"], limit: 0 },
+    onEvent: () => {},
+    onStatus: (status) => statuses.push(status),
+    ready: true,
+  };
+  const subscriptions = new Map([["durable-live", subscription]]);
+
+  handleRelayClosed({
+    subscriptions,
+    subId: "durable-live",
+    message: "error: retryable live failure",
+    sendReq: async () => {},
+    recoverHistory: async () => {
+      throw new Error("restricted: durable history denied");
+    },
+  });
+  tickTo(1_001);
+  for (let index = 0; index < 6; index++) await Promise.resolve();
+
+  assert.equal(subscriptions.size, 0);
+  assert.deepEqual(statuses.at(-1), {
+    state: "closed",
+    message: "restricted: durable history denied",
+  });
+  assert.equal(
+    pendingTimers.size,
+    0,
+    "terminal recovery must not re-arm retry",
+  );
+});
+
 test("overlapping CLOSED recovery ignores stale send completion and EOSE", async () => {
   resetAll(0);
   let resolveFirstSend;
