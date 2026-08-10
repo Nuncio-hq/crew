@@ -2,11 +2,27 @@
  * Issue #119 acceptance coverage for named Hermes readiness and profile
  * archive lifecycle surfaces.
  */
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
 
 const AGENT_PUBKEY = "cc".repeat(32);
+
+async function captureEvidence(
+  locator: import("@playwright/test").Locator,
+  filename: string,
+  testInfo: import("@playwright/test").TestInfo,
+) {
+  const evidencePath = `/home/ubuntu/119-evidence/${filename}`;
+  const path = existsSync("/home/ubuntu")
+    ? evidencePath
+    : testInfo.outputPath("evidence", filename);
+  mkdirSync(dirname(path), { recursive: true });
+  await locator.screenshot({ path });
+}
 
 async function openAgents(page: import("@playwright/test").Page) {
   await page.setViewportSize({ width: 1600, height: 1000 });
@@ -18,7 +34,9 @@ async function openAgents(page: import("@playwright/test").Page) {
 }
 
 test.describe("Hermes profile lifecycle acceptance", () => {
-  test("readiness card renders every named state", async ({ page }) => {
+  test("readiness card renders every named state", async ({
+    page,
+  }, testInfo) => {
     const states = [
       {
         state: "ready",
@@ -69,9 +87,11 @@ test.describe("Hermes profile lifecycle acceptance", () => {
       const indicator = page.getByTestId(readiness.expectedId);
       await expect(indicator).toBeVisible();
       await expect(indicator).toContainText(readiness.copy);
-      await indicator.screenshot({
-        path: `/home/ubuntu/119-evidence/readiness-${readiness.state}.png`,
-      });
+      await captureEvidence(
+        indicator,
+        `readiness-${readiness.state}.png`,
+        testInfo,
+      );
       if (readiness.state === "auth_unknown") {
         await expect(indicator).not.toHaveClass(/destructive|warning/);
         await expect(indicator).toContainText("Auth not verifiable");
@@ -115,7 +135,7 @@ test.describe("Hermes profile lifecycle acceptance", () => {
 
   test("offboarding archive choice shows estimate and optional reason", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await installMockBridge(page, {
       managedAgents: [
         {
@@ -144,14 +164,12 @@ test.describe("Hermes profile lifecycle acceptance", () => {
     await expect(
       page.getByTestId("hermes-profile-offboard-reason"),
     ).not.toHaveAttribute("required", "");
-    await dialog.screenshot({
-      path: "/home/ubuntu/119-evidence/offboard-archive-dialog.png",
-    });
+    await captureEvidence(dialog, "offboard-archive-dialog.png", testInfo);
   });
 
   test("archive panel exposes manifest facts and exact-name delete gate", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await installMockBridge(page, {
       managedAgents: [
         {
@@ -195,9 +213,7 @@ test.describe("Hermes profile lifecycle acceptance", () => {
     );
     await expect(row).toBeVisible();
     await expect(row).toContainText(/scout|E2E archive|audio_cache/i);
-    await row.screenshot({
-      path: "/home/ubuntu/119-evidence/archives-list.png",
-    });
+    await captureEvidence(row, "archives-list.png", testInfo);
     await row
       .getByTestId("hermes-profile-archive-restore-scout-mock-archive")
       .click();
@@ -264,10 +280,12 @@ test.describe("Hermes profile lifecycle acceptance", () => {
         "hermes-profile-archive-confirm-delete-scout-mock-archive",
       ),
     ).toBeEnabled();
-    await page
-      .getByTestId("hermes-profile-archive-confirm-input-scout-mock-archive")
-      .screenshot({
-        path: "/home/ubuntu/119-evidence/permanent-delete-confirmation.png",
-      });
+    await captureEvidence(
+      page.getByTestId(
+        "hermes-profile-archive-confirm-input-scout-mock-archive",
+      ),
+      "permanent-delete-confirmation.png",
+      testInfo,
+    );
   });
 });
