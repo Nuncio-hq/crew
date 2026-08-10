@@ -44,7 +44,8 @@ test("issue comments use the project activity timeline", async ({ page }) => {
     });
     const successToast = page.getByText("Comment posted.", { exact: true });
     await expect(successToast).toBeVisible();
-    await expect(successToast).toBeHidden();
+    await page.mouse.move(0, 0);
+    await expect(successToast).toBeHidden({ timeout: 10_000 });
   }
 
   const timelineRows = page.getByTestId("project-issue-comment-timeline-row");

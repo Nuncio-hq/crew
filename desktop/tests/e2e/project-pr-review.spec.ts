@@ -985,12 +985,10 @@ test("project overview does not paint a background behind its cards", async ({
   await page.getByTestId("open-projects-view").click();
 
   const landing = page.getByTestId("projects-outcome-landing");
-  await expect(landing).toHaveCSS(
-    "background-color",
-    "rgba(0, 0, 0, 0)",
+  await expect(landing).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  const outcomeCards = landing.locator(
+    '[data-testid^="project-outcome-card-"]',
   );
-
-  const outcomeCards = landing.locator('[data-testid^="project-outcome-card-"]');
   await expect(outcomeCards.first()).toBeVisible();
   const outcomeCardCount = await outcomeCards.count();
   for (let index = 0; index < outcomeCardCount; index += 1) {

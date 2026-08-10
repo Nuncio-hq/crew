@@ -880,6 +880,7 @@ test("navigating via a 30617 entity-link route opens the correct non-primary rep
             ["branch-name", "feature/entity-link-test"],
             ["clone", "https://github.com/block/relay-tools.git"],
           ],
+          sig: "mocksig".repeat(20).slice(0, 128),
         },
       ];
     },

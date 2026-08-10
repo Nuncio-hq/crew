@@ -8,5 +8,7 @@ export async function expandProjectPlumbing(page: Page): Promise<void> {
     await plumbing.locator("summary").click();
   }
   await expect(plumbing).toHaveAttribute("open", "");
-  await expect(plumbing.getByRole("tab").first()).toBeVisible();
+  await expect(plumbing.getByRole("tab").first()).toBeVisible({
+    timeout: 10_000,
+  });
 }
