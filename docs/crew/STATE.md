@@ -134,6 +134,11 @@ Out of scope for this slice:
 - Evidence-card C2 and owner-reaction C3 Playwright contracts pass, including
   full authored text excerpts for the text layouts and owner-consistent verdict
   state.
+- Phase 09 live probe results are recorded in
+  [`verification/0010-evidence-on-thread-log-probes.md`](verification/0010-evidence-on-thread-log-probes.md).
+  Probe 1 is explicitly split between the mock desktop command-payload check
+  and the separate real-relay reaction read-back; the single-process
+  click-to-relay chain remains unverified.
 - The desktop unit suite passes with 5045 tests passing, one skipped, and zero
   failures.
 - `buzz-acp` uses the process cwd for ordinary sessions and one validated,
