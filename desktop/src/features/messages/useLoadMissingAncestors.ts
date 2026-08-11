@@ -22,9 +22,9 @@ import type { Channel, RelayEvent } from "@/shared/api/types";
 /**
  * Fetch thread ancestors the loaded window does not contain.
  *
- * A live subscription starts at `since = now`, so an event created before the
- * subscription opened is never delivered even when its replies are. Without a
- * backfill the client holds replies whose root it has never seen: the root has
+ * A live subscription is bounded near the present, so an event older than that
+ * bound is never delivered even when its replies are. Without a backfill the
+ * client holds replies whose root it has never seen: the root has
  * no timeline row, its thread summary has nothing to attach to, and the reply
  * graph the unread counts walk is missing its top.
  *
