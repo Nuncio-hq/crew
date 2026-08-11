@@ -546,10 +546,10 @@ test.describe("hermes profile binding", () => {
       dialog.getByText("Agent instructions (optional)"),
     ).toBeVisible();
     await expect(dialog).toContainText(
-      "L1: the profile’s SOUL.md — who the person is",
+      "L1 SOUL.md = the profile’s persona, Hermes-owned, Crew edits write-through.",
     );
     await expect(dialog).toContainText(
-      "L3: this box — job context for this Crew agent only",
+      "L3 the Crew agent description = optional per-agent job context, appended only when non-empty.",
     );
     await page.screenshot({
       path: "/tmp/shots118/agent-instructions-optional.png",
