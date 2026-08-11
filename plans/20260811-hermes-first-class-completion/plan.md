@@ -174,6 +174,11 @@ Everything else in #104 is shipped, in flight, or obsolete.
 - [`phase-01-doctor-completion.md`](phase-01-doctor-completion.md) — R1 Hermes Doctor completion
 - [`phase-02-live-certification.md`](phase-02-live-certification.md) — R2 live-Hermes verification records
 - [`phase-03-capability-view.md`](phase-03-capability-view.md) — R3 conditional effective capability view
+- [`closeout/README.md`](closeout/README.md) — filing order and prepared artifacts
+- [`closeout/104-closing-comment.md`](closeout/104-closing-comment.md) — paste-ready #104 closeout
+- [`closeout/issue-r1-doctor-completion.md`](closeout/issue-r1-doctor-completion.md) — paste-ready R1 issue
+- [`closeout/issue-r2-live-certification.md`](closeout/issue-r2-live-certification.md) — paste-ready R2 issue
+- [`closeout/issue-r3-capability-view.md`](closeout/issue-r3-capability-view.md) — paste-ready R3 issue
 
 ### Spike questions that must be answered before any of R1/R3 is implemented
 
@@ -245,23 +250,38 @@ Per D-008 no production code starts before these are conclusive.
 
 | Question | Decision | Consequence |
 | --- | --- | --- |
-| **Q1 — model configuration** | **#118 wins.** Crew-side model write-through is approved; #104's no-model/provider-configuration non-goal and D-019's presentation clause are superseded. | D-019's substance remains: the Hermes profile owns the model and Crew stores no competing copy. #118 owns the implementation. Its PR must record the D-019 amendment in `DECISIONS.md`; this plan takes no D-number. |
+| **Q1 — model configuration** | **#118 wins.** Crew-side model write-through shipped in PR #149 on branch `agents/hermes-profile-editing`. D-038's accepted record (`docs/crew/DECISIONS.md:493-505`, PR #149 / branch `agents/hermes-profile-editing`) defines the implementation and preserves Hermes as the single source of truth. | D-038 already carries the D-019 presentation-clause and `HERMES.md` rule-2 supersession (`docs/crew/DECISIONS.md:507-511`, PR #149 / branch `agents/hermes-profile-editing`). The #104 issue-body non-goal is moot when the issue closes; this plan files nothing and edits neither `DECISIONS.md` nor `HERMES.md`. |
 | **Q6 — disposition** | **Close #104 once #134 merges, then replace it with three narrow issues.** | The three issues are R1 Doctor completion, R2 live-Hermes certification, and R3 capability view. |
+
+### Where each text amendment lives
+
+- **D-019 presentation clause and `HERMES.md` rule 2:** already superseded by
+  D-038 in #149, branch `agents/hermes-profile-editing`
+  (`docs/crew/DECISIONS.md:493-511`). This PR does not file or amend either
+  file.
+- **#104's “Crew does not configure model/provider” non-goal:** text in the
+  GitHub issue body only; it is moot when Q6 closes #104, and is superseded
+  operationally by #149/D-038.
+- **Hermes `STATE.md` drift:** finding §5.4 belongs to #124. This PR does not
+  edit `STATE.md`, `DECISIONS.md`, or `HERMES.md`, which other open PRs are
+  already rewriting.
 
 ---
 
 ## 7. Agreed disposition (founder-decided)
 
-**#104 is mostly covered and will close once #134 merges, with the remainder
-tracked as three narrow issues.** Concretely:
+**This PR does not close #104. #104 must remain open until #134 merges.**
+After that precondition, the founder files the pre-written closeout artifacts
+and closes #104 with the real replacement issue numbers. The remainder is
+tracked as three narrow issues:
 
-1. **Close #104** once #134 merges, with a comment mapping each phase to what
-   covered it (Phase 01 → #106/#107; Phase 02/05 → #119/#134; Phase 03/04 →
-   already on `main`; Phase 06 → new issue).
-2. Open **three narrow issues** in its place:
-   - *Hermes Doctor completion* (R1) — after spikes S-A and S-C.
-   - *Live-Hermes certification records* (R2) — verification-only, no code.
-   - *Effective capability view* (R3) — gated on S-B and on Q2.
+1. **After #134 merges, file the prepared artifacts**:
+   [`closeout/issue-r1-doctor-completion.md`](closeout/issue-r1-doctor-completion.md),
+   [`closeout/issue-r2-live-certification.md`](closeout/issue-r2-live-certification.md),
+   [`closeout/issue-r3-capability-view.md`](closeout/issue-r3-capability-view.md).
+2. **Then paste the prepared closing comment** from
+   [`closeout/104-closing-comment.md`](closeout/104-closing-comment.md), with
+   the real replacement issue numbers, and close #104.
 3. Leave **C-12 / auth truthfulness** filed as the standing Hermes-side ask
    (feature §7.3); it is not Crew work.
 4. Fix the STATE.md Hermes drift on **#124**, not here.
