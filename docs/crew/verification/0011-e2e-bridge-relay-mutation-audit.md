@@ -286,6 +286,33 @@ Expected: visible
 Error: element(s) not found
 ```
 
+### Smoke shard-2 baseline
+
+PR #146 shard 2
+[31493426658/job/93785356715](https://github.com/Nuncio-hq/crew/actions/runs/31493426658/job/93785356715)
+reported one failure:
+
+```text
+[smoke] › tests/e2e/evidence-reactions.spec.ts:46:1 › owner Accept and Reject round-trip as reactions on the evidence card
+```
+
+The error is a strict-mode violation because the rejected indicator appears
+in both the message timeline and the opened thread head after Reject opens
+the reply composer:
+
+```text
+Locator: getByTestId('evidence-card-test-run').getByTestId('evidence-reaction-rejected')
+Error: strict mode violation: ... resolved to 2 elements:
+  1) ... getByTestId('message-timeline').getByTestId('evidence-reaction-rejected')
+  2) ... getByTestId('message-thread-head').getByTestId('evidence-reaction-rejected')
+```
+
+The same three-test file run against clean `origin/main`
+(`8b4e8aad1`) reproduced the failure exactly. It is not caused by the
+relay-mutation bridge changes; `evidence-reactions.spec.ts` is an inherited
+PR #128 test whose `card` selector does not narrow to the timeline card when
+the reply composer opens the thread head.
+
 ## Mock-boundary audit
 
 “Relay-aware” means the bridge has a relay branch that publishes the real
