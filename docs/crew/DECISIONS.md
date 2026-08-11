@@ -729,6 +729,27 @@ permission mode from the channel's role assignment (the existing seam at
 shipped in #148 predates this evidence and remains dev-mcp only. Claude is
 untested (binary unavailable) and keeps the original wording until measured.
 
+**Amendment 2 (2026-08-11) — implemented, so the enforcement claim is now
+per-engine and observable.** Withholding `buzz-dev-mcp` for a channel clamps
+that channel's ACP session to a read-only native floor as well, addressed by
+session ID immediately after `session/new`
+(`apply_native_tool_floor` in `crates/buzz-acp/src/pool.rs`): the engine's
+advertised floor via `session/set_config_option` `configId: mode` when
+`session/new` lists one (Codex `read-only`, Claude `plan`), otherwise an
+attempted `session/set_mode` (Grok, which advertises no modes yet enforces
+`plan`). Sibling channels on the same process are unaffected, so this is not a
+process-level union.
+
+Capability is still never inferred from the free-form role label, and the
+floor is only clamped **down**: a channel with no Crew capability block keeps
+the process-wide permission mode untouched.
+
+An engine that refuses the request is not a failure — the session continues
+with dev-mcp withheld and the harness emits a `session_capability_floor` frame
+with `enforcement: "advisory"` (vs `"engine"` when the engine accepted). That
+frame, not prose, is what any surface may claim. "Denial is a Crew rule, not a
+wall" is therefore accurate exactly when `enforcement` is `advisory`.
+
 ## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
 
 - **Status:** Accepted

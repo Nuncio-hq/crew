@@ -916,6 +916,21 @@ const CONTROL_CANCEL_GRACE: Duration = Duration::from_secs(5);
 /// Timeout for permission-mode requests (`session/set_config_option` with `configId: "mode"`).
 const PERMISSION_MODE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Session mode IDs that clamp an engine's own file/shell tools to read-only,
+/// most restrictive first.
+///
+/// Engines disagree on the label for the same floor: Codex advertises
+/// `read-only` in `session/new.modes.availableModes`, `claude-agent-acp` calls
+/// its non-executing mode `plan`, and Grok advertises no modes at all but
+/// accepts `plan` on `session/set_mode` (spike 0018, real-engine section).
+const READ_ONLY_FLOOR_MODES: [&str; 4] = ["read-only", "readOnly", "plan", "dontAsk"];
+
+/// Mode ID attempted on engines that advertise no modes in `session/new`.
+///
+/// Grok is the observed member of this class: it answers `session/set_mode`
+/// with `plan` and then refuses native writes in that session only.
+const UNADVERTISED_FLOOR_MODE: &str = "plan";
+
 /// Placeholder [`fetch_channel_info`] substitutes when a channel's metadata
 /// event carries no `name` tag. Not a real channel name — consumers that need
 /// an identifying name must treat it as absent.
@@ -1003,6 +1018,9 @@ async fn create_session_and_apply_model(
         .session_title
         .as_deref()
         .map(|agent_name| compose_session_title(agent_name, channel_name));
+    // A channel with a Crew capability block decides dev-mcp for *this* session
+    // only; a channel without one keeps the process-wide server list.
+    let dev_mcp_denied = capability_denies_dev_mcp(capabilities);
     let capability_servers = capabilities.map(|keys| {
         let granted = keys.iter().any(|key| key == CAPABILITY_DEV_MCP);
         ctx.mcp_servers
@@ -1122,7 +1140,151 @@ async fn create_session_and_apply_model(
         apply_permission_mode(&mut agent.acp, &resp.session_id, &ctx.permission_mode).await?;
     }
 
+    // Removing dev-mcp only closes the door Crew opened; an engine with its own
+    // file/shell tools still has them. Clamp this session's native floor too,
+    // addressed by session ID so sibling channels on the same process keep
+    // theirs. Applied after the process-wide permission mode so the channel's
+    // capability grant is the stricter, final word.
+    if dev_mcp_denied {
+        apply_native_tool_floor(&mut agent.acp, &resp.session_id, &resp.raw).await?;
+    }
+
     Ok(resp.session_id)
+}
+
+/// Whether a channel's founder-signed capability grant withholds developer MCP.
+///
+/// `None` means the channel has no Crew capability block at all, which leaves
+/// existing behaviour untouched. A present-but-empty or unknown-only grant
+/// denies: capability is never inferred from the free-form role label.
+fn capability_denies_dev_mcp(capabilities: Option<&[String]>) -> bool {
+    capabilities.is_some_and(|keys| !keys.iter().any(|key| key == CAPABILITY_DEV_MCP))
+}
+
+/// How a session's native-tool floor can be clamped on a given engine.
+#[derive(Debug, Clone, PartialEq)]
+enum NativeFloorMethod {
+    /// Engine advertises the mode in `session/new`: set it with
+    /// `session/set_config_option` (`configId: "mode"`). Verified on Codex.
+    ConfigOption { mode_id: String },
+    /// Engine advertises no modes: attempt session-addressed
+    /// `session/set_mode`. Verified on Grok, unsupported elsewhere.
+    SetMode { mode_id: String },
+}
+
+impl NativeFloorMethod {
+    fn mode_id(&self) -> &str {
+        match self {
+            Self::ConfigOption { mode_id } | Self::SetMode { mode_id } => mode_id,
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::ConfigOption { .. } => "session/set_config_option",
+            Self::SetMode { .. } => "session/set_mode",
+        }
+    }
+}
+
+/// Pick the read-only floor a `session/new` response supports.
+///
+/// Prefers a mode the engine actually advertised, in `READ_ONLY_FLOOR_MODES`
+/// order, so the most restrictive available floor wins. Engines that advertise
+/// nothing get the `session/set_mode` attempt; whether they honour it is
+/// decided by their answer, not by guessing here.
+fn resolve_native_floor_method(session_new_result: &serde_json::Value) -> NativeFloorMethod {
+    for candidate in READ_ONLY_FLOOR_MODES {
+        if agent_supports_mode(session_new_result, candidate) {
+            return NativeFloorMethod::ConfigOption {
+                mode_id: candidate.to_string(),
+            };
+        }
+    }
+    NativeFloorMethod::SetMode {
+        mode_id: UNADVERTISED_FLOOR_MODE.to_string(),
+    }
+}
+
+/// Clamp one ACP session's native file/shell tools to a read-only floor.
+///
+/// Transport-class failures propagate so the caller can respawn. An engine that
+/// rejects the request (unknown method, unknown mode) is **not** an error: the
+/// session keeps running with dev-mcp withheld, and the emitted
+/// `session_capability_floor` frame reports `enforcement: "advisory"` so no
+/// surface claims a native wall that the engine never agreed to.
+async fn apply_native_tool_floor(
+    acp: &mut AcpClient,
+    session_id: &str,
+    session_new_result: &serde_json::Value,
+) -> Result<(), AcpError> {
+    let method = resolve_native_floor_method(session_new_result);
+    let mode_id = method.mode_id().to_string();
+    let label = method.label();
+
+    let result = tokio::time::timeout(PERMISSION_MODE_TIMEOUT, async {
+        match &method {
+            NativeFloorMethod::ConfigOption { mode_id } => {
+                acp.session_set_config_option(session_id, "mode", mode_id)
+                    .await
+            }
+            NativeFloorMethod::SetMode { mode_id } => {
+                acp.session_set_mode(session_id, mode_id).await
+            }
+        }
+    })
+    .await;
+
+    let enforcement = match result {
+        Ok(Ok(_)) => {
+            tracing::info!(
+                target: "pool::capability",
+                "clamped session {session_id} to native floor {mode_id:?} via {label}"
+            );
+            "engine"
+        }
+        // Transport-class errors may have corrupted the stdio stream — propagate
+        // so the caller can respawn the agent.
+        Ok(Err(e @ AcpError::Io(_)))
+        | Ok(Err(e @ AcpError::WriteTimeout(_)))
+        | Ok(Err(e @ AcpError::Timeout(_)))
+        | Ok(Err(e @ AcpError::Protocol(_)))
+        | Ok(Err(e @ AcpError::AgentExited)) => {
+            tracing::error!(
+                target: "pool::capability",
+                "fatal error clamping session {session_id} to {mode_id:?} via {label}: {e}"
+            );
+            return Err(e);
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                target: "pool::capability",
+                "engine refused native floor {mode_id:?} via {label}: {e} — \
+                 dev-mcp stays withheld, but this engine's own file/shell tools \
+                 are not walled off for this channel"
+            );
+            "advisory"
+        }
+        Err(_) => {
+            tracing::error!(
+                target: "pool::capability",
+                "native floor set timed out ({PERMISSION_MODE_TIMEOUT:?}) — treating as fatal"
+            );
+            return Err(AcpError::Timeout(PERMISSION_MODE_TIMEOUT));
+        }
+    };
+
+    acp.observe(
+        "session_capability_floor",
+        serde_json::json!({
+            "sessionId": session_id,
+            "devMcp": "denied",
+            "modeId": mode_id,
+            "method": label,
+            "enforcement": enforcement,
+        }),
+    );
+    Ok(())
 }
 
 fn mcp_servers_with_git_origin(
@@ -6291,6 +6453,72 @@ mod tests {
         assert_eq!(denied[0].name, unrelated.name);
         assert_eq!(denied[0].command, unrelated.command);
         assert!(is_dev_mcp_server(&test_mcp_server()));
+    }
+
+    #[test]
+    fn capability_grant_decides_native_floor_not_role_label() {
+        // No Crew capability block: process-wide behaviour is untouched.
+        assert!(!capability_denies_dev_mcp(None));
+        // Granted.
+        assert!(!capability_denies_dev_mcp(Some(&[
+            CAPABILITY_DEV_MCP.into()
+        ])));
+        // Present but empty, and unknown-only, both deny.
+        assert!(capability_denies_dev_mcp(Some(&[])));
+        assert!(capability_denies_dev_mcp(Some(&["something-else".into()])));
+        // A role label that sounds privileged grants nothing.
+        assert!(capability_denies_dev_mcp(Some(&["backend-dev".into()])));
+    }
+
+    #[test]
+    fn native_floor_prefers_the_engine_s_advertised_mode() {
+        // Codex advertises read-only/agent/agent-full-access.
+        let codex = serde_json::json!({
+            "modes": {
+                "currentModeId": "agent",
+                "availableModes": [
+                    {"id": "read-only"},
+                    {"id": "agent"},
+                    {"id": "agent-full-access"},
+                ],
+            },
+        });
+        assert_eq!(
+            resolve_native_floor_method(&codex),
+            NativeFloorMethod::ConfigOption {
+                mode_id: "read-only".into()
+            }
+        );
+
+        // claude-agent-acp has no read-only id; `plan` is its non-executing mode.
+        let claude = serde_json::json!({
+            "modes": {
+                "availableModes": [{"id": "default"}, {"id": "acceptEdits"}, {"id": "plan"}],
+            },
+        });
+        assert_eq!(
+            resolve_native_floor_method(&claude),
+            NativeFloorMethod::ConfigOption {
+                mode_id: "plan".into()
+            }
+        );
+    }
+
+    #[test]
+    fn native_floor_falls_back_to_set_mode_when_nothing_is_advertised() {
+        // Grok's session/new carries neither `modes` nor `configOptions`, yet it
+        // enforces `plan` when asked via session/set_mode (spike 0018).
+        let grok = serde_json::json!({"sessionId": "s-1"});
+        assert_eq!(
+            resolve_native_floor_method(&grok),
+            NativeFloorMethod::SetMode {
+                mode_id: "plan".into()
+            }
+        );
+        assert_eq!(
+            resolve_native_floor_method(&grok).label(),
+            "session/set_mode"
+        );
     }
 
     #[test]

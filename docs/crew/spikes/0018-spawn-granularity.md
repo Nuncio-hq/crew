@@ -219,12 +219,21 @@ session-addressed `session/set_mode`:
 {"method": "session/set_mode", "params": {"sessionId": "<B>", "modeId": "plan"}}
 ```
 
-On PID 483848 with a permission-approving client, session A wrote its file and
-session B refused (`DENIED`, no file). Under a permission-**denying** client
-(`real-grok-per-session-floor.json`) neither session could write, because
-Grok's default mode routes the write through a client permission request that
-the probe rejected — the distinction there is *where* the refusal comes from,
-not whether the floor differs.
+Grok needed two probe variables fixed before the run proved anything about the
+*engine*, and both matter when reading the assets:
+
+| Grok run | Client permission policy | Client `fs` capability | Result |
+|---|---|---|---|
+| `real-grok-per-session-floor.json` | deny | advertised | both sessions blocked — **inconclusive**, the probe's own rejection did it |
+| `real-grok-per-session-floor-approve.json` | approve | withheld | A `WROTE` (file exists), B `DENIED` (no file) — **floor differs**, PID 497755 |
+
+Denying permissions blocks Grok's unrestricted session too, since Grok asks
+before writing; and advertising a client `fs` capability makes Grok proxy the
+write back through the client, so an approving-but-no-op probe reported `WROTE`
+with no file on disk. Only the third combination — approve permissions, withhold
+`fs`, forcing Grok's own native file tool — isolates the engine's floor. In that
+run session B, and only session B, refused: *"Plan mode is active, so file
+creation outside the plan file is not permitted."*
 
 The earlier `FAIL` was drawn from Crew's own spawn path — `agent_args` such as
 Codex `-s` and Claude `--permission-mode` are fixed per process
@@ -237,8 +246,11 @@ control that they enforce. Crew already has the seam for it —
 shared process context rather than the channel's role assignment.
 
 Assets: `assets/0018-spawn-granularity/real-codex-per-session-floor.json`,
-`assets/0018-spawn-granularity/real-grok-per-session-floor.json`, probe
-scripts `acp_two_session_probe.py` and `acp_per_session_floor_probe.py`.
+`real-grok-per-session-floor.json` (the inconclusive deny run, kept so the
+distinction is checkable), `real-grok-per-session-floor-approve.json` (the
+conclusive run), probe scripts `acp_two_session_probe.py` and
+`acp_per_session_floor_probe.py`. Engine stderr is redacted in every asset: it
+carries auth prefixes and bearer fragments.
 
 ### Revised verdict
 

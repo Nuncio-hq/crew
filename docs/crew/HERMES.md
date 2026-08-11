@@ -252,25 +252,29 @@ Hermes-side ask lands.
 
 ## Crew roles (issue #116 Slice 1)
 
-- **Taxonomy (day one):** `code`, `content`, `research`, `ops` — one validated
-  list in `managed_agents::crew_role::TAXONOMY` / `features/agents/lib/crewRole.ts`.
-  Stored as a free string after validation.
-- **Assignment:** founder/owner only via the managed-agent edit UI (Crew role
-  control). Agents cannot self-assign. Non-owner role claims are ignored
-  (D-028).
-- **Storage:** `ManagedAgentRecord.crew_role` locally; private forward-compat
-  path `30179` `extensions["crew:role"]` (spike 0015). Public projection:
-  kind `10100` tag `["crew-role", <role>]`.
-- **Prompt:** buzz-acp injects a role section (allowed / not-allowed /
-  refuse-and-redirect + mandatory first-line `ROLE-CHECK`) on each **fresh
-  session** when a verified owner-assigned role is present. No role ⇒ no
-  section (byte-identical to prior behavior).
-- **Change semantics:** same as profile model changes / `!rotate` — desktop
-  writes `{app_data}/agents/<pubkey>.crew-role` and sets
-  `BUZZ_ACP_CREW_ROLE_FILE`; the harness re-reads the file on the next
-  session/new. **No respawn required.**
-- **Display:** role chip on the managed-agent row; edit control on the instance
-  edit dialog. Display-name convention for multi-role teams: prefer
-  handle = role (`code`, `content`, …) or `name (role)` when the handle is a
-  persona name.
-- **Capability flags / presets:** not Slice 1 (see plan Slices 2–3).
+- **Model:** a role is a founder/owner-signed `(agent, channel)` assignment
+  carried in that channel's fenced `crew` canvas block. Labels are free-form
+  validated strings; the founder-authored definition travels with the
+  assignment. There is no global taxonomy.
+- **Authority:** agents cannot self-assign. On read, the harness accepts the
+  Crew block only when the canvas author matches the agent's owner/founder
+  pubkey; non-owner blocks are ignored (D-028, D-043).
+- **Prompt:** buzz-acp injects a role section (definition text,
+  allowed/not-allowed/refuse-and-redirect guidance, and the mandatory first
+  reply `ROLE-CHECK`) on each **fresh channel session** when a valid assignment
+  is present. No assignment means no role section.
+- **Change semantics:** the owner updates the channel canvas. The next fresh
+  session for that channel reads the latest replaceable canvas event; no agent
+  respawn is required. Concurrent canvas edits use replaceable-event LWW
+  semantics.
+- **Routing and capabilities:** routing presets and founder-authored capability
+  keys are additional fields in the same channel Crew block. `buzz-dev-mcp`
+  denial is enforced through the per-session MCP list where that is the
+  engine's tool boundary, and on engines with their own file/shell tools the
+  same denial also clamps that session to a read-only native mode addressed by
+  session ID (Codex `read-only`, Grok `plan`; see D-044 amendment 2). Where an
+  engine refuses the session-scoped floor, the harness says so through
+  `session_capability_floor.enforcement: "advisory"` and the denial is a Crew
+  rule rather than a wall for that engine only. Hermes profile ownership remains a boundary for profile
+  memory/skills/credentials/model, not the capability boundary (D-024,
+  D-029, D-044).

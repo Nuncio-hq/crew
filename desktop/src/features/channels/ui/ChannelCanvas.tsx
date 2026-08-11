@@ -200,8 +200,10 @@ export function ChannelCanvas({
           className="text-xs text-muted-foreground"
           data-testid="channel-canvas-capability"
         >
-          Channel dev-mcp: {devMcpGranted ? "granted" : "denied"} (native engine
-          tools remain process-scoped)
+          Channel dev-mcp: {devMcpGranted ? "granted" : "denied"}
+          {devMcpGranted
+            ? null
+            : " — this channel's session is also clamped to the engine's read-only mode where the engine honours a session-scoped floor; engines that refuse it fall back to instruction only"}
         </p>
       ) : null}
       {canEdit && !isArchived ? (

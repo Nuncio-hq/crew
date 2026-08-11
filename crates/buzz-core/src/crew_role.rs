@@ -288,17 +288,27 @@ pub fn resolve_assignment(
         return Ok(None);
     };
     let mut label = None;
+    let mut malformed_key = None;
     for (agent, assignment_label) in &block.assignments {
         match same_pubkey(agent, agent_pubkey) {
             Ok(true) => {
                 label = Some(assignment_label.clone());
                 break;
             }
-            Ok(false) | Err(_) => continue,
+            Ok(false) => continue,
+            Err(_) => {
+                malformed_key.get_or_insert_with(|| agent.clone());
+                continue;
+            }
         }
     }
     let Some(label) = label else {
-        return Ok(None);
+        // A malformed key only surfaces when it could be the missing
+        // assignment, so one bad entry cannot hide a resolved role.
+        return match malformed_key {
+            Some(key) => Err(RoleParseError::InvalidPubkey(key)),
+            None => Ok(None),
+        };
     };
     let Some(definition) = block.definitions.get(&label.to_ascii_lowercase()) else {
         return Err(RoleParseError::MissingDefinition(label));
@@ -393,7 +403,7 @@ pub fn compose_role_section(assignment: &RoleAssignment) -> String {
          MANDATORY declaration: The FIRST line of your first reply message for each turn MUST be exactly:\n\n\
          ROLE-CHECK: role={} decision=accept|refuse reason=<short>\n\n\
          Never omit ROLE-CHECK, including for short answers.\n\n\
-         Capability note: channel dev-mcp denial is a Crew rule, not a hard wall, on engines with native file or shell tools; Codex/Claude native containment remains process-level.",
+         Capability note: when this channel withholds dev-mcp, Crew also clamps THIS session's native file and shell tools to a read-only floor, addressed by session ID, so the restriction holds for this channel alone. On an engine that refuses the session-scoped floor, the denial degrades to a Crew rule you are expected to honour rather than an enforced wall.",
         assignment.label, assignment.definition, assignment.label
     )
 }

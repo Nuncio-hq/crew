@@ -754,6 +754,23 @@ impl AcpClient {
         self.send_request("session/set_model", params).await
     }
 
+    /// Send `session/set_mode` — the ACP session-mode path.
+    ///
+    /// Used for engines that expose session modes without advertising them as
+    /// `configOptions` (Grok answers this method and enforces the mode on that
+    /// session alone; see spike 0018).
+    pub async fn session_set_mode(
+        &mut self,
+        session_id: &str,
+        mode_id: &str,
+    ) -> Result<serde_json::Value, AcpError> {
+        let params = serde_json::json!({
+            "sessionId": session_id,
+            "modeId": mode_id,
+        });
+        self.send_request("session/set_mode", params).await
+    }
+
     /// Send `session/prompt` with idle-based timeout instead of wall-clock.
     ///
     /// The idle deadline resets on any stdout activity from the agent. The hard

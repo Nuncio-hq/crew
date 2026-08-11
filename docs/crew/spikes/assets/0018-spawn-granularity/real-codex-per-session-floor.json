@@ -1,340 +1,342 @@
 {
-  "findings": {
-    "engine": "codex",
-    "cmd": "codex-acp",
-    "started": 1786429848.3909962,
-    "pid": 483192,
-    "session_ids": {
-      "a": "019fef84-3d09-7042-8809-6d22a9d2f68c",
-      "b": "019fef84-3d81-7271-9928-95eb40cee7d5"
-    },
-    "config_options_advertised": [
+ "findings": {
+  "engine": "codex",
+  "cmd": "codex-acp",
+  "started": 1786429848.3909962,
+  "pid": 483192,
+  "session_ids": {
+   "a": "019fef84-3d09-7042-8809-6d22a9d2f68c",
+   "b": "019fef84-3d81-7271-9928-95eb40cee7d5"
+  },
+  "config_options_advertised": [
+   {
+    "id": "mode",
+    "currentValue": "agent",
+    "options": [
+     "read-only",
+     "agent",
+     "agent-full-access"
+    ]
+   },
+   {
+    "id": "collaboration_mode",
+    "currentValue": "default",
+    "options": [
+     "default",
+     "plan"
+    ]
+   },
+   {
+    "id": "model",
+    "currentValue": "gpt-5.6-sol",
+    "options": [
+     "gpt-5.6-sol",
+     "gpt-5.6-terra",
+     "gpt-5.6-luna",
+     "gpt-daybreak-blue-latest",
+     "gpt-5.5",
+     "gpt-5.4",
+     "gpt-5.4-mini",
+     "gpt-5.3-codex-spark"
+    ]
+   },
+   {
+    "id": "reasoning_effort",
+    "currentValue": "low",
+    "options": [
+     "low",
+     "medium",
+     "high",
+     "xhigh",
+     "max",
+     "ultra"
+    ]
+   },
+   {
+    "id": "fast-mode",
+    "currentValue": "off",
+    "options": [
+     "off",
+     "on"
+    ]
+   }
+  ],
+  "set_config_option_b": {
+   "configOptions": [
+    {
+     "id": "mode",
+     "name": "Mode",
+     "description": "Approval and sandboxing preset for the session",
+     "category": "mode",
+     "type": "select",
+     "currentValue": "read-only",
+     "options": [
       {
-        "id": "mode",
-        "currentValue": "agent",
-        "options": [
-          "read-only",
-          "agent",
-          "agent-full-access"
-        ]
+       "value": "read-only",
+       "name": "Read-only",
+       "description": "Requires approval to edit files and run commands."
       },
       {
-        "id": "collaboration_mode",
-        "currentValue": "default",
-        "options": [
-          "default",
-          "plan"
-        ]
+       "value": "agent",
+       "name": "Agent",
+       "description": "Read and edit files, and run commands."
       },
       {
-        "id": "model",
-        "currentValue": "gpt-5.6-sol",
-        "options": [
-          "gpt-5.6-sol",
-          "gpt-5.6-terra",
-          "gpt-5.6-luna",
-          "gpt-daybreak-blue-latest",
-          "gpt-5.5",
-          "gpt-5.4",
-          "gpt-5.4-mini",
-          "gpt-5.3-codex-spark"
-        ]
-      },
-      {
-        "id": "reasoning_effort",
-        "currentValue": "low",
-        "options": [
-          "low",
-          "medium",
-          "high",
-          "xhigh",
-          "max",
-          "ultra"
-        ]
-      },
-      {
-        "id": "fast-mode",
-        "currentValue": "off",
-        "options": [
-          "off",
-          "on"
-        ]
+       "value": "agent-full-access",
+       "name": "Agent (full access)",
+       "description": "Codex can edit files outside this workspace and run commands with network access. Exercise caution when using."
       }
-    ],
-    "set_config_option_b": {
-      "configOptions": [
-        {
-          "id": "mode",
-          "name": "Mode",
-          "description": "Approval and sandboxing preset for the session",
-          "category": "mode",
-          "type": "select",
-          "currentValue": "read-only",
-          "options": [
-            {
-              "value": "read-only",
-              "name": "Read-only",
-              "description": "Requires approval to edit files and run commands."
-            },
-            {
-              "value": "agent",
-              "name": "Agent",
-              "description": "Read and edit files, and run commands."
-            },
-            {
-              "value": "agent-full-access",
-              "name": "Agent (full access)",
-              "description": "Codex can edit files outside this workspace and run commands with network access. Exercise caution when using."
-            }
-          ]
-        },
-        {
-          "id": "collaboration_mode",
-          "name": "Collaboration mode",
-          "description": "How Codex collaborates for subsequent turns",
-          "category": "collaboration_mode",
-          "type": "select",
-          "currentValue": "default",
-          "options": [
-            {
-              "value": "default",
-              "name": "Default"
-            },
-            {
-              "value": "plan",
-              "name": "Plan",
-              "description": "Plan before making changes"
-            }
-          ]
-        },
-        {
-          "id": "model",
-          "name": "Model",
-          "description": "Model Codex uses for the session",
-          "category": "model",
-          "type": "select",
-          "currentValue": "gpt-5.6-sol",
-          "options": [
-            {
-              "value": "gpt-5.6-sol",
-              "name": "GPT-5.6-Sol",
-              "description": "Latest frontier agentic coding model."
-            },
-            {
-              "value": "gpt-5.6-terra",
-              "name": "GPT-5.6-Terra",
-              "description": "Balanced agentic coding model for everyday work."
-            },
-            {
-              "value": "gpt-5.6-luna",
-              "name": "GPT-5.6-Luna",
-              "description": "Fast and affordable agentic coding model."
-            },
-            {
-              "value": "gpt-daybreak-blue-latest",
-              "name": "Daybreak Blue",
-              "description": "Latest frontier agentic coding model for broad defensive cybersecurity work."
-            },
-            {
-              "value": "gpt-5.5",
-              "name": "GPT-5.5",
-              "description": "Frontier model for complex coding, research, and real-world work."
-            },
-            {
-              "value": "gpt-5.4",
-              "name": "GPT-5.4",
-              "description": "Strong model for everyday coding."
-            },
-            {
-              "value": "gpt-5.4-mini",
-              "name": "GPT-5.4-Mini",
-              "description": "Small, fast, and cost-efficient model for simpler coding tasks."
-            },
-            {
-              "value": "gpt-5.3-codex-spark",
-              "name": "GPT-5.3-Codex-Spark",
-              "description": "Ultra-fast coding model."
-            }
-          ]
-        },
-        {
-          "id": "reasoning_effort",
-          "name": "Reasoning effort",
-          "description": "How much reasoning effort the model should use",
-          "category": "thought_level",
-          "type": "select",
-          "currentValue": "low",
-          "options": [
-            {
-              "value": "low",
-              "name": "Low",
-              "description": "Fast responses with lighter reasoning"
-            },
-            {
-              "value": "medium",
-              "name": "Medium",
-              "description": "Balances speed and reasoning depth for everyday tasks"
-            },
-            {
-              "value": "high",
-              "name": "High",
-              "description": "Greater reasoning depth for complex problems"
-            },
-            {
-              "value": "xhigh",
-              "name": "Xhigh",
-              "description": "Extra high reasoning depth for complex problems"
-            },
-            {
-              "value": "max",
-              "name": "Max",
-              "description": "Maximum reasoning depth for the hardest problems"
-            },
-            {
-              "value": "ultra",
-              "name": "Ultra",
-              "description": "Maximum reasoning with automatic task delegation"
-            }
-          ]
-        },
-        {
-          "id": "fast-mode",
-          "name": "Fast mode",
-          "description": "1.5x speed, increased usage",
-          "category": "model_config",
-          "type": "select",
-          "currentValue": "off",
-          "options": [
-            {
-              "value": "off",
-              "name": "Off",
-              "description": "Default speed, normal usage"
-            },
-            {
-              "value": "on",
-              "name": "On",
-              "description": "1.5x speed, increased usage"
-            }
-          ]
-        }
-      ]
+     ]
     },
-    "b_stop": {
-      "stopReason": "end_turn",
-      "usage": {
+    {
+     "id": "collaboration_mode",
+     "name": "Collaboration mode",
+     "description": "How Codex collaborates for subsequent turns",
+     "category": "collaboration_mode",
+     "type": "select",
+     "currentValue": "default",
+     "options": [
+      {
+       "value": "default",
+       "name": "Default"
+      },
+      {
+       "value": "plan",
+       "name": "Plan",
+       "description": "Plan before making changes"
+      }
+     ]
+    },
+    {
+     "id": "model",
+     "name": "Model",
+     "description": "Model Codex uses for the session",
+     "category": "model",
+     "type": "select",
+     "currentValue": "gpt-5.6-sol",
+     "options": [
+      {
+       "value": "gpt-5.6-sol",
+       "name": "GPT-5.6-Sol",
+       "description": "Latest frontier agentic coding model."
+      },
+      {
+       "value": "gpt-5.6-terra",
+       "name": "GPT-5.6-Terra",
+       "description": "Balanced agentic coding model for everyday work."
+      },
+      {
+       "value": "gpt-5.6-luna",
+       "name": "GPT-5.6-Luna",
+       "description": "Fast and affordable agentic coding model."
+      },
+      {
+       "value": "gpt-daybreak-blue-latest",
+       "name": "Daybreak Blue",
+       "description": "Latest frontier agentic coding model for broad defensive cybersecurity work."
+      },
+      {
+       "value": "gpt-5.5",
+       "name": "GPT-5.5",
+       "description": "Frontier model for complex coding, research, and real-world work."
+      },
+      {
+       "value": "gpt-5.4",
+       "name": "GPT-5.4",
+       "description": "Strong model for everyday coding."
+      },
+      {
+       "value": "gpt-5.4-mini",
+       "name": "GPT-5.4-Mini",
+       "description": "Small, fast, and cost-efficient model for simpler coding tasks."
+      },
+      {
+       "value": "gpt-5.3-codex-spark",
+       "name": "GPT-5.3-Codex-Spark",
+       "description": "Ultra-fast coding model."
+      }
+     ]
+    },
+    {
+     "id": "reasoning_effort",
+     "name": "Reasoning effort",
+     "description": "How much reasoning effort the model should use",
+     "category": "thought_level",
+     "type": "select",
+     "currentValue": "low",
+     "options": [
+      {
+       "value": "low",
+       "name": "Low",
+       "description": "Fast responses with lighter reasoning"
+      },
+      {
+       "value": "medium",
+       "name": "Medium",
+       "description": "Balances speed and reasoning depth for everyday tasks"
+      },
+      {
+       "value": "high",
+       "name": "High",
+       "description": "Greater reasoning depth for complex problems"
+      },
+      {
+       "value": "xhigh",
+       "name": "Xhigh",
+       "description": "Extra high reasoning depth for complex problems"
+      },
+      {
+       "value": "max",
+       "name": "Max",
+       "description": "Maximum reasoning depth for the hardest problems"
+      },
+      {
+       "value": "ultra",
+       "name": "Ultra",
+       "description": "Maximum reasoning with automatic task delegation"
+      }
+     ]
+    },
+    {
+     "id": "fast-mode",
+     "name": "Fast mode",
+     "description": "1.5x speed, increased usage",
+     "category": "model_config",
+     "type": "select",
+     "currentValue": "off",
+     "options": [
+      {
+       "value": "off",
+       "name": "Off",
+       "description": "Default speed, normal usage"
+      },
+      {
+       "value": "on",
+       "name": "On",
+       "description": "1.5x speed, increased usage"
+      }
+     ]
+    }
+   ]
+  },
+  "b_stop": {
+   "stopReason": "end_turn",
+   "usage": {
+    "totalTokens": 17782,
+    "inputTokens": 11888,
+    "cachedReadTokens": 5888,
+    "outputTokens": 6,
+    "thoughtTokens": 0
+   },
+   "_meta": {
+    "quota": {
+     "token_count": {
+      "totalTokens": 17782,
+      "inputTokens": 11888,
+      "cachedInputTokens": 5888,
+      "outputTokens": 6,
+      "reasoningOutputTokens": 0
+     },
+     "model_usage": [
+      {
+       "model": "gpt-5.6-sol",
+       "token_count": {
         "totalTokens": 17782,
         "inputTokens": 11888,
-        "cachedReadTokens": 5888,
+        "cachedInputTokens": 5888,
         "outputTokens": 6,
-        "thoughtTokens": 0
-      },
-      "_meta": {
-        "quota": {
-          "token_count": {
-            "totalTokens": 17782,
-            "inputTokens": 11888,
-            "cachedInputTokens": 5888,
-            "outputTokens": 6,
-            "reasoningOutputTokens": 0
-          },
-          "model_usage": [
-            {
-              "model": "gpt-5.6-sol",
-              "token_count": {
-                "totalTokens": 17782,
-                "inputTokens": 11888,
-                "cachedInputTokens": 5888,
-                "outputTokens": 6,
-                "reasoningOutputTokens": 0
-              }
-            }
-          ]
-        }
+        "reasoningOutputTokens": 0
+       }
       }
-    },
-    "b_text": "I\u2019ll create the requested file with the file-editing tool, then verify it exists.DENIED",
-    "b_file_exists": false,
-    "a_stop": {
-      "stopReason": "end_turn",
-      "usage": {
+     ]
+    }
+   }
+  },
+  "b_text": "I\u2019ll create the requested file with the file-editing tool, then verify it exists.DENIED",
+  "b_file_exists": false,
+  "a_stop": {
+   "stopReason": "end_turn",
+   "usage": {
+    "totalTokens": 18078,
+    "inputTokens": 919,
+    "cachedReadTokens": 17152,
+    "outputTokens": 7,
+    "thoughtTokens": 0
+   },
+   "_meta": {
+    "quota": {
+     "token_count": {
+      "totalTokens": 18078,
+      "inputTokens": 919,
+      "cachedInputTokens": 17152,
+      "outputTokens": 7,
+      "reasoningOutputTokens": 0
+     },
+     "model_usage": [
+      {
+       "model": "gpt-5.6-sol",
+       "token_count": {
         "totalTokens": 18078,
         "inputTokens": 919,
-        "cachedReadTokens": 17152,
+        "cachedInputTokens": 17152,
         "outputTokens": 7,
-        "thoughtTokens": 0
-      },
-      "_meta": {
-        "quota": {
-          "token_count": {
-            "totalTokens": 18078,
-            "inputTokens": 919,
-            "cachedInputTokens": 17152,
-            "outputTokens": 7,
-            "reasoningOutputTokens": 0
-          },
-          "model_usage": [
-            {
-              "model": "gpt-5.6-sol",
-              "token_count": {
-                "totalTokens": 18078,
-                "inputTokens": 919,
-                "cachedInputTokens": 17152,
-                "outputTokens": 7,
-                "reasoningOutputTokens": 0
-              }
-            }
-          ]
-        }
+        "reasoningOutputTokens": 0
+       }
       }
-    },
-    "a_text": "I\u2019ll create the requested file and verify it exists.WROTE",
-    "a_file_exists": true,
-    "denied_requests": [
-      {
-        "sessionId": "019fef84-3d81-7271-9928-95eb40cee7d5",
-        "toolCall": null
-      }
-    ],
-    "floor_differs_per_session": true,
-    "ls_cwd": [
-      "probe-a-c570a1bc.txt"
-    ],
-    "stderr_tail": []
-  },
-  "selected_frames": [
-    {
-      "send": {
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "session/new",
-        "params": {
-          "cwd": "/tmp/acp-probe2-codex",
-          "mcpServers": []
-        }
-      }
-    },
-    {
-      "send": {
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "session/new",
-        "params": {
-          "cwd": "/tmp/acp-probe2-codex",
-          "mcpServers": []
-        }
-      }
-    },
-    {
-      "send": {
-        "jsonrpc": "2.0",
-        "id": 4,
-        "method": "session/set_config_option",
-        "params": {
-          "sessionId": "019fef84-3d81-7271-9928-95eb40cee7d5",
-          "configId": "mode",
-          "value": "read-only"
-        }
-      }
+     ]
     }
+   }
+  },
+  "a_text": "I\u2019ll create the requested file and verify it exists.WROTE",
+  "a_file_exists": true,
+  "denied_requests": [
+   {
+    "sessionId": "019fef84-3d81-7271-9928-95eb40cee7d5",
+    "toolCall": null
+   }
+  ],
+  "floor_differs_per_session": true,
+  "ls_cwd": [
+   "probe-a-c570a1bc.txt"
+  ],
+  "stderr_tail": [
+   "<redacted: engine stderr contained auth prefixes/bearer fragments>"
   ]
+ },
+ "selected_frames": [
+  {
+   "send": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "session/new",
+    "params": {
+     "cwd": "/tmp/acp-probe2-codex",
+     "mcpServers": []
+    }
+   }
+  },
+  {
+   "send": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "session/new",
+    "params": {
+     "cwd": "/tmp/acp-probe2-codex",
+     "mcpServers": []
+    }
+   }
+  },
+  {
+   "send": {
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "session/set_config_option",
+    "params": {
+     "sessionId": "019fef84-3d81-7271-9928-95eb40cee7d5",
+     "configId": "mode",
+     "value": "read-only"
+    }
+   }
+  }
+ ]
 }

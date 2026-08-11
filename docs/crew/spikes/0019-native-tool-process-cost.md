@@ -6,10 +6,12 @@ What does it cost to use one native-tool engine process per
 `(agent, thread)` if session-addressed native permission configuration cannot
 provide a per-channel floor?
 
-This is a measurement-only spike. Slice 3 remains the shipped two-tier model:
-`buzz-dev-mcp` is channel-scoped through ACP `mcpServers`, while native
-file/shell tools remain process-scoped. On engines with native file/shell
-tools, channel dev-mcp denial is a Crew rule, not a wall.
+This is a measurement-only spike. Its premise turned out to be false: spike
+0018's real-engine run showed session-addressed permission configuration *does*
+provide a per-channel floor on Codex and Grok, and #148 now clamps the denied
+channel's session to the engine's read-only mode alongside removing dev-mcp. The
+numbers below therefore price a fallback that is only needed for engines which
+refuse a session-scoped floor.
 
 ## Method and host
 

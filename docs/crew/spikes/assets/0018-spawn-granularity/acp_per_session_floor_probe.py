@@ -2,9 +2,19 @@
 """Spike 0018 probe 2: per-session native-tool floor on ONE engine process.
 
 Session A keeps the default mode; session B is switched to the engine's
-read-only mode via session-addressed `session/set_config_option`. The client
-DENIES every permission request, so a session whose floor is genuinely
-read-only cannot write, while the unrestricted session can.
+read-only mode via session-addressed `session/set_config_option` (or
+`session/set_mode`).
+
+Permission handling is a probe *variable*, because it changes what a run can
+prove:
+
+* `--deny-permissions` (default): the client rejects every request. A session
+  whose floor is genuinely read-only cannot write, but an engine that asks
+  before writing (Grok) has its unrestricted session denied too, so the run
+  cannot separate engine floor from client policy.
+* `--approve-permissions`: the client approves every request, so a refusal is
+  the engine's own floor talking. This is the only variant that is evidence
+  about the engine on engines that ask.
 """
 
 import argparse
@@ -15,7 +25,7 @@ import time
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from acp_probe import AcpClient, prompt  # noqa: E402
+from acp_two_session_probe import AcpClient, prompt  # noqa: E402
 
 
 def deny_permissions(client):
@@ -49,6 +59,32 @@ def deny_permissions(client):
     client._auto_reply = _auto_reply
 
 
+def approve_permissions(client):
+    def _auto_reply(msg):
+        method = msg.get("method")
+        if method == "session/request_permission":
+            opts = msg.get("params", {}).get("options", [])
+            allow = next(
+                (o for o in opts if o.get("kind", "").startswith("allow")), None)
+            client.approved_requests.append({
+                "sessionId": msg.get("params", {}).get("sessionId"),
+                "toolCall": msg.get("params", {}).get("toolCall", {}).get("title"),
+            })
+            client._send({
+                "jsonrpc": "2.0", "id": msg["id"],
+                "result": {"outcome": {
+                    "outcome": "selected",
+                    "optionId": (allow or {}).get("optionId", "allow"),
+                }},
+            })
+            return
+        client._send({"jsonrpc": "2.0", "id": msg["id"], "result": {}})
+
+    client.approved_requests = []
+    client.denied_requests = []
+    client._auto_reply = _auto_reply
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cmd", required=True)
@@ -59,20 +95,35 @@ def main():
     ap.add_argument("--config-id", default="mode")
     ap.add_argument("--use-set-mode", action="store_true",
                     help="use session/set_mode instead of set_config_option")
+    ap.add_argument("--approve-permissions", action="store_true",
+                    help="approve every permission request, so a refusal is the "
+                         "engine's own floor rather than the client's policy")
+    ap.add_argument("--no-fs-capability", action="store_true",
+                    help="advertise no client fs capability, forcing the engine "
+                         "to use its own native file tools instead of proxying "
+                         "writes back through the client")
     args = ap.parse_args()
 
     os.makedirs(args.cwd, exist_ok=True)
     findings = {"engine": args.label, "cmd": args.cmd, "started": time.time()}
     log = []
     client = AcpClient(args.cmd.split(), args.cwd, log=log)
-    deny_permissions(client)
+    findings["permission_policy"] = (
+        "approve" if args.approve_permissions else "deny")
+    if args.approve_permissions:
+        approve_permissions(client)
+    else:
+        deny_permissions(client)
+    fs_capability = (
+        {"readTextFile": False, "writeTextFile": False}
+        if args.no_fs_capability
+        else {"readTextFile": True, "writeTextFile": True}
+    )
+    findings["client_fs_capability"] = fs_capability
     try:
         client.request("initialize", {
             "protocolVersion": 1,
-            "clientCapabilities": {
-                "fs": {"readTextFile": True, "writeTextFile": True},
-                "terminal": False,
-            },
+            "clientCapabilities": {"fs": fs_capability, "terminal": False},
         }, timeout=60)
         a = client.request("session/new", {"cwd": args.cwd, "mcpServers": []},
                            timeout=120)["result"]
@@ -121,13 +172,18 @@ def main():
             os.path.join(args.cwd, "probe-a-%s.txt" % marker))
 
         findings["denied_requests"] = client.denied_requests
+        findings["approved_requests"] = getattr(client, "approved_requests", [])
         findings["floor_differs_per_session"] = (
             findings["a_file_exists"] and not findings["b_file_exists"])
         findings["ls_cwd"] = sorted(os.listdir(args.cwd))
     except Exception as exc:  # noqa: BLE001
         findings["fatal"] = str(exc)[:2000]
 
-    findings["stderr_tail"] = client.stderr_lines[-40:]
+    # Engine stderr carries auth prefixes and bearer fragments, so it is never
+    # written to a committed asset.
+    findings["stderr_tail"] = [
+        "<redacted: engine stderr contained auth prefixes/bearer fragments>"
+    ]
     client.close()
     with open(args.out, "w") as fh:
         json.dump({"findings": findings, "wire_log": log}, fh, indent=2)
