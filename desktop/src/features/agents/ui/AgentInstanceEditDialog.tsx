@@ -26,7 +26,10 @@ import { Input } from "@/shared/ui/input";
 import { setManagedAgentAutoRestart } from "@/shared/api/tauriManagedAgents";
 import { EditAgentAdvancedFields } from "./EditAgentAdvancedFields";
 import { EditAgentModelAndProfileSection } from "./EditAgentModelAndProfileSection";
-import { deriveAgentConfigFieldModel } from "../lib/agentConfigCore";
+import {
+  deriveAgentConfigFieldModel,
+  isModelWriteThrough,
+} from "../lib/agentConfigCore";
 import { useEditHermesBinding } from "./editHermesBinding";
 import { EMPTY_GLOBAL_CONFIG } from "./AgentConfigFields";
 import {
