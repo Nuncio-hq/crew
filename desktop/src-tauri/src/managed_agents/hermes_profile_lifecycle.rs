@@ -350,7 +350,7 @@ pub(crate) fn delete_profile_with(
     }
 }
 
-fn run_hermes(binary: &Path, args: &[String]) -> Result<std::process::Output, String> {
+pub(crate) fn run_hermes(binary: &Path, args: &[String]) -> Result<std::process::Output, String> {
     let mut command = Command::new(binary);
     command.args(args);
     command.stdin(Stdio::null());
@@ -366,7 +366,7 @@ fn run_hermes(binary: &Path, args: &[String]) -> Result<std::process::Output, St
         .map_err(|e| format!("failed to spawn hermes: {e}"))
 }
 
-fn first_error_line(combined: &str) -> Option<String> {
+pub(crate) fn first_error_line(combined: &str) -> Option<String> {
     combined
         .lines()
         .map(str::trim)

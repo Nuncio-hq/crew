@@ -58,6 +58,57 @@ export async function deleteHermesProfile(
   });
 }
 
+export type HermesProfileConfigResult =
+  | {
+      status: "ok";
+      name: string;
+      provider: string | null;
+      model: string | null;
+    }
+  | { status: "does_not_exist"; name: string; message: string }
+  | { status: "invalid_name"; name: string; message: string }
+  | { status: "binary_missing"; message: string }
+  | { status: "rejected"; name: string; message: string }
+  | { status: "failed"; name: string; message: string };
+
+export async function readHermesProfileModel(
+  name: string,
+): Promise<HermesProfileConfigResult> {
+  return invokeTauri("read_hermes_profile_model", { name });
+}
+
+export async function writeHermesProfileModel(
+  name: string,
+  provider?: string,
+  model?: string,
+): Promise<HermesProfileConfigResult> {
+  return invokeTauri("write_hermes_profile_model", {
+    name,
+    provider: provider ?? null,
+    model: model ?? null,
+  });
+}
+
+export type HermesProfileSoulResult =
+  | { status: "ok"; name: string; content: string }
+  | { status: "does_not_exist"; name: string; message: string }
+  | { status: "missing"; name: string; message: string }
+  | { status: "invalid_name"; name: string; message: string }
+  | { status: "failed"; name: string; message: string };
+
+export async function readHermesProfileSoul(
+  name: string,
+): Promise<HermesProfileSoulResult> {
+  return invokeTauri("read_hermes_profile_soul", { name });
+}
+
+export async function writeHermesProfileSoul(
+  name: string,
+  content: string,
+): Promise<HermesProfileSoulResult> {
+  return invokeTauri("write_hermes_profile_soul", { name, content });
+}
+
 export type HermesProfileArchiveManifest = {
   schema_version: number;
   profile: string;

@@ -221,6 +221,18 @@ type MockBridgeOptions = {
   managedAgents?: MockManagedAgentSeed[];
   /** Disk Hermes profiles returned by list_hermes_profiles. */
   hermesProfiles?: string[];
+  /** Model values returned by Hermes profile config reads, keyed by profile. */
+  hermesProfileConfigs?: Record<
+    string,
+    { provider?: string | null; model?: string | null }
+  >;
+  /** SOUL.md contents returned by Hermes profile reads, keyed by profile. */
+  hermesProfileSouls?: Record<string, string>;
+  /** Classified failure returned by Hermes profile config/SOUL writes. */
+  hermesProfileWriteFailure?: {
+    status: "rejected" | "failed";
+    message: string;
+  };
   /** Result returned by the mocked `add_agent_to_huddle` command. */
   addAgentToHuddleResult?: {
     ephemeral_added: boolean;
