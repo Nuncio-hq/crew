@@ -248,6 +248,44 @@ Received string: "AaliceActivity · #agents·No updates yet"
 Timeout: 5000ms
 ```
 
+### Smoke shard-3 baseline
+
+The three additional failures from
+[PR #146 shard 3](https://github.com/Nuncio-hq/crew/actions/runs/31451647392/job/93657147023)
+also reproduce on the PR #128 parent (`df2a9995e`) and on clean
+`origin/main` (`35af74019`). They were already present in the earlier PR
+shard-3 run
+[31448955605/job/93649138303](https://github.com/Nuncio-hq/crew/actions/runs/31448955605/job/93649138303),
+so they are upstream-side pre-existing failures, not regressions from the
+relay bridge changes:
+
+| Spec | Branch `413afe3fd` | PR #128 parent `df2a9995e` | `origin/main` `35af74019` |
+|---|---:|---:|---:|
+| `inbox-edit.spec.ts:175` | fail | fail | fail |
+| `inbox-edit.spec.ts:325` | fail | fail | fail |
+| `messaging.spec.ts:1819` | fail | fail | fail |
+
+The edit assertions consistently showed:
+
+```text
+- Attachment reply after editing.
++ 👍❤️😂🎉YYouAug 11, 2026, 2:44 AMAttachment reply before editing.
++ inbox-edit-proof.pdf
+```
+
+```text
+Expected substring: "My Inbox message after editing."
+Received string: "👍❤️😂🎉Nnpub1mock...Aug 11, 2026, 2:44 AMMy Inbox message before editing."
+```
+
+The reaction-shaped messaging assertion consistently showed:
+
+```text
+Locator: ...getByLabel('Toggle 👍 reaction')
+Expected: visible
+Error: element(s) not found
+```
+
 ## Mock-boundary audit
 
 “Relay-aware” means the bridge has a relay branch that publishes the real
