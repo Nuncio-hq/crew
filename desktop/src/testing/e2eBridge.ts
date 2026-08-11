@@ -4485,7 +4485,14 @@ function hasMockOwnerKindSubscription(ownerPubkey: string, kind: number) {
 
 function recordMockMessage(channelId: string, event: RelayEvent) {
   const history = getMockMessageStore(channelId);
-  history.push(event);
+  const existingIndex = history.findIndex(
+    (candidate) => candidate.id === event.id,
+  );
+  if (existingIndex === -1) {
+    history.push(event);
+  } else {
+    history[existingIndex] = event;
+  }
 
   const channel = mockChannels.find((candidate) => candidate.id === channelId);
   if (!channel) {
@@ -4494,6 +4501,24 @@ function recordMockMessage(channelId: string, event: RelayEvent) {
 
   channel.last_message_at = new Date(event.created_at * 1_000).toISOString();
   touchMockChannel(channel);
+}
+
+function materializeMockFeedItem(item: RawFeedItem) {
+  if (!item.channel_id) {
+    // Feed-only items have no channel context to store against.
+    return;
+  }
+  recordMockMessage(
+    item.channel_id,
+    createMockEvent(
+      item.kind,
+      item.content,
+      item.tags,
+      item.pubkey,
+      item.created_at,
+      item.id,
+    ),
+  );
 }
 
 function resetMockUserStatuses() {
@@ -10649,12 +10674,14 @@ export function maybeInstallE2eTauriMocks() {
   }) => hasMockOwnerKindSubscription(ownerPubkey, kind);
   window.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__ = (item) => {
     const category = item.category === "mention" ? "mentions" : item.category;
+    materializeMockFeedItem(item);
     mockFeedOverrides[category].unshift(item);
     window.dispatchEvent(new CustomEvent("buzz:e2e-home-feed-updated"));
     return item;
   };
   window.__BUZZ_E2E_REPLACE_MOCK_FEED_ITEM__ = (oldId, item) => {
     const category = item.category === "mention" ? "mentions" : item.category;
+    materializeMockFeedItem(item);
     // Remove the old item from every category bucket (it may have been in a
     // different bucket or the same one).
     for (const bucket of Object.values(mockFeedOverrides)) {

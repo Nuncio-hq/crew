@@ -18,7 +18,7 @@ Locked narrative for agents (not a shipped feature checklist):
   on Buzz contracts, mobile continuity, in/out scope
 - [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md) — plain language,
   honesty, no assumed manager experience
-- Decisions **D-025**, **D-026**, **D-027** in [`DECISIONS.md`](DECISIONS.md)
+- Decisions **D-025**, **D-026**, **D-027**, **D-046** in [`DECISIONS.md`](DECISIONS.md)
   (upstream **D-024** remains Hermes trusted/owner-only/local)
 
 Implementation slices below remain the code truth for what is built today.
