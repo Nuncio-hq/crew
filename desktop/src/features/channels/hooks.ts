@@ -22,8 +22,10 @@ import {
   unarchiveChannel,
   updateChannel,
 } from "@/shared/api/tauri";
+import { assignChannelAgentRole } from "@/shared/api/assignment";
 import type {
   AddChannelMembersInput,
+  AssignChannelAgentRoleInput,
   Channel,
   ChannelDetail,
   CreateChannelInput,
@@ -696,6 +698,25 @@ export function useSetCanvasMutation(channelId: string | null) {
       if (channelId) {
         void queryClient.invalidateQueries({
           queryKey: ["channel-canvas", channelId],
+        });
+      }
+    },
+  });
+}
+
+export function useAssignChannelAgentRoleMutation(channelId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Omit<AssignChannelAgentRoleInput, "channelId">) => {
+      if (!channelId) {
+        return Promise.reject(new Error("No channel selected"));
+      }
+      return assignChannelAgentRole({ ...input, channelId });
+    },
+    onSuccess: () => {
+      if (channelId) {
+        void queryClient.invalidateQueries({
+          queryKey: ["canvas", channelId],
         });
       }
     },

@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use nostr::{FromBech32, PublicKey};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -42,6 +43,12 @@ pub enum RoleParseError {
     /// A role label violates the format-only constraints.
     #[error("invalid crew role label: {0}")]
     InvalidLabel(String),
+    /// A pubkey in the canvas or authority inputs is not a valid Nostr key.
+    #[error("invalid crew pubkey: {0}")]
+    InvalidPubkey(String),
+    /// An assignment points at a role without founder-authored meaning.
+    #[error("assignment for role `{0}` has no definition")]
+    MissingDefinition(String),
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,13 +63,16 @@ struct RawCanvasRoleBlock {
 ///
 /// No block is represented by `Ok(None)`. A partial or malformed block is an
 /// error so callers can warn and emit no role section rather than panicking.
+/// If multiple blocks are present, the first block wins; callers should warn.
 pub fn parse_canvas_assignments(
     canvas_content: &str,
 ) -> Result<Option<CanvasRoleBlock>, RoleParseError> {
-    let Some(start) = canvas_content
+    let starts: Vec<usize> = canvas_content
         .lines()
-        .position(|line| line.trim() == "```crew")
-    else {
+        .enumerate()
+        .filter_map(|(index, line)| (line.trim() == "```crew").then_some(index))
+        .collect();
+    let Some(&start) = starts.first() else {
         return Ok(None);
     };
     let lines: Vec<&str> = canvas_content.lines().collect();
@@ -98,6 +108,41 @@ pub fn parse_canvas_assignments(
     }))
 }
 
+/// Count complete or partial ` ```crew ` fence openers in canvas content.
+///
+/// The resolver intentionally uses the first block when this returns more
+/// than one; callers can use the count to emit a warning.
+pub fn count_crew_blocks(canvas_content: &str) -> usize {
+    canvas_content
+        .lines()
+        .filter(|line| line.trim() == "```crew")
+        .count()
+}
+
+/// Remove the first fenced `crew` block while preserving surrounding prose.
+///
+/// The block is machine configuration and should not be copied into rendered
+/// canvas prose when the role/routing sections already carry its meaning.
+pub fn strip_crew_block(canvas_content: &str) -> Result<String, RoleParseError> {
+    let Some(start) = canvas_content
+        .lines()
+        .position(|line| line.trim() == "```crew")
+    else {
+        return Ok(canvas_content.to_string());
+    };
+    let lines: Vec<&str> = canvas_content.lines().collect();
+    let Some(end_offset) = lines[start + 1..]
+        .iter()
+        .position(|line| line.trim() == "```")
+    else {
+        return Err(RoleParseError::MalformedFence);
+    };
+    let end = start + 1 + end_offset;
+    let mut kept = lines[..start].to_vec();
+    kept.extend_from_slice(&lines[end + 1..]);
+    Ok(kept.join("\n"))
+}
+
 /// Resolve one agent's assignment after checking canvas author authority.
 ///
 /// The caller must pass the author of the channel canvas event. The canvas
@@ -109,22 +154,24 @@ pub fn resolve_assignment(
     owner_pubkey: &str,
     agent_pubkey: &str,
 ) -> Result<Option<RoleAssignment>, RoleParseError> {
-    if !same_pubkey(canvas_author, owner_pubkey) {
+    if !same_pubkey(canvas_author, owner_pubkey)? {
         return Ok(None);
     }
     let Some(block) = parse_canvas_assignments(canvas_content)? else {
         return Ok(None);
     };
-    let label = block
-        .assignments
-        .iter()
-        .find(|(agent, _)| same_pubkey(agent, agent_pubkey))
-        .map(|(_, label)| label.clone());
+    let mut label = None;
+    for (agent, assignment_label) in &block.assignments {
+        if same_pubkey(agent, agent_pubkey)? {
+            label = Some(assignment_label.clone());
+            break;
+        }
+    }
     let Some(label) = label else {
         return Ok(None);
     };
     let Some(definition) = block.definitions.get(&label.to_ascii_lowercase()) else {
-        return Ok(None);
+        return Err(RoleParseError::MissingDefinition(label));
     };
     Ok(Some(RoleAssignment {
         label,
@@ -168,10 +215,17 @@ fn normalize_label(raw: &str) -> Result<String, RoleParseError> {
     Ok(label.to_string())
 }
 
-fn same_pubkey(left: &str, right: &str) -> bool {
-    let left = left.trim();
-    let right = right.trim();
-    !left.is_empty() && !right.is_empty() && left.eq_ignore_ascii_case(right)
+fn same_pubkey(left: &str, right: &str) -> Result<bool, RoleParseError> {
+    let left = parse_pubkey(left)?;
+    let right = parse_pubkey(right)?;
+    Ok(left == right)
+}
+
+fn parse_pubkey(value: &str) -> Result<PublicKey, RoleParseError> {
+    let value = value.trim();
+    PublicKey::from_hex(value)
+        .or_else(|_| PublicKey::from_bech32(value))
+        .map_err(|_| RoleParseError::InvalidPubkey(value.to_string()))
 }
 
 #[cfg(test)]

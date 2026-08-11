@@ -92,6 +92,9 @@ pub use agent_metric_archive::*;
 pub use agent_models::*;
 pub use agent_providers::*;
 pub use agent_settings::*;
+pub(crate) use assignment_publish::{
+    assignment_announcement_content, publish_assignment_announcement,
+};
 pub use agents::*;
 pub use canvas::*;
 pub use channel_templates::*;

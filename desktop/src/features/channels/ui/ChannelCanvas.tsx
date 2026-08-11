@@ -2,6 +2,7 @@ import { Pencil, Save, X } from "lucide-react";
 import * as React from "react";
 
 import {
+  useAssignChannelAgentRoleMutation,
   useCanvasQuery,
   useSetCanvasMutation,
 } from "@/features/channels/hooks";
@@ -27,6 +28,7 @@ export function ChannelCanvas({
 }: ChannelCanvasProps) {
   const canvasQuery = useCanvasQuery(channelId, channelId !== null);
   const setCanvasMutation = useSetCanvasMutation(channelId);
+  const assignRoleMutation = useAssignChannelAgentRoleMutation(channelId);
   const { channels } = useChannelNavigation();
   const channelNames = React.useMemo(
     () => channels.filter((c) => c.channelType !== "dm").map((c) => c.name),
@@ -34,6 +36,9 @@ export function ChannelCanvas({
   );
   const [isEditing, setIsEditing] = React.useState(false);
   const [draft, setDraft] = React.useState("");
+  const [assignmentAgent, setAssignmentAgent] = React.useState("");
+  const [assignmentLabel, setAssignmentLabel] = React.useState("");
+  const [assignmentDefinition, setAssignmentDefinition] = React.useState("");
 
   const canvasContent = canvasQuery.data?.content ?? null;
   // Defer the single large Markdown parse so opening the canvas commits the
@@ -135,16 +140,74 @@ export function ChannelCanvas({
         </p>
       )}
       {canEdit && !isArchived ? (
-        <Button
-          data-testid="channel-canvas-edit"
-          onClick={handleStartEditing}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          <Pencil className="h-4 w-4" />
-          {canvasContent ? "Edit canvas" : "Create canvas"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            data-testid="channel-canvas-edit"
+            onClick={handleStartEditing}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Pencil className="h-4 w-4" />
+            {canvasContent ? "Edit canvas" : "Create canvas"}
+          </Button>
+          <div className="basis-full space-y-2 rounded-xl border border-border/70 p-3">
+            <p className="text-sm font-medium">Assign an agent role</p>
+            <input
+              aria-label="Agent pubkey"
+              className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
+              onChange={(event) => setAssignmentAgent(event.target.value)}
+              placeholder="Agent pubkey (hex or npub)"
+              value={assignmentAgent}
+            />
+            <input
+              aria-label="Role label"
+              className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
+              onChange={(event) => setAssignmentLabel(event.target.value)}
+              placeholder="Role label"
+              value={assignmentLabel}
+            />
+            <Textarea
+              aria-label="Role definition"
+              className="min-h-20 text-sm"
+              onChange={(event) => setAssignmentDefinition(event.target.value)}
+              placeholder="Allowed, not-allowed, and redirect definition"
+              value={assignmentDefinition}
+            />
+            <Button
+              data-testid="channel-canvas-assign-role"
+              disabled={
+                assignRoleMutation.isPending ||
+                !assignmentAgent.trim() ||
+                !assignmentLabel.trim() ||
+                !assignmentDefinition.trim()
+              }
+              onClick={() => {
+                assignRoleMutation.mutate({
+                  agentPubkey: assignmentAgent,
+                  label: assignmentLabel,
+                  definition: assignmentDefinition,
+                });
+              }}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {assignRoleMutation.isPending ? "Assigning..." : "Assign role"}
+            </Button>
+          </div>
+          {assignRoleMutation.error instanceof Error ? (
+            <p className="basis-full text-sm text-destructive">
+              {assignRoleMutation.error.message}
+            </p>
+          ) : null}
+          {assignRoleMutation.isSuccess ? (
+            <p className="basis-full text-sm text-muted-foreground">
+              Assigned {assignmentLabel} to {assignmentAgent}; announcement
+              published.
+            </p>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

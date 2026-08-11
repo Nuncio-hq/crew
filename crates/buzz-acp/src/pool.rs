@@ -25,7 +25,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use buzz_core::crew_role::{compose_role_section, resolve_assignment, RoleAssignment};
+use buzz_core::crew_role::{
+    compose_role_section, count_crew_blocks, resolve_assignment, RoleAssignment,
+};
 use buzz_worktree::SharedLease;
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
@@ -978,7 +980,7 @@ async fn create_session_and_apply_model(
     // `[Channel Canvas]` header; both are appended with a blank-line separator.
     let is_goose = agent.agent_name == "goose";
     let system_with_role = role_assignment
-        .map(|assignment| compose_role_section(&assignment))
+        .map(|assignment| compose_role_section(assignment))
         .map(|section| combine_optional_prompt(ctx.system_prompt.as_deref(), Some(&section)))
         .unwrap_or_else(|| ctx.system_prompt.clone());
     let combined_system_prompt = with_canvas(
@@ -2767,6 +2769,13 @@ async fn fetch_canvas_section(
 
     let rendered = canvas_section_from_query_response(events, &channel_id.to_string())?;
     let event = serde_json::from_value::<nostr::Event>(events.first()?.clone()).ok()?;
+    if count_crew_blocks(&event.content) > 1 {
+        tracing::warn!(
+            target: "canvas::crew",
+            channel = %channel_id,
+            "multiple crew blocks found; using the first block"
+        );
+    }
     let role = owner_pubkey.and_then(|owner| {
         match resolve_assignment(
             &event.content,
@@ -2779,6 +2788,7 @@ async fn fetch_canvas_section(
                 tracing::warn!(
                     target: "canvas::crew",
                     channel = %channel_id,
+                    agent = %agent_pubkey.to_hex(),
                     %error,
                     "malformed crew block — emitting no role section"
                 );

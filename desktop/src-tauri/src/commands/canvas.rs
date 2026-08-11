@@ -120,6 +120,46 @@ pub async fn set_canvas(
     }))
 }
 
+/// Assign one agent a founder-authored role in a channel's canvas.
+#[tauri::command]
+pub async fn assign_channel_agent_role(
+    channel_id: String,
+    agent_pubkey: String,
+    label: String,
+    definition: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let events = query_relay(
+        &state,
+        &[serde_json::json!({
+            "kinds": [40100],
+            "#h": [channel_id],
+            "limit": 1
+        })],
+    )
+    .await?;
+    let current = events
+        .first()
+        .map(|event| event.content.as_str())
+        .unwrap_or("");
+    let updated =
+        update_canvas_crew_assignment(current, &agent_pubkey, &label, &definition)?;
+    let uuid = uuid::Uuid::parse_str(&channel_id)
+        .map_err(|_| format!("invalid channel UUID: {channel_id}"))?;
+    let canvas_result = submit_event(events::build_set_canvas(uuid, &updated)?, &state).await?;
+    let announcement =
+        crate::commands::assignment_announcement_content(&agent_pubkey, label.trim(), &definition);
+    let announcement_event_id =
+        crate::commands::publish_assignment_announcement(&state, &channel_id, &announcement)
+            .await?;
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "canvas_event_id": canvas_result.event_id,
+        "announcement_event_id": announcement_event_id,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::update_canvas_crew_assignment;
