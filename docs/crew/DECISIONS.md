@@ -778,6 +778,8 @@ concluding the product is broken.
 
 ## D-045 — Unread accounting reads the reply graph, not the visible row list
 
+## D-046 — Keep live-event filter relay-parity-safe
+
 - **Status:** Accepted
 - **Date:** 2026-08-11
 
