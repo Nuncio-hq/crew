@@ -237,14 +237,22 @@ and in flight.
 
 ## Open decisions
 
-- Whether a future non-local relay must hard-block local-path publication or
-  use a different privacy mechanism.
-- Final board event kind and tag schema.
-- Whether exact local snapshots should additionally refresh on app focus.
-- Whether symlink-selected workspaces should remain unsupported or get a
-  separately reviewed canonical-path flow.
-- When to publish or link a real Project on the manager relay for the final
-  native exact-reader smoke.
+- **Resolved by D-037(2):** Final board event kind and tag schema is deferred;
+  no board event kind or tag schema is defined until a board-like surface is
+  prioritized.
+- **Decided: yes; task:** Exact local snapshots refresh on app focus with a
+  debounced point-in-time re-read. File-watcher liveness is a future upgrade
+  tied to the work overview lens in D-037(3). The small implementation task is
+  filed as #139.
+- **Decided: stay unsupported:** Symlink-selected workspaces fail closed as
+  shipped. GitHub identity and the real project path are the source of truth;
+  revisit only on a concrete user need.
+- **Deferred; decided-with: mobile epic:** Non-local relay local-path privacy
+  is a mandatory spike question for the future mobile-continuity epic (D-026).
+- **Converted to task:** Publishing or linking a real Project on the manager
+  relay for the native exact-reader smoke belongs in the next
+  release-verification Definition of Done, alongside the outstanding signed
+  updater install/relaunch verification. It is not an open decision.
 
 ## Hermes runtime track (feature 0001)
 

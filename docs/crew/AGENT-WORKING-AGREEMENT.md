@@ -86,6 +86,9 @@ Before a multi-step plan, confirm:
 - [ ] Docs updated only if user-visible behavior or durable rules change
 - [ ] Shipped state changed (release published, slice merged, gate changed)
   → update [`STATE.md`](STATE.md) in the same PR
+- [ ] Every entry in STATE.md's "Open decisions" carries a closure address:
+  `decided-with: <track>`, a revisit trigger, or immediate resolution /
+  conversion to a task. No anonymous parking.
 - [ ] New sticky choice → append [`DECISIONS.md`](DECISIONS.md)
 
 ## When stuck with the founder
