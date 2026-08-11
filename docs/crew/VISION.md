@@ -1,5 +1,14 @@
 # Crew Vision
 
+> **Status: historical vision (2026-08-10).** This document pre-dates
+> [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md) and is kept as history; it is not
+> rewritten. The section [Board as orchestrator](#board-as-orchestrator-superseded)
+> is **superseded** as a product commitment by **D-037** in
+> [`DECISIONS.md`](DECISIONS.md): channels and threads are the surface where
+> work happens, and board-as-home is not current direction. Every other section
+> — manager–agent relationship, mention-as-assignment, thin-fork constraints,
+> board state as signed relay events — remains aligned and in force.
+
 ## Product statement
 
 Crew is mission control for a team of agents.
@@ -16,6 +25,8 @@ room:
 6. The manager returns only for decisions, review, or completion.
 
 Chat is the detail view of work. The board is the control surface.
+(**Superseded by D-037**: channel-first stands; the channel/thread is the
+surface, not a board.)
 
 ## Manager and agent relationship
 
@@ -32,7 +43,12 @@ An agent has its own keypair and is treated as a participant. Mentioning an
 agent assigns work. A future mention syntax may also select model, reasoning,
 speed, or other execution attributes.
 
-## Board as orchestrator
+## Board as orchestrator (superseded)
+
+> **Superseded by D-037** ([`DECISIONS.md`](DECISIONS.md)). Board-as-home —
+> columns as authoritative state, a `Working` cap, card-move-as-transition —
+> is not current direction and no board event kind or tag schema is planned.
+> Kept here for history only.
 
 The primary workflow is:
 
