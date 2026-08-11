@@ -19,6 +19,7 @@ export const PRUNE_INTERVAL_MS = 5_000;
 
 export type ActiveTurn = {
   turnId: string;
+  sessionId: string | null;
   channelId: string;
   conversationId: string;
   startedAt: number;
@@ -51,9 +52,11 @@ export function createActiveTurn(input: {
   startedAt: number;
   triggeringEventIds?: string[];
   turnId: string;
+  sessionId?: string | null;
 }): ActiveTurn {
   return {
     turnId: input.turnId,
+    sessionId: input.sessionId ?? null,
     channelId: input.channelId,
     conversationId: input.conversationId,
     startedAt: input.startedAt,

@@ -13,9 +13,12 @@ import {
 import { drainRelayTimestampBucket } from "@/shared/api/exhaustiveRelayPagination";
 import {
   beginLiveSubscriptionRecovery,
+  clearClosedRetry,
   completeLiveSubscriptionRecovery,
+  deleteSubscriptionAliases,
   markLiveRecoveryRequestSent,
 } from "@/shared/api/relayClosedRecovery";
+import { classifyRelayClosed } from "@/shared/api/relayClosedPolicy";
 import type {
   RelaySubscription,
   RelaySubscriptionFilter,
@@ -61,6 +64,7 @@ export const REPLAY_BATCH_SIZE = 8;
  * can absorb each batch without triggering rate-limiting on the next.
  */
 export const REPLAY_INTER_BATCH_DELAY_MS = 50;
+export const REPLAY_RECOVERY_RETRY_DELAY_MS = 30_000;
 
 export function initialRecoveryFloor(
   now: number,
@@ -184,6 +188,16 @@ function replaySinceForSubscription(
   return candidates.length === 0 ? undefined : Math.min(...candidates);
 }
 
+function completedRecoveryFloor(
+  subscription: Extract<RelaySubscription, { mode: "live" }>,
+  now: number,
+): number {
+  return subscription.filter.kinds?.includes(KIND_AGENT_OBSERVER_FRAME) ===
+    true && subscription.recoveryFloorCreatedAt === 0
+    ? 0
+    : now;
+}
+
 export async function recoverLiveSubscriptionHistory({
   subscription,
   now,
@@ -195,6 +209,7 @@ export async function recoverLiveSubscriptionHistory({
   isActive: () => boolean;
   requestHistory: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
 }): Promise<boolean> {
+  if (!isActive()) return false;
   const since = replaySinceForSubscription(subscription);
   if (since === undefined || !shouldPageReconnectReplay(subscription.filter)) {
     return true;
@@ -209,7 +224,10 @@ export async function recoverLiveSubscriptionHistory({
   });
   if (completed) {
     subscription.pendingReplaySince = undefined;
-    subscription.recoveryFloorCreatedAt = now;
+    subscription.recoveryFloorCreatedAt = completedRecoveryFloor(
+      subscription,
+      now,
+    );
   }
   return completed;
 }
@@ -442,6 +460,57 @@ export async function replayLiveSubscriptions({
     ),
     pageReplayConcurrency,
     async ({ subId, subscription, recoveryGeneration, replaySince }) => {
+      const isCurrentRecovery = () =>
+        isActive() &&
+        subscriptions.get(subId) === subscription &&
+        subscription.recoveryGeneration === recoveryGeneration;
+      const closeTerminalRecovery = (message: string) => {
+        if (!isCurrentRecovery()) return;
+        const currentSubId = subscription.currentSubId ?? subId;
+        deleteSubscriptionAliases(subscriptions, subscription);
+        clearClosedRetry(subscription);
+        subscription.ready = false;
+        subscription.recoveryInFlight = false;
+        subscription.pendingReplaySince = undefined;
+        const rejection = new Error(message);
+        subscription.rejectReady?.(rejection);
+        subscription.resolveReady = undefined;
+        subscription.rejectReady = undefined;
+        subscription.onStatus?.({ state: "closed", message });
+        void sendRaw(["CLOSE", currentSubId]).catch(() => {});
+      };
+      const scheduleTransientRecovery = () => {
+        setTimeoutFn(() => {
+          void (async () => {
+            if (!isCurrentRecovery()) return;
+            try {
+              const retryNow = Math.max(now, Math.floor(Date.now() / 1_000));
+              const completed = await recoverLiveSubscriptionHistory({
+                subscription,
+                now: retryNow,
+                isActive: isCurrentRecovery,
+                requestHistory,
+              });
+              if (!completed || !isCurrentRecovery()) return;
+              completeLiveSubscriptionRecovery(
+                subscription,
+                recoveryGeneration,
+                true,
+              );
+            } catch (error) {
+              if (!isCurrentRecovery()) return;
+              const message =
+                error instanceof Error ? error.message : String(error);
+              if (classifyRelayClosed(message) === "terminal") {
+                closeTerminalRecovery(message);
+                return;
+              }
+              subscription.onStatus?.({ state: "recovering", message });
+              scheduleTransientRecovery();
+            }
+          })();
+        }, REPLAY_RECOVERY_RETRY_DELAY_MS);
+      };
       // Backfill is best-effort: a failure here (typically a `rate-limited:`
       // CLOSED on a history REQ) must never escape to the session and tear
       // down the healthy, authenticated socket carrying the live REQs — that
@@ -454,6 +523,7 @@ export async function replayLiveSubscriptions({
       // followed by one live event would make the next reconnect skip the
       // unresolved window permanently. Cleared only on a completed pass.
       subscription.pendingReplaySince = replaySince;
+      let lastFailureMessage = "durable history recovery failed";
       for (let attempt = 1; attempt <= PAGE_REPLAY_MAX_ATTEMPTS; attempt++) {
         try {
           const completed = await replayReconnectHistoryPages({
@@ -466,8 +536,7 @@ export async function replayLiveSubscriptions({
             // SAME subscription key and object survive in the map — identity
             // alone stays true and a stale pass could complete and clear the
             // floor the superseding connection needs.
-            isActive: () =>
-              isActive() && subscriptions.get(subId) === subscription,
+            isActive: isCurrentRecovery,
             requestHistory,
           });
           // A stale-connection abort is NOT completion: the superseding
@@ -476,7 +545,10 @@ export async function replayLiveSubscriptions({
           // window may release it.
           if (completed) {
             subscription.pendingReplaySince = undefined;
-            subscription.recoveryFloorCreatedAt = now;
+            subscription.recoveryFloorCreatedAt = completedRecoveryFloor(
+              subscription,
+              now,
+            );
             completeLiveSubscriptionRecovery(
               subscription,
               recoveryGeneration,
@@ -485,16 +557,30 @@ export async function replayLiveSubscriptions({
           }
           return;
         } catch (error) {
+          if (!isCurrentRecovery()) return;
+          lastFailureMessage =
+            error instanceof Error ? error.message : String(error);
           console.warn(
             `[reconnect replay] history backfill attempt ${attempt}/${PAGE_REPLAY_MAX_ATTEMPTS} failed for ${subId}:`,
             error,
           );
-          if (attempt === PAGE_REPLAY_MAX_ATTEMPTS) return;
+          if (classifyRelayClosed(lastFailureMessage) === "terminal") {
+            closeTerminalRecovery(lastFailureMessage);
+            return;
+          }
+          if (attempt === PAGE_REPLAY_MAX_ATTEMPTS) {
+            subscription.onStatus?.({
+              state: "recovering",
+              message: lastFailureMessage,
+            });
+            scheduleTransientRecovery();
+            return;
+          }
           // The failed REQ's CLOSED handler arms the rate-limit gate before
           // rejecting; wait for it (no-op when the failure wasn't back-pressure)
           // and re-check that this replay's connection is still current.
           if (isRateLimited()) await waitForRateLimit();
-          if (subscriptions.get(subId) !== subscription || !isActive()) return;
+          if (!isCurrentRecovery()) return;
         }
       }
     },

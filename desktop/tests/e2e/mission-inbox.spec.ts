@@ -300,6 +300,7 @@ test.describe("mission inbox", () => {
               files_changed: ["agentAttention.ts"],
               ci: [{ label: "local", status: "passed" }],
             },
+            run: { session_id: "session-e2e", turn_id: "turn-e2e" },
           }),
           id: receiptId,
           kind: 46043,

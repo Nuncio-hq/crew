@@ -15,6 +15,8 @@ export type AgentReceiptSummary = {
   rootEventId: string | null;
   parentEventId: string;
   agentPubkey: string;
+  sessionId: string;
+  turnId: string;
   createdAt: number;
   summary: string;
   verify: string;
@@ -27,6 +29,8 @@ const MAX_PENDING_RECEIPT_REVIEWS = 1_000;
 const pendingReviewEventsByReceiptId = new Map<string, RelayEvent>();
 let pendingReviewProjectionUnavailable = false;
 let exhaustiveReviewProjection = false;
+let nextReviewProjectionOwner = 0;
+let exhaustiveReviewProjectionOwner = 0;
 let reviewAuthority: {
   currentPubkey: string;
   ownedAgentPubkeys: ReadonlySet<string>;
@@ -37,10 +41,16 @@ let cachedAll: AgentReceiptSummary[] | null = null;
 const cachedByConversation = new Map<string, AgentReceiptSummary | null>();
 const EMPTY: AgentReceiptSummary[] = [];
 
+function ownsReviewProjection(owner: number): boolean {
+  return owner === exhaustiveReviewProjectionOwner;
+}
+
 export function beginExhaustiveAgentReceiptProjection(
   currentPubkey = "",
   ownedAgentPubkeys: ReadonlySet<string> = new Set(),
-): void {
+): number {
+  nextReviewProjectionOwner += 1;
+  exhaustiveReviewProjectionOwner = nextReviewProjectionOwner;
   pendingReviewEventsByReceiptId.clear();
   pendingReviewProjectionUnavailable = false;
   exhaustiveReviewProjection = true;
@@ -48,23 +58,28 @@ export function beginExhaustiveAgentReceiptProjection(
     currentPubkey: normalizePubkey(currentPubkey),
     ownedAgentPubkeys: new Set([...ownedAgentPubkeys].map(normalizePubkey)),
   };
+  return exhaustiveReviewProjectionOwner;
 }
 
-export function endExhaustiveAgentReceiptProjection(): void {
+export function endExhaustiveAgentReceiptProjection(owner: number): boolean {
+  if (!ownsReviewProjection(owner)) return false;
   exhaustiveReviewProjection = false;
+  return true;
 }
 
 export function isAgentReceiptProjectionUnavailable(): boolean {
   return pendingReviewProjectionUnavailable;
 }
 
-export function markAgentReceiptProjectionUnavailable(): void {
+export function markAgentReceiptProjectionUnavailable(owner: number): boolean {
+  if (!ownsReviewProjection(owner)) return false;
   pendingReviewEventsByReceiptId.clear();
   pendingReviewProjectionUnavailable = true;
   exhaustiveReviewProjection = false;
   receiptsById.clear();
   reviewedReceiptIds.clear();
   notify();
+  return true;
 }
 
 function notify() {
@@ -167,10 +182,10 @@ export function subscribeAgentReceipts(listener: () => void) {
 export function ingestAgentReceiptEvent(
   event: RelayEvent,
   parentEvent: RelayEvent | null | undefined,
-  causalEvents: ReadonlyMap<string, RelayEvent> = new Map(
-    parentEvent ? [[parentEvent.id, parentEvent]] : [],
-  ),
+  causalEvents: ReadonlyMap<string, RelayEvent>,
+  projectionOwner: number,
 ): boolean {
+  if (!ownsReviewProjection(projectionOwner)) return false;
   if (pendingReviewProjectionUnavailable) return false;
   if (event.kind !== KIND_AGENT_RECEIPT) return false;
   if (!/^[0-9a-f]{64}$/.test(event.id) || !/^[0-9a-f]{64}$/.test(event.pubkey))
@@ -185,7 +200,7 @@ export function ingestAgentReceiptEvent(
   const channelId = tagValue(event, "h");
   const rootId = getThreadReference(event.tags).rootId;
   const conversationId = deriveAgentConversationIdOrNull(channelId, rootId);
-  if (!thread || !parsed || !channelId || !conversationId) return false;
+  if (!thread || !parsed?.run || !channelId || !conversationId) return false;
 
   const prior = receiptsById.get(event.id);
   const pendingReview = pendingReviewEventsByReceiptId.get(event.id);
@@ -205,6 +220,8 @@ export function ingestAgentReceiptEvent(
     rootEventId: rootId,
     parentEventId: thread.parentId,
     agentPubkey: normalizePubkey(event.pubkey),
+    sessionId: parsed.run.sessionId,
+    turnId: parsed.run.turnId,
     createdAt: event.created_at * 1_000,
     summary: parsed.summary,
     verify: parsed.verify,
@@ -214,6 +231,8 @@ export function ingestAgentReceiptEvent(
     prior &&
     prior.reviewed === receipt.reviewed &&
     prior.createdAt === receipt.createdAt &&
+    prior.sessionId === receipt.sessionId &&
+    prior.turnId === receipt.turnId &&
     prior.summary === receipt.summary &&
     prior.verify === receipt.verify
   ) {
@@ -228,7 +247,9 @@ export function ingestAgentReceiptReviewEvent(
   event: RelayEvent,
   currentPubkey: string,
   ownedAgentPubkeys: ReadonlySet<string>,
+  projectionOwner: number,
 ): boolean {
+  if (!ownsReviewProjection(projectionOwner)) return false;
   reviewAuthority = {
     currentPubkey: normalizePubkey(currentPubkey),
     ownedAgentPubkeys: new Set([...ownedAgentPubkeys].map(normalizePubkey)),
@@ -249,7 +270,7 @@ export function ingestAgentReceiptReviewEvent(
     if (pendingReviewProjectionUnavailable) return false;
     pendingReviewEventsByReceiptId.set(receiptId, event);
     if (pendingReviewEventsByReceiptId.size > MAX_PENDING_RECEIPT_REVIEWS) {
-      markAgentReceiptProjectionUnavailable();
+      markAgentReceiptProjectionUnavailable(projectionOwner);
     }
     return false;
   }
@@ -324,7 +345,11 @@ export function getLatestOwnedAgentReceiptForConversation(
 
 type ActiveReceiptAuthority = {
   agentPubkey: string;
-  triggeringEventIds: readonly string[];
+  runs: ReadonlyArray<{
+    sessionId: string;
+    turnId: string;
+    triggeringEventIds: readonly string[];
+  }>;
 };
 
 export function getLatestOwnedAgentReceiptForActiveTurns(
@@ -336,19 +361,42 @@ export function getLatestOwnedAgentReceiptForActiveTurns(
   if (turns.length === 0) return null;
   const pairs = new Set(
     turns.flatMap((turn) =>
-      turn.triggeringEventIds.map(
-        (eventId) => `${normalizePubkey(turn.agentPubkey)}\0${eventId}`,
-      ),
+      ownedAgentPubkeys.has(normalizePubkey(turn.agentPubkey))
+        ? turn.runs.flatMap((run) =>
+            run.triggeringEventIds.map(
+              (eventId) =>
+                `${normalizePubkey(turn.agentPubkey)}\0${eventId}\0${run.sessionId}\0${run.turnId}`,
+            ),
+          )
+        : [],
     ),
   );
-  return (
-    getAgentReceipts().find(
+  if (pairs.size === 0) return null;
+  const receipts = getAgentReceipts();
+  const matching = [...pairs].map((pair) =>
+    receipts.find(
       (receipt) =>
         receipt.conversationId === conversationId &&
         ownedAgentPubkeys.has(receipt.agentPubkey) &&
-        pairs.has(`${receipt.agentPubkey}\0${receipt.parentEventId}`),
-    ) ?? null
+        `${receipt.agentPubkey}\0${receipt.parentEventId}\0${receipt.sessionId}\0${receipt.turnId}` ===
+          pair,
+    ),
   );
+  if (matching.some((receipt) => !receipt)) return null;
+  const covered = matching.filter(
+    (receipt): receipt is AgentReceiptSummary => receipt !== undefined,
+  );
+  const latest = covered.reduce((current, receipt) =>
+    receipt.createdAt > current.createdAt ||
+    (receipt.createdAt === current.createdAt && receipt.id > current.id)
+      ? receipt
+      : current,
+  );
+  const allReviewed = covered.every((receipt) => receipt.reviewed);
+  return {
+    ...latest,
+    reviewed: allReviewed,
+  };
 }
 
 export function getAgentReceipts(): AgentReceiptSummary[] {
@@ -423,6 +471,8 @@ export function useLatestOwnedAgentReceiptForActiveTurns(
 }
 
 export function resetAgentReceiptStore(): void {
+  nextReviewProjectionOwner += 1;
+  exhaustiveReviewProjectionOwner = nextReviewProjectionOwner;
   exhaustiveReviewProjection = false;
   if (
     receiptsById.size === 0 &&

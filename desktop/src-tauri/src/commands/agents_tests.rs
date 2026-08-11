@@ -529,7 +529,27 @@ fn tauri_platform_configs_bundle_kubernetes_only_on_supported_hosts() {
             has_kubernetes, expected,
             "unexpected Kubernetes externalBin for {target}; merged {paths:?}"
         );
+        let has_agent_sidecars = ["buzz-acp", "buzz-agent", "buzz-dev-mcp"]
+            .iter()
+            .all(|binary| {
+                external_bins
+                    .iter()
+                    .any(|value| value == &format!("binaries/{binary}"))
+            });
+        assert_eq!(
+            has_agent_sidecars,
+            target != Target::Windows,
+            "secure agent sidecars must not be packaged for unsupported hosts; merged {paths:?}"
+        );
     }
+}
+
+#[test]
+fn windows_managed_agent_runtime_fails_closed_when_sidecars_are_not_bundled() {
+    let source = include_str!("../managed_agents/runtime.rs");
+    assert!(source.contains("#[cfg(windows)]"));
+    assert!(source.contains("managed agents are unavailable on Windows"));
+    assert!(source.contains("secure Windows backend"));
 }
 
 #[test]

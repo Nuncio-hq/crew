@@ -1,7 +1,5 @@
 import * as React from "react";
 
-import { ingestApprovalRequestFeedItem } from "@/features/agents/needsYouStore";
-import { reconcileAuthorizedUserInputRequests } from "@/features/agents/userInputAttentionProjection";
 import {
   deriveMissionInboxSections,
   useMissionInboxActiveTurns,
@@ -10,7 +8,7 @@ import {
   type MissionInboxSections,
 } from "@/features/home/lib/missionInbox";
 import type { InboxItem } from "@/features/home/lib/inbox";
-import type { Channel, HomeFeedResponse } from "@/shared/api/types";
+import type { Channel } from "@/shared/api/types";
 import {
   getAgentReceipts,
   subscribeAgentReceipts,
@@ -27,7 +25,6 @@ import {
 type UseMissionInboxSectionsInput = {
   channels?: readonly Pick<Channel, "id" | "name">[];
   effectiveDoneSet: ReadonlySet<string>;
-  feed?: HomeFeedResponse;
   inboxItems: readonly InboxItem[];
   currentPubkey?: string;
   ownedAgentPubkeys: ReadonlySet<string>;
@@ -36,23 +33,10 @@ type UseMissionInboxSectionsInput = {
 export function useMissionInboxSections({
   channels,
   effectiveDoneSet,
-  feed,
   inboxItems,
   currentPubkey,
   ownedAgentPubkeys,
 }: UseMissionInboxSectionsInput): MissionInboxSections {
-  React.useEffect(() => {
-    reconcileAuthorizedUserInputRequests(
-      currentPubkey ?? "",
-      ownedAgentPubkeys,
-    );
-    for (const item of feed?.feed.needsAction ?? []) {
-      if (item.kind === 46010) {
-        ingestApprovalRequestFeedItem(item);
-      }
-    }
-  }, [currentPubkey, feed?.feed.needsAction, ownedAgentPubkeys]);
-
   const storedNeedsYou = useMissionInboxNeedsYou();
   // Cleanup effects cannot be the authority boundary: an identity switch
   // renders once before they run. Filter synchronously on every snapshot.

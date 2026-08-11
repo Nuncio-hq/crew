@@ -2,9 +2,38 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  deriveMissionInboxSections,
+  deriveMissionInboxSections as deriveTrustedMissionInboxSections,
   getMissionInboxEventTarget,
 } from "./missionInbox.ts";
+
+function deriveMissionInboxSections(input) {
+  return deriveTrustedMissionInboxSections({
+    ...input,
+    activeTurns: input.activeTurns.map((turn) => ({
+      ...turn,
+      agentTriggerPairs: turn.agentTriggerPairs?.map((pair) => ({
+        ...pair,
+        sessionId: pair.sessionId ?? "session",
+        turnId: pair.turnId ?? "turn",
+      })),
+    })),
+    outcomes: input.outcomes.map(([conversationId, outcome]) => [
+      conversationId,
+      outcome.outcome === "completed"
+        ? {
+            sessionId: "session",
+            turnId: "turn",
+            ...outcome,
+          }
+        : outcome,
+    ]),
+    receipts: input.receipts.map((receipt) => ({
+      sessionId: "session",
+      turnId: "turn",
+      ...receipt,
+    })),
+  });
+}
 
 function item(conversationId, channelId, createdAt, overrides = {}) {
   return {
@@ -37,7 +66,7 @@ const attentionDefaults = {
 };
 
 function activeTurn(conversationId, overrides = {}) {
-  return {
+  const turn = {
     conversationId,
     channelId: "channel-a",
     agentPubkeys: ["agent-1"],
@@ -48,6 +77,19 @@ function activeTurn(conversationId, overrides = {}) {
     progressLabel: "Running tests",
     triggeringEventIds: ["current-trigger"],
     ...overrides,
+  };
+  return {
+    ...turn,
+    agentTriggerPairs:
+      turn.agentTriggerPairs ??
+      (turn.agentPubkeys.length === 1
+        ? turn.triggeringEventIds.map((eventId) => ({
+            agentPubkey: turn.agentPubkeys[0],
+            eventId,
+            sessionId: "session",
+            turnId: "turn",
+          }))
+        : []),
   };
 }
 
@@ -81,6 +123,83 @@ test("blocked conversations win over working", () => {
   assert.equal(sections.working.length, 0);
 });
 
+test("one completed receipt cannot hide an unrelated active sibling", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    now: 100_100,
+    channels,
+    inboxItems: [item("conversation-siblings", "channel-a", 100)],
+    needsYou: [],
+    activeTurns: [
+      activeTurn("conversation-siblings", {
+        agentPubkeys: ["agent-1", "agent-2"],
+        triggeringEventIds: ["trigger-1", "trigger-2"],
+        agentTriggerPairs: [
+          { agentPubkey: "agent-1", eventId: "trigger-1" },
+          { agentPubkey: "agent-2", eventId: "trigger-2" },
+        ],
+      }),
+    ],
+    outcomes: [],
+    receipts: [
+      {
+        id: "receipt-1",
+        channelId: "channel-a",
+        conversationId: "conversation-siblings",
+        agentPubkey: "agent-1",
+        parentEventId: "trigger-1",
+        createdAt: 100_050,
+        summary: "Agent one completed",
+        verify: "done",
+        reviewed: false,
+      },
+    ],
+    acknowledgedConversationIds: new Set(),
+  });
+
+  assert.equal(sections.readyToReview.length, 0);
+  assert.equal(sections.working.length, 1);
+  assert.equal(sections.working[0].conversationId, "conversation-siblings");
+});
+
+test("completed multi-trigger outcomes require one receipt per trigger", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    channels,
+    inboxItems: [item("conversation-completed-siblings", "channel-a", 100)],
+    needsYou: [],
+    activeTurns: [],
+    outcomes: [
+      [
+        "conversation-completed-siblings",
+        {
+          outcome: "completed",
+          channelId: "channel-a",
+          agentPubkey: "agent-1",
+          endedAt: 200,
+          triggeringEventIds: ["trigger-1", "trigger-2"],
+        },
+      ],
+    ],
+    receipts: [
+      {
+        id: "receipt-1",
+        channelId: "channel-a",
+        conversationId: "conversation-completed-siblings",
+        agentPubkey: "agent-1",
+        parentEventId: "trigger-1",
+        createdAt: 201,
+        summary: "Only one trigger completed",
+        verify: "done",
+        reviewed: false,
+      },
+    ],
+    acknowledgedConversationIds: new Set(),
+  });
+
+  assert.equal(sections.readyToReview.length, 0);
+});
+
 test("read-state acknowledgement does not review a durable receipt", () => {
   const input = {
     ...attentionDefaults,
@@ -96,6 +215,7 @@ test("read-state acknowledgement does not review a durable receipt", () => {
           channelId: "channel-b",
           agentPubkey: "agent-2",
           endedAt: 200,
+          triggeringEventIds: ["receipt-2-parent"],
         },
       ],
     ],
@@ -105,6 +225,7 @@ test("read-state acknowledgement does not review a durable receipt", () => {
         channelId: "channel-b",
         conversationId: "conversation-2",
         agentPubkey: "agent-2",
+        parentEventId: "receipt-2-parent",
         createdAt: 200,
         summary: "Completed successfully",
         verify: "pnpm check passed",
@@ -129,7 +250,7 @@ test("read-state acknowledgement does not review a durable receipt", () => {
   );
 });
 
-test("receipt-only rows retain a direct message and thread target", () => {
+test("receipt-only rows resolve navigation from the exact verified event", async () => {
   const sections = deriveMissionInboxSections({
     ...attentionDefaults,
     acknowledgedConversationIds: new Set(),
@@ -152,10 +273,28 @@ test("receipt-only rows retain a direct message and thread target", () => {
       },
     ],
   });
-  assert.deepEqual(getMissionInboxEventTarget(sections.readyToReview[0]), {
-    messageId: "a".repeat(64),
-    threadRootId: "b".repeat(64),
-  });
+  const messageId = "a".repeat(64);
+  const threadRootId = "b".repeat(64);
+  assert.deepEqual(
+    await getMissionInboxEventTarget(
+      sections.readyToReview[0],
+      async () => ({
+        id: messageId,
+        tags: [
+          ["h", "channel-a"],
+          ["e", threadRootId, "", "root"],
+          ["e", messageId, "", "reply"],
+        ],
+      }),
+      () => true,
+    ),
+    {
+      channelId: "channel-a",
+      messageId,
+      parentEventId: messageId,
+      threadRootId,
+    },
+  );
 });
 
 test("non-owned receipts never enter the owner's review queue", () => {
@@ -205,6 +344,43 @@ test("observer completion alone is not ready to review", () => {
       ],
     ],
   });
+  assert.equal(sections.readyToReview.length, 0);
+});
+
+test("a completed run never falls back to an older run's receipt", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [],
+    channels,
+    inboxItems: [item("conversation-2", "channel-b", 100)],
+    needsYou: [],
+    outcomes: [
+      [
+        "conversation-2",
+        {
+          outcome: "completed",
+          channelId: "channel-b",
+          agentPubkey: "agent-2",
+          endedAt: 300,
+          triggeringEventIds: ["run-b-trigger"],
+        },
+      ],
+    ],
+    receipts: [
+      {
+        id: "run-a-receipt",
+        channelId: "channel-b",
+        conversationId: "conversation-2",
+        agentPubkey: "agent-2",
+        parentEventId: "run-a-trigger",
+        createdAt: 200,
+        summary: "Run A completed",
+        reviewed: false,
+      },
+    ],
+  });
+
   assert.equal(sections.readyToReview.length, 0);
 });
 
@@ -492,7 +668,24 @@ test("same inputs return a reference-stable snapshot", () => {
   );
 });
 
-test("mission rows use real roots and never promote conversation UUIDs to event ids", () => {
+test("explicit clock inputs produce distinct snapshots", () => {
+  const input = {
+    ...attentionDefaults,
+    channels,
+    inboxItems: [item("conversation-3", "channel-a", 100)],
+    needsYou: [],
+    activeTurns: [],
+    outcomes: [],
+    acknowledgedConversationIds: new Set(),
+  };
+
+  assert.notStrictEqual(
+    deriveMissionInboxSections({ ...input, now: 100 }),
+    deriveMissionInboxSections({ ...input, now: 200 }),
+  );
+});
+
+test("mission rows use real roots and never promote conversation UUIDs to event ids", async () => {
   const root = "a".repeat(64);
   const [needsYouRow] = deriveMissionInboxSections({
     ...attentionDefaults,
@@ -513,12 +706,63 @@ test("mission rows use real roots and never promote conversation UUIDs to event 
     acknowledgedConversationIds: new Set(),
   }).needsYou;
 
-  assert.deepEqual(getMissionInboxEventTarget(needsYouRow), {
-    messageId: root,
-    threadRootId: root,
-  });
+  assert.deepEqual(
+    await getMissionInboxEventTarget(
+      needsYouRow,
+      async () => ({ id: root, tags: [["h", "channel-a"]] }),
+      () => true,
+    ),
+    {
+      channelId: "channel-a",
+      messageId: root,
+      parentEventId: root,
+      threadRootId: root,
+    },
+  );
   assert.equal(
-    getMissionInboxEventTarget({ ...needsYouRow, rootEventId: null }),
+    await getMissionInboxEventTarget({ ...needsYouRow, rootEventId: null }),
     null,
   );
+});
+
+test("a same-trigger rerun requires the receipt from the exact producer turn", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [],
+    channels,
+    inboxItems: [item("same-trigger-rerun", "channel-a", 100)],
+    needsYou: [],
+    outcomes: [
+      [
+        "same-trigger-rerun",
+        {
+          outcome: "completed",
+          channelId: "channel-a",
+          agentPubkey: "agent-1",
+          sessionId: "session-new",
+          turnId: "turn-new",
+          endedAt: 300,
+          triggeringEventIds: ["same-trigger"],
+        },
+      ],
+    ],
+    receipts: [
+      {
+        id: "receipt-old-turn",
+        channelId: "channel-a",
+        conversationId: "same-trigger-rerun",
+        agentPubkey: "agent-1",
+        parentEventId: "same-trigger",
+        sessionId: "session-old",
+        turnId: "turn-old",
+        createdAt: 200,
+        summary: "Old turn",
+        verify: "old",
+        reviewed: false,
+      },
+    ],
+  });
+
+  assert.equal(sections.readyToReview.length, 0);
 });

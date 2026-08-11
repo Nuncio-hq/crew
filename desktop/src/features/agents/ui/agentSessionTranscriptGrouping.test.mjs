@@ -849,6 +849,24 @@ test("isObserverEventAfter returns true for same timestamp, higher seq — sessi
   assert.ok(isObserverEventAfter(candidate, stored));
 });
 
+test("isObserverEventAfter uses producer sequence before a same-session clock rollback", () => {
+  const stored = {
+    agentIndex: 0,
+    seq: 41,
+    sessionId: "session-a",
+    sourceEventId: "source-41",
+    timestamp: "2026-07-08T00:00:02.000Z",
+    turnId: "turn-a",
+  };
+  const candidate = {
+    ...stored,
+    seq: 42,
+    sourceEventId: "source-42",
+    timestamp: "2026-07-08T00:00:01.000Z",
+  };
+  assert.ok(isObserverEventAfter(candidate, stored));
+});
+
 test("isObserverEventAfter returns false for same timestamp, same seq", () => {
   const stored = { timestamp: "2026-07-08T00:00:01.000Z", seq: 3 };
   const candidate = { timestamp: "2026-07-08T00:00:01.000Z", seq: 3 };

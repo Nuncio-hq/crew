@@ -367,6 +367,32 @@ export function compareObserverEvents(
   left: ObserverEvent,
   right: ObserverEvent,
 ) {
+  const causalOrder = compareObserverCausalOrder(left, right);
+  if (causalOrder !== 0) return causalOrder;
+  return observerEventIdentity(left).localeCompare(
+    observerEventIdentity(right),
+  );
+}
+
+type ObserverOrderFields = Pick<
+  ObserverEvent,
+  "agentIndex" | "seq" | "sessionId" | "sourceEventId" | "timestamp" | "turnId"
+>;
+
+function compareObserverCausalOrder(
+  left: ObserverOrderFields,
+  right: ObserverOrderFields,
+) {
+  const sameAgentIndex = left.agentIndex === right.agentIndex;
+  const sameSession =
+    sameAgentIndex &&
+    left.sessionId != null &&
+    left.sessionId === right.sessionId;
+  const sameTurn =
+    sameAgentIndex && left.turnId != null && left.turnId === right.turnId;
+  if ((sameSession || sameTurn) && left.seq !== right.seq) {
+    return left.seq - right.seq;
+  }
   const leftTime = Date.parse(left.timestamp);
   const rightTime = Date.parse(right.timestamp);
   if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
@@ -377,8 +403,11 @@ export function compareObserverEvents(
   }
 
   return (
-    left.seq - right.seq ||
-    observerEventIdentity(left).localeCompare(observerEventIdentity(right))
+    (left.agentIndex ?? -1) - (right.agentIndex ?? -1) ||
+    (left.sessionId ?? "").localeCompare(right.sessionId ?? "") ||
+    (left.turnId ?? "").localeCompare(right.turnId ?? "") ||
+    (left.sourceEventId ?? "").localeCompare(right.sourceEventId ?? "") ||
+    left.seq - right.seq
   );
 }
 
@@ -389,17 +418,10 @@ export function compareObserverEvents(
  * cannot drift from transcript ordering.
  */
 export function isObserverEventAfter(
-  candidate: { timestamp: string; seq: number },
-  stored: { timestamp: string; seq: number },
+  candidate: ObserverOrderFields,
+  stored: ObserverOrderFields,
 ): boolean {
-  const candidateTime = Date.parse(candidate.timestamp);
-  const storedTime = Date.parse(stored.timestamp);
-  if (Number.isFinite(candidateTime) && Number.isFinite(storedTime)) {
-    if (candidateTime !== storedTime) {
-      return candidateTime > storedTime;
-    }
-  }
-  return candidate.seq > stored.seq;
+  return compareObserverCausalOrder(candidate, stored) > 0;
 }
 
 // Per-event processing shared by every event a live frame carries (one for a

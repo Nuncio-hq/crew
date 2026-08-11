@@ -246,11 +246,13 @@ function recoverLiveSubscriptionFromClosed({
           return;
         }
         console.error("Failed to restore closed relay subscription", error);
+        const recoveryMessage =
+          error instanceof Error ? error.message : String(error);
         recoverLiveSubscriptionFromClosed({
           subscriptions,
           subId: replacementSubId,
           subscription,
-          message,
+          message: recoveryMessage,
           sendReq,
           recoverHistory,
           isActive,

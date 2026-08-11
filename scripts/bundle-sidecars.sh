@@ -8,7 +8,8 @@ if [[ "$TARGET" != *windows* ]]; then
     SIDECARS+=(buzz-backend-kubernetes)
     BUILD_HINT="cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli"
 else
-    BUILD_HINT="cargo build --release -p buzz-acp -p buzz-agent -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli"
+    SIDECARS=(git-credential-nostr buzz)
+    BUILD_HINT="cargo build --release -p git-credential-nostr -p buzz-cli"
 fi
 BINARIES_DIR="desktop/src-tauri/binaries"
 

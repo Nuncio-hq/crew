@@ -893,6 +893,27 @@ pub fn start_managed_agent_process(
     runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
     owner_hex: Option<&str>,
 ) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let _ = (app, record, runtimes, owner_hex);
+        Err(
+            "managed agents are unavailable on Windows until the durable receipt spool has a secure Windows backend"
+                .to_string(),
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        start_managed_agent_process_supported(app, record, runtimes, owner_hex)
+    }
+}
+
+#[cfg(not(windows))]
+fn start_managed_agent_process_supported(
+    app: &AppHandle,
+    record: &mut ManagedAgentRecord,
+    runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
+    owner_hex: Option<&str>,
+) -> Result<(), String> {
     let relay_url = {
         use tauri::Manager;
         let state = app.state::<crate::app_state::AppState>();

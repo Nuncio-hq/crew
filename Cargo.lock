@@ -809,6 +809,7 @@ dependencies = [
  "chrono",
  "clap",
  "evalexpr",
+ "fs4",
  "futures-util",
  "hex",
  "httparse",

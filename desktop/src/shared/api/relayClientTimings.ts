@@ -8,6 +8,7 @@ export const EVENT_BATCH_MS = 16;
  */
 export const AUTH_TIMEOUT_MS = 25_000;
 export const HISTORY_TIMEOUT_MS = 25_000;
+export const LIVE_SUBSCRIPTION_READY_TIMEOUT_MS = HISTORY_TIMEOUT_MS;
 export const PUBLISH_TIMEOUT_MS = 25_000;
 
 /**

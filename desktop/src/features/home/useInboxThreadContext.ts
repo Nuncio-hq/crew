@@ -1,11 +1,11 @@
 import * as React from "react";
 
 import { isInboxThreadContextEvent } from "@/features/home/lib/inboxViewHelpers";
-import { relayEventFromFeedItem } from "@/features/home/lib/inbox";
 import { fetchStructuralAuxForMessages } from "@/features/messages/lib/auxBackfill";
 import { getThreadReference } from "@/features/messages/lib/threading";
 import { relayClient } from "@/shared/api/relayClient";
 import { buildChannelReactionAuxFilter } from "@/shared/api/relayChannelFilters";
+import { isVerifiedRelayEvent } from "@/shared/api/relayEventVerification";
 import { getEventById } from "@/shared/api/tauri";
 import type { FeedItem, RelayEvent } from "@/shared/api/types";
 import {
@@ -41,9 +41,22 @@ function dedupeEvents(events: RelayEvent[]): RelayEvent[] {
   return [...eventsById.values()].sort((a, b) => a.created_at - b.created_at);
 }
 
-function getThreadRootId(event: RelayEvent): string {
+export function deriveInboxThreadSelectionFromVerifiedEvent(
+  event: RelayEvent,
+  expectedEventId: string,
+) {
+  if (event.id !== expectedEventId) return null;
   const thread = getThreadReference(event.tags);
-  return thread.rootId ?? thread.parentId ?? event.id;
+  const selectedChannelId = event.tags.find(
+    (tag) => tag[0] === "h" && tag[1],
+  )?.[1];
+  if (!selectedChannelId) return null;
+  return {
+    selectedChannelId,
+    selectedEventId: event.id,
+    selectedParentId: thread.parentId,
+    selectedThreadRootId: thread.rootId ?? thread.parentId ?? event.id,
+  };
 }
 
 export function useInboxThreadContext(
@@ -59,24 +72,32 @@ export function useInboxThreadContext(
   const [hasLoadError, setHasLoadError] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
 
-  const selectedEvent = React.useMemo(
-    () => (item ? relayEventFromFeedItem(item) : null),
-    [item],
-  );
-
-  const selectedThreadRootId = selectedEvent
-    ? getThreadRootId(selectedEvent)
-    : null;
-  const selectedParentId = selectedEvent
-    ? getThreadReference(selectedEvent.tags).parentId
-    : null;
-  const selectedChannelId = item?.channelId ?? null;
+  const selectedEventId = item?.id ?? null;
   const fullChannel = options.fullChannel === true;
+  const selectedVerifiedEvent = React.useMemo(
+    () =>
+      [...(channelMessages ?? []), ...fetchedEvents].find(
+        (event) => event.id === selectedEventId && isVerifiedRelayEvent(event),
+      ) ?? null,
+    [channelMessages, fetchedEvents, selectedEventId],
+  );
+  const selectedVerifiedSelection = React.useMemo(
+    () =>
+      selectedVerifiedEvent && selectedEventId
+        ? deriveInboxThreadSelectionFromVerifiedEvent(
+            selectedVerifiedEvent,
+            selectedEventId,
+          )
+        : null,
+    [selectedEventId, selectedVerifiedEvent],
+  );
+  const selectedChannelId =
+    selectedVerifiedSelection?.selectedChannelId ?? null;
 
   React.useEffect(() => {
     let isCancelled = false;
 
-    if (fullChannel || !selectedEvent || !selectedThreadRootId) {
+    if (fullChannel || !selectedEventId) {
       setFetchedEvents([]);
       setHasLoadError(false);
       setIsLoading(false);
@@ -86,9 +107,8 @@ export function useInboxThreadContext(
     }
 
     async function loadContext() {
-      const targetEvent = selectedEvent;
-      const threadRootId = selectedThreadRootId;
-      if (!targetEvent || !threadRootId) {
+      const targetEventId = selectedEventId;
+      if (!targetEventId) {
         return;
       }
 
@@ -96,37 +116,45 @@ export function useInboxThreadContext(
       setHasLoadError(false);
 
       try {
-        const selection = {
-          selectedChannelId,
-          selectedEventId: targetEvent.id,
-          selectedParentId,
-          selectedThreadRootId: threadRootId,
-        };
-        const ancestorEventsPromise = (async () => {
-          const eventsById = new Map<string, RelayEvent>();
-          let failed = false;
-
-          const fetchEvent = async (eventId: string) => {
-            if (eventId === targetEvent.id || eventsById.has(eventId)) {
-              return eventsById.get(eventId) ?? targetEvent;
-            }
-
-            try {
-              const event = await getEventById(eventId);
-              eventsById.set(event.id, event);
-              return event;
-            } catch {
-              failed = true;
+        const targetEvent = await getEventById(targetEventId);
+        if (!isVerifiedRelayEvent(targetEvent)) {
+          throw new Error("selected Inbox event failed signature verification");
+        }
+        const selection = deriveInboxThreadSelectionFromVerifiedEvent(
+          targetEvent,
+          targetEventId,
+        );
+        if (!selection) {
+          throw new Error(
+            "selected Inbox event identity or signed channel authority mismatch",
+          );
+        }
+        const eventsById = new Map<string, RelayEvent>([
+          [targetEvent.id, targetEvent],
+        ]);
+        let ancestorFailed = false;
+        const fetchEvent = async (eventId: string) => {
+          if (eventsById.has(eventId)) return eventsById.get(eventId) ?? null;
+          try {
+            const event = await getEventById(eventId);
+            if (!isVerifiedRelayEvent(event) || event.id !== eventId) {
+              ancestorFailed = true;
               return null;
             }
-          };
-
-          if (threadRootId !== targetEvent.id) {
-            await fetchEvent(threadRootId);
+            eventsById.set(event.id, event);
+            return event;
+          } catch {
+            ancestorFailed = true;
+            return null;
+          }
+        };
+        const ancestorEventsPromise = (async () => {
+          if (selection.selectedThreadRootId !== targetEventId) {
+            await fetchEvent(selection.selectedThreadRootId);
           }
 
-          let ancestorId = selectedParentId;
-          const seen = new Set<string>([targetEvent.id]);
+          let ancestorId = selection.selectedParentId;
+          const seen = new Set<string>([targetEventId]);
           let hops = 0;
           while (
             ancestorId &&
@@ -135,36 +163,37 @@ export function useInboxThreadContext(
           ) {
             seen.add(ancestorId);
             const ancestor = await fetchEvent(ancestorId);
-            if (!ancestor || ancestorId === threadRootId) {
+            if (!ancestor || ancestorId === selection.selectedThreadRootId) {
               break;
             }
             ancestorId = getThreadReference(ancestor.tags).parentId;
             hops += 1;
           }
-
-          return { events: [...eventsById.values()], failed };
+          return {
+            events: [...eventsById.values()],
+            failed: ancestorFailed,
+          };
         })();
 
-        const descendantEventsPromise =
-          selectedChannelId && threadRootId
-            ? relayClient
-                .fetchEvents({
-                  "#e": [threadRootId],
-                  "#h": [selectedChannelId],
-                  kinds: [...HOME_MENTION_EVENT_KINDS],
-                  limit: THREAD_CONTEXT_LIMIT,
-                })
-                .then((events) => ({ events, failed: false }))
-                .catch((error) => {
-                  console.error(
-                    "Failed to hydrate Inbox thread context",
-                    selectedChannelId,
-                    threadRootId,
-                    error,
-                  );
-                  return { events: [] as RelayEvent[], failed: true };
-                })
-            : Promise.resolve({ events: [] as RelayEvent[], failed: false });
+        const descendantEventsPromise = selection.selectedChannelId
+          ? relayClient
+              .fetchEvents({
+                "#e": [selection.selectedThreadRootId],
+                "#h": [selection.selectedChannelId],
+                kinds: [...HOME_MENTION_EVENT_KINDS],
+                limit: THREAD_CONTEXT_LIMIT,
+              })
+              .then((events) => ({ events, failed: false }))
+              .catch((error) => {
+                console.error(
+                  "Failed to hydrate Inbox thread context",
+                  selection.selectedChannelId,
+                  selection.selectedThreadRootId,
+                  error,
+                );
+                return { events: [] as RelayEvent[], failed: true };
+              })
+          : Promise.resolve({ events: [] as RelayEvent[], failed: false });
         const [ancestorResult, descendantResult] = await Promise.all([
           ancestorEventsPromise,
           descendantEventsPromise,
@@ -179,7 +208,9 @@ export function useInboxThreadContext(
           dedupeEvents(
             [...ancestorResult.events, ...descendantResult.events].filter(
               (event): event is RelayEvent =>
-                event !== null && isInboxThreadContextEvent(event, selection),
+                event !== null &&
+                isVerifiedRelayEvent(event) &&
+                isInboxThreadContextEvent(event, selection),
             ),
           ),
         );
@@ -200,48 +231,37 @@ export function useInboxThreadContext(
     return () => {
       isCancelled = true;
     };
-  }, [
-    selectedChannelId,
-    selectedEvent,
-    selectedParentId,
-    selectedThreadRootId,
-    fullChannel,
-  ]);
+  }, [selectedEventId, fullChannel]);
 
   const events = React.useMemo(() => {
-    if (!selectedEvent) {
+    if (!selectedVerifiedEvent || !selectedVerifiedSelection) {
       return [];
     }
 
     if (fullChannel) {
       return dedupeEvents([
-        selectedEvent,
-        ...(channelMessages ?? []).filter((event) =>
-          CHANNEL_CONTEXT_EVENT_KINDS.has(event.kind),
+        selectedVerifiedEvent,
+        ...(channelMessages ?? []).filter(
+          (event) =>
+            CHANNEL_CONTEXT_EVENT_KINDS.has(event.kind) &&
+            isVerifiedRelayEvent(event),
         ),
       ]);
     }
 
     const localContext = (channelMessages ?? []).filter((event) => {
-      return isInboxThreadContextEvent(event, {
-        selectedChannelId,
-        selectedEventId: selectedEvent.id,
-        selectedParentId,
-        selectedThreadRootId,
-      });
+      return (
+        isVerifiedRelayEvent(event) &&
+        isInboxThreadContextEvent(event, selectedVerifiedSelection)
+      );
     });
 
     const currentFetchedEvents = fetchedEvents.filter((event) =>
-      isInboxThreadContextEvent(event, {
-        selectedChannelId,
-        selectedEventId: selectedEvent.id,
-        selectedParentId,
-        selectedThreadRootId,
-      }),
+      isInboxThreadContextEvent(event, selectedVerifiedSelection),
     );
 
     return dedupeEvents([
-      selectedEvent,
+      selectedVerifiedEvent,
       ...currentFetchedEvents,
       ...localContext,
     ]);
@@ -249,10 +269,8 @@ export function useInboxThreadContext(
     channelMessages,
     fetchedEvents,
     fullChannel,
-    selectedChannelId,
-    selectedEvent,
-    selectedParentId,
-    selectedThreadRootId,
+    selectedVerifiedEvent,
+    selectedVerifiedSelection,
   ]);
 
   // Auxiliary events carry only an `#e` reference, so they may be absent from

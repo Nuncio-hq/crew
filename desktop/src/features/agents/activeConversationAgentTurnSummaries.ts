@@ -16,6 +16,11 @@ export type ActiveConversationAgentTurnSummary = {
   progressKind: AgentProgressKind;
   progressLabel: string;
   triggeringEventIds: string[];
+  runs: Array<{
+    sessionId: string;
+    turnId: string;
+    triggeringEventIds: string[];
+  }>;
 };
 
 const EMPTY: ActiveConversationAgentTurnSummary[] = [];
@@ -56,6 +61,15 @@ export function getActiveTurnSummariesForConversation(
         progressKind: turn.progressKind,
         progressLabel: turn.progressLabel,
         triggeringEventIds: [...turn.triggeringEventIds],
+        runs: turn.sessionId
+          ? [
+              {
+                sessionId: turn.sessionId,
+                turnId: turn.turnId,
+                triggeringEventIds: [...turn.triggeringEventIds],
+              },
+            ]
+          : [],
       });
       return;
     }
@@ -69,6 +83,13 @@ export function getActiveTurnSummariesForConversation(
     prior.triggeringEventIds = [
       ...new Set([...prior.triggeringEventIds, ...turn.triggeringEventIds]),
     ];
+    if (turn.sessionId) {
+      prior.runs.push({
+        sessionId: turn.sessionId,
+        turnId: turn.turnId,
+        triggeringEventIds: [...turn.triggeringEventIds],
+      });
+    }
   });
 
   const result =
