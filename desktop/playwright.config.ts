@@ -157,6 +157,8 @@ export default defineConfig({
         "**/agent-numeric-tuning.spec.ts",
         "**/needs-restart-screenshots.spec.ts",
         "**/mission-inbox.spec.ts",
+        "**/evidence-cards.spec.ts",
+        "**/evidence-reactions.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

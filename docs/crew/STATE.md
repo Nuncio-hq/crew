@@ -27,6 +27,16 @@ Implementation slices below remain the code truth for what is built today.
 
 ## Current product slice
 
+Evidence on the thread log is shipped for this slice:
+
+- the CLI appends `["crew-evidence", "<kind>"]` for the four validated evidence
+  kinds to existing messages;
+- desktop renders Crew evidence cards for kind 9, preserves ordinary fallback,
+  and keeps kind 46043 receipt cards unchanged;
+- owners can Accept/Reject with existing kind-7 reactions, with Reject opening
+  the normal reply composer.
+- C2/C3 Playwright contracts and the desktop unit suite verify these behaviors.
+
 Make a Buzz Project record point to a local workspace directory while
 preserving NIP-34 identity.
 
@@ -41,6 +51,10 @@ In scope:
 - per-thread ACP scheduling and isolated Git worktree cwd;
 - owner-scoped worktree-ready/error telemetry and a root-scoped Project-thread
   workspace surface;
+- office-level completion evidence guidance and the `messages send
+  --evidence <kind>` tag surface;
+- desktop evidence cards with owner Accept/Reject reactions on ordinary kind-9
+  messages;
 - ordered Project-thread handoff state from mentions, active-turn telemetry,
   and signed agent replies;
 - ordered multi-agent Project task routing through normal composer mentions;
@@ -120,6 +134,17 @@ Out of scope for this slice:
 
 ## Verified evidence
 
+- Evidence-card C2 and owner-reaction C3 Playwright contracts pass, including
+  full authored text excerpts for the text layouts and owner-consistent verdict
+  state.
+- Phase 09 live probe results are recorded in
+  [`verification/0010-evidence-on-thread-log-probes.md`](verification/0010-evidence-on-thread-log-probes.md).
+  Probe 1 is explicitly split between the mock desktop command-payload check
+  and the separate real-relay reaction read-back; the single-process
+  click-to-relay chain remains unverified; issue #133 tracks the relay-backed
+  `add_reaction` bridge follow-up.
+- The desktop unit suite passes with 5045 tests passing, one skipped, and zero
+  failures.
 - `buzz-acp` uses the process cwd for ordinary sessions and one validated,
   deterministic worktree cwd for each owner-authored Project task thread.
 - Project announcements already support `buzz-channel` binding.
@@ -265,6 +290,18 @@ and in flight.
   relay for the native exact-reader smoke belongs in the next
   release-verification Definition of Done, alongside the outstanding signed
   updater install/relaunch verification. It is not an open decision.
+
+- Phase 07's generic upstream contribution remains a draft only under D-020;
+  no upstream PR is open.
+
+- Whether a future non-local relay must hard-block local-path publication or
+  use a different privacy mechanism.
+- Final board event kind and tag schema.
+- Whether exact local snapshots should additionally refresh on app focus.
+- Whether symlink-selected workspaces should remain unsupported or get a
+  separately reviewed canonical-path flow.
+- When to publish or link a real Project on the manager relay for the final
+  native exact-reader smoke.
 
 ## Hermes runtime track (feature 0001)
 

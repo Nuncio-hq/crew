@@ -405,6 +405,9 @@ pub enum MessagesCmd {
         /// Nostr event kind (default: channel default)
         #[arg(long)]
         kind: Option<u16>,
+        /// Append a validated evidence kind tag; only kind 9 renders an evidence card in this slice
+        #[arg(long, value_name = "KIND")]
+        evidence: Option<commands::evidence::EvidenceKind>,
         /// Event ID to reply to (creates a thread)
         #[arg(long)]
         reply_to: Option<String>,

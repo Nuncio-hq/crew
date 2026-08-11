@@ -468,15 +468,37 @@ mis-assignment when roles exist, and treat shared thread reports as the human
 record. Spikes are not automatic law. Full text of MUST/MUST NOT lives in the
 working agreement doc.
 
-## D-031 — Keep shipped state in sync with STATE.md
+## D-036 — Evidence stays on existing message events as a tolerant tag
 
 - **Status:** Accepted
 - **Date:** 2026-08-10
-- **Working agreement:** [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md)
+- **Evidence:** [`spikes/0021-evidence-tag-roundtrip.md`](spikes/0021-evidence-tag-roundtrip.md)
 
-When a release is published, a slice merges, or the gate changes, update
-`STATE.md` in the same PR. Repeated drift is costly because agents sequence
-work from that file. Enforcement is review-visible prose, not a CI guard.
+Evidence uses `["crew-evidence", "<kind>"]` on existing message kinds. The
+allowed values are `test-run`, `metrics`, `before-after-visual`, and `diff-stat`;
+the first occurrence wins, and no new event kind is introduced.
+
+This is a tag rather than a new kind because existing kinds can carry it while
+other ACP engines and clients can safely ignore an unknown tag. The phase 01
+spike recorded a real relay/storage/query/desktop round trip preserving the
+tag and ordinary-client ignore safety.
+
+The CLI appends the tag after the event is built and before signing, following
+the precedent at `crates/buzz-cli/src/client.rs:590`. This keeps the additional
+Crew delta out of both `buzz-sdk` and `buzz-core`.
+
+Evidence is self-reported and can be fabricated, including numbers and test
+excerpts. This raises the cost of lying and the odds of getting caught, but it
+does not cryptographically verify work. Independent verification remains with
+CI and PR review.
+
+Only the CLI can emit the tag in this slice; the desktop composer and mobile
+cannot. Only kind 9 renders an evidence card. Accept/Reject reuse existing
+kind-7 reactions, using `✅` and `❌`; `KIND_AGENT_RECEIPT` ignores the tag and
+keeps its receipt card.
+
+The ≤30-line evidence bound is a prompt rule and a probe check, never a runtime
+guard.
 
 ## D-032 — Keep Desktop Smoke E2E advisory until known failures close
 

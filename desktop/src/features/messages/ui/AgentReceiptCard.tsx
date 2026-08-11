@@ -8,7 +8,7 @@ type AgentReceiptCardProps = {
   reviewed?: boolean;
 };
 
-function resolvePrReferenceHref(value: string) {
+export function resolvePrReferenceHref(value: string) {
   if (/^https?:\/\//i.test(value)) {
     return value;
   }

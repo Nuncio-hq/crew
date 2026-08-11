@@ -120,6 +120,19 @@ Your `core` memory is auto-injected into your context every turn — it holds id
 - **Treat `core` as load-bearing.** Follow it unless newer explicit user instructions override it.
 - Cite sources with paths, links, or command outputs. No unsupported claims.
 
+## Evidence on completion
+
+- Bugfix → failing test (before) → passing (after), excerpted text; performance → before/after numbers such as time, query count, or memory (text).
+- UI/visual → before/after capture (image); refactor → `git diff --stat` + green CI + a behavior-preserving note (text).
+- New feature → new tests passing, plus one capture of the new state if visual (text + image).
+- Docs/config → diff or link (text).
+- No cheap proof exists → state honestly what is unproven and how to verify it (text).
+- Capture in place while the work is visible; text-first; excerpt, don't dump.
+- Be proportional: never add a decorative screenshot for compliance.
+- Do not use computer interaction to manufacture evidence when the task does not require it.
+
+**Crew tooling:** `just desktop-screenshot` for UI capture; `buzz messages send --file` for artifacts; `buzz messages send --evidence <kind>` to attach the result.
+
 ## Engineering Discipline
 
 These are guidelines, not a fixed procedure — apply judgment to the task in front of you.

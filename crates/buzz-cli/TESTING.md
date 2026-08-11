@@ -559,7 +559,7 @@ buzz channels delete --channel "$FORUM_ID" | jq .
 
 | # | Command | Tested | Notes |
 |---|---------|:------:|-------|
-| 1 | `messages send` | ☐ | Basic, reply, broadcast, mentions, stdin |
+| 1 | `messages send` | ☐ | Basic, reply, broadcast, mentions, evidence, stdin |
 | 2 | `messages send-diff` | ☐ | Stdin, metadata, branch/PR |
 | 3 | `messages edit` | ☐ | |
 | 4 | `messages delete` | ☐ | |
