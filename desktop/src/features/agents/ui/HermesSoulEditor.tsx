@@ -31,12 +31,19 @@ export function HermesSoulEditor({
   const [content, setContent] = React.useState<string | null>(null);
   const [savedContent, setSavedContent] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const hasLocalEdits = React.useRef(false);
 
   React.useEffect(() => {
-    if (query.data?.status !== "ok") return;
-    setContent(query.data.content);
-    setSavedContent(query.data.content);
-    setError(null);
+    if (hasLocalEdits.current) return;
+    if (query.data?.status === "ok") {
+      setContent(query.data.content);
+      setSavedContent(query.data.content);
+      setError(null);
+    } else if (query.data?.status === "missing") {
+      setContent("");
+      setSavedContent("");
+      setError(null);
+    }
   }, [query.data]);
 
   const mutation = useMutation({
@@ -46,6 +53,7 @@ export function HermesSoulEditor({
         setError(result.message);
         return;
       }
+      hasLocalEdits.current = false;
       setContent(result.content);
       setSavedContent(result.content);
       void queryClient.invalidateQueries({ queryKey });
@@ -58,7 +66,11 @@ export function HermesSoulEditor({
   });
 
   if (query.isLoading || content === null) {
-    if (query.data && query.data.status !== "ok") {
+    if (
+      query.data &&
+      query.data.status !== "ok" &&
+      query.data.status !== "missing"
+    ) {
       return (
         <div className="space-y-1.5" data-testid="hermes-soul-error">
           <p className="text-sm font-medium text-foreground">Profile persona</p>
@@ -72,6 +84,7 @@ export function HermesSoulEditor({
   }
 
   const dirty = content !== savedContent;
+  const missing = query.data?.status === "missing";
   return (
     <div
       className="space-y-2 rounded-md border border-border p-3"
@@ -84,11 +97,20 @@ export function HermesSoulEditor({
           runs. It applies on the next fresh ACP session; <code>!rotate</code>{" "}
           forces one.
         </p>
+        {missing ? (
+          <p className="text-sm text-muted-foreground">
+            This profile has no persona file yet. Saving will create
+            <code> SOUL.md</code>.
+          </p>
+        ) : null}
       </div>
       <Textarea
         aria-label="Hermes profile persona"
         disabled={disabled || mutation.isPending}
-        onChange={(event) => setContent(event.target.value)}
+        onChange={(event) => {
+          hasLocalEdits.current = true;
+          setContent(event.target.value);
+        }}
         value={content}
       />
       {error ? <p className="text-sm text-destructive">{error}</p> : null}

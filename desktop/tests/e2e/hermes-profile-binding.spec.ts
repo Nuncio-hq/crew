@@ -485,6 +485,7 @@ test.describe("hermes profile binding", () => {
     await expect(field).toContainText(
       "changing it here changes it everywhere the profile runs",
     );
+    await expect(page.getByTestId("agent-ai-defaults-notice")).toHaveCount(0);
     await page.screenshot({
       path: "/tmp/shots118/hermes-model-write-through.png",
       fullPage: true,
@@ -528,6 +529,43 @@ test.describe("hermes profile binding", () => {
     await expect(textarea).toHaveValue("You are a bold, careful scout.\n");
   });
 
+  test("edit: failed profile model save keeps typed values", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      hermesProfiles: ["scout"],
+      hermesProfileConfigs: {
+        scout: { provider: "anthropic", model: "claude-sonnet" },
+      },
+      hermesProfileWriteFailure: {
+        status: "rejected",
+        message: "provider rejected",
+      },
+      managedAgents: [
+        {
+          pubkey: HERMES_AGENT_PUBKEY,
+          name: "Hermes Scout",
+          status: "stopped",
+          channelNames: ["agents"],
+          runtime: "hermes",
+          hermesProfile: "scout",
+        },
+      ],
+    });
+    await openEditForAgent(page, "Hermes Scout");
+    const field = page.getByTestId("hermes-profile-model-field");
+    await field.getByLabel("Hermes profile provider").fill("openai");
+    await field.getByLabel("Hermes profile model").fill("gpt-5");
+    await field.getByRole("button", { name: "Save profile model" }).click();
+    await expect(field.getByTestId("hermes-profile-model-error")).toContainText(
+      "provider rejected",
+    );
+    await expect(field.getByLabel("Hermes profile provider")).toHaveValue(
+      "openai",
+    );
+    await expect(field.getByLabel("Hermes profile model")).toHaveValue("gpt-5");
+  });
+
   test("create: empty optional Agent instructions is accepted and explains layers", async ({
     page,
   }) => {
@@ -546,10 +584,10 @@ test.describe("hermes profile binding", () => {
       dialog.getByText("Agent instructions (optional)"),
     ).toBeVisible();
     await expect(dialog).toContainText(
-      "L1 SOUL.md = the profile’s persona, Hermes-owned, Crew edits write-through.",
+      "The profile’s shared persona (SOUL.md), Hermes-owned; Crew edits it write-through.",
     );
     await expect(dialog).toContainText(
-      "L3 the Crew agent description = optional per-agent job context, appended only when non-empty.",
+      "Instructions for this Crew agent only are added when you fill in Agent instructions.",
     );
     await page.screenshot({
       path: "/tmp/shots118/agent-instructions-optional.png",
@@ -558,6 +596,28 @@ test.describe("hermes profile binding", () => {
     await expect(
       dialog.getByTestId("persona-dialog-submit"),
     ).not.toHaveAttribute("aria-invalid");
+  });
+
+  test("create: a profile without SOUL.md opens an empty persona editor that saves", async ({
+    page,
+  }) => {
+    await installMockBridge(page, { hermesProfiles: [] });
+    const dialog = await openCreateCustomize(page);
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await waitForAnimations(page);
+
+    await dialog.locator("#persona-hermes-profile").fill("recruit");
+    await page.getByTestId("hermes-profile-create-button").click();
+    const step = page.getByTestId("hermes-profile-persona-step");
+    await expect(step).toBeVisible();
+    const editor = step.getByTestId("hermes-soul-editor");
+    await expect(editor).toContainText("has no persona file yet");
+    const textarea = editor.getByLabel("Hermes profile persona");
+    await expect(textarea).toHaveValue("");
+    await textarea.fill("You are a thoughtful recruiter.");
+    await editor.getByRole("button", { name: "Save profile persona" }).click();
+    await expect(textarea).toHaveValue("You are a thoughtful recruiter.");
+    await expect(editor).not.toContainText("has no persona file yet");
   });
 
   test("edit: profile-bound Hermes cannot be changed to public access", async ({

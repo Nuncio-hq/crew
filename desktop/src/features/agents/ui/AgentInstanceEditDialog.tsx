@@ -1123,8 +1123,8 @@ export function AgentInstanceEditDialog({
               showCustomModelInput={showCustomModelInput}
               showProfileField={showHermesProfileField}
             />
-
             <AgentAiDefaultsNotice
+              hidden={modelWriteThrough}
               onEditDefaults={() => setAiDefaultsOpen(true)}
               triggerRef={aiDefaultsTriggerRef}
               explicitModel={inheritedSubmission.model ?? ""}

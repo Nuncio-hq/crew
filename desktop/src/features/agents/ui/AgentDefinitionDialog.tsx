@@ -913,7 +913,7 @@ export function AgentDefinitionDialog({
                 topLevelSecretEnvVar={topLevelSecretEnvVar}
                 transition={advancedFieldsTransition}
               />
-              {aiConfigurationMode === "defaults" ? (
+              {aiConfigurationMode === "defaults" && !modelWriteThrough ? (
                 <AgentCreateAiDefaultsSummary
                   canChooseProvider={runtimeCanChooseLlmProvider}
                   harness={runtimeSummaryLabel}

@@ -26,6 +26,7 @@ export function formatAiDefaultsSummary({
 }
 
 export function AgentAiDefaultsNotice({
+  hidden = false,
   isConfigured = true,
   onEditDefaults,
   triggerRef,
@@ -35,6 +36,7 @@ export function AgentAiDefaultsNotice({
   inheritedModel,
   inheritedProvider,
 }: {
+  hidden?: boolean;
   isConfigured?: boolean;
   onEditDefaults: () => void;
   triggerRef?: React.Ref<HTMLButtonElement>;
@@ -44,6 +46,7 @@ export function AgentAiDefaultsNotice({
   inheritedModel: InheritedDefault;
   inheritedProvider: InheritedDefault;
 }) {
+  if (hidden) return null;
   const provider = explicitProvider.trim() || inheritedProvider.value;
   const model = explicitModel.trim() || inheritedModel.value;
 

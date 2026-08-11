@@ -41,8 +41,10 @@ export function HermesProfileModelField({
   const [model, setModel] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
+  const hasLocalEdits = React.useRef(false);
 
   React.useEffect(() => {
+    if (hasLocalEdits.current) return;
     if (!okResult(query.data)) return;
     setProvider(query.data.provider ?? "");
     setModel(query.data.model ?? "");
@@ -61,6 +63,7 @@ export function HermesProfileModelField({
         setError(result.message);
         return;
       }
+      hasLocalEdits.current = false;
       setProvider(result.provider ?? "");
       setModel(result.model ?? "");
       setNotice("Saved. The new model applies on the next fresh ACP session.");
@@ -111,14 +114,20 @@ export function HermesProfileModelField({
         <Input
           aria-label="Hermes profile provider"
           disabled={disabled || mutation.isPending}
-          onChange={(event) => setProvider(event.target.value)}
+          onChange={(event) => {
+            hasLocalEdits.current = true;
+            setProvider(event.target.value);
+          }}
           placeholder="Provider"
           value={provider}
         />
         <Input
           aria-label="Hermes profile model"
           disabled={disabled || mutation.isPending}
-          onChange={(event) => setModel(event.target.value)}
+          onChange={(event) => {
+            hasLocalEdits.current = true;
+            setModel(event.target.value);
+          }}
           placeholder="Model ID"
           value={model}
         />
