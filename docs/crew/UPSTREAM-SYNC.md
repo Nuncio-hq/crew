@@ -63,7 +63,10 @@ Then:
    the same upstream file. If the Desktop file-size ratchet trips on a shared
    file, extract Crew-owned additions into Crew-only files so the shared file
    returns to at or below the upstream line count (D-022) — do not raise the
-   limit or grant a sync-only exception.
+   limit or grant a sync-only exception. For a file with a recorded baseline,
+   its recorded `lines` value uses `wc -l` semantics: update only that value to
+   the exact count printed by the guard in the same sync PR when upstream grows
+   it; Crew-owned growth still requires extraction under D-022.
 4. After the merge, run `gh workflow list --all` and disable any newly imported
    workflows that fall outside Crew scope (for example Sprig publication).
 5. Run focused tests for conflict areas.

@@ -22,6 +22,12 @@ export function countLines(content) {
   return content.split(/\r?\n/).length;
 }
 
+// Recorded baselines intentionally use wc -l semantics so manifest values
+// match the line counts reviewers see in issue reports and shell commands.
+export function countRecordedLines(content) {
+  return content.endsWith("\n") ? countLines(content) - 1 : countLines(content);
+}
+
 export function allowedLineCount(baseLines, maxLines) {
   return baseLines == null || baseLines <= maxLines ? maxLines : baseLines;
 }
@@ -29,6 +35,79 @@ export function allowedLineCount(baseLines, maxLines) {
 export function evaluateFileSize({ baseLines, candidateLines, maxLines }) {
   const limit = allowedLineCount(baseLines, maxLines);
   return { limit, violates: candidateLines > limit };
+}
+
+export function evaluateBaselineFileSize({ recordedLines, candidateLines }) {
+  if (candidateLines === recordedLines) {
+    return { violates: false, direction: "unchanged" };
+  }
+
+  return {
+    violates: true,
+    direction: candidateLines > recordedLines ? "grew" : "shrank",
+  };
+}
+
+export function parseFileSizeBaselines(
+  content,
+  manifestPath = "file-size-baselines.json",
+) {
+  let manifest;
+  try {
+    manifest = JSON.parse(content);
+  } catch (error) {
+    throw new Error(
+      `Invalid file-size baseline manifest ${manifestPath}: invalid JSON`,
+      {
+        cause: error,
+      },
+    );
+  }
+
+  if (
+    manifest === null ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest) ||
+    manifest.files === null ||
+    typeof manifest.files !== "object" ||
+    Array.isArray(manifest.files)
+  ) {
+    throw new Error(
+      `Invalid file-size baseline manifest ${manifestPath}: expected a top-level object with a files object`,
+    );
+  }
+
+  const baselines = new Map();
+  for (const [relativePath, entry] of Object.entries(manifest.files)) {
+    if (
+      relativePath.length === 0 ||
+      relativePath.startsWith("/") ||
+      relativePath.includes("\\") ||
+      path.posix.normalize(relativePath) !== relativePath ||
+      relativePath.split("/").some((part) => part === ".." || part === ".")
+    ) {
+      throw new Error(
+        `Invalid file-size baseline manifest ${manifestPath}: ${relativePath} is not a project-relative POSIX path`,
+      );
+    }
+    if (
+      entry === null ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      !Number.isInteger(entry.lines) ||
+      entry.lines < 0 ||
+      typeof entry.reason !== "string" ||
+      entry.reason.length === 0 ||
+      typeof entry.recordedAt !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(entry.recordedAt)
+    ) {
+      throw new Error(
+        `Invalid file-size baseline manifest ${manifestPath}: ${relativePath} must have a non-negative integer lines, a non-empty reason, and recordedAt in YYYY-MM-DD format`,
+      );
+    }
+    baselines.set(relativePath, entry);
+  }
+  return baselines;
 }
 
 function findRule(rules, relativePath) {
@@ -118,6 +197,34 @@ export async function runFileSizeCheck({ projectRoot, rules, label }) {
   // Fail clearly instead of silently turning a missing/shallow base into a pass.
   git(["cat-file", "-e", `${baseRef}^{commit}`], repoRoot);
 
+  const manifestPath = path.join(
+    projectRoot,
+    "scripts",
+    "file-size-baselines.json",
+  );
+  let baselines = new Map();
+  try {
+    baselines = parseFileSizeBaselines(
+      await fs.readFile(manifestPath, "utf8"),
+      toPosixPath(path.relative(repoRoot, manifestPath)),
+    );
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+
+  for (const relativePath of baselines.keys()) {
+    const candidatePath = path.join(projectRoot, relativePath);
+    try {
+      const stats = await fs.stat(candidatePath);
+      if (!stats.isFile()) throw new Error("not a file");
+    } catch (error) {
+      throw new Error(
+        `Stale file-size baseline entry ${relativePath}: remove it or repoint it at the new path`,
+        { cause: error },
+      );
+    }
+  }
+
   const violations = [];
   for (const change of changedProjectFiles({
     repoRoot,
@@ -129,8 +236,31 @@ export async function runFileSizeCheck({ projectRoot, rules, label }) {
     const relativePath = toPosixPath(
       path.relative(projectRelative, change.path),
     );
+    const baseline = baselines.get(relativePath);
+    if (baseline) {
+      const candidatePath = path.join(repoRoot, change.path);
+      const candidateLines = countRecordedLines(
+        await fs.readFile(candidatePath, "utf8"),
+      );
+      const result = evaluateBaselineFileSize({
+        recordedLines: baseline.lines,
+        candidateLines,
+      });
+      if (result.violates) {
+        violations.push({
+          relativePath,
+          baseLines: null,
+          candidateLines,
+          limit: baseline.lines,
+          baseline: true,
+          direction: result.direction,
+        });
+      }
+      continue;
+    }
+
     const rule = findRule(rules, relativePath);
-    if (!rule || !rule.extensions.has(path.extname(relativePath))) continue;
+    if (!rule?.extensions.has(path.extname(relativePath))) continue;
 
     const candidatePath = path.join(repoRoot, change.path);
     const candidateLines = countLines(await fs.readFile(candidatePath, "utf8"));
@@ -150,6 +280,7 @@ export async function runFileSizeCheck({ projectRoot, rules, label }) {
         baseLines,
         candidateLines,
         limit: result.limit,
+        baseline: false,
       });
     }
   }
@@ -164,11 +295,22 @@ export async function runFileSizeCheck({ projectRoot, rules, label }) {
         ? ""
         : ` (${violation.candidateLines - violation.baseLines >= 0 ? "+" : ""}${violation.candidateLines - violation.baseLines})`;
     console.error(
-      `- ${violation.relativePath}: ${before} -> ${violation.candidateLines}${delta} lines (allowed ${violation.limit})`,
+      violation.baseline
+        ? violation.direction === "grew"
+          ? `- ${violation.relativePath}: recorded baseline ${violation.limit} -> ${violation.candidateLines} lines (grew)`
+          : `- ${violation.relativePath}: recorded baseline ${violation.limit} -> ${violation.candidateLines} lines (shrank — tighten the recorded baseline to ${violation.candidateLines})`
+        : `- ${violation.relativePath}: ${before} -> ${violation.candidateLines}${delta} lines (allowed ${violation.limit})`,
     );
   }
-  console.error(
-    "Keep new files at or below the limit; files already over it may not grow.",
-  );
+  if (violations.some((violation) => violation.baseline)) {
+    console.error(
+      "For upstream-owned growth, update the one lines value in the project's file-size-baselines.json to the new count in the same upstream sync PR; do not raise MAX_LINES or restructure upstream code. For Crew-owned growth, D-022 applies: extract Crew's additions.",
+    );
+  }
+  if (violations.some((violation) => !violation.baseline)) {
+    console.error(
+      "Keep new files at or below the limit; files already over it may not grow.",
+    );
+  }
   process.exitCode = 1;
 }

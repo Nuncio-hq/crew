@@ -608,7 +608,10 @@ The mobile app lives in `mobile/` — a Flutter app using Riverpod + Hooks.
   **1000 lines/file**, enforced by `mobile/scripts/check-file-sizes.mjs` via
   `just mobile-check` (runs in `just check` + pre-push, mirroring desktop/web).
   If the guard trips, **split the file — never bump the limit or add an
-  override to slip under it.**
+  override to slip under it.** Upstream-heavy files may instead use an exact
+  per-project baseline in `scripts/file-size-baselines.json`; only upstream
+  growth may update that recorded line count, while Crew additions still
+  require extraction under D-022.
 - Feature modules must not import from other feature modules — only from
   `shared/`.
 - Use `Grid` tokens for spacing, `Radii` for border radius.
