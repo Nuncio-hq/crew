@@ -366,5 +366,8 @@ and in flight.
   `feat/issue-116-agent-roles`: owner-signed `(agent, channel)` assignments
   in the channel canvas `crew` block; free-form labels and carried definitions;
   fresh-session harness injection; no global role projection or taxonomy.
-  Slice 2 (presets) and Slice 3 (capability) not started.
-- Next: orchestrator review → PR; then Slice 2/3 per plan.
+  Slice 2 routing presets are implemented in the canonical Rust parser and
+  injected into fresh channel-session context with exact work-type matching,
+  resolved holders, and explicit founder escalation for unheld roles.
+  Slice 3 (capability) not started.
+- Next: orchestrator review → PR; then Slice 3 per plan.

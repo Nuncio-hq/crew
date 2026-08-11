@@ -26,7 +26,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use buzz_core::crew_role::{
-    compose_role_section, count_crew_blocks, resolve_assignment, RoleAssignment,
+    compose_role_section, compose_routing_section, count_crew_blocks, resolve_assignment,
+    resolve_routing, RoleAssignment, RoutingAssignment,
 };
 use buzz_worktree::SharedLease;
 use tokio::sync::mpsc;
@@ -153,6 +154,7 @@ pub struct SessionState {
 pub struct CanvasSessionContext {
     pub rendered: String,
     pub role: Option<RoleAssignment>,
+    pub routing: Vec<RoutingAssignment>,
 }
 
 impl SessionState {
@@ -968,6 +970,7 @@ async fn create_session_and_apply_model(
     agent_core: Option<&str>,
     agent_canvas: Option<&str>,
     role_assignment: Option<&RoleAssignment>,
+    routing: &[RoutingAssignment],
     channel_name: Option<&str>,
     channel_id: Option<Uuid>,
     channel_type: Option<&str>,
@@ -980,9 +983,15 @@ async fn create_session_and_apply_model(
     // `[Channel Canvas]` header; both are appended with a blank-line separator.
     let is_goose = agent.agent_name == "goose";
     let system_with_role = role_assignment
-        .map(|assignment| compose_role_section(assignment))
+        .map(compose_role_section)
         .map(|section| combine_optional_prompt(ctx.system_prompt.as_deref(), Some(&section)))
         .unwrap_or_else(|| ctx.system_prompt.clone());
+    let routing_section = compose_routing_section(routing);
+    let system_with_role = if routing_section.is_empty() {
+        system_with_role
+    } else {
+        combine_optional_prompt(system_with_role.as_deref(), Some(&routing_section))
+    };
     let combined_system_prompt = with_canvas(
         with_core(
             with_team(
@@ -1792,6 +1801,20 @@ pub async fn run_prompt_task(
             .or_else(|| pending_canvas.as_ref().and_then(|(_, s)| s.role.clone())),
         PromptSource::Heartbeat => None,
     };
+    let routing = match &source {
+        PromptSource::Channel(cid) => agent
+            .state
+            .canvas_sections
+            .get(cid)
+            .map(|section| section.routing.clone())
+            .or_else(|| {
+                pending_canvas
+                    .as_ref()
+                    .map(|(_, section)| section.routing.clone())
+            })
+            .unwrap_or_default(),
+        PromptSource::Heartbeat => Vec::new(),
+    };
 
     let (session_id, is_new_session) = match &source {
         PromptSource::Channel(cid) => {
@@ -1809,6 +1832,7 @@ pub async fn run_prompt_task(
                     agent_core.as_deref(),
                     agent_canvas.as_deref(),
                     role_assignment.as_ref(),
+                    &routing,
                     title_channel.as_deref(),
                     Some(*cid),
                     origin_channel_type.as_deref(),
@@ -1864,7 +1888,16 @@ pub async fn run_prompt_task(
                 (sid.clone(), false)
             } else {
                 match create_session_and_apply_model(
-                    &mut agent, &ctx, &ctx.cwd, None, None, None, None, None, None,
+                    &mut agent,
+                    &ctx,
+                    &ctx.cwd,
+                    None,
+                    None,
+                    None,
+                    &[],
+                    None,
+                    None,
+                    None,
                 )
                 .await
                 {
@@ -2796,7 +2829,28 @@ async fn fetch_canvas_section(
             }
         }
     });
-    Some(CanvasSessionContext { rendered, role })
+    let routing = owner_pubkey
+        .map(|owner| {
+            match resolve_routing(&event.content, &event.pubkey.to_hex(), &owner.to_hex()) {
+                Ok(Some(routing)) => routing,
+                Ok(None) => Vec::new(),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "canvas::crew",
+                        channel = %channel_id,
+                        %error,
+                        "malformed crew routing — emitting no routing section"
+                    );
+                    Vec::new()
+                }
+            }
+        })
+        .unwrap_or_default();
+    Some(CanvasSessionContext {
+        rendered,
+        role,
+        routing,
+    })
 }
 
 /// Parse a canvas query response array and render a `[Channel Canvas]` section.
@@ -9902,6 +9956,7 @@ mod tests {
             CanvasSessionContext {
                 rendered: "[Channel Canvas]\nrev abc".into(),
                 role: None,
+                routing: Vec::new(),
             },
         );
 
@@ -9921,6 +9976,7 @@ mod tests {
             CanvasSessionContext {
                 rendered: "canvas-a".into(),
                 role: None,
+                routing: Vec::new(),
             },
         );
         s.canvas_sections.insert(
@@ -9928,6 +9984,7 @@ mod tests {
             CanvasSessionContext {
                 rendered: "canvas-b".into(),
                 role: None,
+                routing: Vec::new(),
             },
         );
         s.sessions.insert(ch_a, "sess-a".into());
@@ -9950,6 +10007,7 @@ mod tests {
             CanvasSessionContext {
                 rendered: "canvas-a".into(),
                 role: None,
+                routing: Vec::new(),
             },
         );
         s.canvas_sections.insert(
@@ -9957,6 +10015,7 @@ mod tests {
             CanvasSessionContext {
                 rendered: "canvas-b".into(),
                 role: None,
+                routing: Vec::new(),
             },
         );
 
@@ -9975,6 +10034,7 @@ mod tests {
             CanvasSessionContext {
                 rendered: "canvas".into(),
                 role: None,
+                routing: Vec::new(),
             },
         );
         assert!(s.has_channel_state(&ch));

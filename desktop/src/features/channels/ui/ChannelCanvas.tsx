@@ -41,6 +41,7 @@ export function ChannelCanvas({
   const [assignmentDefinition, setAssignmentDefinition] = React.useState("");
 
   const canvasContent = canvasQuery.data?.content ?? null;
+  const routing = canvasQuery.data?.routing ?? [];
   // Defer the single large Markdown parse so opening the canvas commits the
   // surrounding chrome immediately and the heavy render reconciles after.
   const deferredCanvasContent = React.useDeferredValue(canvasContent);
@@ -139,6 +140,31 @@ export function ChannelCanvas({
           No canvas set for this channel.
         </p>
       )}
+      {routing.length > 0 ? (
+        <div
+          className="rounded-xl border border-border/70 px-4 py-3"
+          data-testid="channel-canvas-routing"
+        >
+          <p className="text-sm font-medium">Routing presets</p>
+          <ul className="mt-2 space-y-1 text-sm">
+            {routing.map((preset) => (
+              <li key={preset.workType}>
+                <span className="font-medium">{preset.workType}</span>
+                {" → "}
+                <span>{preset.roleLabel}</span>
+                {": "}
+                {preset.holders.length > 0 ? (
+                  preset.holders.join(", ")
+                ) : (
+                  <span className="text-amber-700 dark:text-amber-300">
+                    no role here — ask the founder
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {canEdit && !isArchived ? (
         <div className="flex flex-wrap gap-2">
           <Button

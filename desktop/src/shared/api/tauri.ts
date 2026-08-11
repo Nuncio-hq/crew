@@ -218,6 +218,7 @@ type RawCanvasResponse = {
   content: string | null;
   updated_at: number | null;
   author: string | null;
+  routing: { work_type: string; role_label: string; holders: string[] }[];
 };
 
 type RawSetCanvasResult = {
@@ -387,11 +388,13 @@ export async function getCanvas(channelId: string): Promise<CanvasResponse> {
   });
   return {
     content: response.content,
-    // Normalize absent keys to null: ensureWelcomeCanvas treats null as
-    // "no canvas yet", and `undefined !== null` would make every fresh
-    // channel look already-seeded.
     updatedAt: response.updated_at ?? null,
     author: response.author ?? null,
+    routing: response.routing.map((entry) => ({
+      workType: entry.work_type,
+      roleLabel: entry.role_label,
+      holders: entry.holders,
+    })),
   };
 }
 

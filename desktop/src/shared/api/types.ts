@@ -84,6 +84,13 @@ export type CanvasResponse = {
   content: string | null;
   updatedAt: number | null;
   author: string | null;
+  routing: CanvasRoutingPreset[];
+};
+
+export type CanvasRoutingPreset = {
+  workType: string;
+  roleLabel: string;
+  holders: string[];
 };
 
 export type SetCanvasInput = {

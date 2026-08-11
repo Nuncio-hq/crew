@@ -92,14 +92,34 @@ pub async fn get_canvas(
             "event_id": null,
             "updated_at": null,
             "author": null,
+            "routing": [],
         }));
     };
+    let owner = state
+        .keys
+        .lock()
+        .map_err(|_| "identity lock poisoned".to_string())?
+        .public_key()
+        .to_hex();
+    let routing = buzz_core_pkg::crew_role::resolve_routing(
+        &event.content,
+        &event.pubkey.to_hex(),
+        &owner,
+    )
+    .ok()
+    .flatten()
+    .unwrap_or_default();
 
     Ok(serde_json::json!({
         "content": event.content,
         "event_id": event.id.to_hex(),
         "updated_at": event.created_at.as_secs(),
         "author": event.pubkey.to_hex(),
+        "routing": routing.into_iter().map(|entry| serde_json::json!({
+            "work_type": entry.work_type,
+            "role_label": entry.role_label,
+            "holders": entry.holders,
+        })).collect::<Vec<_>>(),
     }))
 }
 
@@ -113,6 +133,16 @@ pub async fn set_canvas(
         .map_err(|_| format!("invalid channel UUID: {channel_id}"))?;
     let builder = events::build_set_canvas(uuid, &content)?;
     let result = submit_event(builder, &state).await?;
+    if buzz_core_pkg::crew_role::parse_canvas_assignments(&content)
+        .ok()
+        .flatten()
+        .is_some_and(|block| !block.routing.is_empty())
+    {
+        let announcement =
+            "AGENT-WORKING-AGREEMENT: channel routing presets updated in the canvas.";
+        crate::commands::publish_assignment_announcement(&state, &channel_id, announcement)
+            .await?;
+    }
 
     Ok(serde_json::json!({
         "ok": true,

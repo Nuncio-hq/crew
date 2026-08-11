@@ -29,6 +29,19 @@ pub struct CanvasRoleBlock {
     pub assignments: BTreeMap<String, String>,
     /// Case-folded role label to definition text.
     pub definitions: BTreeMap<String, String>,
+    /// Founder-authored work type to role label presets.
+    pub routing: BTreeMap<String, String>,
+}
+
+/// A routing preset resolved to agents holding its role in the channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoutingAssignment {
+    /// Founder-authored work type.
+    pub work_type: String,
+    /// Founder-authored role label.
+    pub role_label: String,
+    /// Canonical holder pubkeys.
+    pub holders: Vec<String>,
 }
 
 /// Errors that make a crew block fail closed.
@@ -57,6 +70,8 @@ struct RawCanvasRoleBlock {
     assignments: BTreeMap<String, String>,
     #[serde(default)]
     definitions: BTreeMap<String, String>,
+    #[serde(default)]
+    routing: BTreeMap<String, String>,
 }
 
 /// Parse the first fenced ` ```crew ` block in canvas content.
@@ -102,10 +117,84 @@ pub fn parse_canvas_assignments(
         let normalized = normalize_label(&label)?;
         definitions.insert(normalized.to_ascii_lowercase(), definition);
     }
+    let mut routing = BTreeMap::new();
+    for (work_type, label) in raw.routing {
+        let work_type = normalize_label(&work_type)?;
+        let label = normalize_label(&label)?;
+        routing.insert(work_type.to_ascii_lowercase(), label);
+    }
     Ok(Some(CanvasRoleBlock {
         assignments,
         definitions,
+        routing,
     }))
+}
+
+/// Resolve founder-authored routing presets to role holders in this channel.
+pub fn resolve_routing(
+    canvas_content: &str,
+    canvas_author: &str,
+    owner_pubkey: &str,
+) -> Result<Option<Vec<RoutingAssignment>>, RoleParseError> {
+    if !same_pubkey(canvas_author, owner_pubkey)? {
+        return Ok(None);
+    }
+    let Some(block) = parse_canvas_assignments(canvas_content)? else {
+        return Ok(None);
+    };
+    if block.routing.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    let mut resolved = Vec::with_capacity(block.routing.len());
+    for (work_type, role_label) in block.routing {
+        let mut holders = Vec::new();
+        for (agent, assigned_label) in &block.assignments {
+            if assigned_label.eq_ignore_ascii_case(&role_label) {
+                holders.push(parse_pubkey(agent)?.to_hex());
+            }
+        }
+        resolved.push(RoutingAssignment {
+            work_type,
+            role_label,
+            holders,
+        });
+    }
+    Ok(Some(resolved))
+}
+
+/// Resolve one exact work type without guessing unknown work.
+pub fn resolve_routing_work_type<'a>(
+    routing: &'a [RoutingAssignment],
+    work_type: &str,
+) -> Option<&'a RoutingAssignment> {
+    let work_type = work_type.trim().to_ascii_lowercase();
+    routing.iter().find(|preset| preset.work_type == work_type)
+}
+
+/// Compose channel routing presets and explicit founder escalation rows.
+pub fn compose_routing_section(routing: &[RoutingAssignment]) -> String {
+    if routing.is_empty() {
+        return String::new();
+    }
+    let mut section = String::from("## Channel routing presets (Crew)\n\n");
+    for preset in routing {
+        section.push_str(&format!(
+            "- `{}` → role `{}`: ",
+            preset.work_type, preset.role_label
+        ));
+        if preset.holders.is_empty() {
+            section.push_str(&format!(
+                "no agent holds `{}` in this channel — ask the founder\n",
+                preset.role_label
+            ));
+        } else {
+            section.push_str(&format!("holder(s): {}\n", preset.holders.join(", ")));
+        }
+    }
+    section.push_str(
+        "\nUse only exact work-type matches. Unknown work types must not be guessed; ask the founder.\n",
+    );
+    section
 }
 
 /// Count complete or partial ` ```crew ` fence openers in canvas content.
