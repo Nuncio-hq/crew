@@ -59,6 +59,7 @@ import {
   KIND_STREAM_MESSAGE_EDIT,
   KIND_SYSTEM_MESSAGE,
   KIND_TEXT_NOTE,
+  KIND_TYPING_INDICATOR,
   KIND_USER_STATUS,
 } from "@/shared/constants/kinds";
 import type {
@@ -4622,13 +4623,13 @@ function emitMockChannelMessage(
   recordMockMessage(channelId, event);
   if (emitLive) emitMockLiveEvent(channelId, event);
   const rootEvent = history.find((candidate) => candidate.id === rootEventId);
-  if (rootEvent && mockHuddle?.state.ephemeral_channel_id === channelId) {
+  if (rootEvent && emitLive) {
     const summary = buildMockChannelThreadSummary(
       channelId,
       rootEvent,
       getMockMessageStore(channelId),
     );
-    if (emitLive && summary) emitMockLiveEvent(channelId, summary);
+    if (summary) emitMockLiveEvent(channelId, summary);
   }
   return event;
 }
@@ -10338,7 +10339,9 @@ function sendToMockSocket(args: {
       return;
     }
 
-    recordMockMessage(channelId, event);
+    if (event.kind !== KIND_TYPING_INDICATOR) {
+      recordMockMessage(channelId, event);
+    }
     emitMockLiveEvent(channelId, event);
     sendWsText(socket.handler, ["OK", event.id, true, ""]);
   }

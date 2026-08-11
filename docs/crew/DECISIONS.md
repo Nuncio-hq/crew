@@ -794,3 +794,24 @@ The accepted consequence: without an explicit clock input, row `age` values
 stay fixed until another input changes. The desktop caller passes no clock and
 the home surface has no ticker, so ages already only refresh when a store
 changes. A caller that wants clock-driven recomputation passes `now`.
+
+## D-041 — The E2E mock bridge mirrors relay event semantics, not per-surface shortcuts
+
+- **Status:** Accepted
+- **Date:** 2026-08-11
+
+`desktop/src/testing/e2eBridge.ts` stands in for the relay in Desktop Smoke
+E2E. When the desktop read model moved thread counts onto the relay's
+kind:39005 recount push, the mock kept emitting that push only for huddle
+ephemeral channels, so fifteen shard-4 specs failed on a missing
+`message-thread-summary` for ordinary channels — a harness gap that read as a
+product break. The mock also persisted kind:20002 typing indicators that the
+relay discards as ephemeral (kinds 20000–29999), which inflated thread
+descendant counts once the recount became visible everywhere.
+
+The rule: mock relay behavior is derived from relay semantics for **all**
+channels and event kinds, never narrowed to the surface that first needed it.
+A mock that is selectively faithful produces failures that are indistinguishable
+from product bugs, which is the expensive failure mode. When a spec fails on
+missing mock-derived state, check the mock against the relay handler before
+concluding the product is broken.
