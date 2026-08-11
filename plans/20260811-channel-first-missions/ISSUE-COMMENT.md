@@ -15,4 +15,4 @@ recovery.
 Nothing was implemented and no D-number was taken; the plan lives at
 `plans/20260811-channel-first-missions/`.
 
-PR: <link>
+PR: https://github.com/Nuncio-hq/crew/pull/143

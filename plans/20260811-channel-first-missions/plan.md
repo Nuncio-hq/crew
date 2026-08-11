@@ -318,7 +318,7 @@ components**, not in `MessageRow.tsx`.
 
 ## 4. Red-team pass
 
-Adversarial review of this plan. **11 findings — 8 applied, 3 rejected.**
+Adversarial review of this plan. **12 findings — 9 applied, 3 rejected.**
 
 | # | Finding | Disposition |
 | --- | --- | --- |
