@@ -13687,6 +13687,7 @@ export function maybeInstallE2eTauriMocks() {
           updated_at: null,
           author: null,
           routing: [],
+          assignments: [],
           dev_mcp_granted: null,
           crew_parse_error: null,
         };

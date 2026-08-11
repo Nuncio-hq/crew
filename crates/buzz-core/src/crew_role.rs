@@ -24,6 +24,15 @@ pub struct RoleAssignment {
     pub definition: String,
 }
 
+/// A founder-authored role label resolved for one agent in a channel canvas.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanvasRoleAssignment {
+    /// Canonical hexadecimal agent pubkey.
+    pub agent_pubkey: String,
+    /// Founder-authored display label.
+    pub role_label: String,
+}
+
 /// Parsed content of a `crew` canvas block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanvasRoleBlock {
@@ -298,6 +307,42 @@ pub fn resolve_assignment(
         label,
         definition: definition.clone(),
     }))
+}
+
+/// Resolve every valid founder-authored assignment for a channel canvas.
+///
+/// Invalid assignment keys are skipped individually so one malformed entry
+/// cannot hide otherwise valid channel roles. Definitions are required just
+/// as they are for [`resolve_assignment`].
+pub fn resolve_canvas_assignments(
+    canvas_content: &str,
+    canvas_author: &str,
+    owner_pubkey: &str,
+) -> Result<Option<Vec<CanvasRoleAssignment>>, RoleParseError> {
+    if !same_pubkey(canvas_author, owner_pubkey)? {
+        return Ok(None);
+    }
+    let Some(block) = parse_canvas_assignments(canvas_content)? else {
+        return Ok(None);
+    };
+    let mut resolved = Vec::new();
+    for (agent, role_label) in block.assignments {
+        let agent_pubkey = match parse_pubkey(&agent) {
+            Ok(pubkey) => pubkey,
+            Err(_) => continue,
+        };
+        if !block
+            .definitions
+            .contains_key(&role_label.to_ascii_lowercase())
+        {
+            return Err(RoleParseError::MissingDefinition(role_label));
+        }
+        resolved.push(CanvasRoleAssignment {
+            agent_pubkey: agent_pubkey.to_hex(),
+            role_label,
+        });
+    }
+    Ok(Some(resolved))
 }
 
 /// Resolve founder-authored capability keys for one channel session.

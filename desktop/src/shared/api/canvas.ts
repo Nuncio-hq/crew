@@ -11,6 +11,10 @@ type RawCanvasResponse = {
     holders: string[];
     unheld_message: string | null;
   }[];
+  assignments?: {
+    agent_pubkey: string;
+    role_label: string;
+  }[];
   dev_mcp_granted: boolean | null;
   crew_parse_error: string | null;
 };
@@ -28,6 +32,10 @@ export async function getCanvas(channelId: string): Promise<CanvasResponse> {
       roleLabel: entry.role_label,
       holders: entry.holders,
       unheldMessage: entry.unheld_message,
+    })),
+    assignments: (response.assignments ?? []).map((entry) => ({
+      agentPubkey: entry.agent_pubkey,
+      roleLabel: entry.role_label,
     })),
     devMcpGranted: response.dev_mcp_granted,
     crewParseError: response.crew_parse_error,

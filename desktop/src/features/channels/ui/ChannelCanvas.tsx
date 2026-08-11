@@ -42,6 +42,7 @@ export function ChannelCanvas({
 
   const canvasContent = canvasQuery.data?.content ?? null;
   const routing = canvasQuery.data?.routing ?? [];
+  const assignments = canvasQuery.data?.assignments ?? [];
   const devMcpGranted = canvasQuery.data?.devMcpGranted;
   const crewParseError = canvasQuery.data?.crewParseError;
   // Defer the single large Markdown parse so opening the canvas commits the
@@ -170,6 +171,25 @@ export function ChannelCanvas({
                     {preset.unheldMessage}
                   </span>
                 )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {assignments.length > 0 ? (
+        <div
+          className="rounded-xl border border-border/70 px-4 py-3"
+          data-testid="channel-canvas-assignments"
+        >
+          <p className="text-sm font-medium">Channel role assignments</p>
+          <ul className="mt-2 space-y-1 text-sm">
+            {assignments.map((assignment) => (
+              <li key={assignment.agentPubkey}>
+                <span className="font-medium">{assignment.roleLabel}</span>
+                {" · "}
+                <span className="font-mono text-xs">
+                  {assignment.agentPubkey}
+                </span>
               </li>
             ))}
           </ul>

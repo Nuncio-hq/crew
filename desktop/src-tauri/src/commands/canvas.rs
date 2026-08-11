@@ -93,6 +93,7 @@ pub async fn get_canvas(
             "updated_at": null,
             "author": null,
             "routing": [],
+            "assignments": [],
             "dev_mcp_granted": null,
             "crew_parse_error": null,
         }));
@@ -112,6 +113,14 @@ pub async fn get_canvas(
     .ok()
     .flatten()
         .unwrap_or_default();
+    let assignments = buzz_core_pkg::crew_role::resolve_canvas_assignments(
+        &event.content,
+        &event.pubkey.to_hex(),
+        &owner,
+    )
+    .ok()
+    .flatten()
+    .unwrap_or_default();
     let dev_mcp_granted = buzz_core_pkg::crew_role::resolve_capabilities(
         &event.content,
         &event.pubkey.to_hex(),
@@ -134,6 +143,10 @@ pub async fn get_canvas(
             "unheld_message": entry.holders.is_empty().then(|| {
                 buzz_core_pkg::crew_role::compose_unheld_routing_message(&entry.role_label)
             }),
+        })).collect::<Vec<_>>(),
+        "assignments": assignments.into_iter().map(|entry| serde_json::json!({
+            "agent_pubkey": entry.agent_pubkey,
+            "role_label": entry.role_label,
         })).collect::<Vec<_>>(),
         "dev_mcp_granted": dev_mcp_granted,
         "crew_parse_error": crew_parse_error,

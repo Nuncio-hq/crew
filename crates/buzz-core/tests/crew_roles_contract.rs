@@ -1,6 +1,6 @@
 use buzz_core::crew_role::{
-    compose_role_section, parse_canvas_assignments, resolve_assignment, strip_crew_block,
-    RoleAssignment, RoleParseError,
+    compose_role_section, parse_canvas_assignments, resolve_assignment, resolve_canvas_assignments,
+    strip_crew_block, RoleAssignment, RoleParseError,
 };
 use nostr::{Keys, ToBech32};
 
@@ -56,6 +56,26 @@ fn non_owner_canvas_is_ignored_and_no_block_is_unchanged() {
         resolve_assignment("ordinary canvas prose", &owner, &owner, &agent)
             .expect("canvas without crew block is valid")
             .is_none()
+    );
+}
+
+#[test]
+fn all_owner_assignments_resolve_to_channel_scoped_labels() {
+    let owner = Keys::generate().public_key();
+    let agent = Keys::generate().public_key();
+    let canvas = format!(
+        "```crew\nassignments:\n  {}: reviewer\ndefinitions:\n  reviewer: inspect only\n```",
+        agent.to_bech32().expect("agent npub")
+    );
+    let assignments = resolve_canvas_assignments(&canvas, &owner.to_hex(), &owner.to_hex())
+        .expect("valid crew block")
+        .expect("founder canvas");
+    assert_eq!(
+        assignments,
+        vec![buzz_core::crew_role::CanvasRoleAssignment {
+            agent_pubkey: agent.to_hex(),
+            role_label: "reviewer".into(),
+        }]
     );
 }
 

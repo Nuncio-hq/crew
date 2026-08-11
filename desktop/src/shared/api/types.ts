@@ -86,8 +86,14 @@ export type CanvasResponse = {
   updatedAt: number | null;
   author: string | null;
   routing: CanvasRoutingPreset[];
+  assignments: CanvasRoleAssignment[];
   devMcpGranted: boolean | null;
   crewParseError: string | null;
+};
+
+export type CanvasRoleAssignment = {
+  agentPubkey: string;
+  roleLabel: string;
 };
 
 export type CanvasRoutingPreset = {

@@ -24,6 +24,7 @@ export type MentionSuggestion = {
   isAgent?: boolean;
   notInChannel?: boolean;
   ownerLabel?: string | null;
+  crewRoleLabel?: string | null;
   role?: string | null;
 };
 
@@ -146,6 +147,7 @@ export const MentionAutocomplete = React.memo(function MentionAutocomplete({
                 </span>
                 {suggestion.kind === "team" ||
                 suggestion.isAgent ||
+                suggestion.crewRoleLabel ||
                 suggestion.role ||
                 suggestion.ownerLabel ||
                 suggestion.notInChannel ? (
@@ -177,6 +179,14 @@ export const MentionAutocomplete = React.memo(function MentionAutocomplete({
                         variant="secondary"
                       >
                         {suggestion.role}
+                      </Badge>
+                    ) : null}
+                    {suggestion.crewRoleLabel ? (
+                      <Badge
+                        className="max-w-32 shrink-0 truncate"
+                        variant="secondary"
+                      >
+                        {suggestion.crewRoleLabel}
                       </Badge>
                     ) : null}
                     {suggestion.ownerLabel || suggestion.notInChannel ? (
