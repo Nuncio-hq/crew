@@ -236,3 +236,21 @@ test("computeThreadBadgeCounts_fullParentChain_orphanRollsUp_DESIRED", () => {
   ];
   assert.equal(counts(loaded, neverRead).get("root"), 3);
 });
+
+// The channel live subscription starts a short grace window before "now", so an
+// event the user already read can be delivered a second time. Unread is decided
+// per reply id against a monotonic read timestamp, and a redelivery changes
+// neither the id nor createdAt — so a replayed read reply must not resurrect a
+// badge, and a genuinely newer sibling must still light one.
+test("computeThreadBadgeCounts_replayedReadReply_doesNotResurrectBadge", () => {
+  const read = msg("read-reply", "root", 100);
+  const fresh = msg("fresh", "root", 200);
+  const loaded = [msg("root", null, 10), read];
+  const frontiers = new Map([["root", 150]]);
+  const readAt = readLineByRoot([...loaded, fresh], frontiers);
+  assert.equal(counts(loaded, readAt).get("root"), undefined);
+  // Same event delivered again (identical id and createdAt): still read.
+  assert.equal(counts([...loaded, read], readAt).get("root"), undefined);
+  // A reply created after the marker still counts.
+  assert.equal(counts([...loaded, read, fresh], readAt).get("root"), 1);
+});
