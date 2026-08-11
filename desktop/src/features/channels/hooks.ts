@@ -716,7 +716,7 @@ export function useAssignChannelAgentRoleMutation(channelId: string | null) {
     onSuccess: () => {
       if (channelId) {
         void queryClient.invalidateQueries({
-          queryKey: ["canvas", channelId],
+          queryKey: ["channel-canvas", channelId],
         });
       }
     },

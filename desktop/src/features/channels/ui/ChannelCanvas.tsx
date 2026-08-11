@@ -167,7 +167,7 @@ export function ChannelCanvas({
                   preset.holders.join(", ")
                 ) : (
                   <span className="text-amber-700 dark:text-amber-300">
-                    no role here — ask the founder
+                    {preset.unheldMessage}
                   </span>
                 )}
               </li>

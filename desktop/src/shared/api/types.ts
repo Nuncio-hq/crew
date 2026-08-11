@@ -94,6 +94,7 @@ export type CanvasRoutingPreset = {
   workType: string;
   roleLabel: string;
   holders: string[];
+  unheldMessage: string | null;
 };
 
 export type SetCanvasInput = {

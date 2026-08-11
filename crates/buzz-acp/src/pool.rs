@@ -986,16 +986,8 @@ async fn create_session_and_apply_model(
     // its own `[Agent Memory — core]` header, and canvas carries its own
     // `[Channel Canvas]` header; both are appended with a blank-line separator.
     let is_goose = agent.agent_name == "goose";
-    let system_with_role = role_assignment
-        .map(compose_role_section)
-        .map(|section| combine_optional_prompt(ctx.system_prompt.as_deref(), Some(&section)))
-        .unwrap_or_else(|| ctx.system_prompt.clone());
-    let routing_section = compose_routing_section(routing);
-    let system_with_role = if routing_section.is_empty() {
-        system_with_role
-    } else {
-        combine_optional_prompt(system_with_role.as_deref(), Some(&routing_section))
-    };
+    let system_with_role =
+        compose_role_and_routing_prompt(ctx.system_prompt.as_deref(), role_assignment, routing);
     let combined_system_prompt = with_canvas(
         with_core(
             with_team(
@@ -1468,6 +1460,23 @@ fn combine_optional_prompt(base: Option<&str>, addition: Option<&str>) -> Option
         (Some(base), None) => Some(base.to_string()),
         (None, Some(addition)) => Some(addition.to_string()),
         (None, None) => None,
+    }
+}
+
+fn compose_role_and_routing_prompt(
+    system_prompt: Option<&str>,
+    role_assignment: Option<&RoleAssignment>,
+    routing: &[RoutingAssignment],
+) -> Option<String> {
+    let with_role = role_assignment
+        .map(compose_role_section)
+        .map(|section| combine_optional_prompt(system_prompt, Some(&section)))
+        .unwrap_or_else(|| system_prompt.map(str::to_owned));
+    let routing_section = compose_routing_section(routing);
+    if routing_section.is_empty() {
+        with_role
+    } else {
+        combine_optional_prompt(with_role.as_deref(), Some(&routing_section))
     }
 }
 
@@ -2185,10 +2194,11 @@ pub async fn run_prompt_task(
             );
         }
 
-        let legacy_system = role_assignment
-            .map(|assignment| compose_role_section(&assignment))
-            .map(|section| combine_optional_prompt(ctx.system_prompt.as_deref(), Some(&section)))
-            .unwrap_or_else(|| ctx.system_prompt.clone());
+        let legacy_system = compose_role_and_routing_prompt(
+            ctx.system_prompt.as_deref(),
+            role_assignment.as_ref(),
+            &routing,
+        );
         crate::queue::format_prompt(
             b,
             &crate::queue::FormatPromptArgs {
@@ -6115,6 +6125,28 @@ mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
     use serde_json::json;
+
+    #[test]
+    fn legacy_system_composition_includes_role_and_routing() {
+        let role = RoleAssignment {
+            label: "backend".into(),
+            definition: "edit only the assigned repository".into(),
+        };
+        let routing = [RoutingAssignment {
+            work_type: "review".into(),
+            role_label: "reviewer".into(),
+            holders: Vec::new(),
+        }];
+
+        let legacy_system =
+            compose_role_and_routing_prompt(None, Some(&role), &routing).expect("system prompt");
+
+        assert!(legacy_system.contains("## Role assignment (Crew)"));
+        assert!(legacy_system.contains("## Channel routing presets (Crew)"));
+        assert!(
+            legacy_system.contains("no agent holds `reviewer` in this channel — ask the founder")
+        );
+    }
 
     #[test]
     fn thread_response_requires_the_exact_requested_root() {

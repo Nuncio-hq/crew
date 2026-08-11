@@ -48,6 +48,11 @@ pub struct RoutingAssignment {
     pub holders: Vec<String>,
 }
 
+/// Render the founder-escalation text for a routing preset with no holders.
+pub fn compose_unheld_routing_message(role_label: &str) -> String {
+    format!("no agent holds `{role_label}` in this channel — ask the founder")
+}
+
 /// Errors that make a crew block fail closed.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RoleParseError {
@@ -197,10 +202,8 @@ pub fn compose_routing_section(routing: &[RoutingAssignment]) -> String {
             preset.work_type, preset.role_label
         ));
         if preset.holders.is_empty() {
-            section.push_str(&format!(
-                "no agent holds `{}` in this channel — ask the founder\n",
-                preset.role_label
-            ));
+            section.push_str(&compose_unheld_routing_message(&preset.role_label));
+            section.push('\n');
         } else {
             let holders = preset
                 .holders

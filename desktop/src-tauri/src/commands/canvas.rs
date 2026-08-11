@@ -131,6 +131,9 @@ pub async fn get_canvas(
             "work_type": entry.work_type,
             "role_label": entry.role_label,
             "holders": entry.holders,
+            "unheld_message": entry.holders.is_empty().then(|| {
+                buzz_core_pkg::crew_role::compose_unheld_routing_message(&entry.role_label)
+            }),
         })).collect::<Vec<_>>(),
         "dev_mcp_granted": dev_mcp_granted,
         "crew_parse_error": crew_parse_error,
