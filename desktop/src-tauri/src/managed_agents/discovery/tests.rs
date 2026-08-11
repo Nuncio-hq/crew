@@ -240,7 +240,6 @@ fn record_with(
         agent_command_override: override_cmd.map(str::to_string),
         agent_args: vec![],
         hermes_profile: None,
-        crew_role: None,
         mcp_command: String::new(),
         turn_timeout_seconds: 0,
         idle_timeout_seconds: None,

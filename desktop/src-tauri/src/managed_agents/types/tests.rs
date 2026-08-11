@@ -444,40 +444,6 @@ fn managed_agent_record_without_key_deserializes_empty() {
     assert_eq!(record.private_key_nsec, "");
 }
 
-#[test]
-fn managed_agent_record_crew_role_round_trips() {
-    let mut record = sample_agent_record();
-    assert_eq!(record.crew_role, None);
-    record.crew_role = Some("code".to_string());
-    let json = serde_json::to_string(&record).expect("serialize");
-    assert!(json.contains("\"crew_role\":\"code\""));
-    let back: ManagedAgentRecord = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(back.crew_role.as_deref(), Some("code"));
-    // Legacy records without the field still load.
-    let legacy: ManagedAgentRecord = serde_json::from_str(
-        r#"{
-            "pubkey": "abcd1234",
-            "name": "test-agent",
-            "private_key_nsec": "nsec1fake",
-            "relay_url": "wss://localhost:3000",
-            "acp_command": "buzz-acp",
-            "agent_command": "goose",
-            "agent_args": [],
-            "mcp_command": "",
-            "turn_timeout_seconds": 320,
-            "system_prompt": null,
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T00:00:00Z",
-            "last_started_at": null,
-            "last_stopped_at": null,
-            "last_exit_code": null,
-            "last_error": null
-        }"#,
-    )
-    .expect("legacy without crew_role");
-    assert_eq!(legacy.crew_role, None);
-}
-
 fn sample_agent_record() -> ManagedAgentRecord {
     serde_json::from_str(
         r#"{
@@ -747,7 +713,6 @@ fn summary_fixture(
         agent_args: Vec::new(),
         hermes_profile: None,
         profile_readiness: None,
-        crew_role: None,
         mcp_command: String::new(),
         turn_timeout_seconds: 320,
         idle_timeout_seconds: None,

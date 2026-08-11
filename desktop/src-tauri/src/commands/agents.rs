@@ -844,9 +844,6 @@ pub async fn create_managed_agent(
             agent_command_override,
             agent_args,
             hermes_profile: hermes_profile.clone(),
-            crew_role: crate::managed_agents::crew_role::parse_crew_role(
-                input.crew_role.as_deref(),
-            )?,
             mcp_command,
             // BUZZ_ACP_TURN_TIMEOUT is deprecated and ignored by the harness;
             // store the schema default only. Use idle_timeout_seconds or

@@ -440,7 +440,7 @@ pub fn search_response_from_events(events: &[Event]) -> SearchResponse {
 /// Convert kind:10100 agent profile events to the agent discovery format.
 ///
 /// Returns a JSON array of `{pubkey, name, ...}` objects parsed from each
-/// event's content. Unknown tags (e.g. Crew `crew-role`) are ignored — stock
+/// event's content. Unknown tags are ignored — stock
 /// consumers keep working (issue #116 stock safety).
 pub fn agents_from_events(events: &[Event]) -> Value {
     let arr: Vec<Value> = events

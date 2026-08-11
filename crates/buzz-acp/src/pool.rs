@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use buzz_core::crew_role::{compose_role_section, resolve_assignment, RoleAssignment};
 use buzz_worktree::SharedLease;
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
@@ -137,13 +138,19 @@ pub struct SessionState {
     /// Absent when the channel has no canvas, the canvas content is blank, or the
     /// fetch fails — all fail open. Cleared on session invalidation alongside
     /// `core_sections` so the next session picks up any canvas change.
-    pub canvas_sections: HashMap<Uuid, String>,
+    pub canvas_sections: HashMap<Uuid, CanvasSessionContext>,
     /// Conversation identity → real NIP-29 channel.
     pub routing_channels: HashMap<Uuid, Uuid>,
     /// Conversation identity → last verified Project workspace binding.
     /// Cleared alongside the session on every invalidation path so a removed
     /// or generation-changed checkout cannot be silently reused.
     pub workspace_bindings: HashMap<Uuid, WorkspaceBinding>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CanvasSessionContext {
+    pub rendered: String,
+    pub role: Option<RoleAssignment>,
 }
 
 impl SessionState {
@@ -583,10 +590,6 @@ pub struct PromptContext {
     pub turn_liveness_interval: Duration,
     pub dedup_mode: DedupMode,
     pub system_prompt: Option<String>,
-    /// Owner-assigned Crew role snapshot (env). Prefer `crew_role_file` re-read.
-    pub crew_role: Option<String>,
-    /// Role file re-read on every fresh session (no respawn).
-    pub crew_role_file: Option<std::path::PathBuf>,
     /// Sanitized title for each new ACP session, sent as `_meta.sessionTitle`
     /// on `session/new`. Never part of the prompt.
     pub session_title: Option<String>,
@@ -962,6 +965,7 @@ async fn create_session_and_apply_model(
     session_cwd: &str,
     agent_core: Option<&str>,
     agent_canvas: Option<&str>,
+    role_assignment: Option<&RoleAssignment>,
     channel_name: Option<&str>,
     channel_id: Option<Uuid>,
     channel_type: Option<&str>,
@@ -973,16 +977,10 @@ async fn create_session_and_apply_model(
     // its own `[Agent Memory — core]` header, and canvas carries its own
     // `[Channel Canvas]` header; both are appended with a blank-line separator.
     let is_goose = agent.agent_name == "goose";
-    // Re-read role on every fresh session so assignment changes take effect
-    // without respawning the harness (same model as !rotate).
-    let session_role = crate::crew_role::resolve_role_for_session(
-        ctx.crew_role.as_deref(),
-        ctx.crew_role_file.as_deref(),
-    );
-    let system_with_role = crate::crew_role::compose_system_prompt_with_role(
-        ctx.system_prompt.as_deref(),
-        session_role.as_deref(),
-    );
+    let system_with_role = role_assignment
+        .map(|assignment| compose_role_section(&assignment))
+        .map(|section| combine_optional_prompt(ctx.system_prompt.as_deref(), Some(&section)))
+        .unwrap_or_else(|| ctx.system_prompt.clone());
     let combined_system_prompt = with_canvas(
         with_core(
             with_team(
@@ -1429,6 +1427,18 @@ fn with_canvas(prompt: Option<String>, canvas: Option<&str>) -> Option<String> {
     }
 }
 
+fn combine_optional_prompt(base: Option<&str>, addition: Option<&str>) -> Option<String> {
+    match (
+        base.map(str::trim).filter(|value| !value.is_empty()),
+        addition.map(str::trim).filter(|value| !value.is_empty()),
+    ) {
+        (Some(base), Some(addition)) => Some(format!("{base}\n\n{addition}")),
+        (Some(base), None) => Some(base.to_string()),
+        (None, Some(addition)) => Some(addition.to_string()),
+        (None, None) => None,
+    }
+}
+
 /// Return `agent` to the pool via `result_tx`, clearing any steer receiver first.
 ///
 /// Every path that returns an `OwnedAgent` to the pool via `PromptResult` goes
@@ -1721,7 +1731,7 @@ pub async fn run_prompt_task(
     // commit it to `canvas_sections` only after session creation succeeds. This
     // prevents a stale revision A surviving a failed create and being re-used by
     // the next attempt after the canvas was cleared.
-    let mut pending_canvas: Option<(Uuid, String)> = None;
+    let mut pending_canvas: Option<(Uuid, CanvasSessionContext)> = None;
     // Channel name for the session title, from the same single resolve the
     // canvas DM check uses — see `resolve_new_session_channel_context`.
     let mut title_channel: Option<String> = None;
@@ -1739,8 +1749,13 @@ pub async fn run_prompt_task(
             // A confirmed DM never receives a canvas section; an undeterminable
             // channel type fails closed as a DM for the same reason.
             if needs_canvas && !is_dm {
-                if let Some(section) =
-                    fetch_canvas_section(routing_channel_id, &ctx.rest_client).await
+                if let Some(section) = fetch_canvas_section(
+                    routing_channel_id,
+                    &ctx.rest_client,
+                    ctx.agent_owner_pubkey.as_ref(),
+                    &ctx.agent_keys.public_key(),
+                )
+                .await
                 {
                     pending_canvas = Some((*cid, section));
                 }
@@ -1762,8 +1777,17 @@ pub async fn run_prompt_task(
             .state
             .canvas_sections
             .get(cid)
-            .cloned()
-            .or_else(|| pending_canvas.as_ref().map(|(_, s)| s.clone())),
+            .map(|section| section.rendered.clone())
+            .or_else(|| pending_canvas.as_ref().map(|(_, s)| s.rendered.clone())),
+        PromptSource::Heartbeat => None,
+    };
+    let role_assignment = match &source {
+        PromptSource::Channel(cid) => agent
+            .state
+            .canvas_sections
+            .get(cid)
+            .and_then(|section| section.role.clone())
+            .or_else(|| pending_canvas.as_ref().and_then(|(_, s)| s.role.clone())),
         PromptSource::Heartbeat => None,
     };
 
@@ -1782,6 +1806,7 @@ pub async fn run_prompt_task(
                     &session_cwd,
                     agent_core.as_deref(),
                     agent_canvas.as_deref(),
+                    role_assignment.as_ref(),
                     title_channel.as_deref(),
                     Some(*cid),
                     origin_channel_type.as_deref(),
@@ -1837,7 +1862,7 @@ pub async fn run_prompt_task(
                 (sid.clone(), false)
             } else {
                 match create_session_and_apply_model(
-                    &mut agent, &ctx, &ctx.cwd, None, None, None, None, None,
+                    &mut agent, &ctx, &ctx.cwd, None, None, None, None, None, None,
                 )
                 .await
                 {
@@ -2089,14 +2114,10 @@ pub async fn run_prompt_task(
             );
         }
 
-        let legacy_role = crate::crew_role::resolve_role_for_session(
-            ctx.crew_role.as_deref(),
-            ctx.crew_role_file.as_deref(),
-        );
-        let legacy_system = crate::crew_role::compose_system_prompt_with_role(
-            ctx.system_prompt.as_deref(),
-            legacy_role.as_deref(),
-        );
+        let legacy_system = role_assignment
+            .map(|assignment| compose_role_section(&assignment))
+            .map(|section| combine_optional_prompt(ctx.system_prompt.as_deref(), Some(&section)))
+            .unwrap_or_else(|| ctx.system_prompt.clone());
         crate::queue::format_prompt(
             b,
             &crate::queue::FormatPromptArgs {
@@ -2691,7 +2712,12 @@ pub(crate) async fn fetch_channel_info(
 ///
 /// Called at most once per new channel session; the result is cached in
 /// `SessionState::canvas_sections` and cleared on session invalidation.
-async fn fetch_canvas_section(channel_id: Uuid, rest: &RestClient) -> Option<String> {
+async fn fetch_canvas_section(
+    channel_id: Uuid,
+    rest: &RestClient,
+    owner_pubkey: Option<&nostr::PublicKey>,
+    agent_pubkey: &nostr::PublicKey,
+) -> Option<CanvasSessionContext> {
     use nostr::{Alphabet, SingleLetterTag};
 
     let h_tag = SingleLetterTag::lowercase(Alphabet::H);
@@ -2739,7 +2765,28 @@ async fn fetch_canvas_section(channel_id: Uuid, rest: &RestClient) -> Option<Str
         }
     };
 
-    canvas_section_from_query_response(events, &channel_id.to_string())
+    let rendered = canvas_section_from_query_response(events, &channel_id.to_string())?;
+    let event = serde_json::from_value::<nostr::Event>(events.first()?.clone()).ok()?;
+    let role = owner_pubkey.and_then(|owner| {
+        match resolve_assignment(
+            &event.content,
+            &event.pubkey.to_hex(),
+            &owner.to_hex(),
+            &agent_pubkey.to_hex(),
+        ) {
+            Ok(role) => role,
+            Err(error) => {
+                tracing::warn!(
+                    target: "canvas::crew",
+                    channel = %channel_id,
+                    %error,
+                    "malformed crew block — emitting no role section"
+                );
+                None
+            }
+        }
+    });
+    Some(CanvasSessionContext { rendered, role })
 }
 
 /// Parse a canvas query response array and render a `[Channel Canvas]` section.
@@ -9287,8 +9334,6 @@ mod tests {
             turn_liveness_interval: Duration::ZERO,
             dedup_mode: DedupMode::Drop,
             system_prompt: None,
-            crew_role: None,
-            crew_role_file: None,
             session_title: None,
             team_instructions: None,
             heartbeat_prompt: None,
@@ -9842,8 +9887,13 @@ mod tests {
         let ch = Uuid::new_v4();
         let mut s = SessionState::default();
         s.sessions.insert(ch, "sess".into());
-        s.canvas_sections
-            .insert(ch, "[Channel Canvas]\nrev abc".into());
+        s.canvas_sections.insert(
+            ch,
+            CanvasSessionContext {
+                rendered: "[Channel Canvas]\nrev abc".into(),
+                role: None,
+            },
+        );
 
         s.invalidate_channel(&ch);
 
@@ -9856,8 +9906,20 @@ mod tests {
         let ch_a = Uuid::new_v4();
         let ch_b = Uuid::new_v4();
         let mut s = SessionState::default();
-        s.canvas_sections.insert(ch_a, "canvas-a".into());
-        s.canvas_sections.insert(ch_b, "canvas-b".into());
+        s.canvas_sections.insert(
+            ch_a,
+            CanvasSessionContext {
+                rendered: "canvas-a".into(),
+                role: None,
+            },
+        );
+        s.canvas_sections.insert(
+            ch_b,
+            CanvasSessionContext {
+                rendered: "canvas-b".into(),
+                role: None,
+            },
+        );
         s.sessions.insert(ch_a, "sess-a".into());
 
         s.invalidate_all();
@@ -9873,20 +9935,38 @@ mod tests {
         let mut s = SessionState::default();
         s.sessions.insert(ch_a, "sess-a".into());
         s.sessions.insert(ch_b, "sess-b".into());
-        s.canvas_sections.insert(ch_a, "canvas-a".into());
-        s.canvas_sections.insert(ch_b, "canvas-b".into());
+        s.canvas_sections.insert(
+            ch_a,
+            CanvasSessionContext {
+                rendered: "canvas-a".into(),
+                role: None,
+            },
+        );
+        s.canvas_sections.insert(
+            ch_b,
+            CanvasSessionContext {
+                rendered: "canvas-b".into(),
+                role: None,
+            },
+        );
 
         s.invalidate_channel(&ch_a);
 
         assert!(!s.canvas_sections.contains_key(&ch_a));
-        assert_eq!(s.canvas_sections.get(&ch_b).unwrap(), "canvas-b");
+        assert_eq!(s.canvas_sections.get(&ch_b).unwrap().rendered, "canvas-b");
     }
 
     #[test]
     fn test_has_channel_state_true_when_only_canvas_section_present() {
         let ch = Uuid::new_v4();
         let mut s = SessionState::default();
-        s.canvas_sections.insert(ch, "canvas".into());
+        s.canvas_sections.insert(
+            ch,
+            CanvasSessionContext {
+                rendered: "canvas".into(),
+                role: None,
+            },
+        );
         assert!(s.has_channel_state(&ch));
     }
 

@@ -111,7 +111,6 @@ impl AgentDefinition {
             agent_command_override: None,
             agent_args: Vec::new(),
             hermes_profile: None,
-            crew_role: None,
             mcp_command: String::new(),
             turn_timeout_seconds: DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
             idle_timeout_seconds: None,
@@ -254,12 +253,6 @@ pub struct ManagedAgentRecord {
     pub agent_args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes_profile: Option<String>, // D-019; validate_hermes_profile_name
-    /// Owner-assigned Crew role (issue #116). Free string validated against the
-    /// day-one taxonomy in [`super::crew_role::TAXONOMY`]. Projected publicly as
-    /// a `crew-role` tag on kind `10100`; private forward-compat path is
-    /// `30179` `extensions["crew:role"]`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub crew_role: Option<String>,
     /// Create-time snapshot of the catalog MCP command. Never read at spawn —
     /// the effective MCP command is always re-derived from the runtime catalog
     /// (`known_acp_runtime`) — and no longer written by updates. Kept for
@@ -518,9 +511,6 @@ pub struct ManagedAgentSummary {
     pub hermes_profile: Option<String>, // D-019; catalog-derived mcp below
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_readiness: Option<super::HermesProfileReadiness>,
-    /// Owner-assigned Crew role (issue #116). Mirrored from the record.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub crew_role: Option<String>,
     pub mcp_command: String,
     /// Deprecated passthrough of the stored record value; the harness ignores
     /// it. Kept for wire compatibility.

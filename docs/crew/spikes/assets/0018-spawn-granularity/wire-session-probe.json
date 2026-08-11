@@ -1,0 +1,101 @@
+{
+  "probe": "ACP wire session/new process identity and per-session mcpServers",
+  "childPid": 22888,
+  "sameProcessForBothSessions": true,
+  "sessionAHasDevMcp": true,
+  "sessionBHasDevMcp": false,
+  "frames": [
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 2,
+          "clientCapabilities": {},
+          "clientInfo": {
+            "name": "spike-0018-driver",
+            "version": "1"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": 2,
+          "agentInfo": {
+            "name": "spike-0018-fake-agent",
+            "version": "1"
+          },
+          "pid": 22888
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/new",
+        "params": {
+          "cwd": "/tmp",
+          "mcpServers": [
+            {
+              "name": "buzz-dev-mcp",
+              "command": "/tmp/buzz-dev-mcp",
+              "args": [],
+              "env": [
+                {
+                  "name": "BUZZ_GIT_ORIGIN_CHANNEL_ID",
+                  "value": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "sessionId": "session-2",
+          "pid": 22888,
+          "receivedMcpServers": [
+            {
+              "name": "buzz-dev-mcp",
+              "command": "/tmp/buzz-dev-mcp",
+              "args": [],
+              "env": [
+                {
+                  "name": "BUZZ_GIT_ORIGIN_CHANNEL_ID",
+                  "value": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/new",
+        "params": {
+          "cwd": "/tmp",
+          "mcpServers": []
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "sessionId": "session-3",
+          "pid": 22888,
+          "receivedMcpServers": []
+        }
+      }
+    }
+  ],
+  "scope": "Protocol capability probe with a fake ACP agent; it does not claim the shipped pool derives grant/deny differently by channel."
+}

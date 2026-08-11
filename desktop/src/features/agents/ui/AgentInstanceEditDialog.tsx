@@ -26,7 +26,6 @@ import { Input } from "@/shared/ui/input";
 import { setManagedAgentAutoRestart } from "@/shared/api/tauriManagedAgents";
 import { EditAgentAdvancedFields } from "./EditAgentAdvancedFields";
 import { EditAgentModelAndProfileSection } from "./EditAgentModelAndProfileSection";
-import { CrewRoleField, crewRoleSubmitPatch } from "./CrewRoleFields";
 import { deriveAgentConfigFieldModel } from "../lib/agentConfigCore";
 import { useEditHermesBinding } from "./editHermesBinding";
 import { EMPTY_GLOBAL_CONFIG } from "./AgentConfigFields";
@@ -143,7 +142,6 @@ export function AgentInstanceEditDialog({
   const [hermesProfile, setHermesProfile] = React.useState(
     agent.hermesProfile ?? "",
   );
-  const [crewRole, setCrewRole] = React.useState(agent.crewRole ?? "");
   const [isCustomModelEditing, setIsCustomModelEditing] = React.useState(false);
   const [provider, setProvider] = React.useState(agent.provider ?? "");
   const [isCustomProviderEditing, setIsCustomProviderEditing] =
@@ -193,7 +191,6 @@ export function AgentInstanceEditDialog({
       setSystemPrompt(agent.systemPrompt ?? "");
       setModel(agent.model ?? "");
       setHermesProfile(agent.hermesProfile ?? "");
-      setCrewRole(agent.crewRole ?? "");
       setIsCustomModelEditing(false);
       setProvider(agent.provider ?? "");
       setIsCustomProviderEditing(false);
@@ -743,7 +740,6 @@ export function AgentInstanceEditDialog({
             ? respondToAllowlist
             : undefined,
         hermesProfile: hermesProfileForSubmit,
-        crewRole: crewRoleSubmitPatch(crewRole, agent.crewRole),
       };
 
       const result = await updateMutation.mutateAsync(input);
@@ -1115,11 +1111,6 @@ export function AgentInstanceEditDialog({
               respondTo={respondTo}
               showCustomModelInput={showCustomModelInput}
               showProfileField={showHermesProfileField}
-            />
-            <CrewRoleField
-              disabled={updateMutation.isPending}
-              onChange={setCrewRole}
-              value={crewRole}
             />
             <AgentAiDefaultsNotice
               hidden={modelWriteThrough}

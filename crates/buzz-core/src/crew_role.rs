@@ -1,0 +1,198 @@
+//! Founder-signed, channel-scoped Crew role assignments.
+//!
+//! A role block is deliberately a small, forward-compatible YAML document
+//! embedded in a channel's founder-authored canvas. The canvas event supplies
+//! the channel scope; this module supplies parsing, validation, authority
+//! filtering, and prompt framing without maintaining a role taxonomy.
+
+use std::collections::BTreeMap;
+
+use serde::Deserialize;
+use thiserror::Error;
+
+const MAX_LABEL_LEN: usize = 128;
+
+/// A resolved role assignment for one agent in one channel canvas.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleAssignment {
+    /// Founder-authored display label.
+    pub label: String,
+    /// Founder-authored allowed/not-allowed/redirect definition.
+    pub definition: String,
+}
+
+/// Parsed content of a `crew` canvas block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanvasRoleBlock {
+    /// Agent pubkey to founder-authored label.
+    pub assignments: BTreeMap<String, String>,
+    /// Case-folded role label to definition text.
+    pub definitions: BTreeMap<String, String>,
+}
+
+/// Errors that make a crew block fail closed.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum RoleParseError {
+    /// The fenced block is not structurally complete.
+    #[error("malformed crew fenced block")]
+    MalformedFence,
+    /// The YAML document does not match the supported shape.
+    #[error("invalid crew YAML: {0}")]
+    InvalidYaml(String),
+    /// A role label violates the format-only constraints.
+    #[error("invalid crew role label: {0}")]
+    InvalidLabel(String),
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCanvasRoleBlock {
+    #[serde(default)]
+    assignments: BTreeMap<String, String>,
+    #[serde(default)]
+    definitions: BTreeMap<String, String>,
+}
+
+/// Parse the first fenced ` ```crew ` block in canvas content.
+///
+/// No block is represented by `Ok(None)`. A partial or malformed block is an
+/// error so callers can warn and emit no role section rather than panicking.
+pub fn parse_canvas_assignments(
+    canvas_content: &str,
+) -> Result<Option<CanvasRoleBlock>, RoleParseError> {
+    let Some(start) = canvas_content
+        .lines()
+        .position(|line| line.trim() == "```crew")
+    else {
+        return Ok(None);
+    };
+    let lines: Vec<&str> = canvas_content.lines().collect();
+    let Some(end_offset) = lines[start + 1..]
+        .iter()
+        .position(|line| line.trim() == "```")
+    else {
+        return Err(RoleParseError::MalformedFence);
+    };
+    let end = start + 1 + end_offset;
+    let yaml = lines[start + 1..end].join("\n");
+    let raw: RawCanvasRoleBlock =
+        serde_yaml::from_str(&yaml).map_err(|e| RoleParseError::InvalidYaml(e.to_string()))?;
+    let mut assignments = BTreeMap::new();
+    for (agent, label) in raw.assignments {
+        let agent = agent.trim().to_string();
+        if agent.is_empty() {
+            return Err(RoleParseError::InvalidYaml(
+                "assignment agent key must not be empty".into(),
+            ));
+        }
+        let label = normalize_label(&label)?;
+        assignments.insert(agent, label);
+    }
+    let mut definitions = BTreeMap::new();
+    for (label, definition) in raw.definitions {
+        let normalized = normalize_label(&label)?;
+        definitions.insert(normalized.to_ascii_lowercase(), definition);
+    }
+    Ok(Some(CanvasRoleBlock {
+        assignments,
+        definitions,
+    }))
+}
+
+/// Resolve one agent's assignment after checking canvas author authority.
+///
+/// The caller must pass the author of the channel canvas event. The canvas
+/// write path currently has no relay-side founder check, so this read-side
+/// comparison is the enforcement point.
+pub fn resolve_assignment(
+    canvas_content: &str,
+    canvas_author: &str,
+    owner_pubkey: &str,
+    agent_pubkey: &str,
+) -> Result<Option<RoleAssignment>, RoleParseError> {
+    if !same_pubkey(canvas_author, owner_pubkey) {
+        return Ok(None);
+    }
+    let Some(block) = parse_canvas_assignments(canvas_content)? else {
+        return Ok(None);
+    };
+    let label = block
+        .assignments
+        .iter()
+        .find(|(agent, _)| same_pubkey(agent, agent_pubkey))
+        .map(|(_, label)| label.clone());
+    let Some(label) = label else {
+        return Ok(None);
+    };
+    let Some(definition) = block.definitions.get(&label.to_ascii_lowercase()) else {
+        return Ok(None);
+    };
+    Ok(Some(RoleAssignment {
+        label,
+        definition: definition.clone(),
+    }))
+}
+
+/// Compose fixed Crew framing around founder-authored assignment text.
+pub fn compose_role_section(assignment: &RoleAssignment) -> String {
+    format!(
+        "## Role assignment (Crew)\n\n\
+         You are assigned role: **{}**.\n\n\
+         The founder-authored role definition below is authoritative:\n\
+         {}\n\n\
+         When a request is outside this definition:\n\
+         1. Do not silently execute it.\n\
+         2. Refuse briefly and redirect to the appropriate role or founder.\n\
+         3. Do not partially perform the off-role work.\n\n\
+         MANDATORY declaration: The FIRST line of your first reply message for each turn MUST be exactly:\n\n\
+         ROLE-CHECK: role={} decision=accept|refuse reason=<short>\n\n\
+         Never omit ROLE-CHECK, including for short answers.",
+        assignment.label, assignment.definition, assignment.label
+    )
+}
+
+fn normalize_label(raw: &str) -> Result<String, RoleParseError> {
+    let label = raw.trim();
+    if label.is_empty() {
+        return Err(RoleParseError::InvalidLabel("label is empty".into()));
+    }
+    if label.len() > MAX_LABEL_LEN {
+        return Err(RoleParseError::InvalidLabel(format!(
+            "label exceeds {MAX_LABEL_LEN} bytes"
+        )));
+    }
+    if label.lines().count() != 1 {
+        return Err(RoleParseError::InvalidLabel(
+            "label must be one line".into(),
+        ));
+    }
+    Ok(label.to_string())
+}
+
+fn same_pubkey(left: &str, right: &str) -> bool {
+    let left = left.trim();
+    let right = right.trim();
+    !left.is_empty() && !right.is_empty() && left.eq_ignore_ascii_case(right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_top_level_keys_are_ignored() {
+        let parsed = parse_canvas_assignments(
+            "```crew\nassignments:\n  agent: code\ndefinitions:\n  code: text\nrouting: {}\n```",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(parsed.assignments["agent"], "code");
+    }
+
+    #[test]
+    fn malformed_block_is_an_error() {
+        assert_eq!(
+            parse_canvas_assignments("```crew\nassignments:\n"),
+            Err(RoleParseError::MalformedFence)
+        );
+    }
+}

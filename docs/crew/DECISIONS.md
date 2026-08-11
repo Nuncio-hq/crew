@@ -684,6 +684,18 @@ The reserved `default` profile and the `~/.hermes` root remain untouchable.
    events". It is recorded as a future candidate track and is not in scope of
    this change.
 
+## D-043 — Roles are channel-scoped owner-signed canvas assignments
+
+- **Status:** Accepted (Slice 1R)
+- **Date:** 2026-08-10
+- **Issue:** [Nuncio-hq/crew#116](https://github.com/Nuncio-hq/crew/issues/116)
+
+A role is a channel-scoped owner-signed assignment carried by the channel
+canvas. This supersedes D-028's storage clause while retaining its authority
+clause. Labels are free-form; the founder-authored definition travels with the
+assignment and is the meaning used at read time. The former global managed-agent
+role, 30179 extension, and 10100 projection are not enforcement sources.
+
 ## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
 
 - **Status:** Accepted

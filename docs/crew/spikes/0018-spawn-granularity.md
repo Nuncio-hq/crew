@@ -1,0 +1,101 @@
+# Spike 0018 — spawn granularity: channel-session capability
+
+## Question
+
+Spike 0017 proved per-spawn grant/deny of `BUZZ_ACP_MCP_COMMAND`, but not what a spawn corresponds to. Can capability differ per channel-session of one agent, or only per agent process?
+
+## Verdict definitions
+
+- **PASS:** Slice 3 can use a channel-scoped hard floor: a channel's role assignment determines the dev-mcp grant and engine permission flag for that channel session.
+- **FAIL:** the hard floor degrades to the union of assignments per agent process; per-channel discipline remains prompt-level only.
+- **INCONCLUSIVE:** the required runtime execution could not be performed; no stronger runtime claim is made.
+
+## Method
+
+1. Inspected the shipped desktop managed-agent spawn path, ACP process/session ownership, configuration construction, channel session cache, and ACP `session/new` implementation.
+2. Ran the narrow existing ACP tests covering MCP serialization and channel-origin forwarding.
+3. Ran a real stdio ACP wire probe with one child process and two `session/new` requests. The probe sent a dev-mcp server for session A and an empty list for session B, and recorded the child PID and raw request/response frames.
+4. A full local relay/real-engine two-channel run was not performed: the environment had no running relay/database stack or authenticated test agent identity. The wire probe is therefore protocol evidence, not a desktop+harness runtime proof.
+
+## Code-level evidence
+
+### Process boundary
+
+The desktop runtime key is `(agent pubkey, relay URL)`, not channel (`desktop/src-tauri/src/managed_agents/runtime_types.rs:8-17`). The managed runtime constructs one `Command` and sets the harness environment before spawning it (`desktop/src-tauri/src/managed_agents/runtime.rs:522-547`). The environment includes `BUZZ_ACP_AGENT_ARGS` and `BUZZ_ACP_MCP_COMMAND` (`:539-547`).
+
+The ACP client documents the boundary directly: “One `AcpClient` per agent process. Multiple sessions can be created on the same client” (`crates/buzz-acp/src/acp.rs:145-148`). `AcpClient::spawn` starts the agent subprocess once with command, args, and environment; subsequent sessions use that client (`crates/buzz-acp/src/acp.rs:462-500`).
+
+Channel sessions are cached by channel UUID and created lazily. An existing channel reuses its session ID; a new channel calls `create_session_and_apply_model` and stores the resulting ID (`crates/buzz-acp/src/pool.rs:1770-1805`). Thus the shipped arrangement is one ACP/agent process per managed-agent runtime, with multiple ACP sessions in that process—not one process per `(agent, channel)`.
+
+### MCP configuration
+
+`BUZZ_ACP_MCP_COMMAND` is a harness configuration field (`crates/buzz-acp/src/config.rs:249-261`) and is copied into `Config` during startup configuration construction (`crates/buzz-acp/src/config.rs:941-945, 1089-1095`). `build_mcp_servers(&config)` converts that one configured command into the shared `PromptContext.mcp_servers` list (`crates/buzz-acp/src/lib.rs:1939-1967, 5163-5180`; `crates/buzz-acp/src/pool.rs:575-612`). It is not re-read from the environment per channel session.
+
+There is, however, a session-scoped ACP transport seam. `session_new_full` accepts `mcp_servers: Vec<McpServer>` and places it directly in each `session/new` request as `mcpServers` (`crates/buzz-acp/src/acp.rs:638-688`). Channel creation passes a channel-specific copy to that call (`crates/buzz-acp/src/pool.rs:1001-1018`). Current code only appends channel/agent origin environment metadata in `mcp_servers_with_git_origin` (`crates/buzz-acp/src/pool.rs:1115-1165`); it does not add or remove the base dev-mcp server from role assignment.
+
+**Code-level MCP result: PASS for transport capability, not for the current policy implementation.** One process can create channel sessions with different `mcpServers` lists, so a future role-scoped policy can make dev-mcp available in one channel session and absent in another without respawning. The shipped code currently supplies the same base list to all sessions.
+
+### Engine arguments and permission mode
+
+`agent_args` are normalized once and stored in `Config` (`crates/buzz-acp/src/config.rs:807-830, 941, 1093`). They are cloned into the one ACP subprocess spawn (`crates/buzz-acp/src/lib.rs:4738-4755`). Therefore Codex `-s` and Claude CLI startup flags, including `--permission-mode` when passed as engine args, are process-level in this path.
+
+The harness also has a `PermissionMode` config and applies it using session-addressed ACP `session/set_config_option` after `session/new` (`crates/buzz-acp/src/pool.rs:1103-1110, 1242+`). But the mode is read from shared process `PromptContext`, not selected from channel assignment. The evidence establishes a possible session-addressed ACP mechanism, not that every engine supports or enforces a different mode per session.
+
+**Code-level engine result: FAIL for startup-argument separation; unverified/conditional for ACP session config.** Codex/Claude process flags cannot differ between channel sessions of the same spawned engine process. A session-level permission mode may be possible where the ACP agent advertises it, but that is not the current role policy and was not runtime-tested here.
+
+## Runtime evidence
+
+### ACP wire probe
+
+Asset: `docs/crew/spikes/assets/0018-spawn-granularity/wire-session-probe.json`
+
+The probe used one fake ACP agent child process (PID `22888`) and sent two `session/new` requests:
+
+- Session A request contained one `buzz-dev-mcp` server.
+- Session B request contained `"mcpServers": []`.
+- Both responses reported PID `22888`.
+
+Recorded result:
+
+```json
+{
+  "sameProcessForBothSessions": true,
+  "sessionAHasDevMcp": true,
+  "sessionBHasDevMcp": false
+}
+```
+
+The raw frames show the complete `session/new` requests and responses, including the differing MCP lists. This is a faithful wire-level demonstration that ACP session configuration can differ while the agent process remains the same.
+
+The probe does **not** execute the shipped `buzz-acp` pool against a local relay and real engine, and therefore does not prove that the current desktop policy derives different lists from two real channel role assignments.
+
+### Existing tests
+
+- `pool::tests::public_session_forwards_channel_origin_to_mcp` — PASS; confirms channel-session creation forwards channel-origin metadata through the MCP server definition.
+- `acp::tests::session_new_mcp_server_has_required_fields` — PASS; confirms the ACP MCP server payload serializes the required fields.
+
+These tests passed with:
+
+```text
+cargo test -p buzz-acp pool::tests::public_session_forwards_channel_origin_to_mcp -- --nocapture
+cargo test -p buzz-acp acp::tests::session_new_mcp_server_has_required_fields -- --nocapture
+```
+
+Raw code excerpts are retained in `docs/crew/spikes/assets/0018-spawn-granularity/code-evidence.txt`.
+
+## Verdict
+
+- **Code-level MCP/session granularity: PASS.** One ACP process serves multiple channel sessions, and ACP `session/new` carries a distinct `mcpServers` list per session.
+- **Code-level engine startup-flag granularity: FAIL.** `agent_args` and Codex/Claude CLI startup permission flags are process-level. The current shared `PermissionMode` source is not channel-scoped; ACP session config is only a conditional, untested escape hatch.
+- **Runtime desktop+harness two-channel experiment: INCONCLUSIVE.** The wire probe passed, but a real relay/engine run was not available in this environment.
+
+## Slice 3 implication
+
+Slice 3 can make the dev-mcp hard floor channel-session scoped through per-session `mcpServers`, but native Codex/Claude permission flags cannot be independently hard-floored per channel in the current process-spawn model; they require a separately verified session-config path or an honest process-level union limitation.
+
+## Limitations
+
+- No product code or existing source file was changed.
+- No authenticated local relay/database/real-engine two-channel run was available, so runtime behavior of actual engines remains unverified.
+- The fake-agent wire probe demonstrates ACP transport semantics only; it does not establish engine enforcement of session-level permission settings.
+- No relay or engine process was started by this spike.

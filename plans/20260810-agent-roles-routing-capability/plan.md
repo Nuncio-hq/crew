@@ -11,27 +11,43 @@
 agent, channel routing presets that point at roles, and role-scoped capability at
 the harness boundary — all on existing Buzz contracts (D-025).
 
-**Architecture:** Role = owner-signed identity attribute (source record owner-signed,
-public projection on the agent profile event). Harness injects the role into each
-turn's prompt (existing `[Context]` pipeline) — soft enforcement day one. Channel
-presets map work type → required role and are founder-signed. Capability is
-Crew-owned at the spawn boundary, keyed by role, uniform across engines: the
-Hermes profile keeps memory/skills/credentials/model (D-024); it is NOT the
-capability boundary.
+> **Revision 2 (2026-08-11) — channel-scoped roles.** Issue #116's founder design
+> review ("Founder design review — channel-scoped roles") supersedes the issue body
+> and revision 1 of this plan: a role is not a global agent attribute but an
+> owner-signed **(agent, channel) assignment**. Slice 1 shipped revision 1's global
+> model on `feat/issue-116-agent-roles` (PR #120); the rework is part of this round
+> and is described under Slice 1R. Everything below Slice 0 is revision 2; the
+> Slice 0 spike record is kept verbatim as history.
+
+**Architecture (revision 2):** A role is an owner-signed binding of
+`(agent, channel) → role label + role definition`, carried by the **channel
+canvas** (`KIND_CANVAS` = 40100, `h`-tag scoped, already founder-editable and
+already injected once per channel session). Role labels are free-form founder
+text; meaning lives in the definition (allowed / not-allowed / redirect) that
+travels with the assignment, never in a taxonomy const and never derived from the
+name. The same canvas block carries the channel's routing preset
+(`work type → required role`). Authority is the canvas event author: a crew block
+takes effect only when the canvas event is signed by the agent's owner (founder)
+pubkey — everything else is ignored. Channels with no crew block behave exactly as
+today. The `10100` `crew-role` projection is demoted to optional CV metadata, not
+an enforcement source. Capability is Crew-owned at the spawn boundary, keyed by
+role, uniform across engines: the Hermes profile keeps
+memory/skills/credentials/model (D-024); it is NOT the capability boundary.
 
 **Tech stack:** `buzz-acp` (context injection, spawn env), `buzz-core` kinds
 `30179` / `10100`, desktop managed-agent record + spawn (Phase 02A pattern),
 channel canvas, `buzz-dev-mcp` (grant/deny only in this plan).
 
-**Founder decisions to record in `docs/crew/DECISIONS.md` when Slice 1 lands:**
-
-1. Roles are owner-assigned only ("email promote"): only founder-signed events
-   define or change a role; agents may propose, never self-assign.
-2. Capability is Crew-owned at the harness/spawn boundary keyed by role, uniform
-   for all ACP engines. Hermes profile ownership (D-024) is unchanged and
-   explicitly does not extend to being the capability boundary.
-3. Presets reference roles, never hard-coded agent names (names allowed only as
-   explicit per-channel override).
+**Founder decisions:** revision 1's three decisions are already recorded by
+PR #120 as **D-028** (roles are owner/founder-signed only — "email promote"),
+**D-029** (capability is Crew-owned at the harness/spawn boundary keyed by role,
+uniform across ACP engines; D-024 Hermes profile ownership unchanged and
+explicitly not the capability boundary) and **D-030** (presets reference roles,
+never hard-coded agent names). Revision 2 needs two more, allocated by the
+orchestrator: **D-043** (a role is a channel-scoped owner-signed assignment
+carried by the channel canvas; supersedes D-028's storage clause, keeps its
+authority clause) and **D-044** (capability granularity — decided by spike 0018
+evidence, see Slice 3).
 
 ---
 
@@ -94,6 +110,17 @@ PASS/FAIL/INCONCLUSIVE up front, record under `docs/crew/spikes/`.
   **FAIL:** env cannot be withheld per agent, or denial breaks the turn loop.
 
 **Gate:** all three spikes recorded PASS before any Slice 1 implementation.
+
+### Spike D — Spawn granularity (revision 2, blocks Slice 3's shape)
+
+- **Question:** 0017 proved per-spawn grant/deny of `BUZZ_ACP_MCP_COMMAND` but not
+  what a spawn corresponds to. Can capability differ **per channel-session** of one
+  agent, or only per agent process?
+- **PASS:** Slice 3's floor is channel-scoped — the assignment in a channel decides
+  that channel session's dev-mcp grant and engine permission flag.
+  **FAIL:** the floor is per agent process (union of that agent's assignments),
+  documented honestly; per-channel discipline stays prompt-level.
+- Recorded as `docs/crew/spikes/0018-spawn-granularity-per-channel-session.md`.
 
 ---
 

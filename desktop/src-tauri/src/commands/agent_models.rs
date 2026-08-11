@@ -727,7 +727,7 @@ pub async fn update_managed_agent(
     state: State<'_, AppState>,
 ) -> Result<UpdateManagedAgentResponse, String> {
     // Phase 1: local save (synchronous, under lock)
-    let (summary, sync_params, rollback, role_projection) = {
+    let (summary, sync_params, rollback) = {
         let _store_guard = state
             .managed_agents_store_lock
             .lock()
@@ -798,8 +798,6 @@ pub async fn update_managed_agent(
         if let Some(p) = hermes_profile_update {
             record.hermes_profile = p;
         }
-        let role_changed =
-            super::crew_role_publish::apply_crew_role_patch(record, &input.crew_role)?;
         if let Some(env_vars) = input.env_vars {
             crate::managed_agents::validate_user_env_keys(&env_vars)?;
             record.env_vars = env_vars;
@@ -853,9 +851,6 @@ pub async fn update_managed_agent(
             .ok_or_else(|| format!("agent {} not found", input.pubkey))?;
 
         super::agents::retain_managed_agent_pending(&app, &state, record);
-        let role_projection =
-            super::crew_role_publish::finish_role_save(&app, &state, role_changed, record);
-
         let sync_params = if name_changed {
             let agent_keys = Keys::parse(&record.private_key_nsec)
                 .map_err(|e| format!("failed to parse agent keys: {e}"))?;
@@ -892,7 +887,7 @@ pub async fn update_managed_agent(
             )?
         };
         let rollback = name_changed.then(|| AgentUpdateRollback::new(previous_record, record));
-        (summary, sync_params, rollback, role_projection)
+        (summary, sync_params, rollback)
     }; // lock dropped here
 
     try_regenerate_nest(&app);
@@ -919,16 +914,6 @@ pub async fn update_managed_agent(
                 "Agent rename failed because its relay profile could not be updated. No changes were saved: {sync_error}"
             ));
         }
-    }
-    if let Some((_pk, name, role, nsec, relay_url)) = role_projection {
-        super::crew_role_publish::publish_role_side_effects(
-            &state,
-            &name,
-            role.as_deref(),
-            &nsec,
-            &relay_url,
-        )
-        .await;
     }
     Ok(UpdateManagedAgentResponse {
         agent: summary,
