@@ -50,7 +50,11 @@ async function seedTurn(
           kind: "turn_started" | "turn_completed";
         }) => void;
       };
-      win.__BUZZ_E2E_SEED_ACTIVE_TURNS__?.({
+      const seed = win.__BUZZ_E2E_SEED_ACTIVE_TURNS__;
+      if (!seed) {
+        throw new Error("E2E active-turn seed bridge is unavailable");
+      }
+      seed({
         agentPubkey,
         channelId,
         turnId: "presence-turn-1",
@@ -112,6 +116,9 @@ test.describe("channel header agent presence", () => {
         kind: 46040,
       }),
     );
+    await page.waitForFunction(
+      () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+    );
     await page.evaluate(
       ({ agentPubkey, rootEventId }) => {
         const win = window as Window & {
@@ -124,7 +131,11 @@ test.describe("channel header agent presence", () => {
             pubkey?: string;
           }) => unknown;
         };
-        win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        const emit = win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+        if (!emit) {
+          throw new Error("E2E mock message bridge is unavailable");
+        }
+        emit({
           channelName: "agents",
           content: "Mock channel question parent",
           id: rootEventId,
@@ -136,6 +147,9 @@ test.describe("channel header agent presence", () => {
         agentPubkey: AGENT_PUBKEY,
         rootEventId: USER_INPUT_ROOT_EVENT_ID,
       },
+    );
+    await page.waitForFunction(
+      () => typeof window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__ === "function",
     );
     await page.evaluate(
       ({ agentPubkey, channelId, conversationId, requestId, rootEventId }) => {
@@ -149,7 +163,11 @@ test.describe("channel header agent presence", () => {
             pubkey?: string;
           }) => unknown;
         };
-        win.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__?.({
+        const emit = win.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__;
+        if (!emit) {
+          throw new Error("E2E user-input bridge is unavailable");
+        }
+        emit({
           channelName: "agents",
           requestId,
           rootEventId,
