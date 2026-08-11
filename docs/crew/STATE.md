@@ -119,6 +119,9 @@ Out of scope for this slice:
 ## CI lane
 
 - Required merge signal: `NuncioCrew Gate`.
+- Upstream-heavy file-size exceptions use exact per-project recorded baselines;
+  `MAX_LINES` remains 1000, and upstream syncs must review any one-line
+  baseline bump while D-022 governs Crew-authored growth.
 - Automatic checks: desktop fast gate, unsigned macOS ARM64 package, and a
   path-filtered real-relay Project contract.
 - Web, mobile, Windows, Linux distribution, Docker publishing, Helm, Sprig,

@@ -1,0 +1,10 @@
+{
+  "$comment": "Recorded lines use wc -l semantics; keep the exact count printed by the file-size guard.",
+  "files": {
+    "src/features/messages/ui/MessageThreadPanel.tsx": {
+      "lines": 999,
+      "reason": "Upstream-owned file; recorded for issue #111 so upstream sync growth is reviewed without restructuring upstream code.",
+      "recordedAt": "2026-08-10"
+    }
+  }
+}

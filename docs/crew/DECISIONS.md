@@ -514,6 +514,27 @@ cancelled at the 30-minute timeout `8/8`, shard 3 failed `2/8`, shard 2 passed
 `8/8`, and the Gate was green `10/10`. Revisit making the shards required once
 #109 and #110 are closed.
 
+## D-033 — Record exact baselines for upstream-heavy files
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Issue:** #111
+
+Upstream-heavy files are governed by an exact recorded baseline instead of the
+hard 1000-line limit. `MAX_LINES` is not raised. Only upstream's own growth may
+bump a recorded baseline; D-022 continues to govern Crew's own additions, so a
+Crew-authored regression still requires a visible, reviewable manifest edit.
+Recorded `lines` values use `wc -l` semantics, and the number to record is the
+exact count printed by the guard.
+
+The next upstream sync is expected to fail this guard once with a message
+naming the new count. The sync PR remedies that failure with a one-line
+baseline bump. This is deliberate and preferred over merge-parent
+auto-detection machinery. Files already above `MAX_LINES` (for example
+`desktop/src-tauri/src/managed_agents/discovery.rs` at 1494) retain the existing
+implicit base-ref grandfathering and are not being migrated into the manifest
+in this change; both mechanisms deliberately coexist.
+
 ## D-037 — Channel-first stands; board deferred; work overview is future direction
 
 - **Status:** Accepted
