@@ -167,11 +167,10 @@ fn run_set(
         "invalid",
         "unknown",
         "unsupported",
+        "not found",
         "auth",
         "credential",
         "unauthorized",
-        "provider",
-        "model",
     ]
     .iter()
     .any(|marker| combined.contains(marker))
@@ -180,7 +179,12 @@ fn run_set(
     } else {
         Err(HermesProfileConfigResult::Failed {
             name: name.to_string(),
-            message: first_error_line(&combined).unwrap_or_else(|| {
+            message: first_error_line(&format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ))
+            .unwrap_or_else(|| {
                 format!(
                     "Hermes config set failed (exit {})",
                     output.status.code().unwrap_or(-1)

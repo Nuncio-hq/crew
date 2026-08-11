@@ -15,6 +15,7 @@ import { PersonaDropdownField } from "./PersonaDropdownField";
 import { PersonaProviderApiKeyField } from "./PersonaProviderApiKeyField";
 import { PersonaModelField } from "./PersonaModelField";
 import { CreateHermesBindingFields } from "./createHermesBindingFields";
+import { AgentInstructionsHelper } from "./AgentInstructionsHelper";
 import type { AgentAiConfigurationMode } from "./AgentAiConfigurationMode";
 import type { PersonaModelDiscoveryStatus } from "./personaModelDiscoveryStatus";
 
@@ -32,6 +33,7 @@ export function AgentDefinitionCustomAiFields({
   modelDropdownOptions,
   modelFieldVisible,
   modelOwnedByProfile,
+  modelWriteThrough,
   modelSelectValue,
   onCustomModelChange,
   onHermesProfileChange,
@@ -68,6 +70,7 @@ export function AgentDefinitionCustomAiFields({
   modelDropdownOptions: PersonaDropdownOption[];
   modelFieldVisible: boolean;
   modelOwnedByProfile: boolean;
+  modelWriteThrough: boolean;
   modelSelectValue: string;
   onCustomModelChange: (next: string) => void;
   onHermesProfileChange: (next: string) => void;
@@ -177,10 +180,12 @@ export function AgentDefinitionCustomAiFields({
         disabled={disabled}
         hermesProfile={hermesProfile}
         modelOwnedByProfile={modelOwnedByProfile}
+        modelWriteThrough={modelWriteThrough}
         onHermesProfileChange={onHermesProfileChange}
         respondTo={respondTo}
         showProfileField={showHermesProfileField}
       />
+      <AgentInstructionsHelper hasPersona={modelWriteThrough} />
     </>
   );
 }

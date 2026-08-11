@@ -90,3 +90,20 @@ test("explicit-runtime-chosen: runtime and model both persisted when user explic
   assert.equal(result.model, "claude-opus-4-8", "model must be persisted");
   assert.equal(result.provider, undefined, "empty provider must be omitted");
 });
+
+test("profile write-through never persists profile model or provider", () => {
+  const result = buildRuntimeModelProviderPayload({
+    runtime: "hermes",
+    model: "profile-model",
+    provider: "profile-provider",
+    modelWriteThrough: true,
+    isEditMode: true,
+    isAutoSeeded: false,
+    initialPreviousRuntime: "hermes",
+    initialModel: "old-model",
+    initialProvider: "old-provider",
+    initialModelProviderEditableWithoutRuntime: false,
+  });
+  assert.equal(result.model, undefined);
+  assert.equal(result.provider, undefined);
+});

@@ -28,8 +28,8 @@ import {
 import {
   deriveAgentConfigFieldModel,
   isModelOwnedByProfile,
+  isModelWriteThrough,
 } from "../lib/agentConfigCore.ts";
-import { profileOwnedModelLabel } from "../lib/hermesProfileBinding.ts";
 
 test("canonical behaviors: onboarding's values are the only behavior", () => {
   assert.deepEqual(CANONICAL_CONFIG_BEHAVIORS, {
@@ -229,7 +229,7 @@ test("required-model harnesses always keep the control", () => {
 // an editable model control. Capability projection only (profileArg +
 // providerLocked + no modelEnvVar) — never runtime.id.
 
-test("ownedByProfile omission is informational copy, not a control", () => {
+test("profile write-through exposes a model control", () => {
   const model = deriveAgentConfigFieldModel({
     config: {
       env_vars: {},
@@ -266,18 +266,12 @@ test("ownedByProfile omission is informational copy, not a control", () => {
     scope: "instance",
   });
 
-  assert.equal(isModelOwnedByProfile(model), true);
+  assert.equal(isModelOwnedByProfile(model), false);
+  assert.equal(isModelWriteThrough(model), true);
   assert.equal(
-    model.fields.some((f) => f.kind === "model" && f.render === "control"),
-    false,
-    "must not project an editable model control",
+    model.fields.find((f) => f.kind === "model")?.targetApplication.kind,
+    "profileWriteThrough",
   );
-  assert.match(
-    profileOwnedModelLabel("scout", null),
-    /decided by profile scout/,
-  );
-  // shouldRenderModelControl stays about optional/empty discovery — the
-  // ownedByProfile gate is a separate named omission before that helper runs.
   assert.equal(
     shouldRenderModelControl({
       discoveredModelOptions: null,
@@ -287,6 +281,6 @@ test("ownedByProfile omission is informational copy, not a control", () => {
       showCustomModelOption: false,
     }),
     true,
-    "helper itself is unchanged; surfaces skip it when ownedByProfile",
+    "profile write-through still has an explicit model surface",
   );
 });

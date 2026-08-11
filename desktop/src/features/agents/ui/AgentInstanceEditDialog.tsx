@@ -26,7 +26,10 @@ import { Input } from "@/shared/ui/input";
 import { setManagedAgentAutoRestart } from "@/shared/api/tauriManagedAgents";
 import { EditAgentAdvancedFields } from "./EditAgentAdvancedFields";
 import { EditAgentModelAndProfileSection } from "./EditAgentModelAndProfileSection";
-import { deriveAgentConfigFieldModel } from "../lib/agentConfigCore";
+import {
+  deriveAgentConfigFieldModel,
+  isModelWriteThrough,
+} from "../lib/agentConfigCore";
 import { useEditHermesBinding } from "./editHermesBinding";
 import { EMPTY_GLOBAL_CONFIG } from "./AgentConfigFields";
 import {
@@ -444,6 +447,7 @@ export function AgentInstanceEditDialog({
     runtimeSelectionConfirmedNoBinding:
       runtimeTouched.current && selectedRuntimeId === "custom",
   });
+  const modelWriteThrough = isModelWriteThrough(instanceFieldModel);
   const {
     discoveredModelOptions,
     modelDiscoveryLoading,
@@ -451,7 +455,7 @@ export function AgentInstanceEditDialog({
   } = usePersonaModelDiscovery({
     envVars: envVarsForDiscovery,
     isCustomProviderEditing,
-    modelFieldVisible: !modelOwnedByProfile,
+    modelFieldVisible: !modelOwnedByProfile && !modelWriteThrough,
     open,
     provider: providerForDiscovery,
     selectedRuntime,
@@ -716,18 +720,13 @@ export function AgentInstanceEditDialog({
               ? systemPrompt.trim() || null
               : undefined,
         model:
-          linkedPersona != null
+          linkedPersona != null || modelWriteThrough
             ? undefined
             : normalizedModel !== (agent.model ?? null)
               ? normalizedModel
               : undefined,
-        // Tri-state provider persistence keyed on providerRuntimeCapability:
-        //   "capable"  → persist: value if changed, omit if unchanged.
-        //   "locked"   → clear: send null if provider was set, else omit.
-        //   "unknown"  → omit always (never send null for a transient state).
-        // llmProviderFieldVisible is for UX visibility only; not used here.
         provider:
-          linkedPersona != null
+          linkedPersona != null || modelWriteThrough
             ? undefined
             : providerRuntimeCapability === "capable"
               ? normalizedSubmitProvider !== (agent.provider ?? null)
@@ -1112,6 +1111,7 @@ export function AgentInstanceEditDialog({
               modelDiscoveryLoading={modelDiscoveryLoading}
               modelDropdownOptions={modelDropdownOptions}
               modelOwnedByProfile={modelOwnedByProfile}
+              modelWriteThrough={modelWriteThrough}
               modelRequired={modelRequired}
               modelSelectValue={modelSelectValue}
               modelStatusMessage={modelStatusMessage}

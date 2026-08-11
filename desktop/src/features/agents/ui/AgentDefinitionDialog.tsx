@@ -336,6 +336,7 @@ export function AgentDefinitionDialog({
       initialModel: initialValues.model,
       initialProvider: initialValues.provider,
       initialModelProviderEditableWithoutRuntime,
+      modelWriteThrough,
     });
     const namePool = parsePersonaNamePoolText(namePoolText);
     const namePoolInput =
@@ -391,6 +392,7 @@ export function AgentDefinitionDialog({
   const {
     showProfileField: showHermesProfileField,
     modelOwnedByProfile,
+    modelWriteThrough,
     profileError: hermesProfileError,
   } = useCreateHermesBinding({
     enabled: isCreateMode,
@@ -489,14 +491,9 @@ export function AgentDefinitionDialog({
     aiConfigurationMode === "custom" && runtimeCanChooseLlmProvider;
   const modelFieldVisible =
     !modelOwnedByProfile &&
+    !modelWriteThrough &&
     (runtime.trim().length > 0 || blankRuntimeModelProviderEditable);
   const isExplicitModelRequired = aiConfigurationMode === "custom";
-  // Gate the provider requirement on the field's actual visibility, not the raw
-  // runtime capability. Codex/Claude hide the provider picker (they drive their
-  // own provider), so Customize must not require a provider there. But a
-  // runtime-less legacy/builtin definition still exposes the picker via
-  // blankRuntimeModelProviderEditable, so it must keep requiring a provider —
-  // otherwise Save could persist `provider: undefined` despite the visible field.
   const customAiPairSatisfied = agentAiConfigurationModeSatisfied(
     aiConfigurationMode,
     { provider, model },
@@ -825,7 +822,7 @@ export function AgentDefinitionDialog({
                 className="text-sm font-medium text-foreground"
                 htmlFor="persona-system-prompt"
               >
-                Agent instructions
+                Agent instructions (optional)
               </label>
               <div className={PERSONA_FIELD_SHELL_CLASS}>
                 <Textarea
@@ -885,6 +882,7 @@ export function AgentDefinitionDialog({
                 modelDropdownOptions={modelDropdownOptions}
                 modelFieldVisible={modelFieldVisible}
                 modelOwnedByProfile={modelOwnedByProfile}
+                modelWriteThrough={modelWriteThrough}
                 modelSelectValue={modelSelectValue}
                 onCustomModelChange={setModel}
                 onHermesProfileChange={(next) => {

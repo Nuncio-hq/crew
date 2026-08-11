@@ -9,6 +9,7 @@
 import type { AcpRuntimeCatalogEntry, RespondToMode } from "@/shared/api/types";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import type { AgentRunLocation } from "./agentAccessWarning";
+import { deriveRuntimeCapabilities } from "@/shared/api/runtimeCapabilities";
 
 /** Reserved manager-personal profile — never bindable to a Crew agent (P-7). */
 export const HERMES_FORBIDDEN_PROFILE_NAME = "default";
@@ -24,11 +25,8 @@ const HERMES_PROFILE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export function runtimeOwnsModelViaProfile(
   runtime: AcpRuntimeCatalogEntry | undefined,
 ): boolean {
-  if (!runtime) return false;
   return (
-    Boolean(runtime.profileArg?.trim()) &&
-    !runtime.modelEnvVar &&
-    runtime.providerLocked === true
+    deriveRuntimeCapabilities(runtime).modelSource === "profileWriteThrough"
   );
 }
 

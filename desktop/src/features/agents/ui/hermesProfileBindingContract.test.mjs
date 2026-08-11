@@ -39,6 +39,7 @@ import {
 } from "../lib/hermesProfileBinding.ts";
 import {
   isModelOwnedByProfile,
+  isModelWriteThrough,
   deriveAgentConfigFieldModel,
 } from "../lib/agentConfigCore.ts";
 
@@ -435,7 +436,7 @@ test("hermes profile command lines are auditable", async () => {
   );
 });
 
-test("isModelOwnedByProfile reads the named omission", () => {
+test("profile write-through no longer uses the owned-model omission", () => {
   const model = deriveAgentConfigFieldModel({
     config: {
       env_vars: {},
@@ -471,5 +472,6 @@ test("isModelOwnedByProfile reads the named omission", () => {
     },
     scope: "instance",
   });
-  assert.equal(isModelOwnedByProfile(model), true);
+  assert.equal(isModelOwnedByProfile(model), false);
+  assert.equal(isModelWriteThrough(model), true);
 });

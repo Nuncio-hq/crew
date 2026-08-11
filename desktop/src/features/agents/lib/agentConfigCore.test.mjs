@@ -601,7 +601,7 @@ test("goose without profileArg has no hermesProfile field", () => {
   assert.ok(field(model, "model"));
 });
 
-test("profile-owned model omits editable model with ownedByProfile", () => {
+test("profile write-through model exposes an editable descriptor", () => {
   const model = deriveAgentConfigFieldModel({
     config,
     hermesProfile: "scout",
@@ -613,10 +613,14 @@ test("profile-owned model omits editable model with ownedByProfile", () => {
     scope: "instance",
   });
 
-  assert.equal(field(model, "model"), undefined);
-  assert.deepEqual(
-    model.omissions.filter((o) => o.kind === "model"),
-    [{ kind: "model", reason: "ownedByProfile" }],
+  assert.equal(field(model, "model")?.render, "control");
+  assert.equal(
+    field(model, "model")?.targetApplication.kind,
+    "profileWriteThrough",
+  );
+  assert.equal(
+    model.omissions.some((o) => o.kind === "model"),
+    false,
   );
 });
 
