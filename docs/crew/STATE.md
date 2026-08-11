@@ -271,6 +271,9 @@ and in flight.
   channel question card accepts an answer` passes again (issue #110); the two
   remaining `channels.spec.ts` failures (sticky date divider, channel agent
   activity indicators) are unrelated and predate this change on `main`.
+- `channel-agent-presence.spec.ts` now passes its needs-you smoke-shard
+  scenario in 12/12 clean runs; the fix was an E2E fixture-fidelity gap, not
+  a product break (issue #130).
 - Earlier focused live relay test: `1/1` passed with an isolated Buzz relay.
 - Typecheck, file-size gate, Biome checks, production build, and
   `git diff --check` passed.

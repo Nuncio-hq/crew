@@ -492,6 +492,7 @@ explain simply, label uncertainty about “real company” practice, refuse sile
 mis-assignment when roles exist, and treat shared thread reports as the human
 record. Spikes are not automatic law. Full text of MUST/MUST NOT lives in the
 working agreement doc.
+<<<<<<< HEAD
 
 
 ## D-028 — Roles are owner-assigned only ("email promote")
@@ -794,3 +795,16 @@ The accepted consequence: without an explicit clock input, row `age` values
 stay fixed until another input changes. The desktop caller passes no clock and
 the home surface has no ticker, so ages already only refresh when a store
 changes. A caller that wants clock-driven recomputation passes `now`.
+
+## D-040 — Keep E2E mock fixtures production-authorizable
+
+- **Status:** Accepted
+- **Date:** 2026-08-11
+- **Links:** [`userInputAttentionProjection.ts`](../../desktop/src/features/agents/userInputAttentionProjection.ts), [`userInput.ts`](../../desktop/src/features/channels/lib/userInput.ts), issues #110 and #130
+
+E2E mock fixtures must emit only events that production could actually
+produce. A fixture must not bypass authority rules—owner `p` tag, canonical
+`e` causal parent and ancestry, 64-hex ids, or an owned-agent profile—to make
+a red spec green. When production rejects a mock event, fix the fixture for
+fidelity, reusing the shared `__BUZZ_E2E_EMIT_MOCK_USER_INPUT__` helper, rather
+than weakening the production rule or the spec.
