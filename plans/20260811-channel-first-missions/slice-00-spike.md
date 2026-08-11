@@ -20,9 +20,9 @@ IDs before Slice 01 starts.
 
 Can an unknown `["crew-mission", "promote"]` tag on a kind-9 event survive
 publish, relay storage, cold query, reconnect replay, and desktop timeline
-ingestion unchanged? A failure changes D-1's recommended wire shape: stop and
-re-plan around a receipt-style body convention. The adjacent evidence-tag
-spike is the precedent (`origin/devin/1786360062-evidence-thread-log`,
+ingestion unchanged? A failure blocks Slice 01 and requires the settled D-1
+wire shape to be re-planned around a receipt-style body convention. The
+adjacent evidence-tag spike is the precedent (`origin/devin/1786360062-evidence-thread-log`,
 `crates/buzz-cli/src/commands/evidence.rs:5-34`,
 `desktop/src/features/messages/lib/evidenceTag.ts:1-19`).
 
@@ -84,9 +84,9 @@ receipt-style body convention, preserving normal thread rendering.
 ### Question and decision changed
 
 Can a promoted thread in an ordinary, non-Project channel obtain an isolated
-worktree using today's ACP path? A PASS would reopen D-3's scope assumptions. A
-FAIL leaves the recommended “promotion anywhere, worktree only where trusted
-Project metadata exists” split intact.
+worktree using today's ACP path? A PASS would be an unexpected baseline change
+requiring founder review. A FAIL confirms the settled D-3 split: promotion
+anywhere, worktree only where trusted Project metadata exists.
 
 ### Smallest realistic environment
 
@@ -122,9 +122,9 @@ be seeded.
 
 ### Plan on FAIL
 
-Do not broaden worktree provisioning in Slice 01. Escalate D-3; continue with
-durable Mission state that may have no worktree outside a trusted Project
-context.
+Do not broaden worktree provisioning in Slice 01. Continue with durable Mission
+state and the required plain-language no-worktree explanation outside a trusted
+Project context.
 
 ## Q3 — receipt availability in the real configuration
 
@@ -175,8 +175,9 @@ slice is explicitly narrowed.
 
 Does the owner pubkey available in an ordinary channel resolve reliably enough
 to authorize a promotion using the same ownership pattern as receipt review?
-The result changes D-1's authorization rule if the community owner is absent
-or ambiguous.
+The result blocks Slice 01's owner-authorization implementation if the
+community owner is absent or ambiguous; it does not change the settled D-1
+wire shape.
 
 ### Smallest realistic environment
 
@@ -206,8 +207,9 @@ fixture. Do not publish a Mission marker.
 
 ### Plan on FAIL
 
-Do not use community-owner authorization by assumption. Escalate D-1 and
-re-plan around thread-root authorship or another explicitly approved authority.
+Do not use community-owner authorization by assumption. Stop Slice 01 and
+return the authorization implementation to the founder; do not change the
+settled D-1 wire shape in the slice.
 
 ## Gate
 

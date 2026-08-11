@@ -4,7 +4,7 @@ title: Promote in place and reconstruct after restart
 status: draft
 priority: P0
 effort: L
-dependencies: ["00", "D-1", "D-2"]
+dependencies: ["00"]
 ---
 
 # Slice 01 — Promote in place
@@ -23,17 +23,20 @@ cannot quietly redefine the state model.
 ## Question and decision
 
 How can the thread carry an explicit durable Mission fact while the visible
-surface remains a projection over existing relay events? Pending D-1 and D-2,
-the plan's recommended wire shape is a kind-9 message with normal `h` and
-NIP-10 `e` tags plus:
+surface remains a projection over existing relay events? Settled D-1 = option A:
+the marker is a kind-9 message with normal `h` and NIP-10 `e` tags plus:
 
 ```text
 ["crew-mission", "promote"]
 ["crew-mission-goal", "<short title>"]
 ```
 
-The exact tag shape remains subject to the founder decisions in `plan.md`;
-this slice must not implement an unapproved alternative.
+This is the settled wire shape: no new event kind and no alternative marker
+shape may be implemented in this slice.
+
+Promotion is a manual human toggle. Never infer a Mission from a worktree,
+receipt, ACP telemetry, or any other side effect; the valid marker is the only
+Mission authority.
 
 ## Pure projection contract
 
@@ -95,6 +98,7 @@ absence of the behavior, not because of a fixture or build mistake.
 | `failed_receipt_or_git_status_projects_failed` | A failure receipt or allowed failure Git status produces `failed`. | No Mission projection consumes terminal failure facts. |
 | `valid_cancel_projects_cancelled` | A valid owner cancel after promotion produces `cancelled`. | No Mission lifecycle marker projection exists. |
 | `valid_reopen_projects_reopened` | A valid owner reopen after cancellation produces `reopened`. | No Mission lifecycle marker projection exists. |
+| `ordinary_channel_mission_explains_no_worktree` | A promoted Mission outside a trusted Project workspace visibly says that it has no isolated worktree because the channel has no trusted Project workspace. | No Mission strip or plain-language worktree limitation exists. |
 | `non_owner_promotion_is_rejected` | Same marker from a non-owner returns `null`. | No Mission-specific authorization path exists. |
 | `wrong_channel_marker_is_rejected` | Mismatched `h` is ignored. | No strict Mission tag validator exists. |
 | `wrong_root_or_reply_ancestry_is_rejected` | Unrelated root/reply `e` tags do not promote the selected root. | No Mission ancestry projection exists. |
@@ -121,15 +125,20 @@ the plan records that it is 980/1000 lines against
 `desktop/src/features/messages/ui/MessageRow.tsx:400-409`; the new surface
 must use a Crew-owned component seam instead.
 
-The strip is thread-local, compact, and contains no cross-thread fields. It
-does not create an Inbox/Projects surface, write a local authoritative store,
-or infer promotion from a receipt/worktree.
+The strip is thread-local, compact, and contains no cross-thread fields. For an
+ordinary channel, it must plainly say that this Mission has no isolated
+worktree because the channel has no trusted Project workspace; it must not fail
+mysteriously. It does not create an Inbox/Projects surface, write a local
+authoritative store, or infer promotion from a receipt/worktree. The limitation
+is required by the fail-closed provisioning path at
+`crates/buzz-acp/src/pool.rs:3019-3078`,
+`crates/buzz-acp/src/thread_workspace.rs:244-270,141-148`.
 
 ## Implementation steps
 
 1. Add the RED projection fixtures and strict tag-validation tests.
-2. After D-1/D-2 approval, implement the tolerant Mission marker parser and
-   pure `missionState(threadRoot)` projection.
+2. Implement the settled tolerant Mission marker parser and pure
+   `missionState(threadRoot)` projection.
 3. Add the owner-only promotion action using the existing message publish
    path (`crates/buzz-sdk/src/builders.rs:179-205,218-239`); preserve
    ordinary message rendering for clients that ignore the tag.
@@ -146,7 +155,7 @@ not passed and later slices do not start.
 
 ## Risks
 
-* An unapproved tag shape would create durable data before D-1/D-2 are settled.
+* The settled tag shape must remain the only accepted promotion wire shape.
 * Weak `h`/`e` validation could let unrelated channel members promote another
   thread.
 * Reading TTL-bound stores would make restart behavior appear correct only
@@ -159,6 +168,16 @@ Remove the new projection and UI code. Published marker messages remain
 ordinary readable messages to clients that do not understand the tag. No
 migration or local database cleanup is required.
 
+## Review checklist
+
+* The Mission marker is the only authority, and promotion is a manual human
+  toggle; no worktree, receipt, telemetry, or other side effect infers a
+  Mission.
+* Outside a trusted Project workspace, the strip plainly explains that no
+  isolated worktree exists because the channel has no trusted Project workspace.
+* If anyone requests Mission priority or ordering, stop and return to the
+  founder for a fresh decision; do not settle it in implementation.
+
 ## Definition of Done mapping
 
 * Explicit promotion produces one owner-authored durable marker.
@@ -166,3 +185,5 @@ migration or local database cleanup is required.
 * Mission reconstruction passes with ephemeral stores empty.
 * The strip survives quit/relaunch.
 * No file-size limit is raised and no non-Crew Mission authority is added.
+* Any request for Mission priority or ordering stops the work and returns to
+  the founder; it is not an implementer-settled detail.

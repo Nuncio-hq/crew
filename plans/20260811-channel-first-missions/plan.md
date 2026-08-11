@@ -6,8 +6,9 @@
 - **Code baseline:** `origin/main` @ `35af74019`
 - **Shipped-state baseline:** `STATE.md` on `origin/docs/state-truth-and-gate-audit`
   (PR #124), **not** `main`'s copy
-- **Decision numbers taken by this PR:** **none.** This plan escalates decisions
-  instead of recording them (see [Founder decisions required](#founder-decisions-required)).
+- **Decision numbers taken by this PR:** **none.** The founder has decided D-1,
+  D-2, and D-3 outside this planning PR; this document records those settled
+  inputs without claiming any decision number.
 - **Slices:** 5 (`slice-00` … `slice-04`)
 
 ## Audit gate
@@ -18,12 +19,12 @@
 | Scout findings | **Real, heavily precedented, and smaller than the issue thinks.** Every state the issue wants except *promotion intent itself* already exists as a durable relay event or a documented projection |
 | Already implemented? | No. There is **no mission aggregate** anywhere in the tree. `projectThreadMissionControl.ts` is a name collision, not a mission record — it is a set of pure selectors over in-memory stores |
 | Duplicate? | No. #116/#121/#119/#109/#125/#110 are adjacent seams, not this |
-| Under-specified? | **In one load-bearing place, yes** — the issue assumes promotion can be additive-durable without saying what carries it, and assumes a promoted ordinary-channel thread can get a worktree. Both are escalated, not guessed |
-| **Decision** | **Proceed to plan.** Three founder decisions gate slice 1; slice 0 is runnable today |
+| Under-specified? | **Resolved for this plan:** promotion is an explicit owner-authored marker, and ordinary-channel promotion is allowed without an isolated checkout |
+| **Decision** | **Proceed to plan.** D-1/D-2/D-3 are settled inputs; slice 0 remains runnable today and gates slice 1 |
 
 The issue was treated as specification, not law. Two of its instructions
-collide with repo law or with code reality; both are escalated below rather
-than silently executed or silently dropped.
+collide with repo law or with code reality; the settled founder decisions below
+record the resulting boundaries rather than silently executing or dropping them.
 
 ## Objective, in founder language
 
@@ -111,12 +112,9 @@ Three transitions are **human intent**, and intent is not inferable:
 
 The issue forbids silent auto-promotion ("Promotion must be explicit in the
 first release"), so promotion cannot be inferred from "a worktree appeared".
-This is the one place where new durable state is genuinely unavoidable, and it
-is escalated as **[D-1](#d-1--what-carries-promotion-intent)** rather than
-assumed.
-
-**This plan's recommendation (pending D-1):** a **tagged ordinary message**, not
-a new kind.
+This is the one place where new durable state is genuinely unavoidable. The
+founder decided D-1 = option A: a **tagged ordinary message**, not a new kind.
+Promotion is a manual human toggle; the marker is the only Mission authority.
 
 ```text
 kind 9 (KIND_STREAM_MESSAGE), posted into the thread with the normal
@@ -147,6 +145,10 @@ Why this shape:
 - **It is not board state.** It carries no lane, column, order, priority,
   assignee or due date — see the D-037 boundary in §3.
 
+**Hard invariant:** never infer a Mission from a worktree, receipt, ACP
+telemetry, or any other side effect. A Mission exists only after the founder's
+explicit manual promotion toggle publishes this marker.
+
 ### 1.3 What Mission does *not* own
 
 Deliberately absent from the marker, because each already has an owner:
@@ -171,7 +173,7 @@ must be derived.
 | # | Slice | Founder-visible outcome | Gated on |
 | --- | --- | --- | --- |
 | 00 | Spike — reality check | (none; produces PASS/FAIL evidence) | nothing — **runnable today** |
-| 01 | **Minimum shippable:** promote in place, strip survives restart | "I marked this thread as work and it is still marked tomorrow" | D-1, D-2, slice 00 |
+| 01 | **Minimum shippable:** promote in place, strip survives restart | "I marked this thread as work and it is still marked tomorrow" | slice 00 (D-1/D-2/D-3 settled) |
 | 02 | Live state + inline decision | "The strip tells me it's running, and when it needs me I answer without leaving the channel" | 01 |
 | 03 | Review in the channel | "It's done, the receipt is here, I accept it, and it stays accepted" | 02, #121 landed |
 | 04 | Cancel / reopen / retry recovery | "I can stop this and pick it up later" | 03 |
@@ -186,13 +188,13 @@ These four questions can change the architecture. **None may be assumed.**
 
 | # | Question | Pass criterion | If it fails |
 | --- | --- | --- | --- |
-| **Q1** | Does an unknown `crew-mission` tag on kind 9 survive publish → relay → cold reconnect replay with tags intact? | tag round-trips byte-identical after reconnect | the tag design is dead; re-plan onto a receipt-style body convention. #121's phase-01 spike covers the same risk for `crew-evidence` — **reuse its result if it has run, do not re-run blindly** |
-| **Q2** | Can a promoted thread in an **ordinary** (non-Project) channel obtain an isolated worktree today? | worktree provisioned | **Expected FAIL.** `crates/buzz-acp/src/pool.rs:3019-3078` + `thread_workspace.rs:244-270` require trusted `buzz://project-workspace?` metadata with an absolute repo path, owner-authored, fail-closed (`thread_workspace.rs:141-148` "not the Project owner"). Feeds **[D-3](#d-3--where-can-a-thread-be-promoted)** |
+| **Q1** | Does an unknown `crew-mission` tag on kind 9 survive publish → relay → cold reconnect replay with tags intact? | tag round-trips byte-identical after reconnect | stop Slice 01 and re-plan the settled marker wire shape onto a receipt-style body convention. #121's phase-01 spike covers the same risk for `crew-evidence` — **reuse its result if it has run, do not re-run blindly** |
+| **Q2** | Can a promoted thread in an **ordinary** (non-Project) channel obtain an isolated worktree today? | worktree provisioned | **Expected FAIL.** `crates/buzz-acp/src/pool.rs:3019-3078` + `thread_workspace.rs:244-270` require trusted `buzz://project-workspace?` metadata with an absolute repo path, owner-authored, fail-closed (`thread_workspace.rs:141-148` "not the Project owner"). This validates the settled D-3 UI limitation |
 | **Q3** | Is a receipt actually published in the founder's real configuration? | a `46043` appears on the relay for a completed turn | **Expected FAIL by default:** `agent_receipts_enabled: false` (`crates/buzz-acp/src/config.rs:1495`). If receipts are off, `ready_for_review` is unreachable and slice 03 is blocked on a config change, not on UI work |
-| **Q4** | Does the founder's owner pubkey reliably identify "the owner" for a promotion in an ordinary channel, the same way `AgentReceiptMessageBody` gates review? | owner check resolves in a non-Project channel | authorization rule for D-1 must change (e.g. thread-root author instead of community owner) |
+| **Q4** | Does the founder's owner pubkey reliably identify "the owner" for a promotion in an ordinary channel, the same way `AgentReceiptMessageBody` gates review? | owner check resolves in a non-Project channel | stop Slice 01 and escalate the authorization implementation, without changing the settled D-1 wire shape |
 
-Q2 and Q3 are the ones that most plausibly turn this epic from "UI work" into
-"config + scope work". They are cheap and must run first.
+Q2 and Q3 are cheap reality checks that constrain implementation scope and
+configuration. They do not reopen the settled D-1/D-2/D-3 decisions.
 
 ### Slice 01 — the minimum a founder can feel
 
@@ -247,26 +249,33 @@ Carried from the issue, plus three added by this plan:
 - No `Since you left` catch-up (issue phase 4 → separate issue).
 - No new event kind, no relay change, no `buzz-db` change (added; hard).
 - No auto-promotion, no promotion heuristics, no suggestion card in slice 01.
+- Promotion is a manual human toggle; never infer a Mission from a worktree,
+  receipt, telemetry, or any other side effect.
 - No parallel task database, no React-owned authoritative mission store.
 - No rewrite of Inbox or Projects IA; they consume, they do not own.
-- No priority, ordering, due date, or assignee field on a Mission (added; this
-  is the D-037 tripwire — see §3).
+- No priority, ordering, due date, or assignee field on a Mission. If anyone
+  wants priority or ordering, work stops and returns to the founder for a fresh
+  decision; an implementer may not settle that as a design detail.
 - No mobile scope, no multi-agent concurrent worktree mutation.
 
 ## 3. Composition — and what it must not duplicate
 
 ### D-037 (#122 / PR #140) — the constraint this plan works hardest to respect
 
-D-037(2) defers **board event kind and tag schema**. This plan proposes a *tag*.
-That tension is real and is stated rather than hidden.
+D-037(2) defers **board event kind and tag schema**. The founder decided D-2 =
+option A: this Mission marker does **not** fall under that deferred board
+schema because it is thread-scoped and carries no lane, column, order, or
+priority.
 
 The boundary this plan holds: **D-037(2) defers board schema — lanes, columns,
 slot caps, ordering, card position. The Mission marker carries none of those.**
 It carries one enum and one title, scoped to a thread root, and it renders only
 inside the thread it belongs to. The moment anyone adds `priority`, `order`,
-`column`, or a cross-channel list view, they are building the deferred board and
-must go back to the founder. That tripwire is written into the non-goals above
-and into `slice-01`'s review checklist.
+`column`, or a cross-channel list view, they are building the deferred board.
+**The moment anyone wants priority or ordering on a Mission, work stops and
+returns to the founder for a fresh decision. It is not an implementer-settled
+design detail.** This tripwire is also written into the non-goals above and
+Slice 01's review checklist.
 
 D-037(3)'s work-overview lens is a **consumer** of what this epic makes durable,
 not a part of it. If the lens is prioritized later, `missionState()` is exactly
@@ -322,59 +331,60 @@ Adversarial review of this plan. **12 findings — 9 applied, 3 rejected.**
 
 | # | Finding | Disposition |
 | --- | --- | --- |
-| RT-1 | "Prefer a projection over existing events" is a comforting phrase that hides the one thing that genuinely cannot be projected: human promotion intent. A plan could ship "pure projection!" and then quietly add a store | **Applied** — §1.2 names the gap explicitly and escalates it as D-1 instead of resolving it |
+| RT-1 | "Prefer a projection over existing events" is a comforting phrase that hides the one thing that genuinely cannot be projected: human promotion intent. A plan could ship "pure projection!" and then quietly add a store | **Applied** — §1.2 names the gap explicitly and requires the manual owner-authored marker; the marker is the only authority |
 | RT-2 | `completed` derived from `conversationOutcomeLedger` would silently expire after 4 hours; `needs_input` from `needsYouStore` after 30 minutes. Both are the obvious wiring and both are wrong | **Applied** — §1.1 forbids both by name; RED contract in slice-01 asserts a Mission reconstructed with those stores empty |
 | RT-3 | A Mission strip with a state chip *is* a board cell. Add ordering and priority "for convenience" and D-037(2) is violated without anyone deciding to violate it | **Applied** — explicit tripwire non-goal + the §3 boundary statement |
-| RT-4 | The issue's DoD step 5 ("existing Project/ACP tooling provisions one isolated worktree") is **not achievable for an ordinary channel thread** — provisioning is fail-closed on trusted Project workspace metadata | **Applied** — spike Q2 + escalated as D-3. The checkbox is neither dropped nor faked |
+| RT-4 | The issue's DoD step 5 ("existing Project/ACP tooling provisions one isolated worktree") is **not achievable for an ordinary channel thread** — provisioning is fail-closed on trusted Project workspace metadata | **Applied** — settled D-3 allows promotion anywhere but requires a plain-language no-checkout explanation in Slice 01; the checkbox is neither dropped nor faked |
 | RT-5 | DoD steps 9-12 depend on receipts, which are **off by default** (`config.rs:1495`). A plan that assumes receipts flow would burn a whole slice before discovering it | **Applied** — spike Q3 runs before slice 01 |
 | RT-6 | Anyone in a channel can publish a `crew-mission` tag. Without an author check, any member (or a compromised agent) can promote or cancel the founder's work | **Applied** — owner-authored + strict `h`/`e`-ancestry validation, mirroring `agentReceiptStore.ts:107-175`; RED contract rejects a non-owner marker |
 | RT-7 | Repeated clicks publish duplicate markers; a naive projection creates two Missions or flaps | **Applied** — first valid `promote` wins, later duplicates ignored; deterministic ordering by `(created_at, event id)`; RED contract for out-of-order and duplicate arrival |
-| RT-8 | Every promotion posts a visible message into the thread — the founder may experience this as chat spam, and there is no "quiet" variant | **Applied as a stated trade-off, not solved** — surfaced in D-1 option A's cons so the founder chooses with eyes open |
+| RT-8 | Every promotion posts a visible message into the thread — the founder may experience this as chat spam, and there is no "quiet" variant | **Accepted trade-off under settled D-1 = option A** — the readable kind-9 marker is the chosen wire shape |
 | RT-9 | "Just add a case in `MessageRow.tsx`" trips the 980/1000 ratchet and tempts a D-022 violation | **Applied** — §3 mandates new Crew-owned components |
 | RT-10 | Add a `30xxx` addressable Mission record: replaceable, clean edits, natural LWW | **Rejected** — a new kind is exactly the "new authoritative state" the issue and D-025 push back on, it is board-schema-adjacent under D-037(2), and it locks a shape in before slice 01 has taught us what a Mission needs. Revisit only if spike Q1 fails |
-| RT-11 | Skip promotion entirely: infer a Mission from "a worktree exists" or "a receipt exists". Zero new state, zero decisions | **Rejected** — it contradicts the issue's explicit-promotion rule, cannot express `planned` (promoted, not started) or `cancelled`, and makes the founder's intent a side effect of tooling. Recorded because it is the cheapest option and the founder may still want it — it is D-1 option C |
+| RT-11 | Skip promotion entirely: infer a Mission from "a worktree exists" or "a receipt exists". Zero new state, zero decisions | **Ruled out by the founder** — promotion is a manual human toggle; the marker is the only authority, so worktree/receipt inference is forbidden |
 | RT-12 | Ship the suggestion card in slice 01 so the feature "feels smart" | **Rejected** — a threshold heuristic (issue § "Mission promotion threshold") is an unproven product bet; getting it wrong trains the founder to ignore the card. It costs nothing to defer to slice 02+ once real promotions exist to learn from |
 
-**Blocking findings remaining:** none technical. D-1, D-2 and D-3 are founder
-decisions and gate slice 01.
+**Blocking findings remaining:** none technical. D-1, D-2, and D-3 are settled
+inputs; Slice 00 still gates Slice 01.
 
-## Founder decisions required
+## Founder decisions recorded
 
 Reported separately; recorded here so the plan is self-contained. **This PR
-takes no D-number.**
+takes no D-number.** These are founder decisions supplied to this plan, not
+decisions claimed by this PR.
 
 ### D-1 — What carries promotion intent
 
-- **A (recommended):** tagged ordinary message, `["crew-mission","promote"]` on
-  kind 9. *Pro:* no new kind, precedent in #121, degrades readably everywhere,
-  free authorization/ordering. *Con:* a visible message in the thread each time
-  (RT-8); a Crew tag schema while D-037(2) defers board schema (boundary in §3).
-- **B:** new addressable kind (`30xxx`). *Pro:* clean replace/edit semantics.
-  *Con:* new authoritative state, upstream `kind.rs` edit, board-schema-adjacent,
-  locks the shape in early.
-- **C:** no promotion marker at all — infer Missions from worktree/receipt
-  existence. *Pro:* zero new state, zero decisions. *Con:* contradicts the
-  issue's explicit-promotion rule, cannot express `planned` or `cancelled`.
+- **DECIDED — A:** tagged ordinary message, `["crew-mission","promote"]` on
+  kind 9 with normal `h` + NIP-10 `e` tags, owner-authored, plus
+  `["crew-mission-goal","<short title>"]`. *Pro:* no new kind, precedent in
+  #121, and readable degradation. *Con:* a visible message in the thread each
+  time (accepted trade-off, RT-8).
+- **Rejected — B:** new addressable kind (`30xxx`). *Pro:* clean replace/edit
+  semantics. *Con:* new authoritative state and upstream `kind.rs` edit.
+- **Ruled out — C:** no promotion marker; infer Missions from worktree/receipt
+  existence. Promotion is a manual human toggle and inference is forbidden.
 
 ### D-2 — Does the Mission marker count as the deferred board schema
 
-D-037(2) says no board tag schema until a board surface is prioritized. Option A
-is a tag schema, but a thread-scoped one with no lane/order/priority. **Ask:**
-confirm the §3 boundary (thread-scoped enum + title is *not* board schema), or
-treat D-037(2) as blocking and take option C.
+**DECIDED — A:** this thread-scoped enum + title is not the deferred board
+schema because it has no lane, column, order, or priority. The §3 boundary and
+tripwire are binding: if anyone wants priority or ordering on a Mission, work
+stops and returns to the founder for a fresh decision.
 
 ### D-3 — Where can a thread be promoted
 
-Worktrees are fail-closed on trusted Project workspace metadata. So either:
+Worktrees are fail-closed on trusted Project workspace metadata. The founder
+decided:
 
-- **A (recommended):** slice 01 allows promotion **anywhere**, and a Mission
+- **DECIDED — A:** slice 01 allows promotion **anywhere**, and a Mission
   outside a Project simply has no worktree — durable state and decisions still
-  work, the founder just gets no isolated checkout.
-- **B:** promotion is **Project-channel-only** until a later slice. Honest, but
-  much narrower than the issue reads.
-- **C:** promotion **publishes** Project workspace metadata for ordinary
-  channels. Widest, but it opens the trusted-metadata/local-path security path
-  (`thread_workspace.rs:244-270`) and needs its own review.
+  work, with a plain-language explanation in the Mission strip that this
+  channel has no trusted Project workspace and therefore no isolated checkout.
+- **Rejected — B:** promotion is Project-channel-only.
+- **Rejected — C:** promotion publishes Project workspace metadata for ordinary
+  channels; it would open the trusted-metadata/local-path security path
+  (`thread_workspace.rs:244-270`).
 
 ## Verification (per slice)
 
