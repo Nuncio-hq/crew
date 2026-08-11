@@ -1,0 +1,1 @@
+Created `/tmp/spike116/claude-native-probe2/SPIKE-AE.txt` containing `AE-OK`.

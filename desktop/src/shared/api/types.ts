@@ -68,6 +68,13 @@ export type SetChannelTopicInput = {
   topic: string;
 };
 
+export type AssignChannelAgentRoleInput = {
+  channelId: string;
+  agentPubkey: string;
+  label: string;
+  definition: string;
+};
+
 export type SetChannelPurposeInput = {
   channelId: string;
   purpose: string;

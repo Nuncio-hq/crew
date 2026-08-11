@@ -1,5 +1,14 @@
 # Crew State
 
+## Issue #116 Slice 1R — channel-scoped roles
+
+Roles are founder-authorized `(agent, channel)` assignments stored in the
+channel's signed `KIND_CANVAS` event inside a fenced `crew` YAML block.
+Assignments carry a free-form label and founder-authored definition text.
+The harness resolves them when creating a fresh channel session and ignores
+non-owner or malformed canvas blocks. Channels without an assignment retain
+the existing prompt behavior.
+
 Last updated: 2026-08-10
 
 ## Founder product direction (docs)
@@ -347,3 +356,15 @@ and in flight.
   offboarding, and an Agents-page archive browser. Archive semantics follow
   D-035 and spike 0015; real Hermes authentication remains unverified here
   because no Hermes binary is installed.
+
+## Agent roles track (issue #116)
+
+- Plan:
+  [`plans/20260810-agent-roles-routing-capability/plan.md`](../../plans/20260810-agent-roles-routing-capability/plan.md)
+- Slice 0 spikes **0015–0017 PASS** (records under `docs/crew/spikes/`).
+- **Slice 1R (channel-scoped roles) — implemented on branch**
+  `feat/issue-116-agent-roles`: owner-signed `(agent, channel)` assignments
+  in the channel canvas `crew` block; free-form labels and carried definitions;
+  fresh-session harness injection; no global role projection or taxonomy.
+  Slice 2 (presets) and Slice 3 (capability) not started.
+- Next: orchestrator review → PR; then Slice 2/3 per plan.

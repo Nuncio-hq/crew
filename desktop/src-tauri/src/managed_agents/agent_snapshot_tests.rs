@@ -25,8 +25,8 @@ fn minimal_record() -> ManagedAgentRecord {
         agent_command_override: Some("goose-override".to_string()), // MUST NOT appear
         agent_args: vec!["--arg".to_string()],         // MUST NOT appear in snapshot
         hermes_profile: Some("scout".to_string()),     // MUST NOT appear in snapshot
-        mcp_command: "mcp-server".to_string(),         // MUST NOT appear in snapshot
-        turn_timeout_seconds: 120,                     // deprecated, MUST NOT appear
+        mcp_command: "mcp-server".to_string(), // MUST NOT appear in snapshot
+        turn_timeout_seconds: 120,             // deprecated, MUST NOT appear
         idle_timeout_seconds: Some(30),
         max_turn_duration_seconds: Some(600),
         parallelism: 2,

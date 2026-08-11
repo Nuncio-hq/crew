@@ -10,6 +10,7 @@ mod agent_models_env;
 mod agent_providers;
 mod agent_settings;
 mod agent_update_rollback;
+mod assignment_publish;
 mod agents;
 mod canvas;
 mod channel_templates;
@@ -91,6 +92,9 @@ pub use agent_metric_archive::*;
 pub use agent_models::*;
 pub use agent_providers::*;
 pub use agent_settings::*;
+pub(crate) use assignment_publish::{
+    assignment_announcement_content, publish_assignment_announcement,
+};
 pub use agents::*;
 pub use canvas::*;
 pub use channel_templates::*;

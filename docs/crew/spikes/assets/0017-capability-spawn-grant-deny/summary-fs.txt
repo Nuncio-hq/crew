@@ -1,0 +1,3 @@
+granted_file=HELLO-CAP-granted
+denied_file=ABSENT
+native_file=HELLO-CAP-native

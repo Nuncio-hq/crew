@@ -1,0 +1,3 @@
+granted=HELLO-CAP-granted
+denied=ABSENT
+native=HELLO-CAP-native

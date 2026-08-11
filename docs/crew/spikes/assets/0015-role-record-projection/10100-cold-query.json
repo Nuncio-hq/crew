@@ -1,0 +1,20 @@
+[
+  {
+    "content": "{\"channel_add_policy\":\"owner_only\"}",
+    "created_at": 1786337034,
+    "id": "bb7d69a04848dd88b437b9a8ce24607b338e2a8811b12f9c39a4c6e8dff0dbb5",
+    "kind": 10100,
+    "pubkey": "6464799e876cf590f7c0ecd5db80daf9585d8b6309ffb6f1a311667a04f833fa",
+    "sig": "08936e00145d7f3be3b8210301715bcfb506f35ed2471f44960950baa53c3b4439ca92e42d30cedce19f9488731cb177c3318009a53a3fcc3680d0a506d81876",
+    "tags": [
+      [
+        "crew-role",
+        "code"
+      ],
+      [
+        "alt",
+        "agent profile with crew role"
+      ]
+    ]
+  }
+]

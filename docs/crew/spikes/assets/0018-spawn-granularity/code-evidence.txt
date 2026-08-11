@@ -1,0 +1,78 @@
+# Captured from branch slice1-review after `. ./bin/activate-hermit`
+# Product source was not modified.
+
+$ nl -ba crates/buzz-acp/src/acp.rs | sed -n '145,175p;638,713p'
+   145	/// ACP client that owns an agent subprocess and communicates over its stdio pipes.
+   146	///
+   147	/// One `AcpClient` per agent process. Multiple sessions can be created
+   148	/// on the same client via repeated calls to [`session_new`](AcpClient::session_new).
+   ...
+   638	    pub async fn session_new_full(
+   639	        &mut self,
+   640	        cwd: &str,
+   641	        mcp_servers: Vec<McpServer>,
+   642	        system_prompt: Option<SystemPromptTransport<'_>>,
+   643	        session_title: Option<&str>,
+   ...
+   660	        let mut params = serde_json::json!({
+   661	            "cwd": cwd,
+   662	            "mcpServers": mcp_servers,
+   663	        });
+
+$ nl -ba crates/buzz-acp/src/pool.rs | sed -n '570,580p;959,1020p;1115,1145p'
+   575	pub struct PromptContext {
+   576	    pub mcp_servers: Vec<McpServer>,
+   ...
+   959	async fn create_session_and_apply_model(
+   ...
+   1001	    let mcp_servers = mcp_servers_with_git_origin(
+   1002	        &ctx.mcp_servers,
+   1003	        channel_id,
+   1004	        channel_type,
+   1005	        ctx.session_title.as_deref(),
+   ...
+   1010	        .session_new_full(
+   1011	            session_cwd,
+   1012	            mcp_servers,
+   ...
+   1115	fn mcp_servers_with_git_origin(
+   1116	    servers: &[McpServer],
+   1117	    channel_id: Option<Uuid>,
+   1118	    channel_type: Option<&str>,
+   ...
+   1121	    let mut servers = servers.to_vec();
+   1122	    let origin = match (channel_id, channel_type) {
+   1123	        (Some(channel_id), Some("stream")) => Some(EnvVar {
+   1124	            name: "BUZZ_GIT_ORIGIN_CHANNEL_ID".into(),
+   ...
+
+$ nl -ba crates/buzz-acp/src/config.rs | sed -n '249,263p;930,947p;1088,1097p'
+   249	    pub agent_command: String,
+   250	    ...
+   258	    pub agent_args: Vec<String>,
+   259	    pub mcp_command: String,
+   ...
+   941	        let agent_args = normalize_agent_args(&agent_command, args.agent_args);
+   ...
+   1093	            agent_args,
+   1094	            mcp_command: args.mcp_command,
+
+$ nl -ba crates/buzz-acp/src/lib.rs | sed -n '4738,4760p;4870,4912p;5158,5178p'
+   4738	    let args = config.agent_args.clone();
+   ...
+   4749	    let spawn_result = AcpClient::spawn(
+   4750	        &agent_command,
+   4751	        &args,
+   ...
+   4874	    let mut acp = AcpClient::spawn(command, args, extra_env, has_generated_codex_config)
+   ...
+   4908	    let agent_args = config::normalize_agent_args(&agent.agent_command, agent.agent_args.clone());
+   4909	    AcpClient::spawn(&agent.agent_command, &agent_args, &[], false).await
+   ...
+   5163	fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
+   5164	    if config.mcp_command.is_empty() {
+   5165	        return vec![];
+   5166	    }
+   5167	    vec![McpServer {
+   5168	        name: ...
+   5169	        command: config.mcp_command.clone(),

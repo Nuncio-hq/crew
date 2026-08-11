@@ -39,7 +39,6 @@ import type {
   GitBashPrerequisite,
   RuntimeConfigSurface,
 } from "@/shared/api/types";
-
 export * from "@/shared/api/tauriChannels";
 type RawPresenceLookup = Record<string, PresenceStatus>;
 type RawAddChannelMembersResult = {
