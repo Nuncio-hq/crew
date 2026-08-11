@@ -238,6 +238,7 @@ Per D-008 no production code starts before these are conclusive.
 | **Q3** | Is a live-Hermes certification record (R2) required before #104 can close, or is the existing harness/mock coverage enough? | (a) require both records; (b) require only the Phase 03 elicitation record; (c) close on existing coverage | The repo's own workflow prizes real-boundary evidence; (c) is faster but leaves "works with a real Hermes" as an assumption |
 | **Q4** | Phase 05 tail: import of an externally supplied archive, and readiness-check-before-bind? | (a) both; (b) readiness gate only; (c) neither — #134's restore is enough | External import is the "moved machines" story; nobody has asked for it yet, and it is a second archive format to own |
 | **Q5** | If spike S-B finds no stable Hermes JSON contract for skills/tools/MCP, what happens to Phase 06? | (a) drop it; (b) ship a degraded card showing only what Crew already knows (MCP guard, bound profile, role); (c) file a Hermes-side ask and wait | (b) risks the "Crew invents parity" failure #104 explicitly forbids |
+
 ---
 
 ## 6a. Decided (founder, 2026-08-11)
@@ -246,6 +247,8 @@ Per D-008 no production code starts before these are conclusive.
 | --- | --- | --- |
 | **Q1 — model configuration** | **#118 wins.** Crew-side model write-through is approved; #104's no-model/provider-configuration non-goal and D-019's presentation clause are superseded. | D-019's substance remains: the Hermes profile owns the model and Crew stores no competing copy. #118 owns the implementation. Its PR must record the D-019 amendment in `DECISIONS.md`; this plan takes no D-number. |
 | **Q6 — disposition** | **Close #104 once #134 merges, then replace it with three narrow issues.** | The three issues are R1 Doctor completion, R2 live-Hermes certification, and R3 capability view. |
+
+---
 
 ## 7. Agreed disposition (founder-decided)
 
@@ -282,7 +285,7 @@ disposition.
 | F-5 | Phase 06 could be planned as buildable when Hermes may expose no contract for it. | **Applied.** R3 is gated on spike S-B, with an explicit "drop, do not fake" instruction and founder question Q5. |
 | F-6 | Recommending closure of #104 while #134 is unmerged could lose Phase 02/05 scope if #134 is abandoned. | **Applied.** §7.1 makes closure conditional on #134 merging. |
 | F-7 | "Reconnect restores a pending request exactly once" was initially marked shipped from the restart-recovery tests, which actually prove *cancellation* of orphans, not restoration of an answerable request. | **Applied.** Downgraded to *partial* with the distinction spelled out. |
-| F-8 | Should this plan take D-028 (or the next free number) for "reduce #104"? | **Rejected.** A plan does not record decisions, and the scope call is the founder's (Q6). D-numbering is also contended right now — #120 holds D-028/029/030, #124 D-031/032, #134 D-035, #128 D-036. |
+| F-8 | Should this plan take D-028 (or the next free number) for "reduce #104"? | **Rejected.** A plan does not record decisions, and the scope call was the founder's (§6a). D-numbering is also contended right now — #120 holds D-028/029/030, #124 D-031/032, #134 D-035, #128 D-036. |
 | F-9 | Proposal to fix the untested contracts (C-04/05/06/08/09/11/13) as part of the remainder. | **Rejected for this plan.** Real gap, but it is test debt on already-shipped behavior, not #104 operations scope; it belongs in its own hygiene issue so it is not used to keep the epic alive. |
 | F-10 | Proposal to specify the Phase 04 "durable result links to a PR" work here. | **Rejected.** #121/#128 own the evidence surface; specifying it here would duplicate an open PR (§5.3). |
 | F-11 | Estimate the remainder in weeks for the founder. | **Rejected as framed.** Sized in slices/records instead (§4); calendar time here is dominated by waiting on #134 and on the Hermes-side probe, not by build effort. |
