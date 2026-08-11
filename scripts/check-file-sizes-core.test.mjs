@@ -1,15 +1,25 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   allowedLineCount,
   countLines,
+  countRecordedLines,
+  evaluateBaselineFileSize,
   evaluateFileSize,
   parseChangedFiles,
+  parseFileSizeBaselines,
   resolveBaseRef,
+  runFileSizeCheck,
 } from "./check-file-sizes-core.mjs";
 
 function git(repo, ...args) {
@@ -41,6 +51,18 @@ test("counts empty, LF, and CRLF content with the existing semantics", () => {
   assert.equal(countLines(""), 0);
   assert.equal(countLines("one\n"), 2);
   assert.equal(countLines("one\r\ntwo"), 2);
+});
+
+test("recorded line counts use wc -l semantics alongside ordinary counts", () => {
+  for (const [content, ordinary, recorded] of [
+    ["", 0, 0],
+    ["one", 1, 1],
+    ["one\n", 2, 1],
+    ["one\r\ntwo\r\n", 3, 2],
+  ]) {
+    assert.equal(countLines(content), ordinary);
+    assert.equal(countRecordedLines(content), recorded);
+  }
 });
 
 test("new files use the configured ceiling", () => {
@@ -105,5 +127,200 @@ test("an inherited oversized file may hold or shrink but not grow", () => {
     evaluateFileSize({ baseLines: 1026, candidateLines: 1027, maxLines: 1000 })
       .violates,
     true,
+  );
+});
+
+test("recorded baselines fail growth, shrinkage, and pass unchanged", () => {
+  assert.deepEqual(
+    evaluateBaselineFileSize({ recordedLines: 1001, candidateLines: 1002 }),
+    { violates: true, direction: "grew" },
+  );
+  assert.deepEqual(
+    evaluateBaselineFileSize({ recordedLines: 1001, candidateLines: 1000 }),
+    { violates: true, direction: "shrank" },
+  );
+  assert.deepEqual(
+    evaluateBaselineFileSize({ recordedLines: 1001, candidateLines: 1001 }),
+    { violates: false, direction: "unchanged" },
+  );
+});
+
+test("a recorded baseline above 1000 replaces MAX_LINES", () => {
+  assert.equal(
+    evaluateBaselineFileSize({ recordedLines: 1400, candidateLines: 1400 })
+      .violates,
+    false,
+  );
+});
+
+test("rejects malformed file-size baseline manifests", () => {
+  assert.throws(
+    () =>
+      parseFileSizeBaselines(
+        JSON.stringify({
+          files: {
+            "src\\bad.ts": {
+              lines: 10,
+              reason: "test",
+              recordedAt: "2026-08-10",
+            },
+          },
+        }),
+      ),
+    /not a project-relative POSIX path/,
+  );
+  assert.throws(
+    () =>
+      parseFileSizeBaselines(
+        JSON.stringify({
+          files: {
+            "src/good.ts": { lines: 10, reason: "test" },
+          },
+        }),
+      ),
+    /must have a non-negative integer lines/,
+  );
+});
+
+test("a non-listed file keeps the ordinary file-size semantics", () => {
+  assert.equal(
+    evaluateFileSize({ baseLines: 1001, candidateLines: 1001, maxLines: 1000 })
+      .violates,
+    false,
+  );
+  assert.equal(
+    evaluateFileSize({ baseLines: 1001, candidateLines: 1002, maxLines: 1000 })
+      .violates,
+    true,
+  );
+});
+
+test("runFileSizeCheck loads a project baseline and reports its exact candidate count", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "file-size-manifest-"));
+  const projectRoot = path.join(repo, "desktop");
+  mkdirSync(path.join(projectRoot, "scripts"), { recursive: true });
+  mkdirSync(path.join(projectRoot, "src"), { recursive: true });
+  writeFileSync(
+    path.join(projectRoot, "src", "upstream.ts"),
+    "one\ntwo\nthree\n",
+  );
+  writeFileSync(
+    path.join(projectRoot, "src", "ordinary.ts"),
+    Array.from({ length: 1000 }, (_, index) => `line ${index}`).join("\n"),
+  );
+  writeFileSync(
+    path.join(projectRoot, "scripts", "file-size-baselines.json"),
+    JSON.stringify({
+      files: {
+        "src/upstream.ts": {
+          lines: 3,
+          reason: "upstream-owned fixture",
+          recordedAt: "2026-08-10",
+        },
+      },
+    }),
+  );
+  git(repo, "init", "-b", "main");
+  git(repo, "config", "user.name", "Test");
+  git(repo, "config", "user.email", "test@example.com");
+  git(repo, "add", "desktop");
+  git(repo, "commit", "-m", "base");
+  git(repo, "remote", "add", "origin", repo);
+  git(repo, "fetch", "origin", "main:refs/remotes/origin/main");
+  git(repo, "switch", "-c", "feature");
+  const fixtureBase = git(repo, "rev-parse", "HEAD");
+  const runFixtureCheck = async (options) => {
+    const originalBase = process.env.CHECK_FILE_SIZES_BASE;
+    process.env.CHECK_FILE_SIZES_BASE = fixtureBase;
+    try {
+      return await runFileSizeCheck(options);
+    } finally {
+      if (originalBase === undefined) {
+        delete process.env.CHECK_FILE_SIZES_BASE;
+      } else {
+        process.env.CHECK_FILE_SIZES_BASE = originalBase;
+      }
+    }
+  };
+  writeFileSync(
+    path.join(projectRoot, "src", "upstream.ts"),
+    readFileSync(path.join(projectRoot, "src", "upstream.ts"), "utf8") +
+      "four\n",
+  );
+  writeFileSync(
+    path.join(projectRoot, "src", "ordinary.ts"),
+    `${readFileSync(path.join(projectRoot, "src", "ordinary.ts"), "utf8")}\nextra`,
+  );
+
+  const errors = [];
+  const originalError = console.error;
+  const originalExitCode = process.exitCode;
+  console.error = (...args) => errors.push(args.join(" "));
+  process.exitCode = undefined;
+  try {
+    await runFixtureCheck({
+      projectRoot,
+      rules: [
+        {
+          root: "src",
+          extensions: new Set([".ts"]),
+          maxLines: 1000,
+        },
+      ],
+      label: "Fixture",
+    });
+  } finally {
+    console.error = originalError;
+    process.exitCode = originalExitCode;
+  }
+  assert.match(errors.join("\n"), /recorded baseline 3 -> 4 lines \(grew\)/);
+  assert.match(errors.join("\n"), /update the one lines value/);
+  assert.match(
+    errors.join("\n"),
+    /Keep new files at or below the limit; files already over it may not grow\./,
+  );
+
+  writeFileSync(path.join(projectRoot, "src", "upstream.ts"), "one\ntwo\n");
+  const shrinkErrors = [];
+  const shrinkOriginalError = console.error;
+  const shrinkOriginalExitCode = process.exitCode;
+  console.error = (...args) => shrinkErrors.push(args.join(" "));
+  process.exitCode = undefined;
+  try {
+    await runFixtureCheck({
+      projectRoot,
+      rules: [
+        {
+          root: "src",
+          extensions: new Set([".ts"]),
+          maxLines: 1000,
+        },
+      ],
+      label: "Fixture",
+    });
+  } finally {
+    console.error = shrinkOriginalError;
+    process.exitCode = shrinkOriginalExitCode;
+  }
+  assert.match(
+    shrinkErrors.join("\n"),
+    /recorded baseline 3 -> 2 lines \(shrank — tighten the recorded baseline to 2\)/,
+  );
+
+  rmSync(path.join(projectRoot, "src", "upstream.ts"));
+  await assert.rejects(
+    () =>
+      runFixtureCheck({
+        projectRoot,
+        rules: [
+          {
+            root: "src",
+            extensions: new Set([".ts"]),
+            maxLines: 1000,
+          },
+        ],
+        label: "Fixture",
+      }),
+    /Stale file-size baseline entry src\/upstream\.ts: remove it or repoint it at the new path/,
   );
 });
