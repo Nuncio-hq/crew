@@ -775,3 +775,32 @@ A mock that is selectively faithful produces failures that are indistinguishable
 from product bugs, which is the expensive failure mode. When a spec fails on
 missing mock-derived state, check the mock against the relay handler before
 concluding the product is broken.
+
+## D-045 — Unread accounting reads the reply graph, not the visible row list
+
+- **Status:** Accepted
+- **Date:** 2026-08-11
+
+Upstream's channel read-model overhaul made the timeline a projection of the
+window store, and a non-broadcast thread reply is deliberately not a row in it:
+replies live in the per-root `["thread-replies", channelId, rootId]` cache and
+render inside the thread panel. Per-thread unread counts, however, were still
+derived from the row list alone, so `(N new)` never appeared for a thread that
+was not open — the replies the badge counts were, by design, not in the list it
+counted (#152).
+
+The rule: unread accounting consumes the reply **graph** — the timeline unioned
+with the per-root reply caches, deduplicated by event id — while rendering keeps
+consuming the row list. Restoring a count must never be done by widening the
+visible timeline: that would undo the overhaul and put replies back in the
+channel. Nor may a kind:39005 `descendant_count` stand in for it; the relay
+recount is authoritative structural metadata and carries no per-reply identity,
+so it cannot answer "which replies has this user not read".
+
+A corollary on delivery: a live channel subscription bounded at `since = now`
+drops any event whose `created_at` precedes it — a peer with a lagging clock, or
+an event created between the window fetch and the subscription opening. The
+client never learns such an event exists, so a reply can arrive for a root that
+never renders. Channel live subscriptions therefore start a bounded grace window
+before now (`CHANNEL_LIVE_BACKLOG_GRACE_SECONDS`), matching the existing huddle
+TTS startup replay; the window store dedups by event id, so the overlap is free.

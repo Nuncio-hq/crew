@@ -1,8 +1,17 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { channelMessagesKey } from "@/features/messages/lib/messageQueryKeys";
+import {
+  channelMessagesKey,
+  channelWindowKey,
+} from "@/features/messages/lib/messageQueryKeys";
 import { mergeMessages } from "@/features/messages/hooks";
+import {
+  emptyChannelWindowStore,
+  mergeLiveChannelWindowEvent,
+  type ChannelWindowStore,
+} from "@/features/messages/lib/channelWindowStore";
+import { projectChannelWindowMessages } from "@/features/messages/lib/projectChannelWindow";
 import {
   getChannelIdFromTags,
   getThreadReference,
@@ -10,6 +19,20 @@ import {
 import { getEventById } from "@/shared/api/tauri";
 import type { Channel, RelayEvent } from "@/shared/api/types";
 
+/**
+ * Fetch thread ancestors the loaded window does not contain.
+ *
+ * A live subscription is bounded near the present, so an event older than that
+ * bound is never delivered even when its replies are. Without a backfill the
+ * client holds replies whose root it has never seen: the root has
+ * no timeline row, its thread summary has nothing to attach to, and the reply
+ * graph the unread counts walk is missing its top.
+ *
+ * A top-level ancestor is merged through the authoritative window store (the
+ * timeline cache is a projection of it, so a direct write there is reverted by
+ * the next projection); a reply ancestor goes to the timeline cache, which the
+ * projection retains for exactly this reason.
+ */
 export function useLoadMissingAncestors(
   activeChannel: Channel | null,
   resolvedMessages: RelayEvent[],
@@ -86,6 +109,19 @@ export function useLoadMissingAncestors(
             isCancelled ||
             getChannelIdFromTags(event.tags) !== activeChannel.id
           ) {
+            return;
+          }
+
+          if (getThreadReference(event.tags).parentId === null) {
+            const windowKey = channelWindowKey(activeChannel.id);
+            const current =
+              queryClient.getQueryData<ChannelWindowStore>(windowKey) ??
+              emptyChannelWindowStore();
+            const next = mergeLiveChannelWindowEvent(current, event);
+            if (next !== current) {
+              queryClient.setQueryData(windowKey, next);
+              projectChannelWindowMessages(queryClient, activeChannel.id);
+            }
             return;
           }
 
