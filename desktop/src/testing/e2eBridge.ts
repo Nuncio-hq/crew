@@ -59,6 +59,7 @@ import {
   KIND_STREAM_MESSAGE_EDIT,
   KIND_SYSTEM_MESSAGE,
   KIND_TEXT_NOTE,
+  KIND_TYPING_INDICATOR,
   KIND_USER_STATUS,
 } from "@/shared/constants/kinds";
 import type {
@@ -10338,7 +10339,9 @@ function sendToMockSocket(args: {
       return;
     }
 
-    recordMockMessage(channelId, event);
+    if (event.kind !== KIND_TYPING_INDICATOR) {
+      recordMockMessage(channelId, event);
+    }
     emitMockLiveEvent(channelId, event);
     sendWsText(socket.handler, ["OK", event.id, true, ""]);
   }
