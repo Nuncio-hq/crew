@@ -176,14 +176,11 @@ After capture`.
 ## Limits
 
 - One machine, Linux x86_64, single relay, single-worker Playwright.
-- Probe 1 was executed as two halves because the headless harness cannot make a
-  desktop click publish to the relay (mock `add_reaction`). The desktop half
-  proves the kind-7 emission target and the card's accepted/rejected states; the
-  relay half proves the kind-7 actually lands and is agent-readable. A
-  single-process "click in the app → event on the relay" chain remains
-  unverified and would need either a relay-backed `add_reaction` in the bridge
-  or a real Tauri run (which needs computer-use); issue #133 tracks adding the
-  relay-backed bridge path to close this gap.
+- The split-probe limitation is now closed for the reaction path. The relay-
+  backed `add_reaction` bridge and
+  `desktop/tests/e2e/evidence-reactions-relay.spec.ts` exercise the single
+  headless click → real relay kind-7 chain. See Verification 0011 for the
+  commands and remaining agent-profile limitation.
 - `just ci` was not run in this session; only the evidence specs and the CLI
   probes above were executed.
 - The relay used is the shared local dev relay on `:3000`, isolated per probe by

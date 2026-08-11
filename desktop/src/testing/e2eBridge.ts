@@ -13429,10 +13429,11 @@ export function maybeInstallE2eTauriMocks() {
           activeConfig,
         );
       case "delete_message":
-        return handleDeleteMessage(
+        await handleDeleteMessage(
           payload as Parameters<typeof handleDeleteMessage>[0],
           activeConfig,
         );
+        return null;
       case "edit_message":
         return handleEditMessage(
           (payload as { input: Parameters<typeof handleEditMessage>[0] }).input,
@@ -13743,14 +13744,12 @@ export function maybeInstallE2eTauriMocks() {
       case "set_canvas": {
         const canvasArgs = payload as { channelId: string; content: string };
         if (getIdentity(activeConfig)) {
-          return submitSignedEvent(activeConfig, {
+          const result = await submitSignedEvent(activeConfig, {
             kind: 40100,
             content: canvasArgs.content,
             tags: [["h", canvasArgs.channelId]],
-          }).then((result) => ({
-            ok: result.accepted,
-            event_id: result.event_id,
-          }));
+          });
+          return { ok: result.accepted, event_id: result.event_id };
         }
         return { ok: true, event_id: mockEventId() };
       }

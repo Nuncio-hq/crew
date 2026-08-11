@@ -109,7 +109,9 @@ test("owner Accept and Reject publish real relay reactions", async ({
   await page.goto("/");
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
-  const card = page.getByTestId("evidence-card-test-run");
+  const card = page
+    .getByTestId("evidence-card-test-run")
+    .filter({ hasText: evidence.content });
   await expect(card).toBeVisible();
 
   await card.getByTestId("evidence-accept").click();
