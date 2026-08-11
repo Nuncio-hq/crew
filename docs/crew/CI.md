@@ -12,6 +12,12 @@ The gate always appears. It requires `CI Policy` and accepts a deliberately
 skipped conditional job only when the path classifier says that surface is
 unchanged.
 
+A green `NuncioCrew Gate` is not evidence that the Desktop Smoke E2E suite
+passed.
+
+This advisory posture is recorded in [`verification/0007`](verification/0007-gate-e2e-shard-relationship.md)
+and D-032; revisit making the shards required once #109 and #110 are closed.
+
 | Job | Runs when | Proves |
 | --- | --- | --- |
 | `CI Policy` | Always | Workflow contract and relevant-path classification |
@@ -20,6 +26,7 @@ unchanged.
 | `buzz-acp` | `crates/buzz-acp/**`, path-dep `crates/buzz-persona/**`, root `Cargo.toml`/`Cargo.lock`, `rust-toolchain.toml`, `Justfile`, or this workflow change | ACP harness lib tests (`cargo test -p buzz-acp --lib`). Not covered by Desktop Rust — `desktop/src-tauri` does not depend on this crate |
 | `macOS ARM Package` | Same desktop boundary as Desktop Fast | Unsigned `aarch64-apple-darwin` Tauri package with Nuncio identity |
 | `Project Relay` | Project, relay, schema, or Nostr paths change | Kind `30617` local-path lifecycle against an isolated real relay |
+| `Desktop Smoke E2E` | Desktop paths change | **nothing that blocks merge** — advisory (`continue-on-error`), excluded from the gate by design (#36/#37) |
 
 The PR package uses placeholder sidecars only to satisfy Tauri's packaging
 shape. The manual release workflow builds real sidecars, signs the app,
