@@ -1,6 +1,6 @@
 # Hermes first-class operations — completion scope audit (issue #104)
 
-- **Status:** Scope verdict — awaiting founder decisions (no implementation)
+- **Status:** Scope verdict — Q1/Q6 decided; Q2–Q5 remain open (no implementation)
 - **Date:** 2026-08-11
 - **Issue:** [#104](https://github.com/Nuncio-hq/crew/issues/104)
   (tracking epic, Phases 01–06)
@@ -8,8 +8,8 @@
   (contracts C-01…C-17)
 - **Parent plan:** [`../20260805-1330-hermes-first-class-runtime/plan.md`](../20260805-1330-hermes-first-class-runtime/plan.md)
 - **Decisions:** D-019, D-020, D-023, D-024, D-025 apply. **This plan takes no
-  D-number** — a plan does not record decisions, and the remainder's decisions
-  belong to the founder (§6).
+  D-number** — a plan does not record decisions; the D-019 amendment belongs
+  in #118's decision record.
 - **Baseline read:** `origin/main` `35af74019`, plus the open branches for
   #134 (`agents/profile-lifecycle-hardening`), #120
   (`feat/issue-116-agent-roles`), #123 (`docs/plans-issues-117-121`), #124
@@ -35,7 +35,7 @@ planned capability descriptor.
 
 The honest remainder is roughly **one small implementation slice, two
 verification records, and one blocked-on-upstream item** — not six phases.
-Recommendation in §7: close #104 and replace it with three narrow issues.
+Agreed disposition in §7: close #104 and replace it with three narrow issues.
 
 ---
 
@@ -51,7 +51,7 @@ lands.
 | C-01 | Catalog truth | shipped | `desktop/src-tauri/src/managed_agents/discovery.rs:310-311`; normalization tests `crates/buzz-acp/src/config.rs:1586-1606` |
 | C-02 | Profile-bound spawn | shipped | `desktop/src-tauri/src/managed_agents/hermes_profile.rs:94-119`; live evidence [`verification/0006`](../../docs/crew/verification/0006-hermes-slice1-live-roundtrip.md) |
 | C-03 | Missing profile | shipped | `desktop/src-tauri/src/managed_agents/readiness/hermes.rs:30-32`, test `:137-172` |
-| C-04 | No model field | shipped (untested) | runtime metadata `desktop/src-tauri/src/managed_agents/discovery.rs:1256-1275`; **superseded in spirit by #118** (§5) |
+| C-04 | No model field | **obsolete (superseded by #118)** | runtime metadata `desktop/src-tauri/src/managed_agents/discovery.rs:1256-1275`; founder decided that #118's approved model write-through supersedes the original no-model-field intent, so C-04 as written is obsolete |
 | C-05 | No model injection (fields) | shipped (untested) | `desktop/src-tauri/src/managed_agents/runtime.rs:781`, helper `hermes_profile.rs:82-90` |
 | C-06 | No model injection (env maps) | shipped (untested) | same last-write guard `runtime.rs:781`; no per-layer assertion found |
 | C-07 | Profile-side model change | shipped | `crates/buzz-acp/src/pool.rs:948-1051`; live `!rotate` evidence in verification 0006 |
@@ -198,7 +198,7 @@ Per D-008 no production code starts before these are conclusive.
   profile-bound agents (D-024).
 - No new Nostr kind, no Hermes-only protocol (D-025); R2 produces documents,
   not surfaces.
-- No re-litigation of the model-presentation rule — that belongs to #118.
+- No re-litigation of the model-presentation rule — settled in favour of #118; implementation and the D-019 amendment belong to #118.
 - No global lock on cross-community profile reuse.
 
 ---
@@ -208,7 +208,9 @@ Per D-008 no production code starts before these are conclusive.
 1. **#104 vs #118 — model configuration.** #104's non-goals forbid "model /
    provider configuration in Crew"; #118 is founder-locked to *model
    write-through from Crew* and explicitly supersedes the presentation half of
-   D-019. Both cannot stand as written. Founder decision **Q1**.
+   D-019. **Resolved in favour of #118.** The profile remains the source of
+   truth and Crew stores no competing model copy; #118 owns the implementation,
+   and its PR must record the D-019 amendment in `DECISIONS.md`.
 2. **Phase 06 vs #118's capability descriptor.** #118 plans
    `{ modelSource, personaDoc, layer3 }`; Phase 06 wants a tools/skills/MCP
    summary on the same card. Two owners, one surface. Founder decision **Q2**.
@@ -228,23 +230,27 @@ Per D-008 no production code starts before these are conclusive.
 
 ---
 
-## 6. Open product decisions (founder only — not decided here)
+## 6. Open product decisions (founder only — Q2–Q5 remain undecided)
 
 | # | Question | Options | Trade-off |
 | - | -------- | ------- | --------- |
-| **Q1** | #104 forbids model config in Crew; #118 ships it. Which rule survives? | (a) #118 wins, amend #104's non-goal and D-019's presentation clause; (b) #104 wins, cut #118's write-through; (c) write-through allowed but read-only display stays default | (a) matches the 2026-08-10 founder lock but weakens "profile is the only source of truth"; (b) preserves the original model at the cost of a CLI round-trip for every model change |
 | **Q2** | Who owns the profile card's capability summary? | (a) fold Phase 06 into #118 as one card; (b) keep R3 as its own slice after #118 lands; (c) drop Phase 06 | (a) one coherent surface, but grows an unmerged plan; (b) clean ownership, two passes over one component; (c) cheapest — the manager keeps using `hermes -p X` to see skills |
 | **Q3** | Is a live-Hermes certification record (R2) required before #104 can close, or is the existing harness/mock coverage enough? | (a) require both records; (b) require only the Phase 03 elicitation record; (c) close on existing coverage | The repo's own workflow prizes real-boundary evidence; (c) is faster but leaves "works with a real Hermes" as an assumption |
 | **Q4** | Phase 05 tail: import of an externally supplied archive, and readiness-check-before-bind? | (a) both; (b) readiness gate only; (c) neither — #134's restore is enough | External import is the "moved machines" story; nobody has asked for it yet, and it is a second archive format to own |
 | **Q5** | If spike S-B finds no stable Hermes JSON contract for skills/tools/MCP, what happens to Phase 06? | (a) drop it; (b) ship a degraded card showing only what Crew already knows (MCP guard, bound profile, role); (c) file a Hermes-side ask and wait | (b) risks the "Crew invents parity" failure #104 explicitly forbids |
-| **Q6** | Disposition of #104 itself | (a) close it and open the three narrow issues in §7; (b) keep it open, edit the body down to the remainder; (c) keep as-is | (a)/(b) both remove the stale scope; (c) keeps a misleading epic that duplicates #119 and #118 |
-
 ---
 
-## 7. Recommendation
+## 6a. Decided (founder, 2026-08-11)
 
-**#104 is now mostly covered and should be closed or reduced to a short
-remainder.** Concretely:
+| Question | Decision | Consequence |
+| --- | --- | --- |
+| **Q1 — model configuration** | **#118 wins.** Crew-side model write-through is approved; #104's no-model/provider-configuration non-goal and D-019's presentation clause are superseded. | D-019's substance remains: the Hermes profile owns the model and Crew stores no competing copy. #118 owns the implementation. Its PR must record the D-019 amendment in `DECISIONS.md`; this plan takes no D-number. |
+| **Q6 — disposition** | **Close #104 once #134 merges, then replace it with three narrow issues.** | The three issues are R1 Doctor completion, R2 live-Hermes certification, and R3 capability view. |
+
+## 7. Agreed disposition (founder-decided)
+
+**#104 is mostly covered and will close once #134 merges, with the remainder
+tracked as three narrow issues.** Concretely:
 
 1. **Close #104** once #134 merges, with a comment mapping each phase to what
    covered it (Phase 01 → #106/#107; Phase 02/05 → #119/#134; Phase 03/04 →
@@ -257,10 +263,8 @@ remainder.** Concretely:
    (feature §7.3); it is not Crew work.
 4. Fix the STATE.md Hermes drift on **#124**, not here.
 
-If the founder prefers a single tracker, option Q6(b) — editing #104's body
-down to R1/R2/R3 — is equally acceptable; what must not survive is the
-six-phase body, which would send the next agent to rebuild #106, #134, and
-`main`.
+What must not survive is the six-phase body, which would send the next agent to
+rebuild #106, #134, and `main`.
 
 ---
 
