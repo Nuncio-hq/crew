@@ -1,0 +1,32 @@
+Real Codex CLI authentication attempt
+
+Engine: codex-cli 0.147.0
+ACP adapter: @agentclientprotocol/codex-acp 1.1.14
+Provider/auth path: openai-codex via ~/.codex/auth.json
+
+Commands:
+
+  npm install -g @openai/codex@0.147.0
+  npm install -g @agentclientprotocol/codex-acp@1.1.14
+  codex login status
+  codex exec --json --sandbox read-only --skip-git-repo-check \
+    'Reply with exactly CODEX_AUTH_OK and nothing else.'
+
+Observed:
+
+  codex login status
+  Logged in using ChatGPT
+
+  The real Codex app-server initialized and reached the ChatGPT backend, but
+  the model request failed with HTTP 401 Unauthorized. The Codex log reported:
+
+  auth_recovery_outcome="recovery_failed_permanent"
+  auth.mode="Chatgpt"
+  Turn error: Your access token could not be refreshed because you have since
+  logged out or signed in to another account. Please sign in again.
+
+  The request did not produce a model response, so no ACP two-session
+  transcript could be collected.
+
+Credential material, tokens, account identifiers, and request identifiers are
+intentionally omitted.

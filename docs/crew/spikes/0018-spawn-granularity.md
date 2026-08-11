@@ -93,6 +93,74 @@ Raw code excerpts are retained in `docs/crew/spikes/assets/0018-spawn-granularit
 
 Slice 3 can make the dev-mcp hard floor channel-session scoped through per-session `mcpServers`, but native Codex/Claude permission flags cannot be independently hard-floored per channel in the current process-spawn model; they require a separately verified session-config path or an honest process-level union limitation.
 
+## Corrected real-engine rerun
+
+The earlier Pi and Hermes attempts used the wrong authentication paths for this
+credential. This retry used the provider/runtime path identified by the shipped
+catalog:
+
+- runtime: `codex`, launched through `codex-acp`;
+- CLI: `codex-cli 0.147.0`;
+- ACP adapter: `@agentclientprotocol/codex-acp 1.1.14`;
+- provider/auth key: `openai-codex`;
+- decoded auth file: `~/.codex/auth.json`, mode `0600`.
+
+The catalog identifies Codex's config path as `~/.codex/config.toml`, its
+runtime command as `codex-acp`, and its login path as `codex login`. It does
+not expose a provider environment variable for Codex because the Codex CLI
+owns provider authentication. The credential blob was decoded only to the
+Codex auth path; no credential material was copied into this repository or
+the spike assets.
+
+`codex-acp` initialized successfully and advertised the real Codex adapter:
+
+```text
+agentInfo.name = @agentclientprotocol/codex-acp
+agentInfo.version = 1.1.14
+protocolVersion = 1
+authMethods = api-key, chat-gpt
+```
+
+However, both `session/new` attempts were rejected before a session was
+created:
+
+```text
+Internal error: plan type is required for chatgpt authentication
+```
+
+The standalone Codex CLI independently reached the real ChatGPT backend, but
+the model request returned HTTP 401. Its credential recovery log reported:
+
+```text
+auth_recovery_outcome="recovery_failed_permanent"
+Turn error: Your access token could not be refreshed because you have since
+logged out or signed in to another account. Please sign in again.
+```
+
+Evidence assets:
+
+- `assets/0018-spawn-granularity/codex-acp-auth-attempt.json`
+- `assets/0018-spawn-granularity/codex-cli-auth-attempt.txt`
+- `assets/0018-spawn-granularity/hermes-acp-auth-attempt.txt`
+
+Hermes was also obtainable as `Hermes Agent v0.19.0 (2026.7.20)`, but its
+ACP entry point failed before initialization with:
+
+```text
+ModuleNotFoundError: No module named 'acp'
+```
+
+The Hermes failure is an adapter installation/runtime blocker, not evidence
+about Codex authentication or either engine's session semantics.
+
+No ACP session was created, so there is no honest real-engine transcript for
+either context isolation or session-addressed `set_config_option`. The verdict
+therefore remains **INCONCLUSIVE**. In particular, this run neither confirms
+nor reverses the negative native-tool finding. A fresh, valid ChatGPT OAuth
+credential (and, if required by the adapter, account plan metadata accepted by
+the Codex ACP path) is required before the two-session experiment can answer
+those questions.
+
 ## Limitations
 
 - No product code or existing source file was changed.

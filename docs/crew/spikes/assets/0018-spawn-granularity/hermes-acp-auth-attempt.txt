@@ -1,0 +1,15 @@
+Hermes ACP attempt
+
+Engine: Hermes Agent v0.19.0 (2026.7.20)
+Command: hermes-acp
+Provider intent: openai-codex (profile-owned configuration; no provider
+environment variable is injected by the Crew runtime catalog)
+
+The binary was present and was invoked over stdin with a real ACP
+initialize request. It failed before ACP initialization:
+
+  ModuleNotFoundError: No module named 'acp'
+
+No Hermes ACP session was created, so no context-isolation or
+session-addressed set_config_option result is claimed. This is an adapter
+installation/runtime blocker, separate from the Codex OAuth result.
