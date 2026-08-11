@@ -11,7 +11,6 @@ Crew remains a GitHub fork of `block/buzz`. Prefer new Crew-owned files and
 keep edits to upstream files exceptionally small. This preserves the ability
 to pull upstream changes and makes maintenance cost visible.
 
-
 ## D-002 — Keep the existing Buzz UI and desktop shell
 
 - **Status:** Accepted
@@ -19,7 +18,6 @@ to pull upstream changes and makes maintenance cost visible.
 
 Do not restyle the existing Buzz product. New manager-facing UI is
 TypeScript/React embedded in the existing Tauri desktop app.
-
 
 ## D-003 — Preserve NIP-34 Project identity
 
@@ -30,7 +28,6 @@ A repository is identified by `(pubkey, identifier)`. Clone URLs and local
 workspace paths are location metadata. Changing a path must not create or
 rename a Project.
 
-
 ## D-004 — Keep board state on the relay
 
 - **Status:** Accepted
@@ -39,7 +36,6 @@ rename a Project.
 Board cards, columns, assignments, and transitions are signed relay events.
 React may project and cache events but is not authoritative. Do not introduce a
 separate board database.
-
 
 ## D-005 — Treat the board as an orchestrator
 
@@ -50,7 +46,6 @@ The columns are `Issues`, `Planned`, `Working`, `Need Input`, and `Done`.
 `Working` has a hard cap of three. `Need Input` releases the working slot and
 has highest manager priority.
 
-
 ## D-006 — Keep data planes separate
 
 - **Status:** Accepted
@@ -59,7 +54,6 @@ has highest manager priority.
 Coordination events belong on the relay. Source code belongs on the local
 filesystem. Large artifacts belong in the media store and are referenced by
 URL.
-
 
 ## D-007 — Use subscription-backed agent execution
 
@@ -70,7 +64,6 @@ Crew uses the user's subscription-backed Codex, Claude Code, Cursor, and other
 eligible agent tools. Do not design the normal execution path around metered
 API keys.
 
-
 ## D-008 — Require Spike, TDD, then implementation
 
 - **Status:** Accepted
@@ -79,7 +72,6 @@ API keys.
 Every behavior change begins with a feasibility spike. After a passing spike,
 write failing contract tests and design-changing edge cases. Production
 implementation begins only after the manager approves the resulting plan.
-
 
 ## D-009 — Do not change ACP session cwd in the first Project slice
 
@@ -90,7 +82,6 @@ The first Project implementation stores and surfaces the local location but
 does not set `session/new.cwd` to it. The absolute path is delivered through
 Project-channel context. A Rust change requires a later spike showing that this
 boundary is insufficient and explicit approval.
-
 
 ## D-010 — Make local workspace location native to Buzz Project lifecycle
 
@@ -110,7 +101,6 @@ reload continue through Buzz's existing relay lifecycle. The canonical
 authoritative state, or separate Project database is not an acceptable
 fallback when the relay is unavailable.
 
-
 ## D-011 — Keep Git and worktree management out of the local-path slice
 
 - **Status:** Accepted for current slice
@@ -122,7 +112,6 @@ initialize, discover, validate, create, switch, or remove Git worktrees. An
 agent may use Git when the selected directory already supports it, but Crew
 does not yet manage or guarantee that behavior. Git integration requires a
 separate spike.
-
 
 ## D-012 — Accept the no-Rust picker and restart boundary
 
@@ -139,7 +128,6 @@ that the directory is locally available. Missing or denied paths are reported
 when an agent or tool uses them. Proactive restart-time filesystem probing
 requires a separate capability spike.
 
-
 ## D-013 — Reuse Buzz release identity for the local NuncioCrew flavor
 
 - **Status:** Accepted for local development
@@ -155,7 +143,6 @@ single-instance scope, app data, deep links, and recovery markers. This
 local flavor has only linker ad-hoc signing and is for local use; a separately
 identified distributable app requires a new identity-migration, distribution
 signing, and notarization decision.
-
 
 ## D-014 — Make Add Project folder-first and relay-authoritative
 
@@ -187,7 +174,6 @@ existing read-only snapshot command when TypeScript supplies the selected
 path's parent and basename. That read path is not part of D-014's implemented
 slice.
 
-
 ## D-015 — Reuse Buzz's reader with exact selected-path isolation
 
 - **Status:** Accepted for current slice
@@ -208,7 +194,6 @@ This reader exposes files, README, commits, contributors, and language data.
 It does not enable clone, fetch, pull, push, branch mutation, Terminal,
 commit-diff loading, pull-request merge, or agent session cwd for the linked
 workspace. Both UI visibility and mutation/query boundaries fail closed.
-
 
 ## D-016 — Separate local, dev, stable, and upstream version identities
 
@@ -244,7 +229,6 @@ signature key ID matches the public key embedded in the app.
 The first `v0.0.1-dev` installation is manual because the existing local build
 reports Buzz version `0.5.3` and an updater must never downgrade it.
 
-
 ## D-017 — Require one macOS-first Crew merge gate
 
 - **Status:** Accepted
@@ -265,7 +249,6 @@ workspaces.
 Buzz workflow source files remain unchanged for upstream synchronization.
 Inherited automatic workflows are disabled in GitHub repository state only
 after the additive Crew gate passes, and can be re-enabled as rollback.
-
 
 ## D-018 — Scope managed agent execution by Project thread
 
@@ -288,7 +271,6 @@ A new multi-agent Project task notifies only the first explicitly ordered
 agent. Later agents remain visible through non-notifying reference tags and
 are woken by explicit mentions in subsequent thread replies. Ordinary chat,
 single-agent prompts, DMs, and non-Project channels keep existing routing.
-
 
 ## D-019 — Hermes agents bind 1:1 to Hermes profiles; the profile owns the model
 
@@ -322,7 +304,6 @@ Adopted from
    showed fresh profiles read the manager's pooled credentials through a
    global-root fallback.
 
-
 ## D-020 — Hermes tier-1 promotion lands in Crew, not upstream
 
 - **Status:** Accepted; supersedes D-019 item 4
@@ -348,7 +329,6 @@ Consequences:
 - Feature 0001 documents (P-4, §7.2, Slice 3) are historical as written;
   this decision governs.
 
-
 ## D-021 — Keep Crew local workspace fields on upstream `Repository`
 
 - **Status:** Accepted
@@ -364,7 +344,6 @@ When a Project has several repositories, a Crew thread worktree binds to
 `primaryRepositoryAddress`, falling back to `repositories[0]` for
 `legacy: true` projects. Selection uses `selectProjectRepository()`.
 
-
 ## D-022 — Extract Crew deltas when sync trips the file-size ratchet
 
 - **Status:** Accepted
@@ -378,7 +357,6 @@ upstream's own code just to pass the guard.
 
 This shrinks future conflict surface instead of freezing oversized shared
 blobs. Record the extracted files in the sync PR body.
-
 
 ## D-023 — Crew-created Hermes profiles keep bundled skills
 
@@ -394,7 +372,6 @@ Rationale: agents benefit from the standard skill set on day one; an
 empty profile is a power-user CLI flow (`hermes profile create … --no-skills`)
 rather than the Crew hiring path. Revisit only if managers ask for a
 Crew toggle.
-
 
 ## D-024 — Keep profile-bound Hermes trusted, owner-only, and local
 
@@ -439,7 +416,6 @@ uniqueness, and supersedes D-019 item 7's possible future public path for a
 profile-bound agent. The profile still owns the model and credentials, and the
 named-profile requirement remains unchanged.
 
-
 ## D-025 — Build on Buzz contracts; Hermes-first without parallel protocol
 
 - **Status:** Accepted
@@ -463,7 +439,6 @@ Buzz/ACP room contracts. Implementers:
 Anti-lock-in (swap engines later) is enough; local-AI product investment is
 out of scope unless a later decision supersedes this.
 
-
 ## D-026 — Mobile continues the same company; not a second product myth
 
 - **Status:** Accepted
@@ -480,7 +455,6 @@ Do not rewrite Flutter → React Native solely for install/test ergonomics;
 fix distribution or implement features on the existing client unless a later
 decision supersedes this.
 
-
 ## D-027 — Plain-language agent collaboration with the founder
 
 - **Status:** Accepted
@@ -492,34 +466,6 @@ explain simply, label uncertainty about “real company” practice, refuse sile
 mis-assignment when roles exist, and treat shared thread reports as the human
 record. Spikes are not automatic law. Full text of MUST/MUST NOT lives in the
 working agreement doc.
-## D-034 — Adapt upstream Project E2E specs to the outcome-first UI
-
-- **Status:** Accepted
-- **Date:** 2026-08-10
-
-Crew adapts the upstream `project-*` Desktop Smoke E2E specs to the
-post-#95 outcome-first Projects UI instead of skipping them and replacing them
-with Crew-native tests under the #65 precedent. This is an accepted permanent
-fork delta. Future upstream syncs must keep the adaptations, including the
-Project Plumbing expansion helper and its call sites; resolve conflicts by
-re-adding the helper calls when upstream refreshes those specs.
-
-## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
-
-- **Status:** Accepted
-- **Date:** 2026-08-11
-- **Issue:** [#135](https://github.com/Nuncio-hq/crew/issues/135)
-
-`deriveMissionInboxSections` memoizes on a key built from its inputs. An
-explicitly supplied `now` is part of that key; the implicit `Date.now()`
-fallback is not. Identical inputs therefore always return the identical
-snapshot object, which is what a `getSnapshot`-shaped selector must do.
-
-The accepted consequence: without an explicit clock input, row `age` values
-stay fixed until another input changes. The desktop caller passes no clock and
-the home surface has no ticker, so ages already only refresh when a store
-changes. A caller that wants clock-driven recomputation passes `now`.
-
 
 ## D-028 — Roles are owner-assigned only ("email promote")
 
@@ -535,7 +481,6 @@ managed-agent-record storage and `30179`/`10100` projection described below
 were superseded by Slice 1R and are retained only as historical context:
 roles now live as owner-signed `(agent, channel)` assignments in the channel's
 Crew canvas block (D-043).
-
 
 ## D-029 — Capability is Crew-owned at spawn, keyed by role (not Hermes profile)
 
@@ -556,7 +501,6 @@ proposal to pair the MCP grant with per-engine permission flags (Codex `-s`,
 Claude permission mode) as a per-channel floor is superseded by Spike 0018,
 which found those flags to be process-level; see D-044.
 
-
 ## D-030 — Routing presets reference roles, not hard-coded agent names
 
 - **Status:** Accepted for future slice (Slice 2 implements)
@@ -568,7 +512,6 @@ agent names (names allowed only as an explicit per-channel override). Resolution
 role → current holder happens at read time. Non-founder preset edits are ignored
 when Slice 2 lands.
 
-
 ## D-031 — Keep shipped state in sync with STATE.md
 
 - **Status:** Accepted
@@ -578,7 +521,6 @@ when Slice 2 lands.
 When a release is published, a slice merges, or the gate changes, update
 `STATE.md` in the same PR. Repeated drift is costly because agents sequence
 work from that file. Enforcement is review-visible prose, not a CI guard.
-
 
 ## D-036 — Evidence stays on existing message events as a tolerant tag
 
@@ -612,7 +554,6 @@ keeps its receipt card.
 The ≤30-line evidence bound is a prompt rule and a probe check, never a runtime
 guard.
 
-
 ## D-032 — Keep Desktop Smoke E2E advisory until known failures close
 
 - **Status:** Accepted
@@ -626,7 +567,6 @@ fixing a test. Over the last 10 `main` runs, shard 1 failed `8/8`, shard 4
 cancelled at the 30-minute timeout `8/8`, shard 3 failed `2/8`, shard 2 passed
 `8/8`, and the Gate was green `10/10`. Revisit making the shards required once
 #109 and #110 are closed.
-
 
 ## D-033 — Record exact baselines for upstream-heavy files
 
@@ -649,7 +589,6 @@ auto-detection machinery. Files already above `MAX_LINES` (for example
 implicit base-ref grandfathering and are not being migrated into the manifest
 in this change; both mechanisms deliberately coexist.
 
-
 ## D-034 — Adapt upstream Project E2E specs to the outcome-first UI
 
 - **Status:** Accepted
@@ -661,7 +600,6 @@ with Crew-native tests under the #65 precedent. This is an accepted permanent
 fork delta. Future upstream syncs must keep the adaptations, including the
 Project Plumbing expansion helper and its call sites; resolve conflicts by
 re-adding the helper calls when upstream refreshes those specs.
-
 
 ## D-035 — Offboarding archives a Hermes profile; deletion is archive-only
 
@@ -684,7 +622,6 @@ refuses while a runtime pair bound to that profile is alive — Crew does not
 stop a working agent on the owner's behalf to complete a destructive action.
 
 The reserved `default` profile and the `~/.hermes` root remain untouchable.
-
 
 ## D-037 — Channel-first stands; board deferred; work overview is future direction
 
@@ -709,7 +646,6 @@ The reserved `default` profile and the `~/.hermes` root remain untouchable.
    consistent with D-003, D-010, and VISION.md's "board state = signed relay
    events". It is recorded as a future candidate track and is not in scope of
    this change.
-
 
 ## D-038 — Crew edits the bound Hermes profile write-through
 
@@ -740,7 +676,6 @@ Two sub-decisions are settled:
    the second fails, the profile may be partially updated; Crew does not
    invent rollback without a verified Hermes unset operation.
 
-
 ## D-043 — Roles are channel-scoped owner-signed canvas assignments
 
 - **Status:** Accepted (Slice 1R)
@@ -752,7 +687,6 @@ canvas. This supersedes D-028's storage clause while retaining its authority
 clause. Labels are free-form; the founder-authored definition travels with the
 assignment and is the meaning used at read time. The former global managed-agent
 role, 30179 extension, and 10100 projection are not enforcement sources.
-
 
 ## D-044 — Capability is founder-authored and channel-session scoped
 
@@ -804,7 +738,6 @@ with dev-mcp withheld and the harness emits a `session_capability_floor` frame
 with `enforcement: "advisory"` (vs `"engine"` when the engine accepted). That
 frame, not prose, is what any surface may claim. "Denial is a Crew rule, not a
 wall" is therefore accurate exactly when `enforcement` is `advisory`.
-
 
 ## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
 
