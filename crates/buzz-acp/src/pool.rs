@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use buzz_core::crew_role::{
     compose_role_section, compose_routing_section, count_crew_blocks, resolve_assignment,
-    resolve_routing, RoleAssignment, RoutingAssignment,
+    resolve_capabilities, resolve_routing, RoleAssignment, RoutingAssignment, CAPABILITY_DEV_MCP,
 };
 use buzz_worktree::SharedLease;
 use tokio::sync::mpsc;
@@ -155,6 +155,7 @@ pub struct CanvasSessionContext {
     pub rendered: String,
     pub role: Option<RoleAssignment>,
     pub routing: Vec<RoutingAssignment>,
+    pub capabilities: Option<Vec<String>>,
 }
 
 impl SessionState {
@@ -971,6 +972,7 @@ async fn create_session_and_apply_model(
     agent_canvas: Option<&str>,
     role_assignment: Option<&RoleAssignment>,
     routing: &[RoutingAssignment],
+    capabilities: Option<&[String]>,
     channel_name: Option<&str>,
     channel_id: Option<Uuid>,
     channel_type: Option<&str>,
@@ -1007,8 +1009,15 @@ async fn create_session_and_apply_model(
         .session_title
         .as_deref()
         .map(|agent_name| compose_session_title(agent_name, channel_name));
+    let capability_servers = capabilities.map(|keys| {
+        if keys.iter().any(|key| key == CAPABILITY_DEV_MCP) {
+            ctx.mcp_servers.clone()
+        } else {
+            Vec::new()
+        }
+    });
     let mcp_servers = mcp_servers_with_git_origin(
-        &ctx.mcp_servers,
+        capability_servers.as_deref().unwrap_or(&ctx.mcp_servers),
         channel_id,
         channel_type,
         ctx.session_title.as_deref(),
@@ -1815,6 +1824,19 @@ pub async fn run_prompt_task(
             .unwrap_or_default(),
         PromptSource::Heartbeat => Vec::new(),
     };
+    let capabilities = match &source {
+        PromptSource::Channel(cid) => agent
+            .state
+            .canvas_sections
+            .get(cid)
+            .and_then(|section| section.capabilities.clone())
+            .or_else(|| {
+                pending_canvas
+                    .as_ref()
+                    .and_then(|(_, s)| s.capabilities.clone())
+            }),
+        PromptSource::Heartbeat => None,
+    };
 
     let (session_id, is_new_session) = match &source {
         PromptSource::Channel(cid) => {
@@ -1833,6 +1855,7 @@ pub async fn run_prompt_task(
                     agent_canvas.as_deref(),
                     role_assignment.as_ref(),
                     &routing,
+                    capabilities.as_deref(),
                     title_channel.as_deref(),
                     Some(*cid),
                     origin_channel_type.as_deref(),
@@ -1895,6 +1918,7 @@ pub async fn run_prompt_task(
                     None,
                     None,
                     &[],
+                    None,
                     None,
                     None,
                     None,
@@ -2846,10 +2870,30 @@ async fn fetch_canvas_section(
             }
         })
         .unwrap_or_default();
+    let capabilities = owner_pubkey.and_then(|owner| {
+        match resolve_capabilities(
+            &event.content,
+            &event.pubkey.to_hex(),
+            &owner.to_hex(),
+            &agent_pubkey.to_hex(),
+        ) {
+            Ok(capabilities) => capabilities,
+            Err(error) => {
+                tracing::warn!(
+                    target: "canvas::crew",
+                    channel = %channel_id,
+                    %error,
+                    "malformed crew capabilities — denying dev-mcp"
+                );
+                Some(Vec::new())
+            }
+        }
+    });
     Some(CanvasSessionContext {
         rendered,
         role,
         routing,
+        capabilities,
     })
 }
 
@@ -9957,6 +10001,7 @@ mod tests {
                 rendered: "[Channel Canvas]\nrev abc".into(),
                 role: None,
                 routing: Vec::new(),
+                capabilities: None,
             },
         );
 
@@ -9977,6 +10022,7 @@ mod tests {
                 rendered: "canvas-a".into(),
                 role: None,
                 routing: Vec::new(),
+                capabilities: None,
             },
         );
         s.canvas_sections.insert(
@@ -9985,6 +10031,7 @@ mod tests {
                 rendered: "canvas-b".into(),
                 role: None,
                 routing: Vec::new(),
+                capabilities: None,
             },
         );
         s.sessions.insert(ch_a, "sess-a".into());
@@ -10008,6 +10055,7 @@ mod tests {
                 rendered: "canvas-a".into(),
                 role: None,
                 routing: Vec::new(),
+                capabilities: None,
             },
         );
         s.canvas_sections.insert(
@@ -10016,6 +10064,7 @@ mod tests {
                 rendered: "canvas-b".into(),
                 role: None,
                 routing: Vec::new(),
+                capabilities: None,
             },
         );
 
@@ -10035,6 +10084,7 @@ mod tests {
                 rendered: "canvas".into(),
                 role: None,
                 routing: Vec::new(),
+                capabilities: None,
             },
         );
         assert!(s.has_channel_state(&ch));

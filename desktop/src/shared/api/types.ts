@@ -85,6 +85,7 @@ export type CanvasResponse = {
   updatedAt: number | null;
   author: string | null;
   routing: CanvasRoutingPreset[];
+  devMcpGranted: boolean | null;
 };
 
 export type CanvasRoutingPreset = {

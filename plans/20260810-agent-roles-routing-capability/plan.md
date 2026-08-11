@@ -172,24 +172,18 @@ without presets behave exactly as today.
 
 Non-goals: auto-routing unmentioned messages; preset UI beyond canvas day one.
 
-## Slice 3 — Role-scoped capability (hard floor, honestly scoped per engine)
+## Slice 3 — Role-scoped capability (implemented; honestly scoped per engine)
 
-Scope (detailed tasks after Spike C): map role → dev-mcp grant in the spawn
-path (deny = no `BUZZ_ACP_MCP_COMMAND` for that agent); role section text tells
-denied agents they genuinely lack repo/shell tools (honest, not theatrical);
-contracts assert the env is absent/present per role and that a role change flips
-the grant on next spawn.
+Scope: map founder-authored role capabilities to the per-session `mcpServers`
+list (deny = no dev-mcp server for that channel session); role section text
+states the native-tool limitation honestly. Contracts assert that two channels
+of one process can receive different MCP lists without respawn.
 
-**Engine honesty rule (D-025 rule 4 applied to capability), updated per Spike C
-(0017) evidence:** dev-mcp deny alone is NOT a filesystem floor for ANY engine —
-Hermes itself retains native terminal/write_file when MCP is withheld. The real
-floor is the **combination proven spawn-settable in 0017**: deny dev-mcp (removes
-Buzz-credentialed reply/write path) **plus** the engine-side permission flag at
-spawn (Codex `-s read-only`, Claude `--permission-mode plan`; Hermes profile
-tool config for the Hermes case). Slice 3 implements role → {mcp grant, engine
-permission flag} as one spawn-time capability decision per engine. UI and docs
-state the per-engine mechanism honestly — never present capability denial as a
-single uniform switch.
+**Engine honesty rule:** dev-mcp denial is a channel-session hard floor only
+for engines whose file/shell path is dev-mcp. Codex/Claude native permission
+flags remain process-level, so no per-channel native containment is claimed.
+The UI and docs state denial as a Crew rule rather than a wall on those
+engines.
 
 Deferred to its own decision + possible upstream tier-1 PR: tool allowlist flag
 in `buzz-dev-mcp` (static `tool_router` today, `crates/buzz-dev-mcp/src/lib.rs`)

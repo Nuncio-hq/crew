@@ -7,11 +7,13 @@
 
 use std::collections::BTreeMap;
 
-use nostr::{FromBech32, PublicKey};
+use nostr::{FromBech32, PublicKey, ToBech32};
 use serde::Deserialize;
 use thiserror::Error;
 
 const MAX_LABEL_LEN: usize = 128;
+/// Capability key that grants the Crew developer MCP server.
+pub const CAPABILITY_DEV_MCP: &str = "buzz-dev-mcp";
 
 /// A resolved role assignment for one agent in one channel canvas.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +33,8 @@ pub struct CanvasRoleBlock {
     pub definitions: BTreeMap<String, String>,
     /// Founder-authored work type to role label presets.
     pub routing: BTreeMap<String, String>,
+    /// Founder-authored role label to Crew capability keys.
+    pub capabilities: BTreeMap<String, Vec<String>>,
 }
 
 /// A routing preset resolved to agents holding its role in the channel.
@@ -72,6 +76,8 @@ struct RawCanvasRoleBlock {
     definitions: BTreeMap<String, String>,
     #[serde(default)]
     routing: BTreeMap<String, String>,
+    #[serde(default)]
+    capabilities: BTreeMap<String, Vec<String>>,
 }
 
 /// Parse the first fenced ` ```crew ` block in canvas content.
@@ -123,10 +129,16 @@ pub fn parse_canvas_assignments(
         let label = normalize_label(&label)?;
         routing.insert(work_type.to_ascii_lowercase(), label);
     }
+    let mut capabilities = BTreeMap::new();
+    for (label, keys) in raw.capabilities {
+        let label = normalize_label(&label)?;
+        capabilities.insert(label.to_ascii_lowercase(), keys);
+    }
     Ok(Some(CanvasRoleBlock {
         assignments,
         definitions,
         routing,
+        capabilities,
     }))
 }
 
@@ -150,7 +162,9 @@ pub fn resolve_routing(
         let mut holders = Vec::new();
         for (agent, assigned_label) in &block.assignments {
             if assigned_label.eq_ignore_ascii_case(&role_label) {
-                holders.push(parse_pubkey(agent)?.to_hex());
+                if let Ok(key) = parse_pubkey(agent) {
+                    holders.push(key.to_hex());
+                }
             }
         }
         resolved.push(RoutingAssignment {
@@ -188,7 +202,19 @@ pub fn compose_routing_section(routing: &[RoutingAssignment]) -> String {
                 preset.role_label
             ));
         } else {
-            section.push_str(&format!("holder(s): {}\n", preset.holders.join(", ")));
+            let holders = preset
+                .holders
+                .iter()
+                .map(|holder| {
+                    parse_pubkey(holder)
+                        .and_then(|key| {
+                            key.to_bech32()
+                                .map_err(|_| RoleParseError::InvalidPubkey(holder.clone()))
+                        })
+                        .unwrap_or_else(|_| holder.clone())
+                })
+                .collect::<Vec<_>>();
+            section.push_str(&format!("holder(s): {}\n", holders.join(", ")));
         }
     }
     section.push_str(
@@ -251,9 +277,12 @@ pub fn resolve_assignment(
     };
     let mut label = None;
     for (agent, assignment_label) in &block.assignments {
-        if same_pubkey(agent, agent_pubkey)? {
-            label = Some(assignment_label.clone());
-            break;
+        match same_pubkey(agent, agent_pubkey) {
+            Ok(true) => {
+                label = Some(assignment_label.clone());
+                break;
+            }
+            Ok(false) | Err(_) => continue,
         }
     }
     let Some(label) = label else {
@@ -266,6 +295,40 @@ pub fn resolve_assignment(
         label,
         definition: definition.clone(),
     }))
+}
+
+/// Resolve founder-authored capability keys for one channel session.
+pub fn resolve_capabilities(
+    canvas_content: &str,
+    canvas_author: &str,
+    owner_pubkey: &str,
+    agent_pubkey: &str,
+) -> Result<Option<Vec<String>>, RoleParseError> {
+    if !same_pubkey(canvas_author, owner_pubkey)? {
+        return Ok(None);
+    }
+    let Some(block) = parse_canvas_assignments(canvas_content)? else {
+        return Ok(None);
+    };
+    let mut assigned = None;
+    for (agent, label) in &block.assignments {
+        if let Ok(true) = same_pubkey(agent, agent_pubkey) {
+            assigned = Some(label);
+            break;
+        }
+    }
+    let Some(label) = assigned else {
+        return Ok(Some(Vec::new()));
+    };
+    let Some(keys) = block.capabilities.get(&label.to_ascii_lowercase()) else {
+        return Ok(Some(Vec::new()));
+    };
+    Ok(Some(
+        keys.iter()
+            .filter(|key| key.as_str() == CAPABILITY_DEV_MCP)
+            .cloned()
+            .collect(),
+    ))
 }
 
 /// Compose fixed Crew framing around founder-authored assignment text.
@@ -281,7 +344,8 @@ pub fn compose_role_section(assignment: &RoleAssignment) -> String {
          3. Do not partially perform the off-role work.\n\n\
          MANDATORY declaration: The FIRST line of your first reply message for each turn MUST be exactly:\n\n\
          ROLE-CHECK: role={} decision=accept|refuse reason=<short>\n\n\
-         Never omit ROLE-CHECK, including for short answers.",
+         Never omit ROLE-CHECK, including for short answers.\n\n\
+         Capability note: channel dev-mcp denial is a Crew rule, not a hard wall, on engines with native file or shell tools; Codex/Claude native containment remains process-level.",
         assignment.label, assignment.definition, assignment.label
     )
 }

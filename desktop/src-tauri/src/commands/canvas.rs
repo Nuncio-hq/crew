@@ -93,6 +93,7 @@ pub async fn get_canvas(
             "updated_at": null,
             "author": null,
             "routing": [],
+            "dev_mcp_granted": null,
         }));
     };
     let owner = state
@@ -108,7 +109,16 @@ pub async fn get_canvas(
     )
     .ok()
     .flatten()
-    .unwrap_or_default();
+        .unwrap_or_default();
+    let dev_mcp_granted = buzz_core_pkg::crew_role::resolve_capabilities(
+        &event.content,
+        &event.pubkey.to_hex(),
+        &owner,
+        &owner,
+    )
+    .ok()
+    .flatten()
+    .map(|keys| keys.iter().any(|key| key == buzz_core_pkg::crew_role::CAPABILITY_DEV_MCP));
 
     Ok(serde_json::json!({
         "content": event.content,
@@ -120,6 +130,7 @@ pub async fn get_canvas(
             "role_label": entry.role_label,
             "holders": entry.holders,
         })).collect::<Vec<_>>(),
+        "dev_mcp_granted": dev_mcp_granted,
     }))
 }
 
@@ -168,6 +179,14 @@ pub async fn assign_channel_agent_role(
         })],
     )
     .await?;
+    let signing_key = state
+        .keys
+        .lock()
+        .map_err(|_| "identity lock poisoned".to_string())?
+        .public_key();
+    if let Some(event) = events.first() {
+        ensure_canvas_author(event.pubkey.to_hex().as_str(), signing_key.to_hex().as_str())?;
+    }
     let current = events
         .first()
         .map(|event| event.content.as_str())
@@ -190,9 +209,20 @@ pub async fn assign_channel_agent_role(
     }))
 }
 
+fn ensure_canvas_author(canvas_author: &str, signing_key: &str) -> Result<(), String> {
+    if canvas_author.trim().eq_ignore_ascii_case(signing_key.trim()) {
+        Ok(())
+    } else {
+        Err(format!(
+            "latest channel canvas was edited by {}; review it before assigning",
+            canvas_author.trim()
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::update_canvas_crew_assignment;
+    use super::{ensure_canvas_author, update_canvas_crew_assignment};
 
     #[test]
     fn crew_assignment_update_preserves_canvas_prose() {
@@ -208,5 +238,18 @@ mod tests {
         assert!(updated.ends_with("\n\nClosing notes."));
         assert!(updated.contains("Code Review"));
         assert!(updated.contains("routing:"));
+    }
+
+    #[test]
+    fn assignment_rejects_canvas_from_another_author() {
+        let error = ensure_canvas_author(&"22".repeat(32), &"11".repeat(32))
+            .expect_err("non-founder canvas must not be laundered");
+        assert!(error.contains("edited by"));
+    }
+
+    #[test]
+    fn assignment_accepts_canvas_from_signing_author() {
+        ensure_canvas_author(&"11".repeat(32), &"11".repeat(32))
+            .expect("same-author assignment should proceed");
     }
 }

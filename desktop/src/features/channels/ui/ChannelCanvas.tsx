@@ -42,6 +42,7 @@ export function ChannelCanvas({
 
   const canvasContent = canvasQuery.data?.content ?? null;
   const routing = canvasQuery.data?.routing ?? [];
+  const devMcpGranted = canvasQuery.data?.devMcpGranted;
   // Defer the single large Markdown parse so opening the canvas commits the
   // surrounding chrome immediately and the heavy render reconciles after.
   const deferredCanvasContent = React.useDeferredValue(canvasContent);
@@ -164,6 +165,15 @@ export function ChannelCanvas({
             ))}
           </ul>
         </div>
+      ) : null}
+      {devMcpGranted !== null && devMcpGranted !== undefined ? (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="channel-canvas-capability"
+        >
+          Channel dev-mcp: {devMcpGranted ? "granted" : "denied"} (native engine
+          tools remain process-scoped)
+        </p>
       ) : null}
       {canEdit && !isArchived ? (
         <div className="flex flex-wrap gap-2">

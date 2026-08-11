@@ -369,5 +369,6 @@ and in flight.
   Slice 2 routing presets are implemented in the canonical Rust parser and
   injected into fresh channel-session context with exact work-type matching,
   resolved holders, and explicit founder escalation for unheld roles.
-  Slice 3 (capability) not started.
-- Next: orchestrator review → PR; then Slice 3 per plan.
+  Slice 3 capability is implemented with founder-authored role capabilities,
+  channel-session dev-mcp selection, and explicit native-tool limitations.
+- Next: orchestrator review → PR; no partial MCP allowlists or path containment.

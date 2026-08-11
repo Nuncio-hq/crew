@@ -696,6 +696,24 @@ clause. Labels are free-form; the founder-authored definition travels with the
 assignment and is the meaning used at read time. The former global managed-agent
 role, 30179 extension, and 10100 projection are not enforcement sources.
 
+## D-044 — Capability is founder-authored and channel-session scoped
+
+- **Status:** Accepted (Slice 3)
+- **Date:** 2026-08-10
+- **Issue:** [Nuncio-hq/crew#116](https://github.com/Nuncio-hq/crew/issues/116)
+- **Evidence:** spike 0018
+
+The founder-authored `capabilities` map uses Crew-owned keys keyed by
+free-form role label. Unknown keys and missing entries fail closed; the
+day-one key is `buzz-dev-mcp`. Partial MCP tool allowlists and path
+containment are out of scope.
+
+ACP `mcpServers` is channel-session scoped, so engines whose only file/shell
+path is dev-mcp receive a channel-session hard floor without respawning the
+agent. Codex and Claude native file/shell tools remain process-level: their
+containment is a process-level union and no per-channel native hard floor is
+claimed. On those engines, denial is a Crew rule, not a wall.
+
 ## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
 
 - **Status:** Accepted

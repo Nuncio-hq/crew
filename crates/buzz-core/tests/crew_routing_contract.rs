@@ -45,3 +45,32 @@ fn non_founder_canvas_ignores_routing_and_missing_routing_is_unchanged() {
         None
     );
 }
+
+#[test]
+fn malformed_assignment_key_does_not_hide_valid_holder() {
+    let owner = "11".repeat(32);
+    let valid = "22".repeat(32);
+    let canvas = format!(
+        "```crew\nassignments:\n  garbage-key: backend\n  \"{valid}\": backend\ndefinitions:\n  backend: Build services.\nrouting:\n  backend: backend\n```"
+    );
+    let routing = resolve_routing(&canvas, &owner, &owner)
+        .expect("valid holder survives")
+        .expect("routing present");
+    assert_eq!(routing[0].holders, vec![valid]);
+}
+
+#[test]
+fn routing_holders_render_as_npub_but_retain_hex_values() {
+    let owner = "11".repeat(32);
+    let holder = "22".repeat(32);
+    let canvas = format!(
+        "```crew\nassignments:\n  \"{holder}\": backend\ndefinitions:\n  backend: Build services.\nrouting:\n  backend: backend\n```"
+    );
+    let routing = resolve_routing(&canvas, &owner, &owner)
+        .expect("routing")
+        .expect("routing present");
+    assert_eq!(routing[0].holders, vec![holder.clone()]);
+    let prompt = compose_routing_section(&routing);
+    assert!(prompt.contains("npub1"));
+    assert!(!prompt.contains(&holder));
+}
