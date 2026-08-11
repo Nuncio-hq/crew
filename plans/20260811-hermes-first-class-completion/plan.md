@@ -31,7 +31,7 @@ Phase 05 are **substantially in flight in #134**, which lands a named
 readiness enum, agent-card surfacing, spawn preflight, and
 archive/restore/permanent-delete. Only **Phase 06 (read-only capability view)
 is genuinely unbuilt**, and half of its idea is already claimed by #118's
-planned capability descriptor.
+shipped capability descriptor in PR #149.
 
 The honest remainder is roughly **one small implementation slice, two
 verification records, and one blocked-on-upstream item** — not six phases.
@@ -149,11 +149,16 @@ verification record (plus, optionally, the reconnect-restore case).
 Nothing found anywhere for skills count, computer-use availability,
 configured-MCP list/status, plugin tools, or gateway/cron/webhook presence.
 `HERMES_ACP_SKIP_CONFIGURED_MCP=1` is applied (`crates/buzz-acp/src/config.rs:735-743`)
-but never surfaced as a diagnostic fact. The only adjacent work is #118's
-**planned** capability descriptor `{ modelSource, personaDoc, layer3 }`
-(`plans/20260810-hermes-profile-editing/plan.md:69-96`, #123) — plan-only,
-explicitly "not implemented, not approved", and covering model/persona rather
-than tools.
+but never surfaced as a diagnostic fact. The adjacent #118 capability
+descriptor `{ modelSource, personaDoc, layer3 }` is now shipped on PR #149 /
+branch `agents/hermes-profile-editing`: its capability module defines the
+descriptor and persona table (`desktop/src/shared/api/runtimeCapabilities.ts:1-14`
+on PR #149), and the catalog mapper derives it at the
+`fromRawAcpRuntimeCatalog` boundary
+(`desktop/src/shared/api/fromRawAcpRuntimeCatalog.ts:44-83` on PR #149).
+The original plan remains the design record
+(`plans/20260810-hermes-profile-editing/plan.md:69-96`, #123), but the
+implementation is no longer plan-only.
 
 ---
 
@@ -216,9 +221,10 @@ Per D-008 no production code starts before these are conclusive.
    D-019. **Resolved in favour of #118.** The profile remains the source of
    truth and Crew stores no competing model copy; #118 owns the implementation,
    and its PR must record the D-019 amendment in `DECISIONS.md`.
-2. **Phase 06 vs #118's capability descriptor.** #118 plans
-   `{ modelSource, personaDoc, layer3 }`; Phase 06 wants a tools/skills/MCP
-   summary on the same card. Two owners, one surface. Founder decision **Q2**.
+2. **Phase 06 vs #118's capability descriptor.** #149 ships
+   `{ modelSource, personaDoc, layer3 }` on each catalog entry; Phase 06 wants
+   a tools/skills/MCP summary on the same card. Two owners, one surface.
+   Founder decision **Q2**.
 3. **Phase 04 vs #121/#128.** "Durable result links to branch/commit/PR" is
    the evidence-thread-log's problem, not the Hermes runner's. Keeping it in
    #104 would duplicate #128.

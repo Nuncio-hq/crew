@@ -11,10 +11,18 @@ This entire phase is conditional on S-B. If Hermes v0.20.x exposes no stable
 JSON contract for skills, tools, computer-use, configured MCP, and
 gateway/cron/webhook presence, **drop this phase**. Do not render invented
 parity: Crew must show `Unknown`, not infer or fabricate capability facts.
-The audit found no shipped capability view; only #118's planned descriptor
-overlaps the surface
-(`plans/20260810-hermes-profile-editing/plan.md:69-96`,
-PR #123 / branch `docs/plans-issues-117-121`).
+The audit found no shipped Hermes capability view for skills/tools/MCP and
+entrypoints. #149 already ships #118's narrower descriptor
+`{ modelSource, personaDoc, layer3 }`: the capability module defines the
+descriptor and persona table
+(`desktop/src/shared/api/runtimeCapabilities.ts:1-14`, PR #149 / branch
+`agents/hermes-profile-editing`), and the catalog mapper derives it at the
+`fromRawAcpRuntimeCatalog` boundary
+(`desktop/src/shared/api/fromRawAcpRuntimeCatalog.ts:44-83`, PR #149 / branch
+`agents/hermes-profile-editing`). The original design record remains
+`plans/20260810-hermes-profile-editing/plan.md:69-96` on PR #123 / branch
+`docs/plans-issues-117-121`; Q2 still decides ownership of the expanded
+surface.
 
 ## Gate 1 — spike S-B protocol
 
@@ -53,10 +61,12 @@ exist.
 | MCP guard | Show `configured MCP disabled by Crew sandbox` with source/path, not a configured-server count |
 | Card ownership | Block on founder Q2; do not build a second card alongside #118 |
 
-#118's plan chooses `{ modelSource, personaDoc, layer3 }` at the catalog
-boundary (`plans/20260810-hermes-profile-editing/plan.md:69-96`, PR #123 /
-`docs/plans-issues-117-121`). That descriptor is plan-only and belongs to the
-Q2 ownership decision; R3 must not duplicate it or become a second profile card.
+#149 ships `{ modelSource, personaDoc, layer3 }` at the catalog boundary:
+`desktop/src/shared/api/fromRawAcpRuntimeCatalog.ts:44-83` derives the
+descriptor using `desktop/src/shared/api/runtimeCapabilities.ts:1-39` (PR #149
+/ branch `agents/hermes-profile-editing`). R3 must not duplicate that shipped
+descriptor or become a second profile card; Q2 remains open for ownership of
+the expanded tools/skills/MCP surface.
 
 ## RED contract table
 

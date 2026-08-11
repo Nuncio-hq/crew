@@ -4,10 +4,15 @@ Title: Add a truthful read-only Hermes capability view
 
 No shipped surface currently provides Hermes skills counts, computer-use
 availability, configured-MCP status, plugin tools, or gateway/cron/webhook
-presence. The adjacent #118 descriptor is plan-only and covers
-`{ modelSource, personaDoc, layer3 }`
+presence. PR #149 already ships #118's narrower
+`{ modelSource, personaDoc, layer3 }` descriptor: the capability module defines
+it (`desktop/src/shared/api/runtimeCapabilities.ts:1-14`, PR #149 / branch
+`agents/hermes-profile-editing`) and the catalog mapper derives it at the
+projection boundary
+(`desktop/src/shared/api/fromRawAcpRuntimeCatalog.ts:44-83`, PR #149 / branch
+`agents/hermes-profile-editing`). The original design record remains
 (`plans/20260810-hermes-profile-editing/plan.md:69-96`, PR #123 / branch
-`docs/plans-issues-117-121`).
+`docs/plans-issues-117-121`); Q2 still decides ownership of the expanded view.
 
 ## What to solve
 
