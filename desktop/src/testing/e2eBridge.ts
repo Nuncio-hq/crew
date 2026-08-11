@@ -4272,6 +4272,12 @@ function emitMockHistory(
 ) {
   const events = getMockMessageStore(channelId)
     .filter((event) => {
+      if (
+        filter.ids &&
+        !filter.ids.some((prefix) => event.id.startsWith(prefix))
+      ) {
+        return false;
+      }
       if (filter.kinds && !filter.kinds.includes(event.kind)) {
         return false;
       }
