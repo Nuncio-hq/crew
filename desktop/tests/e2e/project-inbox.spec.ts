@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { expandProjectPlumbing } from "../helpers/projectPlumbing";
 
 const DEFAULT_MOCK_PUBKEY = "deadbeef".repeat(8);
 const BUZZ_REPO_ADDRESS = `30617:${DEFAULT_MOCK_PUBKEY}:buzz`;
@@ -27,6 +28,7 @@ test("Buzz Git pull request renders and stays actionable in Inbox", async ({
     )
     .first()
     .click();
+  await expandProjectPlumbing(page);
   await page.getByRole("tab", { name: "Pull Request" }).click();
 
   const alicePullRequest = page

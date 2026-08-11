@@ -198,6 +198,8 @@ and in flight.
 
 ## Current test gate
 
+- Shard-4 Desktop Smoke E2E is revived: the upstream Project specs were
+  adapted to the post-#95 outcome-first Projects contract.
 - Thirteen additive Project workspace test files cover parsing, duplicate
   locations, metadata preservation, NIP-01 replacement ordering, owner
   protection, relay rejection/read-back, privacy copy, Project-channel

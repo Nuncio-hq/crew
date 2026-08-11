@@ -42,6 +42,7 @@ import { ProjectsIssuesList } from "@/features/projects/ui/ProjectsIssuesList";
 import { ProjectsPullRequestsList } from "@/features/projects/ui/ProjectsPullRequestsList";
 
 import { ProjectOutcomeLanding } from "@/features/projects/ui/ProjectOutcomeLanding";
+import { ProjectsWorkItemsLoadNotice } from "@/features/projects/ui/ProjectsWorkItemsLoadNotice";
 import { ProjectsToolbar } from "@/features/projects/ui/ProjectsToolbar";
 import { ProjectsListHeaderBar } from "@/features/projects/ui/ProjectsListHeaderBar";
 import {
@@ -820,15 +821,37 @@ export function ProjectsView({
               {projects.length === 0 ? (
                 <EmptyState />
               ) : filter === "all" ? (
-                <ProjectOutcomeLanding
-                  onOpen={handleOpenProject}
-                  projects={projects}
-                  pullRequests={
-                    projectsWorkItemsQuery.data?.pullRequests.items.map(
-                      ({ project, pullRequest }) => ({ project, pullRequest }),
-                    ) ?? []
-                  }
-                />
+                <>
+                  <ProjectsWorkItemsLoadNotice
+                    error={projectsWorkItemsQuery.error}
+                    failedSections={[
+                      ...new Set([
+                        ...(projectsWorkItemsQuery.data?.issues
+                          .failedSections ?? []),
+                        ...(projectsWorkItemsQuery.data?.pullRequests
+                          .failedSections ?? []),
+                      ]),
+                    ]}
+                    isRetrying={
+                      projectsWorkItemsQuery.isFetching &&
+                      !projectsWorkItemsQuery.isLoading
+                    }
+                    onRetry={() => void projectsWorkItemsQuery.refetch()}
+                    subject="project activity"
+                  />
+                  <ProjectOutcomeLanding
+                    onOpen={handleOpenProject}
+                    projects={projects}
+                    pullRequests={
+                      projectsWorkItemsQuery.data?.pullRequests.items.map(
+                        ({ project, pullRequest }) => ({
+                          project,
+                          pullRequest,
+                        }),
+                      ) ?? []
+                    }
+                  />
+                </>
               ) : (
                 <section>
                   {/* In list view the header is the table's first row inside

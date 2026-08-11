@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { expandProjectPlumbing } from "../helpers/projectPlumbing";
 
 const SHOTS = "test-results/project-pr-review";
 const RECOVERY_SHOTS = "test-results/project-pr-conflict-recovery";
@@ -30,6 +31,7 @@ async function openBuzzProject(page: import("@playwright/test").Page) {
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
   await projectEntry.click();
+  await expandProjectPlumbing(page);
 }
 
 test("same-second request changes supersedes approval", async ({ page }) => {
@@ -982,30 +984,19 @@ test("project overview does not paint a background behind its cards", async ({
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
 
-  await expect(page.getByTestId("projects-overview-panel")).toHaveCSS(
-    "background-color",
-    "rgba(0, 0, 0, 0)",
+  const landing = page.getByTestId("projects-outcome-landing");
+  await expect(landing).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  const outcomeCards = landing.locator(
+    '[data-testid^="project-outcome-card-"]',
   );
-
-  const stats = page.getByTestId("projects-overview-stat");
-  await expect(stats).toHaveCount(4);
-  for (let index = 0; index < 4; index += 1) {
-    await expect(stats.nth(index)).toHaveCSS(
+  await expect(outcomeCards.first()).toBeVisible();
+  const outcomeCardCount = await outcomeCards.count();
+  for (let index = 0; index < outcomeCardCount; index += 1) {
+    await expect(outcomeCards.nth(index)).toHaveCSS(
       "background-color",
       "rgba(0, 0, 0, 0)",
     );
-    await expect(stats.nth(index)).toHaveCSS("border-style", "solid");
-  }
-
-  const activityCards = page.getByTestId("projects-activity-card");
-  await expect(activityCards.first()).toBeVisible();
-  const activityCardCount = await activityCards.count();
-  for (let index = 0; index < activityCardCount; index += 1) {
-    await expect(activityCards.nth(index)).toHaveCSS(
-      "background-color",
-      "rgba(0, 0, 0, 0)",
-    );
-    await expect(activityCards.nth(index)).toHaveCSS("border-style", "solid");
+    await expect(outcomeCards.nth(index)).toHaveCSS("border-style", "solid");
   }
 });
 
