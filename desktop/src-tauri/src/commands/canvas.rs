@@ -94,6 +94,7 @@ pub async fn get_canvas(
             "author": null,
             "routing": [],
             "dev_mcp_granted": null,
+            "crew_parse_error": null,
         }));
     };
     let owner = state
@@ -102,6 +103,7 @@ pub async fn get_canvas(
         .map_err(|_| "identity lock poisoned".to_string())?
         .public_key()
         .to_hex();
+    let crew_parse_error = crew_parse_error(&event.content);
     let routing = buzz_core_pkg::crew_role::resolve_routing(
         &event.content,
         &event.pubkey.to_hex(),
@@ -131,6 +133,7 @@ pub async fn get_canvas(
             "holders": entry.holders,
         })).collect::<Vec<_>>(),
         "dev_mcp_granted": dev_mcp_granted,
+        "crew_parse_error": crew_parse_error,
     }))
 }
 
@@ -168,6 +171,7 @@ pub async fn assign_channel_agent_role(
     agent_pubkey: String,
     label: String,
     definition: String,
+    overwrite_foreign_canvas: bool,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
     let events = query_relay(
@@ -184,11 +188,17 @@ pub async fn assign_channel_agent_role(
         .lock()
         .map_err(|_| "identity lock poisoned".to_string())?
         .public_key();
+    let discarded_foreign_canvas = events.first().is_some_and(|event| {
+        event.pubkey != signing_key
+    });
     if let Some(event) = events.first() {
-        ensure_canvas_author(event.pubkey.to_hex().as_str(), signing_key.to_hex().as_str())?;
+        if !overwrite_foreign_canvas {
+            ensure_canvas_author(event.pubkey.to_hex().as_str(), signing_key.to_hex().as_str())?;
+        }
     }
     let current = events
         .first()
+        .filter(|_| !discarded_foreign_canvas)
         .map(|event| event.content.as_str())
         .unwrap_or("");
     let updated =
@@ -206,6 +216,7 @@ pub async fn assign_channel_agent_role(
         "ok": true,
         "canvas_event_id": canvas_result.event_id,
         "announcement_event_id": announcement_event_id,
+        "discarded_foreign_canvas": discarded_foreign_canvas,
     }))
 }
 
@@ -220,9 +231,15 @@ fn ensure_canvas_author(canvas_author: &str, signing_key: &str) -> Result<(), St
     }
 }
 
+fn crew_parse_error(content: &str) -> Option<String> {
+    buzz_core_pkg::crew_role::parse_canvas_assignments(content)
+        .err()
+        .map(|error| format!("malformed Crew block; no roles are in effect: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ensure_canvas_author, update_canvas_crew_assignment};
+    use super::{crew_parse_error, ensure_canvas_author, update_canvas_crew_assignment};
 
     #[test]
     fn crew_assignment_update_preserves_canvas_prose() {
@@ -251,5 +268,13 @@ mod tests {
     fn assignment_accepts_canvas_from_signing_author() {
         ensure_canvas_author(&"11".repeat(32), &"11".repeat(32))
             .expect("same-author assignment should proceed");
+    }
+
+    #[test]
+    fn malformed_crew_block_has_visible_error() {
+        let error = crew_parse_error("```crew\nassignments: [\n```")
+            .expect("malformed crew block should surface an error");
+        assert!(error.contains("malformed Crew block"));
+        assert!(error.contains("no roles are in effect"));
     }
 }

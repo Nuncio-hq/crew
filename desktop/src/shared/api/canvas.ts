@@ -7,6 +7,7 @@ type RawCanvasResponse = {
   author: string | null;
   routing: { work_type: string; role_label: string; holders: string[] }[];
   dev_mcp_granted: boolean | null;
+  crew_parse_error: string | null;
 };
 
 export async function getCanvas(channelId: string): Promise<CanvasResponse> {
@@ -23,5 +24,6 @@ export async function getCanvas(channelId: string): Promise<CanvasResponse> {
       holders: entry.holders,
     })),
     devMcpGranted: response.dev_mcp_granted,
+    crewParseError: response.crew_parse_error,
   };
 }

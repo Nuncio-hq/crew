@@ -26,10 +26,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use buzz_core::crew_role::{
-    compose_role_section, compose_routing_section, count_crew_blocks, resolve_assignment,
-    resolve_capabilities, resolve_routing, RoleAssignment, RoutingAssignment, CAPABILITY_DEV_MCP,
+    compose_role_section, compose_routing_section, count_crew_blocks, parse_canvas_assignments,
+    resolve_assignment, resolve_capabilities, resolve_routing, RoleAssignment, RoutingAssignment,
+    CAPABILITY_DEV_MCP,
 };
 use buzz_worktree::SharedLease;
+use nostr::FromBech32;
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
@@ -1010,11 +1012,12 @@ async fn create_session_and_apply_model(
         .as_deref()
         .map(|agent_name| compose_session_title(agent_name, channel_name));
     let capability_servers = capabilities.map(|keys| {
-        if keys.iter().any(|key| key == CAPABILITY_DEV_MCP) {
-            ctx.mcp_servers.clone()
-        } else {
-            Vec::new()
-        }
+        let granted = keys.iter().any(|key| key == CAPABILITY_DEV_MCP);
+        ctx.mcp_servers
+            .iter()
+            .filter(|server| granted || !is_dev_mcp_server(server))
+            .cloned()
+            .collect::<Vec<_>>()
     });
     let mcp_servers = mcp_servers_with_git_origin(
         capability_servers.as_deref().unwrap_or(&ctx.mcp_servers),
@@ -1156,6 +1159,15 @@ fn mcp_servers_with_git_origin(
         }
     }
     servers
+}
+
+fn is_dev_mcp_server(server: &McpServer) -> bool {
+    server.name.eq_ignore_ascii_case(CAPABILITY_DEV_MCP)
+        || server
+            .command
+            .rsplit('/')
+            .next()
+            .is_some_and(|command| command.eq_ignore_ascii_case(CAPABILITY_DEV_MCP))
 }
 
 /// Send the appropriate ACP model-switch request with a timeout.
@@ -2826,6 +2838,32 @@ async fn fetch_canvas_section(
 
     let rendered = canvas_section_from_query_response(events, &channel_id.to_string())?;
     let event = serde_json::from_value::<nostr::Event>(events.first()?.clone()).ok()?;
+    if let Ok(Some(block)) = parse_canvas_assignments(&event.content) {
+        for agent in block.assignments.keys() {
+            if nostr::PublicKey::from_hex(agent).is_err()
+                && nostr::PublicKey::from_bech32(agent).is_err()
+            {
+                tracing::warn!(
+                    target: "canvas::crew",
+                    channel = %channel_id,
+                    pubkey = %agent,
+                    "skipping malformed crew assignment pubkey"
+                );
+            }
+        }
+        for keys in block.capabilities.values() {
+            for key in keys {
+                if key != CAPABILITY_DEV_MCP {
+                    tracing::warn!(
+                        target: "canvas::crew",
+                        channel = %channel_id,
+                        capability = %key,
+                        "unrecognized crew capability key; denying it"
+                    );
+                }
+            }
+        }
+    }
     if count_crew_blocks(&event.content) > 1 {
         tracing::warn!(
             target: "canvas::crew",
@@ -6201,6 +6239,26 @@ mod tests {
             args: vec![],
             env: vec![],
         }
+    }
+
+    #[test]
+    fn denied_dev_mcp_keeps_unrelated_servers() {
+        let unrelated = McpServer {
+            name: "github".into(),
+            command: "github-mcp".into(),
+            args: vec![],
+            env: vec![],
+        };
+        let servers = [test_mcp_server(), unrelated.clone()];
+        let denied = servers
+            .iter()
+            .filter(|server| !is_dev_mcp_server(server))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(denied.len(), 1);
+        assert_eq!(denied[0].name, unrelated.name);
+        assert_eq!(denied[0].command, unrelated.command);
+        assert!(is_dev_mcp_server(&test_mcp_server()));
     }
 
     #[test]

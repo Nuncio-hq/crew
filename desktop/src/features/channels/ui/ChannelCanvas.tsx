@@ -43,6 +43,7 @@ export function ChannelCanvas({
   const canvasContent = canvasQuery.data?.content ?? null;
   const routing = canvasQuery.data?.routing ?? [];
   const devMcpGranted = canvasQuery.data?.devMcpGranted;
+  const crewParseError = canvasQuery.data?.crewParseError;
   // Defer the single large Markdown parse so opening the canvas commits the
   // surrounding chrome immediately and the heavy render reconciles after.
   const deferredCanvasContent = React.useDeferredValue(canvasContent);
@@ -141,6 +142,14 @@ export function ChannelCanvas({
           No canvas set for this channel.
         </p>
       )}
+      {crewParseError ? (
+        <p
+          className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          data-testid="channel-canvas-crew-error"
+        >
+          {crewParseError}
+        </p>
+      ) : null}
       {routing.length > 0 ? (
         <div
           className="rounded-xl border border-border/70 px-4 py-3"
@@ -231,6 +240,33 @@ export function ChannelCanvas({
             >
               {assignRoleMutation.isPending ? "Assigning..." : "Assign role"}
             </Button>
+            <p className="text-xs text-muted-foreground">
+              If another author last edited this canvas, the default assignment
+              is refused. An explicit overwrite will discard that foreign canvas
+              content and replace it with a founder-signed canvas.
+            </p>
+            {assignRoleMutation.error instanceof Error &&
+            assignRoleMutation.error.message.includes(
+              "review it before assigning",
+            ) ? (
+              <Button
+                data-testid="channel-canvas-overwrite-foreign"
+                disabled={assignRoleMutation.isPending}
+                onClick={() => {
+                  assignRoleMutation.mutate({
+                    agentPubkey: assignmentAgent,
+                    label: assignmentLabel,
+                    definition: assignmentDefinition,
+                    overwriteForeignCanvas: true,
+                  });
+                }}
+                size="sm"
+                type="button"
+                variant="destructive"
+              >
+                Discard foreign canvas and assign
+              </Button>
+            ) : null}
           </div>
           {assignRoleMutation.error instanceof Error ? (
             <p className="basis-full text-sm text-destructive">

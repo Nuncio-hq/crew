@@ -73,6 +73,7 @@ export type AssignChannelAgentRoleInput = {
   agentPubkey: string;
   label: string;
   definition: string;
+  overwriteForeignCanvas?: boolean;
 };
 
 export type SetChannelPurposeInput = {
@@ -86,6 +87,7 @@ export type CanvasResponse = {
   author: string | null;
   routing: CanvasRoutingPreset[];
   devMcpGranted: boolean | null;
+  crewParseError: string | null;
 };
 
 export type CanvasRoutingPreset = {

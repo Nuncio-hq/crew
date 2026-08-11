@@ -17,6 +17,7 @@ export async function assignChannelAgentRole(
       agentPubkey: input.agentPubkey,
       label: input.label,
       definition: input.definition,
+      overwriteForeignCanvas: input.overwriteForeignCanvas ?? false,
     },
   );
 }
