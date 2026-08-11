@@ -250,7 +250,7 @@ Hermes-side ask lands.
   when a clean ACP session-catalog read path exists from create/edit.
 - Credential isolation for public agents — blocked on Hermes-side ask.
 
-## Crew roles (issue #116 Slice 1)
+## Crew roles (issue #116 Slice 1R and later slices)
 
 - **Model:** a role is a founder/owner-signed `(agent, channel)` assignment
   carried in that channel's fenced `crew` canvas block. Labels are free-form

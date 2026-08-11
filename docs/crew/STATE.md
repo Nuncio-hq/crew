@@ -9,7 +9,7 @@ The harness resolves them when creating a fresh channel session and ignores
 non-owner or malformed canvas blocks. Channels without an assignment retain
 the existing prompt behavior.
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
 
 ## Founder product direction (docs)
 
@@ -370,5 +370,6 @@ and in flight.
   injected into fresh channel-session context with exact work-type matching,
   resolved holders, and explicit founder escalation for unheld roles.
   Slice 3 capability is implemented with founder-authored role capabilities,
-  channel-session dev-mcp selection, and explicit native-tool limitations.
+  channel-session dev-mcp selection, and per-session native-tool floors where the
+  engine advertises session-scoped control (Codex, Grok, Hermes tested; Claude not yet).
 - Next: orchestrator review → PR; no partial MCP allowlists or path containment.
