@@ -124,6 +124,18 @@ export function ChannelRouteScreen({
     const cachedTarget = getCachedSearchHitEvent(targetMessageId);
     return cachedTarget ? [cachedTarget] : [];
   });
+  // Identity of the current route target. `isRouteTargetResolving` is derived
+  // during render rather than set from the fetch effect: consumers below this
+  // component run their effects first, so an effect-set flag would still be
+  // false on the commit that first sees a new target in the URL.
+  const routeTargetKey = `${channelId}::${selectedPostId ?? ""}::${targetMessageId ?? ""}::${targetThreadRootId ?? ""}`;
+  const [resolvedRouteTargetKey, setResolvedRouteTargetKey] = React.useState<
+    string | null
+  >(null);
+  const isRouteTargetResolving =
+    Boolean(targetMessageId || targetThreadRootId) &&
+    !selectedPostId &&
+    resolvedRouteTargetKey !== routeTargetKey;
 
   // Reset spliced target events when the channel context changes (channel
   // switch or entering/leaving a forum post). Tied to channel identity rather
@@ -143,8 +155,6 @@ export function ChannelRouteScreen({
   }, [channelId, selectedPostId]);
 
   React.useEffect(() => {
-    let isCancelled = false;
-
     // Don't wipe already-spliced target events just because the route target
     // cleared (e.g. `onTargetReached` clears the `messageId` URL param once the
     // row is centered). In a channel whose feed doesn't already contain the
@@ -152,10 +162,10 @@ export function ChannelRouteScreen({
     // param-clear blanks the timeline. Resetting on channel / forum-post change
     // is handled by the effect below; here we only fetch when there's a target.
     if ((!targetMessageId && !targetThreadRootId) || selectedPostId) {
-      return () => {
-        isCancelled = true;
-      };
+      return;
     }
+
+    let isCancelled = false;
 
     const cachedTarget = getCachedSearchHitEvent(targetMessageId);
     if (cachedTarget) {
@@ -173,12 +183,16 @@ export function ChannelRouteScreen({
         : null,
     ].filter((eventId): eventId is string => eventId !== null);
 
+    // The spliced events and the end of the resolve are committed together, so
+    // no consumer ever sees a settled resolve whose events have not landed yet
+    // and mistakes the still-arriving target for a deleted message.
     void fetchRouteTargetEvents(
       eventIds,
       targetMessageId,
       targetThreadRootId,
-    ).then((events) => {
-      if (!isCancelled) {
+    ).then(
+      (events) => {
+        if (isCancelled) return;
         setTargetMessageEvents((currentEvents) => {
           const eventsById = new Map<string, RelayEvent>();
           for (const event of [...currentEvents, ...events]) {
@@ -186,13 +200,18 @@ export function ChannelRouteScreen({
           }
           return Array.from(eventsById.values());
         });
-      }
-    });
+        setResolvedRouteTargetKey(routeTargetKey);
+      },
+      () => {
+        if (isCancelled) return;
+        setResolvedRouteTargetKey(routeTargetKey);
+      },
+    );
 
     return () => {
       isCancelled = true;
     };
-  }, [selectedPostId, targetMessageId, targetThreadRootId]);
+  }, [routeTargetKey, selectedPostId, targetMessageId, targetThreadRootId]);
 
   if (channelsQuery.isPending && !activeChannel) {
     if (isHuddleTranscript) {
@@ -212,6 +231,7 @@ export function ChannelRouteScreen({
       autoSendDraftKey={autoSendDraftKey}
       currentIdentity={identityQuery.data}
       currentProfile={profileQuery.data}
+      isRouteTargetResolving={isRouteTargetResolving}
       onCloseForumPost={() => {
         void closeForumPost(channelId);
       }}
@@ -222,6 +242,7 @@ export function ChannelRouteScreen({
       targetForumReplyId={targetReplyId}
       targetMessageEvents={targetMessageEvents}
       targetMessageId={targetMessageId}
+      targetThreadRootId={targetThreadRootId}
     />
   );
 }

@@ -16,10 +16,13 @@ export type ChannelScreenProps = {
   autoSendDraftKey: string | null;
   currentIdentity?: Identity;
   currentProfile?: Profile;
+  /** True while the events named by the route target are still being fetched. */
+  isRouteTargetResolving: boolean;
   onCloseForumPost: () => void;
   onSelectForumPost: (postId: string) => void;
   selectedForumPostId: string | null;
   targetForumReplyId: string | null;
   targetMessageEvents: RelayEvent[];
   targetMessageId: string | null;
+  targetThreadRootId: string | null;
 };

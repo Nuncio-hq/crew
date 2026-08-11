@@ -93,12 +93,14 @@ export function ChannelScreen({
   autoSendDraftKey,
   currentIdentity,
   currentProfile,
+  isRouteTargetResolving,
   onCloseForumPost,
   onSelectForumPost,
   selectedForumPostId,
   targetForumReplyId,
   targetMessageEvents,
   targetMessageId,
+  targetThreadRootId,
 }: ChannelScreenProps) {
   const { goHome } = useAppNavigation();
   const { activeCommunity } = useCommunities();
@@ -678,9 +680,11 @@ export function ChannelScreen({
     clearOptimisticThreadOverride,
     editTargetId,
     editTargetMessage,
+    isRouteTargetResolving,
     isTimelineLoading,
     openThreadHeadId,
     openThreadHeadMessage,
+    routeThreadTargetId: targetThreadRootId,
     setEditTargetId,
     setExpandedThreadReplyIds,
     setOpenThreadHeadId,

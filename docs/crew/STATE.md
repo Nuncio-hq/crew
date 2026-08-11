@@ -8,7 +8,6 @@ Assignments carry a free-form label and founder-authored definition text.
 The harness resolves them when creating a fresh channel session and ignores
 non-owner or malformed canvas blocks. Channels without an assignment retain
 the existing prompt behavior.
-
 Last updated: 2026-08-11
 
 ## Founder product direction (docs)
@@ -189,6 +188,11 @@ Out of scope for this slice:
   Working comes from conversation-scoped active turns; done requires a signed
   agent reply.
 - Ordinary channels and non-Project threads keep the existing UI and composer.
+- A bare `?thread=<id>` channel deep link opens the thread panel on that head
+  even when the head is not already in the loaded timeline: the panel is held
+  open while the channel route resolves that exact head, and still closes once
+  resolution settles without it (deleted or bogus ids) or when an unrelated
+  open head goes missing.
 - Add Project now selects a folder first, derives an editable default name,
   creates/reuses a Project channel, and publishes the Project only after
   explicit plaintext-path consent.
