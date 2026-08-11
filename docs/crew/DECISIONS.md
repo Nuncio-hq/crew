@@ -490,6 +490,35 @@ stop a working agent on the owner's behalf to complete a destructive action.
 
 The reserved `default` profile and the `~/.hermes` root remain untouchable.
 
+## D-038 — Crew edits the bound Hermes profile write-through
+
+- **Status:** Accepted
+- **Date:** 2026-08-11
+- **Issue:** #118
+
+Crew is the editing surface for the bound Hermes profile's model and
+`SOUL.md`; Hermes remains the single source of truth. Crew stores neither a
+second model/persona copy nor a reset template. Reads come from the profile
+files, and writes go through the Hermes CLI for model/provider values or the
+profile file for `SOUL.md`. A successful write is read back before Crew
+updates its display, and the model change applies on the next fresh ACP
+session.
+
+This supersedes the "no editable model control" presentation in rule 2 of
+[`HERMES.md`](HERMES.md) and the corresponding D-019 note. The profile's
+persona is Layer 1, `base_prompt.md` is the harness-owned Layer 2 office
+rules, and the optional Crew agent description is Layer 3 job context,
+appended only when non-empty.
+
+Two sub-decisions are settled:
+
+1. Crew does not offer "Reset to Hermes default": Hermes generates the
+   default at profile creation, and Crew must not ship a copied default that
+   can drift.
+2. Provider and model changes use two separate `config set` invocations. If
+   the second fails, the profile may be partially updated; Crew does not
+   invent rollback without a verified Hermes unset operation.
+
 ## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
 
 - **Status:** Accepted

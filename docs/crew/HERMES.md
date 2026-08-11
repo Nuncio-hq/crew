@@ -25,12 +25,13 @@ a second backend.
    memory, skills, and profile-owned state across them. A second local record
    cannot bind the same profile. Never bind the manager's default profile
    (`~/.hermes`).
-2. Model and provider are configured on the profile
-   (`hermes -p <name> config set model.provider …` /
-   `model.default …`) — never in Crew. The create/edit UI shows
-   "Model: decided by profile \<name\>" and does not offer an editable
-   model control. Crew also strips `BUZZ_ACP_MODEL` at spawn for
-   profile-locked runtimes (Phase 02A).
+2. Model and provider remain profile-owned, but Crew is their write-through
+   editor. The create/edit UI reads `config.yaml` and saves changed values
+   only through `hermes -p <name> config set model.provider …` and
+   `model.default …`; Crew never stores a competing copy. The same UI edits
+   the profile's `SOUL.md`, shared everywhere that profile runs. Both changes
+   apply on the next fresh ACP session; `!rotate` forces one. Crew strips
+   `BUZZ_ACP_MODEL` at spawn for profile-locked runtimes.
 3. Spawn shape is `hermes` with args `-p <profile> acp`. The desktop
    injects `-p <bound name>` from `ManagedAgentRecord.hermes_profile`
    when the catalog entry has `profile_arg`. Never use a renamed
@@ -79,9 +80,11 @@ want an empty profile from the CLI (Crew does not offer this).
 ### 2. Create / bind the Crew agent
 
 Select the profile from the list or keep the name you just created
-(`scout`). Leave model blank — the UI replaces the model control with
-"decided by profile scout". Binding `default` is rejected (client and
-server). Binding a profile already used by another local managed-agent record
+(`scout`). After create succeeds, Crew offers a skippable persona-at-birth
+step for the new profile's `SOUL.md`; skipping preserves Hermes' generated
+default. The model/provider editor reads the profile and writes through the
+Hermes CLI, with a note that changes affect every agent using the profile.
+Binding `default` is rejected (client and server). Binding a profile already used by another local managed-agent record
 shows an occupancy error and disables save; the server still rejects duplicates
 (C-10) if forced. One managed-agent record owns runtime pairs for all
 configured communities, and the Phase 01 UI says that memory, skills, and
@@ -102,6 +105,10 @@ copy; a warning-only path is not sufficient.
 Readiness / Doctor surfaces a `hermesProfile` requirement when the
 binding is missing, and a recreate/rebind repair when the bound
 profile directory is absent (orphan).
+
+There is no "Reset to Hermes default" action: Hermes is the only trustworthy
+source for that generated default, so Crew does not ship a copy that could
+drift.
 
 ### Legacy: tier-3 custom harness JSON (optional)
 

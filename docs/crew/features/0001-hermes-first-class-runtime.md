@@ -420,16 +420,16 @@ profile P.
 | - | -------- | ------------- | ------------ | --------------- | --------------------- |
 | C-01 | Catalog truth | Only `hermes` on PATH | Open runtime catalog | Hermes shown available | "Not installed" while binary exists |
 | C-02 | Profile-bound spawn | Profile `scout` exists | Dispatch mention to agent | Subprocess runs with profile `scout` home; reply arrives in channel | Any read/write to `~/.hermes` default store |
-| C-03 | Missing profile | Profile deleted outside Crew | Dispatch mention | Distinct "profile missing" error surfaced; no zombie spawn loop | Generic offline badge with no cause |
-| C-04 | No model field | Runtime=Hermes persona open in editor | Render | Read-only "provided by profile"; no picker | Editable model/provider control |
+| C-03 | Missing profile | Profile deleted outside Crew | Readiness / dispatch | Distinct missing-profile state and repair path; no zombie spawn loop | Generic offline badge with no cause |
+| C-04 | Profile model/persona editor | Bound Hermes profile exists | Open create/edit | Editable write-through model/provider and populated `SOUL.md` editor; no Crew copy | Read-only "provided by profile" row |
 | C-05 | No model injection (fields) | Global default model set to a valid Hermes model id | Spawn Hermes agent | Env has no `BUZZ_ACP_MODEL`; session model = profile's model | Silent model switch to global default |
 | C-06 | No model injection (env maps) | `BUZZ_ACP_MODEL` set in global/persona/agent env vars | Spawn Hermes agent | Value stripped/ignored for Hermes runtime | Model override applied |
-| C-07 | Profile-side model change | Agent idle | Change model on profile; next mention | Next session uses new model; no restart badge in Crew | Crew restart required |
+| C-07 | Profile-side model change | Agent idle | Change model through Crew/profile; next mention | Read-back value appears and next fresh session uses it; `!rotate` forces one | Crew restart required |
 | C-08 | Memory isolation | Agents A(P1), B(P2) in one community | Teach A a fact; ask B | B cannot recall it | Cross-profile recall |
 | C-09 | Skill inheritance | Skill installed into P outside Crew | Dispatch turn | Skill usable in turn | Crew-side re-install needed |
 | C-10 | Duplicate binding | Agent A bound to P, running | Create agent B bound to P | Warn or block with explanation | Silent double-bind |
 | C-11 | Parallelism guard | Hermes agent, parallelism=4 requested | Save/spawn | Behavior per S0-4 verdict (cap or proven-safe) | Corrupted profile session store |
-| C-12 | Unauthenticated profile | P exists, provider logged out | Readiness view / spawn attempt | "Needs login" + command hint; spawn blocked or clearly failed | Opaque crash loop |
+| C-12 | Unauthenticated profile | P exists, provider logged out | Readiness view / spawn attempt | Honest `auth-unknown`; no false login badge or headless probe | Opaque crash loop or claimed auth success |
 | C-13 | Offboarding | Agent bound to P | Delete agent, choose "keep" | Record gone; P intact and re-attachable | Profile deleted |
 | C-14 | Offboarding-delete | Agent bound to P | Delete agent, choose "delete" | P removed after explicit confirmation | Deletion without the choice |
 | C-15 | Non-Hermes unaffected | Goose/Claude/Codex agents | All above flows | Behavior identical to today | Any regression |
@@ -495,13 +495,15 @@ Records: [`spikes/0009`](../spikes/0009-profile-bound-hermes-acp-spawn.md),
   own terminal tool, so the MCP server is the only reply path (§7.2
   updated).
 
-### Slice 2 — Crew UI: binding, readiness, no-model
+### Slice 2 — Crew UI: binding, readiness, profile editing — **SHIPPED in #104, #134, #118**
 
-- Preconditions: Slice 1 lived-in; S0-2/S0-3/S0-5 conclusive; contract
-  tests C-03, C-04, C-05, C-06, C-10, C-12 RED first.
-- Content: profile field on create/edit for runtime=Hermes; readiness
-  surface; model-field suppression + injection guard; duplicate-binding
-  guard.
+- Shipped: profile field and create-in-place lifecycle, named readiness and
+  repair routing, duplicate-binding guard, `BUZZ_ACP_MODEL` suppression,
+  profile model/provider write-through, exact-byte `SOUL.md` editing,
+  skippable persona-at-birth, and optional Layer-3 instructions. Non-Hermes
+  runtimes retain their existing adapter model controls and no persona editor.
+- Remaining: a truthful Hermes headless auth probe (C-12), live session model
+  discovery, and the upstream tier-1 sync work described in Slice 3.
 - Upstream-file edits (persona editor, create flow, spawn resolver) must
   each carry the "why composition is insufficient / expected diff size"
   justification per the FEATURE template.

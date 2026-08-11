@@ -43,10 +43,6 @@ export function HermesProfileModelField({
   const [notice, setNotice] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    void queryClient.invalidateQueries({ queryKey });
-  }, [queryClient, queryKey]);
-
-  React.useEffect(() => {
     if (!okResult(query.data)) return;
     setProvider(query.data.provider ?? "");
     setModel(query.data.model ?? "");

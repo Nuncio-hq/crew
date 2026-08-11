@@ -1112,6 +1112,7 @@ export function AgentInstanceEditDialog({
               modelDropdownOptions={modelDropdownOptions}
               modelOwnedByProfile={modelOwnedByProfile}
               modelWriteThrough={modelWriteThrough}
+              personaDoc={selectedRuntime?.capabilities?.personaDoc ?? "none"}
               modelRequired={modelRequired}
               modelSelectValue={modelSelectValue}
               modelStatusMessage={modelStatusMessage}
@@ -1207,7 +1208,6 @@ export function AgentInstanceEditDialog({
                 ) : null}
               </AnimatePresence>
             </div>
-
             {updateMutation.error instanceof Error ? (
               <p
                 className="text-sm text-destructive"

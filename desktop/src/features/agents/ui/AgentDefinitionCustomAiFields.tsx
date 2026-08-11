@@ -34,6 +34,7 @@ export function AgentDefinitionCustomAiFields({
   modelFieldVisible,
   modelOwnedByProfile,
   modelWriteThrough,
+  hasPersona,
   modelSelectValue,
   onCustomModelChange,
   onHermesProfileChange,
@@ -71,6 +72,7 @@ export function AgentDefinitionCustomAiFields({
   modelFieldVisible: boolean;
   modelOwnedByProfile: boolean;
   modelWriteThrough: boolean;
+  hasPersona: boolean;
   modelSelectValue: string;
   onCustomModelChange: (next: string) => void;
   onHermesProfileChange: (next: string) => void;
@@ -181,11 +183,12 @@ export function AgentDefinitionCustomAiFields({
         hermesProfile={hermesProfile}
         modelOwnedByProfile={modelOwnedByProfile}
         modelWriteThrough={modelWriteThrough}
+        personaDoc={hasPersona ? "soulMd" : "none"}
         onHermesProfileChange={onHermesProfileChange}
         respondTo={respondTo}
         showProfileField={showHermesProfileField}
       />
-      <AgentInstructionsHelper hasPersona={modelWriteThrough} />
+      <AgentInstructionsHelper hasPersona={hasPersona} />
     </>
   );
 }

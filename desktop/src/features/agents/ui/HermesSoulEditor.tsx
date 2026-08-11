@@ -33,9 +33,6 @@ export function HermesSoulEditor({
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    void queryClient.invalidateQueries({ queryKey });
-  }, [queryClient, queryKey]);
-  React.useEffect(() => {
     if (query.data?.status !== "ok") return;
     setContent(query.data.content);
     setSavedContent(query.data.content);

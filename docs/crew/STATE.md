@@ -332,9 +332,15 @@ and in flight.
   adapter after `!rotate` with no respawn. Operational requirement found:
   `BUZZ_ACP_MCP_COMMAND=buzz-dev-mcp` is mandatory (Hermes' sandbox strips
   `BUZZ_*` from its own terminal tool).
-- Next gates: Slice 2 (binding/readiness/no-model UI + RED contracts),
-  Slice 3 (upstream tier-1 PR to block/buzz), Slice 4 (profile lifecycle
-  UI).
+- Slice 2 profile binding/readiness and Slice 4 lifecycle are shipped across
+  #104 and #134. Issue #118 adds the profile model/provider write-through
+  editor, exact-byte `SOUL.md` editor, skippable persona-at-birth step, and
+  optional Layer-3 instructions. Hermes remains authoritative: L1
+  `SOUL.md` is the Hermes-owned profile persona, L2 `base_prompt.md` is
+  harness-owned office rules, and L3 is optional per-agent Crew job context
+  appended only when non-empty.
+- Remaining: a truthful Hermes headless auth probe, live session model
+  discovery, and the upstream tier-1 sync work described in the feature plan.
 - Issue #119 profile lifecycle hardening now includes named Hermes readiness
   projection, generic preflight/nudge routing, Crew-owned archive/restore and
   permanent-delete backend contracts, readiness indicators, archive

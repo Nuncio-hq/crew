@@ -6,19 +6,23 @@ export type RuntimeCapabilities = {
 
 /** Persona filenames owned by capability descriptors, not render branches. */
 export const runtimePersonaDocument = {
-  soulMd: "SOUL.md",
-  none: null,
+  hermes: "SOUL.md",
 } as const;
+
+const runtimePersonaKinds: Record<string, RuntimeCapabilities["personaDoc"]> = {
+  hermes: "soulMd",
+};
 
 export function deriveRuntimeCapabilities(
   runtime:
     | Pick<
         {
+          id: string;
           profileArg?: string | null;
           providerLocked?: boolean;
           modelEnvVar: string | null;
         },
-        "profileArg" | "providerLocked" | "modelEnvVar"
+        "id" | "profileArg" | "providerLocked" | "modelEnvVar"
       >
     | undefined,
 ): RuntimeCapabilities {
@@ -29,7 +33,7 @@ export function deriveRuntimeCapabilities(
   );
   return {
     modelSource: profileWriteThrough ? "profileWriteThrough" : "adapterSetting",
-    personaDoc: profileWriteThrough ? "soulMd" : "none",
+    personaDoc: runtimePersonaKinds[runtime?.id ?? ""] ?? "none",
     layer3: "append",
   };
 }

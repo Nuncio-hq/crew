@@ -51,6 +51,10 @@ type UnavailablePersistence = {
   kind: "unavailable";
 };
 
+type NoPersistence = {
+  kind: "none";
+};
+
 export type AgentConfigFieldDescriptor =
   | {
       kind: "provider";
@@ -63,7 +67,7 @@ export type AgentConfigFieldDescriptor =
   | {
       kind: "model";
       optionSource: "acpModels";
-      persistence: NormalizedFieldPersistence;
+      persistence: NormalizedFieldPersistence | NoPersistence;
       targetApplication:
         | { kind: "envVar"; key: string }
         | { kind: "acpNative" }
@@ -216,7 +220,9 @@ export function deriveAgentConfigFieldModel({
   fields.push({
     kind: "model",
     optionSource: "acpModels",
-    persistence: { kind: "normalizedField", field: "model" },
+    persistence: profileWriteThrough
+      ? { kind: "none" }
+      : { kind: "normalizedField", field: "model" },
     targetApplication: profileWriteThrough
       ? { kind: "profileWriteThrough" }
       : runtime?.modelEnvVar

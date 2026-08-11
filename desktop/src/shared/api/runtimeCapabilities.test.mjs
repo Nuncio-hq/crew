@@ -38,7 +38,12 @@ function entry(metadata = {}) {
 test("capabilities derive Hermes profile ownership from catalog facts", () => {
   assert.deepEqual(
     deriveRuntimeCapabilities(
-      entry({ profileArg: "-p", providerLocked: true, modelEnvVar: null }),
+      entry({
+        id: "hermes",
+        profileArg: "-p",
+        providerLocked: true,
+        modelEnvVar: null,
+      }),
     ),
     {
       modelSource: "profileWriteThrough",
@@ -50,11 +55,36 @@ test("capabilities derive Hermes profile ownership from catalog facts", () => {
 
 test("non-Hermes and unknown runtimes use adapter settings without persona docs", () => {
   for (const runtime of [
-    entry({ id: "claude" }),
-    entry({ id: "codex" }),
-    entry({ id: "goose", modelEnvVar: "GOOSE_MODEL" }),
-    entry({ id: "buzz-agent", modelEnvVar: "BUZZ_AGENT_MODEL" }),
-    entry({ id: "custom" }),
+    entry({
+      id: "claude",
+      profileArg: "-p",
+      providerLocked: true,
+      modelEnvVar: null,
+    }),
+    entry({
+      id: "codex",
+      profileArg: "-p",
+      providerLocked: true,
+      modelEnvVar: null,
+    }),
+    entry({
+      id: "goose",
+      modelEnvVar: "GOOSE_MODEL",
+      profileArg: "-p",
+      providerLocked: true,
+    }),
+    entry({
+      id: "buzz-agent",
+      modelEnvVar: "BUZZ_AGENT_MODEL",
+      profileArg: "-p",
+      providerLocked: true,
+    }),
+    entry({
+      id: "custom",
+      profileArg: "-p",
+      providerLocked: true,
+      modelEnvVar: null,
+    }),
     undefined,
   ]) {
     assert.deepEqual(deriveRuntimeCapabilities(runtime), {
@@ -66,6 +96,5 @@ test("non-Hermes and unknown runtimes use adapter settings without persona docs"
 });
 
 test("persona filename is data, not a render-time runtime branch", () => {
-  assert.equal(runtimePersonaDocument.soulMd, "SOUL.md");
-  assert.equal(runtimePersonaDocument.none, null);
+  assert.equal(runtimePersonaDocument.hermes, "SOUL.md");
 });

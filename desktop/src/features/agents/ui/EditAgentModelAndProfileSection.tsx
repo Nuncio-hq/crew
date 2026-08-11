@@ -25,6 +25,7 @@ export function EditAgentModelAndProfileSection({
   onHermesProfileChange,
   modelOwnedByProfile,
   modelWriteThrough,
+  personaDoc,
   disabled,
   modelRequired,
   modelDiscoveryLoading,
@@ -44,6 +45,7 @@ export function EditAgentModelAndProfileSection({
   onHermesProfileChange: (next: string) => void;
   modelOwnedByProfile: boolean;
   modelWriteThrough: boolean;
+  personaDoc: "soulMd" | "none";
   disabled: boolean;
   modelRequired: boolean;
   modelDiscoveryLoading: boolean;
@@ -131,7 +133,7 @@ export function EditAgentModelAndProfileSection({
           ) : null}
         </div>
       )}
-      {modelWriteThrough && hermesProfile.trim() ? (
+      {personaDoc === "soulMd" && hermesProfile.trim() ? (
         <HermesSoulEditor disabled={disabled} profileName={hermesProfile} />
       ) : null}
     </>

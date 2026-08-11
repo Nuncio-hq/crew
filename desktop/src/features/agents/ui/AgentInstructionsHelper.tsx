@@ -6,12 +6,15 @@ export function AgentInstructionsHelper({
   return (
     <div className="space-y-0.5 text-xs text-muted-foreground">
       {hasPersona ? (
-        <p>L1: the profile’s SOUL.md — who the person is.</p>
+        <p>
+          L1 SOUL.md = the profile’s persona, Hermes-owned, Crew edits
+          write-through.
+        </p>
       ) : null}
-      <p>L2: the harness base prompt — office rules.</p>
+      <p>L2 base_prompt.md = office rules, harness-owned.</p>
       <p>
-        L3: this box — job context for this Crew agent only, appended when
-        non-empty.
+        L3 the Crew agent description = optional per-agent job context, appended
+        only when non-empty.
       </p>
     </div>
   );

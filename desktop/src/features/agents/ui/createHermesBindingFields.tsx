@@ -75,6 +75,7 @@ export function CreateHermesBindingFields({
   onHermesProfileChange,
   modelOwnedByProfile,
   modelWriteThrough,
+  personaDoc,
   showProfileField,
   respondTo,
 }: {
@@ -84,6 +85,7 @@ export function CreateHermesBindingFields({
   onHermesProfileChange: (next: string) => void;
   modelOwnedByProfile: boolean;
   modelWriteThrough: boolean;
+  personaDoc: "soulMd" | "none";
   showProfileField: boolean;
   respondTo?: RespondToMode | null;
 }) {
@@ -107,7 +109,7 @@ export function CreateHermesBindingFields({
       ) : modelOwnedByProfile ? (
         <ProfileOwnedModelRow profileName={hermesProfile} />
       ) : null}
-      {modelWriteThrough && hermesProfile.trim() ? (
+      {personaDoc === "soulMd" && hermesProfile.trim() ? (
         <HermesSoulEditor profileName={hermesProfile} />
       ) : null}
     </>

@@ -75,6 +75,7 @@ export function fromRawAcpRuntimeCatalogEntry(
       maxParallelism: entry.max_parallelism,
     }),
     capabilities: deriveRuntimeCapabilities({
+      id: entry.id,
       profileArg: entry.profile_arg,
       providerLocked: entry.provider_locked,
       modelEnvVar: entry.model_env_var ?? null,

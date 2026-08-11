@@ -79,6 +79,7 @@ import {
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
 import { useCreateHermesBinding } from "./createHermesBindingFields";
 import { resolveHermesProfileForCreate } from "../lib/hermesProfileBinding";
+import { deriveModelFieldVisibility } from "../lib/modelFieldVisibility";
 import { AgentDefinitionCustomAiFields } from "./AgentDefinitionCustomAiFields";
 import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload";
 import { AgentDefinitionDialogFooter } from "./AgentDefinitionDialogFooter";
@@ -487,12 +488,14 @@ export function AgentDefinitionDialog({
     secretEnvVar: topLevelSecretEnvVar,
     value: apiKeyValue,
   } = apiKeyFieldState;
-  const providerIsRequired =
-    aiConfigurationMode === "custom" && runtimeCanChooseLlmProvider;
-  const modelFieldVisible =
-    !modelOwnedByProfile &&
-    !modelWriteThrough &&
-    (runtime.trim().length > 0 || blankRuntimeModelProviderEditable);
+  const { modelFieldVisible, providerIsRequired } = deriveModelFieldVisibility({
+    aiConfigurationMode,
+    blankRuntimeModelProviderEditable,
+    modelOwnedByProfile,
+    modelWriteThrough,
+    runtime,
+    runtimeCanChooseLlmProvider,
+  });
   const isExplicitModelRequired = aiConfigurationMode === "custom";
   const customAiPairSatisfied = agentAiConfigurationModeSatisfied(
     aiConfigurationMode,
@@ -518,7 +521,6 @@ export function AgentDefinitionDialog({
     customAiPairSatisfied &&
     hermesProfileError == null &&
     !isAvatarUploadPending;
-
   // Merge global env as the base layer so credential keys satisfied via global
   // config are available to model discovery — same rationale as in AgentInstanceEditDialog.
   const envVarsForDiscovery = React.useMemo(
@@ -634,7 +636,6 @@ export function AgentDefinitionDialog({
   const advancedFieldsTransition = shouldReduceMotion
     ? { duration: 0 }
     : ADVANCED_FIELDS_MOTION_TRANSITION;
-
   React.useEffect(() => {
     if (
       !open ||
@@ -648,7 +649,6 @@ export function AgentDefinitionDialog({
     ) {
       return;
     }
-
     setModel("");
     setIsCustomModelEditing(false);
   }, [
@@ -883,6 +883,9 @@ export function AgentDefinitionDialog({
                 modelFieldVisible={modelFieldVisible}
                 modelOwnedByProfile={modelOwnedByProfile}
                 modelWriteThrough={modelWriteThrough}
+                hasPersona={
+                  selectedRuntime?.capabilities?.personaDoc === "soulMd"
+                }
                 modelSelectValue={modelSelectValue}
                 onCustomModelChange={setModel}
                 onHermesProfileChange={(next) => {
@@ -1002,7 +1005,6 @@ export function AgentDefinitionDialog({
                 ) : null}
               </AnimatePresence>
             </div>
-
             {error ? (
               <p className="text-sm text-destructive">{error.message}</p>
             ) : null}
