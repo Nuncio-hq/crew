@@ -106,9 +106,9 @@ limits, cleanup, and result, matching
 
 ```bash
 . ./bin/activate-hermit
-just relay-up
+just relay
 cargo build -p buzz-acp -p buzz-dev-mcp
-pnpm --filter buzz exec playwright test desktop/tests/e2e/mission-inbox.spec.ts
+cd desktop && pnpm exec playwright test tests/e2e/mission-inbox.spec.ts
 just desktop-typecheck
 git diff --check
 ```
