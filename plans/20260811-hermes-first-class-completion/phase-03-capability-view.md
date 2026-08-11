@@ -13,7 +13,8 @@ gateway/cron/webhook presence, **drop this phase**. Do not render invented
 parity: Crew must show `Unknown`, not infer or fabricate capability facts.
 The audit found no shipped capability view; only #118's planned descriptor
 overlaps the surface
-(`/home/ubuntu/hermes-104-evidence.md:513-522`).
+(`plans/20260810-hermes-profile-editing/plan.md:69-96`,
+PR #123 / branch `docs/plans-issues-117-121`).
 
 ## Gate 1 — spike S-B protocol
 
@@ -37,9 +38,9 @@ Define outcomes before running:
 | INCONCLUSIVE | Version/platform/provider differences prevent a stable conclusion | Keep R3 blocked; ask founder/upstream rather than degrade silently |
 
 The existing MCP guard is a fact about Crew's spawn policy, not a profile
-capability list: `crates/buzz-acp/src/config.rs:735-743` and
-`/home/ubuntu/hermes-104-evidence.md:62-67`. It may be surfaced as a diagnostic
-label, never as proof that configured MCP servers exist.
+capability list: `crates/buzz-acp/src/config.rs:735-743` on main. It may be
+surfaced as a diagnostic label, never as proof that configured MCP servers
+exist.
 
 ## Ownership and conditional design
 
@@ -63,16 +64,16 @@ Write tests only after S-B PASS, then run them RED before implementation:
 
 | ID | Scenario | Expected | Forbidden |
 | --- | --- | --- | --- |
-| C-01 | Stable skills JSON exists | Typed count/status appears | Rendering profile skill contents |
-| C-02 | Stable tools JSON exists | Typed count/status appears | Assuming every tool is executable |
-| C-03 | Computer-use fact exists | Explicit availability state | Inferring from a tool name |
-| C-04 | Configured MCP JSON exists | Redacted server names/statuses | Leaking URLs, tokens, or config |
-| C-05 | Gateway/cron/webhook fact exists | Presence/status only | Copying schedules, payloads, or endpoints |
-| C-06 | One category is unavailable | `Unknown` for that category | Invented zero/false parity |
-| C-07 | External profile changes | Refresh updates facts | Stale card with no refresh path |
-| C-08 | MCP guard is active | Visible sandbox diagnostic | Claiming configured MCP is available |
-| C-09 | #118 descriptor is present | One agreed card/owner | A second overlapping capability card |
-| C-10 | Profile contains sensitive fields | Values never cross boundary | Raw YAML/JSON in relay, logs, or screenshot |
+| CV-01 | Stable skills JSON exists | Typed count/status appears | Rendering profile skill contents |
+| CV-02 | Stable tools JSON exists | Typed count/status appears | Assuming every tool is executable |
+| CV-03 | Computer-use fact exists | Explicit availability state | Inferring from a tool name |
+| CV-04 | Configured MCP JSON exists | Redacted server names/statuses | Leaking URLs, tokens, or config |
+| CV-05 | Gateway/cron/webhook fact exists | Presence/status only | Copying schedules, payloads, or endpoints |
+| CV-06 | One category is unavailable | `Unknown` for that category | Invented zero/false parity |
+| CV-07 | External profile changes | Refresh updates facts | Stale card with no refresh path |
+| CV-08 | MCP guard is active | Visible sandbox diagnostic | Claiming configured MCP is available |
+| CV-09 | #118 descriptor is present | One agreed card/owner | A second overlapping capability card |
+| CV-10 | Profile contains sensitive fields | Values never cross boundary | Raw YAML/JSON in relay, logs, or screenshot |
 
 ## Implementation after approval
 
@@ -106,7 +107,7 @@ git diff --check
 
 - [ ] S-B is PASS, with two reproducible JSON captures and no secrets.
 - [ ] Q2 and #118 ownership are resolved before RED tests.
-- [ ] C-01…C-10 are RED before implementation and GREEN afterward.
+- [ ] CV-01…CV-10 are RED before implementation and GREEN afterward.
 - [ ] Every unavailable fact renders `Unknown`; no invented parity ships.
 - [ ] MCP guard is visible as a sandbox diagnostic only.
 - [ ] No editor, profile-content copy, or second capability card is introduced.

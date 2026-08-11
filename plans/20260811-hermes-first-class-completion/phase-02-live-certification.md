@@ -2,20 +2,22 @@
 
 - **Status:** Proposed — not approved, not implemented
 - **Issue:** #104 remainder / R2
-- **Depends on:** PR #126 merged; spikes S-D; no production code
+- **Depends on:** PR #126 merged; spike S-D; no production code
 - **Deliverable:** Two `docs/crew/verification/00NN-*.md` records
 - **Boundary:** A real `hermes -p <profile> acp` process, isolated relay, disposable profile
 
 ## Deliverable
 
 Produce two reproducible verification records, not implementation. Existing
-main code has the durable elicitation substrate, ownership checks, and
-Needs-you projection, but no real-Hermes Needs You certification
-(`/home/ubuntu/hermes-104-evidence.md:438-491`). Existing verification 0006
-proves a real Hermes relay round-trip and makes
+main code has the durable elicitation substrate and same-turn continuation
+(`crates/buzz-acp/src/elicitation.rs:1543-1617`,
+`crates/buzz-acp/src/acp.rs:1586-1647`), while the verification index currently
+holds records 0001–0006 only
+(`docs/crew/verification/README.md:1-10`). Existing verification 0006 proves
+a real Hermes relay round-trip and makes
 `BUZZ_ACP_MCP_COMMAND=buzz-dev-mcp` mandatory
-(`/home/ubuntu/hermes-104-evidence.md:506-512`; verification record
-`docs/crew/verification/0006-hermes-slice1-live-roundtrip.md:1-16`).
+(`docs/crew/verification/0006-hermes-slice1-live-roundtrip.md:21-24,56-76`).
+The requested real-Hermes Needs You certification is therefore new.
 
 This phase must land after PR #126 (issue #110's channel question-card fix).
 The question card is the UI under test; a passing protocol trace without the
@@ -83,12 +85,15 @@ Use a deterministic local Git fixture and a Project thread:
 | Stop | Stop/cancel releases active-turn/worktree state | Cleanup bug issue |
 | Result | Record branch/commit facts or explicit no-code result | Evidence-surface bug issue; no manual annotation workaround |
 
-The substrate is engine-generic and already documented, while Hermes-specific
-certification is absent
-(`/home/ubuntu/hermes-104-evidence.md:494-503`). PR #128 adds durable evidence
-events/cards but not a Project-runner result projection
-(`/home/ubuntu/hermes-104-evidence.md:494-503`); this record must not silently
-convert a generic evidence card into Hermes proof.
+The substrate is engine-generic and already documented
+(`docs/crew/STATE.md:118-127` on main; `crates/buzz-acp/src/thread_workspace.rs:29-61`
+on main), while Hermes-specific certification is absent. PR #128 adds durable
+evidence event kinds (`crates/buzz-cli/src/commands/evidence.rs:1-64`,
+PR #128 / branch `devin/1786360062-evidence-thread-log`) but not a
+Project-runner result projection; the base prompt only requires linking
+Buzz-hosted results (`crates/buzz-acp/src/base_prompt.md:32-34` on main).
+This record must not silently convert a generic evidence card into Hermes
+proof.
 
 ## Implementation after approval
 
