@@ -57,29 +57,45 @@ and 48 children (80.04 ms to 1,107.26 ms for the batch), indicating CPU or
 process-launch contention rather than an FD ceiling. The measurement did not
 run a model turn, so it contains no native-tool turn RSS.
 
-### Turns and warm sessions
+### Turns and warm sessions — measured on authenticated engines
 
-First-token latency for a cold process and a warm-session `session/new` were
-**UNMEASURED**. The real Codex ACP attempt reached initialization but rejected
-`session/new` with:
+The owner completed device-code login for Codex (`codex login --device-auth`)
+and for the official xAI Grok Build CLI (`grok login --device-auth`,
+`grok 1.0.0`), so the previously UNMEASURED rows are now observed. Each engine
+was spawned once, initialized, given one turn on a cold session, then given a
+second turn on a **new session created on the same warm process**. RSS is the
+adapter process plus its direct children; the prompt was a single-token reply
+(`Reply with exactly: PONG`), so first-token latency is dominated by the model
+round trip, not by Crew.
 
-```text
-Internal error: plan type is required for chatgpt authentication
-```
+| Measurement | Codex (`codex-acp` 1.1.14) | Grok (`grok agent stdio` 1.0.0) |
+| --- | ---: | ---: |
+| spawn → `initialize` returned | 352.4 ms | 201.6 ms |
+| spawn → cold session ready (`session/new`) | 1,503.2 ms | 1,302.2 ms |
+| cold session first token | 3,084.5 ms | 3,310.8 ms |
+| cold turn total | 3,459.9 ms | 3,358.9 ms |
+| **warm `session/new`** | **100.3 ms** | **50.1 ms** |
+| warm session first token | 3,649.7 ms | 920.8 ms |
+| warm `session/new` → first token | 3,750.0 ms | 971.0 ms |
+| idle RSS after `initialize` | 145.0 MiB | 70.1 MiB |
+| peak RSS across two turns | 159.2 MiB | 109.4 MiB |
+| RSS growth from idle | +14.2 MiB | +39.3 MiB |
 
-The standalone Codex CLI then reached the backend and returned HTTP 401:
+Assets: `assets/0019-native-tool-process-cost/real-codex-latency.json`,
+`assets/0019-native-tool-process-cost/real-grok-latency.json`, probe script
+`assets/0019-native-tool-process-cost/acp_latency_probe.py`.
 
-```text
-auth_recovery_outcome="recovery_failed_permanent"
-Turn error: Your access token could not be refreshed because you have since
-logged out or signed in to another account. Please sign in again.
-```
+Two things matter for the process-per-thread question:
 
-Consequently, one-turn RSS, cold first-token latency, warm-session creation
-latency, and warm-session first-token latency have no observed values. No
-modeled values are substituted.
+1. **A new session on a warm process costs 50–100 ms; a new process costs
+   1.30–1.50 s before the session is even usable.** Process-per-`(agent,
+   thread)` therefore adds roughly 1.2–1.4 s of dead time to every first
+   message in a new thread — 13–30× the warm-session path.
+2. **Turn RSS is modest** (+14 MiB Codex, +39 MiB Grok over idle), so the
+   dominant per-process cost is the ~70–145 MiB idle baseline, matching the
+   idle scaling measured above.
 
-Claude idle/turn RSS and all Claude latency measurements are **UNMEASURED**:
+Claude idle/turn RSS and all Claude latency measurements remain **UNMEASURED**:
 the `claude` binary was not installed in this environment
 (`bash: claude: command not found`).
 
@@ -137,13 +153,26 @@ that change.
 
 ## Recommendation
 
-Do not reshape Slice 3 to process-per-thread based on this measurement alone.
-At 48 Codex ACP processes, idle aggregate RSS was 4.46 GiB and no RAM or FD
-ceiling was reached on the 31.4 GiB VM, but batch launch time increased from
-80.04 ms at 24 to 1,107.26 ms at 48. Native-turn cost is unknown because
-authentication blocked every real turn, and Claude was unavailable. Keep the
-current two-tier model and its explicit limitation until a fresh credential
-permits first-token/turn measurements and a real session-addressed native
-permission test. If that test shows the native floor must be process-scoped,
-use these numbers as a baseline for a separately scoped process-per-thread
-design rather than silently assuming it is cheap.
+**Do not implement process-per-`(agent, thread)`.** Two measured results now
+point the same way:
+
+1. Spike 0018's authenticated real-engine run showed both tested engines
+   enforce a **per-session** native-tool floor on one process (Codex via
+   session-addressed `set_config_option` `mode`, Grok via `set_mode`), so
+   process-per-thread is not required to get a per-thread floor.
+2. The cost of taking it anyway is real: 1.30–1.50 s to a usable session on a
+   cold process versus 50–100 ms for a new session on a warm one, on top of a
+   ~70–145 MiB idle baseline per process (4.46 GiB at 48 Codex processes, and
+   batch launch time degrading from 80.04 ms at 24 to 1,107.26 ms at 48).
+
+The cheaper and stronger change is to source the session's ACP permission mode
+from the channel's role assignment, using the seam Crew already has at
+`crates/buzz-acp/src/pool.rs:1103-1110`, instead of from shared process
+context. That keeps one process per agent and still gives each thread its own
+enforced floor.
+
+Process-per-thread should be reconsidered only for an engine that advertises no
+session-scoped permission control; Claude is untested here
+(`bash: claude: command not found`) and must be measured before any claim is
+made about it. The `pool.rs` re-keying shape above stays on record as the
+baseline cost if that ever becomes necessary.

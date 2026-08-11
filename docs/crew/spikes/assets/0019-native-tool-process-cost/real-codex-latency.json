@@ -1,0 +1,22 @@
+{
+  "engine": "codex",
+  "cmd": "codex-acp",
+  "spawn_to_initialized_ms": 352.4,
+  "idle_rss_kib": 148440,
+  "cold_spawn_to_session_ready_ms": 1503.2,
+  "cold_first_token_ms": 3084.5,
+  "cold_turn_total_ms": 3459.9,
+  "cold_turn_stop": {
+    "stopReason": "end_turn"
+  },
+  "cold_process_to_first_token_ms": 4588.0,
+  "warm_session_new_ms": 100.3,
+  "warm_first_token_ms": 3649.7,
+  "warm_session_new_to_first_token_ms": 3750.0,
+  "warm_turn_total_ms": 3859.2,
+  "warm_turn_stop": {
+    "stopReason": "end_turn"
+  },
+  "peak_rss_kib_two_turns": 163012,
+  "rss_growth_kib": 14572
+}

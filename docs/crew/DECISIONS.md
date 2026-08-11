@@ -714,6 +714,21 @@ agent. Codex and Claude native file/shell tools remain process-level: their
 containment is a process-level union and no per-channel native hard floor is
 claimed. On those engines, denial is a Crew rule, not a wall.
 
+**Amendment (2026-08-11) — the native-tool clause is narrower than written.**
+Spike 0018's authenticated real-engine run showed Codex and Grok each enforce a
+per-session native-tool floor on a single process: Codex honors
+session-addressed `session/set_config_option` with `configId: mode` (a
+`read-only` session was denied a file write while a sibling `agent` session on
+the same PID wrote successfully), and Grok honors `session/set_mode`. The
+process-level restriction is a property of Crew's spawn path (`agent_args` such
+as Codex `-s`), not of those engines. "Denial is a Crew rule, not a wall"
+therefore applies only to engines that expose no session-scoped permission
+control, and must not be asserted for Codex or Grok. Sourcing the session
+permission mode from the channel's role assignment (the existing seam at
+`crates/buzz-acp/src/pool.rs:1103-1110`) is the follow-on work; Slice 3 as
+shipped in #148 predates this evidence and remains dev-mcp only. Claude is
+untested (binary unavailable) and keeps the original wording until measured.
+
 ## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
 
 - **Status:** Accepted

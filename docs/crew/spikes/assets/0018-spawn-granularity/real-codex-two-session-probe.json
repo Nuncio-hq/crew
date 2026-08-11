@@ -1,0 +1,364 @@
+{
+  "findings": {
+    "engine": "codex",
+    "cmd": [
+      "codex-acp"
+    ],
+    "started": 1786429773.992824,
+    "initialize": {
+      "protocolVersion": 1,
+      "agentInfo": {
+        "name": "@agentclientprotocol/codex-acp",
+        "title": "Codex",
+        "version": "1.1.14"
+      },
+      "agentCapabilities": {
+        "auth": {
+          "logout": {}
+        },
+        "providers": {},
+        "loadSession": true,
+        "promptCapabilities": {
+          "embeddedContext": true,
+          "image": true
+        },
+        "sessionCapabilities": {
+          "resume": {},
+          "list": {},
+          "close": {},
+          "delete": {},
+          "additionalDirectories": {}
+        },
+        "mcpCapabilities": {
+          "acp": false,
+          "http": true,
+          "sse": false
+        }
+      },
+      "authMethods": [
+        {
+          "id": "api-key",
+          "name": "API Key",
+          "description": "Use an API key to authenticate",
+          "_meta": {
+            "api-key": {
+              "provider": "openai"
+            }
+          }
+        },
+        {
+          "id": "chat-gpt",
+          "name": "ChatGPT",
+          "description": "Use ChatGPT to authenticate"
+        }
+      ],
+      "_meta": {
+        "steering": {
+          "supported": true
+        },
+        "goal": {
+          "version": 1,
+          "controlMethod": "_session/goal",
+          "actions": [
+            "set",
+            "pause",
+            "resume",
+            "clear"
+          ]
+        }
+      }
+    },
+    "session_new_a": {
+      "sessionId": "019fef83-1ce7-7ca2-95f7-84eae469350a",
+      "modes": {
+        "availableModes": [
+          {
+            "id": "read-only",
+            "name": "Read-only",
+            "description": "Requires approval to edit files and run commands."
+          },
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Read and edit files, and run commands."
+          },
+          {
+            "id": "agent-full-access",
+            "name": "Agent (full access)",
+            "description": "Codex can edit files outside this workspace and run commands with network access. Exercise caution when using."
+          }
+        ],
+        "currentModeId": "agent"
+      }
+    },
+    "session_new_b": {
+      "sessionId": "019fef83-1d39-7480-9987-3ccb353af4d5",
+      "modes": {
+        "availableModes": [
+          {
+            "id": "read-only",
+            "name": "Read-only",
+            "description": "Requires approval to edit files and run commands."
+          },
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Read and edit files, and run commands."
+          },
+          {
+            "id": "agent-full-access",
+            "name": "Agent (full access)",
+            "description": "Codex can edit files outside this workspace and run commands with network access. Exercise caution when using."
+          }
+        ],
+        "currentModeId": "agent"
+      }
+    },
+    "same_process_pid": 481372,
+    "session_ids": {
+      "a": "019fef83-1ce7-7ca2-95f7-84eae469350a",
+      "b": "019fef83-1d39-7480-9987-3ccb353af4d5"
+    },
+    "distinct_session_ids": true,
+    "a_turn1_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "totalTokens": 14421,
+        "inputTokens": 7502,
+        "cachedReadTokens": 6912,
+        "outputTokens": 7,
+        "thoughtTokens": 0
+      },
+      "_meta": {
+        "quota": {
+          "token_count": {
+            "totalTokens": 14421,
+            "inputTokens": 7502,
+            "cachedInputTokens": 6912,
+            "outputTokens": 7,
+            "reasoningOutputTokens": 0
+          },
+          "model_usage": [
+            {
+              "model": "gpt-5.6-sol",
+              "token_count": {
+                "totalTokens": 14421,
+                "inputTokens": 7502,
+                "cachedInputTokens": 6912,
+                "outputTokens": 7,
+                "reasoningOutputTokens": 0
+              }
+            }
+          ]
+        }
+      }
+    },
+    "a_turn1_text": "STORED",
+    "b_turn1_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "totalTokens": 17811,
+        "inputTokens": 6798,
+        "cachedReadTokens": 11008,
+        "outputTokens": 5,
+        "thoughtTokens": 0
+      },
+      "_meta": {
+        "quota": {
+          "token_count": {
+            "totalTokens": 17811,
+            "inputTokens": 6798,
+            "cachedInputTokens": 11008,
+            "outputTokens": 5,
+            "reasoningOutputTokens": 0
+          },
+          "model_usage": [
+            {
+              "model": "gpt-5.6-sol",
+              "token_count": {
+                "totalTokens": 17811,
+                "inputTokens": 6798,
+                "cachedInputTokens": 11008,
+                "outputTokens": 5,
+                "reasoningOutputTokens": 0
+              }
+            }
+          ]
+        }
+      }
+    },
+    "b_turn1_text": "NONE",
+    "q1_leaked": false,
+    "a_turn2_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "totalTokens": 18483,
+        "inputTokens": 4393,
+        "cachedReadTokens": 14080,
+        "outputTokens": 10,
+        "thoughtTokens": 0
+      },
+      "_meta": {
+        "quota": {
+          "token_count": {
+            "totalTokens": 18483,
+            "inputTokens": 4393,
+            "cachedInputTokens": 14080,
+            "outputTokens": 10,
+            "reasoningOutputTokens": 0
+          },
+          "model_usage": [
+            {
+              "model": "gpt-5.6-sol",
+              "token_count": {
+                "totalTokens": 18483,
+                "inputTokens": 4393,
+                "cachedInputTokens": 14080,
+                "outputTokens": 10,
+                "reasoningOutputTokens": 0
+              }
+            }
+          ]
+        }
+      }
+    },
+    "a_turn2_text": "STOREDPLUMBUS-7742",
+    "q1_control_a_remembers": true,
+    "q2_session_set_config_option": {
+      "code": -32602,
+      "message": "Invalid params",
+      "data": {
+        "_errors": [],
+        "configId": {
+          "_errors": [
+            "Invalid input: expected string, received undefined"
+          ]
+        }
+      }
+    },
+    "q2_session_set_mode": {
+      "code": -32602,
+      "message": "Invalid params"
+    },
+    "b_write_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "totalTokens": 17951,
+        "inputTokens": 11032,
+        "cachedReadTokens": 6912,
+        "outputTokens": 7,
+        "thoughtTokens": 0
+      },
+      "_meta": {
+        "quota": {
+          "token_count": {
+            "totalTokens": 17951,
+            "inputTokens": 11032,
+            "cachedInputTokens": 6912,
+            "outputTokens": 7,
+            "reasoningOutputTokens": 0
+          },
+          "model_usage": [
+            {
+              "model": "gpt-5.6-sol",
+              "token_count": {
+                "totalTokens": 17951,
+                "inputTokens": 11032,
+                "cachedInputTokens": 6912,
+                "outputTokens": 7,
+                "reasoningOutputTokens": 0
+              }
+            }
+          ]
+        }
+      }
+    },
+    "b_write_text": "NONEI\u2019ll create the requested file with exactly one line.WROTE",
+    "b_file_exists": true,
+    "a_write_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "totalTokens": 18631,
+        "inputTokens": 7616,
+        "cachedReadTokens": 11008,
+        "outputTokens": 7,
+        "thoughtTokens": 0
+      },
+      "_meta": {
+        "quota": {
+          "token_count": {
+            "totalTokens": 18631,
+            "inputTokens": 7616,
+            "cachedInputTokens": 11008,
+            "outputTokens": 7,
+            "reasoningOutputTokens": 0
+          },
+          "model_usage": [
+            {
+              "model": "gpt-5.6-sol",
+              "token_count": {
+                "totalTokens": 18631,
+                "inputTokens": 7616,
+                "cachedInputTokens": 11008,
+                "outputTokens": 7,
+                "reasoningOutputTokens": 0
+              }
+            }
+          ]
+        }
+      }
+    },
+    "a_write_text": "STOREDPLUMBUS-7742I\u2019ll create the requested file with the exact one-line contents.WROTE",
+    "a_file_exists": true,
+    "q2_floor_differs": false,
+    "stderr_tail": [],
+    "finished": 1786429803.0170238
+  },
+  "selected_frames": [
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/new",
+        "params": {
+          "cwd": "/tmp/acp-probe-codex",
+          "mcpServers": []
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/new",
+        "params": {
+          "cwd": "/tmp/acp-probe-codex",
+          "mcpServers": []
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "session/set_config_option",
+        "params": {
+          "sessionId": "019fef83-1d39-7480-9987-3ccb353af4d5",
+          "key": "sandbox_mode",
+          "value": "read-only"
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "session/set_mode",
+        "params": {
+          "sessionId": "019fef83-1d39-7480-9987-3ccb353af4d5",
+          "modeId": "plan"
+        }
+      }
+    }
+  ]
+}

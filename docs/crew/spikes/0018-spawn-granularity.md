@@ -85,6 +85,11 @@ Raw code excerpts are retained in `docs/crew/spikes/assets/0018-spawn-granularit
 
 ## Verdict
 
+> **Superseded in part.** The engine-flag `FAIL` and the `INCONCLUSIVE`
+> runtime row below were both overturned by the authenticated real-engine run
+> in “Real-engine two-session run (authoritative)”. Read that section for the
+> current answer; this section records what code inspection alone showed.
+
 - **Code-level MCP/session granularity: PASS.** One ACP process serves multiple channel sessions, and ACP `session/new` carries a distinct `mcpServers` list per session.
 - **Code-level engine startup-flag granularity: FAIL.** `agent_args` and Codex/Claude CLI startup permission flags are process-level. The current shared `PermissionMode` source is not channel-scoped; ACP session config is only a conditional, untested escape hatch.
 - **Runtime desktop+harness two-channel experiment: INCONCLUSIVE.** The wire probe passed, but a real relay/engine run was not available in this environment.
@@ -153,13 +158,109 @@ ModuleNotFoundError: No module named 'acp'
 The Hermes failure is an adapter installation/runtime blocker, not evidence
 about Codex authentication or either engine's session semantics.
 
-No ACP session was created, so there is no honest real-engine transcript for
-either context isolation or session-addressed `set_config_option`. The verdict
-therefore remains **INCONCLUSIVE**. In particular, this run neither confirms
-nor reverses the negative native-tool finding. A fresh, valid ChatGPT OAuth
-credential (and, if required by the adapter, account plan metadata accepted by
-the Codex ACP path) is required before the two-session experiment can answer
-those questions.
+No ACP session was created during that attempt, so it produced no transcript
+for either context isolation or session-addressed `set_config_option`. That
+attempt is retained as history; it is **superseded** by the authenticated
+real-engine run below.
+
+## Real-engine two-session run (authoritative)
+
+The owner completed device-code login for two engines, so both questions were
+answered against live engines instead of a stub:
+
+- `codex-cli 0.147.0` with `@agentclientprotocol/codex-acp 1.1.14`
+  (`codex login --device-auth`, `chat-gpt` auth method);
+- `grok 1.0.0` (`3cd0d0cbce`), official xAI Grok Build CLI, ACP over
+  `grok agent stdio` (`grok login --device-auth`, `cached_token` auth method).
+
+Each run spawned **one** engine process and created **two** sessions on it. No
+credential material was copied into this repository; the probe scripts and
+recorded frames are credential-free.
+
+### Q1 — context isolation across sessions on one process: **PASS, both engines**
+
+Session A was told a code word; session B was asked, in its own session, what
+code word it had been given; session A was then asked to repeat it as a
+positive control.
+
+| Engine | PID | Session A turn 1 | Session B | Session A control | Leaked? |
+|--------|-----|------------------|-----------|-------------------|---------|
+| Codex  | 481372 | `STORED` | `NONE` | `PLUMBUS-7742` | no |
+| Grok   | 483848 | `STORED` | `NONE` | `PLUMBUS-7742` | no |
+
+Both engines kept the two sessions' contexts separate while sharing one
+process, and the control turn proves the probe could have detected a leak.
+
+Assets: `assets/0018-spawn-granularity/real-codex-two-session-probe.json`,
+`assets/0018-spawn-granularity/real-grok-two-session-probe.json`.
+
+### Q2 — per-session native-tool floor on one process: **PASS, both engines**
+
+This **reverses** the earlier negative finding. Codex ACP advertises a
+session-scoped `mode` config option (`read-only` / `agent` /
+`agent-full-access`) in its `session/new` result, and honors a
+session-addressed change to it:
+
+```json
+{"method": "session/set_config_option",
+ "params": {"sessionId": "<B>", "configId": "mode", "value": "read-only"}}
+```
+
+With session B switched to `read-only` and session A left at `agent`, on PID
+483192, both sessions were asked to create a file with their native file
+tool. Session A answered `WROTE` and the file exists; session B answered
+`DENIED` and its file does not exist. The only file in the workspace
+afterwards was session A's.
+
+Grok rejects `set_config_option` (`missing field configId`) but accepts
+session-addressed `session/set_mode`:
+
+```json
+{"method": "session/set_mode", "params": {"sessionId": "<B>", "modeId": "plan"}}
+```
+
+On PID 483848 with a permission-approving client, session A wrote its file and
+session B refused (`DENIED`, no file). Under a permission-**denying** client
+(`real-grok-per-session-floor.json`) neither session could write, because
+Grok's default mode routes the write through a client permission request that
+the probe rejected — the distinction there is *where* the refusal comes from,
+not whether the floor differs.
+
+The earlier `FAIL` was drawn from Crew's own spawn path — `agent_args` such as
+Codex `-s` and Claude `--permission-mode` are fixed per process
+(`crates/buzz-acp/src/config.rs:807-830`, `crates/buzz-acp/src/lib.rs:4738-4755`).
+That remains true, but it is a limitation of **how Crew configures the engine**,
+not of the engines: both tested engines expose a session-addressed permission
+control that they enforce. Crew already has the seam for it —
+`pool.rs:1103-1110` applies `PermissionMode` via session-addressed
+`session/set_config_option` after `session/new`; the value simply comes from
+shared process context rather than the channel's role assignment.
+
+Assets: `assets/0018-spawn-granularity/real-codex-per-session-floor.json`,
+`assets/0018-spawn-granularity/real-grok-per-session-floor.json`, probe
+scripts `acp_two_session_probe.py` and `acp_per_session_floor_probe.py`.
+
+### Revised verdict
+
+- Context isolation per thread: **PASS** (Codex, Grok) — already satisfied
+  today, no change needed.
+- Per-session native-tool floor: **PASS** (Codex via `set_config_option`
+  `mode`, Grok via `set_mode`) — a per-thread hard floor does **not** require
+  one engine process per `(agent, thread)`.
+- Not tested: Claude (`claude` is not installed in this environment) and
+  Hermes (ACP entry point missing its `acp` module). For any engine that
+  advertises no session-scoped permission control, the process-level
+  limitation still stands and must be stated per engine rather than globally.
+
+### Slice 3 implication (revised)
+
+Slice 3's honest ceiling is higher than shipped. Role-decided dev-mcp per
+channel session stays as is; on top of it, the channel's role should also
+select the session's ACP permission mode, so a role-denied channel gets a
+real read-only floor on Codex and Grok instead of a prompt-level rule. The
+"a rule, not a wall" sentence must be narrowed to engines that expose no
+session-scoped permission control, and must not be applied to Codex or Grok
+on the strength of this run.
 
 ## Limitations
 
