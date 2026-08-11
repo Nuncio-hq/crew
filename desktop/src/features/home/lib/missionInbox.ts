@@ -457,6 +457,7 @@ export function deriveMissionInboxSections(
   needsYou.sort((left, right) => left.age - right.age);
   working.sort((left, right) => left.age - right.age);
 
+  // Without an explicit clock input, ages stay fixed until another input changes.
   const key = JSON.stringify({
     acknowledged: [...input.acknowledgedConversationIds].sort(),
     active: input.activeTurns,
@@ -477,7 +478,7 @@ export function deriveMissionInboxSections(
       ? [...input.connectionStateByAgent]
       : [],
     snoozed: [...input.snoozedUntilByConversation],
-    now,
+    now: input.now,
   });
   if (key === lastKey) return lastSections;
   lastKey = key;

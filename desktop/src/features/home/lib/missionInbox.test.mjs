@@ -668,6 +668,23 @@ test("same inputs return a reference-stable snapshot", () => {
   );
 });
 
+test("explicit clock inputs produce distinct snapshots", () => {
+  const input = {
+    ...attentionDefaults,
+    channels,
+    inboxItems: [item("conversation-3", "channel-a", 100)],
+    needsYou: [],
+    activeTurns: [],
+    outcomes: [],
+    acknowledgedConversationIds: new Set(),
+  };
+
+  assert.notStrictEqual(
+    deriveMissionInboxSections({ ...input, now: 100 }),
+    deriveMissionInboxSections({ ...input, now: 200 }),
+  );
+});
+
 test("mission rows use real roots and never promote conversation UUIDs to event ids", async () => {
   const root = "a".repeat(64);
   const [needsYouRow] = deriveMissionInboxSections({
