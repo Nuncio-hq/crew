@@ -27,6 +27,25 @@ The evidence message and both reaction events use the real local relay. The
 agent ownership metadata remains a bridge-config profile injection; see
 [Limits](#limits).
 
+## CI coverage
+
+The new relay-backed desktop spec has **no CI coverage today**. The
+`integration` project runs only in `.github/workflows/ci.yml`, which is
+`disabled_manually` in this fork (workflow id `323540365`). The active
+`.github/workflows/nuncio-crew-ci.yml` runs the smoke project only.
+
+For PR #146, head `70bfa70e7`, the desktop path filter was true but no
+integration job appeared in run
+[31448955605](https://github.com/Nuncio-hq/crew/actions/runs/31448955605).
+The clean-main push run
+[31362178966](https://github.com/Nuncio-hq/crew/actions/runs/31362178966)
+also had no integration job. The lane last appeared under the disabled
+workflow at
+[30534161705/job/90843624305](https://github.com/Nuncio-hq/crew/actions/runs/30534161705/job/90843624305).
+Every relay-backed desktop spec is therefore locally verified only. Issue
+[#147](https://github.com/Nuncio-hq/crew/issues/147) tracks restoring the
+lane.
+
 ## Local relay and test data
 
 The Docker Postgres, Redis, and MinIO services were reused. The relay was
@@ -150,6 +169,45 @@ The clean-base run produced the same failure:
 ```
 
 The branch failure was therefore not caused by the relay mutation changes.
+
+### Smoke shard-1 baseline
+
+Clean-main run
+[31362178966/job/93373095535](https://github.com/Nuncio-hq/crew/actions/runs/31362178966/job/93373095535)
+reported these six failures:
+
+```text
+6 failed
+[smoke] › tests/e2e/channel-activity-popover.spec.ts:274:3 › channel activity hover preview › shows unread channel activity and working agents, then opens the selected thread
+[smoke] › tests/e2e/channel-activity-popover.spec.ts:368:3 › channel activity hover preview › removes the dot and preview after the final activity is read
+[smoke] › tests/e2e/channel-activity-popover.spec.ts:459:3 › channel activity hover preview › supports row actions and opens an agent's scoped activity
+[smoke] › tests/e2e/channel-activity-popover.spec.ts:753:3 › channel activity hover preview › surfaces future replies after the user reacts to a thread root
+[smoke] › tests/e2e/channel-agent-presence.spec.ts:100:3 › channel header agent presence › shows needs-you for a 46040 request and opens its real thread
+[smoke] › tests/e2e/channels.spec.ts:500:1 › channel question card accepts an answer
+```
+
+The PR shard-1 log
+[31448955605/job/93649138295](https://github.com/Nuncio-hq/crew/actions/runs/31448955605/job/93649138295)
+also reported `channels.spec.ts:1951` and `channels.spec.ts:2108`, but
+neither appears in the clean-main failure list above. Both reproduce
+identically on the PR #128 parent commit `df2a9995e`, so they are inherited
+from that base branch rather than introduced by this change:
+
+```text
+Error: expect(locator).toHaveCount failed
+Locator: getByTestId('message-timeline-day-group')
+Expected: 2
+Received: 0
+Timeout: 5000ms
+```
+
+```text
+Error: expect(locator).toContainText failed
+Locator: getByTestId('agent-session-thread-panel')
+Expected substring: "No ACP activity yet"
+Received string: "AaliceActivity · #agents·No updates yet"
+Timeout: 5000ms
+```
 
 ## Mock-boundary audit
 
