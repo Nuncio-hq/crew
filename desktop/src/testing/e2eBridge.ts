@@ -10433,7 +10433,8 @@ export function maybeInstallE2eTauriMocks() {
     const hasParent = history.some(
       (candidate) => candidate.id === parentEventId,
     );
-    if (!hasRoot && !hasParent) {
+    const requestCreatedAt = Math.floor(Date.now() / 1000);
+    if (!hasRoot) {
       // Persist a canonical causal root so hydration can validate the request
       // against the same ancestry that a real relay would retain.
       recordMockMessage(
@@ -10446,8 +10447,26 @@ export function maybeInstallE2eTauriMocks() {
             ["p", requestAgentPubkey],
           ],
           DEFAULT_MOCK_IDENTITY.pubkey,
-          Math.floor(Date.now() / 1000) - 1,
+          requestCreatedAt - 2,
           rootEventId,
+        ),
+      );
+    }
+    if (parentEventId !== rootEventId && !hasParent) {
+      // Preserve a real threaded parent when the caller references one.
+      recordMockMessage(
+        channel.id,
+        createMockEvent(
+          9,
+          "Mock channel question reply",
+          [
+            ["h", channel.id],
+            ["p", requestAgentPubkey],
+            ["e", rootEventId, "", "reply"],
+          ],
+          DEFAULT_MOCK_IDENTITY.pubkey,
+          requestCreatedAt - 1,
+          parentEventId,
         ),
       );
     }
@@ -10465,7 +10484,7 @@ export function maybeInstallE2eTauriMocks() {
             ]),
       ],
       requestAgentPubkey,
-      Math.floor(Date.now() / 1000),
+      requestCreatedAt,
       requestId,
     );
     // Live delivery is not durable in the mock; retain the request for a
