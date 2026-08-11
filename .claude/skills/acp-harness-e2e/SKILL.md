@@ -65,6 +65,41 @@ your primary evidence: it shows the exact `clientCapabilities` on `initialize` a
   `buzz user-input list`-style queries will show all of them; restart the harness between scenarios
   for clean, attributable evidence.
 
+## Verifying prompt-composition features (Crew roles, routing, canvas sections)
+
+When the change injects text into the session prompt (e.g. the channel `crew` block role/routing
+sections from `crates/buzz-core/src/crew_role.rs`, read by `pool.rs::fetch_canvas_section`),
+**the ACP protocol version the fake agent advertises decides where the text lands**:
+
+- `protocolVersion >= 2` → the harness passes the composed prompt as `session/new.systemPrompt`.
+- `protocolVersion == 1` (legacy) → no `systemPrompt`; the per-turn `session/prompt` array carries
+  a `[System]` block instead, composed on a *different* code path.
+
+Make the fake agent's version an env knob (e.g. `FAKE_AGENT_PROTOCOL`) and test **both**: sections
+present on one path can be missing on the other (observed: routing section reached v2 `systemPrompt`
+but not the legacy `[System]` block). Extract evidence from the frame log with a small Python script
+that json-parses each line and dumps `session/new.params.systemPrompt` and every `session/prompt`
+text block, then assert on exact substrings (verbatim founder text, `no agent holds \`X\`…`).
+
+Also note `session/new.params.mcpServers` — an empty list is the evidence that no capability was
+granted, which is what an "unauthorized canvas grants nothing" test needs.
+
+Useful adjacent facts for channel-canvas (kind 40100) testing:
+
+- The desktop `ChannelCanvas` panel is reachable via the channel `⋮` menu → **Canvas** row; the
+  toolbar icons next to it open a terminal/other panels, so prefer the `⋮` path.
+- Authority is the canvas *event author*. To forge a non-owner canvas you do not need a new identity:
+  publish as the agent's own key (already a channel member) with
+  `buzz canvas set --channel <uuid> --content "$(cat file.md)"` — `--file` does not exist.
+- Inspect actual canvas revisions directly:
+  `docker exec buzz-postgres psql -U buzz -d buzz -c "select encode(pubkey,'hex'), created_at from events where kind=40100 order by created_at;"`
+- A durable spool is required before the harness admits prompts; a `$HOME/.local` path is rejected
+  ("writable durable spool ancestor is not trusted"). Create mode-0700 dirs elsewhere and set
+  `BUZZ_ACP_RESOLUTION_OUTBOX_DIR` / `BUZZ_ACP_RECEIPT_OUTBOX_DIR`.
+- `buzz keys generate` may be absent; generate hex keys with `openssl rand -hex 32` instead.
+- Rebuild `-p buzz-acp -p buzz-cli` before capturing frames — stale `target/release` binaries silently
+  produce "missing section" false positives.
+
 ## Devin Secrets Needed
 
 None — everything runs against a local relay with locally generated keys.
