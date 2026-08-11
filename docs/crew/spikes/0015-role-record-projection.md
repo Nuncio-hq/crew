@@ -1,6 +1,11 @@
 # Spike 0015 — Role record shape and projection (`30179` + `10100` crew-role)
 
-- **Status:** PASS
+> **Historical and superseded.** This spike documents the rejected global
+> managed-agent role projection. Slice 1R replaced it with founder-signed
+> `(agent, channel)` assignments in the channel canvas; the identifiers below
+> are retained as experiment evidence and are not shipped role storage.
+
+- **Status:** SUPERSEDED (historical experiment)
 - **Date:** 2026-08-10
 - **Plan:** [`../../../plans/20260810-agent-roles-routing-capability/plan.md`](../../../plans/20260810-agent-roles-routing-capability/plan.md) Slice 0 Spike A
 - **Issue:** [Nuncio-hq/crew#116](https://github.com/Nuncio-hq/crew/issues/116)

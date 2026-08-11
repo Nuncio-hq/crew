@@ -43,6 +43,7 @@ import { hasMention } from "./hasMention";
 import { useDraftMentionRouting } from "./useDraftMentionRouting";
 import { rankMentionCandidates } from "./mentionRanking";
 import { mapMentionCandidateToSuggestion } from "./mentionSuggestionMapping";
+import { useChannelCanvasRoleMap } from "./useChannelCanvasRoleMap";
 import {
   buildAgentAvatarUrlsByName,
   uniqueTrimmedNames,
@@ -106,7 +107,11 @@ export function useMentions(
   const currentPubkey = identityQuery.data?.pubkey
     ? normalizePubkey(identityQuery.data.pubkey)
     : null;
+  const mentionChannelId = isAgentMentionChannelType(options?.channelType)
+    ? channelId
+    : null;
   const membersQuery = useChannelMembersQuery(channelId);
+  const crewRoleByPubkey = useChannelCanvasRoleMap(mentionChannelId);
   const members = externalMembers ?? membersQuery.data;
   const isArchivedDiscovery = useIsArchivedPredicate();
   const managedAgentsQuery = useManagedAgentsQuery();
@@ -198,9 +203,6 @@ export function useMentions(
     () => getSharedChannelIds(channelsQuery.data),
     [channelsQuery.data],
   );
-  const mentionChannelId = isAgentMentionChannelType(options?.channelType)
-    ? channelId
-    : null;
   const mentionableAgentPubkeys = React.useMemo(
     () =>
       getMentionableAgentPubkeys({
@@ -303,6 +305,7 @@ export function useMentions(
             : null) ??
           null,
         isManagedAgent: current.isManagedAgent || candidate.isManagedAgent,
+        crewRoleLabel: current.crewRoleLabel ?? candidate.crewRoleLabel ?? null,
       });
     };
     for (const member of members ?? []) {
@@ -341,6 +344,7 @@ export function useMentions(
           profile?.displayName?.trim() && profile?.nip05Handle?.trim()
             ? profile.nip05Handle
             : null,
+        crewRoleLabel: crewRoleByPubkey.get(pubkey) ?? null,
       });
     }
 
@@ -437,6 +441,7 @@ export function useMentions(
     memberPubkeys,
     members,
     mentionableAgentPubkeys,
+    crewRoleByPubkey,
     personaNameByPubkey,
     profiles,
     relayAgentNamesByPubkey,

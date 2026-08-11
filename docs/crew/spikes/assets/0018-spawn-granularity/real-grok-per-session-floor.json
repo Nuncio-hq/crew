@@ -1,0 +1,143 @@
+{
+ "findings": {
+  "engine": "grok",
+  "cmd": "/home/ubuntu/.grok/bin/grok agent stdio",
+  "started": 1786429915.3906631,
+  "pid": 485003,
+  "session_ids": {
+   "a": "019fef85-41c9-7a01-942f-55ea11db4bfd",
+   "b": "019fef85-422d-71b2-b9c6-2da3d95467b2"
+  },
+  "config_options_advertised": [],
+  "set_config_option_b": {},
+  "b_stop": {
+   "stopReason": "end_turn",
+   "_meta": {
+    "sessionId": "019fef85-422d-71b2-b9c6-2da3d95467b2",
+    "requestId": "71821c1a-49ad-4d6c-afa2-db4c8fa39c2b",
+    "promptId": "71821c1a-49ad-4d6c-afa2-db4c8fa39c2b",
+    "totalTokens": 14422,
+    "modelId": "grok-4.5",
+    "inputTokens": 13657,
+    "outputTokens": 765,
+    "cachedReadTokens": 5504,
+    "reasoningTokens": 760,
+    "usage": {
+     "inputTokens": 13657,
+     "outputTokens": 765,
+     "totalTokens": 14422,
+     "cachedReadTokens": 5504,
+     "cacheCreationTokens": 0,
+     "reasoningTokens": 760,
+     "modelCalls": 1,
+     "apiDurationMs": 12531,
+     "costUsdTicks": 225472000,
+     "modelUsage": {
+      "grok-4.5-build": {
+       "inputTokens": 13657,
+       "outputTokens": 765,
+       "totalTokens": 14422,
+       "cachedReadTokens": 5504,
+       "cacheCreationTokens": 0,
+       "reasoningTokens": 760,
+       "modelCalls": 1,
+       "apiDurationMs": 12531,
+       "costUsdTicks": 225472000
+      }
+     },
+     "numTurns": 1
+    }
+   }
+  },
+  "b_text": "DENIED",
+  "b_file_exists": false,
+  "a_stop": {
+   "stopReason": "cancelled",
+   "_meta": {
+    "sessionId": "019fef85-41c9-7a01-942f-55ea11db4bfd",
+    "requestId": "c346bcea-a2a9-4ba2-a256-b40029563d6a",
+    "promptId": "c346bcea-a2a9-4ba2-a256-b40029563d6a",
+    "totalTokens": 13677,
+    "modelId": "grok-4.5",
+    "inputTokens": 13576,
+    "outputTokens": 99,
+    "cachedReadTokens": 11264,
+    "reasoningTokens": 96,
+    "usage": {
+     "inputTokens": 13576,
+     "outputTokens": 99,
+     "totalTokens": 13675,
+     "cachedReadTokens": 11264,
+     "cacheCreationTokens": 0,
+     "reasoningTokens": 96,
+     "modelCalls": 1,
+     "apiDurationMs": 2620,
+     "costUsdTicks": 85972000,
+     "modelUsage": {
+      "grok-4.5-build": {
+       "inputTokens": 13576,
+       "outputTokens": 99,
+       "totalTokens": 13675,
+       "cachedReadTokens": 11264,
+       "cacheCreationTokens": 0,
+       "reasoningTokens": 96,
+       "modelCalls": 1,
+       "apiDurationMs": 2620,
+       "costUsdTicks": 85972000
+      }
+     },
+     "numTurns": 1
+    },
+    "cancellationCategory": "PermissionRejected"
+   }
+  },
+  "a_text": "",
+  "a_file_exists": false,
+  "denied_requests": [
+   {
+    "sessionId": "019fef85-41c9-7a01-942f-55ea11db4bfd",
+    "toolCall": "Edit `/tmp/acp-probe2-grok/probe-a-24292492.txt`"
+   }
+  ],
+  "floor_differs_per_session": false,
+  "ls_cwd": [],
+  "stderr_tail": [
+   "<redacted: engine stderr contained auth prefixes/bearer fragments>"
+  ]
+ },
+ "selected_frames": [
+  {
+   "send": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "session/new",
+    "params": {
+     "cwd": "/tmp/acp-probe2-grok",
+     "mcpServers": []
+    }
+   }
+  },
+  {
+   "send": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "session/new",
+    "params": {
+     "cwd": "/tmp/acp-probe2-grok",
+     "mcpServers": []
+    }
+   }
+  },
+  {
+   "send": {
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "session/set_mode",
+    "params": {
+     "sessionId": "019fef85-422d-71b2-b9c6-2da3d95467b2",
+     "modeId": "plan"
+    }
+   }
+  }
+ ]
+}

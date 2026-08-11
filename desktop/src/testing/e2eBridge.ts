@@ -13682,7 +13682,15 @@ export function maybeInstallE2eTauriMocks() {
           throw new Error(canvasReadError);
         }
         // Return the no-canvas success shape — content null means no canvas set.
-        return { content: null, updated_at: null, author: null };
+        return {
+          content: null,
+          updated_at: null,
+          author: null,
+          routing: [],
+          assignments: [],
+          dev_mcp_granted: null,
+          crew_parse_error: null,
+        };
       }
       case "read_archived_observer_events_for_channel": {
         const counters = (window as unknown as Record<string, unknown>)

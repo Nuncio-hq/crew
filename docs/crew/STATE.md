@@ -9,7 +9,7 @@ The harness resolves them when creating a fresh channel session and ignores
 non-owner or malformed canvas blocks. Channels without an assignment retain
 the existing prompt behavior.
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
 
 ## Founder product direction (docs)
 
@@ -366,5 +366,10 @@ and in flight.
   `feat/issue-116-agent-roles`: owner-signed `(agent, channel)` assignments
   in the channel canvas `crew` block; free-form labels and carried definitions;
   fresh-session harness injection; no global role projection or taxonomy.
-  Slice 2 (presets) and Slice 3 (capability) not started.
-- Next: orchestrator review → PR; then Slice 2/3 per plan.
+  Slice 2 routing presets are implemented in the canonical Rust parser and
+  injected into fresh channel-session context with exact work-type matching,
+  resolved holders, and explicit founder escalation for unheld roles.
+  Slice 3 capability is implemented with founder-authored role capabilities,
+  channel-session dev-mcp selection, and per-session native-tool floors where the
+  engine advertises session-scoped control (Codex, Grok, Hermes tested; Claude not yet).
+- Next: orchestrator review → PR; no partial MCP allowlists or path containment.

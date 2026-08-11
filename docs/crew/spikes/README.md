@@ -71,4 +71,6 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0015-role-record-projection.md`](0015-role-record-projection.md)
 - [`0016-role-prompt-adherence-matrix.md`](0016-role-prompt-adherence-matrix.md)
 - [`0017-capability-spawn-grant-deny.md`](0017-capability-spawn-grant-deny.md)
+- [`0018-spawn-granularity.md`](0018-spawn-granularity.md)
+- [`0019-native-tool-process-cost.md`](0019-native-tool-process-cost.md)
 - [`0021-evidence-tag-roundtrip.md`](0021-evidence-tag-roundtrip.md)

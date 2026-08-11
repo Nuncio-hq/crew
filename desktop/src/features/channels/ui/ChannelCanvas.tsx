@@ -41,6 +41,10 @@ export function ChannelCanvas({
   const [assignmentDefinition, setAssignmentDefinition] = React.useState("");
 
   const canvasContent = canvasQuery.data?.content ?? null;
+  const routing = canvasQuery.data?.routing ?? [];
+  const assignments = canvasQuery.data?.assignments ?? [];
+  const devMcpGranted = canvasQuery.data?.devMcpGranted;
+  const crewParseError = canvasQuery.data?.crewParseError;
   // Defer the single large Markdown parse so opening the canvas commits the
   // surrounding chrome immediately and the heavy render reconciles after.
   const deferredCanvasContent = React.useDeferredValue(canvasContent);
@@ -139,6 +143,69 @@ export function ChannelCanvas({
           No canvas set for this channel.
         </p>
       )}
+      {crewParseError ? (
+        <p
+          className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          data-testid="channel-canvas-crew-error"
+        >
+          {crewParseError}
+        </p>
+      ) : null}
+      {routing.length > 0 ? (
+        <div
+          className="rounded-xl border border-border/70 px-4 py-3"
+          data-testid="channel-canvas-routing"
+        >
+          <p className="text-sm font-medium">Routing presets</p>
+          <ul className="mt-2 space-y-1 text-sm">
+            {routing.map((preset) => (
+              <li key={preset.workType}>
+                <span className="font-medium">{preset.workType}</span>
+                {" → "}
+                <span>{preset.roleLabel}</span>
+                {": "}
+                {preset.holders.length > 0 ? (
+                  preset.holders.join(", ")
+                ) : (
+                  <span className="text-amber-700 dark:text-amber-300">
+                    {preset.unheldMessage}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {assignments.length > 0 ? (
+        <div
+          className="rounded-xl border border-border/70 px-4 py-3"
+          data-testid="channel-canvas-assignments"
+        >
+          <p className="text-sm font-medium">Channel role assignments</p>
+          <ul className="mt-2 space-y-1 text-sm">
+            {assignments.map((assignment) => (
+              <li key={assignment.agentPubkey}>
+                <span className="font-medium">{assignment.roleLabel}</span>
+                {" · "}
+                <span className="font-mono text-xs">
+                  {assignment.agentPubkey}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {devMcpGranted !== null && devMcpGranted !== undefined ? (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="channel-canvas-capability"
+        >
+          Channel dev-mcp: {devMcpGranted ? "granted" : "denied"}
+          {devMcpGranted
+            ? null
+            : " — this channel's session is also clamped to the engine's read-only mode where the engine honours a session-scoped floor; engines that refuse it fall back to instruction only"}
+        </p>
+      ) : null}
       {canEdit && !isArchived ? (
         <div className="flex flex-wrap gap-2">
           <Button
@@ -195,6 +262,33 @@ export function ChannelCanvas({
             >
               {assignRoleMutation.isPending ? "Assigning..." : "Assign role"}
             </Button>
+            <p className="text-xs text-muted-foreground">
+              If another author last edited this canvas, the default assignment
+              is refused. An explicit overwrite will discard that foreign canvas
+              content and replace it with a founder-signed canvas.
+            </p>
+            {assignRoleMutation.error instanceof Error &&
+            assignRoleMutation.error.message.includes(
+              "review it before assigning",
+            ) ? (
+              <Button
+                data-testid="channel-canvas-overwrite-foreign"
+                disabled={assignRoleMutation.isPending}
+                onClick={() => {
+                  assignRoleMutation.mutate({
+                    agentPubkey: assignmentAgent,
+                    label: assignmentLabel,
+                    definition: assignmentDefinition,
+                    overwriteForeignCanvas: true,
+                  });
+                }}
+                size="sm"
+                type="button"
+                variant="destructive"
+              >
+                Discard foreign canvas and assign
+              </Button>
+            ) : null}
           </div>
           {assignRoleMutation.error instanceof Error ? (
             <p className="basis-full text-sm text-destructive">

@@ -12,7 +12,6 @@ import type {
   AddChannelMembersResult,
   BackendProviderCandidate,
   BackendProviderProbeResult,
-  CanvasResponse,
   GetHomeFeedInput,
   HomeFeedResponse,
   ManagedAgent,
@@ -39,6 +38,7 @@ import type {
   GitBashPrerequisite,
   RuntimeConfigSurface,
 } from "@/shared/api/types";
+export { getCanvas } from "./canvas";
 export * from "@/shared/api/tauriChannels";
 type RawPresenceLookup = Record<string, PresenceStatus>;
 type RawAddChannelMembersResult = {
@@ -214,12 +214,6 @@ type RawListRelayMembersResponse = {
   members: RawRelayMember[];
 };
 
-type RawCanvasResponse = {
-  content: string | null;
-  updated_at: number | null;
-  author: string | null;
-};
-
 type RawSetCanvasResult = {
   ok: boolean;
   event_id: string;
@@ -379,20 +373,6 @@ export async function joinChannel(channelId: string): Promise<void> {
 
 export async function leaveChannel(channelId: string): Promise<void> {
   await invokeTauri("leave_channel", { channelId });
-}
-
-export async function getCanvas(channelId: string): Promise<CanvasResponse> {
-  const response = await invokeTauri<RawCanvasResponse>("get_canvas", {
-    channelId,
-  });
-  return {
-    content: response.content,
-    // Normalize absent keys to null: ensureWelcomeCanvas treats null as
-    // "no canvas yet", and `undefined !== null` would make every fresh
-    // channel look already-seeded.
-    updatedAt: response.updated_at ?? null,
-    author: response.author ?? null,
-  };
 }
 
 export async function setCanvas(

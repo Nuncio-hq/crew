@@ -1,0 +1,22 @@
+{
+  "engine": "grok",
+  "cmd": "/home/ubuntu/.grok/bin/grok agent stdio",
+  "spawn_to_initialized_ms": 201.6,
+  "idle_rss_kib": 71824,
+  "cold_spawn_to_session_ready_ms": 1302.2,
+  "cold_first_token_ms": 3310.8,
+  "cold_turn_total_ms": 3358.9,
+  "cold_turn_stop": {
+    "stopReason": "end_turn"
+  },
+  "cold_process_to_first_token_ms": 4613.5,
+  "warm_session_new_ms": 50.1,
+  "warm_first_token_ms": 920.8,
+  "warm_session_new_to_first_token_ms": 971.0,
+  "warm_turn_total_ms": 953.6,
+  "warm_turn_stop": {
+    "stopReason": "end_turn"
+  },
+  "peak_rss_kib_two_turns": 112076,
+  "rss_growth_kib": 40252
+}

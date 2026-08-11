@@ -1,0 +1,3000 @@
+{
+  "findings": {
+    "engine": "hermes-acp-xai-oauth",
+    "cmd": "/home/ubuntu/.local/bin/hermes-acp",
+    "started": 1786432548.566504,
+    "permission_policy": "deny",
+    "client_fs_capability": {
+      "readTextFile": false,
+      "writeTextFile": false
+    },
+    "pid": 546625,
+    "session_ids": {
+      "a": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+      "b": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a"
+    },
+    "config_options_advertised": [],
+    "set_config_option_b": {},
+    "b_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "cachedReadTokens": 3008,
+        "inputTokens": 26757,
+        "outputTokens": 329,
+        "thoughtTokens": 320,
+        "totalTokens": 27086
+      }
+    },
+    "b_text": "\n\nDENIED",
+    "b_file_exists": false,
+    "a_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "cachedReadTokens": 15168,
+        "inputTokens": 26772,
+        "outputTokens": 336,
+        "thoughtTokens": 326,
+        "totalTokens": 27108
+      }
+    },
+    "a_text": "\n\nWROTE",
+    "a_file_exists": true,
+    "denied_requests": [
+      {
+        "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+        "toolCall": "Approve edit: /tmp/hermes-xai-floor/probe-b-7343aa9f.txt"
+      }
+    ],
+    "approved_requests": [],
+    "floor_differs_per_session": true,
+    "ls_cwd": [
+      "probe-a-7343aa9f.txt"
+    ],
+    "stderr_tail": [
+      "<redacted: engine stderr contained auth prefixes/bearer fragments>"
+    ]
+  },
+  "wire_log": [
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientCapabilities": {
+            "fs": {
+              "readTextFile": false,
+              "writeTextFile": false
+            },
+            "terminal": false
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "agentCapabilities": {
+            "loadSession": true,
+            "promptCapabilities": {
+              "image": true
+            },
+            "sessionCapabilities": {
+              "fork": {},
+              "list": {},
+              "resume": {}
+            }
+          },
+          "agentInfo": {
+            "name": "hermes-agent",
+            "version": "0.19.0"
+          },
+          "authMethods": [
+            {
+              "description": "Authenticate Hermes using the currently configured xai-oauth runtime credentials.",
+              "id": "xai-oauth",
+              "name": "xai-oauth runtime credentials"
+            },
+            {
+              "args": [
+                "--setup"
+              ],
+              "description": "Open Hermes' interactive model/provider setup in a terminal. Use this when Hermes has not been configured on this machine yet.",
+              "id": "hermes-setup",
+              "name": "Configure Hermes provider",
+              "type": "terminal"
+            }
+          ],
+          "protocolVersion": 1
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/new",
+        "params": {
+          "cwd": "/tmp/hermes-xai-floor",
+          "mcpServers": []
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "_meta": {
+            "hermes": {
+              "sessionProvenance": {
+                "acpSessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+                "currentHermesSessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+                "rootHermesSessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+                "parentHermesSessionId": null,
+                "sessionKind": "root",
+                "compressionDepth": 0
+              }
+            }
+          },
+          "models": {
+            "availableModels": [
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+) \u2022 current",
+                "modelId": "xai-oauth:grok-3-latest",
+                "name": "grok-3-latest"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-build-0.1",
+                "name": "grok-build-0.1"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-composer-2.5-fast",
+                "name": "grok-composer-2.5-fast"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-0309-non-reasoning",
+                "name": "grok-4.20-0309-non-reasoning"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-0309-reasoning",
+                "name": "grok-4.20-0309-reasoning"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-multi-agent-0309",
+                "name": "grok-4.20-multi-agent-0309"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.3",
+                "name": "grok-4.3"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.5",
+                "name": "grok-4.5"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-image",
+                "name": "grok-imagine-image"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-image-quality",
+                "name": "grok-imagine-image-quality"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-video",
+                "name": "grok-imagine-video"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-video-1.5",
+                "name": "grok-imagine-video-1.5"
+              }
+            ],
+            "currentModelId": "xai-oauth:grok-3-latest"
+          },
+          "modes": {
+            "availableModes": [
+              {
+                "description": "Ask before edits.",
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "description": "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+                "id": "accept_edits",
+                "name": "Accept Edits"
+              },
+              {
+                "description": "Auto-allow file edits for this session except sensitive paths.",
+                "id": "dont_ask",
+                "name": "Don't Ask"
+              }
+            ],
+            "currentModeId": "default"
+          },
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "availableCommands": [
+              {
+                "description": "List available commands",
+                "name": "help"
+              },
+              {
+                "description": "Show current model and provider, or switch models",
+                "input": {
+                  "hint": "model name to switch to"
+                },
+                "name": "model"
+              },
+              {
+                "description": "List available tools with descriptions",
+                "name": "tools"
+              },
+              {
+                "description": "Show conversation message counts by role",
+                "name": "context"
+              },
+              {
+                "description": "Clear conversation history",
+                "name": "reset"
+              },
+              {
+                "description": "Compress conversation context",
+                "name": "compact"
+              },
+              {
+                "description": "Inject guidance into the currently running agent turn",
+                "input": {
+                  "hint": "guidance for the active turn"
+                },
+                "name": "steer"
+              },
+              {
+                "description": "Queue a prompt to run after the current turn finishes",
+                "input": {
+                  "hint": "prompt to run next"
+                },
+                "name": "queue"
+              },
+              {
+                "description": "Show Hermes version",
+                "name": "version"
+              }
+            ],
+            "sessionUpdate": "available_commands_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "size": 131072,
+            "used": 10769,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/new",
+        "params": {
+          "cwd": "/tmp/hermes-xai-floor",
+          "mcpServers": []
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "_meta": {
+            "hermes": {
+              "sessionProvenance": {
+                "acpSessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+                "currentHermesSessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+                "rootHermesSessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+                "parentHermesSessionId": null,
+                "sessionKind": "root",
+                "compressionDepth": 0
+              }
+            }
+          },
+          "models": {
+            "availableModels": [
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+) \u2022 current",
+                "modelId": "xai-oauth:grok-3-latest",
+                "name": "grok-3-latest"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-build-0.1",
+                "name": "grok-build-0.1"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-composer-2.5-fast",
+                "name": "grok-composer-2.5-fast"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-0309-non-reasoning",
+                "name": "grok-4.20-0309-non-reasoning"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-0309-reasoning",
+                "name": "grok-4.20-0309-reasoning"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-multi-agent-0309",
+                "name": "grok-4.20-multi-agent-0309"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.3",
+                "name": "grok-4.3"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.5",
+                "name": "grok-4.5"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-image",
+                "name": "grok-imagine-image"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-image-quality",
+                "name": "grok-imagine-image-quality"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-video",
+                "name": "grok-imagine-video"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-video-1.5",
+                "name": "grok-imagine-video-1.5"
+              }
+            ],
+            "currentModelId": "xai-oauth:grok-3-latest"
+          },
+          "modes": {
+            "availableModes": [
+              {
+                "description": "Ask before edits.",
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "description": "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+                "id": "accept_edits",
+                "name": "Accept Edits"
+              },
+              {
+                "description": "Auto-allow file edits for this session except sensitive paths.",
+                "id": "dont_ask",
+                "name": "Don't Ask"
+              }
+            ],
+            "currentModeId": "default"
+          },
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "availableCommands": [
+              {
+                "description": "List available commands",
+                "name": "help"
+              },
+              {
+                "description": "Show current model and provider, or switch models",
+                "input": {
+                  "hint": "model name to switch to"
+                },
+                "name": "model"
+              },
+              {
+                "description": "List available tools with descriptions",
+                "name": "tools"
+              },
+              {
+                "description": "Show conversation message counts by role",
+                "name": "context"
+              },
+              {
+                "description": "Clear conversation history",
+                "name": "reset"
+              },
+              {
+                "description": "Compress conversation context",
+                "name": "compact"
+              },
+              {
+                "description": "Inject guidance into the currently running agent turn",
+                "input": {
+                  "hint": "guidance for the active turn"
+                },
+                "name": "steer"
+              },
+              {
+                "description": "Queue a prompt to run after the current turn finishes",
+                "input": {
+                  "hint": "prompt to run next"
+                },
+                "name": "queue"
+              },
+              {
+                "description": "Show Hermes version",
+                "name": "version"
+              }
+            ],
+            "sessionUpdate": "available_commands_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "size": 131072,
+            "used": 10769,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/set_mode",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "modeId": "dont_ask"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {}
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "session/set_mode",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "modeId": "default"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {}
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "Create a file named probe-b-7343aa9f.txt in the current working directory containing the single line hello, using your file editing tool. Then reply WROTE if the file now exists, or DENIED if you were not permitted."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " task",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " is",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " Create",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " a",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " named",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " probe",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "-b",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "-",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "734",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "3",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "aa",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "9",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "f",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": ".txt",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " in",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " current",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " working",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " directory",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " containing",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " single",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " line",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " hello",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": ",",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " using",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " your",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " editing",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " tool",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": ".",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " Then",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " reply",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " W",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "RO",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "TE",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " if",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " now",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " exists",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": ",",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " or",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " DEN",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "IE...",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": [
+              {
+                "content": {
+                  "text": "Preparing write to /tmp/hermes-xai-floor/probe-b-7343aa9f.txt. Approval prompt shows the diff.",
+                  "type": "text"
+                },
+                "type": "content"
+              }
+            ],
+            "kind": "edit",
+            "locations": [
+              {
+                "path": "/tmp/hermes-xai-floor/probe-b-7343aa9f.txt"
+              }
+            ],
+            "title": "write: /tmp/hermes-xai-floor/probe-b-7343aa9f.txt",
+            "toolCallId": "tc-3a76cae04eb4",
+            "sessionUpdate": "tool_call"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "session/request_permission",
+        "params": {
+          "options": [
+            {
+              "kind": "allow_once",
+              "name": "Allow edit",
+              "optionId": "allow_once"
+            },
+            {
+              "kind": "reject_once",
+              "name": "Deny",
+              "optionId": "deny"
+            }
+          ],
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "toolCall": {
+            "content": [
+              {
+                "newText": "hello",
+                "path": "/tmp/hermes-xai-floor/probe-b-7343aa9f.txt",
+                "type": "diff"
+              }
+            ],
+            "kind": "edit",
+            "rawInput": {
+              "tool": "write_file",
+              "arguments": {
+                "path": "/tmp/hermes-xai-floor/probe-b-7343aa9f.txt",
+                "content": "hello"
+              }
+            },
+            "status": "pending",
+            "title": "Approve edit: /tmp/hermes-xai-floor/probe-b-7343aa9f.txt",
+            "toolCallId": "edit-approval-1"
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "result": {
+          "outcome": {
+            "outcome": "selected",
+            "optionId": "deny"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " write",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "_file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " tool",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " failed",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " with",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " \"",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "Edit",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " approval",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " denied",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " by",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " ACP",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " client",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": ";",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " was",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " not",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": " modified",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": ".\"\n",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "\n\nDEN",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "content": {
+              "text": "IED",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "size": 131072,
+            "used": 14179,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "result": {
+          "stopReason": "end_turn",
+          "usage": {
+            "cachedReadTokens": 3008,
+            "inputTokens": 26757,
+            "outputTokens": 329,
+            "thoughtTokens": 320,
+            "totalTokens": 27086
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "Create a file named probe-a-7343aa9f.txt in the current working directory containing the single line hello, using your file editing tool. Then reply WROTE if the file now exists, or DENIED if you were not permitted."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " task",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " is",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " Create",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " a",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " named",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " probe",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "-a",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "-",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "734",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "3",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "aa",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "9",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "f",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": ".txt",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " in",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " current",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " working",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " directory",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " containing",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " single",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " line",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " hello",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": ",",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " using",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " your",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " editing",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " tool",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": ".",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " Then",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " reply",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " W",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "RO",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "TE",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " if",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " now",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " exists",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": ",",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " or",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " DEN",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "IE...",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": [
+              {
+                "newText": "hello",
+                "path": "/tmp/hermes-xai-floor/probe-a-7343aa9f.txt",
+                "type": "diff"
+              }
+            ],
+            "kind": "edit",
+            "locations": [
+              {
+                "path": "/tmp/hermes-xai-floor/probe-a-7343aa9f.txt"
+              }
+            ],
+            "title": "write: /tmp/hermes-xai-floor/probe-a-7343aa9f.txt",
+            "toolCallId": "tc-9a78f816d27e",
+            "sessionUpdate": "tool_call"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " was",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " written",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " successfully",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": ".",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " Now",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": ",",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " I",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " need",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " to",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " verify",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " if",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " it",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " exists",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " and",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " contains",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": " content",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": ".\n",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+          "update": {
+            "_meta": {
+              "hermes": {
+                "sessionProvenance": {
+                  "acpSessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+                  "currentHermesSessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+                  "rootHermesSessionId": "a3d1daee-44fd-48a7-b2b4-9a5aef01d32a",
+                  "parentHermesSessionId": null,
+                  "sessionKind": "root",
+                  "compressionDepth": 0
+                }
+              }
+            },
+            "title": "Denied File Write Request Probe",
+            "updatedAt": "2026-08-11T07:15:59.114122+00:00",
+            "sessionUpdate": "session_info_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "\n\nW",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "RO",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "content": {
+              "text": "TE",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "05ca15f9-0cdc-4a6b-a167-a9d981ee01e1",
+          "update": {
+            "size": 131072,
+            "used": 14239,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "stopReason": "end_turn",
+          "usage": {
+            "cachedReadTokens": 15168,
+            "inputTokens": 26772,
+            "outputTokens": 336,
+            "thoughtTokens": 326,
+            "totalTokens": 27108
+          }
+        }
+      }
+    }
+  ]
+}

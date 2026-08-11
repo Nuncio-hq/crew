@@ -21,6 +21,7 @@ export type MentionCandidate = {
   role?: ChannelRole | null;
   personaName?: string | null;
   secondaryLabel?: string | null;
+  crewRoleLabel?: string | null;
   ownerPubkey?: string | null;
   isAgent: boolean;
   isManagedAgent?: boolean;

@@ -1,0 +1,830 @@
+{
+  "findings": {
+    "engine": "hermes-acp-openai-codex",
+    "cmd": "/home/ubuntu/.local/bin/hermes-acp",
+    "started": 1786432470.144677,
+    "permission_policy": "deny",
+    "client_fs_capability": {
+      "readTextFile": false,
+      "writeTextFile": false
+    },
+    "pid": 544392,
+    "session_ids": {
+      "a": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+      "b": "01fd5993-9c1f-42bd-8444-746ed12142ae"
+    },
+    "config_options_advertised": [],
+    "set_config_option_b": {},
+    "b_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "cachedReadTokens": 9728,
+        "inputTokens": 20880,
+        "outputTokens": 36,
+        "thoughtTokens": 0,
+        "totalTokens": 20916
+      }
+    },
+    "b_text": "\n\nDENIED",
+    "b_file_exists": false,
+    "a_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "cachedReadTokens": 19456,
+        "inputTokens": 20942,
+        "outputTokens": 37,
+        "thoughtTokens": 0,
+        "totalTokens": 20979
+      }
+    },
+    "a_text": "\n\nWROTE",
+    "a_file_exists": true,
+    "denied_requests": [
+      {
+        "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+        "toolCall": "Approve edit: probe-b-e077a40f.txt"
+      }
+    ],
+    "approved_requests": [],
+    "floor_differs_per_session": true,
+    "ls_cwd": [
+      "probe-a-e077a40f.txt"
+    ],
+    "stderr_tail": [
+      "<redacted: engine stderr contained auth prefixes/bearer fragments>"
+    ]
+  },
+  "wire_log": [
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientCapabilities": {
+            "fs": {
+              "readTextFile": false,
+              "writeTextFile": false
+            },
+            "terminal": false
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "agentCapabilities": {
+            "loadSession": true,
+            "promptCapabilities": {
+              "image": true
+            },
+            "sessionCapabilities": {
+              "fork": {},
+              "list": {},
+              "resume": {}
+            }
+          },
+          "agentInfo": {
+            "name": "hermes-agent",
+            "version": "0.19.0"
+          },
+          "authMethods": [
+            {
+              "description": "Authenticate Hermes using the currently configured openai-codex runtime credentials.",
+              "id": "openai-codex",
+              "name": "openai-codex runtime credentials"
+            },
+            {
+              "args": [
+                "--setup"
+              ],
+              "description": "Open Hermes' interactive model/provider setup in a terminal. Use this when Hermes has not been configured on this machine yet.",
+              "id": "hermes-setup",
+              "name": "Configure Hermes provider",
+              "type": "terminal"
+            }
+          ],
+          "protocolVersion": 1
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/new",
+        "params": {
+          "cwd": "/tmp/hermes-acp-floor",
+          "mcpServers": []
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "_meta": {
+            "hermes": {
+              "sessionProvenance": {
+                "acpSessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+                "currentHermesSessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+                "rootHermesSessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+                "parentHermesSessionId": null,
+                "sessionKind": "root",
+                "compressionDepth": 0
+              }
+            }
+          },
+          "models": {
+            "availableModels": [
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-sol",
+                "name": "gpt-5.6-sol"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-terra",
+                "name": "gpt-5.6-terra"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-luna",
+                "name": "gpt-5.6-luna"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-daybreak-blue-latest",
+                "name": "gpt-daybreak-blue-latest"
+              },
+              {
+                "description": "Provider: OpenAI Codex \u2022 current",
+                "modelId": "openai-codex:gpt-5.5",
+                "name": "gpt-5.5"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.4",
+                "name": "gpt-5.4"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.4-mini",
+                "name": "gpt-5.4-mini"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.3-codex-spark",
+                "name": "gpt-5.3-codex-spark"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-sol-pro",
+                "name": "gpt-5.6-sol-pro"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-terra-pro",
+                "name": "gpt-5.6-terra-pro"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-luna-pro",
+                "name": "gpt-5.6-luna-pro"
+              }
+            ],
+            "currentModelId": "openai-codex:gpt-5.5"
+          },
+          "modes": {
+            "availableModes": [
+              {
+                "description": "Ask before edits.",
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "description": "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+                "id": "accept_edits",
+                "name": "Accept Edits"
+              },
+              {
+                "description": "Auto-allow file edits for this session except sensitive paths.",
+                "id": "dont_ask",
+                "name": "Don't Ask"
+              }
+            ],
+            "currentModeId": "default"
+          },
+          "sessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+          "update": {
+            "availableCommands": [
+              {
+                "description": "List available commands",
+                "name": "help"
+              },
+              {
+                "description": "Show current model and provider, or switch models",
+                "input": {
+                  "hint": "model name to switch to"
+                },
+                "name": "model"
+              },
+              {
+                "description": "List available tools with descriptions",
+                "name": "tools"
+              },
+              {
+                "description": "Show conversation message counts by role",
+                "name": "context"
+              },
+              {
+                "description": "Clear conversation history",
+                "name": "reset"
+              },
+              {
+                "description": "Compress conversation context",
+                "name": "compact"
+              },
+              {
+                "description": "Inject guidance into the currently running agent turn",
+                "input": {
+                  "hint": "guidance for the active turn"
+                },
+                "name": "steer"
+              },
+              {
+                "description": "Queue a prompt to run after the current turn finishes",
+                "input": {
+                  "hint": "prompt to run next"
+                },
+                "name": "queue"
+              },
+              {
+                "description": "Show Hermes version",
+                "name": "version"
+              }
+            ],
+            "sessionUpdate": "available_commands_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+          "update": {
+            "size": 272000,
+            "used": 10213,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/new",
+        "params": {
+          "cwd": "/tmp/hermes-acp-floor",
+          "mcpServers": []
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "_meta": {
+            "hermes": {
+              "sessionProvenance": {
+                "acpSessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+                "currentHermesSessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+                "rootHermesSessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+                "parentHermesSessionId": null,
+                "sessionKind": "root",
+                "compressionDepth": 0
+              }
+            }
+          },
+          "models": {
+            "availableModels": [
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-sol",
+                "name": "gpt-5.6-sol"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-terra",
+                "name": "gpt-5.6-terra"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-luna",
+                "name": "gpt-5.6-luna"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-daybreak-blue-latest",
+                "name": "gpt-daybreak-blue-latest"
+              },
+              {
+                "description": "Provider: OpenAI Codex \u2022 current",
+                "modelId": "openai-codex:gpt-5.5",
+                "name": "gpt-5.5"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.4",
+                "name": "gpt-5.4"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.4-mini",
+                "name": "gpt-5.4-mini"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.3-codex-spark",
+                "name": "gpt-5.3-codex-spark"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-sol-pro",
+                "name": "gpt-5.6-sol-pro"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-terra-pro",
+                "name": "gpt-5.6-terra-pro"
+              },
+              {
+                "description": "Provider: OpenAI Codex",
+                "modelId": "openai-codex:gpt-5.6-luna-pro",
+                "name": "gpt-5.6-luna-pro"
+              }
+            ],
+            "currentModelId": "openai-codex:gpt-5.5"
+          },
+          "modes": {
+            "availableModes": [
+              {
+                "description": "Ask before edits.",
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "description": "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+                "id": "accept_edits",
+                "name": "Accept Edits"
+              },
+              {
+                "description": "Auto-allow file edits for this session except sensitive paths.",
+                "id": "dont_ask",
+                "name": "Don't Ask"
+              }
+            ],
+            "currentModeId": "default"
+          },
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+          "update": {
+            "availableCommands": [
+              {
+                "description": "List available commands",
+                "name": "help"
+              },
+              {
+                "description": "Show current model and provider, or switch models",
+                "input": {
+                  "hint": "model name to switch to"
+                },
+                "name": "model"
+              },
+              {
+                "description": "List available tools with descriptions",
+                "name": "tools"
+              },
+              {
+                "description": "Show conversation message counts by role",
+                "name": "context"
+              },
+              {
+                "description": "Clear conversation history",
+                "name": "reset"
+              },
+              {
+                "description": "Compress conversation context",
+                "name": "compact"
+              },
+              {
+                "description": "Inject guidance into the currently running agent turn",
+                "input": {
+                  "hint": "guidance for the active turn"
+                },
+                "name": "steer"
+              },
+              {
+                "description": "Queue a prompt to run after the current turn finishes",
+                "input": {
+                  "hint": "prompt to run next"
+                },
+                "name": "queue"
+              },
+              {
+                "description": "Show Hermes version",
+                "name": "version"
+              }
+            ],
+            "sessionUpdate": "available_commands_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+          "update": {
+            "size": 272000,
+            "used": 10213,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/set_mode",
+        "params": {
+          "sessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+          "modeId": "dont_ask"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {}
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "session/set_mode",
+        "params": {
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+          "modeId": "default"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {}
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "Create a file named probe-b-e077a40f.txt in the current working directory containing the single line hello, using your file editing tool. Then reply WROTE if the file now exists, or DENIED if you were not permitted."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+          "update": {
+            "content": [
+              {
+                "content": {
+                  "text": "Preparing write to probe-b-e077a40f.txt. Approval prompt shows the diff.",
+                  "type": "text"
+                },
+                "type": "content"
+              }
+            ],
+            "kind": "edit",
+            "locations": [
+              {
+                "path": "probe-b-e077a40f.txt"
+              }
+            ],
+            "title": "write: probe-b-e077a40f.txt",
+            "toolCallId": "tc-4ab4ac59eb7d",
+            "sessionUpdate": "tool_call"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "session/request_permission",
+        "params": {
+          "options": [
+            {
+              "kind": "allow_once",
+              "name": "Allow edit",
+              "optionId": "allow_once"
+            },
+            {
+              "kind": "reject_once",
+              "name": "Deny",
+              "optionId": "deny"
+            }
+          ],
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+          "toolCall": {
+            "content": [
+              {
+                "newText": "hello\n",
+                "path": "probe-b-e077a40f.txt",
+                "type": "diff"
+              }
+            ],
+            "kind": "edit",
+            "rawInput": {
+              "tool": "write_file",
+              "arguments": {
+                "path": "probe-b-e077a40f.txt",
+                "content": "hello\n"
+              }
+            },
+            "status": "pending",
+            "title": "Approve edit: probe-b-e077a40f.txt",
+            "toolCallId": "edit-approval-1"
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "result": {
+          "outcome": {
+            "outcome": "selected",
+            "optionId": "deny"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+          "update": {
+            "content": {
+              "text": "\n\nDEN",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+          "update": {
+            "content": {
+              "text": "IED",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+          "update": {
+            "size": 272000,
+            "used": 12867,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "result": {
+          "stopReason": "end_turn",
+          "usage": {
+            "cachedReadTokens": 9728,
+            "inputTokens": 20880,
+            "outputTokens": 36,
+            "thoughtTokens": 0,
+            "totalTokens": 20916
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "Create a file named probe-a-e077a40f.txt in the current working directory containing the single line hello, using your file editing tool. Then reply WROTE if the file now exists, or DENIED if you were not permitted."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+          "update": {
+            "content": [
+              {
+                "newText": "hello\n",
+                "path": "probe-a-e077a40f.txt",
+                "type": "diff"
+              }
+            ],
+            "kind": "edit",
+            "locations": [
+              {
+                "path": "probe-a-e077a40f.txt"
+              }
+            ],
+            "title": "write: probe-a-e077a40f.txt",
+            "toolCallId": "tc-8433fc88385a",
+            "sessionUpdate": "tool_call"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+          "update": {
+            "_meta": {
+              "hermes": {
+                "sessionProvenance": {
+                  "acpSessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+                  "currentHermesSessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+                  "rootHermesSessionId": "01fd5993-9c1f-42bd-8444-746ed12142ae",
+                  "parentHermesSessionId": null,
+                  "sessionKind": "root",
+                  "compressionDepth": 0
+                }
+              }
+            },
+            "title": "File Write Permission Denied",
+            "updatedAt": "2026-08-11T07:14:40.098195+00:00",
+            "sessionUpdate": "session_info_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+          "update": {
+            "content": {
+              "text": "\n\nW",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+          "update": {
+            "content": {
+              "text": "RO",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+          "update": {
+            "content": {
+              "text": "TE",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "1d1cf211-c273-4f2b-a7b7-f88ee3d6b336",
+          "update": {
+            "size": 272000,
+            "used": 12909,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "stopReason": "end_turn",
+          "usage": {
+            "cachedReadTokens": 19456,
+            "inputTokens": 20942,
+            "outputTokens": 37,
+            "thoughtTokens": 0,
+            "totalTokens": 20979
+          }
+        }
+      }
+    }
+  ]
+}

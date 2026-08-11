@@ -1,0 +1,448 @@
+{
+ "findings": {
+  "engine": "grok",
+  "cmd": [
+   "/home/ubuntu/.grok/bin/grok",
+   "agent",
+   "stdio"
+  ],
+  "started": 1786429863.140761,
+  "initialize": {
+   "protocolVersion": 1,
+   "agentCapabilities": {
+    "loadSession": true,
+    "promptCapabilities": {
+     "image": false,
+     "audio": false,
+     "embeddedContext": true
+    },
+    "mcpCapabilities": {
+     "http": true,
+     "sse": true
+    },
+    "sessionCapabilities": {
+     "list": {},
+     "resume": {},
+     "close": {}
+    },
+    "auth": {},
+    "_meta": {
+     "x.ai/fs_notify": true,
+     "x.ai/hooks": {
+      "blockingEvents": [
+       "pre_tool_use",
+       "stop",
+       "subagent_stop"
+      ],
+      "decisions": [
+       "deny",
+       "block"
+      ],
+      "stopSignals": [
+       "continue",
+       "stopReason",
+       "additionalContext"
+      ]
+     },
+     "x.ai/capabilities": {
+      "toolOverrides": {
+       "x_keyword_search": true,
+       "x_semantic_search": true,
+       "x_user_search": false,
+       "x_thread_fetch": false
+      }
+     }
+    }
+   },
+   "authMethods": [
+    {
+     "id": "cached_token",
+     "name": "cached_token",
+     "description": "Cached token from ~/.grok/auth.json"
+    },
+    {
+     "id": "grok.com",
+     "name": "Grok",
+     "description": "Sign in with Grok"
+    }
+   ],
+   "_meta": {
+    "grokShell": true,
+    "defaultAuthMethodId": "cached_token",
+    "x.ai/mcp/sdk": true,
+    "x.ai/pluginDirs": true,
+    "currentWorkingDirectory": "/tmp/acp-probe-grok",
+    "agentVersion": "1.0.0",
+    "agentId": "d7a05453-b52f-57c0-9e82-fcabd496c472",
+    "agentInstanceId": "e752c57c-4acd-4036-9b80-b1fb09a5337d",
+    "hostname": "devin-box",
+    "modelState": {
+     "currentModelId": "grok-4.5",
+     "availableModels": [
+      {
+       "modelId": "grok-4.5",
+       "name": "Grok 4.5",
+       "description": "SpaceXAI's new frontier model",
+       "_meta": {
+        "totalContextTokens": 500000,
+        "agentType": "grok-build-plan",
+        "supportsReasoningEffort": true,
+        "reasoningEffort": "high",
+        "reasoningEfforts": [
+         {
+          "id": "high",
+          "value": "high",
+          "label": "High Effort",
+          "description": "Highest implementation quality with extensive reasoning",
+          "default": true
+         },
+         {
+          "id": "medium",
+          "value": "medium",
+          "label": "Medium Effort",
+          "description": "Balanced effort with standard implementation and testing",
+          "default": false
+         },
+         {
+          "id": "low",
+          "value": "low",
+          "label": "Low Effort",
+          "description": "Quick, fast implementations",
+          "default": false
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "mcpServers": [],
+    "mcpApps": false,
+    "metadata": null,
+    "availableCommands": [
+     {
+      "name": "compact",
+      "description": "Compress conversation history to save context window",
+      "input": {
+       "hint": "optional context about what to preserve"
+      }
+     },
+     {
+      "name": "always-approve",
+      "description": "Toggle always-approve mode (skip all permission prompts)",
+      "input": {
+       "hint": "on|off"
+      }
+     },
+     {
+      "name": "context",
+      "description": "Show context window usage and session stats",
+      "input": null
+     },
+     {
+      "name": "session-info",
+      "description": "Show session details (model, turns, context usage)",
+      "input": null
+     },
+     {
+      "name": "deep-research",
+      "description": "Research with bounded parallel agents, cross-check evidence, and write a cited report",
+      "input": {
+       "hint": "<query>"
+      }
+     },
+     {
+      "name": "workflow",
+      "description": "Launch a saved workflow, or manage a run (pause, resume, stop, save)",
+      "input": {
+       "hint": "<name> [args] | pause|resume|stop|save [name]"
+      }
+     },
+     {
+      "name": "goal",
+      "description": "Set, manage, or check an autonomous goal",
+      "input": {
+       "hint": "<objective> [--budget <tokens>] | status | pause | resume | clear"
+      }
+     }
+    ],
+    "cancelRewind": true,
+    "sessionRecap": true,
+    "voiceMode": true
+   }
+  },
+  "session_new_a": {
+   "sessionId": "019fef84-75e1-7aa0-9703-3698b8ab931f"
+  },
+  "session_new_b": {
+   "sessionId": "019fef84-7613-7342-91e0-ac82205deae6"
+  },
+  "same_process_pid": 483848,
+  "session_ids": {
+   "a": "019fef84-75e1-7aa0-9703-3698b8ab931f",
+   "b": "019fef84-7613-7342-91e0-ac82205deae6"
+  },
+  "distinct_session_ids": true,
+  "a_turn1_stop": {
+   "stopReason": "end_turn",
+   "_meta": {
+    "sessionId": "019fef84-75e1-7aa0-9703-3698b8ab931f",
+    "requestId": "edf81f70-9b9a-44e9-8f2d-ce52278f1bc7",
+    "promptId": "edf81f70-9b9a-44e9-8f2d-ce52278f1bc7",
+    "totalTokens": 11484,
+    "modelId": "grok-4.5",
+    "inputTokens": 11430,
+    "outputTokens": 53,
+    "cachedReadTokens": 11264,
+    "reasoningTokens": 47,
+    "usage": {
+     "inputTokens": 11430,
+     "outputTokens": 53,
+     "totalTokens": 11483,
+     "cachedReadTokens": 11264,
+     "cacheCreationTokens": 0,
+     "reasoningTokens": 47,
+     "modelCalls": 1,
+     "apiDurationMs": 1424,
+     "costUsdTicks": 40292000,
+     "modelUsage": {
+      "grok-4.5-build": {
+       "inputTokens": 11430,
+       "outputTokens": 53,
+       "totalTokens": 11483,
+       "cachedReadTokens": 11264,
+       "cacheCreationTokens": 0,
+       "reasoningTokens": 47,
+       "modelCalls": 1,
+       "apiDurationMs": 1424,
+       "costUsdTicks": 40292000
+      }
+     },
+     "numTurns": 1
+    }
+   }
+  },
+  "a_turn1_text": "STORED",
+  "b_turn1_stop": {
+   "stopReason": "end_turn",
+   "_meta": {
+    "sessionId": "019fef84-7613-7342-91e0-ac82205deae6",
+    "requestId": "3bd9b3c6-6b1e-4715-8601-ccc0a3eeffc8",
+    "promptId": "3bd9b3c6-6b1e-4715-8601-ccc0a3eeffc8",
+    "totalTokens": 11526,
+    "modelId": "grok-4.5",
+    "inputTokens": 11436,
+    "outputTokens": 90,
+    "cachedReadTokens": 11264,
+    "reasoningTokens": 85,
+    "usage": {
+     "inputTokens": 11436,
+     "outputTokens": 90,
+     "totalTokens": 11526,
+     "cachedReadTokens": 11264,
+     "cacheCreationTokens": 0,
+     "reasoningTokens": 85,
+     "modelCalls": 1,
+     "apiDurationMs": 1982,
+     "costUsdTicks": 42632000,
+     "modelUsage": {
+      "grok-4.5-build": {
+       "inputTokens": 11436,
+       "outputTokens": 90,
+       "totalTokens": 11526,
+       "cachedReadTokens": 11264,
+       "cacheCreationTokens": 0,
+       "reasoningTokens": 85,
+       "modelCalls": 1,
+       "apiDurationMs": 1982,
+       "costUsdTicks": 42632000
+      }
+     },
+     "numTurns": 1
+    }
+   }
+  },
+  "b_turn1_text": "NONE",
+  "q1_leaked": false,
+  "a_turn2_stop": {
+   "stopReason": "end_turn",
+   "_meta": {
+    "sessionId": "019fef84-75e1-7aa0-9703-3698b8ab931f",
+    "requestId": "789f12a3-35d3-48a0-954c-0c7cd6045fb8",
+    "promptId": "789f12a3-35d3-48a0-954c-0c7cd6045fb8",
+    "totalTokens": 11561,
+    "modelId": "grok-4.5",
+    "inputTokens": 11514,
+    "outputTokens": 46,
+    "cachedReadTokens": 11392,
+    "reasoningTokens": 36,
+    "usage": {
+     "inputTokens": 11514,
+     "outputTokens": 46,
+     "totalTokens": 11560,
+     "cachedReadTokens": 11392,
+     "cacheCreationTokens": 0,
+     "reasoningTokens": 36,
+     "modelCalls": 1,
+     "apiDurationMs": 1485,
+     "costUsdTicks": 39376000,
+     "modelUsage": {
+      "grok-4.5-build": {
+       "inputTokens": 11514,
+       "outputTokens": 46,
+       "totalTokens": 11560,
+       "cachedReadTokens": 11392,
+       "cacheCreationTokens": 0,
+       "reasoningTokens": 36,
+       "modelCalls": 1,
+       "apiDurationMs": 1485,
+       "costUsdTicks": 39376000
+      }
+     },
+     "numTurns": 1
+    }
+   }
+  },
+  "a_turn2_text": "STOREDPLUMBUS-7742",
+  "q1_control_a_remembers": true,
+  "q2_session_set_config_option": {
+   "code": -32602,
+   "message": "Invalid params",
+   "data": "missing field `configId` at line 1 column 98"
+  },
+  "q2_session_set_mode": {},
+  "b_write_stop": {
+   "stopReason": "end_turn",
+   "_meta": {
+    "sessionId": "019fef84-7613-7342-91e0-ac82205deae6",
+    "requestId": "f35dbee2-8ae9-4115-9f09-97b32f7eee28",
+    "promptId": "f35dbee2-8ae9-4115-9f09-97b32f7eee28",
+    "totalTokens": 12225,
+    "modelId": "grok-4.5",
+    "inputTokens": 11732,
+    "outputTokens": 493,
+    "cachedReadTokens": 11392,
+    "reasoningTokens": 488,
+    "usage": {
+     "inputTokens": 11732,
+     "outputTokens": 493,
+     "totalTokens": 12225,
+     "cachedReadTokens": 11392,
+     "cacheCreationTokens": 0,
+     "reasoningTokens": 488,
+     "modelCalls": 1,
+     "apiDurationMs": 6992,
+     "costUsdTicks": 70556000,
+     "modelUsage": {
+      "grok-4.5-build": {
+       "inputTokens": 11732,
+       "outputTokens": 493,
+       "totalTokens": 12225,
+       "cachedReadTokens": 11392,
+       "cacheCreationTokens": 0,
+       "reasoningTokens": 488,
+       "modelCalls": 1,
+       "apiDurationMs": 6992,
+       "costUsdTicks": 70556000
+      }
+     },
+     "numTurns": 1
+    }
+   }
+  },
+  "b_write_text": "NONEDENIED",
+  "b_file_exists": false,
+  "a_write_stop": {
+   "stopReason": "end_turn",
+   "_meta": {
+    "sessionId": "019fef84-75e1-7aa0-9703-3698b8ab931f",
+    "requestId": "6c16da1d-cd66-4284-926b-c27515fff8fd",
+    "promptId": "6c16da1d-cd66-4284-926b-c27515fff8fd",
+    "totalTokens": 11760,
+    "modelId": "grok-4.5",
+    "inputTokens": 11735,
+    "outputTokens": 25,
+    "cachedReadTokens": 11520,
+    "reasoningTokens": 18,
+    "usage": {
+     "inputTokens": 23352,
+     "outputTokens": 112,
+     "totalTokens": 23464,
+     "cachedReadTokens": 22912,
+     "cacheCreationTokens": 0,
+     "reasoningTokens": 102,
+     "modelCalls": 2,
+     "apiDurationMs": 3068,
+     "costUsdTicks": 84256000,
+     "modelUsage": {
+      "grok-4.5-build": {
+       "inputTokens": 23352,
+       "outputTokens": 112,
+       "totalTokens": 23464,
+       "cachedReadTokens": 22912,
+       "cacheCreationTokens": 0,
+       "reasoningTokens": 102,
+       "modelCalls": 2,
+       "apiDurationMs": 3068,
+       "costUsdTicks": 84256000
+      }
+     },
+     "numTurns": 2
+    }
+   }
+  },
+  "a_write_text": "STOREDPLUMBUS-7742WROTE",
+  "a_file_exists": true,
+  "q2_floor_differs": true,
+  "stderr_tail": [
+   "<redacted: engine stderr contained auth prefixes/bearer fragments>"
+  ],
+  "finished": 1786429878.6834915
+ },
+ "selected_frames": [
+  {
+   "send": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "session/new",
+    "params": {
+     "cwd": "/tmp/acp-probe-grok",
+     "mcpServers": []
+    }
+   }
+  },
+  {
+   "send": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "session/new",
+    "params": {
+     "cwd": "/tmp/acp-probe-grok",
+     "mcpServers": []
+    }
+   }
+  },
+  {
+   "send": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "method": "session/set_config_option",
+    "params": {
+     "sessionId": "019fef84-7613-7342-91e0-ac82205deae6",
+     "key": "sandbox_mode",
+     "value": "read-only"
+    }
+   }
+  },
+  {
+   "send": {
+    "jsonrpc": "2.0",
+    "id": 8,
+    "method": "session/set_mode",
+    "params": {
+     "sessionId": "019fef84-7613-7342-91e0-ac82205deae6",
+     "modeId": "plan"
+    }
+   }
+  }
+ ]
+}
