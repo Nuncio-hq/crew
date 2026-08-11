@@ -156,6 +156,7 @@ export default defineConfig({
         "**/huddle-transcription.spec.ts",
         "**/agent-numeric-tuning.spec.ts",
         "**/needs-restart-screenshots.spec.ts",
+        "**/hermes-profile-lifecycle.spec.ts",
         "**/mission-inbox.spec.ts",
         "**/evidence-cards.spec.ts",
         "**/evidence-reactions.spec.ts",

@@ -4,7 +4,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 
-import { deleteHermesProfilesAfterAgentRemoval } from "@/features/profile/ui/deleteHermesProfilesAfterAgentRemoval";
+import { archiveHermesProfilesAfterAgentRemoval } from "@/features/profile/ui/archiveHermesProfilesAfterAgentRemoval";
 import type { AgentPersona, ManagedAgent } from "@/shared/api/types";
 import type { ManagedAgentActionResult } from "@/features/agents/lib/managedAgentControlActions";
 
@@ -26,19 +26,23 @@ export function useProfileHermesAwareDeletes({
   setPersonaToDelete: (persona: AgentPersona | null) => void;
 }) {
   const handleDeleteAgent = React.useCallback(
-    async (options?: { deleteHermesProfile?: boolean }) => {
+    async (options?: {
+      archiveHermesProfile?: boolean;
+      hermesProfileReason?: string;
+    }) => {
       if (!managedAgent) return;
       try {
         const profileToDelete =
-          options?.deleteHermesProfile === true
+          options?.archiveHermesProfile === true
             ? managedAgent.hermesProfile?.trim() || null
             : null;
         const result = await deleteManagedAgentRecord(managedAgent);
         if (result.cancelled) return;
         if (profileToDelete) {
-          const profileError = await deleteHermesProfilesAfterAgentRemoval([
-            profileToDelete,
-          ]);
+          const profileError = await archiveHermesProfilesAfterAgentRemoval(
+            [profileToDelete],
+            options?.hermesProfileReason,
+          );
           if (profileError) {
             toast.error(
               `Agent deleted, but profile cleanup failed: ${profileError}`,
@@ -61,7 +65,10 @@ export function useProfileHermesAwareDeletes({
   const handleConfirmDeletePersona = React.useCallback(
     async (
       personaToConfirm: AgentPersona,
-      options?: { deleteHermesProfiles?: boolean },
+      options?: {
+        archiveHermesProfiles?: boolean;
+        hermesProfileReason?: string;
+      },
     ) => {
       if (personaToConfirm.sourceTeam) {
         toast.error("This agent is managed by a team.");
@@ -70,7 +77,7 @@ export function useProfileHermesAwareDeletes({
       }
       try {
         const profilesToDelete =
-          options?.deleteHermesProfiles === true
+          options?.archiveHermesProfiles === true
             ? managedAgents
                 .filter((a) => a.personaId === personaToConfirm.id)
                 .map((a) => a.hermesProfile?.trim())
@@ -78,8 +85,10 @@ export function useProfileHermesAwareDeletes({
             : [];
         await deletePersona(personaToConfirm.id);
         if (profilesToDelete.length > 0) {
-          const profileError =
-            await deleteHermesProfilesAfterAgentRemoval(profilesToDelete);
+          const profileError = await archiveHermesProfilesAfterAgentRemoval(
+            profilesToDelete,
+            options?.hermesProfileReason,
+          );
           if (profileError) {
             toast.error(
               `Deleted ${personaToConfirm.displayName}, but profile cleanup failed: ${profileError}`,

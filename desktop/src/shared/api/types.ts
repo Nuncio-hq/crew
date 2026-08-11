@@ -287,6 +287,13 @@ export type ManagedAgentRuntimeLifecycle =
   | "failed"
   | "stopped";
 
+export type HermesProfileReadiness =
+  | { state: "ready" }
+  | { state: "missing"; profile: string }
+  | { state: "broken_config"; profile: string; diagnostic: string }
+  | { state: "binary_missing"; command: string }
+  | { state: "auth_unknown"; profile: string };
+
 export type ManagedAgentRuntimeStatus = {
   pubkey: string;
   /** Exact submitted descriptor, present only on startup reconcile results. */
@@ -294,6 +301,7 @@ export type ManagedAgentRuntimeStatus = {
   /** Canonical, backend-owned pair identity component. Do not normalize in TS. */
   relayUrl: string;
   localSetup: boolean;
+  profileReadiness?: HermesProfileReadiness | null;
   lifecycle: ManagedAgentRuntimeLifecycle;
   pid: number | null;
   error: string | null;
@@ -386,6 +394,7 @@ export type ManagedAgent = {
   respondToAllowlist: string[];
   /** Hermes profile binding (D-019); null when unbound / no profileArg. */
   hermesProfile: string | null;
+  profileReadiness?: HermesProfileReadiness | null;
 };
 
 /** Inbound author gate mode. Mirrors buzz-acp's --respond-to CLI flag. */

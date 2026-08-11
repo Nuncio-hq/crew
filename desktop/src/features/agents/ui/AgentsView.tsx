@@ -11,6 +11,7 @@ import { AgentDialog } from "./AgentDialog";
 import { PersonaCatalogDialog } from "./PersonaCatalogDialog";
 import { PersonaDeleteDialog } from "./PersonaDeleteDialog";
 import { PersonaShareDialog } from "./PersonaShareDialog";
+import { HermesProfileArchivesPanel } from "./HermesProfileArchivesPanel";
 import { AgentSnapshotExportDialog } from "./AgentSnapshotExportDialog";
 import { AgentSnapshotImportDialog } from "./AgentSnapshotImportDialog";
 import { TeamSnapshotExportDialog } from "./TeamSnapshotExportDialog";
@@ -52,6 +53,7 @@ export function AgentsView() {
   // Exclusivity: create never sets `personaDialogState` (edit/dup/import do),
   // so the create-mode and definition-edit AgentDialog mounts never coexist.
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false);
+  const [isHermesArchivesOpen, setIsHermesArchivesOpen] = React.useState(false);
 
   function openUnifiedCreate() {
     personas.prepareCreate();
@@ -165,6 +167,14 @@ export function AgentsView() {
                       Stop running agents
                     </Button>
                   ) : null}
+                  <Button
+                    data-testid="hermes-profile-archives-button"
+                    onClick={() => setIsHermesArchivesOpen(true)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Archived Hermes profiles
+                  </Button>
                 </div>
 
                 <DropdownMenu modal={false}>
@@ -203,6 +213,12 @@ export function AgentsView() {
                         Stop running agents
                       </DropdownMenuItem>
                     ) : null}
+                    <DropdownMenuItem
+                      data-testid="hermes-profile-archives-menu-item"
+                      onSelect={() => setIsHermesArchivesOpen(true)}
+                    >
+                      Archived Hermes profiles
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </>
@@ -401,6 +417,12 @@ export function AgentsView() {
               .map((a) => a.hermesProfile)
               .filter((p): p is string => Boolean(p?.trim())) as string[]
           }
+          runningHermesProfiles={agents.managedAgents
+            .filter(
+              (agent) =>
+                agent.hermesProfile?.trim() && isManagedAgentActive(agent),
+            )
+            .map((agent) => agent.hermesProfile?.trim() as string)}
           instanceCount={
             (agents.managedAgents ?? []).filter(
               (a) => a.personaId === personas.personaToDelete?.id,
@@ -425,6 +447,11 @@ export function AgentsView() {
           persona={personas.personaToDelete}
         />
       ) : null}
+      <HermesProfileArchivesPanel
+        managedAgents={agents.managedAgents}
+        onOpenChange={setIsHermesArchivesOpen}
+        open={isHermesArchivesOpen}
+      />
       {personas.personaToShare ? (
         <PersonaShareDialog
           catalogShareLevel={personas.getPersonaCatalogShareLevel(

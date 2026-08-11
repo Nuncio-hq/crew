@@ -25,9 +25,10 @@ type PersonaDeleteDialogProps = {
   instanceCount?: number;
   /** Unique Hermes profile names bound on cascade-deleted instances. */
   hermesProfiles?: string[];
+  runningHermesProfiles?: string[];
   onConfirm: (
     persona: AgentPersona,
-    options?: { deleteHermesProfiles?: boolean },
+    options?: { archiveHermesProfiles?: boolean; hermesProfileReason?: string },
   ) => void;
   onOpenChange: (open: boolean) => void;
 };
@@ -61,6 +62,7 @@ export function PersonaDeleteDialog({
   persona,
   instanceCount = 0,
   hermesProfiles = [],
+  runningHermesProfiles = [],
   onConfirm,
   onOpenChange,
 }: PersonaDeleteDialogProps) {
@@ -71,10 +73,12 @@ export function PersonaDeleteDialog({
   );
   const [profileChoice, setProfileChoice] =
     React.useState<HermesProfileOffboardChoice>("keep");
+  const [profileReason, setProfileReason] = React.useState("");
 
   React.useEffect(() => {
     if (open) {
       setProfileChoice("keep");
+      setProfileReason("");
     }
   }, [open]);
 
@@ -95,7 +99,10 @@ export function PersonaDeleteDialog({
             <HermesProfileOffboardFields
               choice={profileChoice}
               onChoiceChange={setProfileChoice}
+              onReasonChange={setProfileReason}
               profileName={primaryProfile}
+              reason={profileReason}
+              isRunning={runningHermesProfiles.includes(primaryProfile)}
               showPublicAgentWarning={showPublicWarning}
             />
             {uniqueProfiles.length > 1 ? (
@@ -118,7 +125,10 @@ export function PersonaDeleteDialog({
                   onConfirm(
                     persona,
                     primaryProfile
-                      ? { deleteHermesProfiles: profileChoice === "delete" }
+                      ? {
+                          archiveHermesProfiles: profileChoice === "archive",
+                          hermesProfileReason: profileReason,
+                        }
                       : undefined,
                   );
                 }

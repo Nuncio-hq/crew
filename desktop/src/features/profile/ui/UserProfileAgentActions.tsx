@@ -36,6 +36,7 @@ import {
   type HermesProfileOffboardChoice,
 } from "@/features/agents/ui/HermesProfileOffboardFields";
 import { isNonOwnerOnlyRespondTo } from "@/features/agents/ui/HermesProfileCreateAffordance";
+import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 
 export function UserProfileAgentSettingsMenu({
   archiveActions,
@@ -52,7 +53,10 @@ export function UserProfileAgentSettingsMenu({
   isPending: boolean;
   isBot?: boolean;
   managedAgent?: ManagedAgent;
-  onDelete?: (options?: { deleteHermesProfile?: boolean }) => void;
+  onDelete?: (options?: {
+    archiveHermesProfile?: boolean;
+    hermesProfileReason?: string;
+  }) => void;
   onDuplicatePersona?: () => void;
   onExportPersona?: () => void;
   onToggleAutoStart?: () => void;
@@ -242,7 +246,10 @@ export function UserProfileAgentSettingsMenuSlot({
   isAgentActionPending: boolean;
   isBot: boolean;
   managedAgent?: ManagedAgent;
-  onDeleteAgent: (options?: { deleteHermesProfile?: boolean }) => void;
+  onDeleteAgent: (options?: {
+    archiveHermesProfile?: boolean;
+    hermesProfileReason?: string;
+  }) => void;
   onDeletePersona: () => void;
   onDuplicatePersona: () => void;
   onExportPersona: () => void;
@@ -305,7 +312,10 @@ function AgentDeleteConfirmDialog({
 }: {
   agent: ManagedAgent;
   isPending: boolean;
-  onConfirm: (options?: { deleteHermesProfile?: boolean }) => void;
+  onConfirm: (options?: {
+    archiveHermesProfile?: boolean;
+    hermesProfileReason?: string;
+  }) => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
 }) {
@@ -313,10 +323,12 @@ function AgentDeleteConfirmDialog({
   const hermesProfile = agent.hermesProfile?.trim() || null;
   const [profileChoice, setProfileChoice] =
     React.useState<HermesProfileOffboardChoice>("keep");
+  const [profileReason, setProfileReason] = React.useState("");
 
   React.useEffect(() => {
     if (open) {
       setProfileChoice("keep");
+      setProfileReason("");
     }
   }, [open]);
 
@@ -346,7 +358,10 @@ function AgentDeleteConfirmDialog({
           <HermesProfileOffboardFields
             choice={profileChoice}
             onChoiceChange={setProfileChoice}
+            onReasonChange={setProfileReason}
             profileName={hermesProfile}
+            reason={profileReason}
+            isRunning={isManagedAgentActive(agent)}
             showPublicAgentWarning={isNonOwnerOnlyRespondTo(agent.respondTo)}
           />
         ) : null}
@@ -367,7 +382,10 @@ function AgentDeleteConfirmDialog({
             onClick={() =>
               onConfirm(
                 hermesProfile
-                  ? { deleteHermesProfile: profileChoice === "delete" }
+                  ? {
+                      archiveHermesProfile: profileChoice === "archive",
+                      hermesProfileReason: profileReason,
+                    }
                   : undefined,
               )
             }

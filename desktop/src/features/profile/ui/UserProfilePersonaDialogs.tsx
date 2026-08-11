@@ -61,7 +61,10 @@ export function UserProfilePersonaDialogs({
   onCloseExportSnapshot: () => void;
   onConfirmDelete: (
     persona: AgentPersona,
-    options?: { deleteHermesProfiles?: boolean },
+    options?: {
+      archiveHermesProfiles?: boolean;
+      hermesProfileReason?: string;
+    },
   ) => void;
   onExportSnapshot: (persona: AgentPersona) => void;
   onSubmit: (input: CreatePersonaInput | UpdatePersonaInput) => Promise<void>;

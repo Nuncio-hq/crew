@@ -104,15 +104,6 @@ pub fn hermes_profile_dir(name: &str) -> Option<PathBuf> {
     hermes_profiles_dir().map(|dir| dir.join(name.trim()))
 }
 
-/// Whether the bound profile's directory exists on disk (orphan detection).
-pub fn hermes_profile_directory_exists(name: &str) -> bool {
-    let trimmed = name.trim();
-    if trimmed.is_empty() || trimmed == HERMES_FORBIDDEN_PROFILE_NAME {
-        return false;
-    }
-    hermes_profile_dir(trimmed).is_some_and(|p| p.is_dir())
-}
-
 /// List named profiles under `profiles/` that pass Crew's name regex.
 /// Directory read only — no CLI (cheap, no TTY concerns).
 pub fn list_profiles() -> Result<Vec<String>, String> {

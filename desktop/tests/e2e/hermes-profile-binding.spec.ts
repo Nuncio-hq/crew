@@ -524,7 +524,7 @@ test.describe("hermes profile binding", () => {
     await expect(page.getByTestId("edit-agent-dialog-submit")).toBeDisabled();
   });
 
-  test("delete: bound Hermes agent shows keep/delete choice defaulting to keep", async ({
+  test("delete: bound Hermes agent shows keep/archive choice defaulting to keep", async ({
     page,
   }) => {
     await installMockBridge(page, {
@@ -565,7 +565,7 @@ test.describe("hermes profile binding", () => {
       page.getByTestId("hermes-profile-offboard-keep"),
     ).toBeChecked();
     await expect(
-      page.getByTestId("hermes-profile-offboard-delete"),
+      page.getByTestId("hermes-profile-offboard-archive"),
     ).not.toBeChecked();
   });
 });

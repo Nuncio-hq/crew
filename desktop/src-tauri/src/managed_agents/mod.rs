@@ -18,6 +18,8 @@ pub(crate) mod git_bash;
 pub(crate) mod global_config;
 pub(crate) mod hermes_profile;
 pub(crate) mod hermes_profile_lifecycle;
+pub(crate) mod hermes_profile_readiness;
+pub(crate) mod hermes_profile_archive;
 mod managed_node_paths;
 mod nest;
 pub(crate) mod parallelism;
@@ -62,6 +64,9 @@ pub(crate) use git_bash::{discover_git_bash, GitBashPrerequisite};
 pub(crate) use global_config::{
     load_global_agent_config, resolve_effective_model_provider, save_global_agent_config,
     validate_global_config, GlobalAgentConfig,
+};
+pub use hermes_profile_readiness::{
+    hermes_profile_readiness, invalidate_hermes_binary_probe_cache, HermesProfileReadiness,
 };
 pub(crate) use managed_node_paths::*;
 pub use nest::*;

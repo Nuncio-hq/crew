@@ -136,23 +136,54 @@ need them; new agents should not add more.
 
 ## Offboarding
 
-Deleting a Hermes agent in Crew asks:
+Deleting a Hermes agent in Crew asks (D-035):
 
 - **Keep profile '\<name\>' (memory + skills)** — default. Record gone;
   profile intact and re-attachable (C-13).
-- **Also delete the profile** — runs
-  `hermes profile delete <name> -y` and verifies by directory absence
-  (C-14 / spike 0011). Never preselected.
+- **Archive the profile** — never preselected. The profile is packed to
+  `<nest>/profile-archives/<profile>-<timestamp>.tar.gz` with a sidecar
+  manifest, then removed from `~/.hermes/profiles/`. Memory and skills are
+  preserved; caches (`audio_cache/`, `image_cache/`, `logs/`) are excluded, and
+  the dialog shows the estimated size before you confirm. An optional reason is
+  stored in the manifest.
 
-**CLI fallback** (if you deleted the Crew record already and kept the
-profile, or need to clean up outside Crew):
+Archiving is copy → verify → remove: if anything fails, the live profile is
+still there. Crew refuses to archive while a runtime pair bound to that profile
+is running — stop the agent first; Crew will not kill it for you.
 
-```bash
-hermes profile delete scout -y
-```
+**Restore** lists archives with their manifest facts, unpacks to
+`~/.hermes/profiles/<name>`, and offers to re-bind the original agent. A name
+collision with a live profile blocks the restore and changes nothing.
 
-Always pass `-y`: on a non-TTY, a bare `delete` auto-cancels **with exit
-code 0** (spike 0011) — verify by directory absence, not exit code.
+**Permanent delete** exists only as an action on an archive, and only after you
+type the profile name exactly. It destroys those memories and skills for good.
+
+There is no `hermes` CLI equivalent for the archive: the archive area is
+Crew-owned. The Hermes CLI can still delete a profile outright
+(`hermes profile delete scout -y`) — that is irreversible and bypasses the
+archive. Always pass `-y`: on a non-TTY, a bare `delete` auto-cancels **with
+exit code 0** (spike 0011) — verify by directory absence, not exit code.
+
+## Profile readiness
+
+Crew classifies a bound profile into one named state (issue #119) rather than a
+healthy/orphaned boolean. The state shows on the agent card in Agents and on
+the agent's config surfaces, and is recomputed on every status read, so
+breakage appears — and repairs clear — without restarting the app.
+
+| State | Meaning | Blocks start |
+| ----- | ------- | ------------ |
+| `ready` | Reserved for a truthful Hermes auth probe; not reachable today | no |
+| `missing` | Bound profile directory is gone | yes |
+| `broken-config` | `config.yaml` exists but does not parse | yes |
+| `binary-missing` | Resolved `hermes` command will not run | yes |
+| `auth-unknown` | Healthy on disk; **auth not verifiable** (spike 0010) | no |
+
+Blocking states ride the normal requirement pipeline, so a start is diverted
+into the existing setup/config-nudge flow with a named repair row instead of
+stalling mid-turn (C-03). `auth-unknown` is advisory only: it never blocks a
+start and never claims auth is good. Crew does not scrape `auth.json` and does
+not make test API calls to fake a green badge.
 
 ## Failure classes (C-03/C-12)
 
@@ -160,7 +191,9 @@ code 0** (spike 0011) — verify by directory absence, not exit code.
 | ------- | ----- | --- |
 | Runtime shows unavailable / MissingBinary | `hermes` not on PATH for the desktop app | Install Hermes; check PATH the app sees |
 | Config nudge: bind Hermes profile | No `hermes_profile` on the record | Edit Agent → Hermes profile; or create-in-place |
-| Config nudge: profile missing on disk | Profile deleted/renamed outside Crew | Recreate profile / Change binding in the nudge |
+| Config nudge: profile missing on disk | Profile deleted/renamed outside Crew | Recreate profile / Change binding in the nudge / restore an archive |
+| Card reads `Config invalid` | Profile `config.yaml` does not parse | Fix the YAML the diagnostic names, then start again |
+| Card reads `Auth not verifiable` | Expected: no Hermes headless auth probe (spike 0010) | Nothing to fix; auth problems still surface in-channel |
 | Spawn exits immediately, log shows `Profile 'x' does not exist…` | Same orphan class | Same repair path |
 | Agent replies with `auth error: BUZZ_PRIVATE_KEY is required` | Reply path missing `buzz-dev-mcp` (Hermes sandbox strips `BUZZ_*`) | Use the tier-1 **Hermes Agent** runtime (attaches MCP automatically); ensure `buzz-dev-mcp` is on PATH the app sees |
 | Agent replies with `model: String should have at least 1 character` | Profile has no model configured | `hermes -p <name> config set model.default …` |
@@ -202,7 +235,10 @@ Hermes-side ask lands.
   orphan repair — **done (Phase 03)**.
 - Owner-only/local backend enforcement and multi-community shared-state copy —
   **done (Issue #104 Phase 01)**.
-- Auth badge — blocked on Hermes-side probe (spike 0010 / feature §7.3).
+- Auth badge — blocked on Hermes-side probe (spike 0010 / feature §7.3);
+  `auth-unknown` is the honest placeholder (D-035, issue #119).
+- `broken-config` detects unparsable `config.yaml` only; missing/invalid model
+  fields are not classified locally (spike 0015).
 - Live session model in the "decided by profile" row — optional follow-up
   when a clean ACP session-catalog read path exists from create/edit.
 - Credential isolation for public agents — blocked on Hermes-side ask.

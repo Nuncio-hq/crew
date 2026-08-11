@@ -41,9 +41,7 @@ import type {
 } from "@/shared/api/types";
 
 export * from "@/shared/api/tauriChannels";
-
 type RawPresenceLookup = Record<string, PresenceStatus>;
-
 type RawAddChannelMembersResult = {
   added: string[];
   errors: Array<{
@@ -161,6 +159,7 @@ export type RawManagedAgent = {
   respond_to?: ManagedAgent["respondTo"];
   respond_to_allowlist?: string[];
   hermes_profile?: string | null;
+  profile_readiness?: ManagedAgent["profileReadiness"];
 };
 
 type RawCreateManagedAgentResponse = {
@@ -690,6 +689,7 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     respondTo: agent.respond_to ?? "owner-only",
     respondToAllowlist: agent.respond_to_allowlist ?? [],
     hermesProfile: agent.hermes_profile ?? null,
+    profileReadiness: agent.profile_readiness ?? null,
   };
 }
 

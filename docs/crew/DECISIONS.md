@@ -547,6 +547,28 @@ fork delta. Future upstream syncs must keep the adaptations, including the
 Project Plumbing expansion helper and its call sites; resolve conflicts by
 re-adding the helper calls when upstream refreshes those specs.
 
+## D-035 — Offboarding archives a Hermes profile; deletion is archive-only
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Runbook:** [`HERMES.md`](HERMES.md)
+- **Spike:** [`spikes/0015-profile-readiness-and-archive.md`](spikes/0015-profile-readiness-and-archive.md)
+
+Offboarding a Hermes agent no longer runs `hermes profile delete -y`. The
+destructive branch archives the profile to `<nest>/profile-archives` as a
+`tar.gz` plus a sidecar manifest (profile, timestamp, bound agent name and
+pubkey, optional reason, exclusions, sizes), excluding caches. Archiving is
+copy → verify → remove: the live profile is removed only after the archive is
+written and read back.
+
+Permanent deletion exists only as an action on an archive and is gated in Rust
+by an exact profile-name confirmation token, not by the dialog. Restore refuses
+to overwrite a live profile of the same name. Every profile-destructive action
+refuses while a runtime pair bound to that profile is alive — Crew does not
+stop a working agent on the owner's behalf to complete a destructive action.
+
+The reserved `default` profile and the `~/.hermes` root remain untouchable.
+
 ## D-037 — Channel-first stands; board deferred; work overview is future direction
 
 - **Status:** Accepted

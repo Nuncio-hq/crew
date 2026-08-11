@@ -305,6 +305,19 @@ and in flight.
 
 ## Hermes runtime track (feature 0001)
 
+- Profile readiness now has a Crew-owned Hermes evaluator and named status
+  projection: binary-missing, missing, broken-config, and neutral
+  auth-unknown. Healthy profiles remain outside the generic setup
+  requirement pipeline until Hermes provides a truthful headless auth probe.
+- Hermes profiles now have backend archive, restore, estimate, listing, and
+  confirmation-gated permanent-delete contracts. Archive is copy-verify-remove,
+  excludes recorded transient cache directories, and refuses while a bound
+  runtime pair is alive.
+- Hermes profiles now have backend archive, restore, estimate, listing, and
+  confirmation-gated permanent-delete contracts. Archive is copy-verify-remove,
+  excludes recorded transient cache directories, and refuses while a bound
+  runtime pair is alive.
+
 - Feature plan:
   [`features/0001-hermes-first-class-runtime.md`](features/0001-hermes-first-class-runtime.md);
   decisions locked as D-019; runbook [`HERMES.md`](HERMES.md).
@@ -322,3 +335,9 @@ and in flight.
 - Next gates: Slice 2 (binding/readiness/no-model UI + RED contracts),
   Slice 3 (upstream tier-1 PR to block/buzz), Slice 4 (profile lifecycle
   UI).
+- Issue #119 profile lifecycle hardening now includes named Hermes readiness
+  projection, generic preflight/nudge routing, Crew-owned archive/restore and
+  permanent-delete backend contracts, readiness indicators, archive
+  offboarding, and an Agents-page archive browser. Archive semantics follow
+  D-035 and spike 0015; real Hermes authentication remains unverified here
+  because no Hermes binary is installed.

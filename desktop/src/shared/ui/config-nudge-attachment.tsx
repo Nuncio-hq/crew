@@ -17,6 +17,7 @@ import {
   AttachmentTrigger,
 } from "@/shared/ui/attachment";
 import { HermesProfileOrphanRepairRow } from "@/shared/ui/HermesProfileOrphanRepairRow";
+import { HermesProfileConfigRepairRow } from "@/shared/ui/HermesProfileConfigRepairRow";
 
 /**
  * Stable key for a requirement row. The combination of surface + primary
@@ -42,6 +43,8 @@ function requirementKey(
       return `missing_binary:${req.command}:${index}`;
     case "hermes_profile_directory_missing":
       return `hermes_profile_directory_missing:${req.profile}:${index}`;
+    case "hermes_profile_config_invalid":
+      return `hermes_profile_config_invalid:${req.profile}:${index}`;
   }
 }
 
@@ -139,6 +142,9 @@ function firstFocusTarget(
     if (req.surface === "hermes_profile_directory_missing") {
       return { type: "normalized_field", field: "hermesProfile" };
     }
+    if (req.surface === "hermes_profile_config_invalid") {
+      return { type: "normalized_field", field: "hermesProfile" };
+    }
   }
   return undefined;
 }
@@ -160,6 +166,9 @@ export function focusTargetForRequirement(
     return { type: "normalized_field", field: req.field };
   }
   if (req.surface === "hermes_profile_directory_missing") {
+    return { type: "normalized_field", field: "hermesProfile" };
+  }
+  if (req.surface === "hermes_profile_config_invalid") {
     return { type: "normalized_field", field: "hermesProfile" };
   }
   return undefined;
@@ -421,6 +430,14 @@ function RequirementRow({
     case "hermes_profile_directory_missing":
       return (
         <HermesProfileOrphanRepairRow
+          onOpenEditAgent={onOpenEditAgent}
+          profile={requirement.profile}
+        />
+      );
+    case "hermes_profile_config_invalid":
+      return (
+        <HermesProfileConfigRepairRow
+          diagnostic={requirement.diagnostic}
           onOpenEditAgent={onOpenEditAgent}
           profile={requirement.profile}
         />

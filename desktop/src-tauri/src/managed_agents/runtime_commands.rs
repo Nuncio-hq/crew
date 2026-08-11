@@ -57,11 +57,14 @@ fn status_for_with(
     let metadata = super::known_acp_runtime(&command);
     let effective = resolve_effective_agent_env(record, personas, metadata, global);
     let local_setup = matches!(agent_readiness(&effective), AgentReadiness::Ready);
+    let profile_readiness =
+        super::hermes_profile_readiness(&command, record.hermes_profile.as_deref());
     ManagedAgentRuntimeStatus {
         pubkey: key.pubkey.clone(),
         relay_url: key.relay_url.clone(),
         requested_relay_url,
         local_setup,
+        profile_readiness,
         lifecycle: runtime
             .map(|runtime| runtime.lifecycle.clone())
             .unwrap_or(ManagedAgentRuntimeLifecycle::Stopped),
@@ -439,6 +442,10 @@ fn unkeyable_failed_status(
         relay_url: requested.clone(),
         requested_relay_url: Some(requested),
         local_setup: matches!(agent_readiness(&effective), AgentReadiness::Ready),
+        profile_readiness: super::hermes_profile_readiness(
+            &command,
+            record.hermes_profile.as_deref(),
+        ),
         lifecycle: ManagedAgentRuntimeLifecycle::Failed,
         pid: None,
         error: Some(error),

@@ -23,6 +23,7 @@ import { ManagedAgentLogPanel } from "./ManagedAgentLogPanel";
 import { PubKey } from "@/shared/ui/PubKey";
 import { SubsectionLabel } from "@/shared/ui/PageHeader";
 import { RestartDiffBadge } from "./RestartDiffBadge";
+import { HermesProfileReadinessIndicator } from "./HermesProfileReadinessIndicator";
 
 export function ManagedAgentRow({
   agent,
@@ -119,6 +120,7 @@ export function ManagedAgentRow({
                 presenceStatus={presenceStatus}
               />
               <StatusBlock
+                agent={agent}
                 friendlyError={friendlyError}
                 isWorking={isWorking}
                 presenceLoaded={presenceLoaded}
@@ -142,6 +144,7 @@ export function ManagedAgentRow({
                 presenceStatus={presenceStatus}
               />
               <StatusBlock
+                agent={agent}
                 friendlyError={friendlyError}
                 isWorking={isWorking}
                 presenceLoaded={presenceLoaded}
@@ -353,6 +356,7 @@ function WorkingBadge({
 }
 
 function StatusBlock({
+  agent,
   friendlyError,
   isWorking,
   presenceLoaded,
@@ -360,6 +364,7 @@ function StatusBlock({
   processDetail,
   status,
 }: {
+  agent: ManagedAgent;
   friendlyError: ReturnType<typeof friendlyAgentLastError>;
   isWorking: boolean;
   presenceLoaded: boolean;
@@ -376,6 +381,9 @@ function StatusBlock({
         presenceStatus={presenceStatus}
         status={status}
       />
+      {agent.profileReadiness ? (
+        <HermesProfileReadinessIndicator readiness={agent.profileReadiness} />
+      ) : null}
       <p className="text-xs text-muted-foreground">{processDetail}</p>
       {friendlyError ? (
         <p

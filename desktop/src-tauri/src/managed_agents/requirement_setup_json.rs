@@ -45,5 +45,13 @@ pub(crate) fn requirement_to_setup_json(requirement: Requirement) -> Value {
             "surface": "hermes_profile_directory_missing",
             "profile": profile,
         }),
+        Requirement::HermesProfileConfigInvalid {
+            profile,
+            diagnostic,
+        } => serde_json::json!({
+            "surface": "hermes_profile_config_invalid",
+            "profile": profile,
+            "diagnostic": diagnostic,
+        }),
     }
 }
