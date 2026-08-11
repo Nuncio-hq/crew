@@ -490,6 +490,30 @@ stop a working agent on the owner's behalf to complete a destructive action.
 
 The reserved `default` profile and the `~/.hermes` root remain untouchable.
 
+## D-037 — Channel-first stands; board deferred; work overview is future direction
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Product doc:** [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md)
+
+1. **Channel-first stands.** Channels and threads are the main surface and
+   where work happens. Board-as-home — columns as authoritative state, slot
+   caps, and card-move-as-transition — is not current direction. This
+   supersedes VISION.md § "Board as orchestrator" as a product commitment.
+   [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md) remains the locked north star.
+2. **Board schema stays deferred.** No board event kind or board tag schema is
+   defined until a board-like surface is actually prioritized. This closes
+   STATE.md's open decision "final board event kind and tag schema".
+3. **The future direction is a work overview lens.** It is a read-only
+   aggregation over signals that already exist as relay events: active turns,
+   thread-workspace branch telemetry, Needs You, evidence and acceptance
+   reactions from #121, and agent readiness from #119. It answers what each
+   agent is doing, on which branch, what needs the founder, and what is done.
+   It is a lens over existing events with no new authoritative state,
+   consistent with D-003, D-010, and VISION.md's "board state = signed relay
+   events". It is recorded as a future candidate track and is not in scope of
+   this change.
+
 ## D-038 — Crew edits the bound Hermes profile write-through
 
 - **Status:** Accepted
@@ -534,6 +558,7 @@ The accepted consequence: without an explicit clock input, row `age` values
 stay fixed until another input changes. The desktop caller passes no clock and
 the home surface has no ticker, so ages already only refresh when a store
 changes. A caller that wants clock-driven recomputation passes `now`.
+
 ## D-031 — Keep shipped state in sync with STATE.md
 
 - **Status:** Accepted
