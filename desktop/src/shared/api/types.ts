@@ -1,3 +1,5 @@
+import type { CanvasRoleAssignment, CanvasRoutingPreset } from "./crew";
+
 export type ChannelType = "stream" | "forum" | "dm";
 export type ChannelVisibility = "open" | "private";
 export type ChannelRole = "owner" | "admin" | "member" | "guest" | "bot";
@@ -68,14 +70,6 @@ export type SetChannelTopicInput = {
   topic: string;
 };
 
-export type AssignChannelAgentRoleInput = {
-  channelId: string;
-  agentPubkey: string;
-  label: string;
-  definition: string;
-  overwriteForeignCanvas?: boolean;
-};
-
 export type SetChannelPurposeInput = {
   channelId: string;
   purpose: string;
@@ -89,18 +83,6 @@ export type CanvasResponse = {
   assignments: CanvasRoleAssignment[];
   devMcpGranted: boolean | null;
   crewParseError: string | null;
-};
-
-export type CanvasRoleAssignment = {
-  agentPubkey: string;
-  roleLabel: string;
-};
-
-export type CanvasRoutingPreset = {
-  workType: string;
-  roleLabel: string;
-  holders: string[];
-  unheldMessage: string | null;
 };
 
 export type SetCanvasInput = {
@@ -1005,3 +987,9 @@ export type GlobalAgentConfigSaveResult = {
   /** Number of agents whose stop succeeded but respawn failed. */
   failed_restart_count: number;
 };
+
+export type {
+  AssignChannelAgentRoleInput,
+  CanvasRoleAssignment,
+  CanvasRoutingPreset,
+} from "./crew";
