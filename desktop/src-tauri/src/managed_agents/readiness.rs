@@ -330,13 +330,8 @@ pub enum Requirement {
         command: String,
     },
     /// Bound Hermes profile directory missing on disk (orphan; C-03 repair).
-    HermesProfileDirectoryMissing {
-        profile: String,
-    },
-    HermesProfileConfigInvalid {
-        profile: String,
-        diagnostic: String,
-    },
+    HermesProfileDirectoryMissing { profile: String },
+    HermesProfileConfigInvalid { profile: String, diagnostic: String },
 }
 // ── AgentReadiness ────────────────────────────────────────────────────────────
 /// Whether a managed agent has all required configuration to start.
