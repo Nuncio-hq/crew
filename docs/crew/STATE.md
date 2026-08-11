@@ -223,6 +223,8 @@ and in flight.
 
 ## Current test gate
 
+- Shard-4 Desktop Smoke E2E is revived: the upstream Project specs were
+  adapted to the post-#95 outcome-first Projects contract.
 - Thirteen additive Project workspace test files cover parsing, duplicate
   locations, metadata preservation, NIP-01 replacement ordering, owner
   protection, relay rejection/read-back, privacy copy, Project-channel
@@ -253,6 +255,13 @@ and in flight.
   switches no longer surface as successful.
 - The local macOS arm64 bundle was built and ad-hoc signed at
   `desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/NuncioCrew Local.app`.
+- The desktop E2E mock relay now matches the real relay where user-input
+  authority depends on it: emitted kind `46040` requests are durable, their
+  canonical causal root is retained, the owner-declared relay agent is in the
+  agent registry, and generated event ids are 64-hex. `channels.spec.ts ›
+  channel question card accepts an answer` passes again (issue #110); the two
+  remaining `channels.spec.ts` failures (sticky date divider, channel agent
+  activity indicators) are unrelated and predate this change on `main`.
 - Earlier focused live relay test: `1/1` passed with an isolated Buzz relay.
 - Typecheck, file-size gate, Biome checks, production build, and
   `git diff --check` passed.

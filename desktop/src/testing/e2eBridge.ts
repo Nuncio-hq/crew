@@ -3387,6 +3387,19 @@ const defaultMockRelayAgents: RawRelayAgent[] = [
     respond_to: "anyone",
     respond_to_allowlist: [],
   },
+  // Keep the owner-declared relay agent in the registry: user-input authority
+  // derives owned agents from this query, not from channel membership alone.
+  {
+    pubkey: OWNED_RELAY_AGENT_PUBKEY,
+    name: "nadia",
+    agent_type: "goose",
+    channels: ["general"],
+    channel_ids: ["9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50"],
+    capabilities: ["messages", "channels", "mcp"],
+    status: "online",
+    respond_to: "owner-only",
+    respond_to_allowlist: [],
+  },
 ];
 let mockRelayAgents: RawRelayAgent[] = defaultMockRelayAgents.map((agent) => ({
   ...agent,
@@ -4272,6 +4285,12 @@ function emitMockHistory(
 ) {
   const events = getMockMessageStore(channelId)
     .filter((event) => {
+      if (
+        filter.ids &&
+        !filter.ids.some((prefix) => event.id.startsWith(prefix))
+      ) {
+        return false;
+      }
       if (filter.kinds && !filter.kinds.includes(event.kind)) {
         return false;
       }
@@ -5359,12 +5378,6 @@ function handleGetLikedNotes(): RawUserNotesResponse {
   return { notes: [], next_cursor: null };
 }
 
-// A random 64-hex event id, matching the shape of real Nostr event ids
-// (sha256 → 64 hex). Most mock events use the 32-hex `createMockEvent` default,
-// but kind:7 reactions need a real 64-hex id: the timeline's deletion path only
-// accepts 64-hex `e` tags (getDeletionTargets in formatTimelineMessages.ts), so
-// a kind:5 targeting a 32-hex reaction id would be silently ignored and the
-// reaction pill would never clear on toggle-off.
 // --- Mock projects (NIP-34 repo announcements + git activity) ---
 // Deterministic fixtures so the Projects view (cards, stat pills, and the
 // contribution heatmap) renders with data in screenshots and e2e specs.
@@ -5650,6 +5663,9 @@ function filterMockProjectEvents(filter: MockFilter): RelayEvent[] {
     .slice(0, filter.limit ?? 500);
 }
 
+// A random 64-hex event id, matching the shape of real Nostr event ids
+// (sha256 → 64 hex). Production code validates that shape — deletion targets,
+// user-input authority transitions — so a shorter mock id is silently ignored.
 function mockEventId(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -5662,7 +5678,7 @@ function createMockEvent(
   tags: string[][],
   pubkey = DEFAULT_MOCK_IDENTITY.pubkey,
   createdAt = Math.floor(Date.now() / 1000),
-  id = crypto.randomUUID().replace(/-/g, ""),
+  id = mockEventId(),
 ): RelayEvent {
   return {
     id,
@@ -10411,6 +10427,49 @@ export function maybeInstallE2eTauriMocks() {
       (candidate) => candidate.name === channelName,
     );
     if (!channel) throw new Error(`Mock channel ${channelName} not found.`);
+    const requestAgentPubkey = pubkey ?? OWNED_RELAY_AGENT_PUBKEY;
+    const history = getMockMessageStore(channel.id);
+    const hasRoot = history.some((candidate) => candidate.id === rootEventId);
+    const hasParent = history.some(
+      (candidate) => candidate.id === parentEventId,
+    );
+    const requestCreatedAt = Math.floor(Date.now() / 1000);
+    if (!hasRoot) {
+      // Persist a canonical causal root so hydration can validate the request
+      // against the same ancestry that a real relay would retain.
+      recordMockMessage(
+        channel.id,
+        createMockEvent(
+          9,
+          "Mock channel question parent",
+          [
+            ["h", channel.id],
+            ["p", requestAgentPubkey],
+          ],
+          DEFAULT_MOCK_IDENTITY.pubkey,
+          requestCreatedAt - 2,
+          rootEventId,
+        ),
+      );
+    }
+    if (parentEventId !== rootEventId && !hasParent) {
+      // Preserve a real threaded parent when the caller references one.
+      recordMockMessage(
+        channel.id,
+        createMockEvent(
+          9,
+          "Mock channel question reply",
+          [
+            ["h", channel.id],
+            ["p", requestAgentPubkey],
+            ["e", rootEventId, "", "reply"],
+          ],
+          DEFAULT_MOCK_IDENTITY.pubkey,
+          requestCreatedAt - 1,
+          parentEventId,
+        ),
+      );
+    }
     const event = createMockEvent(
       KIND_AGENT_USER_INPUT_REQUESTED,
       content,
@@ -10424,10 +10483,13 @@ export function maybeInstallE2eTauriMocks() {
               ["e", parentEventId, "", "reply"],
             ]),
       ],
-      pubkey ?? OWNED_RELAY_AGENT_PUBKEY,
-      Math.floor(Date.now() / 1000),
+      requestAgentPubkey,
+      requestCreatedAt,
       requestId,
     );
+    // Live delivery is not durable in the mock; retain the request for a
+    // subscriber that completes hydration after the event is emitted.
+    recordMockMessage(channel.id, event);
     emitMockLiveEvent(channel.id, event);
     return event;
   };

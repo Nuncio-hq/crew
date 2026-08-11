@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { expandProjectPlumbing } from "../helpers/projectPlumbing";
 
 const SHOTS = "test-results/project-commit-detail";
 const ALIGNMENT_TOLERANCE_PX = 2;
@@ -511,6 +512,7 @@ test("commit detail opens from the commits feed with a diff", async ({
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
   await projectEntry.click();
+  await expandProjectPlumbing(page);
 
   await page.getByRole("tab", { name: "Commits" }).click();
   const commitRows = page.getByTestId("project-activity-feed-item");
@@ -619,6 +621,7 @@ test("pull request and issue feeds share the commit row structure", async ({
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
   await projectEntry.click();
+  await expandProjectPlumbing(page);
 
   // PR rows use the shared feed row: title button + #id cluster cell.
   await page.getByRole("tab", { name: "Pull Request" }).click();
@@ -794,13 +797,17 @@ test("adding a repository blocks when a standalone 30617 already exists at that 
             ["name", "Existing Standalone"],
             ["clone", "https://git.example.com/standalone.git"],
           ],
+          sig: "mocksig".repeat(20).slice(0, 128),
         },
       ];
     },
     { owner: MOCK_OWNER, dtag: STANDALONE_DTAG },
   );
-  await installMockBridge(page);
+  await installMockBridge(page, undefined, { autoConnectDefaultRelay: true });
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(
+    () => window.__BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?.() === "connected",
+  );
   await page.getByTestId("open-projects-view").click();
   await page.getByTestId("projects-section-projects").click();
   await page
@@ -816,6 +823,9 @@ test("adding a repository blocks when a standalone 30617 already exists at that 
   await page
     .getByTestId("add-project-repository-name")
     .fill("Existing Standalone");
+  await page.waitForFunction(
+    () => window.__BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?.() === "connected",
+  );
   await page.getByTestId("add-project-repository-submit").click();
 
   // The dialog must remain open with a clobber error.
@@ -870,6 +880,7 @@ test("navigating via a 30617 entity-link route opens the correct non-primary rep
             ["branch-name", "feature/entity-link-test"],
             ["clone", "https://github.com/block/relay-tools.git"],
           ],
+          sig: "mocksig".repeat(20).slice(0, 128),
         },
       ];
     },
@@ -900,6 +911,8 @@ test("navigating via a 30617 entity-link route opens the correct non-primary rep
   const picker = page.getByTestId("project-repository-picker");
   await expect(picker).toContainText("relay-tools", { timeout: 10_000 });
   await expect(picker).not.toContainText("buzz");
+
+  await expandProjectPlumbing(page);
 
   // The PR detail panel must render from the relay-tools repository — not blank.
   // Use `first()` to avoid Playwright strict-mode violations: the text appears

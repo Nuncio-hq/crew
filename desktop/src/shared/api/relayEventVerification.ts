@@ -40,6 +40,13 @@ export function relayEventMatchesFilter(
 
 /** Verify the canonical Nostr id and Schnorr signature before trusting relay data. */
 export function isVerifiedRelayEvent(event: RelayEvent): boolean {
+  if (
+    typeof event.sig !== "string" ||
+    !Array.isArray(event.tags) ||
+    !event.tags.every((tag) => Array.isArray(tag))
+  ) {
+    return false;
+  }
   if (import.meta.env?.MODE === "e2e" && event.sig.startsWith("mocksig")) {
     return true;
   }

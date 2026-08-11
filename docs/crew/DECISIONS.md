@@ -535,6 +535,18 @@ auto-detection machinery. Files already above `MAX_LINES` (for example
 implicit base-ref grandfathering and are not being migrated into the manifest
 in this change; both mechanisms deliberately coexist.
 
+## D-034 — Adapt upstream Project E2E specs to the outcome-first UI
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+
+Crew adapts the upstream `project-*` Desktop Smoke E2E specs to the
+post-#95 outcome-first Projects UI instead of skipping them and replacing them
+with Crew-native tests under the #65 precedent. This is an accepted permanent
+fork delta. Future upstream syncs must keep the adaptations, including the
+Project Plumbing expansion helper and its call sites; resolve conflicts by
+re-adding the helper calls when upstream refreshes those specs.
+
 ## D-037 — Channel-first stands; board deferred; work overview is future direction
 
 - **Status:** Accepted

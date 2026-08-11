@@ -18,3 +18,24 @@ test("relay event verification rejects tampered relay data", () => {
   assert.equal(isVerifiedRelayEvent(tamperedContent), false);
   assert.equal(isVerifiedRelayEvent(tamperedSignature), false);
 });
+
+test("relay event verification rejects malformed event data without throwing", () => {
+  const missingSignature = {
+    id: "event",
+    kind: 1,
+    pubkey: "pubkey",
+    created_at: 1,
+    tags: [],
+    content: "missing signature",
+  };
+  const malformedTags = {
+    ...missingSignature,
+    sig: "not-a-signature",
+    tags: null,
+  };
+
+  assert.doesNotThrow(() => isVerifiedRelayEvent(missingSignature));
+  assert.doesNotThrow(() => isVerifiedRelayEvent(malformedTags));
+  assert.equal(isVerifiedRelayEvent(missingSignature), false);
+  assert.equal(isVerifiedRelayEvent(malformedTags), false);
+});
