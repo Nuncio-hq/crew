@@ -30,21 +30,60 @@ agent ownership metadata remains a bridge-config profile injection; see
 ## CI coverage
 
 The new relay-backed desktop spec has **no CI coverage today**. The
-`integration` project runs only in `.github/workflows/ci.yml`, which is
-`disabled_manually` in this fork (workflow id `323540365`). The active
-`.github/workflows/nuncio-crew-ci.yml` runs the smoke project only.
+`integration` project is an upstream-owned lane from `block/buzz`'s
+`.github/workflows/ci.yml`, introduced by upstream commit
+[`a1c28f487d`](https://github.com/block/buzz/commit/a1c28f487d2af01d620619d940cf377d21c1a81a),
+“Shard desktop Playwright CI jobs (#992)”. Upstream's workflow is still
+`active`; Crew disabled its inherited `CI` workflow deliberately as part of
+the minimised merge gate. See [CI.md](../CI.md), which records that “Upstream
+Sync does not run the inherited integration or cross-platform matrices” and
+the cutover step to “disable inherited `CI` and `Docker image` in GitHub
+Actions”.
 
-For PR #146, head `70bfa70e7`, the desktop path filter was true but no
-integration job appeared in run
+In Crew, workflow `CI` is `disabled_manually` (id `323540365`), while the
+active `.github/workflows/nuncio-crew-ci.yml` runs the smoke project only.
+For PR #146, head `70bfa70e7`, desktop filters were true but no integration
+job appeared in
 [31448955605](https://github.com/Nuncio-hq/crew/actions/runs/31448955605).
 The clean-main push run
 [31362178966](https://github.com/Nuncio-hq/crew/actions/runs/31362178966)
 also had no integration job. The lane last appeared under the disabled
 workflow at
 [30534161705/job/90843624305](https://github.com/Nuncio-hq/crew/actions/runs/30534161705/job/90843624305).
-Every relay-backed desktop spec is therefore locally verified only. Issue
-[#147](https://github.com/Nuncio-hq/crew/issues/147) tracks restoring the
-lane.
+
+The last completed integration run,
+[30533242569](https://github.com/Nuncio-hq/crew/actions/runs/30533242569),
+used two `ubuntu-latest` shards. Shard 1 took about 6m45s
+([job 90840519406](https://github.com/Nuncio-hq/crew/actions/runs/30533242569/job/90840519406));
+shard 2 took about 6m17s
+([job 90840519509](https://github.com/Nuncio-hq/crew/actions/runs/30533242569/job/90840519509)).
+Each shard has a 20-minute timeout. The job requires Postgres, Redis, MinIO
+and `minio-init`, a built `buzz-relay`, schema and community setup,
+`scripts/setup-desktop-test-data.sh`, Playwright installation, and
+`BUZZ_RECONCILE_CHANNELS=true`.
+
+The active `Project Relay` job provisions its own relay stack inside
+`scripts/run-nuncio-crew-project-relay-ci.sh`, but jobs do not share
+services; that job neither seeds desktop E2E data nor runs Playwright.
+Adding this lane would therefore duplicate the per-job relay, database,
+schema, seed, browser, and E2E-build setup. It stays with
+[#147](https://github.com/Nuncio-hq/crew/issues/147). Of the 17 configured
+integration specs, `evidence-reactions-relay.spec.ts` is the only
+Crew-specific one; the rest are inherited Buzz coverage. Every relay-backed
+desktop spec is therefore locally verified only.
+
+### How to run this spec locally
+
+```bash
+. ./bin/activate-hermit
+docker compose up -d postgres redis minio minio-init
+export BUZZ_RECONCILE_CHANNELS=true
+just relay
+bash scripts/setup-desktop-test-data.sh
+pnpm --filter buzz build:e2e
+cd desktop
+pnpm exec playwright test evidence-reactions-relay.spec.ts --project=integration
+```
 
 ## Local relay and test data
 

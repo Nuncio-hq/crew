@@ -9719,7 +9719,7 @@ async function handleRemoveReaction(
     ]);
     const reaction = reactions.find((event) => event.content.trim() === emoji);
     if (!reaction) {
-      return;
+      throw new Error("could not find your reaction event for this emoji");
     }
     await submitSignedEvent(config, {
       kind: KIND_DELETION,
