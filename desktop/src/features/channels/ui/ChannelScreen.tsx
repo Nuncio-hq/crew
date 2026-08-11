@@ -51,6 +51,7 @@ import {
 } from "@/features/messages/lib/timelineLoadingState";
 import { useFetchOlderMessages } from "@/features/messages/useFetchOlderMessages";
 import { useIndependentThreadPanel } from "@/features/messages/useIndependentThreadPanel";
+import { useLoadMissingAncestors } from "@/features/messages/useLoadMissingAncestors";
 import { useThreadReplies } from "@/features/messages/useThreadReplies";
 import { useChannelTyping } from "@/features/messages/useChannelTyping";
 import type { TimelineMessage } from "@/features/messages/types";
@@ -475,6 +476,7 @@ export function ChannelScreen({
     threadReplyTargetId,
     expandedThreadReplyIds,
     openThreadMessages: threadPanelData.visibleReplies,
+    threadReplyMessages: threadPanelData.messages,
     clearChannelUnreadSource,
     getChannelReadAt,
     getMessageReadAt,
@@ -693,6 +695,10 @@ export function ChannelScreen({
     threadReplyTargetId,
     threadReplyTargetMessage,
   });
+  // Backfill roots and intermediate replies the loaded window never received —
+  // a live subscription only delivers events created after it opened, so a
+  // reply can arrive for a root this client has never seen.
+  useLoadMissingAncestors(activeChannel, resolvedMessages);
   const hasAuxiliaryPanel = Boolean(
     effectiveOpenThreadHeadId ||
       openAgentSessionPubkey ||

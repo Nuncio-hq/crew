@@ -9,6 +9,7 @@ import {
 } from "@/features/channels/lib/subtreeCreatedAt";
 import { computeThreadReplyUnreadCounts } from "@/features/channels/lib/threadReplyUnreadCounts";
 import { computeThreadBadgeCounts } from "@/features/channels/lib/threadBadgeCounts";
+import { mergeUnreadGraphMessages } from "@/features/channels/lib/unreadGraphMessages";
 import {
   useStableArrayShallow,
   useStableMap,
@@ -35,6 +36,12 @@ type UseChannelUnreadStateOptions = {
   threadReplyTargetId: string | null;
   expandedThreadReplyIds: ReadonlySet<string>;
   openThreadMessages?: MainTimelineEntry[];
+  /**
+   * Formatted replies from the per-root thread cache, which carries live and
+   * fetched replies the timeline does not (a non-broadcast reply is not a
+   * timeline row). Unread accounting only — never rendered as a row.
+   */
+  threadReplyMessages?: readonly TimelineMessage[];
   getChannelReadAt: (channelId: string) => number | null;
   getMessageReadAt: (messageId: string) => number | null;
   clearChannelUnreadSource: (
@@ -54,10 +61,10 @@ type UseChannelUnreadStateOptions = {
  * unread-count the channel surface renders.
  *
  * Extracted from ChannelScreen so the screen stays under the file-size cap and
- * the NIP-RS read-state machinery lives as one cohesive unit. Behavior is
- * unchanged — the only inputs are the formatted timeline plus the AppShell
- * read-state accessors, and the hook owns the refs/effects that snapshot the
- * "what was unread on open" frontiers.
+ * the NIP-RS read-state machinery lives as one cohesive unit. The inputs are
+ * the formatted timeline, the formatted per-root thread replies (reply-graph
+ * reads only), and the AppShell read-state accessors; the hook owns the
+ * refs/effects that snapshot the "what was unread on open" frontiers.
  */
 export function useChannelUnreadState({
   activeChannelId,
@@ -67,6 +74,7 @@ export function useChannelUnreadState({
   threadReplyTargetId,
   expandedThreadReplyIds,
   openThreadMessages,
+  threadReplyMessages,
   getChannelReadAt,
   getMessageReadAt,
   clearChannelUnreadSource,
@@ -142,13 +150,21 @@ export function useChannelUnreadState({
     };
   }, [activeChannelId]);
 
+  // Every reply-graph read below works off the timeline UNION the per-root
+  // thread cache: replies that are not timeline rows still have to be reachable
+  // for the badges, the descendant walks, and the per-message menu predicate.
+  // Row rendering and the channel divider keep reading timelineMessages alone.
+  const unreadGraphMessages = React.useMemo(
+    () => mergeUnreadGraphMessages(timelineMessages, threadReplyMessages),
+    [timelineMessages, threadReplyMessages],
+  );
   const directReplyIdsByParentId = React.useMemo(
-    () => buildDirectReplyIdsByParentId(timelineMessages),
-    [timelineMessages],
+    () => buildDirectReplyIdsByParentId(unreadGraphMessages),
+    [unreadGraphMessages],
   );
   const repliesByRootId = React.useMemo(
-    () => buildRepliesByRootId(timelineMessages),
-    [timelineMessages],
+    () => buildRepliesByRootId(unreadGraphMessages),
+    [unreadGraphMessages],
   );
   const getFirstReplyIdForMessage = React.useCallback(
     (messageId: string) => directReplyIdsByParentId.get(messageId)?.[0] ?? null,
@@ -160,12 +176,12 @@ export function useChannelUnreadState({
     [directReplyIdsByParentId],
   );
   const createdAtByMessageId = React.useMemo(
-    () => buildCreatedAtByMessageId(timelineMessages),
-    [timelineMessages],
+    () => buildCreatedAtByMessageId(unreadGraphMessages),
+    [unreadGraphMessages],
   );
   const messageById = React.useMemo(
-    () => new Map(timelineMessages.map((message) => [message.id, message])),
-    [timelineMessages],
+    () => new Map(unreadGraphMessages.map((message) => [message.id, message])),
+    [unreadGraphMessages],
   );
   const threadPanelIndex = React.useMemo(
     () => buildThreadPanelIndex(timelineMessages),
@@ -318,7 +334,7 @@ export function useChannelUnreadState({
     () =>
       openThreadHeadId
         ? computeThreadReplyUnreadCounts({
-            timelineMessages,
+            timelineMessages: unreadGraphMessages,
             subtreeReplyIds: getReplyDescendantIdsForMessage(openThreadHeadId),
             visibleReplyIds: threadMessages.map((entry) => entry.message.id),
             expandedReplyIds: expandedThreadReplyIds,
@@ -330,7 +346,7 @@ export function useChannelUnreadState({
     [
       openThreadHeadId,
       threadMessages,
-      timelineMessages,
+      unreadGraphMessages,
       getMessageReadAt,
       expandedThreadReplyIds,
       getReplyDescendantIdsForMessage,
@@ -350,7 +366,7 @@ export function useChannelUnreadState({
   const threadUnreadCountsRaw = React.useMemo(
     () =>
       computeThreadBadgeCounts(
-        timelineMessages,
+        unreadGraphMessages,
         repliesByRootId,
         getMessageReadAt,
         (rootId) => !isThreadMuted(rootId),
@@ -359,7 +375,7 @@ export function useChannelUnreadState({
       ),
     [
       currentPubkey,
-      timelineMessages,
+      unreadGraphMessages,
       repliesByRootId,
       getMessageReadAt,
       isThreadMuted,
