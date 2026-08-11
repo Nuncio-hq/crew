@@ -79,6 +79,24 @@ mod tests {
     use super::resolve_session_title;
 
     #[test]
+    fn system_prompt_env_removes_empty_description_and_sets_non_empty_description() {
+        let mut command = std::process::Command::new("hermes");
+        command.env("BUZZ_ACP_SYSTEM_PROMPT", "ambient");
+        crate::managed_agents::runtime::apply_system_prompt_env(&mut command, None);
+        assert!(command
+            .get_envs()
+            .any(|(key, value)| key == "BUZZ_ACP_SYSTEM_PROMPT" && value.is_none()));
+        crate::managed_agents::runtime::apply_system_prompt_env(
+            &mut command,
+            Some("Crew instructions"),
+        );
+        assert!(command.get_envs().any(|(key, value)| {
+            key == "BUZZ_ACP_SYSTEM_PROMPT"
+                && value.and_then(|value| value.to_str()) == Some("Crew instructions")
+        }));
+    }
+
+    #[test]
     fn resolve_session_title_prefers_display_name() {
         assert_eq!(
             resolve_session_title(Some("Fizz"), "fizz-1").as_deref(),

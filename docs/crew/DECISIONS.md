@@ -468,7 +468,98 @@ mis-assignment when roles exist, and treat shared thread reports as the human
 record. Spikes are not automatic law. Full text of MUST/MUST NOT lives in the
 working agreement doc.
 
-## D-036 — Evidence stays on existing message events as a tolerant tag
+## D-035 — Offboarding archives a Hermes profile; deletion is archive-only
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Runbook:** [`HERMES.md`](HERMES.md)
+- **Spike:** [`spikes/0015-profile-readiness-and-archive.md`](spikes/0015-profile-readiness-and-archive.md)
+
+Offboarding a Hermes agent no longer runs `hermes profile delete -y`. The
+destructive branch archives the profile to `<nest>/profile-archives` as a
+`tar.gz` plus a sidecar manifest (profile, timestamp, bound agent name and
+pubkey, optional reason, exclusions, sizes), excluding caches. Archiving is
+copy → verify → remove: the live profile is removed only after the archive is
+written and read back.
+
+Permanent deletion exists only as an action on an archive and is gated in Rust
+by an exact profile-name confirmation token, not by the dialog. Restore refuses
+to overwrite a live profile of the same name. Every profile-destructive action
+refuses while a runtime pair bound to that profile is alive — Crew does not
+stop a working agent on the owner's behalf to complete a destructive action.
+
+The reserved `default` profile and the `~/.hermes` root remain untouchable.
+
+## D-037 — Channel-first stands; board deferred; work overview is future direction
+
+- **Status:** Accepted
+- **Date:** 2026-08-10
+- **Product doc:** [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md)
+
+1. **Channel-first stands.** Channels and threads are the main surface and
+   where work happens. Board-as-home — columns as authoritative state, slot
+   caps, and card-move-as-transition — is not current direction. This
+   supersedes VISION.md § "Board as orchestrator" as a product commitment.
+   [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md) remains the locked north star.
+2. **Board schema stays deferred.** No board event kind or board tag schema is
+   defined until a board-like surface is actually prioritized. This closes
+   STATE.md's open decision "final board event kind and tag schema".
+3. **The future direction is a work overview lens.** It is a read-only
+   aggregation over signals that already exist as relay events: active turns,
+   thread-workspace branch telemetry, Needs You, evidence and acceptance
+   reactions from #121, and agent readiness from #119. It answers what each
+   agent is doing, on which branch, what needs the founder, and what is done.
+   It is a lens over existing events with no new authoritative state,
+   consistent with D-003, D-010, and VISION.md's "board state = signed relay
+   events". It is recorded as a future candidate track and is not in scope of
+   this change.
+
+## D-038 — Crew edits the bound Hermes profile write-through
+
+- **Status:** Accepted
+- **Date:** 2026-08-11
+- **Issue:** #118
+
+Crew is the editing surface for the bound Hermes profile's model and
+`SOUL.md`; Hermes remains the single source of truth. Crew stores neither a
+second model/persona copy nor a reset template. Reads come from the profile
+files, and writes go through the Hermes CLI for model/provider values or the
+profile file for `SOUL.md`. A successful write is read back before Crew
+updates its display, and the model change applies on the next fresh ACP
+session.
+
+This supersedes the "no editable model control" presentation in rule 2 of
+[`HERMES.md`](HERMES.md) and the corresponding D-019 note. The profile's
+persona is Layer 1, `base_prompt.md` is the harness-owned Layer 2 office
+rules, and the optional Crew agent description is Layer 3 job context,
+appended only when non-empty.
+
+Two sub-decisions are settled:
+
+1. Crew does not offer "Reset to Hermes default": Hermes generates the
+   default at profile creation, and Crew must not ship a copied default that
+   can drift.
+2. Provider and model changes use two separate `config set` invocations. If
+   the second fails, the profile may be partially updated; Crew does not
+   invent rollback without a verified Hermes unset operation.
+
+## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
+
+- **Status:** Accepted
+- **Date:** 2026-08-11
+- **Issue:** [#135](https://github.com/Nuncio-hq/crew/issues/135)
+
+`deriveMissionInboxSections` memoizes on a key built from its inputs. An
+explicitly supplied `now` is part of that key; the implicit `Date.now()`
+fallback is not. Identical inputs therefore always return the identical
+snapshot object, which is what a `getSnapshot`-shaped selector must do.
+
+The accepted consequence: without an explicit clock input, row `age` values
+stay fixed until another input changes. The desktop caller passes no clock and
+the home surface has no ticker, so ages already only refresh when a store
+changes. A caller that wants clock-driven recomputation passes `now`.
+
+## D-031 — Keep shipped state in sync with STATE.md
 
 - **Status:** Accepted
 - **Date:** 2026-08-10

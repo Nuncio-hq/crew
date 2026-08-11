@@ -49,13 +49,13 @@ with a TypeScript lookup table or an id comparison in a component.
    *should* receive it. They intentionally differ until PR 2.7 migrates
    Goose/Claude — do not "fix" one to match the other without doing the
    migration work.
-3. **Field absence has a named reason, not a boolean.** Codex effort is
-   `ownedByModelId`; Claude effort is `deferredUntilNativeOptionsAvailable`;
-   profile-locked model (Hermes / any runtime with `profileArg` +
-   `providerLocked` + no `modelEnvVar`) is `ownedByProfile` — surfaces render
-   an informational row, never an editable model control. New absences get
-   new named reasons in `AgentConfigOmission` / `render` — never a `showX`
-   prop.
+3. **Field absence has a named reason, not a boolean.** Model resolution is a
+   capability: `modelSource` selects profile write-through versus adapter
+   settings. Codex effort is `ownedByModelId`; Claude effort is
+   `deferredUntilNativeOptionsAvailable`; `ownedByProfile` is retained only
+   for runtimes that genuinely cannot expose a model, not for Hermes'
+   write-through path. New absences get new named reasons in
+   `AgentConfigOmission` / `render` — never a `showX` prop.
 4. **The clearing policy is the named types.** `onContextChange:
    "resetDependentValues"` (user changed harness/provider → dependent values
    reset everywhere) vs `onCatalogMismatch: "explainOnly" | "onboardingCleanup"`
@@ -115,7 +115,9 @@ with a TypeScript lookup table or an id comparison in a component.
    still shows the control when Custom model is available. Required-model
    harnesses always keep the field. **Separately**, `ownedByProfile` omits the
    model control before discovery runs — that path does not use
-   `shouldRenderModelControl`. Gate: `defaults hides model when optional
+   `shouldRenderModelControl`. A persona document renders only when the runtime
+   declares one, and render code still never branches on `runtime.id`. Gate:
+   `defaults hides model when optional
    harness has empty discovery` (and the failed-discovery counterpart) in
    `onboarding-agent-defaults.spec.ts`; profile-owned model in
    `lib/agentConfigCore.test.mjs` + `ui/agentConfigFieldsContract.test.mjs` +

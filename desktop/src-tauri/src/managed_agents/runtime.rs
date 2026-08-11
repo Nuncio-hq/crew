@@ -680,11 +680,7 @@ pub fn spawn_agent_child(
     let effective_model = effective_cfg.model.value;
     let effective_provider = effective_cfg.provider.value;
 
-    if let Some(prompt) = &effective_prompt {
-        command.env("BUZZ_ACP_SYSTEM_PROMPT", prompt);
-    } else {
-        command.env_remove("BUZZ_ACP_SYSTEM_PROMPT");
-    }
+    apply_system_prompt_env(&mut command, effective_prompt.as_deref());
     if let Some(model) = effective_model.as_deref() {
         command.env("BUZZ_ACP_MODEL", model);
     } else {
@@ -881,6 +877,14 @@ pub fn spawn_agent_child(
         adapter_availability: spawned_adapter_availability,
         start_nonce,
     })
+}
+
+pub(crate) fn apply_system_prompt_env(command: &mut std::process::Command, prompt: Option<&str>) {
+    if let Some(prompt) = prompt {
+        command.env("BUZZ_ACP_SYSTEM_PROMPT", prompt);
+    } else {
+        command.env_remove("BUZZ_ACP_SYSTEM_PROMPT");
+    }
 }
 
 fn child_rust_log_filter() -> String {

@@ -51,6 +51,10 @@ type UnavailablePersistence = {
   kind: "unavailable";
 };
 
+type NoPersistence = {
+  kind: "none";
+};
+
 export type AgentConfigFieldDescriptor =
   | {
       kind: "provider";
@@ -63,10 +67,11 @@ export type AgentConfigFieldDescriptor =
   | {
       kind: "model";
       optionSource: "acpModels";
-      persistence: NormalizedFieldPersistence;
+      persistence: NormalizedFieldPersistence | NoPersistence;
       targetApplication:
         | { kind: "envVar"; key: string }
-        | { kind: "acpNative" };
+        | { kind: "acpNative" }
+        | { kind: "profileWriteThrough" };
       render: "control";
       value: string | null;
     }
@@ -211,23 +216,21 @@ export function deriveAgentConfigFieldModel({
     });
   }
 
-  // Profile-owned model (C-04): omit the editable control; surfaces render an
-  // informational row from the named omission. Capability check only — never
-  // `runtime.id === "hermes"`.
-  if (runtimeOwnsModelViaProfile(runtime)) {
-    omissions.push({ kind: "model", reason: "ownedByProfile" });
-  } else {
-    fields.push({
-      kind: "model",
-      optionSource: "acpModels",
-      persistence: { kind: "normalizedField", field: "model" },
-      targetApplication: runtime?.modelEnvVar
+  const profileWriteThrough = runtimeOwnsModelViaProfile(runtime);
+  fields.push({
+    kind: "model",
+    optionSource: "acpModels",
+    persistence: profileWriteThrough
+      ? { kind: "none" }
+      : { kind: "normalizedField", field: "model" },
+    targetApplication: profileWriteThrough
+      ? { kind: "profileWriteThrough" }
+      : runtime?.modelEnvVar
         ? { kind: "envVar", key: runtime.modelEnvVar }
         : { kind: "acpNative" },
-      render: "control",
-      value: config.model,
-    });
-  }
+    render: "control",
+    value: config.model,
+  });
 
   // Profile binding is instance/definition-scoped (ManagedAgentRecord), not
   // global defaults / onboarding.
@@ -315,6 +318,14 @@ export function isModelOwnedByProfile(model: AgentConfigFieldModel): boolean {
   return model.omissions.some(
     (omission) =>
       omission.kind === "model" && omission.reason === "ownedByProfile",
+  );
+}
+
+export function isModelWriteThrough(model: AgentConfigFieldModel): boolean {
+  return model.fields.some(
+    (field) =>
+      field.kind === "model" &&
+      field.targetApplication.kind === "profileWriteThrough",
   );
 }
 

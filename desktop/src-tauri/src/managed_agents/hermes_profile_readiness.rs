@@ -84,6 +84,17 @@ fn is_hermes_command(command: &str) -> bool {
     crate::managed_agents::known_acp_runtime(command).is_some_and(|runtime| runtime.id == "hermes")
 }
 
+pub(crate) fn read_profile_yaml(profile_dir: &Path) -> Result<Option<serde_yaml::Value>, String> {
+    let config = profile_dir.join("config.yaml");
+    if !config.is_file() {
+        return Ok(None);
+    }
+    let contents = std::fs::read_to_string(&config).map_err(|error| error.to_string())?;
+    serde_yaml::from_str::<serde_yaml::Value>(&contents)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
 /// Evaluate one Hermes command and its optional bound profile.
 pub fn hermes_profile_readiness(
     command: &str,
@@ -126,24 +137,11 @@ pub fn hermes_profile_readiness_with(
             profile: profile.to_string(),
         });
     }
-    let config = profile_dir.join("config.yaml");
-    if config.is_file() {
-        match std::fs::read_to_string(&config) {
-            Ok(contents) => {
-                if let Err(error) = serde_yaml::from_str::<serde_yaml::Value>(&contents) {
-                    return Some(HermesProfileReadiness::BrokenConfig {
-                        profile: profile.to_string(),
-                        diagnostic: error.to_string(),
-                    });
-                }
-            }
-            Err(error) => {
-                return Some(HermesProfileReadiness::BrokenConfig {
-                    profile: profile.to_string(),
-                    diagnostic: error.to_string(),
-                });
-            }
-        }
+    if let Err(error) = read_profile_yaml(&profile_dir) {
+        return Some(HermesProfileReadiness::BrokenConfig {
+            profile: profile.to_string(),
+            diagnostic: error,
+        });
     }
     Some(HermesProfileReadiness::AuthUnknown {
         profile: profile.to_string(),

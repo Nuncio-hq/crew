@@ -7,6 +7,7 @@ import type {
   AcpRuntimeCatalogEntry,
   AuthStatus,
 } from "./acpRuntimeCatalogTypes";
+import { deriveRuntimeCapabilities } from "./runtimeCapabilities";
 
 export type RawAcpRuntimeCatalogEntry = {
   id: string;
@@ -72,6 +73,12 @@ export function fromRawAcpRuntimeCatalogEntry(
     providerLocked: entry.provider_locked ?? false,
     ...(entry.max_parallelism !== undefined && {
       maxParallelism: entry.max_parallelism,
+    }),
+    capabilities: deriveRuntimeCapabilities({
+      id: entry.id,
+      profileArg: entry.profile_arg,
+      providerLocked: entry.provider_locked,
+      modelEnvVar: entry.model_env_var ?? null,
     }),
   };
 }

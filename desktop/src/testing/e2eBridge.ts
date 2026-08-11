@@ -288,6 +288,18 @@ type E2eConfig = {
     managedAgents?: MockManagedAgentSeed[];
     /** Disk Hermes profiles for list_hermes_profiles (Phase 04 picker). */
     hermesProfiles?: string[];
+    /** Model values returned by Hermes profile config reads, keyed by profile. */
+    hermesProfileConfigs?: Record<
+      string,
+      { provider?: string | null; model?: string | null }
+    >;
+    /** SOUL.md contents returned by Hermes profile reads, keyed by profile. */
+    hermesProfileSouls?: Record<string, string>;
+    /** Classified failure returned by Hermes profile config/SOUL writes. */
+    hermesProfileWriteFailure?: {
+      status: "rejected" | "failed";
+      message: string;
+    };
     /** Result returned by the mocked `add_agent_to_huddle` command. */
     addAgentToHuddleResult?: {
       ephemeral_added: boolean;
@@ -1551,6 +1563,15 @@ const mockAgentPubkeys = new Set([
 ]);
 /** In-memory Hermes profiles for Phase 03 lifecycle IPC mocks. */
 const mockHermesProfiles = new Set<string>();
+const mockHermesProfileConfigs = new Map<
+  string,
+  { provider: string | null; model: string | null }
+>();
+const mockHermesProfileSouls = new Map<string, string>();
+let mockHermesProfileWriteFailure: {
+  status: "rejected" | "failed";
+  message: string;
+} | null = null;
 const mockHermesArchives = new Map<
   string,
   {
@@ -2382,6 +2403,10 @@ function resetMockRelayAgents(config?: E2eConfig) {
 function resetMockManagedAgents(config?: E2eConfig) {
   mockManagedAgents = [];
   mockHermesProfiles.clear();
+  mockHermesProfileConfigs.clear();
+  mockHermesProfileSouls.clear();
+  mockHermesProfileWriteFailure =
+    config?.mock?.hermesProfileWriteFailure ?? null;
   mockHermesArchives.clear();
   mockManagedAgentRuntimes = (config?.mock?.managedAgentRuntimes ?? []).map(
     (seed) => ({
@@ -2398,6 +2423,21 @@ function resetMockManagedAgents(config?: E2eConfig) {
   for (const name of config?.mock?.hermesProfiles ?? []) {
     const trimmed = name.trim();
     if (trimmed) mockHermesProfiles.add(trimmed);
+  }
+  for (const [name, values] of Object.entries(
+    config?.mock?.hermesProfileConfigs ?? {},
+  )) {
+    mockHermesProfiles.add(name);
+    mockHermesProfileConfigs.set(name, {
+      provider: values.provider ?? null,
+      model: values.model ?? null,
+    });
+  }
+  for (const [name, content] of Object.entries(
+    config?.mock?.hermesProfileSouls ?? {},
+  )) {
+    mockHermesProfiles.add(name);
+    mockHermesProfileSouls.set(name, content);
   }
 
   for (const seed of config?.mock?.managedAgents ?? []) {
@@ -12755,6 +12795,96 @@ export function maybeInstallE2eTauriMocks() {
         }
         mockHermesProfiles.delete(trimmed);
         return { status: "ok", name: trimmed };
+      }
+      case "read_hermes_profile_model": {
+        const { name } = payload as { name: string };
+        const trimmed = name?.trim() ?? "";
+        if (!mockHermesProfiles.has(trimmed)) {
+          return {
+            status: "does_not_exist",
+            name: trimmed,
+            message: `Hermes profile '${trimmed}' does not exist`,
+          };
+        }
+        const values = mockHermesProfileConfigs.get(trimmed);
+        return {
+          status: "ok",
+          name: trimmed,
+          provider: values?.provider ?? null,
+          model: values?.model ?? null,
+        };
+      }
+      case "write_hermes_profile_model": {
+        const { name, provider, model } = payload as {
+          name: string;
+          provider?: string | null;
+          model?: string | null;
+        };
+        const trimmed = name?.trim() ?? "";
+        if (mockHermesProfileWriteFailure) {
+          return {
+            status: mockHermesProfileWriteFailure.status,
+            name: trimmed,
+            message: mockHermesProfileWriteFailure.message,
+          };
+        }
+        if (!mockHermesProfiles.has(trimmed)) {
+          return {
+            status: "does_not_exist",
+            name: trimmed,
+            message: `Hermes profile '${trimmed}' does not exist`,
+          };
+        }
+        const current = mockHermesProfileConfigs.get(trimmed) ?? {
+          provider: null,
+          model: null,
+        };
+        const next = {
+          provider: provider ?? current.provider,
+          model: model ?? current.model,
+        };
+        mockHermesProfileConfigs.set(trimmed, next);
+        return { status: "ok", name: trimmed, ...next };
+      }
+      case "read_hermes_profile_soul": {
+        const { name } = payload as { name: string };
+        const trimmed = name?.trim() ?? "";
+        if (!mockHermesProfiles.has(trimmed)) {
+          return {
+            status: "does_not_exist",
+            name: trimmed,
+            message: `Hermes profile '${trimmed}' does not exist`,
+          };
+        }
+        const content = mockHermesProfileSouls.get(trimmed);
+        if (content === undefined) {
+          return {
+            status: "missing",
+            name: trimmed,
+            message: `Hermes profile '${trimmed}' has no SOUL.md`,
+          };
+        }
+        return { status: "ok", name: trimmed, content };
+      }
+      case "write_hermes_profile_soul": {
+        const { name, content } = payload as { name: string; content: string };
+        const trimmed = name?.trim() ?? "";
+        if (mockHermesProfileWriteFailure) {
+          return {
+            status: mockHermesProfileWriteFailure.status,
+            name: trimmed,
+            message: mockHermesProfileWriteFailure.message,
+          };
+        }
+        if (!mockHermesProfiles.has(trimmed)) {
+          return {
+            status: "does_not_exist",
+            name: trimmed,
+            message: `Hermes profile '${trimmed}' does not exist`,
+          };
+        }
+        mockHermesProfileSouls.set(trimmed, content);
+        return { status: "ok", name: trimmed, content };
       }
       case "estimate_hermes_profile_archive": {
         const profile = String((payload as { profile?: string }).profile ?? "");

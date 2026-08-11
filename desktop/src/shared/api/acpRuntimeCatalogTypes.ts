@@ -57,6 +57,7 @@ export type AcpRuntimeCatalogEntry = {
   providerLocked?: boolean;
   /** Maximum parallel agent invocations supported by the runtime harness. */
   maxParallelism?: number;
+  capabilities: import("./runtimeCapabilities").RuntimeCapabilities;
 };
 
 /** An AcpRuntimeCatalogEntry that is confirmed available — command and binaryPath are non-null. */

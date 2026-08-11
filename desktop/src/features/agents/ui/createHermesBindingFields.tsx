@@ -8,6 +8,7 @@ import type { AcpRuntimeCatalogEntry, RespondToMode } from "@/shared/api/types";
 import {
   deriveAgentConfigFieldModel,
   getRenderableHermesProfileField,
+  isModelWriteThrough,
   isModelOwnedByProfile,
 } from "../lib/agentConfigCore";
 import { shouldClearHermesProfileOnRuntimeChange } from "../lib/hermesProfileBinding";
@@ -17,6 +18,8 @@ import {
   ProfileOwnedModelRow,
   useHermesProfileBindingState,
 } from "./HermesProfileBindingFields";
+import { HermesProfileModelField } from "./HermesProfileModelField";
+import { HermesSoulEditor } from "./HermesSoulEditor";
 
 export function useCreateHermesBinding({
   enabled,
@@ -49,6 +52,7 @@ export function useCreateHermesBinding({
   const showProfileField =
     enabled && getRenderableHermesProfileField(fieldModel) != null;
   const modelOwnedByProfile = enabled && isModelOwnedByProfile(fieldModel);
+  const modelWriteThrough = enabled && isModelWriteThrough(fieldModel);
   const { blockingError } = useHermesProfileBindingState({
     enabled: showProfileField,
     hermesProfile,
@@ -59,6 +63,7 @@ export function useCreateHermesBinding({
   return {
     showProfileField,
     modelOwnedByProfile,
+    modelWriteThrough,
     profileError: blockingError,
   };
 }
@@ -69,6 +74,8 @@ export function CreateHermesBindingFields({
   hermesProfile,
   onHermesProfileChange,
   modelOwnedByProfile,
+  modelWriteThrough,
+  personaDoc,
   showProfileField,
   respondTo,
 }: {
@@ -77,10 +84,14 @@ export function CreateHermesBindingFields({
   hermesProfile: string;
   onHermesProfileChange: (next: string) => void;
   modelOwnedByProfile: boolean;
+  modelWriteThrough: boolean;
+  personaDoc: "soulMd" | "none";
   showProfileField: boolean;
   respondTo?: RespondToMode | null;
 }) {
-  if (!showProfileField && !modelOwnedByProfile) return null;
+  if (!showProfileField && !modelOwnedByProfile && !modelWriteThrough) {
+    return null;
+  }
   return (
     <>
       {showProfileField ? (
@@ -93,8 +104,13 @@ export function CreateHermesBindingFields({
           value={hermesProfile}
         />
       ) : null}
-      {modelOwnedByProfile ? (
+      {modelWriteThrough && hermesProfile.trim() ? (
+        <HermesProfileModelField profileName={hermesProfile} />
+      ) : modelOwnedByProfile ? (
         <ProfileOwnedModelRow profileName={hermesProfile} />
+      ) : null}
+      {personaDoc === "soulMd" && hermesProfile.trim() ? (
+        <HermesSoulEditor profileName={hermesProfile} />
       ) : null}
     </>
   );

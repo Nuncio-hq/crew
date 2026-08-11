@@ -20,6 +20,7 @@ export function buildRuntimeModelProviderPayload({
   initialModel,
   initialProvider,
   initialModelProviderEditableWithoutRuntime,
+  modelWriteThrough = false,
 }: {
   runtime: string;
   model: string;
@@ -30,6 +31,7 @@ export function buildRuntimeModelProviderPayload({
   initialModel: string | null | undefined;
   initialProvider: string | null | undefined;
   initialModelProviderEditableWithoutRuntime: boolean;
+  modelWriteThrough?: boolean;
 }): {
   runtime: string | undefined;
   model: string | undefined;
@@ -60,8 +62,9 @@ export function buildRuntimeModelProviderPayload({
     !modelProviderEditableWithoutRuntime;
   return {
     runtime: runtimeForSubmit || undefined,
-    model:
-      runtimeForSubmit || modelProviderEditableWithoutRuntime
+    model: modelWriteThrough
+      ? undefined
+      : runtimeForSubmit || modelProviderEditableWithoutRuntime
         ? model.trim() || undefined
         : shouldPreserveHiddenModelProvider
           ? (initialModel ?? undefined)

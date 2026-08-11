@@ -3,6 +3,7 @@ import { cn } from "@/shared/lib/cn";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import { EnvVarsEditor, type EnvVarsValue } from "./EnvVarsEditor";
+import { AgentInstructionsHelper } from "./AgentInstructionsHelper";
 import {
   CARD_MINT_KEY_ANNOTATIONS,
   PERSONA_FIELD_CONTROL_CLASS,
@@ -305,9 +306,12 @@ export function EditAgentAdvancedFields({
             className="text-sm font-medium text-foreground"
             htmlFor="edit-agent-system-prompt"
           >
-            System prompt override
+            Agent instructions
             <span className={PERSONA_LABEL_OPTIONAL_CLASS}>Optional</span>
           </label>
+          <AgentInstructionsHelper
+            hasPersona={selectedRuntime?.capabilities?.personaDoc === "soulMd"}
+          />
           <div className={PERSONA_FIELD_SHELL_CLASS}>
             <Textarea
               className={cn(

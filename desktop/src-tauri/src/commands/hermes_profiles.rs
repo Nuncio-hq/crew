@@ -8,8 +8,14 @@ use crate::managed_agents::hermes_profile_archive::{
     running_agent_for_profile, HermesProfileArchiveAgent, HermesProfileArchiveEstimate,
     HermesProfileArchiveListing, HermesProfileArchiveResult,
 };
+use crate::managed_agents::hermes_profile_config::{
+    read_profile_config, write_profile_config, HermesProfileConfigResult,
+};
 use crate::managed_agents::hermes_profile_lifecycle::{
     create_profile, delete_profile, list_profiles, HermesProfileLifecycleResult,
+};
+use crate::managed_agents::hermes_profile_soul::{
+    read_profile_soul, write_profile_soul, HermesProfileSoulResult,
 };
 use crate::managed_agents::load_managed_agents;
 use tauri::{AppHandle, Manager};
@@ -42,6 +48,30 @@ pub fn delete_hermes_profile(name: String) -> HermesProfileLifecycleResult {
         "delete_hermes_profile"
     );
     result
+}
+
+#[tauri::command]
+pub fn read_hermes_profile_model(name: String) -> HermesProfileConfigResult {
+    read_profile_config(&name)
+}
+
+#[tauri::command]
+pub fn write_hermes_profile_model(
+    name: String,
+    provider: Option<String>,
+    model: Option<String>,
+) -> HermesProfileConfigResult {
+    write_profile_config(&name, provider, model)
+}
+
+#[tauri::command]
+pub fn read_hermes_profile_soul(name: String) -> HermesProfileSoulResult {
+    read_profile_soul(&name)
+}
+
+#[tauri::command]
+pub fn write_hermes_profile_soul(name: String, content: String) -> HermesProfileSoulResult {
+    write_profile_soul(&name, &content)
 }
 
 #[tauri::command]

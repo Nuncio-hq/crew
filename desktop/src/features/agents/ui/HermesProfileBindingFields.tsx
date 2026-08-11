@@ -9,6 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import type { RespondToMode } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
+import { Button } from "@/shared/ui/button";
 import { useCommunities } from "@/features/communities/useCommunities";
 import {
   hermesProfilesQueryKey,
@@ -36,6 +37,7 @@ import {
   HermesProfileCreateAffordance,
   isNonOwnerOnlyRespondTo,
 } from "./HermesProfileCreateAffordance";
+import { HermesSoulEditor } from "./HermesSoulEditor";
 
 export function ProfileOwnedModelRow({
   profileName,
@@ -265,6 +267,9 @@ export function HermesProfileField({
   const showPublicWarning = isNonOwnerOnlyRespondTo(respondTo);
   const showCreate =
     enableCreateInPlace && shouldShowHermesProfileCreate(value, profiles);
+  const [personaStepProfile, setPersonaStepProfile] = React.useState<
+    string | null
+  >(null);
 
   return (
     <div className="space-y-1.5" data-testid="hermes-profile-field">
@@ -301,6 +306,7 @@ export function HermesProfileField({
           onCreated={(name) => {
             onChange(name);
             invalidateProfiles();
+            setPersonaStepProfile(name);
           }}
           profileName={value}
           showPublicAgentWarning={showPublicWarning}
@@ -313,6 +319,27 @@ export function HermesProfileField({
           Hermes profiles currently read the manager&apos;s pooled provider
           credentials (see docs/crew/HERMES.md).
         </p>
+      ) : null}
+      {personaStepProfile ? (
+        <div
+          className="space-y-1.5 rounded-md border border-border/60 p-3"
+          data-testid="hermes-profile-persona-step"
+        >
+          <p className="text-sm font-medium">Set this profile&apos;s persona</p>
+          <p className="text-xs text-muted-foreground">
+            This optional step customizes the new profile&apos;s shared persona.
+            Skip it to keep Hermes&apos; default.
+          </p>
+          <HermesSoulEditor profileName={personaStepProfile} />
+          <Button
+            onClick={() => setPersonaStepProfile(null)}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            Skip for now
+          </Button>
+        </div>
       ) : null}
       {error ? (
         <p

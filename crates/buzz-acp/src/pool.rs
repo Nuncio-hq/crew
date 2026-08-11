@@ -6099,6 +6099,15 @@ mod tests {
             session_new_system_prompt(false, 2, "buzz-agent", Some("instructions")),
             Some(SystemPromptTransport::Field("instructions"))
         );
+        // Hermes follows the same non-Claude protocol-v2 field transport.
+        assert_eq!(
+            session_new_system_prompt(false, 2, "hermes-agent", Some("instructions")),
+            Some(SystemPromptTransport::Field("instructions"))
+        );
+        assert_eq!(
+            session_new_system_prompt(false, 2, "hermes-agent", None),
+            None
+        );
         // Protocol-v1 non-goose, non-claude gets None (legacy user-message framing).
         assert_eq!(
             session_new_system_prompt(false, 1, "codex", Some("instructions")),

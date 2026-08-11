@@ -16,12 +16,16 @@ import {
   HermesProfileField,
   ProfileOwnedModelRow,
 } from "./HermesProfileBindingFields";
+import { HermesProfileModelField } from "./HermesProfileModelField";
+import { HermesSoulEditor } from "./HermesSoulEditor";
 
 export function EditAgentModelAndProfileSection({
   showProfileField,
   hermesProfile,
   onHermesProfileChange,
   modelOwnedByProfile,
+  modelWriteThrough,
+  personaDoc,
   disabled,
   modelRequired,
   modelDiscoveryLoading,
@@ -40,6 +44,8 @@ export function EditAgentModelAndProfileSection({
   hermesProfile: string;
   onHermesProfileChange: (next: string) => void;
   modelOwnedByProfile: boolean;
+  modelWriteThrough: boolean;
+  personaDoc: "soulMd" | "none";
   disabled: boolean;
   modelRequired: boolean;
   modelDiscoveryLoading: boolean;
@@ -68,7 +74,12 @@ export function EditAgentModelAndProfileSection({
         />
       ) : null}
 
-      {modelOwnedByProfile ? (
+      {modelWriteThrough && hermesProfile.trim() ? (
+        <HermesProfileModelField
+          disabled={disabled}
+          profileName={hermesProfile}
+        />
+      ) : modelOwnedByProfile ? (
         <ProfileOwnedModelRow profileName={hermesProfile} />
       ) : (
         <div className="space-y-1.5">
@@ -122,6 +133,9 @@ export function EditAgentModelAndProfileSection({
           ) : null}
         </div>
       )}
+      {personaDoc === "soulMd" && hermesProfile.trim() ? (
+        <HermesSoulEditor disabled={disabled} profileName={hermesProfile} />
+      ) : null}
     </>
   );
 }
