@@ -467,3 +467,19 @@ explain simply, label uncertainty about “real company” practice, refuse sile
 mis-assignment when roles exist, and treat shared thread reports as the human
 record. Spikes are not automatic law. Full text of MUST/MUST NOT lives in the
 working agreement doc.
+
+## D-039 — Mission inbox snapshots memoize on inputs, not on the wall clock
+
+- **Status:** Accepted
+- **Date:** 2026-08-11
+- **Issue:** [#135](https://github.com/Nuncio-hq/crew/issues/135)
+
+`deriveMissionInboxSections` memoizes on a key built from its inputs. An
+explicitly supplied `now` is part of that key; the implicit `Date.now()`
+fallback is not. Identical inputs therefore always return the identical
+snapshot object, which is what a `getSnapshot`-shaped selector must do.
+
+The accepted consequence: without an explicit clock input, row `age` values
+stay fixed until another input changes. The desktop caller passes no clock and
+the home surface has no ticker, so ages already only refresh when a store
+changes. A caller that wants clock-driven recomputation passes `now`.
