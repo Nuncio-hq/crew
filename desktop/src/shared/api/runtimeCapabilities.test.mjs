@@ -53,7 +53,7 @@ test("capabilities derive Hermes profile ownership from catalog facts", () => {
   );
 });
 
-test("non-Hermes and unknown runtimes use adapter settings without persona docs", () => {
+test("non-Hermes runtimes do not infer persona documents", () => {
   for (const runtime of [
     entry({
       id: "claude",
@@ -68,6 +68,19 @@ test("non-Hermes and unknown runtimes use adapter settings without persona docs"
       modelEnvVar: null,
     }),
     entry({
+      id: "custom",
+      profileArg: "-p",
+      providerLocked: true,
+      modelEnvVar: null,
+    }),
+  ]) {
+    assert.equal(deriveRuntimeCapabilities(runtime).personaDoc, "none");
+  }
+});
+
+test("runtimes without profile-owned model facts use adapter settings", () => {
+  for (const runtime of [
+    entry({
       id: "goose",
       modelEnvVar: "GOOSE_MODEL",
       profileArg: "-p",
@@ -78,12 +91,6 @@ test("non-Hermes and unknown runtimes use adapter settings without persona docs"
       modelEnvVar: "BUZZ_AGENT_MODEL",
       profileArg: "-p",
       providerLocked: true,
-    }),
-    entry({
-      id: "custom",
-      profileArg: "-p",
-      providerLocked: true,
-      modelEnvVar: null,
     }),
     undefined,
   ]) {
