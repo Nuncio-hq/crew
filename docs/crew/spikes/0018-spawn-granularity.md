@@ -155,13 +155,20 @@ ACP entry point failed before initialization with:
 ModuleNotFoundError: No module named 'acp'
 ```
 
-The Hermes failure is an adapter installation/runtime blocker, not evidence
-about Codex authentication or either engine's session semantics.
+The error came from `acp_adapter/server.py` importing `ModelInfo` from
+`acp.schema`. Public `agent-client-protocol` 0.11.0/0.12.0 removed `ModelInfo`,
+but `0.10.1` still has it, so the local fix was:
 
-No ACP session was created during that attempt, so it produced no transcript
-for either context isolation or session-addressed `set_config_option`. That
-attempt is retained as history; it is **superseded** by the authenticated
-real-engine run below.
+```bash
+uv pip install --python ~/.local/share/uv/tools/hermes-agent/bin/python \
+  "agent-client-protocol==0.10.1"
+```
+
+After that, `hermes-acp --check` passed. The credential was then wired through
+Hermes's own auth store (`~/.hermes/auth.json`) as `providers.openai-codex`
+for the Codex token and `providers.xai-oauth` for the Grok token, with
+`~/.hermes/config.yaml` pointed at the matching provider/model. No credential
+material was copied into this repository.
 
 ## Real-engine two-session run (authoritative)
 
@@ -177,7 +184,11 @@ Each run spawned **one** engine process and created **two** sessions on it. No
 credential material was copied into this repository; the probe scripts and
 recorded frames are credential-free.
 
-### Q1 — context isolation across sessions on one process: **PASS, both engines**
+Hermes 0.19.0 was tested over ACP after the dependency fix above, using both
+the `openai-codex` and `xai-oauth` provider profiles with the same two
+credentials.
+
+### Q1 — context isolation across sessions on one process: **PASS, all tested engines**
 
 Session A was told a code word; session B was asked, in its own session, what
 code word it had been given; session A was then asked to repeat it as a
@@ -187,14 +198,18 @@ positive control.
 |--------|-----|------------------|-----------|-------------------|---------|
 | Codex  | 481372 | `STORED` | `NONE` | `PLUMBUS-7742` | no |
 | Grok   | 483848 | `STORED` | `NONE` | `PLUMBUS-7742` | no |
+| Hermes (`openai-codex`) | 543131 | `STORED` | `NONE` | `PLUMBUS-7742` | no |
+| Hermes (`xai-oauth`) | 546625 | `STORED` | `NONE` | `PLUMBUS-7742` | no |
 
-Both engines kept the two sessions' contexts separate while sharing one
+All engines kept the two sessions' contexts separate while sharing one
 process, and the control turn proves the probe could have detected a leak.
 
 Assets: `assets/0018-spawn-granularity/real-codex-two-session-probe.json`,
-`assets/0018-spawn-granularity/real-grok-two-session-probe.json`.
+`assets/0018-spawn-granularity/real-grok-two-session-probe.json`,
+`real-hermes-openai-codex-two-session-probe.json`,
+`real-hermes-xai-oauth-two-session-probe.json`.
 
-### Q2 — per-session native-tool floor on one process: **PASS, both engines**
+### Q2 — per-session native-tool floor on one process: **PASS, all tested engines**
 
 This **reverses** the earlier negative finding. Codex ACP advertises a
 session-scoped `mode` config option (`read-only` / `agent` /
@@ -235,12 +250,36 @@ with no file on disk. Only the third combination — approve permissions, withho
 run session B, and only session B, refused: *"Plan mode is active, so file
 creation outside the plan file is not permitted."*
 
+Hermes accepts `session/set_mode` for its ACP sessions. The Hermes probe set
+session A to `dont_ask` and session B to `default`, withheld the client's `fs`
+capability to force Hermes's own file tool, and denied all permission requests:
+
+```json
+{"method": "session/set_mode",
+ "params": {"sessionId": "<A>", "modeId": "dont_ask"}}
+```
+
+```json
+{"method": "session/set_mode",
+ "params": {"sessionId": "<B>", "modeId": "default"}}
+```
+
+Results:
+
+| Provider | PID | A mode | A result | B mode | B result | floor differs? |
+|---|---|---|---|---|---|---|
+| Hermes `openai-codex` | 544392 | `dont_ask` | `WROTE` | `default` | `DENIED` | yes |
+| Hermes `xai-oauth` | 546625 | `dont_ask` | `WROTE` | `default` | `DENIED` | yes |
+
+In both runs session B requested permission and the probe denied it; session A
+in `dont_ask` did not request permission and wrote the file.
+
 The earlier `FAIL` was drawn from Crew's own spawn path — `agent_args` such as
 Codex `-s` and Claude `--permission-mode` are fixed per process
 (`crates/buzz-acp/src/config.rs:807-830`, `crates/buzz-acp/src/lib.rs:4738-4755`).
 That remains true, but it is a limitation of **how Crew configures the engine**,
-not of the engines: both tested engines expose a session-addressed permission
-control that they enforce. Crew already has the seam for it —
+not of the engines: every engine tested exposes a session-addressed permission
+control that it enforces. Crew already has the seam for it —
 `pool.rs:1103-1110` applies `PermissionMode` via session-addressed
 `session/set_config_option` after `session/new`; the value simply comes from
 shared process context rather than the channel's role assignment.
@@ -248,20 +287,20 @@ shared process context rather than the channel's role assignment.
 Assets: `assets/0018-spawn-granularity/real-codex-per-session-floor.json`,
 `real-grok-per-session-floor.json` (the inconclusive deny run, kept so the
 distinction is checkable), `real-grok-per-session-floor-approve.json` (the
-conclusive run), probe scripts `acp_two_session_probe.py` and
-`acp_per_session_floor_probe.py`. Engine stderr is redacted in every asset: it
-carries auth prefixes and bearer fragments.
+conclusive run), `real-hermes-openai-codex-per-session-floor.json`,
+`real-hermes-xai-oauth-per-session-floor.json`, probe scripts
+`acp_two_session_probe.py` and `acp_per_session_floor_probe.py`. Engine stderr
+is redacted in every asset: it carries auth prefixes and bearer fragments.
 
 ### Revised verdict
 
-- Context isolation per thread: **PASS** (Codex, Grok) — already satisfied
-  today, no change needed.
+- Context isolation per thread: **PASS** (Codex, Grok, Hermes with both
+  `openai-codex` and `xai-oauth`) — already satisfied today, no change needed.
 - Per-session native-tool floor: **PASS** (Codex via `set_config_option`
-  `mode`, Grok via `set_mode`) — a per-thread hard floor does **not** require
-  one engine process per `(agent, thread)`.
-- Not tested: Claude (`claude` is not installed in this environment) and
-  Hermes (ACP entry point missing its `acp` module). For any engine that
-  advertises no session-scoped permission control, the process-level
+  `mode`, Grok and Hermes via `set_mode`) — a per-thread hard floor does
+  **not** require one engine process per `(agent, thread)`.
+- Not tested: Claude (`claude` is not installed in this environment). For any
+  engine that advertises no session-scoped permission control, the process-level
   limitation still stands and must be stated per engine rather than globally.
 
 ### Slice 3 implication (revised)
@@ -269,14 +308,18 @@ carries auth prefixes and bearer fragments.
 Slice 3's honest ceiling is higher than shipped. Role-decided dev-mcp per
 channel session stays as is; on top of it, the channel's role should also
 select the session's ACP permission mode, so a role-denied channel gets a
-real read-only floor on Codex and Grok instead of a prompt-level rule. The
-"a rule, not a wall" sentence must be narrowed to engines that expose no
-session-scoped permission control, and must not be applied to Codex or Grok
-on the strength of this run.
+real read-only floor on Codex, Grok, and Hermes instead of a prompt-level
+rule. The "a rule, not a wall" sentence must be narrowed to engines that
+expose no session-scoped permission control, and must not be applied to
+Codex, Grok, or Hermes on the strength of this run.
 
 ## Limitations
 
-- No product code or existing source file was changed.
-- No authenticated local relay/database/real-engine two-channel run was available, so runtime behavior of actual engines remains unverified.
-- The fake-agent wire probe demonstrates ACP transport semantics only; it does not establish engine enforcement of session-level permission settings.
-- No relay or engine process was started by this spike.
+- No product code was changed in this spike; the only code change was a probe
+  script option (`--mode-a`) to exercise per-session mode on session A.
+- Authenticated real-engine two-session runs were performed for Codex, Grok,
+  and Hermes (with `openai-codex` and `xai-oauth` credentials) over stdio ACP;
+  no local relay/database/desktop two-channel run was performed.
+- The Hermes ACP dependency fix (`agent-client-protocol==0.10.1`) was applied
+  to the local Hermes tool venv, not to a repository-managed dependency.
+- Claude remains untested in this environment.

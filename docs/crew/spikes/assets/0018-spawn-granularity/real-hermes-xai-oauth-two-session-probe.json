@@ -1,0 +1,4895 @@
+{
+  "findings": {
+    "engine": "hermes-acp-xai-oauth",
+    "cmd": [
+      "/home/ubuntu/.local/bin/hermes-acp"
+    ],
+    "started": 1786432523.2376626,
+    "initialize": {
+      "agentCapabilities": {
+        "loadSession": true,
+        "promptCapabilities": {
+          "image": true
+        },
+        "sessionCapabilities": {
+          "fork": {},
+          "list": {},
+          "resume": {}
+        }
+      },
+      "agentInfo": {
+        "name": "hermes-agent",
+        "version": "0.19.0"
+      },
+      "authMethods": [
+        {
+          "description": "Authenticate Hermes using the currently configured xai-oauth runtime credentials.",
+          "id": "xai-oauth",
+          "name": "xai-oauth runtime credentials"
+        },
+        {
+          "args": [
+            "--setup"
+          ],
+          "description": "Open Hermes' interactive model/provider setup in a terminal. Use this when Hermes has not been configured on this machine yet.",
+          "id": "hermes-setup",
+          "name": "Configure Hermes provider",
+          "type": "terminal"
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "session_new_a": {
+      "_meta": {
+        "hermes": {
+          "sessionProvenance": {
+            "acpSessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+            "currentHermesSessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+            "rootHermesSessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+            "parentHermesSessionId": null,
+            "sessionKind": "root",
+            "compressionDepth": 0
+          }
+        }
+      },
+      "models": {
+        "availableModels": [
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+) \u2022 current",
+            "modelId": "xai-oauth:grok-3-latest",
+            "name": "grok-3-latest"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-build-0.1",
+            "name": "grok-build-0.1"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-composer-2.5-fast",
+            "name": "grok-composer-2.5-fast"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.20-0309-non-reasoning",
+            "name": "grok-4.20-0309-non-reasoning"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.20-0309-reasoning",
+            "name": "grok-4.20-0309-reasoning"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.20-multi-agent-0309",
+            "name": "grok-4.20-multi-agent-0309"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.3",
+            "name": "grok-4.3"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.5",
+            "name": "grok-4.5"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-image",
+            "name": "grok-imagine-image"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-image-quality",
+            "name": "grok-imagine-image-quality"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-video",
+            "name": "grok-imagine-video"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-video-1.5",
+            "name": "grok-imagine-video-1.5"
+          }
+        ],
+        "currentModelId": "xai-oauth:grok-3-latest"
+      },
+      "modes": {
+        "availableModes": [
+          {
+            "description": "Ask before edits.",
+            "id": "default",
+            "name": "Default"
+          },
+          {
+            "description": "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+            "id": "accept_edits",
+            "name": "Accept Edits"
+          },
+          {
+            "description": "Auto-allow file edits for this session except sensitive paths.",
+            "id": "dont_ask",
+            "name": "Don't Ask"
+          }
+        ],
+        "currentModeId": "default"
+      },
+      "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b"
+    },
+    "session_new_b": {
+      "_meta": {
+        "hermes": {
+          "sessionProvenance": {
+            "acpSessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+            "currentHermesSessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+            "rootHermesSessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+            "parentHermesSessionId": null,
+            "sessionKind": "root",
+            "compressionDepth": 0
+          }
+        }
+      },
+      "models": {
+        "availableModels": [
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+) \u2022 current",
+            "modelId": "xai-oauth:grok-3-latest",
+            "name": "grok-3-latest"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-build-0.1",
+            "name": "grok-build-0.1"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-composer-2.5-fast",
+            "name": "grok-composer-2.5-fast"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.20-0309-non-reasoning",
+            "name": "grok-4.20-0309-non-reasoning"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.20-0309-reasoning",
+            "name": "grok-4.20-0309-reasoning"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.20-multi-agent-0309",
+            "name": "grok-4.20-multi-agent-0309"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.3",
+            "name": "grok-4.3"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-4.5",
+            "name": "grok-4.5"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-image",
+            "name": "grok-imagine-image"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-image-quality",
+            "name": "grok-imagine-image-quality"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-video",
+            "name": "grok-imagine-video"
+          },
+          {
+            "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+            "modelId": "xai-oauth:grok-imagine-video-1.5",
+            "name": "grok-imagine-video-1.5"
+          }
+        ],
+        "currentModelId": "xai-oauth:grok-3-latest"
+      },
+      "modes": {
+        "availableModes": [
+          {
+            "description": "Ask before edits.",
+            "id": "default",
+            "name": "Default"
+          },
+          {
+            "description": "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+            "id": "accept_edits",
+            "name": "Accept Edits"
+          },
+          {
+            "description": "Auto-allow file edits for this session except sensitive paths.",
+            "id": "dont_ask",
+            "name": "Don't Ask"
+          }
+        ],
+        "currentModeId": "default"
+      },
+      "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106"
+    },
+    "same_process_pid": 546072,
+    "session_ids": {
+      "a": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+      "b": "f3e2872d-9647-4c28-95ae-028b3ff34106"
+    },
+    "distinct_session_ids": true,
+    "a_turn1_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "cachedReadTokens": 128,
+        "inputTokens": 13213,
+        "outputTokens": 286,
+        "thoughtTokens": 280,
+        "totalTokens": 13499
+      }
+    },
+    "a_turn1_text": "STORED",
+    "b_turn1_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "cachedReadTokens": 1024,
+        "inputTokens": 13219,
+        "outputTokens": 287,
+        "thoughtTokens": 282,
+        "totalTokens": 13506
+      }
+    },
+    "b_turn1_text": "NONE",
+    "q1_leaked": false,
+    "a_turn2_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "cachedReadTokens": 13312,
+        "inputTokens": 26733,
+        "outputTokens": 408,
+        "thoughtTokens": 392,
+        "totalTokens": 27141
+      }
+    },
+    "a_turn2_text": "STOREDPLUMBUS-7742",
+    "q1_control_a_remembers": true,
+    "q2_session_set_config_option": {
+      "code": -32602,
+      "message": "Invalid params",
+      "data": {
+        "errors": [
+          {
+            "type": "missing",
+            "loc": [
+              "configId"
+            ],
+            "msg": "Field required",
+            "input": {
+              "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+              "key": "sandbox_mode",
+              "value": "read-only"
+            },
+            "url": "https://errors.pydantic.dev/2.13/v/missing"
+          }
+        ]
+      }
+    },
+    "q2_session_set_mode": {},
+    "b_write_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "cachedReadTokens": 27712,
+        "inputTokens": 40641,
+        "outputTokens": 558,
+        "thoughtTokens": 543,
+        "totalTokens": 41199
+      }
+    },
+    "b_write_text": "NONE\n\nWROTE",
+    "b_file_exists": true,
+    "a_write_stop": {
+      "stopReason": "end_turn",
+      "usage": {
+        "cachedReadTokens": 40448,
+        "inputTokens": 54423,
+        "outputTokens": 697,
+        "thoughtTokens": 671,
+        "totalTokens": 55120
+      }
+    },
+    "a_write_text": "STOREDPLUMBUS-7742\n\nWROTE",
+    "a_file_exists": true,
+    "q2_floor_differs": false,
+    "stderr_tail": [
+      "<redacted: engine stderr contained auth prefixes/bearer fragments>"
+    ],
+    "finished": 1786432543.5455735
+  },
+  "wire_log": [
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientCapabilities": {
+            "fs": {
+              "readTextFile": true,
+              "writeTextFile": true
+            },
+            "terminal": false
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "agentCapabilities": {
+            "loadSession": true,
+            "promptCapabilities": {
+              "image": true
+            },
+            "sessionCapabilities": {
+              "fork": {},
+              "list": {},
+              "resume": {}
+            }
+          },
+          "agentInfo": {
+            "name": "hermes-agent",
+            "version": "0.19.0"
+          },
+          "authMethods": [
+            {
+              "description": "Authenticate Hermes using the currently configured xai-oauth runtime credentials.",
+              "id": "xai-oauth",
+              "name": "xai-oauth runtime credentials"
+            },
+            {
+              "args": [
+                "--setup"
+              ],
+              "description": "Open Hermes' interactive model/provider setup in a terminal. Use this when Hermes has not been configured on this machine yet.",
+              "id": "hermes-setup",
+              "name": "Configure Hermes provider",
+              "type": "terminal"
+            }
+          ],
+          "protocolVersion": 1
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/new",
+        "params": {
+          "cwd": "/tmp/hermes-xai-probe",
+          "mcpServers": []
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "_meta": {
+            "hermes": {
+              "sessionProvenance": {
+                "acpSessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+                "currentHermesSessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+                "rootHermesSessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+                "parentHermesSessionId": null,
+                "sessionKind": "root",
+                "compressionDepth": 0
+              }
+            }
+          },
+          "models": {
+            "availableModels": [
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+) \u2022 current",
+                "modelId": "xai-oauth:grok-3-latest",
+                "name": "grok-3-latest"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-build-0.1",
+                "name": "grok-build-0.1"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-composer-2.5-fast",
+                "name": "grok-composer-2.5-fast"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-0309-non-reasoning",
+                "name": "grok-4.20-0309-non-reasoning"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-0309-reasoning",
+                "name": "grok-4.20-0309-reasoning"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-multi-agent-0309",
+                "name": "grok-4.20-multi-agent-0309"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.3",
+                "name": "grok-4.3"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.5",
+                "name": "grok-4.5"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-image",
+                "name": "grok-imagine-image"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-image-quality",
+                "name": "grok-imagine-image-quality"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-video",
+                "name": "grok-imagine-video"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-video-1.5",
+                "name": "grok-imagine-video-1.5"
+              }
+            ],
+            "currentModelId": "xai-oauth:grok-3-latest"
+          },
+          "modes": {
+            "availableModes": [
+              {
+                "description": "Ask before edits.",
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "description": "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+                "id": "accept_edits",
+                "name": "Accept Edits"
+              },
+              {
+                "description": "Auto-allow file edits for this session except sensitive paths.",
+                "id": "dont_ask",
+                "name": "Don't Ask"
+              }
+            ],
+            "currentModeId": "default"
+          },
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "availableCommands": [
+              {
+                "description": "List available commands",
+                "name": "help"
+              },
+              {
+                "description": "Show current model and provider, or switch models",
+                "input": {
+                  "hint": "model name to switch to"
+                },
+                "name": "model"
+              },
+              {
+                "description": "List available tools with descriptions",
+                "name": "tools"
+              },
+              {
+                "description": "Show conversation message counts by role",
+                "name": "context"
+              },
+              {
+                "description": "Clear conversation history",
+                "name": "reset"
+              },
+              {
+                "description": "Compress conversation context",
+                "name": "compact"
+              },
+              {
+                "description": "Inject guidance into the currently running agent turn",
+                "input": {
+                  "hint": "guidance for the active turn"
+                },
+                "name": "steer"
+              },
+              {
+                "description": "Queue a prompt to run after the current turn finishes",
+                "input": {
+                  "hint": "prompt to run next"
+                },
+                "name": "queue"
+              },
+              {
+                "description": "Show Hermes version",
+                "name": "version"
+              }
+            ],
+            "sessionUpdate": "available_commands_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "size": 131072,
+            "used": 10769,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/new",
+        "params": {
+          "cwd": "/tmp/hermes-xai-probe",
+          "mcpServers": []
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "_meta": {
+            "hermes": {
+              "sessionProvenance": {
+                "acpSessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+                "currentHermesSessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+                "rootHermesSessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+                "parentHermesSessionId": null,
+                "sessionKind": "root",
+                "compressionDepth": 0
+              }
+            }
+          },
+          "models": {
+            "availableModels": [
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+) \u2022 current",
+                "modelId": "xai-oauth:grok-3-latest",
+                "name": "grok-3-latest"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-build-0.1",
+                "name": "grok-build-0.1"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-composer-2.5-fast",
+                "name": "grok-composer-2.5-fast"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-0309-non-reasoning",
+                "name": "grok-4.20-0309-non-reasoning"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-0309-reasoning",
+                "name": "grok-4.20-0309-reasoning"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.20-multi-agent-0309",
+                "name": "grok-4.20-multi-agent-0309"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.3",
+                "name": "grok-4.3"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-4.5",
+                "name": "grok-4.5"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-image",
+                "name": "grok-imagine-image"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-image-quality",
+                "name": "grok-imagine-image-quality"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-video",
+                "name": "grok-imagine-video"
+              },
+              {
+                "description": "Provider: xAI Grok OAuth (SuperGrok / Premium+)",
+                "modelId": "xai-oauth:grok-imagine-video-1.5",
+                "name": "grok-imagine-video-1.5"
+              }
+            ],
+            "currentModelId": "xai-oauth:grok-3-latest"
+          },
+          "modes": {
+            "availableModes": [
+              {
+                "description": "Ask before edits.",
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "description": "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+                "id": "accept_edits",
+                "name": "Accept Edits"
+              },
+              {
+                "description": "Auto-allow file edits for this session except sensitive paths.",
+                "id": "dont_ask",
+                "name": "Don't Ask"
+              }
+            ],
+            "currentModeId": "default"
+          },
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "availableCommands": [
+              {
+                "description": "List available commands",
+                "name": "help"
+              },
+              {
+                "description": "Show current model and provider, or switch models",
+                "input": {
+                  "hint": "model name to switch to"
+                },
+                "name": "model"
+              },
+              {
+                "description": "List available tools with descriptions",
+                "name": "tools"
+              },
+              {
+                "description": "Show conversation message counts by role",
+                "name": "context"
+              },
+              {
+                "description": "Clear conversation history",
+                "name": "reset"
+              },
+              {
+                "description": "Compress conversation context",
+                "name": "compact"
+              },
+              {
+                "description": "Inject guidance into the currently running agent turn",
+                "input": {
+                  "hint": "guidance for the active turn"
+                },
+                "name": "steer"
+              },
+              {
+                "description": "Queue a prompt to run after the current turn finishes",
+                "input": {
+                  "hint": "prompt to run next"
+                },
+                "name": "queue"
+              },
+              {
+                "description": "Show Hermes version",
+                "name": "version"
+              }
+            ],
+            "sessionUpdate": "available_commands_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "size": 131072,
+            "used": 10769,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "Remember this exact code word for later: PLUMBUS-7742. Reply with just: STORED"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " user",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " says",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " \"",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "Remember",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " this",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " exact",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " code",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " word",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " for",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " later",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " PL",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "UM",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "BUS",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "-",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "774",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "2",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ".",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " Reply",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " with",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " just",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " STO",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "RED",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "\"\n",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "STO",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "RED",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "size": 131072,
+            "used": 13788,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "stopReason": "end_turn",
+          "usage": {
+            "cachedReadTokens": 128,
+            "inputTokens": 13213,
+            "outputTokens": 286,
+            "thoughtTokens": 280,
+            "totalTokens": 13499
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "What code word were you asked to remember earlier in this conversation? If you were never given one in THIS conversation, reply exactly: NONE"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " question",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " is",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " \"",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "What",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " code",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " word",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " were",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " you",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " asked",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " to",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " remember",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " earlier",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " in",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " this",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " conversation",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "?",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " If",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " you",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " were",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " never",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " given",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " one",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " in",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " THIS",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " conversation",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ",",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " reply",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " exactly",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " NONE",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "\"\n",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "NONE",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "size": 131072,
+            "used": 13906,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "stopReason": "end_turn",
+          "usage": {
+            "cachedReadTokens": 1024,
+            "inputTokens": 13219,
+            "outputTokens": 287,
+            "thoughtTokens": 282,
+            "totalTokens": 13506
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "Repeat the code word you were asked to remember. Reply with just the code word."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "_meta": {
+              "hermes": {
+                "sessionProvenance": {
+                  "acpSessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+                  "currentHermesSessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+                  "rootHermesSessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+                  "parentHermesSessionId": null,
+                  "sessionKind": "root",
+                  "compressionDepth": 0
+                }
+              }
+            },
+            "title": "Code Word Memorization Request",
+            "updatedAt": "2026-08-11T07:15:32.831113+00:00",
+            "sessionUpdate": "session_info_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " user",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " is",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " asking",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " \"",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "Repeat",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " code",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " word",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " you",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " were",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " asked",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " to",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " remember",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ".",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " Reply",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " with",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " just",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " code",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " word",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ".\"\n",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "PL",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "UM",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "BUS",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "-",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "774",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "2",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "size": 131072,
+            "used": 14196,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "result": {
+          "stopReason": "end_turn",
+          "usage": {
+            "cachedReadTokens": 13312,
+            "inputTokens": 26733,
+            "outputTokens": 408,
+            "thoughtTokens": 392,
+            "totalTokens": 27141
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "session/set_config_option",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "key": "sandbox_mode",
+          "value": "read-only"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "error": {
+          "code": -32602,
+          "message": "Invalid params",
+          "data": {
+            "errors": [
+              {
+                "type": "missing",
+                "loc": [
+                  "configId"
+                ],
+                "msg": "Field required",
+                "input": {
+                  "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+                  "key": "sandbox_mode",
+                  "value": "read-only"
+                },
+                "url": "https://errors.pydantic.dev/2.13/v/missing"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "session/set_mode",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "modeId": "plan"
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "result": {}
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "Create a file named probe-b-85c18183.txt in the current directory with the single line hello. Use your file-writing tool. Then reply WROTE or DENIED depending on what happened."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " task",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " is",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " \"",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "Create",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " a",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " named",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " probe",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "-b",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "-",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "85",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "c",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "181",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "83",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ".txt",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " in",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " current",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " directory",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " with",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " single",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " line",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " hello",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ".",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " Use",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " your",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "-writing",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " tool",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ".",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " Then",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " reply",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " W",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "RO",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "TE",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " or",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " DEN",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "IED",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " depending",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " on",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " what",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " happened",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ".\"\n",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "_meta": {
+              "hermes": {
+                "sessionProvenance": {
+                  "acpSessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+                  "currentHermesSessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+                  "rootHermesSessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+                  "parentHermesSessionId": null,
+                  "sessionKind": "root",
+                  "compressionDepth": 0
+                }
+              }
+            },
+            "title": "Code Word Memory Verification Query",
+            "updatedAt": "2026-08-11T07:15:36.430538+00:00",
+            "sessionUpdate": "session_info_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": [
+              {
+                "content": {
+                  "text": "Preparing write to probe-b-85c18183.txt. Approval prompt shows the diff.",
+                  "type": "text"
+                },
+                "type": "content"
+              }
+            ],
+            "kind": "edit",
+            "locations": [
+              {
+                "path": "probe-b-85c18183.txt"
+              }
+            ],
+            "title": "write: probe-b-85c18183.txt",
+            "toolCallId": "tc-d92b293fea38",
+            "sessionUpdate": "tool_call"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "session/request_permission",
+        "params": {
+          "options": [
+            {
+              "kind": "allow_once",
+              "name": "Allow edit",
+              "optionId": "allow_once"
+            },
+            {
+              "kind": "reject_once",
+              "name": "Deny",
+              "optionId": "deny"
+            }
+          ],
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "toolCall": {
+            "content": [
+              {
+                "newText": "hello",
+                "path": "probe-b-85c18183.txt",
+                "type": "diff"
+              }
+            ],
+            "kind": "edit",
+            "rawInput": {
+              "tool": "write_file",
+              "arguments": {
+                "path": "probe-b-85c18183.txt",
+                "content": "hello"
+              }
+            },
+            "status": "pending",
+            "title": "Approve edit: probe-b-85c18183.txt",
+            "toolCallId": "edit-approval-1"
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "result": {
+          "outcome": {
+            "outcome": "selected",
+            "optionId": "allow_once"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " tool",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " succeeded",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " it",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " wrote",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " ",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "5",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " bytes",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ",",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " created",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " at",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " correct",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": " path",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": ".\n",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "\n\nW",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "RO",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "content": {
+              "text": "TE",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f3e2872d-9647-4c28-95ae-028b3ff34106",
+          "update": {
+            "size": 131072,
+            "used": 14912,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "result": {
+          "stopReason": "end_turn",
+          "usage": {
+            "cachedReadTokens": 27712,
+            "inputTokens": 40641,
+            "outputTokens": 558,
+            "thoughtTokens": 543,
+            "totalTokens": 41199
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "Create a file named probe-a-85c18183.txt in the current directory with the single line hello. Use your file-writing tool. Then reply WROTE or DENIED depending on what happened."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " task",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " is",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " \"",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "Create",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " a",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " named",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " probe",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "-a",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "-",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "85",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "c",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "181",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "83",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ".txt",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " in",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " current",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " directory",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " with",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " the",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " single",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " line",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " hello",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ".",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " Use",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " your",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "-writing",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " tool",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ".",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " Then",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " reply",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " W",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "RO",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "TE",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " or",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " DEN",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "IED",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " depending",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " on",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " what",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " happened",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ".\"\n",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": [
+              {
+                "content": {
+                  "text": "Preparing write to probe-a-85c18183.txt. Approval prompt shows the diff.",
+                  "type": "text"
+                },
+                "type": "content"
+              }
+            ],
+            "kind": "edit",
+            "locations": [
+              {
+                "path": "probe-a-85c18183.txt"
+              }
+            ],
+            "title": "write: probe-a-85c18183.txt",
+            "toolCallId": "tc-c485016a7b89",
+            "sessionUpdate": "tool_call"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/request_permission",
+        "params": {
+          "options": [
+            {
+              "kind": "allow_once",
+              "name": "Allow edit",
+              "optionId": "allow_once"
+            },
+            {
+              "kind": "reject_once",
+              "name": "Deny",
+              "optionId": "deny"
+            }
+          ],
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "toolCall": {
+            "content": [
+              {
+                "newText": "hello",
+                "path": "probe-a-85c18183.txt",
+                "type": "diff"
+              }
+            ],
+            "kind": "edit",
+            "rawInput": {
+              "tool": "write_file",
+              "arguments": {
+                "path": "probe-a-85c18183.txt",
+                "content": "hello"
+              }
+            },
+            "status": "pending",
+            "title": "Approve edit: probe-a-85c18183.txt",
+            "toolCallId": "edit-approval-2"
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "outcome": {
+            "outcome": "selected",
+            "optionId": "allow_once"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "The",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " tool",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " succeeded",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " bytes",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "_written",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ":",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " ",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "5",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ",",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " resolved",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "_path",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " is",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " correct",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ",",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " file",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": " created",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": ".\n",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_thought_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "\n\nW",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "RO",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "content": {
+              "text": "TE",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "bc0b6c55-65de-4c78-8ca9-ee7b5c59165b",
+          "update": {
+            "size": 131072,
+            "used": 15212,
+            "sessionUpdate": "usage_update"
+          }
+        }
+      }
+    },
+    {
+      "recv": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "result": {
+          "stopReason": "end_turn",
+          "usage": {
+            "cachedReadTokens": 40448,
+            "inputTokens": 54423,
+            "outputTokens": 697,
+            "thoughtTokens": 671,
+            "totalTokens": 55120
+          }
+        }
+      }
+    }
+  ]
+}

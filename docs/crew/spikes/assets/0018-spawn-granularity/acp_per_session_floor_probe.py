@@ -95,6 +95,8 @@ def main():
     ap.add_argument("--config-id", default="mode")
     ap.add_argument("--use-set-mode", action="store_true",
                     help="use session/set_mode instead of set_config_option")
+    ap.add_argument("--mode-a", default=None,
+                    help="if set, call session/set_mode on session A with this id")
     ap.add_argument("--approve-permissions", action="store_true",
                     help="approve every permission request, so a refusal is the "
                          "engine's own floor rather than the client's policy")
@@ -137,6 +139,12 @@ def main():
              "options": [v.get("value") for v in o.get("options", [])]}
             for o in a.get("configOptions", [])
         ]
+
+        if args.mode_a:
+            client.request("session/set_mode", {
+                "sessionId": sid_a,
+                "modeId": args.mode_a,
+            }, timeout=60)
 
         if args.use_set_mode:
             resp = client.request("session/set_mode", {
