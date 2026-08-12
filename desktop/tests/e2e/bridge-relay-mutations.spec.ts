@@ -513,3 +513,176 @@ test("send_channel_user_input_answer publishes a real kind 46041", async ({
     )
     .toBeTruthy();
 });
+
+test("workflow create/update/trigger/delete publish real 30620 / 46020 / 5", async ({
+  page,
+}) => {
+  // Mirrors desktop/src-tauri/src/commands/workflows.rs + events.rs:
+  // create/update → kind 30620 (d+h, YAML content); trigger → 46020 (d);
+  // delete → kind 5 with a=30620:owner:id. Issue title mentioned 30625;
+  // Rust has no such kind — only 30620.
+  await installBridge(page, {
+    mode: "relay",
+    user: "tyler",
+    relayHttpUrl: RELAY_HTTP_URL,
+    relayWsUrl: RELAY_HTTP_URL.replace(/^http/, "ws"),
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("app-sidebar")).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const marker = `bridge-wf-${Date.now()}`;
+  const createYaml = [
+    `name: ${marker}`,
+    "trigger:",
+    "  on: manual",
+    "steps:",
+    "  - id: step_1",
+    "    action: noop",
+  ].join("\n");
+
+  const created = (await invokeBridgeCommand(page, "create_workflow", {
+    channelId: GENERAL_CHANNEL_ID,
+    yamlDefinition: createYaml,
+  })) as {
+    id?: string;
+    name?: string;
+    channel_id?: string;
+    owner_pubkey?: string;
+  };
+
+  expect(created.id).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  );
+  expect(created.name).toBe(marker);
+  expect(created.channel_id).toBe(GENERAL_CHANNEL_ID);
+  expect(created.owner_pubkey?.toLowerCase()).toBe(
+    TEST_IDENTITIES.tyler.pubkey.toLowerCase(),
+  );
+
+  const workflowId = created.id as string;
+
+  await expect
+    .poll(
+      async () =>
+        (
+          await queryRelay([
+            {
+              kinds: [30620],
+              authors: [TEST_IDENTITIES.tyler.pubkey],
+              "#d": [workflowId],
+              "#h": [GENERAL_CHANNEL_ID],
+              limit: 5,
+            },
+          ])
+        ).find(
+          (event) =>
+            event.kind === 30620 &&
+            event.pubkey === TEST_IDENTITIES.tyler.pubkey &&
+            event.content === createYaml &&
+            event.tags.some((tag) => tag[0] === "d" && tag[1] === workflowId) &&
+            event.tags.some(
+              (tag) => tag[0] === "h" && tag[1] === GENERAL_CHANNEL_ID,
+            ),
+        ),
+      { timeout: 15_000 },
+    )
+    .toBeTruthy();
+
+  const updatedName = `${marker}-updated`;
+  const updateYaml = [
+    `name: ${updatedName}`,
+    "trigger:",
+    "  on: manual",
+    "steps:",
+    "  - id: step_1",
+    "    action: noop",
+  ].join("\n");
+
+  const updated = (await invokeBridgeCommand(page, "update_workflow", {
+    workflowId,
+    yamlDefinition: updateYaml,
+  })) as { id?: string; name?: string };
+
+  expect(updated.id).toBe(workflowId);
+  expect(updated.name).toBe(updatedName);
+
+  await expect
+    .poll(
+      async () =>
+        (
+          await queryRelay([
+            {
+              kinds: [30620],
+              authors: [TEST_IDENTITIES.tyler.pubkey],
+              "#d": [workflowId],
+              limit: 5,
+            },
+          ])
+        ).find(
+          (event) =>
+            event.kind === 30620 &&
+            event.content === updateYaml &&
+            event.tags.some(
+              (tag) => tag[0] === "h" && tag[1] === GENERAL_CHANNEL_ID,
+            ),
+        ),
+      { timeout: 15_000 },
+    )
+    .toBeTruthy();
+
+  const triggerResult = (await invokeBridgeCommand(page, "trigger_workflow", {
+    workflowId,
+  })) as { event_id?: string };
+
+  expect(triggerResult.event_id).toMatch(/^[0-9a-f]{64}$/);
+
+  await expect
+    .poll(
+      async () =>
+        (
+          await queryRelay([
+            {
+              kinds: [46020],
+              authors: [TEST_IDENTITIES.tyler.pubkey],
+              "#d": [workflowId],
+              limit: 10,
+            },
+          ])
+        ).find(
+          (event) =>
+            event.id === triggerResult.event_id &&
+            event.kind === 46020 &&
+            event.content === "" &&
+            event.tags.some((tag) => tag[0] === "d" && tag[1] === workflowId),
+        ),
+      { timeout: 15_000 },
+    )
+    .toBeTruthy();
+
+  await invokeBridgeCommand(page, "delete_workflow", { workflowId });
+
+  const deleteCoord = `30620:${TEST_IDENTITIES.tyler.pubkey}:${workflowId}`;
+  await expect
+    .poll(
+      async () =>
+        (
+          await queryRelay([
+            {
+              kinds: [5],
+              authors: [TEST_IDENTITIES.tyler.pubkey],
+              "#a": [deleteCoord],
+              limit: 10,
+            },
+          ])
+        ).find(
+          (event) =>
+            event.kind === 5 &&
+            event.content === "" &&
+            event.tags.some((tag) => tag[0] === "a" && tag[1] === deleteCoord),
+        ),
+      { timeout: 15_000 },
+    )
+    .toBeTruthy();
+});
