@@ -1,5 +1,5 @@
 import * as React from "react";
-import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Moon } from "lucide-react";
 
 import {
   isAgentCardAvatarLoading,
@@ -8,8 +8,19 @@ import {
 import { resolveAgentCardModelLabel } from "@/features/agents/lib/agentCardModelLabel";
 import { friendlyAgentLastError } from "@/features/agents/lib/friendlyAgentLastError";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
+import { useManagedAgentRuntimesQuery } from "@/features/agents/managedAgentRuntimeHooks";
+import {
+  findManagedAgentRuntime,
+  MANAGED_AGENT_SLEEPING_BADGE_LABEL,
+  shouldShowManagedAgentSleepingBadge,
+} from "@/features/agents/managedAgentRuntimeStatus";
+import { useCommunities } from "@/features/communities/useCommunities";
 import { useUserProfileQuery } from "@/features/profile/hooks";
-import type { AgentPersona, ManagedAgent } from "@/shared/api/types";
+import type {
+  AgentPersona,
+  ManagedAgent,
+  ManagedAgentRuntimeStatus,
+} from "@/shared/api/types";
 import type { ProfilePanelOpenOptions } from "@/shared/context/ProfilePanelContext";
 import { useFeedbackToasts } from "@/shared/hooks/useToastEffect";
 import { Badge } from "@/shared/ui/badge";
@@ -98,6 +109,24 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
     () => buildUnifiedGroups(personas, agents),
     [personas, agents],
   );
+  const { activeCommunity } = useCommunities();
+  const activeRelayUrl = activeCommunity?.relayUrl ?? null;
+  const managedAgentRuntimesQuery = useManagedAgentRuntimesQuery({
+    enabled: Boolean(activeRelayUrl && agents.length > 0),
+  });
+  const runtimeByPubkey = React.useMemo(() => {
+    const runtimes = new Map<string, ManagedAgentRuntimeStatus>();
+    if (!activeRelayUrl) return runtimes;
+    for (const agent of agents) {
+      const runtime = findManagedAgentRuntime(
+        managedAgentRuntimesQuery.data ?? [],
+        agent.pubkey,
+        activeRelayUrl,
+      );
+      if (runtime) runtimes.set(agent.pubkey.toLowerCase(), runtime);
+    }
+    return runtimes;
+  }, [activeRelayUrl, agents, managedAgentRuntimesQuery.data]);
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
   function toggle(key: string) {
     setCollapsed((prev) => {
@@ -152,6 +181,11 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
                   agent={profileAgent}
                   defaultModel={defaultModel}
                   key={group.persona.id}
+                  managedAgentRuntime={
+                    profileAgent
+                      ? runtimeByPubkey.get(profileAgent.pubkey.toLowerCase())
+                      : undefined
+                  }
                   persona={group.persona}
                   restartingAgentPubkey={restartingAgentPubkey}
                   startingAgentPubkey={startingAgentPubkey}
@@ -174,6 +208,7 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
               groupKey="__unknown__"
               label="Unknown agents"
               restartingAgentPubkey={restartingAgentPubkey}
+              runtimeByPubkey={runtimeByPubkey}
               startingAgentPubkey={startingAgentPubkey}
               onToggle={toggle}
               onOpenAgentProfile={onOpenAgentProfile}
@@ -189,6 +224,7 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
               groupKey="__ungrouped__"
               label="Custom agents"
               restartingAgentPubkey={restartingAgentPubkey}
+              runtimeByPubkey={runtimeByPubkey}
               startingAgentPubkey={startingAgentPubkey}
               onToggle={toggle}
               onOpenAgentProfile={onOpenAgentProfile}
@@ -221,6 +257,7 @@ function AgentPersonaCard({
   actions,
   agent,
   defaultModel,
+  managedAgentRuntime,
   persona,
   restartingAgentPubkey,
   startingAgentPubkey,
@@ -237,6 +274,7 @@ function AgentPersonaCard({
   ) => React.ReactNode;
   agent: ManagedAgent | undefined;
   defaultModel: string;
+  managedAgentRuntime?: ManagedAgentRuntimeStatus;
   persona: AgentPersona;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
@@ -265,6 +303,11 @@ function AgentPersonaCard({
     ? friendlyAgentLastError(agent.lastError, agent.lastErrorCode)?.copy
     : null;
   const opensRuntimeTab = Boolean(agent && friendlyError && !isActive);
+  const showSleepingBadge = shouldShowManagedAgentSleepingBadge(
+    managedAgentRuntime,
+    isActive,
+  );
+  const hasStatusBadge = showSleepingBadge || Boolean(agent?.personaOrphaned);
 
   return (
     <AgentIdentityCard
@@ -322,11 +365,24 @@ function AgentPersonaCard({
         onOpenPersonaProfile(persona);
       }}
       statusBadge={
-        agent?.personaOrphaned ? (
-          <Badge className="gap-1" variant="warning">
-            <AlertTriangle className="h-3 w-3" />
-            Configuration missing
-          </Badge>
+        hasStatusBadge ? (
+          <>
+            {showSleepingBadge ? (
+              <AgentSleepingStatusBadge
+                isActive={isActive}
+                runtime={managedAgentRuntime}
+                testId={
+                  agent ? `agent-runtime-sleeping-${agent.pubkey}` : undefined
+                }
+              />
+            ) : null}
+            {agent?.personaOrphaned ? (
+              <Badge className="gap-1" variant="warning">
+                <AlertTriangle className="h-3 w-3" />
+                Configuration missing
+              </Badge>
+            ) : null}
+          </>
         ) : null
       }
     />
@@ -336,6 +392,7 @@ function AgentPersonaCard({
 function StandaloneAgentCard({
   agent,
   defaultModel,
+  managedAgentRuntime,
   restartingAgentPubkey,
   startingAgentPubkey,
   onOpenAgentProfile,
@@ -344,6 +401,7 @@ function StandaloneAgentCard({
 }: {
   agent: ManagedAgent;
   defaultModel: string;
+  managedAgentRuntime?: ManagedAgentRuntimeStatus;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
   onOpenAgentProfile: (
@@ -361,6 +419,14 @@ function StandaloneAgentCard({
   )?.copy;
   const isActive = isManagedAgentActive(agent);
   const opensRuntimeTab = Boolean(friendlyError && !isActive);
+  const showSleepingBadge = shouldShowManagedAgentSleepingBadge(
+    managedAgentRuntime,
+    isActive,
+  );
+  const hasStatusBadge =
+    Boolean(agent.profileReadiness) ||
+    showSleepingBadge ||
+    agent.personaOrphaned;
 
   return (
     <AgentIdentityCard
@@ -402,21 +468,53 @@ function StandaloneAgentCard({
         );
       }}
       statusBadge={
-        <>
-          {agent.profileReadiness ? (
-            <HermesProfileReadinessIndicator
-              readiness={agent.profileReadiness}
-            />
-          ) : null}
-          {agent.personaOrphaned ? (
-            <Badge className="gap-1" variant="warning">
-              <AlertTriangle className="h-3 w-3" />
-              Configuration missing
-            </Badge>
-          ) : null}
-        </>
+        hasStatusBadge ? (
+          <>
+            {agent.profileReadiness ? (
+              <HermesProfileReadinessIndicator
+                readiness={agent.profileReadiness}
+              />
+            ) : null}
+            {showSleepingBadge ? (
+              <AgentSleepingStatusBadge
+                isActive={isActive}
+                runtime={managedAgentRuntime}
+                testId={`agent-runtime-sleeping-${agent.pubkey}`}
+              />
+            ) : null}
+            {agent.personaOrphaned ? (
+              <Badge className="gap-1" variant="warning">
+                <AlertTriangle className="h-3 w-3" />
+                Configuration missing
+              </Badge>
+            ) : null}
+          </>
+        ) : null
       }
     />
+  );
+}
+
+function AgentSleepingStatusBadge({
+  isActive,
+  runtime,
+  testId,
+}: {
+  isActive: boolean;
+  runtime?: ManagedAgentRuntimeStatus;
+  testId?: string;
+}) {
+  if (!shouldShowManagedAgentSleepingBadge(runtime, isActive)) return null;
+
+  return (
+    <Badge
+      className="gap-1 normal-case tracking-normal bg-slate-500/10 text-slate-600 dark:bg-slate-400/10 dark:text-slate-300"
+      data-testid={testId}
+      variant="secondary"
+    >
+      <Moon className="h-3 w-3" />
+      {MANAGED_AGENT_SLEEPING_BADGE_LABEL}
+    </Badge>
   );
 }
 
@@ -446,6 +544,7 @@ function CollapsibleAgentGroup({
   collapsed,
   defaultModel,
   restartingAgentPubkey,
+  runtimeByPubkey,
   startingAgentPubkey,
   onToggle,
   onOpenAgentProfile,
@@ -458,6 +557,7 @@ function CollapsibleAgentGroup({
   collapsed: ReadonlySet<string>;
   defaultModel: string;
   restartingAgentPubkey: string | null;
+  runtimeByPubkey: ReadonlyMap<string, ManagedAgentRuntimeStatus>;
   startingAgentPubkey: string | null;
   onToggle: (key: string) => void;
   onOpenAgentProfile: (
@@ -490,6 +590,9 @@ function CollapsibleAgentGroup({
               agent={agent}
               defaultModel={defaultModel}
               key={agent.pubkey}
+              managedAgentRuntime={runtimeByPubkey.get(
+                agent.pubkey.toLowerCase(),
+              )}
               restartingAgentPubkey={restartingAgentPubkey}
               startingAgentPubkey={startingAgentPubkey}
               onOpenAgentProfile={onOpenAgentProfile}

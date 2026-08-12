@@ -174,7 +174,11 @@ fn reserved_keys_include_respond_to_gate() {
 
 #[test]
 fn reserved_keys_include_remote_lifetime_policy() {
-    for key in ["BUZZ_ACP_EXIT_AFTER_INACTIVITY", "BUZZ_ACP_NO_PRESENCE"] {
+    for key in [
+        "BUZZ_ACP_EXIT_AFTER_INACTIVITY",
+        "BUZZ_ACP_NO_PRESENCE",
+        "BUZZ_ACP_POOL_IDLE_TIMEOUT",
+    ] {
         assert!(is_reserved_env_key(key), "{key} should be reserved");
         let agent = map(&[(key, "0")]);
         assert!(merged_user_env(&BTreeMap::new(), &agent).is_empty());

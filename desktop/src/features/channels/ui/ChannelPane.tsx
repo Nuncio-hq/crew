@@ -38,6 +38,11 @@ import { useThreadViewMode } from "@/features/channels/lib/threadViewModePrefere
 import { useThreadViewModeSwitch } from "@/features/channels/ui/useThreadViewModeSwitch";
 import { useFocusDrawerPresence } from "@/features/channels/ui/useFocusDrawerPresence";
 import { useCardMintJobs } from "@/features/agents/cardMintStore";
+import { useManagedAgentRuntimesQuery } from "@/features/agents/managedAgentRuntimeHooks";
+import {
+  findManagedAgentRuntime,
+  isManagedAgentRuntimeWaking,
+} from "@/features/agents/managedAgentRuntimeStatus";
 import { ChannelComposerActivityAccessory } from "@/features/channels/ui/ChannelComposerActivityAccessory";
 import { ChannelUserInputStack } from "@/features/channels/ui/ChannelUserInputStack";
 import { useChannelUserInput } from "@/features/channels/hooks/useChannelUserInput";
@@ -69,6 +74,7 @@ import { channelChrome } from "@/shared/layout/chromeLayout";
 import { cn } from "@/shared/lib/cn";
 export const ChannelPane = React.memo(function ChannelPane({
   activeChannel,
+  activeCommunityRelayUrl = null,
   agentPubkeys,
   agentPubkeysPending = false,
   agentSessionAgents,
@@ -348,6 +354,23 @@ export const ChannelPane = React.memo(function ChannelPane({
   const composerWorkingBotPubkeys = useChannelComposerBotActivity(
     activeChannel?.id ?? null,
   );
+  const managedAgentRuntimesQuery = useManagedAgentRuntimesQuery({
+    enabled: Boolean(activeCommunityRelayUrl && activityAgents.length > 0),
+  });
+  const wakingBotPubkeys = React.useMemo(() => {
+    if (!activeCommunityRelayUrl) return [];
+    return activityAgents
+      .filter((agent) =>
+        isManagedAgentRuntimeWaking(
+          findManagedAgentRuntime(
+            managedAgentRuntimesQuery.data ?? [],
+            agent.pubkey,
+            activeCommunityRelayUrl,
+          ),
+        ),
+      )
+      .map((agent) => agent.pubkey);
+  }, [activeCommunityRelayUrl, activityAgents, managedAgentRuntimesQuery.data]);
   const hasComposerBotActivity = composerWorkingBotPubkeys.length > 0;
   const hasCardMintActivity = useCardMintJobs().length > 0;
   const hasComposerBottomActivity =
@@ -730,6 +753,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                   profiles={profiles}
                   typingPubkeys={typingPubkeys}
                   visible={hasComposerBottomActivity}
+                  wakingBotPubkeys={wakingBotPubkeys}
                   workingBotPubkeys={composerWorkingBotPubkeys}
                 />
               </div>
@@ -836,6 +860,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                     openAgentSessionPubkey={openAgentSessionPubkey}
                     openThreadHeadId={openThreadHeadId}
                     profiles={profiles}
+                    wakingBotPubkeys={wakingBotPubkeys}
                   />
                 }
               />

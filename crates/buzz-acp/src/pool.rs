@@ -45,6 +45,10 @@ use crate::acp::{
 };
 use crate::config::{compose_session_title, DedupMode, PermissionMode};
 use crate::observer;
+use crate::session_ledger::{
+    decide_session_load, declare_session, delete_ledger_entry, read_ledger_entry, SessionLedgerKey,
+    SessionLoadDecision, SessionLoadValidation,
+};
 use crate::queue::{
     CancelReason, ContextMessage, ConversationContext, FlushBatch, PromptChannelInfo,
     PromptProfile, PromptProfileLookup, ThreadTags,
@@ -286,6 +290,8 @@ pub struct OwnedAgent {
     pub goose_system_prompt_supported: Option<bool>,
     /// Protocol version reported by the agent in its initialize response.
     pub protocol_version: u32,
+    /// `agentCapabilities.loadSession` from initialize — gates `session/load`.
+    pub load_session_supported: bool,
 }
 
 /// Package name reported by `claude-agent-acp` in its `initialize` response.
@@ -686,6 +692,10 @@ pub struct PromptContext {
     pub agent_receipts_enabled: bool,
     /// Tracks durable receipt retries so graceful shutdown can await them.
     pub receipt_outbox_workers: TaskTracker,
+    /// Stable engine identity for the durable session ledger (no secrets).
+    pub engine_identity: String,
+    /// Absolute directory root for per-thread session ledger files.
+    pub session_ledger_dir: PathBuf,
 }
 
 impl AgentPool {
@@ -2084,84 +2094,218 @@ pub async fn run_prompt_task(
         PromptSource::Heartbeat => None,
     };
 
-    let (session_id, is_new_session) = match &source {
+    // `skip_context_refetch` is set after a successful session/load so the
+    // engine's restored transcript is not duplicated by conversation context.
+    let (session_id, is_new_session, skip_context_refetch) = match &source {
         PromptSource::Channel(cid) => {
             if let Some(sid) = agent.state.sessions.get(cid) {
-                (sid.clone(), false)
+                (sid.clone(), false, false)
             } else {
-                // The title is channel-qualified (`Agent · #channel`) so one
-                // agent in several channels doesn't produce identical session
-                // rows; `title_channel` comes from the single resolve above and
-                // is `None` for DM, unresolved, and unnamed channels.
-                match create_session_and_apply_model(
-                    &mut agent,
-                    &ctx,
-                    &session_cwd,
-                    agent_core.as_deref(),
-                    agent_canvas.as_deref(),
-                    role_assignment.as_ref(),
-                    &routing,
-                    capabilities.as_deref(),
-                    title_channel.as_deref(),
-                    Some(*cid),
-                    origin_channel_type.as_deref(),
-                )
-                .await
+                let workspace_generation = agent
+                    .state
+                    .workspace_bindings
+                    .get(cid)
+                    .map(|binding| binding.eviction_generation)
+                    .unwrap_or(0);
+                let ledger_key = SessionLedgerKey::new(
+                    &ctx.relay_url,
+                    ctx.agent_keys.public_key().to_hex(),
+                    *cid,
+                );
+                let ledger_entry = match read_ledger_entry(&ctx.session_ledger_dir, &ledger_key).await
                 {
-                    Ok(sid) => {
-                        tracing::info!(
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        tracing::warn!(
                             target: "pool::session",
-                            "created session {sid} for channel {cid}"
+                            error = %error,
+                            "session ledger read failed — treating as absent"
                         );
-                        agent.state.sessions.insert(*cid, sid.clone());
-                        agent
-                            .state
-                            .routing_channels
-                            .insert(*cid, observer_channel_id.unwrap_or(*cid));
-                        agent
-                            .state
-                            .deliveries
-                            .insert(*cid, ChannelDeliveryState::default());
-                        // Seed a zero usage baseline: buzz-acp spawned this session
-                        // so prior usage is zero by definition — first turn is reliable.
-                        agent.acp.notify_session_spawned(&sid);
-                        // Commit canvas only after session creation succeeds (I3).
-                        if let Some((pending_cid, section)) = pending_canvas.take() {
-                            agent.state.canvas_sections.insert(pending_cid, section);
+                        None
+                    }
+                };
+                let decision = decide_session_load(
+                    ledger_entry.as_ref(),
+                    &SessionLoadValidation {
+                        engine_identity: &ctx.engine_identity,
+                        workspace_generation,
+                        load_session_supported: agent.load_session_supported,
+                    },
+                );
+                let resumed = if let SessionLoadDecision::Resume { session_id } = &decision {
+                    let mcp_servers = mcp_servers_with_git_origin(
+                        &ctx.mcp_servers,
+                        Some(*cid),
+                        origin_channel_type.as_deref(),
+                        ctx.session_title.as_deref(),
+                    );
+                    match agent
+                        .acp
+                        .session_load(session_id, &session_cwd, mcp_servers)
+                        .await
+                    {
+                        Ok(resp) => {
+                            tracing::info!(
+                                target: "pool::session",
+                                "resumed session {} for channel {cid}",
+                                resp.session_id
+                            );
+                            agent.state.sessions.insert(*cid, resp.session_id.clone());
+                            agent
+                                .state
+                                .routing_channels
+                                .insert(*cid, observer_channel_id.unwrap_or(*cid));
+                            agent.state.deliveries.insert(
+                                *cid,
+                                ChannelDeliveryState {
+                                    standing_context_sent: true,
+                                    delivered_event_ids: HashSet::new(),
+                                },
+                            );
+                            agent.acp.notify_session_spawned(&resp.session_id);
+                            if let Some((pending_cid, section)) = pending_canvas.take() {
+                                agent.state.canvas_sections.insert(pending_cid, section);
+                            }
+                            let _ = crate::session_ledger::touch_session_used(
+                                &ctx.session_ledger_dir,
+                                &ledger_key,
+                            )
+                            .await;
+                            Some((resp.session_id, false, true))
                         }
-                        (sid, true)
+                        Err(AcpError::AgentExited) => {
+                            agent.state.invalidate_all();
+                            send_prompt_result(
+                                &result_tx,
+                                &turn_id,
+                                agent,
+                                source,
+                                PromptOutcome::AgentExited,
+                                requeue_batch_if_queue(&ctx, batch),
+                            );
+                            return;
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "pool::session",
+                                error = %error,
+                                "session/load rejected — deleting ledger entry and rebuilding"
+                            );
+                            let _ =
+                                delete_ledger_entry(&ctx.session_ledger_dir, &ledger_key).await;
+                            None
+                        }
                     }
-                    Err(AcpError::AgentExited) => {
-                        agent.state.invalidate_all();
-                        send_prompt_result(
-                            &result_tx,
-                            &turn_id,
-                            agent,
-                            source,
-                            PromptOutcome::AgentExited,
-                            requeue_batch_if_queue(&ctx, batch),
+                } else {
+                    if let SessionLoadDecision::Rebuild { reason } = &decision {
+                        tracing::debug!(
+                            target: "pool::session",
+                            reason,
+                            "session resume unavailable — rebuilding"
                         );
-                        return;
+                        if ledger_entry.is_some()
+                            && *reason != "no ledger entry"
+                            && *reason != "loadSession not advertised"
+                        {
+                            let _ =
+                                delete_ledger_entry(&ctx.session_ledger_dir, &ledger_key).await;
+                        }
                     }
-                    Err(e) => {
-                        // Session creation failed; pending canvas was never committed,
-                        // so the next retry will re-fetch a fresh revision.
-                        send_prompt_result(
-                            &result_tx,
-                            &turn_id,
-                            agent,
-                            source,
-                            PromptOutcome::Error(e),
-                            requeue_batch_if_queue(&ctx, batch),
-                        );
-                        return;
+                    None
+                };
+                if let Some(acquired) = resumed {
+                    acquired
+                } else {
+                    // The title is channel-qualified (`Agent · #channel`) so one
+                    // agent in several channels doesn't produce identical session
+                    // rows; `title_channel` comes from the single resolve above and
+                    // is `None` for DM, unresolved, and unnamed channels.
+                    match create_session_and_apply_model(
+                        &mut agent,
+                        &ctx,
+                        &session_cwd,
+                        agent_core.as_deref(),
+                        agent_canvas.as_deref(),
+                        role_assignment.as_ref(),
+                        &routing,
+                        capabilities.as_deref(),
+                        title_channel.as_deref(),
+                        Some(*cid),
+                        origin_channel_type.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(sid) => {
+                            tracing::info!(
+                                target: "pool::session",
+                                "created session {sid} for channel {cid}"
+                            );
+                            agent.state.sessions.insert(*cid, sid.clone());
+                            agent
+                                .state
+                                .routing_channels
+                                .insert(*cid, observer_channel_id.unwrap_or(*cid));
+                            agent
+                                .state
+                                .deliveries
+                                .insert(*cid, ChannelDeliveryState::default());
+                            // Declare-at-birth: the only write site for resume ids.
+                            if let Err(error) = declare_session(
+                                &ctx.session_ledger_dir,
+                                &ledger_key,
+                                &sid,
+                                &ctx.engine_identity,
+                                workspace_generation,
+                            )
+                            .await
+                            {
+                                tracing::warn!(
+                                    target: "pool::session",
+                                    error = %error,
+                                    "failed to declare session ledger entry"
+                                );
+                            }
+                            // Seed a zero usage baseline: buzz-acp spawned this session
+                            // so prior usage is zero by definition — first turn is reliable.
+                            agent.acp.notify_session_spawned(&sid);
+                            // Commit canvas only after session creation succeeds (I3).
+                            if let Some((pending_cid, section)) = pending_canvas.take() {
+                                agent.state.canvas_sections.insert(pending_cid, section);
+                            }
+                            (sid, true, false)
+                        }
+                        Err(AcpError::AgentExited) => {
+                            agent.state.invalidate_all();
+                            send_prompt_result(
+                                &result_tx,
+                                &turn_id,
+                                agent,
+                                source,
+                                PromptOutcome::AgentExited,
+                                requeue_batch_if_queue(&ctx, batch),
+                            );
+                            return;
+                        }
+                        Err(e) => {
+                            // Session creation failed; pending canvas was never committed,
+                            // so the next retry will re-fetch a fresh revision.
+                            send_prompt_result(
+                                &result_tx,
+                                &turn_id,
+                                agent,
+                                source,
+                                PromptOutcome::Error(e),
+                                requeue_batch_if_queue(&ctx, batch),
+                            );
+                            return;
+                        }
                     }
                 }
             }
         }
         PromptSource::Heartbeat => {
             if let Some(sid) = &agent.state.heartbeat_session {
-                (sid.clone(), false)
+                (sid.clone(), false, false)
             } else {
                 match create_session_and_apply_model(
                     &mut agent,
@@ -2187,7 +2331,7 @@ pub async fn run_prompt_task(
                         agent.state.heartbeat_session = Some(sid.clone());
                         // Seed a zero usage baseline: buzz-acp spawned this session.
                         agent.acp.notify_session_spawned(&sid);
-                        (sid, true)
+                        (sid, true, false)
                     }
                     Err(AcpError::AgentExited) => {
                         agent.state.invalidate_all();
@@ -2433,7 +2577,9 @@ pub async fn run_prompt_task(
         // Try startup cache first; lazy-fetch via REST for dynamic channels.
         let channel_info = ctx.channel_info.resolve(b.routing_channel_id()).await;
 
-        let conversation_context = if ctx.context_message_limit > 0 {
+        let conversation_context = if skip_context_refetch {
+            None
+        } else if ctx.context_message_limit > 0 {
             fetch_conversation_context(b, &channel_info, &ctx).await
         } else {
             None
@@ -8015,6 +8161,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
+        load_session_supported: false,
         };
         agent.state.heartbeat_session = Some("live-session".into());
 
@@ -8109,6 +8256,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
+        load_session_supported: false,
         };
         agent
             .state
@@ -8285,6 +8433,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
+        load_session_supported: false,
         };
         agent
             .state
@@ -8435,6 +8584,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
+        load_session_supported: false,
         };
         agent
             .state
@@ -9817,6 +9967,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
+        load_session_supported: false,
         };
 
         let trigger = nostr::EventId::from_hex(&"a".repeat(64)).expect("event id");
@@ -9890,6 +10041,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
+        load_session_supported: false,
         };
 
         // Simulate a completed turn: `steer_rx` was consumed by the read loop
@@ -10720,6 +10872,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             user_input_runtime: None,
             agent_receipts_enabled: false,
             receipt_outbox_workers: TaskTracker::new(),
+            engine_identity: "test-engine".to_string(),
+            session_ledger_dir: std::env::temp_dir().join("buzz-acp-session-ledger-pool-tests"),
         }
     }
 

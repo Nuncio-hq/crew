@@ -501,6 +501,13 @@ pub struct CliArgs {
     /// Connect and subscribe before starting the ACP/LLM subprocess pool.
     #[arg(long, env = "BUZZ_ACP_LAZY_POOL", default_value_t = false)]
     pub lazy_pool: bool,
+
+    /// Spin down the engine pool after this many idle seconds while Ready.
+    /// Default 1800 (30 minutes). 0 disables idle spin-down (today's behavior).
+    /// The harness stays connected (Listening); only the engine/MCP subprocesses
+    /// exit. See issue #169.
+    #[arg(long, env = "BUZZ_ACP_POOL_IDLE_TIMEOUT", default_value_t = 1800)]
+    pub pool_idle_timeout: u64,
 }
 
 /// Merged NIP-01 subscription filter for a single channel.
@@ -584,6 +591,8 @@ pub struct Config {
     pub exit_after_inactivity_secs: u64,
     /// Whether ACP/LLM subprocess initialization is deferred until accepted work arrives.
     pub lazy_pool: bool,
+    /// Seconds of Ready-state idle before engine spin-down. 0 = disabled.
+    pub pool_idle_timeout_secs: u64,
     /// Agent owner pubkey (hex). Used for `--respond-to=owner-only` gate.
     /// Replaces the old REST-based owner lookup.
     pub agent_owner: Option<String>,
@@ -1136,6 +1145,7 @@ impl Config {
             relay_observer: args.relay_observer,
             exit_after_inactivity_secs: args.exit_after_inactivity,
             lazy_pool: args.lazy_pool,
+            pool_idle_timeout_secs: args.pool_idle_timeout,
             agent_owner: args.agent_owner.map(|s| s.trim().to_ascii_lowercase()),
             no_base_prompt: args.no_base_prompt,
             base_prompt_content,
@@ -1516,6 +1526,7 @@ mod tests {
             relay_observer: false,
             exit_after_inactivity_secs: 0,
             lazy_pool: false,
+            pool_idle_timeout_secs: 1800,
             agent_owner: None,
             no_base_prompt: false,
             base_prompt_content: None,
@@ -2271,6 +2282,22 @@ channels = "ALL"
         let args = CliArgs::try_parse_from(["buzz-acp", "--private-key", &key, "--lazy-pool=true"]);
         assert!(args.is_err(), "bool flags do not take an explicit value");
         assert!(CliArgs::parse_from(["buzz-acp", "--private-key", &key, "--lazy-pool"]).lazy_pool);
+    }
+
+    #[test]
+    fn pool_idle_timeout_defaults_to_thirty_minutes() {
+        let key = "0".repeat(64);
+        let default = CliArgs::parse_from(["buzz-acp", "--private-key", &key]);
+        assert_eq!(default.pool_idle_timeout, 1800);
+
+        let off = CliArgs::parse_from([
+            "buzz-acp",
+            "--private-key",
+            &key,
+            "--pool-idle-timeout",
+            "0",
+        ]);
+        assert_eq!(off.pool_idle_timeout, 0);
     }
 
     #[test]

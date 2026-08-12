@@ -333,4 +333,23 @@ describe("agent attention projection", () => {
       "working",
     );
   });
+
+  it("projects sleeping runtimes as idle despite stale observer liveness", () => {
+    const projection = deriveAgentAttention({
+      connectionState: "open",
+      needsYou: false,
+      now: NOW,
+      outcome: null,
+      receipt: null,
+      sleeping: true,
+      turns: [
+        turn({
+          lastSeenAt: NOW - 180_000,
+          lastSubstantiveProgressAt: NOW - 180_000,
+        }),
+      ],
+    });
+
+    assert.equal(projection.state, "idle");
+  });
 });

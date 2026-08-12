@@ -544,6 +544,39 @@ test("unavailable observer telemetry never masquerades as stalled", () => {
   assert.equal(sections.needsYou[0]?.state, "telemetryUnavailable");
 });
 
+test("sleeping agents never project stale liveness into Mission Inbox", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [
+      activeTurn("sleeping", {
+        lastSeenAt: 10_000,
+        lastSubstantiveProgressAt: 10_000,
+      }),
+    ],
+    channels,
+    inboxItems: [item("sleeping", "channel-a", 100)],
+    needsYou: [],
+    now: 110_000,
+    outcomes: [
+      [
+        "sleeping-lost-contact",
+        {
+          outcome: "lost-contact",
+          channelId: "channel-a",
+          agentPubkey: "agent-1",
+          endedAt: 109_000,
+        },
+      ],
+    ],
+    sleepingAgentPubkeys: new Set(["agent-1"]),
+  });
+
+  assert.equal(sections.needsYou.length, 0);
+  assert.equal(sections.readyToReview.length, 0);
+  assert.equal(sections.working.length, 0);
+});
+
 test("observer failures are scoped to the affected conversation agents", () => {
   const sections = deriveMissionInboxSections({
     ...attentionDefaults,

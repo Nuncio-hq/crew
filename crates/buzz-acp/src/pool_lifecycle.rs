@@ -1,8 +1,16 @@
 //! Lazy agent-pool lifecycle state.
 //!
 //! Relay connection, subscription, and event buffering live outside this
-//! module. This state machine owns only whether a deferred pool has not started,
-//! is waking, is ready, or is waiting to retry after a failed wake.
+//! module. This state machine owns whether a deferred pool has not started,
+//! is waking, is ready, is draining back to idle, or is waiting to retry after
+//! a failed wake.
+//!
+//! Transitions (issue #169):
+//! ```text
+//! Listening ──(work)──► Waking ──► Ready ──(idle ≥ T, safe)──► Draining ──► Listening
+//!                                ▲                                          │
+//!                                └───────────────(new work)────────────────┘
+//! ```
 
 use std::time::Duration;
 use tokio::time::Instant;
@@ -17,6 +25,11 @@ pub(crate) enum PoolLifecycle<P> {
         attempt: u32,
     },
     Ready(P),
+    /// Engine teardown in progress. `rewake` is set when flushable work arrives
+    /// while draining so the harness starts a wake immediately after Listening.
+    Draining {
+        rewake: bool,
+    },
     Failed {
         attempt: u32,
         retry_at: Instant,
@@ -24,9 +37,40 @@ pub(crate) enum PoolLifecycle<P> {
     },
 }
 
+/// Sleep eligibility for Ready → Draining (all required).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SleepEligibility {
+    pub turn_in_flight: bool,
+    pub flushable_work: bool,
+    pub outboxes_flushed: bool,
+    pub cancel_drain_in_progress: bool,
+}
+
+impl SleepEligibility {
+    pub(crate) fn is_eligible(self) -> bool {
+        !self.turn_in_flight
+            && !self.flushable_work
+            && self.outboxes_flushed
+            && !self.cancel_drain_in_progress
+    }
+}
+
 impl<P> PoolLifecycle<P> {
     pub(crate) fn listening() -> Self {
         Self::Listening
+    }
+
+    pub(crate) fn is_listening(&self) -> bool {
+        matches!(self, Self::Listening)
+    }
+
+    pub(crate) fn is_draining(&self) -> bool {
+        matches!(self, Self::Draining { .. })
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready(_))
     }
 
     /// Start the first wake, or a due retry, when buffered work exists.
@@ -48,6 +92,12 @@ impl<P> PoolLifecycle<P> {
             Self::Failed {
                 attempt, retry_at, ..
             } if now >= *retry_at => Some(attempt.saturating_add(1)),
+            Self::Draining { rewake } => {
+                // Work during drain arms a re-wake after drain completes; do not
+                // start a second pool while teardown is in flight.
+                *rewake = true;
+                None
+            }
             Self::Waking { .. } | Self::Ready(_) | Self::Failed { .. } => None,
         };
 
@@ -55,6 +105,62 @@ impl<P> PoolLifecycle<P> {
             *self = Self::Waking { attempt };
         }
         next_attempt
+    }
+
+    /// Begin Ready → Draining when idle timeout elapsed and sleep-eligible.
+    ///
+    /// Returns the pool to tear down, or `None` when sleep must wait.
+    /// Used by the state-machine contract tests; the main loop uses
+    /// [`enter_draining`] because the live pool is held outside Ready.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn start_drain_if_due(
+        &mut self,
+        idle_timeout: Duration,
+        last_activity: Instant,
+        now: Instant,
+        eligibility: SleepEligibility,
+    ) -> Option<P> {
+        if idle_timeout.is_zero() || !eligibility.is_eligible() {
+            return None;
+        }
+        if now.duration_since(last_activity) < idle_timeout {
+            return None;
+        }
+        match std::mem::replace(self, Self::Listening) {
+            Self::Ready(pool) => {
+                *self = Self::Draining { rewake: false };
+                Some(pool)
+            }
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+
+    /// Enter Draining when the live pool is held outside this state machine
+    /// (desktop lazy-pool path keeps `AgentPool` in a local variable while Ready).
+    pub(crate) fn enter_draining(&mut self, rewake: bool) {
+        *self = Self::Draining { rewake };
+    }
+
+    /// Complete Draining → Listening. Returns whether a re-wake should start.
+    pub(crate) fn complete_drain(&mut self) -> Result<bool, &'static str> {
+        match self {
+            Self::Draining { rewake } => {
+                let should_rewake = *rewake;
+                *self = Self::Listening;
+                Ok(should_rewake)
+            }
+            _ => Err("drain completed while lifecycle was not Draining"),
+        }
+    }
+
+    /// Mark that work arrived during drain (idempotent).
+    pub(crate) fn note_work_during_drain(&mut self) {
+        if let Self::Draining { rewake } = self {
+            *rewake = true;
+        }
     }
 
     pub(crate) fn take_ready(&mut self) -> Option<P> {
@@ -83,7 +189,7 @@ impl<P> PoolLifecycle<P> {
 
     pub(crate) fn failed_error(&self) -> Option<&str> {
         match self {
-            Self::Failed { error, .. } => Some(error),
+            Self::Failed { error, .. } => Some(error.as_str()),
             _ => None,
         }
     }
@@ -134,6 +240,15 @@ fn retry_delay(attempt: u32) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn eligible() -> SleepEligibility {
+        SleepEligibility {
+            turn_in_flight: false,
+            flushable_work: false,
+            outboxes_flushed: true,
+            cancel_drain_in_progress: false,
+        }
+    }
 
     #[tokio::test(start_paused = true)]
     async fn first_pending_event_starts_exactly_one_wake() {
@@ -308,5 +423,118 @@ mod tests {
             }
             _ => panic!("expected Failed"),
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ready_drains_to_listening_when_idle_and_eligible() {
+        let now = Instant::now();
+        let mut lifecycle = PoolLifecycle::listening();
+        assert_eq!(lifecycle.start_wake_if_due(true, now), Some(1));
+        lifecycle.complete_wake(1, Ok("pool"), now).unwrap();
+
+        let timeout = Duration::from_secs(30 * 60);
+        assert!(lifecycle
+            .start_drain_if_due(timeout, now, now + Duration::from_secs(60), eligible())
+            .is_none());
+        let drained = lifecycle
+            .start_drain_if_due(timeout, now, now + timeout, eligible())
+            .expect("pool");
+        assert_eq!(drained, "pool");
+        assert!(matches!(lifecycle, PoolLifecycle::Draining { rewake: false }));
+        assert_eq!(lifecycle.complete_drain(), Ok(false));
+        assert!(lifecycle.is_listening());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sleep_skipped_when_turn_in_flight_or_queue_or_outbox() {
+        let now = Instant::now();
+        let mut lifecycle = PoolLifecycle::listening();
+        assert_eq!(lifecycle.start_wake_if_due(true, now), Some(1));
+        lifecycle.complete_wake(1, Ok("pool"), now).unwrap();
+        let timeout = Duration::from_secs(1);
+        let later = now + Duration::from_secs(10);
+
+        assert!(lifecycle
+            .start_drain_if_due(
+                timeout,
+                now,
+                later,
+                SleepEligibility {
+                    turn_in_flight: true,
+                    ..eligible()
+                }
+            )
+            .is_none());
+        assert!(lifecycle
+            .start_drain_if_due(
+                timeout,
+                now,
+                later,
+                SleepEligibility {
+                    flushable_work: true,
+                    ..eligible()
+                }
+            )
+            .is_none());
+        assert!(lifecycle
+            .start_drain_if_due(
+                timeout,
+                now,
+                later,
+                SleepEligibility {
+                    outboxes_flushed: false,
+                    ..eligible()
+                }
+            )
+            .is_none());
+        assert!(lifecycle
+            .start_drain_if_due(
+                timeout,
+                now,
+                later,
+                SleepEligibility {
+                    cancel_drain_in_progress: true,
+                    ..eligible()
+                }
+            )
+            .is_none());
+        assert!(lifecycle.is_ready());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn zero_idle_timeout_disables_spin_down() {
+        let now = Instant::now();
+        let mut lifecycle = PoolLifecycle::listening();
+        assert_eq!(lifecycle.start_wake_if_due(true, now), Some(1));
+        lifecycle.complete_wake(1, Ok("pool"), now).unwrap();
+        assert!(lifecycle
+            .start_drain_if_due(Duration::ZERO, now, now + Duration::from_secs(3600), eligible())
+            .is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn work_during_drain_triggers_rewake_after_complete() {
+        let now = Instant::now();
+        let mut lifecycle = PoolLifecycle::listening();
+        assert_eq!(lifecycle.start_wake_if_due(true, now), Some(1));
+        lifecycle.complete_wake(1, Ok("pool"), now).unwrap();
+        let _ = lifecycle
+            .start_drain_if_due(Duration::from_secs(1), now, now + Duration::from_secs(2), eligible())
+            .unwrap();
+
+        assert_eq!(lifecycle.start_wake_if_due(true, now), None);
+        assert!(matches!(lifecycle, PoolLifecycle::Draining { rewake: true }));
+        assert_eq!(lifecycle.complete_drain(), Ok(true));
+        assert!(lifecycle.is_listening());
+        assert_eq!(lifecycle.start_wake_if_due(true, now), Some(1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_style_no_work_does_not_wake_listening() {
+        let now = Instant::now();
+        let mut lifecycle = PoolLifecycle::<()>::listening();
+        // Heartbeat must pass has_pending_work=false.
+        assert_eq!(lifecycle.start_wake_if_due(false, now), None);
+        assert!(lifecycle.is_listening());
     }
 }

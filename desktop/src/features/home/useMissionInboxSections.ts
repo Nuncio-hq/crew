@@ -22,6 +22,12 @@ import {
   useAgentObserverConnectionState,
   useAgentObserverConnectionStates,
 } from "@/features/agents/useAgentObserverConnectionState";
+import { useManagedAgentRuntimesQuery } from "@/features/agents/managedAgentRuntimeHooks";
+import {
+  findManagedAgentRuntime,
+  isManagedAgentRuntimeSleeping,
+} from "@/features/agents/managedAgentRuntimeStatus";
+import { useCommunities } from "@/features/communities/useCommunities";
 type UseMissionInboxSectionsInput = {
   channels?: readonly Pick<Channel, "id" | "name">[];
   effectiveDoneSet: ReadonlySet<string>;
@@ -52,6 +58,7 @@ export function useMissionInboxSections({
   );
   const activeTurns = useMissionInboxActiveTurns();
   const outcomes = useMissionInboxOutcomes();
+  const { activeCommunity } = useCommunities();
   const receipts = React.useSyncExternalStore(
     subscribeAgentReceipts,
     getAgentReceipts,
@@ -74,6 +81,30 @@ export function useMissionInboxSections({
   const connectionState = useAgentObserverConnectionState(activeAgentPubkeys);
   const connectionStateByAgent =
     useAgentObserverConnectionStates(activeAgentPubkeys);
+  const managedAgentRuntimesQuery = useManagedAgentRuntimesQuery({
+    enabled: Boolean(
+      activeCommunity?.relayUrl && activeAgentPubkeys.length > 0,
+    ),
+  });
+  const sleepingAgentPubkeys = React.useMemo(() => {
+    if (!activeCommunity?.relayUrl) return new Set<string>();
+    const sleeping = new Set<string>();
+    for (const pubkey of activeAgentPubkeys) {
+      const runtime = findManagedAgentRuntime(
+        managedAgentRuntimesQuery.data ?? [],
+        pubkey,
+        activeCommunity.relayUrl,
+      );
+      if (isManagedAgentRuntimeSleeping(runtime)) {
+        sleeping.add(pubkey.toLowerCase());
+      }
+    }
+    return sleeping;
+  }, [
+    activeAgentPubkeys,
+    activeCommunity?.relayUrl,
+    managedAgentRuntimesQuery.data,
+  ]);
   const snoozedUntilByConversation = React.useMemo(() => {
     // The store generation invalidates values while active-turn identities
     // remain stable.
@@ -103,6 +134,7 @@ export function useMissionInboxSections({
         receipts,
         connectionState,
         connectionStateByAgent,
+        sleepingAgentPubkeys,
         snoozedUntilByConversation,
       }),
     [
@@ -116,6 +148,7 @@ export function useMissionInboxSections({
       ownedAgentPubkeys,
       outcomes,
       receipts,
+      sleepingAgentPubkeys,
       snoozedUntilByConversation,
     ],
   );

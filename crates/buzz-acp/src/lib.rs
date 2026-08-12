@@ -13,6 +13,7 @@ mod queue;
 mod relay;
 mod retry_turn;
 mod secure_spool;
+mod session_ledger;
 mod setup_mode;
 mod thread_workspace;
 #[cfg(test)]
@@ -48,7 +49,7 @@ use pool::{
     AgentPool, ControlSignal, IdleSwitchResult, OwnedAgent, PromptContext, PromptOutcome,
     PromptResult, PromptSource, SessionState, TimeoutKind,
 };
-use pool_lifecycle::PoolLifecycle;
+use pool_lifecycle::{PoolLifecycle, SleepEligibility};
 use queue::{CancelReason, EventQueue, FlushBatch, QueuedEvent, ThreadTags};
 use relay::{HarnessRelay, RelayEventPublisher};
 use tokio::sync::{mpsc, watch};
@@ -1478,7 +1479,7 @@ fn any_respawn_in_flight(crash_history: &[SlotCircuit]) -> bool {
 struct RespawnResult {
     index: usize,
     /// Tuple: (initialized client, protocol version, agent name).
-    result: Result<(AcpClient, u32, String)>,
+    result: Result<(AcpClient, u32, String, bool)>,
 }
 
 /// Outcome of a non-cancelling steer attempt, forwarded from a per-attempt
@@ -1522,7 +1523,7 @@ impl RespawnGuard {
     /// Send the result and disarm the guard. Uses `try_send` (sync) so there
     /// is no await boundary between marking `sent` and actually enqueueing —
     /// cancellation cannot slip between the two.
-    fn send(mut self, result: Result<(AcpClient, u32, String)>) {
+    fn send(mut self, result: Result<(AcpClient, u32, String, bool)>) {
         // Invariant: try_send succeeds because the channel capacity equals the
         // slot count, and respawn_in_flight guarantees at most one outstanding
         // result per slot. If this ever fails, the channel sizing or the
@@ -1972,6 +1973,15 @@ async fn tokio_main() -> Result<()> {
         user_input_runtime: Some(user_input_runtime.clone()),
         agent_receipts_enabled: config.agent_receipts_enabled,
         receipt_outbox_workers: tokio_util::task::TaskTracker::new(),
+        engine_identity: crate::session_ledger::engine_identity_from(
+            &config.agent_command,
+            &config.agent_args,
+        ),
+        session_ledger_dir: crate::session_ledger::session_ledger_dir_for_scope(
+            &crate::session_ledger::default_session_ledger_dir(),
+            &config.relay_url,
+            &pubkey_hex,
+        ),
     });
     pool::prepare_receipt_outbox(&ctx)
         .await
@@ -2133,7 +2143,15 @@ async fn tokio_main() -> Result<()> {
         Panic(tokio::task::JoinError),
         SteerAck(SteerAckEvent),
         Wake(u32, Result<AgentPool, String>),
+        DrainDone,
     }
+
+    let pool_idle_timeout = Duration::from_secs(config.pool_idle_timeout_secs);
+    let (drain_tx, mut drain_rx) = mpsc::channel::<()>(1);
+    let mut drain_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+    // Delivery/routing state parked across engine spin-down (sessions cleared so
+    // resume-first wake reloads via session/load + ledger).
+    let mut parked_session_state: Option<SessionState> = None;
 
     loop {
         // Whether buffered work is waiting on a lazy pool. Also gates the
@@ -2147,6 +2165,9 @@ async fn tokio_main() -> Result<()> {
         let hold_wake_at = queue.next_hold_ready_at();
         if config.lazy_pool && !pool_ready {
             lazy_wake_work_pending = queue.has_flushable_work();
+            if pool_lifecycle.is_draining() && lazy_wake_work_pending {
+                pool_lifecycle.note_work_during_drain();
+            }
             if let Some(attempt) = pool_lifecycle
                 .start_wake_if_due(lazy_wake_work_pending, tokio::time::Instant::now())
             {
@@ -2171,6 +2192,50 @@ async fn tokio_main() -> Result<()> {
                             shutdown_agent_pool(&mut abandoned_pool).await;
                         }
                     }
+                });
+            }
+        }
+
+        // Ready → Draining → Listening idle spin-down (issue #169).
+        // The live AgentPool is held in `pool` while Ready; enter_draining
+        // records the reverse transition without moving the pool into Ready.
+        if config.lazy_pool
+            && pool_ready
+            && !pool_idle_timeout.is_zero()
+            && !pool_lifecycle.is_draining()
+        {
+            let eligibility = SleepEligibility {
+                turn_in_flight: queue.has_in_flight() || heartbeat_in_flight,
+                flushable_work: queue.has_flushable_work(),
+                outboxes_flushed: ctx.receipt_outbox_workers.is_empty(),
+                cancel_drain_in_progress: !pool.task_map().is_empty(),
+            };
+            if eligibility.is_eligible()
+                && tokio::time::Instant::now().duration_since(last_activity) >= pool_idle_timeout
+            {
+                let mut parked = SessionState::default();
+                for slot in pool.agents_mut() {
+                    if let Some(agent) = slot.as_mut() {
+                        parked = std::mem::take(&mut agent.state);
+                        parked.sessions.clear();
+                        parked.heartbeat_session = None;
+                        parked.heartbeat_turn_count = 0;
+                        parked.heartbeat_standing_context_sent = false;
+                        break;
+                    }
+                }
+                parked_session_state = Some(parked);
+                let mut draining_pool = std::mem::replace(
+                    &mut pool,
+                    AgentPool::from_slots((0..config.agents as usize).map(|_| None).collect()),
+                );
+                pool_ready = false;
+                pool_lifecycle.enter_draining(false);
+                tracing::info!("pool idle timeout reached — draining engine subprocesses");
+                let drain_tx = drain_tx.clone();
+                drain_tasks.spawn(async move {
+                    shutdown_agent_pool(&mut draining_pool).await;
+                    let _ = drain_tx.send(()).await;
                 });
             }
         }
@@ -2231,7 +2296,7 @@ async fn tokio_main() -> Result<()> {
         while let Ok(rr) = respawn_rx.try_recv() {
             crash_history[rr.index].respawn_in_flight = false;
             match rr.result {
-                Ok((acp, protocol_version, agent_name)) => {
+                Ok((acp, protocol_version, agent_name, load_session_supported)) => {
                     let agent = OwnedAgent {
                         index: rr.index,
                         acp,
@@ -2242,6 +2307,7 @@ async fn tokio_main() -> Result<()> {
                         agent_name,
                         goose_system_prompt_supported: None,
                         protocol_version,
+                        load_session_supported,
                     };
                     pool.return_agent(agent);
                     tracing::info!(agent = rr.index, "respawn complete");
@@ -2294,6 +2360,9 @@ async fn tokio_main() -> Result<()> {
                 }
                 Some((attempt, result)) = wake_rx.recv(), if config.lazy_pool && !pool_ready => {
                     Some(PoolEvent::Wake(attempt, result))
+                }
+                Some(()) = drain_rx.recv(), if pool_lifecycle.is_draining() => {
+                    Some(PoolEvent::DrainDone)
                 }
                 // Gated on pending work: with an empty queue there is nothing
                 // for the retry to dispatch, and a past `retry_at` would
@@ -3152,6 +3221,14 @@ async fn tokio_main() -> Result<()> {
                         pool = pool_lifecycle
                             .take_ready()
                             .expect("successful wake stores a ready pool");
+                        if let Some(parked) = parked_session_state.take() {
+                            for slot in pool.agents_mut() {
+                                if let Some(agent) = slot.as_mut() {
+                                    agent.state = parked;
+                                    break;
+                                }
+                            }
+                        }
                         pool_ready = true;
                         emit_runtime_lifecycle(
                             observer.as_ref(),
@@ -3178,6 +3255,27 @@ async fn tokio_main() -> Result<()> {
                             Some(&error),
                         );
                     }
+                }
+            }
+            Some(PoolEvent::DrainDone) => {
+                let should_rewake = match pool_lifecycle.complete_drain() {
+                    Ok(rewake) => rewake,
+                    Err(error) => {
+                        tracing::warn!(error, "discarding unexpected pool drain completion");
+                        continue;
+                    }
+                };
+                emit_runtime_lifecycle(
+                    observer.as_ref(),
+                    &runtime_start_nonce,
+                    &pubkey_hex,
+                    &config.relay_url,
+                    "listening",
+                    None,
+                );
+                tracing::info!(should_rewake, "engine pool drained — listening");
+                if should_rewake || queue.has_flushable_work() {
+                    // Next loop iteration starts the wake (Listening + work).
                 }
             }
             None => {} // relay/heartbeat/shutdown branches handled inline above
@@ -3294,7 +3392,7 @@ async fn tokio_main() -> Result<()> {
     // Drain any respawn results that completed before the abort. Explicitly
     // shut down returned agents instead of relying on AcpClient::Drop.
     while let Ok(rr) = respawn_rx.try_recv() {
-        if let Ok((mut acp, _, _)) = rr.result {
+        if let Ok((mut acp, _, _, _)) = rr.result {
             acp.shutdown().await;
             tracing::debug!(agent = rr.index, "reaped respawned agent on shutdown");
         }
@@ -4848,6 +4946,10 @@ async fn initialize_agent_pool(
                             }),
                         );
                         let agent_name = normalized_agent_name(&init_result);
+                        let load_session_supported = init_result
+                            .pointer("/agentCapabilities/loadSession")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
                         agent_slots.push(Some(OwnedAgent {
                             index: i,
                             acp,
@@ -4858,6 +4960,7 @@ async fn initialize_agent_pool(
                             agent_name,
                             goose_system_prompt_supported: None,
                             protocol_version,
+                            load_session_supported,
                         }));
                     }
                     Ok(Err(e)) => {
@@ -4924,7 +5027,7 @@ async fn spawn_and_init(
     user_input_enabled: bool,
     agent_index: usize,
     observer: Option<observer::ObserverHandle>,
-) -> Result<(AcpClient, u32, String)> {
+) -> Result<(AcpClient, u32, String, bool)> {
     let mut acp = AcpClient::spawn(command, args, extra_env, has_generated_codex_config)
         .await
         .map_err(|e| anyhow::anyhow!("failed to spawn agent: {e}"))?;
@@ -4935,6 +5038,10 @@ async fn spawn_and_init(
         Ok(init_result) => {
             tracing::info!("agent initialized: {init_result}");
             let protocol_version = init_result["protocolVersion"].as_u64().unwrap_or(1) as u32;
+            let load_session_supported = init_result
+                .pointer("/agentCapabilities/loadSession")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             acp.observe(
                 "agent_initialized",
                 serde_json::json!({
@@ -4943,7 +5050,7 @@ async fn spawn_and_init(
                 }),
             );
             let agent_name = normalized_agent_name(&init_result);
-            Ok((acp, protocol_version, agent_name))
+            Ok((acp, protocol_version, agent_name, load_session_supported))
         }
         Err(e) => {
             // Explicitly shut down the spawned child to prevent zombie/leak.
@@ -7092,6 +7199,7 @@ mod build_mcp_servers_tests {
             relay_observer: false,
             exit_after_inactivity_secs: 0,
             lazy_pool: false,
+            pool_idle_timeout_secs: 1800,
             agent_owner: None,
             no_base_prompt: false,
             base_prompt_content: None,
@@ -7317,6 +7425,7 @@ mod error_outcome_emission_tests {
             relay_observer: false,
             exit_after_inactivity_secs: 0,
             lazy_pool: false,
+            pool_idle_timeout_secs: 1800,
             agent_owner: None,
             no_base_prompt: false,
             base_prompt_content: None,
@@ -7357,6 +7466,7 @@ mod error_outcome_emission_tests {
             // Error branches under test never read this; 1 is the legacy
             // non-systemPrompt path, the simplest valid value.
             protocol_version: 1,
+        load_session_supported: false,
         }
     }
 

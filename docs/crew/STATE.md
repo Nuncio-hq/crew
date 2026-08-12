@@ -1,5 +1,17 @@
 # Crew State
 
+## Issue #169 — idle engine spin-down + resume-first wake
+
+Local managed agents spin down their engine/MCP pool after
+`BUZZ_ACP_POOL_IDLE_TIMEOUT` (default 30m; desktop local pairs pass it) while
+the harness stays Listening with presence/subscriptions/buffering. A durable
+session ledger declares session ids at `session/new` birth; wake resumes via
+`session/load` when the engine advertises `loadSession` and validation passes,
+otherwise rebuilds fail-closed. Agent cards show **Sleeping · wakes on
+mention**; Mission Inbox excludes Sleeping; wake feedback uses the typing
+indicator seam. See D-048 and spike 0022.
+Last updated: 2026-08-12
+
 ## Issue #116 Slice 1R — channel-scoped roles
 
 Roles are founder-authorized `(agent, channel)` assignments stored in the

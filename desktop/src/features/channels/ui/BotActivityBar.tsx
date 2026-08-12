@@ -6,6 +6,7 @@ import {
   subscribeActiveAgentTurns,
 } from "@/features/agents/activeAgentTurnsStore";
 import { deriveAgentAttention } from "@/features/agents/agentAttention";
+import { managedAgentWakingStatusLabel } from "@/features/agents/managedAgentRuntimeStatus";
 import {
   getAgentAttentionSnoozeGeneration,
   getAgentAttentionSnoozedUntil,
@@ -41,6 +42,7 @@ type BotActivityBarProps = {
   onOpenAgentSession: (pubkey: string, channelId?: string | null) => void;
   openAgentSessionPubkey: string | null;
   profiles?: UserProfileLookup;
+  wakingBotPubkeys?: string[];
   workingBotPubkeys: string[];
   variant?: "toolbar" | "inline";
 };
@@ -56,6 +58,7 @@ export function BotActivityComposerAction({
   onOpenAgentSession,
   openAgentSessionPubkey,
   profiles,
+  wakingBotPubkeys = [],
   workingBotPubkeys,
   variant = "toolbar",
 }: BotActivityBarProps) {
@@ -77,6 +80,10 @@ export function BotActivityComposerAction({
     () => new Set(retryingTurns.map((entry) => entry.agentPubkey)),
     [retryingTurns],
   );
+  const wakingPubkeys = React.useMemo(
+    () => new Set(wakingBotPubkeys.map((pubkey) => pubkey.toLowerCase())),
+    [wakingBotPubkeys],
+  );
 
   const workingAgents = React.useMemo(() => {
     const workingSet = new Set(
@@ -88,6 +95,11 @@ export function BotActivityComposerAction({
   }, [agents, retryingPubkeys, workingBotPubkeys]);
   const singleWorkingAgent =
     workingAgents.length === 1 ? (workingAgents[0] ?? null) : null;
+  const wakingLabel =
+    singleWorkingAgent &&
+    wakingPubkeys.has(singleWorkingAgent.pubkey.toLowerCase())
+      ? managedAgentWakingStatusLabel(singleWorkingAgent.name)
+      : null;
   const primaryRetrying =
     retryingTurns.length === 1 ? (retryingTurns[0] ?? null) : null;
 
@@ -219,11 +231,13 @@ export function BotActivityComposerAction({
     ? workingAgents.length === 1
       ? `${workingAgents[0]?.name ?? "Agent"} · ${retryingLabel}`
       : retryingLabel
-    : attentionLabel
-      ? `${triggerLabel} · ${attentionLabel}`
-      : activityBounds
-        ? `${triggerLabel} · ${formatElapsed(elapsedMs)}`
-        : triggerLabel;
+    : wakingLabel
+      ? wakingLabel
+      : attentionLabel
+        ? `${triggerLabel} · ${attentionLabel}`
+        : activityBounds
+          ? `${triggerLabel} · ${formatElapsed(elapsedMs)}`
+          : triggerLabel;
   const isInline = variant === "inline";
   const inlineWait =
     isInline && stuck && conversationId ? (

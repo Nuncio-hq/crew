@@ -67,6 +67,7 @@ type MissionInboxInput = {
   receipts: readonly AgentReceiptSummary[];
   connectionState: ConnectionState;
   connectionStateByAgent?: ReadonlyMap<string, ConnectionState>;
+  sleepingAgentPubkeys?: ReadonlySet<string>;
   snoozedUntilByConversation: ReadonlyMap<string, number>;
   acknowledgedConversationIds: ReadonlySet<string>;
   now?: number;
@@ -106,6 +107,10 @@ function connectionStateForAgents(
     }
   }
   return selected;
+}
+
+function isSleepingAgent(input: MissionInboxInput, pubkey: string): boolean {
+  return input.sleepingAgentPubkeys?.has(pubkey.toLowerCase()) ?? false;
 }
 
 function latestRequest(requests: readonly NeedsYouRequest[]) {
@@ -224,7 +229,8 @@ export function deriveMissionInboxSections(
     if (
       entry.outcome === "completed" ||
       blocked.has(conversationId) ||
-      !channelIds.has(entry.channelId)
+      !channelIds.has(entry.channelId) ||
+      isSleepingAgent(input, entry.agentPubkey)
     ) {
       continue;
     }
@@ -329,7 +335,16 @@ export function deriveMissionInboxSections(
     if (blocked.has(turn.conversationId) || !channelIds.has(turn.channelId)) {
       continue;
     }
-    const exactPairs = turn.agentTriggerPairs ?? [];
+    const awakeAgentPubkeys = turn.agentPubkeys.filter(
+      (pubkey) => !isSleepingAgent(input, pubkey),
+    );
+    if (awakeAgentPubkeys.length === 0) continue;
+    const awakeAgentPubkeySet = new Set(
+      awakeAgentPubkeys.map((pubkey) => pubkey.toLowerCase()),
+    );
+    const exactPairs = (turn.agentTriggerPairs ?? []).filter((pair) =>
+      awakeAgentPubkeySet.has(pair.agentPubkey.toLowerCase()),
+    );
     const conversationReceipts =
       receiptsByConversation.get(turn.conversationId) ?? [];
     const matchingReceipts = conversationReceipts.filter((candidate) =>
@@ -360,7 +375,7 @@ export function deriveMissionInboxSections(
       latestReceiptByConversation.delete(turn.conversationId);
     }
     const attention = deriveAgentAttention({
-      connectionState: connectionStateForAgents(input, turn.agentPubkeys),
+      connectionState: connectionStateForAgents(input, awakeAgentPubkeys),
       needsYou: false,
       now,
       outcome: null,
@@ -369,7 +384,7 @@ export function deriveMissionInboxSections(
         input.snoozedUntilByConversation.get(turn.conversationId) ?? 0,
       turns: [
         {
-          agentPubkey: turn.agentPubkeys[0] ?? "",
+          agentPubkey: awakeAgentPubkeys[0] ?? "",
           anchorAt: turn.anchorAt,
           lastSeenAt: turn.lastSeenAt,
           lastSubstantiveProgressAt: turn.lastSubstantiveProgressAt,
@@ -391,7 +406,7 @@ export function deriveMissionInboxSections(
           (exceptionState === "lostContact"
             ? turn.lastSeenAt
             : turn.lastSubstantiveProgressAt),
-        agentPubkey: turn.agentPubkeys[0] ?? item?.item.pubkey ?? "",
+        agentPubkey: awakeAgentPubkeys[0] ?? item?.item.pubkey ?? "",
         channelId: turn.channelId,
         channelName: channelNames.get(turn.channelId) ?? "",
         conversationId: turn.conversationId,
@@ -443,7 +458,10 @@ export function deriveMissionInboxSections(
     working.push(
       rowFor({
         age: now - turn.lastSubstantiveProgressAt,
-        agentPubkey: turn.agentPubkeys[0] ?? item?.item.pubkey ?? "",
+        agentPubkey:
+          turn.agentPubkeys.find((pubkey) => !isSleepingAgent(input, pubkey)) ??
+          item?.item.pubkey ??
+          "",
         channelId: turn.channelId,
         channelName: channelNames.get(turn.channelId) ?? "",
         conversationId: turn.conversationId,
@@ -477,6 +495,7 @@ export function deriveMissionInboxSections(
     connectionStateByAgent: input.connectionStateByAgent
       ? [...input.connectionStateByAgent]
       : [],
+    sleeping: [...(input.sleepingAgentPubkeys ?? [])].sort(),
     snoozed: [...input.snoozedUntilByConversation],
     now: input.now,
   });

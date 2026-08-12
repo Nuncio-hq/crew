@@ -53,6 +53,8 @@ type AgentAttentionInput = {
   now: number;
   outcome: "completed" | "error" | "lost-contact" | null;
   receipt: { createdAt: number; reviewed: boolean } | null;
+  /** Runtime lifecycle is listening/asleep; stale observer liveness is calm. */
+  sleeping?: boolean;
   snoozedUntil?: number | null;
   turns: readonly AgentAttentionTurn[];
 };
@@ -188,6 +190,7 @@ function oldestBy(
 export function deriveAgentAttention(
   input: AgentAttentionInput,
 ): AgentAttentionProjection {
+  if (input.sleeping) return baseProjection("idle");
   if (input.needsYou) return baseProjection("needs-you", input.turns[0]);
   if (input.outcome === "error") return baseProjection("failed");
   if (input.outcome === "lost-contact") {
