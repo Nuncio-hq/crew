@@ -9578,18 +9578,30 @@ async function handleSendManagedAgentChannelMessage(
 }
 
 /**
- * Mock the `delete_message` Tauri command. Removes the event from the
- * in-memory mock store and records the kind:5 structural event used by Inbox
- * refreshes. Do not emit it live: mock target IDs may fail the production
- * 64-hex deletion filter, letting a live merge restore the flattened row.
+ * Handle the `delete_message` Tauri command. Relay mode publishes the
+ * kind:5 structural event; mock mode removes the event from the in-memory
+ * store and records the same event for Inbox refreshes.
  */
-function handleDeleteMessage(
+async function handleDeleteMessage(
   args: {
     channelId: string;
     eventId: string;
   },
   config: E2eConfig | undefined,
-): void {
+): Promise<void> {
+  const identity = getIdentity(config);
+  if (identity) {
+    await submitSignedEvent(config, {
+      kind: KIND_DELETION,
+      content: "",
+      tags: [
+        ["h", args.channelId],
+        ["e", args.eventId],
+      ],
+    });
+    return;
+  }
+
   const history = mockMessages.get(args.channelId);
   if (history) {
     const index = history.findIndex((ev) => ev.id === args.eventId);
@@ -9682,30 +9694,35 @@ function findMockEventChannel(eventId: string): string | undefined {
 }
 
 /**
- * Mock the `add_reaction` Tauri command. Mirrors the real Rust command: a
- * kind:7 whose content is the emoji, plus — for a custom emoji — the NIP-30
- * `["emoji", shortcode, url]` tag (shortcode normalized to match the relay).
- * Recorded into the target's channel store, projected into home-feed activity,
- * and emitted live so timeline reactions and durable inbox projections observe
- * the same event. Unicode reactions carry no emoji tag, like the real command.
+ * Handle the `add_reaction` Tauri command. Relay mode publishes the kind:7
+ * event; mock mode records it into the target's channel store, projects it
+ * into home-feed activity, and emits it live. Unicode reactions carry no
+ * emoji tag; custom emoji uses the NIP-30 tag.
  */
 async function handleAddReaction(
   args: { eventId: string; emoji: string; emojiUrl?: string | null },
   config: E2eConfig | undefined,
 ): Promise<void> {
-  const channelId = findMockEventChannel(args.eventId);
-  if (!channelId) {
-    throw new Error(`mock add_reaction: unknown target event ${args.eventId}`);
-  }
-
+  const identity = getIdentity(config);
   const emoji = args.emoji.trim();
-  // Real add_reaction events carry only the target `e` tag. Channel live
-  // subscriptions already know which channel matched and restore that context
-  // before merging the event into the timeline cache.
   const tags: string[][] = [["e", args.eventId]];
   if (args.emojiUrl) {
     const shortcode = emoji.replace(/^:+/, "").replace(/:+$/, "").toLowerCase();
     tags.push(["emoji", shortcode, args.emojiUrl]);
+  }
+
+  if (identity) {
+    await submitSignedEvent(config, {
+      kind: KIND_REACTION,
+      content: emoji,
+      tags,
+    });
+    return;
+  }
+
+  const channelId = findMockEventChannel(args.eventId);
+  if (!channelId) {
+    throw new Error(`mock add_reaction: unknown target event ${args.eventId}`);
   }
 
   const event = createMockEvent(
@@ -9735,22 +9752,42 @@ async function handleAddReaction(
 }
 
 /**
- * Mock the `remove_reaction` Tauri command. Finds the active member's own
- * kind:7 for this target+emoji, removes it from the store, and emits a kind:5
- * deletion so the timeline drops the reaction (the real command deletes via a
- * kind:5 too).
+ * Handle the `remove_reaction` Tauri command. Relay mode finds the caller's
+ * own matching kind:7 and publishes its kind:5 deletion; mock mode removes
+ * the reaction from the store and emits the same deletion.
  */
 async function handleRemoveReaction(
   args: { eventId: string; emoji: string },
   config: E2eConfig | undefined,
 ): Promise<void> {
+  const identity = getIdentity(config);
+  const emoji = args.emoji.trim();
+  if (identity) {
+    const reactions = await relayQuery(config, [
+      {
+        kinds: [KIND_REACTION],
+        authors: [identity.pubkey],
+        "#e": [args.eventId],
+      },
+    ]);
+    const reaction = reactions.find((event) => event.content.trim() === emoji);
+    if (!reaction) {
+      throw new Error("could not find your reaction event for this emoji");
+    }
+    await submitSignedEvent(config, {
+      kind: KIND_DELETION,
+      content: "",
+      tags: [["e", reaction.id]],
+    });
+    return;
+  }
+
   const channelId = findMockEventChannel(args.eventId);
   if (!channelId) {
     return;
   }
 
   const myPubkey = getMockMemberPubkey(config).toLowerCase();
-  const emoji = args.emoji.trim();
   const store = getMockMessageStore(channelId);
   const reaction = store.find(
     (event) =>
@@ -13451,7 +13488,7 @@ export function maybeInstallE2eTauriMocks() {
           activeConfig,
         );
       case "delete_message":
-        handleDeleteMessage(
+        await handleDeleteMessage(
           payload as Parameters<typeof handleDeleteMessage>[0],
           activeConfig,
         );
@@ -13763,8 +13800,18 @@ export function maybeInstallE2eTauriMocks() {
         // The spec only verifies UI state, not the submitted request shape;
         // returning null mirrors the Rust submit_event success path.
         return null;
-      case "set_canvas":
+      case "set_canvas": {
+        const canvasArgs = payload as { channelId: string; content: string };
+        if (getIdentity(activeConfig)) {
+          const result = await submitSignedEvent(activeConfig, {
+            kind: 40100,
+            content: canvasArgs.content,
+            tags: [["h", canvasArgs.channelId]],
+          });
+          return { ok: result.accepted, event_id: result.event_id };
+        }
         return { ok: true, event_id: mockEventId() };
+      }
       case "get_canvas": {
         const canvasReadError = activeConfig?.mock?.canvasReadError;
         if (canvasReadError) {
