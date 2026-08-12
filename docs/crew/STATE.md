@@ -1,5 +1,14 @@
 # Crew State
 
+## Issue #180 — session ledger compaction / rotation awareness
+
+Hermes `sessionProvenance` and Codex compacted markers update ledger
+`rotation_count` + optional `lineage` tips. Wake re-validates after
+`session/load`: if the ledger lags the engine or the lineage tip mismatches,
+resume is refused and the #169 fail-closed rebuild + delta path runs. Owner
+aging UI / guided handover remains #173. See D-049.
+Last updated: 2026-08-12
+
 ## Issue #169 — idle engine spin-down + resume-first wake
 
 Local managed agents spin down their engine/MCP pool after
@@ -9,7 +18,7 @@ session ledger declares session ids at `session/new` birth; wake resumes via
 `session/load` when the engine advertises `loadSession` and validation passes,
 otherwise rebuilds fail-closed. Agent cards show **Sleeping · wakes on
 mention**; Mission Inbox excludes Sleeping; wake feedback uses the typing
-indicator seam. See D-048 and spike 0022.
+indicator seam. See D-048 and spike 0022. Compaction-awareness: #180 / D-049.
 Last updated: 2026-08-12
 
 ## Issue #116 Slice 1R — channel-scoped roles

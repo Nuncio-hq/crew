@@ -30,11 +30,14 @@ engine RSS after the first mention.
 
 ## Non-goals (same as Crew #169)
 
-- Compaction-awareness / lineage history UI
+- Owner-facing compaction aging UI / guided handover (Crew #173)
 - Memory-pressure eviction
 - Multi-slot resume (`BUZZ_ACP_AGENTS > 1`)
 - Full harness exit (`BUZZ_ACP_EXIT_AFTER_INACTIVITY` unchanged)
 - Per-thread process isolation
+
+Compaction / lineage fail-closed wake (#180 / D-049) is a related Crew-landed
+ledger extension and should travel with the ledger module if upstreamed.
 
 ## Evidence already in Crew
 

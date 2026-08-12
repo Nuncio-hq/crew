@@ -37,10 +37,10 @@ The local upstream push URL is deliberately disabled. Never push to
 | --- | --- | --- |
 | `crates/buzz-acp/src/base_prompt.md` | office-level behavioral rule belongs in the office-level prompt | self-contained Markdown section — on conflict, keep it and re-place it after Communication Patterns |
 | `crates/buzz-acp/src/lib.rs` | machine-check the shared prompt contract; idle pool spin-down + wake restore (#169) | retain prompt assertions; keep drain/wake arms additive beside existing lazy-pool select loop |
-| `crates/buzz-acp/src/pool.rs` | resume-first session acquire + ledger declare-at-birth (#169) | keep resume/rebuild inside the channel session block; do not invent parallel session maps |
+| `crates/buzz-acp/src/pool.rs` | resume-first session acquire + ledger declare-at-birth (#169); post-load lineage check + live rotation persist (#180) | keep resume/rebuild inside the channel session block; do not invent parallel session maps |
 | `crates/buzz-acp/src/pool_lifecycle.rs` | Ready → Draining → Listening reverse transition (#169) | merge drain helpers; preserve forward wake/retry contract tests |
-| `crates/buzz-acp/src/session_ledger.rs` | Crew-landed durable session ledger module (#169; upstream-candidacy) | additive file — prefer keeping intact on sync |
-| `crates/buzz-acp/src/acp.rs` | ACP v1 `session/load` client (#169) | retain beside `session_new_full`; capability-gated by callers |
+| `crates/buzz-acp/src/session_ledger.rs` | Crew-landed durable session ledger (#169) + rotation/lineage (#180; upstream-candidacy) | additive file — prefer keeping intact on sync |
+| `crates/buzz-acp/src/acp.rs` | ACP v1 `session/load` client (#169); Hermes/Codex rotation signal capture (#180) | retain beside `session_new_full`; capability-gated by callers |
 | `crates/buzz-acp/src/config.rs` | `--pool-idle-timeout` / `BUZZ_ACP_POOL_IDLE_TIMEOUT` (#169) | retain clap/env field + default 1800; 0 disables |
 | `desktop/src-tauri/src/managed_agents/runtime.rs` | desktop passes pool idle timeout for local pairs (#169) | keep env injection next to `BUZZ_ACP_LAZY_POOL` |
 | `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs` | reserve pool idle timeout from persona/user override (#169) | keep key in the shared reserved list |

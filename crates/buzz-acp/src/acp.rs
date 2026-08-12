@@ -221,6 +221,10 @@ pub struct AcpClient {
     pending_user_input_id: Option<serde_json::Value>,
     pending_user_input_event_id: Option<String>,
     user_input_responded: bool,
+    /// Most recent engine compaction / session-rotation snapshot observed on
+    /// this client (Hermes `sessionProvenance`, Codex `context_compacted`).
+    /// Consumed by the pool to persist ledger `rotation_count` / `lineage`.
+    last_rotation_signal: Option<crate::session_ledger::EngineRotationSnapshot>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -569,6 +573,7 @@ impl AcpClient {
             pending_user_input_id: None,
             pending_user_input_event_id: None,
             user_input_responded: false,
+            last_rotation_signal: None,
         })
     }
 
@@ -685,6 +690,7 @@ impl AcpClient {
             .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
             .to_owned();
         tracing::info!(target: "acp::session", "session created: {session_id}");
+        self.note_rotation_from_value(&result);
         Ok(SessionNewResponse {
             session_id,
             raw: result,
@@ -731,6 +737,7 @@ impl AcpClient {
             .unwrap_or(session_id)
             .to_owned();
         tracing::info!(target: "acp::session", "session loaded: {loaded_id}");
+        self.note_rotation_from_value(&result);
         Ok(SessionNewResponse {
             session_id: loaded_id,
             raw: result,
@@ -935,6 +942,34 @@ impl AcpClient {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn active_run_id(&self) -> Option<&str> {
         self.active_run_id.as_deref()
+    }
+
+    /// Parse and retain an engine rotation signal from an ACP value, if any.
+    pub(crate) fn note_rotation_from_value(&mut self, value: &serde_json::Value) {
+        if let Some(snapshot) = crate::session_ledger::parse_engine_rotation_signal(value) {
+            tracing::debug!(
+                target: "acp::rotation",
+                depth = snapshot.compression_depth,
+                source = snapshot.source,
+                internal = %snapshot.current_internal_id,
+                "observed engine session rotation signal"
+            );
+            self.last_rotation_signal = Some(snapshot);
+        }
+    }
+
+    /// Peek at the most recent rotation signal without clearing it.
+    pub(crate) fn peek_rotation_signal(
+        &self,
+    ) -> Option<&crate::session_ledger::EngineRotationSnapshot> {
+        self.last_rotation_signal.as_ref()
+    }
+
+    /// Take the most recent rotation signal (clears the client slot).
+    pub(crate) fn take_rotation_signal(
+        &mut self,
+    ) -> Option<crate::session_ledger::EngineRotationSnapshot> {
+        self.last_rotation_signal.take()
     }
 
     /// Whether the agent advertised the [`ACP_STEER_METHOD`] extension at
@@ -2159,11 +2194,22 @@ impl AcpClient {
                         _ => {}
                     }
                 }
+                // Hermes (and future engines) attach session provenance here
+                // after compression rotates the internal session head (#180).
+                self.note_rotation_from_value(msg);
+                false
+            }
+            "context_compacted" | "compacted" => {
+                // Codex (when codex-acp forwards it) — count toward ledger
+                // rotation so wake can refuse a stale lineage (#180).
+                self.note_rotation_from_value(msg);
                 false
             }
             "keepalive" => false,
             other => {
                 tracing::debug!(target: "acp::update", "session/update: {other}");
+                // Still probe unknown update kinds for Codex/Hermes markers.
+                self.note_rotation_from_value(msg);
                 false
             }
         }
@@ -3813,10 +3859,7 @@ done
         assert_eq!(resp.session_id, "ses_loaded");
         let received = &resp.raw["_receivedRequest"];
         assert_eq!(received["method"].as_str(), Some("session/load"));
-        assert_eq!(
-            received["params"]["sessionId"].as_str(),
-            Some("ses_prior")
-        );
+        assert_eq!(received["params"]["sessionId"].as_str(), Some("ses_prior"));
         assert_eq!(
             received["params"]["cwd"].as_str(),
             Some("/workspace/project")
@@ -4095,6 +4138,38 @@ done
         let _ = client.handle_session_update(&msg);
 
         assert_eq!(client.active_run_id(), Some("run-abc-123"));
+    }
+
+    #[tokio::test]
+    async fn hermes_session_info_update_notes_rotation_signal() {
+        let mut client = spawn_inert_client().await;
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "acp-1",
+                "update": {
+                    "sessionUpdate": "session_info_update",
+                    "_meta": {
+                        "hermes": {
+                            "sessionProvenance": {
+                                "acpSessionId": "acp-1",
+                                "currentHermesSessionId": "hermes-child-1",
+                                "rootHermesSessionId": "acp-1",
+                                "parentHermesSessionId": "acp-1",
+                                "sessionKind": "compression",
+                                "compressionDepth": 1
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let _ = client.handle_session_update(&msg);
+        let snap = client.peek_rotation_signal().expect("rotation noted");
+        assert_eq!(snap.compression_depth, 1);
+        assert_eq!(snap.current_internal_id, "hermes-child-1");
+        assert_eq!(snap.source, "hermes.sessionProvenance");
     }
 
     #[tokio::test]

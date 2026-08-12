@@ -8,6 +8,14 @@
 //!    `loadSession` capability must match before `session/load`; any failure
 //!    deletes the entry and rebuilds.
 //!
+//! Contract (issue #180 — compaction / rotation awareness):
+//! 4. **Observe engine rotation** — Hermes `sessionProvenance.compressionDepth`
+//!    / internal session ids, and Codex `compacted` / `context_compacted`
+//!    markers, update `rotation_count` + optional `lineage` on the ledger.
+//! 5. **Wake refuses stale lineage** — if the engine's rotation is ahead of
+//!    the ledger (or the lineage tip mismatches), treat as a resume miss and
+//!    fail closed to rebuild + delta delivery.
+//!
 //! Invariant: a thread owns a sequence of sessions over its lifetime; at most
 //! one is live; only the newest is resumable; superseded sessions are history.
 
@@ -16,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -25,6 +34,8 @@ use crate::secure_spool::{
 
 const LEDGER_EXT: &str = "json";
 const MAX_ENTRY_BYTES: u64 = 64 * 1024;
+/// Cap lineage history retained on disk (oldest tips drop first).
+const MAX_LINEAGE_TIPS: usize = 32;
 
 /// Live session declaration for one thread.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,12 +50,33 @@ pub struct SessionLedgerCurrent {
     pub last_used_at: u64,
 }
 
+/// One observed engine-internal session tip after birth or compaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLineageTip {
+    /// Engine-internal session id (Hermes `currentHermesSessionId`, Codex
+    /// rollout tip, etc.). May differ from the ACP `sessionId` after rotate.
+    pub internal_session_id: String,
+    /// Observed compression / compaction depth at this tip.
+    pub compression_depth: u32,
+    /// Detector that produced this tip (`hermes.sessionProvenance`,
+    /// `codex.context_compacted`, `codex.rollout_compacted`, …).
+    pub source: String,
+    pub observed_at: u64,
+}
+
 /// Durable ledger value for one `(relay, agent, thread)` key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionLedgerEntry {
     pub current: SessionLedgerCurrent,
+    /// Highest engine compression/compaction depth observed for the live ACP
+    /// session. Resets to 0 (or the birth snapshot depth) on `session/new`
+    /// declare. Never fabricated — only real engine signals move this.
     pub rotation_count: u32,
+    /// Optional ordered tips (oldest → newest). Empty on legacy entries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lineage: Vec<SessionLineageTip>,
 }
 
 /// Lookup key for the durable ledger.
@@ -56,7 +88,11 @@ pub struct SessionLedgerKey {
 }
 
 impl SessionLedgerKey {
-    pub fn new(relay_url: impl Into<String>, agent_pubkey: impl Into<String>, thread_id: Uuid) -> Self {
+    pub fn new(
+        relay_url: impl Into<String>,
+        agent_pubkey: impl Into<String>,
+        thread_id: Uuid,
+    ) -> Self {
         Self {
             relay_url: relay_url.into(),
             agent_pubkey: agent_pubkey.into().to_ascii_lowercase(),
@@ -83,12 +119,23 @@ impl SessionLedgerKey {
     }
 }
 
-/// Validation inputs required before `session/load`.
+/// Snapshot of engine rotation state for wake-time comparison.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineRotationSnapshot {
+    pub compression_depth: u32,
+    pub current_internal_id: String,
+    pub source: &'static str,
+}
+
+/// Validation inputs required before / after `session/load`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionLoadValidation<'a> {
     pub engine_identity: &'a str,
     pub workspace_generation: u64,
     pub load_session_supported: bool,
+    /// When `Some`, compare against ledger `rotation_count` / lineage tip.
+    /// Pass the snapshot parsed from `session/load` (or a Codex rollout probe).
+    pub engine_rotation: Option<&'a EngineRotationSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,37 +186,114 @@ pub fn decode_ledger_entry(bytes: &[u8]) -> Result<SessionLedgerEntry, String> {
     Ok(entry)
 }
 
-/// Declare-at-birth / overwrite-on-rotation write site.
+fn tip_from_snapshot(snapshot: &EngineRotationSnapshot, observed_at: u64) -> SessionLineageTip {
+    SessionLineageTip {
+        internal_session_id: snapshot.current_internal_id.clone(),
+        compression_depth: snapshot.compression_depth,
+        source: snapshot.source.to_string(),
+        observed_at,
+    }
+}
+
+fn push_lineage_tip(lineage: &mut Vec<SessionLineageTip>, tip: SessionLineageTip) {
+    if lineage
+        .last()
+        .is_some_and(|last| last.internal_session_id == tip.internal_session_id)
+    {
+        // Same internal id — refresh depth/source/time on the tip.
+        if let Some(last) = lineage.last_mut() {
+            last.compression_depth = tip.compression_depth;
+            last.source = tip.source;
+            last.observed_at = tip.observed_at;
+        }
+        return;
+    }
+    lineage.push(tip);
+    if lineage.len() > MAX_LINEAGE_TIPS {
+        let drop_n = lineage.len() - MAX_LINEAGE_TIPS;
+        lineage.drain(0..drop_n);
+    }
+}
+
+async fn write_entry(
+    dir: &Path,
+    key: &SessionLedgerKey,
+    entry: &SessionLedgerEntry,
+) -> Result<(), String> {
+    let bytes = encode_ledger_entry(entry)?;
+    let name = key.entry_name();
+    let _ = remove_secure_entry(dir, &name).await?;
+    let written = write_secure_entry_if_absent(dir, &name, &key.temporary_name(), &bytes).await?;
+    if !written {
+        return Err("session ledger write raced with another writer".into());
+    }
+    Ok(())
+}
+
+/// Declare-at-birth / overwrite-on-Crew-rebuild write site.
+///
+/// A new ACP `session/new` resets rotation tracking. Pass `initial_rotation`
+/// when `session/new` (or an immediate probe) already reports provenance so
+/// the birth tip is recorded.
 pub async fn declare_session(
     dir: &Path,
     key: &SessionLedgerKey,
     session_id: impl Into<String>,
     engine_identity: impl Into<String>,
     workspace_generation: u64,
+    initial_rotation: Option<&EngineRotationSnapshot>,
 ) -> Result<SessionLedgerEntry, String> {
     ensure_secure_directory(dir).await?;
-    let name = key.entry_name();
-    let previous = read_ledger_entry(dir, key).await?;
     let now = now_unix_secs();
+    let session_id = session_id.into();
+    let mut lineage = Vec::new();
+    let mut rotation_count = 0;
+    if let Some(snapshot) = initial_rotation {
+        rotation_count = snapshot.compression_depth;
+        push_lineage_tip(&mut lineage, tip_from_snapshot(snapshot, now));
+    } else {
+        // Seed a birth tip from the ACP session id so later lineage mismatch
+        // checks have a baseline even when the engine emits no meta yet.
+        push_lineage_tip(
+            &mut lineage,
+            SessionLineageTip {
+                internal_session_id: session_id.clone(),
+                compression_depth: 0,
+                source: "declare.birth".into(),
+                observed_at: now,
+            },
+        );
+    }
     let entry = SessionLedgerEntry {
         current: SessionLedgerCurrent {
-            session_id: session_id.into(),
+            session_id,
             engine_identity: engine_identity.into(),
             workspace_generation,
             created_at: now,
             last_used_at: now,
         },
-        rotation_count: previous.map(|p| p.rotation_count.saturating_add(1)).unwrap_or(0),
+        rotation_count,
+        lineage,
     };
-    let bytes = encode_ledger_entry(&entry)?;
-    // Replace: remove any prior entry, then exclusive-create.
-    let _ = remove_secure_entry(dir, &name).await?;
-    let written =
-        write_secure_entry_if_absent(dir, &name, &key.temporary_name(), &bytes).await?;
-    if !written {
-        return Err("session ledger declare raced with another writer".into());
-    }
+    write_entry(dir, key, &entry).await?;
     Ok(entry)
+}
+
+/// Persist an observed engine compaction / session-rotation signal.
+pub async fn record_rotation_signal(
+    dir: &Path,
+    key: &SessionLedgerKey,
+    snapshot: &EngineRotationSnapshot,
+) -> Result<Option<SessionLedgerEntry>, String> {
+    let Some(mut entry) = read_ledger_entry(dir, key).await? else {
+        return Ok(None);
+    };
+    let now = now_unix_secs();
+    entry.rotation_count = entry.rotation_count.max(snapshot.compression_depth);
+    push_lineage_tip(&mut entry.lineage, tip_from_snapshot(snapshot, now));
+    entry.current.last_used_at = now;
+    write_entry(dir, key, &entry).await?;
+    Ok(Some(entry))
 }
 
 pub async fn touch_session_used(dir: &Path, key: &SessionLedgerKey) -> Result<(), String> {
@@ -177,10 +301,7 @@ pub async fn touch_session_used(dir: &Path, key: &SessionLedgerKey) -> Result<()
         return Ok(());
     };
     entry.current.last_used_at = now_unix_secs();
-    let bytes = encode_ledger_entry(&entry)?;
-    let name = key.entry_name();
-    let _ = remove_secure_entry(dir, &name).await?;
-    let _ = write_secure_entry_if_absent(dir, &name, &key.temporary_name(), &bytes).await?;
+    write_entry(dir, key, &entry).await?;
     Ok(())
 }
 
@@ -211,7 +332,124 @@ pub async fn delete_ledger_entry(dir: &Path, key: &SessionLedgerKey) -> Result<b
     remove_secure_entry(dir, &key.entry_name()).await
 }
 
-/// Resume-by-lookup-only + validate-then-load decision.
+fn hermes_provenance(value: &Value) -> Option<&Value> {
+    value
+        .pointer("/_meta/hermes/sessionProvenance")
+        .or_else(|| value.pointer("/params/update/_meta/hermes/sessionProvenance"))
+        .or_else(|| value.pointer("/update/_meta/hermes/sessionProvenance"))
+        .or_else(|| value.pointer("/hermes/sessionProvenance"))
+}
+
+fn parse_hermes_rotation(value: &Value) -> Option<EngineRotationSnapshot> {
+    let prov = hermes_provenance(value)?;
+    let current = prov
+        .get("currentHermesSessionId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    let depth = prov
+        .get("compressionDepth")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    Some(EngineRotationSnapshot {
+        compression_depth: depth,
+        current_internal_id: current.to_string(),
+        source: "hermes.sessionProvenance",
+    })
+}
+
+fn parse_codex_acp_rotation(value: &Value) -> Option<EngineRotationSnapshot> {
+    // Live ACP path: session/update carrying context_compacted (when codex-acp
+    // forwards it) or an explicit compacted marker under _meta.codex.
+    let update = value
+        .pointer("/params/update")
+        .or_else(|| value.get("update"))
+        .unwrap_or(value);
+
+    let session_update = update.get("sessionUpdate").and_then(|v| v.as_str());
+    let payload_type = update
+        .pointer("/payload/type")
+        .and_then(|v| v.as_str())
+        .or_else(|| update.get("type").and_then(|v| v.as_str()));
+
+    let is_compact = matches!(
+        session_update,
+        Some("context_compacted") | Some("compacted")
+    ) || matches!(payload_type, Some("context_compacted") | Some("compacted"))
+        || update
+            .pointer("/_meta/codex/compacted")
+            .and_then(|v| v.as_bool())
+            == Some(true);
+
+    if !is_compact {
+        return None;
+    }
+
+    let session_id = value
+        .pointer("/params/sessionId")
+        .or_else(|| value.get("sessionId"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let depth = update
+        .pointer("/_meta/codex/compactionCount")
+        .or_else(|| update.get("compactionCount"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as u32;
+
+    Some(EngineRotationSnapshot {
+        compression_depth: depth.max(1),
+        current_internal_id: format!("{session_id}#compact-{depth}"),
+        source: "codex.context_compacted",
+    })
+}
+
+/// Parse a Hermes / Codex rotation signal from an ACP JSON value
+/// (`session/new` result, `session/load` result, or `session/update`).
+pub fn parse_engine_rotation_signal(value: &Value) -> Option<EngineRotationSnapshot> {
+    parse_hermes_rotation(value).or_else(|| parse_codex_acp_rotation(value))
+}
+
+/// Count Codex rollout JSONL compaction markers (`type: compacted` or
+/// `event_msg` / `context_compacted`). Returns `None` when the transcript
+/// has no compaction evidence (caller must not fabricate a count).
+///
+/// Public probe surface for wake-time Codex detection when ACP does not
+/// forward `context_compacted` (#180). Contract-tested; harness callers pass
+/// the rollout bytes they already resolved from the engine store.
+#[allow(dead_code)]
+pub fn parse_codex_rollout_rotation(
+    session_id: &str,
+    jsonl: &str,
+) -> Option<EngineRotationSnapshot> {
+    let mut count = 0u32;
+    for line in jsonl.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            // Fail loud into "unknown" — format drift must not undercount.
+            return None;
+        };
+        let ty = value.get("type").and_then(|v| v.as_str());
+        let payload_ty = value.pointer("/payload/type").and_then(|v| v.as_str());
+        match (ty, payload_ty) {
+            (Some("compacted"), _) => count = count.saturating_add(1),
+            (Some("event_msg"), Some("context_compacted")) => count = count.saturating_add(1),
+            _ => {}
+        }
+    }
+    if count == 0 {
+        return None;
+    }
+    Some(EngineRotationSnapshot {
+        compression_depth: count,
+        current_internal_id: format!("{session_id}#compact-{count}"),
+        source: "codex.rollout_compacted",
+    })
+}
+
+/// Resume-by-lookup-only + validate-then-load (+ optional lineage) decision.
 pub fn decide_session_load(
     entry: Option<&SessionLedgerEntry>,
     validation: &SessionLoadValidation<'_>,
@@ -240,6 +478,26 @@ pub fn decide_session_load(
         return SessionLoadDecision::Rebuild {
             reason: "empty session id",
         };
+    }
+    if let Some(engine) = validation.engine_rotation {
+        if entry.rotation_count < engine.compression_depth {
+            return SessionLoadDecision::Rebuild {
+                reason: "ledger rotation lags engine",
+            };
+        }
+        match entry.lineage.last() {
+            Some(tip) if tip.internal_session_id != engine.current_internal_id => {
+                return SessionLoadDecision::Rebuild {
+                    reason: "lineage mismatch",
+                };
+            }
+            None if engine.compression_depth > 0 => {
+                return SessionLoadDecision::Rebuild {
+                    reason: "lineage mismatch",
+                };
+            }
+            _ => {}
+        }
     }
     SessionLoadDecision::Resume {
         session_id: entry.current.session_id.clone(),
@@ -292,38 +550,45 @@ mod tests {
         )
     }
 
+    fn base_validation<'a>(
+        identity: &'a str,
+        rotation: Option<&'a EngineRotationSnapshot>,
+    ) -> SessionLoadValidation<'a> {
+        SessionLoadValidation {
+            engine_identity: identity,
+            workspace_generation: 0,
+            load_session_supported: true,
+            engine_rotation: rotation,
+        }
+    }
+
     #[tokio::test]
-    async fn declare_at_birth_writes_and_overwrites_on_rotation() {
+    async fn declare_at_birth_resets_rotation_and_seeds_lineage() {
         let dir = unique_dir("declare");
         let key = key();
-        let first = declare_session(&dir, &key, "sess-1", "hermes\0--profile\0a", 0)
+        let first = declare_session(&dir, &key, "sess-1", "hermes\0--profile\0a", 0, None)
             .await
             .unwrap();
         assert_eq!(first.rotation_count, 0);
         assert_eq!(first.current.session_id, "sess-1");
+        assert_eq!(first.lineage.len(), 1);
+        assert_eq!(first.lineage[0].internal_session_id, "sess-1");
 
-        let second = declare_session(&dir, &key, "sess-2", "hermes\0--profile\0a", 0)
+        let second = declare_session(&dir, &key, "sess-2", "hermes\0--profile\0a", 0, None)
             .await
             .unwrap();
-        assert_eq!(second.rotation_count, 1);
+        assert_eq!(second.rotation_count, 0, "Crew rebuild resets rotation");
         assert_eq!(second.current.session_id, "sess-2");
+        assert_eq!(second.lineage[0].internal_session_id, "sess-2");
 
         let loaded = read_ledger_entry(&dir, &key).await.unwrap().unwrap();
         assert_eq!(loaded.current.session_id, "sess-2");
-        assert_eq!(loaded.rotation_count, 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn resume_by_lookup_only_no_entry_rebuilds() {
-        let decision = decide_session_load(
-            None,
-            &SessionLoadValidation {
-                engine_identity: "hermes",
-                workspace_generation: 0,
-                load_session_supported: true,
-            },
-        );
+        let decision = decide_session_load(None, &base_validation("hermes", None));
         assert_eq!(
             decision,
             SessionLoadDecision::Rebuild {
@@ -343,6 +608,7 @@ mod tests {
                 last_used_at: 1,
             },
             rotation_count: 0,
+            lineage: vec![],
         };
         assert!(matches!(
             decide_session_load(
@@ -351,6 +617,7 @@ mod tests {
                     engine_identity: "codex",
                     workspace_generation: 3,
                     load_session_supported: true,
+                    engine_rotation: None,
                 }
             ),
             SessionLoadDecision::Rebuild {
@@ -364,6 +631,7 @@ mod tests {
                     engine_identity: "hermes\0--profile\0a",
                     workspace_generation: 4,
                     load_session_supported: true,
+                    engine_rotation: None,
                 }
             ),
             SessionLoadDecision::Rebuild {
@@ -377,6 +645,7 @@ mod tests {
                     engine_identity: "hermes\0--profile\0a",
                     workspace_generation: 3,
                     load_session_supported: false,
+                    engine_rotation: None,
                 }
             ),
             SessionLoadDecision::Rebuild {
@@ -390,6 +659,7 @@ mod tests {
                     engine_identity: "hermes\0--profile\0a",
                     workspace_generation: 3,
                     load_session_supported: true,
+                    engine_rotation: None,
                 }
             ),
             SessionLoadDecision::Resume {
@@ -411,7 +681,7 @@ mod tests {
         let loaded = read_ledger_entry(&dir, &key).await.unwrap();
         assert_eq!(loaded, None);
         // Corrupt entry is removed so a later declare can succeed.
-        let declared = declare_session(&dir, &key, "sess-new", "hermes", 0)
+        let declared = declare_session(&dir, &key, "sess-new", "hermes", 0, None)
             .await
             .unwrap();
         assert_eq!(declared.current.session_id, "sess-new");
@@ -428,7 +698,13 @@ mod tests {
                 created_at: 1,
                 last_used_at: 2,
             },
-            rotation_count: 0,
+            rotation_count: 1,
+            lineage: vec![SessionLineageTip {
+                internal_session_id: "internal-1".into(),
+                compression_depth: 1,
+                source: "hermes.sessionProvenance".into(),
+                observed_at: 3,
+            }],
         };
         let json = String::from_utf8(encode_ledger_entry(&entry).unwrap()).unwrap();
         for forbidden in [
@@ -450,6 +726,9 @@ mod tests {
         assert!(json.contains("engineIdentity"));
         assert!(json.contains("workspaceGeneration"));
         assert!(json.contains("rotationCount"));
+        assert!(json.contains("lineage"));
+        assert!(json.contains("internalSessionId"));
+        assert!(json.contains("compressionDepth"));
     }
 
     #[test]
@@ -466,7 +745,7 @@ mod tests {
     async fn delete_entry_scopes_cleanup() {
         let dir = unique_dir("delete");
         let key = key();
-        declare_session(&dir, &key, "sess-1", "hermes", 0)
+        declare_session(&dir, &key, "sess-1", "hermes", 0, None)
             .await
             .unwrap();
         assert!(delete_ledger_entry(&dir, &key).await.unwrap());
@@ -483,13 +762,13 @@ mod tests {
         let key_a = SessionLedgerKey::new("ws://127.0.0.1:3000", "aa".repeat(32), thread_a);
         let key_b = SessionLedgerKey::new("ws://127.0.0.1:3000", "aa".repeat(32), thread_b);
         let key_c = SessionLedgerKey::new("ws://127.0.0.1:3000", "aa".repeat(32), thread_c);
-        declare_session(&dir, &key_a, "sess-a", "hermes", 0)
+        declare_session(&dir, &key_a, "sess-a", "hermes", 0, None)
             .await
             .unwrap();
-        declare_session(&dir, &key_b, "sess-b", "hermes", 0)
+        declare_session(&dir, &key_b, "sess-b", "hermes", 0, None)
             .await
             .unwrap();
-        declare_session(&dir, &key_c, "sess-c", "hermes", 0)
+        declare_session(&dir, &key_c, "sess-c", "hermes", 0, None)
             .await
             .unwrap();
 
@@ -501,14 +780,7 @@ mod tests {
         assert_eq!(c.current.session_id, "sess-c");
 
         // Wake via A must only resume A's id.
-        let decision = decide_session_load(
-            Some(&a),
-            &SessionLoadValidation {
-                engine_identity: "hermes",
-                workspace_generation: 0,
-                load_session_supported: true,
-            },
-        );
+        let decision = decide_session_load(Some(&a), &base_validation("hermes", None));
         assert_eq!(
             decision,
             SessionLoadDecision::Resume {
@@ -518,5 +790,199 @@ mod tests {
         assert_ne!(a.current.session_id, b.current.session_id);
         assert_ne!(a.current.session_id, c.current.session_id);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_hermes_session_provenance_from_session_info_update() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "acp-1",
+                "update": {
+                    "sessionUpdate": "session_info_update",
+                    "_meta": {
+                        "hermes": {
+                            "sessionProvenance": {
+                                "acpSessionId": "acp-1",
+                                "currentHermesSessionId": "hermes-child-2",
+                                "rootHermesSessionId": "acp-1",
+                                "parentHermesSessionId": "hermes-child-1",
+                                "sessionKind": "compression",
+                                "compressionDepth": 2
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let snap = parse_engine_rotation_signal(&msg).expect("hermes signal");
+        assert_eq!(snap.compression_depth, 2);
+        assert_eq!(snap.current_internal_id, "hermes-child-2");
+        assert_eq!(snap.source, "hermes.sessionProvenance");
+    }
+
+    #[test]
+    fn parse_codex_rollout_and_acp_compaction_signals() {
+        let jsonl = r#"
+{"type":"response_item","payload":{}}
+{"type":"compacted","payload":{"replacement_history":[]}}
+{"type":"event_msg","payload":{"type":"context_compacted"}}
+"#;
+        let snap = parse_codex_rollout_rotation("sess-x", jsonl).expect("codex rollout");
+        assert_eq!(snap.compression_depth, 2);
+        assert_eq!(snap.source, "codex.rollout_compacted");
+
+        let acp = serde_json::json!({
+            "params": {
+                "sessionId": "sess-x",
+                "update": {
+                    "sessionUpdate": "context_compacted",
+                    "_meta": { "codex": { "compactionCount": 3 } }
+                }
+            }
+        });
+        let acp_snap = parse_engine_rotation_signal(&acp).expect("codex acp");
+        assert_eq!(acp_snap.compression_depth, 3);
+        assert_eq!(acp_snap.source, "codex.context_compacted");
+    }
+
+    #[tokio::test]
+    async fn rotate_then_wake_rebuilds_when_ledger_lags() {
+        let dir = unique_dir("rotate-wake");
+        let key = key();
+        let entry = declare_session(&dir, &key, "acp-1", "hermes", 0, None)
+            .await
+            .unwrap();
+        assert_eq!(entry.rotation_count, 0);
+
+        // Engine compacted twice; ledger never observed it (missed signal).
+        let engine = EngineRotationSnapshot {
+            compression_depth: 2,
+            current_internal_id: "hermes-child-2".into(),
+            source: "hermes.sessionProvenance",
+        };
+        let decision = decide_session_load(Some(&entry), &base_validation("hermes", Some(&engine)));
+        assert_eq!(
+            decision,
+            SessionLoadDecision::Rebuild {
+                reason: "ledger rotation lags engine"
+            }
+        );
+
+        // After observation, matching wake may resume.
+        let updated = record_rotation_signal(&dir, &key, &engine)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.rotation_count, 2);
+        assert_eq!(
+            updated.lineage.last().unwrap().internal_session_id,
+            "hermes-child-2"
+        );
+        let ok = decide_session_load(Some(&updated), &base_validation("hermes", Some(&engine)));
+        assert_eq!(
+            ok,
+            SessionLoadDecision::Resume {
+                session_id: "acp-1".into()
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn lineage_mismatch_rebuilds_even_when_depth_matches() {
+        let dir = unique_dir("lineage-mismatch");
+        let key = key();
+        let birth = EngineRotationSnapshot {
+            compression_depth: 1,
+            current_internal_id: "hermes-a".into(),
+            source: "hermes.sessionProvenance",
+        };
+        let entry = declare_session(&dir, &key, "acp-1", "hermes", 0, Some(&birth))
+            .await
+            .unwrap();
+        let other = EngineRotationSnapshot {
+            compression_depth: 1,
+            current_internal_id: "hermes-OTHER".into(),
+            source: "hermes.sessionProvenance",
+        };
+        assert_eq!(
+            decide_session_load(Some(&entry), &base_validation("hermes", Some(&other))),
+            SessionLoadDecision::Rebuild {
+                reason: "lineage mismatch"
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn multi_thread_lineage_is_isolated() {
+        let dir = unique_dir("lineage-threads");
+        let key_a = SessionLedgerKey::new(
+            "ws://127.0.0.1:3000",
+            "aa".repeat(32),
+            Uuid::from_u128(0xaaaa),
+        );
+        let key_b = SessionLedgerKey::new(
+            "ws://127.0.0.1:3000",
+            "aa".repeat(32),
+            Uuid::from_u128(0xbbbb),
+        );
+        declare_session(&dir, &key_a, "sess-a", "hermes", 0, None)
+            .await
+            .unwrap();
+        declare_session(&dir, &key_b, "sess-b", "hermes", 0, None)
+            .await
+            .unwrap();
+
+        let rot_a = EngineRotationSnapshot {
+            compression_depth: 2,
+            current_internal_id: "internal-a-2".into(),
+            source: "hermes.sessionProvenance",
+        };
+        let rot_b = EngineRotationSnapshot {
+            compression_depth: 1,
+            current_internal_id: "internal-b-1".into(),
+            source: "hermes.sessionProvenance",
+        };
+        record_rotation_signal(&dir, &key_a, &rot_a).await.unwrap();
+        record_rotation_signal(&dir, &key_b, &rot_b).await.unwrap();
+
+        let a = read_ledger_entry(&dir, &key_a).await.unwrap().unwrap();
+        let b = read_ledger_entry(&dir, &key_b).await.unwrap().unwrap();
+        assert_eq!(a.rotation_count, 2);
+        assert_eq!(b.rotation_count, 1);
+        assert_eq!(
+            a.lineage.last().unwrap().internal_session_id,
+            "internal-a-2"
+        );
+        assert_eq!(
+            b.lineage.last().unwrap().internal_session_id,
+            "internal-b-1"
+        );
+
+        // Wake A with B's lineage must rebuild — never resume across threads.
+        assert_eq!(
+            decide_session_load(Some(&a), &base_validation("hermes", Some(&rot_b))),
+            SessionLoadDecision::Rebuild {
+                reason: "lineage mismatch"
+            }
+        );
+        assert_eq!(
+            decide_session_load(Some(&a), &base_validation("hermes", Some(&rot_a))),
+            SessionLoadDecision::Resume {
+                session_id: "sess-a".into()
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_entry_without_lineage_field_decodes() {
+        let json = br#"{"current":{"sessionId":"s","engineIdentity":"hermes","workspaceGeneration":0,"createdAt":1,"lastUsedAt":1},"rotationCount":0}"#;
+        let entry = decode_ledger_entry(json).unwrap();
+        assert!(entry.lineage.is_empty());
+        assert_eq!(entry.rotation_count, 0);
     }
 }
