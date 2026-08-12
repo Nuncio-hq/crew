@@ -73,7 +73,7 @@ export const MessageRow = React.memo(
     currentPubkey,
     collapseDepthGuideActions,
     connectDescendants = false,
-        depthGuideDepths,
+    depthGuideDepths,
     highlighted = false,
     highlightDescendantRail = false,
     highlightReplyConnector = false,
@@ -114,7 +114,7 @@ export const MessageRow = React.memo(
     currentPubkey?: string;
     collapseDepthGuideActions?: ReadonlyArray<ThreadDepthGuideAction>;
     connectDescendants?: boolean;
-        depthGuideDepths?: ReadonlyArray<number>;
+    depthGuideDepths?: ReadonlyArray<number>;
     highlighted?: boolean;
     highlightDescendantRail?: boolean;
     highlightReplyConnector?: boolean;

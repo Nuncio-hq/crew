@@ -867,9 +867,7 @@ export function AgentDefinitionDialog({
             modelFieldVisible={modelFieldVisible}
             modelOwnedByProfile={modelOwnedByProfile}
             modelWriteThrough={modelWriteThrough}
-            hasPersona={
-              selectedRuntime?.capabilities?.personaDoc === "soulMd"
-            }
+            hasPersona={selectedRuntime?.capabilities?.personaDoc === "soulMd"}
             modelSelectValue={modelSelectValue}
             onCustomModelChange={setModel}
             onHermesProfileChange={(next) => {
@@ -960,9 +958,7 @@ export function AgentDefinitionDialog({
                 transition={advancedFieldsTransition}
               >
                 <PersonaAdvancedFields
-                  afterRespondTo={
-                    isCreateMode ? createRunSection : undefined
-                  }
+                  afterRespondTo={isCreateMode ? createRunSection : undefined}
                   behaviorDraft={behaviorDraft}
                   disabled={isPending}
                   envVars={envVars}

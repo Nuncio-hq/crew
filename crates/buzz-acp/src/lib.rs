@@ -5465,7 +5465,7 @@ mod owner_control_command_tests {
                     recoverable_batch: None,
                     control_tx: Some(control_tx),
                     steer_tx: None,
-                successful_steer_deliveries: HashSet::new(),
+                    successful_steer_deliveries: HashSet::new(),
                 },
             );
         }
@@ -5582,7 +5582,7 @@ mod owner_control_command_tests {
                     recoverable_batch: None,
                     control_tx: Some(control_tx),
                     steer_tx: None,
-                successful_steer_deliveries: HashSet::new(),
+                    successful_steer_deliveries: HashSet::new(),
                 },
             );
         }
