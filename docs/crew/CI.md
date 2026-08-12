@@ -31,6 +31,32 @@ either lane required only by an explicit founder decision.
 | `Desktop Smoke E2E` | Desktop paths change | **nothing that blocks merge** — advisory (`continue-on-error`), excluded from the gate by design (#36/#37) |
 | `Desktop E2E Integration` | Same desktop boundary as Desktop Smoke E2E | **nothing that blocks merge** — advisory (`continue-on-error`), two shards, real relay + Postgres/Redis/MinIO, `playwright --project=integration` (D-047 / #147). Includes the Crew-owned `evidence-reactions-relay` proof and inherited Buzz relay-backed specs |
 
+### Desktop E2E Integration — expected failures (accepted upstream drift)
+
+The lane stays advisory (D-047). A red Integration job is **not** merge-blocking,
+but the expected-failure set must stay explicit so a new failure is visible.
+
+Inventory from consistent fails across runs
+[`31567147317`](https://github.com/Nuncio-hq/crew/actions/runs/31567147317)
+(PR #165) and
+[`31573328800`](https://github.com/Nuncio-hq/crew/actions/runs/31573328800)
+(PR #168), reconfirmed on PR #176; Crew-owned strict-mode miss closed in #171.
+
+| Spec / case | Disposition | Notes |
+| --- | --- | --- |
+| `evidence-reactions-relay.spec.ts` — Accept/Reject strict-mode duplicate `evidence-reaction-rejected` | **Fixed** (#171) | Timeline-scoped card locator; mirrors smoke PR #170. Reject opens thread → dual card is product-correct. |
+| `agents.spec.ts` — embedded create discard cancel; narrow overflow; catalog chooser order; catalog detail; share-to-catalog; emoji avatar; community discovery; unresolved publisher "Community member" | **Accepted upstream drift** | Inherited Buzz agents/catalog UI vs Crew pin. Resolve on next upstream sync per [`UPSTREAM-SYNC.md`](UPSTREAM-SYNC.md); do not open sprawl issues. |
+| `profile.spec.ts` — runtime-tab respond-to / agent-type counts; Inbox badge from notification settings | **Accepted upstream drift** | Inherited Buzz profile/runtime/inbox surface vs Crew pin. Same sync path. |
+| `integration.spec.ts` — live channel + forum mentions refetch home feed | **Accepted upstream drift** | Inherited Buzz live-mention / home-feed path vs Crew pin (seen on #168/#176 runs). Same sync path. |
+
+One-run / non-intersecting fails (e.g. occasional `onboarding.spec.ts` cases) are
+**not** in this expected set — treat them as new signal until they appear on
+multiple independent runs.
+
+Do not weaken assertions, skip, or inflate timeouts to silence these. When
+upstream lands matching fixes, drop the corresponding row here during the sync
+PR that absorbs them.
+
 The PR package uses placeholder sidecars only to satisfy Tauri's packaging
 shape. The manual release workflow builds real sidecars, signs the app,
 notarizes it, and verifies the final archive.

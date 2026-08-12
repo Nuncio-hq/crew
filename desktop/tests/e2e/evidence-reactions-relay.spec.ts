@@ -109,7 +109,12 @@ test("owner Accept and Reject publish real relay reactions", async ({
   await page.goto("/");
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
+  // Reject opens the reply composer (`onReply`), which mounts the same message
+  // as the thread-head card. Scope to the timeline card so the dual render
+  // (intentional product behavior) does not trip strict-mode uniqueness.
+  // Same approach as smoke `evidence-reactions.spec.ts` (PR #170).
   const card = page
+    .getByTestId("message-timeline")
     .getByTestId("evidence-card-test-run")
     .filter({ hasText: evidence.content });
   await expect(card).toBeVisible();

@@ -137,7 +137,9 @@ Out of scope for this slice:
 - Advisory (non-blocking) on desktop path changes: Desktop Smoke E2E (D-032)
   and Desktop E2E Integration — real relay + Postgres/Redis/MinIO,
   `playwright --project=integration`, two shards (D-047 / #147). A green Gate
-  is not evidence either advisory lane passed.
+  is not evidence either advisory lane passed. Integration expected-failure
+  inventory (accepted Buzz drift + Crew-owned `evidence-reactions-relay`
+  strict-mode fix) lives in [`CI.md`](CI.md) (#171).
 - Web, mobile, Windows, Linux distribution, Docker publishing, Helm, Sprig,
   and optional mesh-llm builds are outside automatic Crew CI.
 - Core root and desktop Tauri Rust format, lint, unit, and dependency-policy
@@ -410,3 +412,18 @@ Consistent smoke fails on main fixed without weakening assertions:
   `connecting` only when restored events lack live contact; empty+open is idle.
 - **evidence-reactions Reject** — selector scoped to `message-timeline` card
   (thread-head dual render is intentional after Reject opens composer).
+
+## Advisory integration drift inventory (2026-08-12)
+
+Issue #171 — lane stays advisory (D-047). Expected failures are listed in
+[`CI.md`](CI.md) so red means a new problem outside that set:
+
+- **Fixed:** `evidence-reactions-relay` Reject strict-mode — same
+  `message-timeline` card scope as smoke PR #170 (relay variant was out of
+  #170 scope).
+- **Accepted upstream drift** (resolve via
+  [`UPSTREAM-SYNC.md`](UPSTREAM-SYNC.md), no sprawl issues): consistent
+  `agents.spec.ts` catalog/create/overflow cases, `profile.spec.ts`
+  runtime-tab + Inbox badge cases, and `integration.spec.ts` live mention
+  home-feed refetch cases. Confirmed on runs 31567147317 / 31573328800 /
+  PR #176.
