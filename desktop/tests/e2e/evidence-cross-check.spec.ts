@@ -3,11 +3,19 @@ import { expect, test, type Page } from "@playwright/test";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
-const ROOT = "c".repeat(64);
 const CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const BRANCH = "buzz/cccccccccccc";
 const AGENT = TEST_IDENTITIES.alice.pubkey;
 const OWNER = "deadbeef".repeat(8);
+
+/** 64-char hex root ids — workspace ingest rejects non-hex. */
+function rootId(nibble: string) {
+  const tag = nibble
+    .replace(/[^0-9a-f]/gi, "")
+    .toLowerCase()
+    .padStart(2, "0");
+  return `${"c".repeat(62)}${tag.slice(0, 2)}`;
+}
 
 function basePr(
   checks: Array<{ name: string; state: string }>,
@@ -44,7 +52,20 @@ function basePr(
   };
 }
 
-async function openProjectThread(page: Page, github = basePr([])) {
+async function waitForLiveChannel(page: Page) {
+  await page.waitForFunction(
+    () =>
+      window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+        channelName: "general",
+      }) === true,
+  );
+}
+
+async function openProjectThread(
+  page: Page,
+  root: string,
+  github = basePr([{ name: "Crew CI", state: "SUCCESS" }]),
+) {
   await installMockBridge(page, {
     searchProfiles: [
       {
@@ -68,9 +89,7 @@ async function openProjectThread(page: Page, github = basePr([])) {
   });
   await page.goto("/");
   await page.getByTestId("channel-general").click();
-  await page.waitForFunction(
-    () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
-  );
+  await waitForLiveChannel(page);
 
   await page.evaluate(
     ({ agent, eventId }) =>
@@ -82,7 +101,7 @@ async function openProjectThread(page: Page, github = basePr([])) {
         mentionPubkeys: [agent],
         id: eventId,
       }),
-    { agent: AGENT, eventId: ROOT },
+    { agent: AGENT, eventId: root },
   );
 
   const row = page
@@ -94,8 +113,13 @@ async function openProjectThread(page: Page, github = basePr([])) {
   const panel = page.getByTestId("message-thread-panel");
   await expect(panel).toBeVisible();
 
+  await panel.getByRole("button", { name: /Workspace/ }).click();
+  await expect(
+    panel.getByTestId("project-thread-workspace-panel"),
+  ).toBeVisible();
+
   await page.evaluate(
-    ({ agentPubkey, branchName, channelId, root }) => {
+    ({ agentPubkey, branchName, channelId, conversation, rootEventId }) => {
       const now = new Date().toISOString();
       window.__BUZZ_E2E_SEED_OBSERVER_EVENTS__?.({
         agentPubkey,
@@ -106,9 +130,9 @@ async function openProjectThread(page: Page, github = basePr([])) {
             kind: "turn_started",
             agentIndex: 0,
             channelId,
-            conversationId: "conversation-evidence-cross-check",
+            conversationId: conversation,
             sessionId: null,
-            turnId: `turn-${root.slice(0, 8)}`,
+            turnId: `turn-${rootEventId.slice(0, 8)}`,
             payload: {},
           },
           {
@@ -117,11 +141,11 @@ async function openProjectThread(page: Page, github = basePr([])) {
             kind: "thread_workspace_ready",
             agentIndex: 0,
             channelId,
-            conversationId: "conversation-evidence-cross-check",
+            conversationId: conversation,
             sessionId: null,
-            turnId: `turn-${root.slice(0, 8)}`,
+            turnId: `turn-${rootEventId.slice(0, 8)}`,
             payload: {
-              rootEventId: root,
+              rootEventId,
               branch: branchName,
               worktreePath: "/tmp/.buzz-worktrees/crew-cccccccccccc",
               worktreeName: "crew-cccccccccccc",
@@ -139,43 +163,51 @@ async function openProjectThread(page: Page, github = basePr([])) {
       agentPubkey: AGENT,
       branchName: BRANCH,
       channelId: CHANNEL_ID,
-      root: ROOT,
+      conversation: `conversation-${root.slice(0, 12)}`,
+      rootEventId: root,
     },
   );
 
-  await expect(panel.getByText("Ready", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Ready", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
   return panel;
 }
 
 async function emitEvidence(
   page: Page,
+  root: string,
   content: string,
   kind: "test-run" | "diff-stat" | "metrics" | "before-after-visual",
 ) {
   return page.evaluate(
-    ({ body, evidenceKind, pubkey, root }) =>
+    ({ body, evidenceKind, pubkey, rootEventId }) =>
       window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName: "general",
         content: body,
         pubkey,
-        parentEventId: root,
+        parentEventId: rootEventId,
         extraTags: [["crew-evidence", evidenceKind]],
       }),
-    { body: content, evidenceKind: kind, pubkey: AGENT, root: ROOT },
+    { body: content, evidenceKind: kind, pubkey: AGENT, rootEventId: root },
   );
 }
 
 test.describe("evidence–CI cross-check badge (#175)", () => {
   test("Matches CI for green test-run claim", async ({ page }) => {
+    const root = rootId("01");
     const panel = await openProjectThread(
       page,
+      root,
       basePr([{ name: "Crew CI", state: "SUCCESS" }]),
     );
-    await emitEvidence(page, "Tests: 14 passed, 0 failed", "test-run");
+    await emitEvidence(page, root, "Tests: 14 passed, 0 failed", "test-run");
     const card = panel.getByTestId("evidence-card-test-run");
     await expect(card).toBeVisible();
     const badge = card.getByTestId("evidence-cross-check-badge");
-    await expect(badge).toHaveAttribute("data-state", "matches");
+    await expect(badge).toHaveAttribute("data-state", "matches", {
+      timeout: 10_000,
+    });
     await expect(badge).toContainText("Matches CI");
     await waitForAnimations(page);
     await card.screenshot({
@@ -186,15 +218,17 @@ test.describe("evidence–CI cross-check badge (#175)", () => {
   test("Diverges shows claimed vs CI and leaves Accept/Reject usable", async ({
     page,
   }) => {
+    const root = rootId("02");
     const panel = await openProjectThread(
       page,
+      root,
       basePr([{ name: "Desktop Fast", state: "FAILURE" }]),
     );
-    await emitEvidence(page, "Tests: 14 passed, 0 failed", "test-run");
+    await emitEvidence(page, root, "Tests: 14 passed, 0 failed", "test-run");
     const card = panel.getByTestId("evidence-card-test-run");
     await expect(
       card.getByTestId("evidence-cross-check-badge"),
-    ).toHaveAttribute("data-state", "diverges");
+    ).toHaveAttribute("data-state", "diverges", { timeout: 10_000 });
     await expect(card.getByTestId("evidence-cross-check-detail")).toContainText(
       "Claimed: 14 passed, 0 failed",
     );
@@ -212,18 +246,20 @@ test.describe("evidence–CI cross-check badge (#175)", () => {
   });
 
   test("CI running then live-recomputes to Diverges", async ({ page }) => {
+    const root = rootId("03");
     const panel = await openProjectThread(
       page,
+      root,
       basePr([
         { name: "Crew CI", state: "SUCCESS" },
         { name: "Desktop E2E", state: "IN_PROGRESS" },
       ]),
     );
-    await emitEvidence(page, "Tests: 14 passed, 0 failed", "test-run");
+    await emitEvidence(page, root, "Tests: 14 passed, 0 failed", "test-run");
     const card = panel.getByTestId("evidence-card-test-run");
     await expect(
       card.getByTestId("evidence-cross-check-badge"),
-    ).toHaveAttribute("data-state", "ci-running");
+    ).toHaveAttribute("data-state", "ci-running", { timeout: 10_000 });
     await waitForAnimations(page);
     await card.screenshot({
       path: "test-results/evidence-cross-check/03-ci-running.png",
@@ -243,29 +279,30 @@ test.describe("evidence–CI cross-check badge (#175)", () => {
     ).toHaveAttribute("data-state", "diverges", { timeout: 10_000 });
   });
 
-  test("Not comparable for metrics and unlinked channel evidence", async ({
-    page,
-  }) => {
+  test("Not comparable for metrics kind", async ({ page }) => {
+    const root = rootId("04");
     const panel = await openProjectThread(
       page,
+      root,
       basePr([{ name: "Crew CI", state: "SUCCESS" }]),
     );
     await emitEvidence(
       page,
+      root,
       "before: 120ms | after: 80ms | delta: -40ms",
       "metrics",
     );
+    const card = panel.getByTestId("evidence-card-metrics");
     await expect(
-      panel
-        .getByTestId("evidence-card-metrics")
-        .getByTestId("evidence-cross-check-badge"),
-    ).toHaveAttribute("data-state", "not-comparable");
+      card.getByTestId("evidence-cross-check-badge"),
+    ).toHaveAttribute("data-state", "not-comparable", { timeout: 10_000 });
     await waitForAnimations(page);
-    await panel.getByTestId("evidence-card-metrics").screenshot({
+    await card.screenshot({
       path: "test-results/evidence-cross-check/04-not-comparable-metrics.png",
     });
+  });
 
-    await page.getByRole("button", { name: "Close panel" }).click();
+  test("Not comparable for unlinked channel evidence", async ({ page }) => {
     await installMockBridge(page, {
       searchProfiles: [
         {
@@ -278,9 +315,7 @@ test.describe("evidence–CI cross-check badge (#175)", () => {
     });
     await page.goto("/");
     await page.getByTestId("channel-general").click();
-    await page.waitForFunction(
-      () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
-    );
+    await waitForLiveChannel(page);
     await page.evaluate(
       ({ pubkey }) =>
         window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
@@ -302,19 +337,26 @@ test.describe("evidence–CI cross-check badge (#175)", () => {
   });
 
   test("diff-stat Matches within tolerance", async ({ page }) => {
+    const root = rootId("06");
     const panel = await openProjectThread(
       page,
+      root,
       basePr([{ name: "Crew CI", state: "SUCCESS" }], {
         additions: 100,
         deletions: 20,
         changedFiles: 5,
       }),
     );
-    await emitEvidence(page, "Diff: +105/−18 across 6 files", "diff-stat");
+    await emitEvidence(
+      page,
+      root,
+      "Diff: +105/−18 across 6 files",
+      "diff-stat",
+    );
     await expect(
       panel
         .getByTestId("evidence-card-diff-stat")
         .getByTestId("evidence-cross-check-badge"),
-    ).toHaveAttribute("data-state", "matches");
+    ).toHaveAttribute("data-state", "matches", { timeout: 10_000 });
   });
 });
