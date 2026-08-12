@@ -8,7 +8,8 @@ const AGENT_PUBKEY =
   "554cef57437abac34522ac2c9f0490d685b72c80478cf9f7ed6f9570ee8624ea";
 const CHANNEL_ID = "94a444a4-c0a3-5966-ab05-530c6ddc2301";
 const CONVERSATION_ID = "afab2e62-a520-f16b-e63d-b291c2f679c9";
-const USER_INPUT_EVENT_ID = "c".repeat(64);
+const USER_INPUT_ROOT_EVENT_ID = "c".repeat(64);
+const USER_INPUT_REQUEST_ID = "d".repeat(64);
 
 function seedAgent() {
   return {
@@ -49,7 +50,11 @@ async function seedTurn(
           kind: "turn_started" | "turn_completed";
         }) => void;
       };
-      win.__BUZZ_E2E_SEED_ACTIVE_TURNS__?.({
+      const seed = win.__BUZZ_E2E_SEED_ACTIVE_TURNS__;
+      if (!seed) {
+        throw new Error("E2E active-turn seed bridge is unavailable");
+      }
+      seed({
         agentPubkey,
         channelId,
         turnId: "presence-turn-1",
@@ -111,19 +116,62 @@ test.describe("channel header agent presence", () => {
         kind: 46040,
       }),
     );
+    await page.waitForFunction(
+      () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+    );
     await page.evaluate(
-      ({ agentPubkey, channelId, conversationId, eventId }) => {
+      ({ agentPubkey, rootEventId }) => {
         const win = window as Window & {
           __BUZZ_E2E_EMIT_MOCK_MESSAGE__?: (input: {
             channelName: string;
             content: string;
             id: string;
             kind: number;
-            pubkey: string;
+            mentionPubkeys?: string[];
+            pubkey?: string;
           }) => unknown;
         };
-        win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        const emit = win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+        if (!emit) {
+          throw new Error("E2E mock message bridge is unavailable");
+        }
+        emit({
           channelName: "agents",
+          content: "Mock channel question parent",
+          id: rootEventId,
+          kind: 9,
+          mentionPubkeys: [agentPubkey],
+        });
+      },
+      {
+        agentPubkey: AGENT_PUBKEY,
+        rootEventId: USER_INPUT_ROOT_EVENT_ID,
+      },
+    );
+    await page.waitForFunction(
+      () => typeof window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__ === "function",
+    );
+    await page.evaluate(
+      ({ agentPubkey, channelId, conversationId, requestId, rootEventId }) => {
+        const win = window as Window & {
+          __BUZZ_E2E_EMIT_MOCK_USER_INPUT__?: (input: {
+            channelName: string;
+            requestId?: string;
+            rootEventId: string;
+            parentEventId?: string;
+            content: string;
+            pubkey?: string;
+          }) => unknown;
+        };
+        const emit = win.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__;
+        if (!emit) {
+          throw new Error("E2E user-input bridge is unavailable");
+        }
+        emit({
+          channelName: "agents",
+          requestId,
+          rootEventId,
+          parentEventId: rootEventId,
           content: JSON.stringify({
             request_id: "presence-question",
             session_id: "presence-session",
@@ -141,8 +189,6 @@ test.describe("channel header agent presence", () => {
               },
             ],
           }),
-          id: eventId,
-          kind: 46040,
           pubkey: agentPubkey,
         });
       },
@@ -150,29 +196,9 @@ test.describe("channel header agent presence", () => {
         agentPubkey: AGENT_PUBKEY,
         channelId: CHANNEL_ID,
         conversationId: CONVERSATION_ID,
-        eventId: USER_INPUT_EVENT_ID,
+        requestId: USER_INPUT_REQUEST_ID,
+        rootEventId: USER_INPUT_ROOT_EVENT_ID,
       },
-    );
-    await page.evaluate(
-      ({ agentPubkey, eventId }) => {
-        const win = window as Window & {
-          __BUZZ_E2E_EMIT_MOCK_MESSAGE__?: (input: {
-            channelName: string;
-            content: string;
-            id: string;
-            kind: number;
-            pubkey: string;
-          }) => unknown;
-        };
-        win.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
-          channelName: "agents",
-          content: "Choose a deployment target",
-          id: eventId,
-          kind: 9,
-          pubkey: agentPubkey,
-        });
-      },
-      { agentPubkey: AGENT_PUBKEY, eventId: USER_INPUT_EVENT_ID },
     );
     await expect(
       page.getByText("Choose a deployment target", { exact: true }),
