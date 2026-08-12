@@ -394,3 +394,18 @@ and in flight.
   channel-session dev-mcp selection, and per-session native-tool floors where the
   engine advertises session-scoped control (Codex, Grok, Hermes tested; Claude not yet).
 - Next: orchestrator review → PR; no partial MCP allowlists or path containment.
+
+## Advisory smoke baseline cleanup (2026-08-12)
+
+Consistent smoke fails on main fixed without weakening assertions:
+
+- **channel-activity-popover** — unread live sub now uses
+  `CHANNEL_LIVE_BACKLOG_GRACE_SECONDS` (same as timeline live) so lagged self
+  roots populate `authoredRootIds`.
+- **channels sticky day divider** — harness seeds two recent local days into
+  the mock store before open (2023 live emits were outside grace / never
+  rendered).
+- **channels agent activity empty** — `getAgentObserverSnapshot` forces
+  `connecting` only when restored events lack live contact; empty+open is idle.
+- **evidence-reactions Reject** — selector scoped to `message-timeline` card
+  (thread-head dual render is intentional after Reject opens composer).

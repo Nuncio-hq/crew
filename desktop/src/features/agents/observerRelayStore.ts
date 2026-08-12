@@ -715,23 +715,23 @@ export function subscribeControlResults(
 
 export function getAgentObserverSnapshot(
   agentPubkey?: string | null,
-  // `_enabled` previously gated store reads — now only gates the relay
-  // subscription in useObserverEvents. Kept for call-site compatibility.
+  // `_enabled` only gates the relay subscription in useObserverEvents.
   _enabled?: boolean,
 ): ObserverSnapshot {
-  // `_enabled` gates the live-relay subscription in useObserverEvents, but we
-  // always serve stored data when agentPubkey is present — archived frames are
-  // ingested into eventsByAgent regardless of live status and must be readable
-  // by idle-agent panels showing channel-scoped history.
+  // Serve stored data when present — archived frames stay readable offline.
   if (!agentPubkey) {
     return IDLE_SNAPSHOT;
   }
   const key = normalizePubkey(agentPubkey);
   const agentError = connectionErrorByAgent.get(key) ?? null;
+  const agentEvents = eventsByAgent.get(key) ?? [];
+  // connecting only when restored events lack live contact; empty is idle open.
   const effectiveConnectionState =
     connectionState === "open" && agentError
       ? "error"
-      : connectionState === "open" && !agentsWithCurrentLiveContact.has(key)
+      : connectionState === "open" &&
+          !agentsWithCurrentLiveContact.has(key) &&
+          agentEvents.length > 0
         ? "connecting"
         : connectionState;
   const effectiveErrorMessage = agentError ?? errorMessage;
@@ -746,7 +746,7 @@ export function getAgentObserverSnapshot(
   const snapshot: ObserverSnapshot = {
     connectionState: effectiveConnectionState,
     errorMessage: effectiveErrorMessage,
-    events: eventsByAgent.get(key) ?? [],
+    events: agentEvents,
   };
   snapshotByAgent.set(key, snapshot);
   return snapshot;

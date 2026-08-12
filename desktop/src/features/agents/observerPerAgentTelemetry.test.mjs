@@ -43,6 +43,12 @@ test("subscription readiness does not certify restored per-agent telemetry", () 
   assert.equal(getAgentObserverSnapshot(AGENT).connectionState, "open");
 });
 
+test("open subscription with zero agent events is idle open, not connecting", () => {
+  setObserverConnectionStateForE2E("open");
+  assert.equal(getAgentObserverSnapshot(AGENT).connectionState, "open");
+  assert.equal(getAgentObserverSnapshot(AGENT).events.length, 0);
+});
+
 test("a failed connection invalidates contact received before EOSE", () => {
   assert.equal(
     shouldResetObserverLiveContacts("connecting", "connecting"),
