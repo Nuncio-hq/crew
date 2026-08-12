@@ -12,11 +12,13 @@ The gate always appears. It requires `CI Policy` and accepts a deliberately
 skipped conditional job only when the path classifier says that surface is
 unchanged.
 
-A green `NuncioCrew Gate` is not evidence that the Desktop Smoke E2E suite
-passed.
+A green `NuncioCrew Gate` is not evidence that the Desktop Smoke E2E suite or
+the Desktop E2E Integration suite passed.
 
-This advisory posture is recorded in [`verification/0007`](verification/0007-gate-e2e-shard-relationship.md)
-and D-032; revisit making the shards required once #109 and #110 are closed.
+Smoke advisory posture is recorded in
+[`verification/0007`](verification/0007-gate-e2e-shard-relationship.md) and
+D-032. Integration advisory posture is recorded in D-047 (#147); revisit making
+either lane required only by an explicit founder decision.
 
 | Job | Runs when | Proves |
 | --- | --- | --- |
@@ -27,6 +29,7 @@ and D-032; revisit making the shards required once #109 and #110 are closed.
 | `macOS ARM Package` | Same desktop boundary as Desktop Fast | Unsigned `aarch64-apple-darwin` Tauri package with Nuncio identity |
 | `Project Relay` | Project, relay, schema, or Nostr paths change | Kind `30617` local-path lifecycle against an isolated real relay |
 | `Desktop Smoke E2E` | Desktop paths change | **nothing that blocks merge** — advisory (`continue-on-error`), excluded from the gate by design (#36/#37) |
+| `Desktop E2E Integration` | Same desktop boundary as Desktop Smoke E2E | **nothing that blocks merge** — advisory (`continue-on-error`), two shards, real relay + Postgres/Redis/MinIO, `playwright --project=integration` (D-047 / #147). Includes the Crew-owned `evidence-reactions-relay` proof and inherited Buzz relay-backed specs |
 
 The PR package uses placeholder sidecars only to satisfy Tauri's packaging
 shape. The manual release workflow builds real sidecars, signs the app,

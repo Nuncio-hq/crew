@@ -180,7 +180,6 @@ export default defineConfig({
         "**/profile.spec.ts",
         "**/sidebar.spec.ts",
         "**/sidebar-relay-card.spec.ts",
-        "**/tokens.spec.ts",
         "**/persona-env-vars.spec.ts",
         "**/persona-sync.spec.ts",
         "**/team-snapshot.spec.ts",
