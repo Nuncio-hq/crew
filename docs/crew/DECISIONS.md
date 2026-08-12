@@ -806,3 +806,23 @@ client never learns such an event exists, so a reply can arrive for a root that
 never renders. Channel live subscriptions therefore start a bounded grace window
 before now (`CHANNEL_LIVE_BACKLOG_GRACE_SECONDS`), matching the existing huddle
 TTS startup replay; the window store dedups by event id, so the overlap is free.
+
+## D-042 — Relay-mode E2E mutations must reach the relay
+
+- **Status:** Accepted
+- **Date:** 2026-08-11
+- **Evidence:** [`verification/0011-e2e-bridge-relay-mutation-audit.md`](verification/0011-e2e-bridge-relay-mutation-audit.md)
+
+Mutating E2E-bridge commands that have a real Nostr event behind them must
+publish through `submitSignedEvent` in relay mode, branching on
+`getIdentity(config)`, and must skip mock-store bookkeeping. The relay event
+must mirror the Rust command's kind, content, and tags exactly.
+
+A mock-only mutation in relay mode is a coverage trap: the spec can still pass
+while never reaching the relay. Any command that cannot yet be made
+relay-aware must be listed in Verification 0011 with the reason; issue #144
+tracks the remaining commands and the Rust-side confirmation of local-only
+classifications.
+
+This decision changes no reaction semantics, event kinds, or evidence tag
+schema. D-036 remains authoritative for evidence tags and reaction behavior.
