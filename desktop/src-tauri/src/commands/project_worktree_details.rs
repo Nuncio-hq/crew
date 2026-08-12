@@ -78,6 +78,20 @@ async fn ahead_behind(worktree: &Path) -> (u64, u64) {
     parse_left_right(raw.trim()).unwrap_or((0, 0))
 }
 
+/// True when the branch has an upstream and is not ahead of it.
+///
+/// No-upstream is not "pushed" — Hibernate falls back to merged-PR only.
+pub(crate) async fn branch_is_pushed(worktree: &Path) -> bool {
+    if git_output_at(worktree, ["rev-parse", "--abbrev-ref", "@{upstream}"])
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    let (ahead, _behind) = ahead_behind(worktree).await;
+    ahead == 0
+}
+
 fn parse_left_right(text: &str) -> Option<(u64, u64)> {
     let mut parts = text.split_whitespace();
     let behind = parts.next()?.parse().ok()?;

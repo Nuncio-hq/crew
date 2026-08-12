@@ -2,6 +2,7 @@ import * as React from "react";
 
 import { setDesktopAppBadge } from "@/features/notifications/lib/desktop";
 import { useLocalWorkspaceSnapshotFocusRefresh } from "@/features/projects/useLocalWorkspaceSnapshotFocusRefresh";
+import { useWorktreeStorageAliveHeartbeat } from "@/features/worktree-storage/useWorktreeStorageAliveHeartbeat";
 import { relayClient } from "@/shared/api/relayClient";
 import { useRelayResumeTriggers } from "@/shared/api/useRelayResumeTriggers";
 
@@ -25,6 +26,9 @@ export function useAppShellLifecycleEffects({
   // D-037 / #139: debounced exact local workspace snapshot re-read on focus
   // for visible Project surfaces (active `local-repo-snapshot` queries).
   useLocalWorkspaceSnapshotFocusRefresh();
+
+  // #174: app-scoped alive-interval heartbeat for observed-time idle reclaim.
+  useWorktreeStorageAliveHeartbeat();
 
   // Prevent webview file:/// navigation on file drop outside the composer.
   // Scoped to file drags only (text drag-and-drop into inputs still works).

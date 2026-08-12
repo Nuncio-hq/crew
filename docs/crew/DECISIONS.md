@@ -970,3 +970,36 @@ an automatic reset and never a fabricated number.
    (#180).
 
 Spike: `docs/crew/spikes/0023-compaction-signal-matrix.md`.
+
+## D-051 — Worktree storage reclaim: suggest-and-confirm + observed-time idle
+
+- **Status:** Accepted
+- **Date:** 2026-08-12
+- **Issue:** #174 (completes deferred #59 P3 / plan Phase 5 on #72 machinery;
+  disk-side sibling of #169 / D-048 Sleeping)
+
+#72 shipped leases, `LifecycleRecord`, cache allowlist, eviction, and self-heal.
+Managers still had only a per-channel drawer — no aggregate view, no idle
+policy, no bulk suggest flow. #174 adds the brain without new destructive
+primitives and without changing #72 refusal/lease/auth boundaries.
+
+1. **Suggest-and-confirm** — Settings → Storage lists managed worktrees with
+   cache/checkout split, PR state, dual clocks, and refusal-aware read-only
+   rows. The owner reviews checkboxes and runs cleanup; mid-run refusals are
+   per-row outcomes (skip + continue), not errors. No summary modal.
+2. **Observed-time idle** — candidacy uses `observed_idle(last_used_at,
+   intervals, now)` over an app-scoped alive-interval ledger (≈60s heartbeat;
+   gaps > 2× granule close the prior interval). Wall-clock absence accrues
+   nothing, so a post-absence storm is impossible by construction. UI still
+   shows both clocks; harness `lastUsedAt` stays wall-clock and untouched.
+3. **No background auto-GC** — this issue ships no scheduled sweeper. A future
+   opt-in cache-tier schedule is a separate founder decision.
+4. **PR-state-not-git-ancestry** — "merged" comes from the worktree-registry
+   GitHub PR surface (`MERGED`), never `git branch --merged` (squash-merge
+   lies). Hibernate additionally requires clean + (merged **or** pushed).
+5. **Tiers** map to existing commands only: Lean → `clear_project_worktree_cache`;
+   Hibernate → `evict_project_worktree`. Resource ladder with #169:
+   `Active → Sleeping → Lean → Hibernated`.
+
+Non-goals: branch deletion, object-store GC, #72 auth/lease changes, RAM
+lifecycle (#169).

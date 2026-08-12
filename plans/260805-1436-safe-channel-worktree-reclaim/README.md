@@ -48,8 +48,8 @@ upstream multi-repo detached recovery (`automatic_recovery_is_safe` + lossless
 check), linked-issue registry/UI rollup, and desktop terminal deps, while keeping
 issue #59 safety invariants (lease-before-ensure, exclusive mutation auth,
 fail-closed drawer buckets, cache allowlist/symlink guards, branch-retaining
-eviction). Phase 5 remains deferred. Branch is ahead of `origin/main` with a
-signed-off commit; PR open/push is orchestrator-owned.
+eviction). **P3 / Phase 5 completed by [#174](https://github.com/Nuncio-hq/crew/issues/174)**
+as suggest-and-confirm + observed-time idle (not background auto-quota).
 
 ## Verified baseline (pre-implementation)
 

@@ -169,3 +169,67 @@ export type ClearProjectWorktreeCacheResult = {
   worktreePath: string;
   results: CacheCategoryClearResult[];
 };
+
+/** Alive window used by observed-time idle (#174). */
+export type AliveInterval = {
+  start: number;
+  end: number;
+};
+
+export type WorktreeStorageAliveStatus = {
+  intervals: AliveInterval[];
+  recentAbsenceSecs: number;
+  idleThresholdSecs: number;
+  heartbeatGranuleSecs: number;
+  now: number;
+};
+
+export type ReclaimTier = "lean" | "hibernate";
+
+export type WorktreeStorageRow = {
+  repositoryPath: string;
+  worktreePath: string;
+  worktreeName: string;
+  branch: string | null;
+  rootEventId: string | null;
+  routingChannelId: string | null;
+  lifecycleIdentity: LifecycleIdentity;
+  prNumber: number | null;
+  prState: string | null;
+  prTitle: string | null;
+  lastUsedAt: number | null;
+  observedIdleSecs: number;
+  wallIdleSecs: number | null;
+  dirty: boolean;
+  busy: boolean;
+  branchPushed: boolean;
+  diskBytes: number;
+  cacheBytes: number;
+  checkoutBytes: number;
+  cacheCategoryIds: string[];
+  candidate: boolean;
+  tier: ReclaimTier | null;
+  reason: string;
+  readOnly: boolean;
+  refusalReason: string | null;
+  canClearCache: boolean;
+  canEvict: boolean;
+};
+
+export type WorktreeStorageSnapshot = {
+  rows: WorktreeStorageRow[];
+  totalDiskBytes: number;
+  totalCacheBytes: number;
+  reclaimableBytes: number;
+  candidateCount: number;
+  recentAbsenceSecs: number;
+  idleThresholdSecs: number;
+  observedNow: number;
+  intervals: AliveInterval[];
+};
+
+export type WorktreeStorageRowOutcome =
+  | { status: "completed"; message: string; bytesFreed: number }
+  | { status: "skipped"; message: string }
+  | { status: "pending" }
+  | { status: "running" };

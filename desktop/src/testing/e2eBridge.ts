@@ -485,6 +485,21 @@ type E2eConfig = {
      */
     snapshotFetchError?: string;
     uploadDescriptors?: RawBlobDescriptor[];
+    /**
+     * Aggregate Local storage snapshot for Settings → Storage (#174).
+     * When omitted, the bridge returns a small built-in candidate/refusal set.
+     */
+    worktreeStorageSnapshot?: {
+      rows: Array<Record<string, unknown>>;
+      totalDiskBytes?: number;
+      totalCacheBytes?: number;
+      reclaimableBytes?: number;
+      candidateCount?: number;
+      recentAbsenceSecs?: number;
+      idleThresholdSecs?: number;
+      observedNow?: number;
+      intervals?: Array<{ start: number; end: number }>;
+    };
     // Seed rows returned by `list_save_subscriptions`. Each entry uses the same
     // snake_case wire shape the Rust backend returns so tests can drive the
     // LocalArchiveSettingsCard without a real SQLite database.
@@ -3200,6 +3215,109 @@ type MockSaveSubscriptionRow = {
   kinds: string; // JSON-encoded integer array, e.g. "[9,40002]"
 };
 let mockSaveSubscriptions: MockSaveSubscriptionRow[] = [];
+
+function defaultWorktreeStorageSnapshot() {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    rows: [
+      {
+        repositoryPath: "/tmp/crew-fixture",
+        worktreePath: "/tmp/.buzz-worktrees/fix-reconnect-freeze",
+        worktreeName: "fix-reconnect-freeze",
+        branch: "buzz/aaaaaaaaaaaa",
+        rootEventId: "a".repeat(64),
+        routingChannelId: "11111111-1111-1111-1111-111111111111",
+        lifecycleIdentity: "verified",
+        prNumber: 167,
+        prState: "MERGED",
+        prTitle: "Fix reconnect freeze",
+        lastUsedAt: now - 9 * 86_400,
+        observedIdleSecs: 52 * 3600,
+        wallIdleSecs: 9 * 86_400,
+        dirty: false,
+        busy: false,
+        branchPushed: true,
+        diskBytes: 4_500_000_000,
+        cacheBytes: 4_200_000_000,
+        checkoutBytes: 300_000_000,
+        cacheCategoryIds: ["cargo-target", "node-modules"],
+        candidate: true,
+        tier: "lean",
+        reason: "PR #167 merged — Lean: sweep cache",
+        readOnly: false,
+        refusalReason: null,
+        canClearCache: true,
+        canEvict: true,
+      },
+      {
+        repositoryPath: "/tmp/crew-fixture",
+        worktreePath: "/tmp/.buzz-worktrees/scroll-history-fix",
+        worktreeName: "scroll-history-fix",
+        branch: "buzz/bbbbbbbbbbbb",
+        rootEventId: "b".repeat(64),
+        routingChannelId: "11111111-1111-1111-1111-111111111111",
+        lifecycleIdentity: "verified",
+        prNumber: 166,
+        prState: "MERGED",
+        prTitle: "Scroll history fix",
+        lastUsedAt: now - 10 * 86_400,
+        observedIdleSecs: 60 * 3600,
+        wallIdleSecs: 10 * 86_400,
+        dirty: false,
+        busy: false,
+        branchPushed: true,
+        diskBytes: 8_100_000_000,
+        cacheBytes: 7_800_000_000,
+        checkoutBytes: 300_000_000,
+        cacheCategoryIds: ["cargo-target"],
+        candidate: true,
+        tier: "hibernate",
+        reason: "PR #166 merged — Hibernate: evict (clean, merged)",
+        readOnly: false,
+        refusalReason: null,
+        canClearCache: true,
+        canEvict: true,
+      },
+      {
+        repositoryPath: "/tmp/crew-fixture",
+        worktreePath: "/tmp/.buzz-worktrees/issue-116-roles",
+        worktreeName: "issue-116-roles",
+        branch: "buzz/cccccccccccc",
+        rootEventId: "c".repeat(64),
+        routingChannelId: "22222222-2222-2222-2222-222222222222",
+        lifecycleIdentity: "verified",
+        prNumber: 116,
+        prState: "OPEN",
+        prTitle: "Roles",
+        lastUsedAt: now - 2 * 86_400,
+        observedIdleSecs: 10 * 3600,
+        wallIdleSecs: 2 * 86_400,
+        dirty: true,
+        busy: false,
+        branchPushed: false,
+        diskBytes: 6_300_000_000,
+        cacheBytes: 6_000_000_000,
+        checkoutBytes: 300_000_000,
+        cacheCategoryIds: ["cargo-target"],
+        candidate: false,
+        tier: null,
+        reason: "dirty — 3 uncommitted files",
+        readOnly: true,
+        refusalReason: "dirty — 3 uncommitted files",
+        canClearCache: true,
+        canEvict: false,
+      },
+    ],
+    totalDiskBytes: 18_900_000_000,
+    totalCacheBytes: 18_000_000_000,
+    reclaimableBytes: 12_300_000_000,
+    candidateCount: 2,
+    recentAbsenceSecs: 6 * 86_400,
+    idleThresholdSecs: 48 * 3600,
+    observedNow: now,
+    intervals: [{ start: now - 52 * 3600, end: now }],
+  };
+}
 
 function resetMockSaveSubscriptions(config: E2eConfig | undefined) {
   mockSaveSubscriptions = (config?.mock?.saveSubscriptions ?? []).map((s) => ({
@@ -12376,6 +12494,122 @@ export function maybeInstallE2eTauriMocks() {
           dirty:
             activeConfig?.mock?.threadWorkspaceDirtyByBranch?.[branch] ?? false,
           worktreeExists: true,
+        };
+      }
+      case "touch_worktree_storage_alive":
+      case "get_worktree_storage_alive":
+      case "set_worktree_storage_idle_threshold": {
+        const now = Math.floor(Date.now() / 1000);
+        const seeded = activeConfig?.mock?.worktreeStorageSnapshot;
+        return {
+          intervals: seeded?.intervals ?? [{ start: now - 3600, end: now }],
+          recentAbsenceSecs: seeded?.recentAbsenceSecs ?? 0,
+          idleThresholdSecs: seeded?.idleThresholdSecs ?? 48 * 3600,
+          heartbeatGranuleSecs: 60,
+          now,
+        };
+      }
+      case "get_worktree_storage_snapshot": {
+        const seeded = activeConfig?.mock?.worktreeStorageSnapshot;
+        if (seeded) {
+          const rows = seeded.rows ?? [];
+          return {
+            rows,
+            totalDiskBytes:
+              seeded.totalDiskBytes ??
+              rows.reduce(
+                (sum, row) => sum + Number(row.diskBytes ?? 0),
+                0,
+              ),
+            totalCacheBytes:
+              seeded.totalCacheBytes ??
+              rows.reduce(
+                (sum, row) => sum + Number(row.cacheBytes ?? 0),
+                0,
+              ),
+            reclaimableBytes:
+              seeded.reclaimableBytes ??
+              rows
+                .filter((row) => row.candidate)
+                .reduce(
+                  (sum, row) =>
+                    sum +
+                    Number(
+                      row.tier === "hibernate"
+                        ? row.diskBytes
+                        : row.cacheBytes,
+                    ),
+                  0,
+                ),
+            candidateCount:
+              seeded.candidateCount ??
+              rows.filter((row) => row.candidate).length,
+            recentAbsenceSecs: seeded.recentAbsenceSecs ?? 0,
+            idleThresholdSecs: seeded.idleThresholdSecs ?? 48 * 3600,
+            observedNow: seeded.observedNow ?? Math.floor(Date.now() / 1000),
+            intervals: seeded.intervals ?? [],
+          };
+        }
+        return defaultWorktreeStorageSnapshot();
+      }
+      case "revalidate_worktree_storage_action": {
+        const req = payload as {
+          worktreePath?: string;
+          tier?: string;
+        };
+        const snapshot =
+          activeConfig?.mock?.worktreeStorageSnapshot ??
+          defaultWorktreeStorageSnapshot();
+        const row = (snapshot.rows ?? []).find(
+          (entry) => entry.worktreePath === req.worktreePath,
+        );
+        if (!row) return "Worktree not found.";
+        if (row.readOnly || row.busy) {
+          return String(row.refusalReason ?? "skipped: lease appeared");
+        }
+        if (req.tier === "hibernate" && row.dirty) {
+          return "skipped: became dirty";
+        }
+        return null;
+      }
+      case "clear_project_worktree_cache": {
+        const req = payload as { worktreePath?: string };
+        const bytes = Number(
+          (
+            (activeConfig?.mock?.worktreeStorageSnapshot ??
+              defaultWorktreeStorageSnapshot()).rows ?? []
+          ).find((row) => row.worktreePath === req.worktreePath)?.cacheBytes ??
+            0,
+        );
+        return {
+          worktreePath: req.worktreePath ?? "",
+          results: [
+            {
+              id: "cargo-target",
+              status: "completed",
+              message: "Cleared Cargo target/.",
+              bytesRemoved: bytes,
+            },
+          ],
+        };
+      }
+      case "evict_project_worktree":
+      case "remove_project_worktree": {
+        const req = payload as { worktreePath?: string };
+        const row = (
+          (activeConfig?.mock?.worktreeStorageSnapshot ??
+            defaultWorktreeStorageSnapshot()).rows ?? []
+        ).find((entry) => entry.worktreePath === req.worktreePath);
+        if (row?.busy || row?.readOnly || row?.dirty) {
+          return {
+            status: "refused",
+            message: String(row.refusalReason ?? "Eviction refused."),
+          };
+        }
+        return {
+          status: "completed",
+          message:
+            "Freed local space. The branch is kept and will reattach on the next agent turn.",
         };
       }
       case "remove_thread_worktree":
