@@ -6,6 +6,7 @@ import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { cn } from "@/shared/lib/cn";
 import { MessageRow } from "./MessageRow";
+import { SessionAgingBannerSlot } from "./SessionAgingBannerSlot";
 
 export function MessageThreadPanelHead({
   channelId,
@@ -64,48 +65,63 @@ export function MessageThreadPanelHead({
     );
   }
   return (
-    <div
-      className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-1 pt-0")}
-      data-testid="message-thread-head"
-    >
-      <div className="rounded-2xl">
-        <MessageRow
-          actionBarPlacement="inside"
-          channelId={channelId}
-          currentPubkey={currentPubkey}
-          huddleMemberPubkeys={huddleMemberPubkeys}
-          huddleMemberPubkeysPending={huddleMemberPubkeysPending}
-          isFollowingThread={isFollowingThread}
-          isUnread={isMessageUnreadById?.(threadHead.id)}
-          layoutVariant="thread-reply"
-          message={threadHead}
-          onDelete={
-            onDelete &&
-            canManageMessageForCurrentUser(threadHead, currentPubkey, profiles)
-              ? onDelete
-              : undefined
-          }
-          onEdit={
-            onEdit &&
-            canManageMessageForCurrentUser(threadHead, currentPubkey, profiles)
-              ? onEdit
-              : undefined
-          }
-          onFollowThread={
-            onFollowThread ? (_msg) => onFollowThread() : undefined
-          }
-          onMarkRead={onMarkRead}
-          onMarkUnread={onMarkUnread}
-          onToggleReaction={onToggleReaction}
-          onUnfollowThread={
-            onUnfollowThread ? (_msg) => onUnfollowThread() : undefined
-          }
-          profiles={profiles}
-          showDepthGuides={shouldShowThreadBranchGuides}
-          videoReviewCommentRootId={videoReviewCommentRootId}
-          videoReviewContext={videoReviewContext}
-        />
+    <>
+      <div
+        className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-1 pt-0")}
+        data-testid="message-thread-head"
+      >
+        <div className="rounded-2xl">
+          <MessageRow
+            actionBarPlacement="inside"
+            channelId={channelId}
+            currentPubkey={currentPubkey}
+            huddleMemberPubkeys={huddleMemberPubkeys}
+            huddleMemberPubkeysPending={huddleMemberPubkeysPending}
+            isFollowingThread={isFollowingThread}
+            isUnread={isMessageUnreadById?.(threadHead.id)}
+            layoutVariant="thread-reply"
+            message={threadHead}
+            onDelete={
+              onDelete &&
+              canManageMessageForCurrentUser(
+                threadHead,
+                currentPubkey,
+                profiles,
+              )
+                ? onDelete
+                : undefined
+            }
+            onEdit={
+              onEdit &&
+              canManageMessageForCurrentUser(
+                threadHead,
+                currentPubkey,
+                profiles,
+              )
+                ? onEdit
+                : undefined
+            }
+            onFollowThread={
+              onFollowThread ? (_msg) => onFollowThread() : undefined
+            }
+            onMarkRead={onMarkRead}
+            onMarkUnread={onMarkUnread}
+            onToggleReaction={onToggleReaction}
+            onUnfollowThread={
+              onUnfollowThread ? (_msg) => onUnfollowThread() : undefined
+            }
+            profiles={profiles}
+            showDepthGuides={shouldShowThreadBranchGuides}
+            videoReviewCommentRootId={videoReviewCommentRootId}
+            videoReviewContext={videoReviewContext}
+          />
+        </div>
       </div>
-    </div>
+      <SessionAgingBannerSlot
+        conversationIds={[threadHead.id, channelId]}
+        profiles={profiles}
+        rootEventId={threadHead.id}
+      />
+    </>
   );
 }

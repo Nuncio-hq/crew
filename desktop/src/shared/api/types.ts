@@ -972,6 +972,15 @@ export type GlobalAgentConfig = {
   model: string | null;
   /** Preferred ACP runtime for agents without a persona-specific runtime. */
   preferred_runtime: string | null;
+  /**
+   * Per-app model id for owner-triggered guided handover summarizer (#173).
+   * Not a per-agent attribute — same format for every agent.
+   */
+  handover_summarizer_model: string | null;
+  /** Compaction aging threshold (1–10). Default 3. */
+  compaction_aging_threshold: number | null;
+  /** Turn-count aging safety net. Default 100. */
+  turn_aging_threshold: number | null;
 };
 
 /**

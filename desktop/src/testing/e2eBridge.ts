@@ -529,6 +529,9 @@ type E2eConfig = {
       provider: string | null;
       model: string | null;
       preferred_runtime?: string | null;
+      handover_summarizer_model?: string | null;
+      compaction_aging_threshold?: number | null;
+      turn_aging_threshold?: number | null;
     };
     /** Explicit owner-only agent-access capability; independent of baked defaults. */
     ownerOnlyAccessBuild?: boolean;
@@ -8217,6 +8220,9 @@ let mockGlobalAgentConfig: {
   provider: string | null;
   model: string | null;
   preferred_runtime?: string | null;
+  handover_summarizer_model?: string | null;
+  compaction_aging_threshold?: number | null;
+  turn_aging_threshold?: number | null;
 } | null = null;
 
 // Per-page get_nsec call counter for sequenced error testing.
@@ -13695,6 +13701,9 @@ export function maybeInstallE2eTauriMocks() {
             provider: null,
             model: null,
             preferred_runtime: null,
+            handover_summarizer_model: null,
+            compaction_aging_threshold: null,
+            turn_aging_threshold: null,
           }
         );
       }

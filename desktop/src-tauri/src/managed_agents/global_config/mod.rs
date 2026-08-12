@@ -70,6 +70,19 @@ pub struct GlobalAgentConfig {
     /// Preferred ACP runtime for definitions without an explicit runtime.
     #[serde(default)]
     pub preferred_runtime: Option<String>,
+
+    /// Per-app model id for guided handover summarizer (issue #173).
+    /// Injected as `BUZZ_ACP_HANDOVER_MODEL` at spawn — not a per-agent attribute.
+    #[serde(default)]
+    pub handover_summarizer_model: Option<String>,
+
+    /// Compaction aging threshold (1–10). Default when unset: 3.
+    #[serde(default)]
+    pub compaction_aging_threshold: Option<u32>,
+
+    /// Turn-count aging safety net. Default when unset: 100.
+    #[serde(default)]
+    pub turn_aging_threshold: Option<u32>,
 }
 
 /// Validate a `GlobalAgentConfig` before persisting it.
@@ -171,6 +184,17 @@ pub fn normalize_global_config_fields(config: &mut GlobalAgentConfig) {
         if v.trim().is_empty() {
             config.model = None;
         }
+    }
+    if let Some(v) = &config.handover_summarizer_model {
+        if v.trim().is_empty() {
+            config.handover_summarizer_model = None;
+        }
+    }
+    if let Some(threshold) = config.compaction_aging_threshold {
+        config.compaction_aging_threshold = Some(threshold.clamp(1, 10));
+    }
+    if let Some(0) = config.turn_aging_threshold {
+        config.turn_aging_threshold = None;
     }
 }
 

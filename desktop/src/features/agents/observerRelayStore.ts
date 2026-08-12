@@ -48,6 +48,11 @@ import {
   observerEventIdentity,
   unwrapObserverBatch,
 } from "./observerEventIdentity";
+import {
+  clearSessionAging,
+  parseSessionAgingPayload,
+  putSessionAging,
+} from "@/features/messages/lib/sessionAgingStore";
 export { getObserverDropCountsForTest as _testGetObserverDropCounts } from "./observerDropLogger";
 
 const MAX_OBSERVER_EVENTS = 3000;
@@ -461,6 +466,11 @@ function processLiveObserverEvent(agentPubkey: string, parsed: ObserverEvent) {
     onSessionConfigCaptured?.(agentPubkey);
   } else if (parsed.kind === "control_result") {
     dispatchControlResult(agentPubkey, parsed.payload);
+  } else if (parsed.kind === "session_aging") {
+    const aging = parseSessionAgingPayload(agentPubkey, parsed.payload);
+    if (aging) {
+      putSessionAging(aging);
+    }
   } else if (parsed.kind === "managed_agent_runtime_lifecycle") {
     void putManagedAgentRuntimeLifecycle(agentPubkey, parsed.payload).catch(
       (error) => {
@@ -669,6 +679,15 @@ function dispatchControlResult(agentPubkey: string, payload: unknown) {
     payload.conversationId.length > 0
   ) {
     clearPendingAgentRequestsForConversation(payload.conversationId);
+  }
+  if (
+    (payload.type === "guided_handover" ||
+      payload.type === "blind_session_reset") &&
+    payload.status === "ok" &&
+    typeof payload.conversationId === "string" &&
+    payload.conversationId.length > 0
+  ) {
+    clearSessionAging(agentPubkey, payload.conversationId);
   }
   const subscribers = controlResultListeners.get(normalizePubkey(agentPubkey));
   if (!subscribers) {
@@ -908,6 +927,15 @@ export function injectObserverEventsForE2E(
   for (const event of events) {
     if (!event.replayed) markAgentLiveContact(agentPubkey);
     appendAgentEvent(agentPubkey, event);
+    // Side-effect kinds that production frames apply in processLiveObserverEvent.
+    if (event.kind === "session_aging") {
+      const aging = parseSessionAgingPayload(agentPubkey, event.payload);
+      if (aging) {
+        putSessionAging(aging);
+      }
+    } else if (event.kind === "control_result") {
+      dispatchControlResult(agentPubkey, event.payload);
+    }
   }
   notifyListeners();
 }

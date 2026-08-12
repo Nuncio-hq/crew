@@ -16,6 +16,13 @@
 //!    the ledger (or the lineage tip mismatches), treat as a resume miss and
 //!    fail closed to rebuild + delta delivery.
 //!
+//! Contract (issue #173 — owner-facing compaction aging):
+//! 6. **Honest `compaction_count`** — increments only on real signals; unknown
+//!    engines stay unknown (never fabricate a number). Persists beside
+//!    `rotation_count`; resets on `session/new` declare (including OwnerReset).
+//! 7. **Turn-count safety net** — `session_turn_count` ages signal-less engines
+//!    without inventing a compaction number.
+//!
 //! Invariant: a thread owns a sequence of sessions over its lifetime; at most
 //! one is live; only the newest is resumable; superseded sessions are history.
 
@@ -28,6 +35,11 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::compaction_signal::{
+    apply_compaction_signal, mark_compaction_unavailable, project_session_aging,
+    CompactionSignalAvailability, CompactionSignalSource, SessionAgingState,
+    DEFAULT_COMPACTION_THRESHOLD, DEFAULT_TURN_AGING_THRESHOLD,
+};
 use crate::secure_spool::{
     ensure_secure_directory, read_secure_entry, remove_secure_entry, write_secure_entry_if_absent,
 };
@@ -65,6 +77,17 @@ pub struct SessionLineageTip {
     pub observed_at: u64,
 }
 
+/// Why a ledger declare overwrote the previous live session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionDeclareReason {
+    /// Ordinary `session/new` (wake rebuild, first turn, rotation).
+    #[default]
+    Birth,
+    /// Owner-triggered guided / blind handover (#173).
+    OwnerReset,
+}
+
 /// Durable ledger value for one `(relay, agent, thread)` key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +100,20 @@ pub struct SessionLedgerEntry {
     /// Optional ordered tips (oldest → newest). Empty on legacy entries.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lineage: Vec<SessionLineageTip>,
+    /// Owner-facing compaction counter (#173). Increments only on real signals;
+    /// resets on every declare. Never shown unless `compaction_signal` is Known.
+    #[serde(default)]
+    pub compaction_count: u32,
+    /// Whether a numeric compaction count may be shown.
+    #[serde(default)]
+    pub compaction_signal: CompactionSignalAvailability,
+    /// Turns completed on this session generation (safety net for signal-less
+    /// engines). Resets on declare.
+    #[serde(default)]
+    pub session_turn_count: u32,
+    /// Last declare reason (birth vs owner reset). Legacy entries decode as Birth.
+    #[serde(default)]
+    pub declare_reason: SessionDeclareReason,
 }
 
 /// Lookup key for the durable ledger.
@@ -232,9 +269,9 @@ async fn write_entry(
 
 /// Declare-at-birth / overwrite-on-Crew-rebuild write site.
 ///
-/// A new ACP `session/new` resets rotation tracking. Pass `initial_rotation`
-/// when `session/new` (or an immediate probe) already reports provenance so
-/// the birth tip is recorded.
+/// A new ACP `session/new` resets rotation tracking and owner-facing
+/// compaction / turn counters. Pass `initial_rotation` when `session/new` (or
+/// an immediate probe) already reports provenance so the birth tip is recorded.
 pub async fn declare_session(
     dir: &Path,
     key: &SessionLedgerKey,
@@ -243,11 +280,37 @@ pub async fn declare_session(
     workspace_generation: u64,
     initial_rotation: Option<&EngineRotationSnapshot>,
 ) -> Result<SessionLedgerEntry, String> {
+    declare_session_with_reason(
+        dir,
+        key,
+        session_id,
+        engine_identity,
+        workspace_generation,
+        initial_rotation,
+        SessionDeclareReason::Birth,
+    )
+    .await
+}
+
+/// Declare with an explicit reason (OwnerReset for guided / blind handover).
+pub async fn declare_session_with_reason(
+    dir: &Path,
+    key: &SessionLedgerKey,
+    session_id: impl Into<String>,
+    engine_identity: impl Into<String>,
+    workspace_generation: u64,
+    initial_rotation: Option<&EngineRotationSnapshot>,
+    reason: SessionDeclareReason,
+) -> Result<SessionLedgerEntry, String> {
     ensure_secure_directory(dir).await?;
     let now = now_unix_secs();
     let session_id = session_id.into();
     let mut lineage = Vec::new();
     let mut rotation_count = 0;
+    let tip_source = match reason {
+        SessionDeclareReason::Birth => "declare.birth",
+        SessionDeclareReason::OwnerReset => "declare.owner_reset",
+    };
     if let Some(snapshot) = initial_rotation {
         rotation_count = snapshot.compression_depth;
         push_lineage_tip(&mut lineage, tip_from_snapshot(snapshot, now));
@@ -259,7 +322,7 @@ pub async fn declare_session(
             SessionLineageTip {
                 internal_session_id: session_id.clone(),
                 compression_depth: 0,
-                source: "declare.birth".into(),
+                source: tip_source.into(),
                 observed_at: now,
             },
         );
@@ -274,6 +337,11 @@ pub async fn declare_session(
         },
         rotation_count,
         lineage,
+        // Owner-facing counters always reset on session replacement (#173).
+        compaction_count: 0,
+        compaction_signal: CompactionSignalAvailability::Unknown,
+        session_turn_count: 0,
+        declare_reason: reason,
     };
     write_entry(dir, key, &entry).await?;
     Ok(entry)
@@ -291,9 +359,103 @@ pub async fn record_rotation_signal(
     let now = now_unix_secs();
     entry.rotation_count = entry.rotation_count.max(snapshot.compression_depth);
     push_lineage_tip(&mut entry.lineage, tip_from_snapshot(snapshot, now));
+    let source = if snapshot.source.contains("rollout") {
+        CompactionSignalSource::TranscriptMarker
+    } else {
+        CompactionSignalSource::AcpNotification
+    };
+    let (count, signal) = apply_compaction_signal(
+        entry.compaction_count,
+        entry.compaction_signal,
+        source,
+        Some(snapshot.compression_depth),
+    );
+    entry.compaction_count = count;
+    entry.compaction_signal = signal;
     entry.current.last_used_at = now;
     write_entry(dir, key, &entry).await?;
     Ok(Some(entry))
+}
+
+/// Persist a hook-sourced compaction (buzz-agent `_PostCompact`, Claude glue).
+pub async fn record_compaction_hook(
+    dir: &Path,
+    key: &SessionLedgerKey,
+) -> Result<Option<SessionLedgerEntry>, String> {
+    let Some(mut entry) = read_ledger_entry(dir, key).await? else {
+        return Ok(None);
+    };
+    let (count, signal) = apply_compaction_signal(
+        entry.compaction_count,
+        entry.compaction_signal,
+        CompactionSignalSource::Hook,
+        None,
+    );
+    entry.compaction_count = count;
+    entry.compaction_signal = signal;
+    entry.current.last_used_at = now_unix_secs();
+    write_entry(dir, key, &entry).await?;
+    Ok(Some(entry))
+}
+
+/// Freeze owner-facing compaction into Unavailable after adapter parse failure.
+#[allow(dead_code)] // wired when Codex rollout probe detects format drift
+pub async fn record_compaction_unavailable(
+    dir: &Path,
+    key: &SessionLedgerKey,
+) -> Result<Option<SessionLedgerEntry>, String> {
+    let Some(mut entry) = read_ledger_entry(dir, key).await? else {
+        return Ok(None);
+    };
+    let (count, signal) = mark_compaction_unavailable(entry.compaction_count);
+    entry.compaction_count = count;
+    entry.compaction_signal = signal;
+    entry.current.last_used_at = now_unix_secs();
+    write_entry(dir, key, &entry).await?;
+    Ok(Some(entry))
+}
+
+/// Increment the durable per-session turn counter (aging safety net).
+pub async fn record_session_turn(
+    dir: &Path,
+    key: &SessionLedgerKey,
+) -> Result<Option<SessionLedgerEntry>, String> {
+    let Some(mut entry) = read_ledger_entry(dir, key).await? else {
+        return Ok(None);
+    };
+    entry.session_turn_count = entry.session_turn_count.saturating_add(1);
+    entry.current.last_used_at = now_unix_secs();
+    write_entry(dir, key, &entry).await?;
+    Ok(Some(entry))
+}
+
+/// Project benign aging for an entry using configured thresholds.
+pub fn aging_from_entry(
+    entry: &SessionLedgerEntry,
+    compaction_threshold: u32,
+    turn_threshold: u32,
+) -> SessionAgingState {
+    project_session_aging(
+        entry.compaction_count,
+        entry.compaction_signal,
+        entry.session_turn_count,
+        compaction_threshold,
+        turn_threshold,
+    )
+}
+
+/// Default thresholds from env (`BUZZ_ACP_COMPACTION_THRESHOLD`,
+/// `BUZZ_ACP_TURN_AGING_THRESHOLD`).
+pub fn aging_thresholds_from_env() -> (u32, u32) {
+    let compaction = std::env::var("BUZZ_ACP_COMPACTION_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(DEFAULT_COMPACTION_THRESHOLD);
+    let turns = std::env::var("BUZZ_ACP_TURN_AGING_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(DEFAULT_TURN_AGING_THRESHOLD);
+    (compaction, turns)
 }
 
 pub async fn touch_session_used(dir: &Path, key: &SessionLedgerKey) -> Result<(), String> {
@@ -609,6 +771,10 @@ mod tests {
             },
             rotation_count: 0,
             lineage: vec![],
+            compaction_count: 0,
+            compaction_signal: CompactionSignalAvailability::Unknown,
+            session_turn_count: 0,
+            declare_reason: SessionDeclareReason::Birth,
         };
         assert!(matches!(
             decide_session_load(
@@ -705,6 +871,10 @@ mod tests {
                 source: "hermes.sessionProvenance".into(),
                 observed_at: 3,
             }],
+            compaction_count: 1,
+            compaction_signal: CompactionSignalAvailability::Known,
+            session_turn_count: 4,
+            declare_reason: SessionDeclareReason::Birth,
         };
         let json = String::from_utf8(encode_ledger_entry(&entry).unwrap()).unwrap();
         for forbidden in [
@@ -984,5 +1154,138 @@ mod tests {
         let entry = decode_ledger_entry(json).unwrap();
         assert!(entry.lineage.is_empty());
         assert_eq!(entry.rotation_count, 0);
+        assert_eq!(entry.compaction_count, 0);
+        assert_eq!(
+            entry.compaction_signal,
+            CompactionSignalAvailability::Unknown
+        );
+        assert_eq!(entry.session_turn_count, 0);
+    }
+
+    #[tokio::test]
+    async fn compaction_count_only_moves_on_real_signal_and_resets_on_declare() {
+        let dir = unique_dir("compaction-honesty");
+        let key = key();
+        let entry = declare_session(&dir, &key, "acp-1", "hermes", 0, None)
+            .await
+            .unwrap();
+        assert_eq!(entry.compaction_count, 0);
+        assert_eq!(
+            entry.compaction_signal,
+            CompactionSignalAvailability::Unknown
+        );
+
+        let snap = EngineRotationSnapshot {
+            compression_depth: 3,
+            current_internal_id: "h-3".into(),
+            source: "hermes.sessionProvenance",
+        };
+        let updated = record_rotation_signal(&dir, &key, &snap)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.compaction_count, 3);
+        assert_eq!(
+            updated.compaction_signal,
+            CompactionSignalAvailability::Known
+        );
+        assert!(aging_from_entry(&updated, 3, 100).aging);
+
+        let reset = declare_session_with_reason(
+            &dir,
+            &key,
+            "acp-2",
+            "hermes",
+            0,
+            None,
+            SessionDeclareReason::OwnerReset,
+        )
+        .await
+        .unwrap();
+        assert_eq!(reset.compaction_count, 0);
+        assert_eq!(
+            reset.compaction_signal,
+            CompactionSignalAvailability::Unknown
+        );
+        assert_eq!(reset.session_turn_count, 0);
+        assert_eq!(reset.declare_reason, SessionDeclareReason::OwnerReset);
+        assert!(!aging_from_entry(&reset, 3, 100).aging);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn turn_count_net_ages_unknown_signal_without_fabricating_count() {
+        let dir = unique_dir("turn-net");
+        let key = key();
+        declare_session(&dir, &key, "acp-1", "grok", 0, None)
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            record_session_turn(&dir, &key).await.unwrap();
+        }
+        let entry = read_ledger_entry(&dir, &key).await.unwrap().unwrap();
+        assert_eq!(entry.session_turn_count, 100);
+        assert_eq!(
+            entry.compaction_signal,
+            CompactionSignalAvailability::Unknown
+        );
+        let aging = aging_from_entry(&entry, 3, 100);
+        assert!(aging.aging);
+        assert_eq!(aging.reason, Some("turn_count_net"));
+        assert_eq!(aging.compaction_count, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn post_compact_hook_increments_honest_count() {
+        let dir = unique_dir("post-compact");
+        let key = key();
+        declare_session(&dir, &key, "acp-1", "buzz-agent", 0, None)
+            .await
+            .unwrap();
+        let once = record_compaction_hook(&dir, &key).await.unwrap().unwrap();
+        assert_eq!(once.compaction_count, 1);
+        assert_eq!(once.compaction_signal, CompactionSignalAvailability::Known);
+        let twice = record_compaction_hook(&dir, &key).await.unwrap().unwrap();
+        assert_eq!(twice.compaction_count, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn corrupt_transcript_marks_unavailable_not_undercount() {
+        let dir = unique_dir("unavailable");
+        let key = key();
+        declare_session(&dir, &key, "acp-1", "codex", 0, None)
+            .await
+            .unwrap();
+        let snap = EngineRotationSnapshot {
+            compression_depth: 1,
+            current_internal_id: "c-1".into(),
+            source: "codex.context_compacted",
+        };
+        record_rotation_signal(&dir, &key, &snap).await.unwrap();
+        let frozen = record_compaction_unavailable(&dir, &key)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            frozen.compaction_signal,
+            CompactionSignalAvailability::Unavailable
+        );
+        let snap2 = EngineRotationSnapshot {
+            compression_depth: 9,
+            current_internal_id: "c-9".into(),
+            source: "codex.context_compacted",
+        };
+        let after = record_rotation_signal(&dir, &key, &snap2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.compaction_count, 1, "unavailable must not miscount");
+        assert_eq!(
+            after.compaction_signal,
+            CompactionSignalAvailability::Unavailable
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,11 +1,13 @@
 #![deny(unsafe_code)]
 
 mod acp;
+mod compaction_signal;
 mod config;
 mod conversation;
 mod elicitation;
 mod engram_fetch;
 mod filter;
+mod guided_handover;
 mod observer;
 mod pool;
 mod pool_lifecycle;
@@ -1092,6 +1094,9 @@ async fn handle_relay_observer_control_event(
     owner_pubkey_hex: &str,
     rules: &[SubscriptionRule],
     channel_info: &pool::ChannelInfoResolver,
+    relay_url: &str,
+    session_ledger_dir: &std::path::Path,
+    engine_identity: &str,
 ) {
     // Defense-in-depth: verify signature even though the relay already checked.
     if let Err(e) = buzz_core::verify_event(&event) {
@@ -1149,6 +1154,19 @@ async fn handle_relay_observer_control_event(
         }
         Some("switch_model") => {
             handle_switch_model_control(&payload, pool, observer);
+        }
+        Some("guided_handover") | Some("blind_session_reset") => {
+            guided_handover::handle_guided_handover_control(
+                &payload,
+                pool,
+                rest_client,
+                observer,
+                &keys.public_key().to_hex(),
+                relay_url,
+                session_ledger_dir,
+                engine_identity,
+            )
+            .await;
         }
         _ => {
             tracing::debug!(payload = %payload, "ignoring unknown observer control frame");
@@ -2416,6 +2434,9 @@ async fn tokio_main() -> Result<()> {
                                     owner_hex,
                                     &rules,
                                     &ctx.channel_info,
+                                    &ctx.relay_url,
+                                    &ctx.session_ledger_dir,
+                                    &ctx.engine_identity,
                                 )
                                 .await;
                             } else {
