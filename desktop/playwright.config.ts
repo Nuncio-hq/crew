@@ -64,6 +64,7 @@ export default defineConfig({
         "**/activity-scope-label-screenshots.spec.ts",
         "**/welcome-agent-modal-screenshots.spec.ts",
         "**/local-archive-screenshots.spec.ts",
+        "**/worktree-storage.spec.ts",
         "**/voice-settings.spec.ts",
         "**/agent-readiness-screenshots.spec.ts",
         "**/agent-error-state-screenshots.spec.ts",

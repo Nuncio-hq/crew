@@ -5,9 +5,12 @@ import type {
   ProjectWorktreeDetails,
   ProjectWorktreeReclaimPreview,
   ProjectWorktreeRegistry,
+  ReclaimTier,
   ThreadGitHubStatus,
   ThreadWorkspaceActionResult,
   ThreadWorkspaceLifecycle,
+  WorktreeStorageAliveStatus,
+  WorktreeStorageSnapshot,
 } from "@/shared/api/thread-workspace-types";
 
 /**
@@ -223,4 +226,44 @@ export function pruneProjectWorktrees(
   repositoryPath: string,
 ): Promise<ThreadWorkspaceActionResult> {
   return invokeTauri("prune_project_worktrees", { repositoryPath });
+}
+
+export function touchWorktreeStorageAlive(): Promise<WorktreeStorageAliveStatus> {
+  return invokeTauri("touch_worktree_storage_alive");
+}
+
+export function getWorktreeStorageAlive(): Promise<WorktreeStorageAliveStatus> {
+  return invokeTauri("get_worktree_storage_alive");
+}
+
+export function setWorktreeStorageIdleThreshold(
+  idleThresholdSecs: number,
+): Promise<WorktreeStorageAliveStatus> {
+  return invokeTauri("set_worktree_storage_idle_threshold", {
+    idleThresholdSecs,
+  });
+}
+
+export function getWorktreeStorageSnapshot(
+  repositoryPaths: string[],
+  idleThresholdSecs?: number | null,
+): Promise<WorktreeStorageSnapshot> {
+  return invokeTauri("get_worktree_storage_snapshot", {
+    repositoryPaths,
+    idleThresholdSecs: idleThresholdSecs ?? null,
+  });
+}
+
+export function revalidateWorktreeStorageAction(
+  repositoryPath: string,
+  worktreePath: string,
+  expectedRoutingChannelId: string,
+  tier: ReclaimTier,
+): Promise<string | null> {
+  return invokeTauri("revalidate_worktree_storage_action", {
+    repositoryPath,
+    worktreePath,
+    expectedRoutingChannelId,
+    tier,
+  });
 }

@@ -12,6 +12,8 @@ type SettingsSection =
   | "hosted-communities"
   | "tokens"
   | "community-members"
+  | "local-archive"
+  | "storage"
   | "mobile"
   | "updates";
 

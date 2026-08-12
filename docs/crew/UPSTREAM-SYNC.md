@@ -51,7 +51,13 @@ The local upstream push URL is deliberately disabled. Never push to
 | `crates/buzz-cli/src/commands/mod.rs` | register the Crew-owned evidence kind module | retain the module declaration; do not move validation into upstream command code |
 | `crates/buzz-cli/src/commands/evidence.rs` | Crew-owned exact evidence-kind parsing and tag construction | keep canonical wire strings and enum-only validation in this module |
 | `crates/buzz-cli/TESTING.md` | document the additive evidence flag in the CLI test inventory | retain the one-row flag inventory update; do not rewrite unrelated runbook steps |
-| `desktop/playwright.config.ts` | register Crew evidence contracts in the smoke project | retain the narrow test-match addition; do not reorder unrelated entries |
+| `desktop/playwright.config.ts` | register Crew evidence contracts + #174 worktree-storage smoke | retain the narrow test-match additions; do not reorder unrelated entries |
+| `desktop/src/features/settings/ui/SettingsPanels.tsx` | Settings → Storage section registration (#174) | keep `"storage"` arm + nav descriptor; card lives in Crew-owned feature module |
+| `desktop/src/features/settings/ui/SettingsView.tsx` | Personal nav entry for Storage (#174) | retain one-line `"storage"` nav add next to local-archive |
+| `desktop/src/app/useAppShellLifecycleEffects.ts` | app-scoped alive-interval heartbeat (#174) | keep one-line hook call; ledger logic stays in Crew-owned module |
+| `desktop/src-tauri/src/commands/project_worktree_details.rs` | `branch_is_pushed` helper for Hibernate tier (#174) | retain pub(crate) helper beside ahead/behind; no mutation path changes |
+| `desktop/src-tauri/src/commands/mod.rs` / `lib.rs` | register #174 storage commands | retain module + invoke_handler entries only |
+| `desktop/src/testing/e2eBridge.ts` | mock storage snapshot + reclaim commands (#174) | keep additive cases; default fixture is self-contained |
 | `desktop/src/features/messages/ui/MessageRow.tsx` | pass evidence-card review props through the existing default-body seam (987 lines) | retain the seven-line prop pass-through only; keep evidence logic out of this upstream-derived file |
 | `desktop/src/features/messages/ui/MessageRowDefaultBody.tsx` | dispatch known Crew evidence tags + handover note card before ordinary Markdown rendering (#121/#173) | preserve ordinary body fallback and keep card implementation in Crew-owned files |
 | `crates/buzz-acp/src/pool.rs` | persist rotation (#180) + compaction/turn aging emit (#173) after turns | keep additive persist/emit helpers; do not invent parallel session maps |

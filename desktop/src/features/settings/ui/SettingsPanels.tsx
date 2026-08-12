@@ -8,6 +8,7 @@ import {
   Cpu,
   Download,
   FlaskConical,
+  HardDrive,
   Keyboard,
   LayoutTemplate,
   MessagesSquare,
@@ -31,6 +32,7 @@ import type { SoundName, SoundSlot } from "@/features/notifications/lib/sound";
 import { CommunityMembersSettingsCard } from "@/features/community-members/ui/CommunityMembersSettingsCard";
 import { CustomEmojiSettingsCard } from "@/features/custom-emoji/ui/CustomEmojiSettingsCard";
 import { LocalArchiveSettingsCard } from "@/features/local-archive/ui/LocalArchiveSettingsCard";
+import { StorageSettingsCard } from "@/features/worktree-storage/ui/StorageSettingsCard";
 import { cn } from "@/shared/lib/cn";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { Badge } from "@/shared/ui/badge";
@@ -90,6 +92,7 @@ export type SettingsSection =
   | "moderation"
   | "custom-emoji"
   | "local-archive"
+  | "storage"
   | "mobile"
   | "updates";
 
@@ -110,6 +113,7 @@ const SETTINGS_SECTION_VALUES: readonly SettingsSection[] = [
   "moderation",
   "custom-emoji",
   "local-archive",
+  "storage",
   "mobile",
   "updates",
 ];
@@ -217,6 +221,11 @@ export const settingsSections: SettingsSectionDescriptor[] = [
     value: "local-archive",
     label: "Local archive",
     icon: Archive,
+  },
+  {
+    value: "storage",
+    label: "Storage",
+    icon: HardDrive,
   },
   {
     value: "mobile",
@@ -867,6 +876,8 @@ export function renderSettingsSection(
       return <CustomEmojiSettingsCard />;
     case "local-archive":
       return <LocalArchiveSettingsCard />;
+    case "storage":
+      return <StorageSettingsCard />;
     case "mobile":
       return <MobilePairingCard currentPubkey={props.currentPubkey} />;
     case "updates":

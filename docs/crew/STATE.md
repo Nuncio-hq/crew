@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #174 — worktree storage reclaim (completes #59 P3)
+
+Settings → Storage aggregates managed worktrees with cache/checkout split, PR
+state, dual idle clocks (observed vs wall), and refusal-aware rows. Idle
+candidacy uses an app-scoped alive-interval ledger + pure `observed_idle`
+(default 48 observed hours) or merged PR (registry state, never git ancestry).
+Suggest-and-confirm bulk Lean/Hibernate runs over existing #72 commands; no
+background auto-GC. See D-051.
+Last updated: 2026-08-12
+
 ## Issue #173 — session compaction awareness + guided handover
 
 Honest per-engine `CompactionSignal` adapters update ledger `compaction_count`
