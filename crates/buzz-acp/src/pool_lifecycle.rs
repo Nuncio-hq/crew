@@ -440,7 +440,10 @@ mod tests {
             .start_drain_if_due(timeout, now, now + timeout, eligible())
             .expect("pool");
         assert_eq!(drained, "pool");
-        assert!(matches!(lifecycle, PoolLifecycle::Draining { rewake: false }));
+        assert!(matches!(
+            lifecycle,
+            PoolLifecycle::Draining { rewake: false }
+        ));
         assert_eq!(lifecycle.complete_drain(), Ok(false));
         assert!(lifecycle.is_listening());
     }
@@ -508,7 +511,12 @@ mod tests {
         assert_eq!(lifecycle.start_wake_if_due(true, now), Some(1));
         lifecycle.complete_wake(1, Ok("pool"), now).unwrap();
         assert!(lifecycle
-            .start_drain_if_due(Duration::ZERO, now, now + Duration::from_secs(3600), eligible())
+            .start_drain_if_due(
+                Duration::ZERO,
+                now,
+                now + Duration::from_secs(3600),
+                eligible()
+            )
             .is_none());
     }
 
@@ -519,11 +527,19 @@ mod tests {
         assert_eq!(lifecycle.start_wake_if_due(true, now), Some(1));
         lifecycle.complete_wake(1, Ok("pool"), now).unwrap();
         let _ = lifecycle
-            .start_drain_if_due(Duration::from_secs(1), now, now + Duration::from_secs(2), eligible())
+            .start_drain_if_due(
+                Duration::from_secs(1),
+                now,
+                now + Duration::from_secs(2),
+                eligible(),
+            )
             .unwrap();
 
         assert_eq!(lifecycle.start_wake_if_due(true, now), None);
-        assert!(matches!(lifecycle, PoolLifecycle::Draining { rewake: true }));
+        assert!(matches!(
+            lifecycle,
+            PoolLifecycle::Draining { rewake: true }
+        ));
         assert_eq!(lifecycle.complete_drain(), Ok(true));
         assert!(lifecycle.is_listening());
         assert_eq!(lifecycle.start_wake_if_due(true, now), Some(1));

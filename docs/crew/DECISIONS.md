@@ -899,4 +899,38 @@ Spike 0022 narrows usable resume to Hermes ACP and Codex ACP; buzz-agent stays
 rebuild-only; Claude is capability-gated at runtime. The spin-down/resume core
 is Crew-free and tracked for upstream proposal under
 `docs/crew/upstream-proposals/idle-engine-spin-down.md`. Compaction-awareness
-and multi-slot resume are explicit non-goals for this decision.
+landed separately as D-049 / #180; multi-slot resume remains an explicit
+non-goal for this decision.
+
+## D-049 — Session ledger compaction / rotation awareness (fail-closed wake)
+
+- **Status:** Accepted
+- **Date:** 2026-08-12
+- **Issue:** #180 (builds on #169 / D-048; owner-facing aging UI stays #173)
+
+After #169, `session/load` can succeed with silently truncated engine context
+when the engine compacted or rotated its internal session head. Fail-closed
+rebuild already covered corruption / `loadSession: false`; it did not cover
+"load succeeded with wrong history."
+
+1. **Detect only real engine signals** (never fabricate counts):
+   - **Hermes** — `session_info_update` / `session/new` / `session/load`
+     `_meta.hermes.sessionProvenance` (`compressionDepth`,
+     `currentHermesSessionId`).
+   - **Codex** — ACP `context_compacted` / `compacted` when forwarded; else
+     rollout JSONL markers (`type: compacted`,
+     `event_msg` / `context_compacted`) via
+     `parse_codex_rollout_rotation`.
+   - **buzz-agent** — remains rebuild-only (`loadSession: false`).
+2. **Persist** observed depth on ledger `rotation_count` and append
+   `lineage[]` tips (`internalSessionId`, `compressionDepth`, `source`,
+   `observedAt`). Crew `session/new` declare resets rotation/lineage (birth
+   tip seeded from provenance when present).
+3. **Wake** — after a successful `session/load`, re-validate with the
+   engine snapshot. If `ledger.rotation_count < engine.depth` or the lineage
+   tip mismatches, delete the entry and rebuild (same delta-delivery path as
+   #169). Matching lineage may resume.
+4. **Non-goals** — owner aging banner / guided handover (#173), memory-pressure
+   eviction, multi-slot resume, spin-down changes.
+
+Contract tests: rotate-then-wake lag → rebuild; multi-thread lineage isolation.

@@ -7466,7 +7466,7 @@ mod error_outcome_emission_tests {
             // Error branches under test never read this; 1 is the legacy
             // non-systemPrompt path, the simplest valid value.
             protocol_version: 1,
-        load_session_supported: false,
+            load_session_supported: false,
         }
     }
 

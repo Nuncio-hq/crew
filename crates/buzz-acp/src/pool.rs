@@ -45,10 +45,6 @@ use crate::acp::{
 };
 use crate::config::{compose_session_title, DedupMode, PermissionMode};
 use crate::observer;
-use crate::session_ledger::{
-    decide_session_load, declare_session, delete_ledger_entry, read_ledger_entry, SessionLedgerKey,
-    SessionLoadDecision, SessionLoadValidation,
-};
 use crate::queue::{
     CancelReason, ContextMessage, ConversationContext, FlushBatch, PromptChannelInfo,
     PromptProfile, PromptProfileLookup, ThreadTags,
@@ -58,6 +54,11 @@ use crate::secure_spool::{
     claim_secure_entries_bounded, claim_secure_named_entries, cleanup_secure_temporary_entries,
     ensure_secure_directory, lock_secure_directory, measure_secure_directory, read_secure_entry,
     remove_secure_entry, rename_secure_entry, write_secure_entry_if_absent,
+};
+use crate::session_ledger::{
+    decide_session_load, declare_session, delete_ledger_entry, parse_engine_rotation_signal,
+    read_ledger_entry, record_rotation_signal, SessionLedgerKey, SessionLoadDecision,
+    SessionLoadValidation,
 };
 
 /// Window within which agent activity before a hard-cap death qualifies
@@ -1715,6 +1716,45 @@ fn compose_role_and_routing_prompt(
     }
 }
 
+/// Persist a live Hermes/Codex rotation signal onto the durable ledger (#180).
+async fn persist_observed_rotation(agent: &mut OwnedAgent, ctx: &PromptContext, channel_id: Uuid) {
+    let Some(snapshot) = agent.acp.take_rotation_signal() else {
+        return;
+    };
+    let key = SessionLedgerKey::new(
+        &ctx.relay_url,
+        ctx.agent_keys.public_key().to_hex(),
+        channel_id,
+    );
+    match record_rotation_signal(&ctx.session_ledger_dir, &key, &snapshot).await {
+        Ok(Some(entry)) => {
+            tracing::info!(
+                target: "pool::session",
+                depth = entry.rotation_count,
+                tip = entry
+                    .lineage
+                    .last()
+                    .map(|t| t.internal_session_id.as_str())
+                    .unwrap_or(""),
+                "persisted engine rotation signal on session ledger"
+            );
+        }
+        Ok(None) => {
+            tracing::debug!(
+                target: "pool::session",
+                "rotation signal observed but no ledger entry yet — ignored"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(
+                target: "pool::session",
+                error = %error,
+                "failed to persist engine rotation signal on ledger"
+            );
+        }
+    }
+}
+
 /// Return `agent` to the pool via `result_tx`, clearing any steer receiver first.
 ///
 /// Every path that returns an `OwnedAgent` to the pool via `PromptResult` goes
@@ -2112,24 +2152,25 @@ pub async fn run_prompt_task(
                     ctx.agent_keys.public_key().to_hex(),
                     *cid,
                 );
-                let ledger_entry = match read_ledger_entry(&ctx.session_ledger_dir, &ledger_key).await
-                {
-                    Ok(entry) => entry,
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "pool::session",
-                            error = %error,
-                            "session ledger read failed — treating as absent"
-                        );
-                        None
-                    }
-                };
+                let ledger_entry =
+                    match read_ledger_entry(&ctx.session_ledger_dir, &ledger_key).await {
+                        Ok(entry) => entry,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "pool::session",
+                                error = %error,
+                                "session ledger read failed — treating as absent"
+                            );
+                            None
+                        }
+                    };
                 let decision = decide_session_load(
                     ledger_entry.as_ref(),
                     &SessionLoadValidation {
                         engine_identity: &ctx.engine_identity,
                         workspace_generation,
                         load_session_supported: agent.load_session_supported,
+                        engine_rotation: None,
                     },
                 );
                 let resumed = if let SessionLoadDecision::Resume { session_id } = &decision {
@@ -2145,33 +2186,66 @@ pub async fn run_prompt_task(
                         .await
                     {
                         Ok(resp) => {
-                            tracing::info!(
-                                target: "pool::session",
-                                "resumed session {} for channel {cid}",
-                                resp.session_id
-                            );
-                            agent.state.sessions.insert(*cid, resp.session_id.clone());
-                            agent
-                                .state
-                                .routing_channels
-                                .insert(*cid, observer_channel_id.unwrap_or(*cid));
-                            agent.state.deliveries.insert(
-                                *cid,
-                                ChannelDeliveryState {
-                                    standing_context_sent: true,
-                                    delivered_event_ids: HashSet::new(),
+                            // #180: refuse silently-truncated engine context when
+                            // load meta / prior signal shows rotation ahead of
+                            // the ledger (or a lineage tip mismatch).
+                            let load_rotation = parse_engine_rotation_signal(&resp.raw)
+                                .or_else(|| agent.acp.peek_rotation_signal().cloned());
+                            let lineage_decision = decide_session_load(
+                                ledger_entry.as_ref(),
+                                &SessionLoadValidation {
+                                    engine_identity: &ctx.engine_identity,
+                                    workspace_generation,
+                                    load_session_supported: true,
+                                    engine_rotation: load_rotation.as_ref(),
                                 },
                             );
-                            agent.acp.notify_session_spawned(&resp.session_id);
-                            if let Some((pending_cid, section)) = pending_canvas.take() {
-                                agent.state.canvas_sections.insert(pending_cid, section);
+                            if let SessionLoadDecision::Rebuild { reason } = lineage_decision {
+                                tracing::warn!(
+                                    target: "pool::session",
+                                    reason,
+                                    "session/load lineage stale — deleting ledger entry and rebuilding"
+                                );
+                                let _ =
+                                    delete_ledger_entry(&ctx.session_ledger_dir, &ledger_key).await;
+                                None
+                            } else {
+                                if let Some(ref snapshot) = load_rotation {
+                                    let _ = record_rotation_signal(
+                                        &ctx.session_ledger_dir,
+                                        &ledger_key,
+                                        snapshot,
+                                    )
+                                    .await;
+                                }
+                                tracing::info!(
+                                    target: "pool::session",
+                                    "resumed session {} for channel {cid}",
+                                    resp.session_id
+                                );
+                                agent.state.sessions.insert(*cid, resp.session_id.clone());
+                                agent
+                                    .state
+                                    .routing_channels
+                                    .insert(*cid, observer_channel_id.unwrap_or(*cid));
+                                agent.state.deliveries.insert(
+                                    *cid,
+                                    ChannelDeliveryState {
+                                        standing_context_sent: true,
+                                        delivered_event_ids: HashSet::new(),
+                                    },
+                                );
+                                agent.acp.notify_session_spawned(&resp.session_id);
+                                if let Some((pending_cid, section)) = pending_canvas.take() {
+                                    agent.state.canvas_sections.insert(pending_cid, section);
+                                }
+                                let _ = crate::session_ledger::touch_session_used(
+                                    &ctx.session_ledger_dir,
+                                    &ledger_key,
+                                )
+                                .await;
+                                Some((resp.session_id, false, true))
                             }
-                            let _ = crate::session_ledger::touch_session_used(
-                                &ctx.session_ledger_dir,
-                                &ledger_key,
-                            )
-                            .await;
-                            Some((resp.session_id, false, true))
                         }
                         Err(AcpError::AgentExited) => {
                             agent.state.invalidate_all();
@@ -2191,8 +2265,7 @@ pub async fn run_prompt_task(
                                 error = %error,
                                 "session/load rejected — deleting ledger entry and rebuilding"
                             );
-                            let _ =
-                                delete_ledger_entry(&ctx.session_ledger_dir, &ledger_key).await;
+                            let _ = delete_ledger_entry(&ctx.session_ledger_dir, &ledger_key).await;
                             None
                         }
                     }
@@ -2207,8 +2280,7 @@ pub async fn run_prompt_task(
                             && *reason != "no ledger entry"
                             && *reason != "loadSession not advertised"
                         {
-                            let _ =
-                                delete_ledger_entry(&ctx.session_ledger_dir, &ledger_key).await;
+                            let _ = delete_ledger_entry(&ctx.session_ledger_dir, &ledger_key).await;
                         }
                     }
                     None
@@ -2250,12 +2322,15 @@ pub async fn run_prompt_task(
                                 .deliveries
                                 .insert(*cid, ChannelDeliveryState::default());
                             // Declare-at-birth: the only write site for resume ids.
+                            // Seed lineage from session/new provenance when present.
+                            let birth_rotation = agent.acp.peek_rotation_signal().cloned();
                             if let Err(error) = declare_session(
                                 &ctx.session_ledger_dir,
                                 &ledger_key,
                                 &sid,
                                 &ctx.engine_identity,
                                 workspace_generation,
+                                birth_rotation.as_ref(),
                             )
                             .await
                             {
@@ -2904,6 +2979,9 @@ pub async fn run_prompt_task(
                             Some(buzz_core::agent_turn_metric::StopReason::EndTurn),
                         )
                         .await;
+                        if let PromptSource::Channel(cid) = &source {
+                            persist_observed_rotation(&mut agent, &ctx, *cid).await;
+                        }
                         turn_guard.mark_completed();
                         send_prompt_result(
                             &result_tx,
@@ -2925,6 +3003,7 @@ pub async fn run_prompt_task(
             log_stop_reason(&source, &stop_reason);
 
             if let PromptSource::Channel(cid) = &source {
+                persist_observed_rotation(&mut agent, &ctx, *cid).await;
                 let standing_sent = !agent.has_system_prompt_support();
                 agent.state.mark_channel_delivery_success(
                     *cid,
@@ -8161,7 +8240,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
-        load_session_supported: false,
+            load_session_supported: false,
         };
         agent.state.heartbeat_session = Some("live-session".into());
 
@@ -8256,7 +8335,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
-        load_session_supported: false,
+            load_session_supported: false,
         };
         agent
             .state
@@ -8433,7 +8512,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
-        load_session_supported: false,
+            load_session_supported: false,
         };
         agent
             .state
@@ -8584,7 +8663,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
-        load_session_supported: false,
+            load_session_supported: false,
         };
         agent
             .state
@@ -9967,7 +10046,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
-        load_session_supported: false,
+            load_session_supported: false,
         };
 
         let trigger = nostr::EventId::from_hex(&"a".repeat(64)).expect("event id");
@@ -10041,7 +10120,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
-        load_session_supported: false,
+            load_session_supported: false,
         };
 
         // Simulate a completed turn: `steer_rx` was consumed by the read loop

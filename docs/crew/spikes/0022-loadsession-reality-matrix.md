@@ -133,6 +133,17 @@ RED before implementation:
    delete ledger entry + rebuild; load rejection → same.
 5. Multi-thread: wake via thread A resumes A's session id, never B/C's.
 
+## Engine rotation signals (issue #180 / D-049)
+
+| Engine | Signal | Ledger fields |
+| --- | --- | --- |
+| Hermes ACP | `_meta.hermes.sessionProvenance` on `session_info_update` / `session/new` / `session/load` (`compressionDepth`, `currentHermesSessionId`) | `rotationCount`, `lineage[]` tip |
+| Codex ACP | ACP `context_compacted` / `compacted` when forwarded; else rollout JSONL `type: compacted` + `event_msg`/`context_compacted` via `parse_codex_rollout_rotation` | same |
+| buzz-agent | none — `loadSession: false` | rebuild-only (no resume) |
+
+Wake: if ledger `rotationCount` lags engine depth or lineage tip mismatches →
+fail-closed rebuild. Owner aging UI is #173, not this spike.
+
 ## Cleanup
 
 No temporary processes or credentials created for this spike. Evidence remains
