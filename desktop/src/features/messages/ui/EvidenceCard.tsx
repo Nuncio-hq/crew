@@ -10,6 +10,11 @@ import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { resolvePrReferenceHref } from "./AgentReceiptCard";
 import type { EvidenceKind } from "@/features/messages/lib/evidenceTag";
+import { useEvidenceCrossCheck } from "@/features/messages/lib/useEvidenceCrossCheck";
+import {
+  EvidenceCrossCheckBadge,
+  EvidenceCrossCheckDetail,
+} from "./EvidenceCrossCheckBadge";
 
 type EvidenceCardProps = {
   canToggleReactions: boolean;
@@ -184,6 +189,7 @@ export function EvidenceCard({
   const showControls = isOwner && canToggleReactions && onToggleReaction;
   const accepted = reactionIsCurrentUser(reactions, "✅");
   const rejected = reactionIsCurrentUser(reactions, "❌");
+  const crossCheck = useEvidenceCrossCheck(kind, message);
   const heading =
     kind === "test-run"
       ? "Test run"
@@ -210,12 +216,16 @@ export function EvidenceCard({
     >
       <div className="mb-3 flex items-center justify-between gap-2">
         <h3 className="font-medium text-foreground">{heading}</h3>
-        {rejected ? (
-          <span data-testid="evidence-reaction-rejected">❌ Rejected</span>
-        ) : accepted ? (
-          <span data-testid="evidence-reaction-accepted">✅ Accepted</span>
-        ) : null}
+        <div className="flex min-w-0 items-center gap-2">
+          <EvidenceCrossCheckBadge result={crossCheck} />
+          {rejected ? (
+            <span data-testid="evidence-reaction-rejected">❌ Rejected</span>
+          ) : accepted ? (
+            <span data-testid="evidence-reaction-accepted">✅ Accepted</span>
+          ) : null}
+        </div>
       </div>
+      <EvidenceCrossCheckDetail result={crossCheck} />
       {layout}
       {showControls ? (
         <div className="mt-3 flex gap-2 border-t border-border/60 pt-3">

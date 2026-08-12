@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #175 — evidence–CI cross-check badge
+
+Evidence cards compare machine-readable `test-run` / `diff-stat` claim lines
+(`Tests: <N> passed, <M> failed`, `Diff: +<A>/−<D> across <F> files`) against
+the thread PR's existing GitHub status (checks + additions/deletions/
+changedFiles). Badge states: Matches CI / Diverges (shows both values) /
+CI running / Not comparable. Metrics and before-after-visual are permanently
+Not comparable. Accept/Reject unchanged — badge is never a gate. Amends D-036.
+Last updated: 2026-08-12
+
 ## Issue #174 — worktree storage reclaim (completes #59 P3)
 
 Settings → Storage aggregates managed worktrees with cache/checkout split, PR
@@ -83,7 +93,10 @@ Evidence on the thread log is shipped for this slice:
 - desktop renders Crew evidence cards for kind 9, preserves ordinary fallback,
   and keeps kind 46043 receipt cards unchanged;
 - owners can Accept/Reject with existing kind-7 reactions, with Reject opening
-  the normal reply composer.
+  the normal reply composer;
+- test-run / diff-stat cards show a live evidence↔CI cross-check badge against
+  the thread PR (Matches / Diverges / CI running / Not comparable); metrics and
+  before-after-visual stay Not comparable (#175).
 - C2/C3 Playwright contracts and the desktop unit suite verify these behaviors.
 
 Make a Buzz Project record point to a local workspace directory while
