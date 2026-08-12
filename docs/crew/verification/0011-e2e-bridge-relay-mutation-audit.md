@@ -1,8 +1,8 @@
 # Verification 0011 — E2E bridge relay mutation audit
 
-- **Date:** 2026-08-12 (updated for #144; original #133 2026-08-11)
-- **Issue:** #133; follow-up #144
-- **Branch / commit:** `feat/144-bridge-relay-mutations` (see PR for SHA)
+- **Date:** 2026-08-12 (updated for #172 / #144; original #133 2026-08-11)
+- **Issue:** #133; follow-ups #144, #172
+- **Branch / commit:** see PRs for #144 and #172 SHAs
 - **Plan phase:** relay-backed desktop mutation coverage
 
 ## Boundary exercised
@@ -35,7 +35,9 @@ agent ownership metadata remains a bridge-config profile injection; see
 Issue **#144** extended the same boundary to the remaining mock-only
 mutating commands listed under [(a) Already relay-aware](#a-already-relay-aware)
 and confirmed workflow / local-archive classification against the Rust
-commands (see [Rust confirmation (#144)](#rust-confirmation-144)).
+commands (see [Rust confirmation (#144 / #172)](#rust-confirmation-144--172)).
+Issue **#172** then gave the four workflow commands real relay branches
+(they had been misclassified as local-only on the bridge).
 
 ## CI coverage
 
@@ -73,9 +75,9 @@ integration job duplicates services by design so it never becomes a hard Gate
 dependency. Crew-specific relay-mutation specs:
 
 - `evidence-reactions-relay.spec.ts` (#133)
-- `bridge-relay-mutations.spec.ts` (#144) — archive/unarchive identity,
+- `bridge-relay-mutations.spec.ts` (#144 / #172) — archive/unarchive identity,
   update_persona_and_publish, send_managed_agent_channel_message,
-  send_channel_user_input_answer
+  send_channel_user_input_answer, workflow create/update/trigger/delete
 
 ### How to run these specs locally
 
@@ -152,6 +154,7 @@ Each test invokes the bridge command path under `mode: "relay"` and polls
 | persona catalog | `update_persona_and_publish` | 30175, tyler | `d`, content `display_name` |
 | managed agent msg | `send_managed_agent_channel_message` | 9, agent (alice) | `h`, `client` marker; agent signing + NIP-OA `x-auth-tag` |
 | user-input answer | `send_channel_user_input_answer` | 46041, tyler | `h`, `e`→request, `p`→requesting agent |
+| workflows (#172) | `create_workflow` / `update_workflow` / `trigger_workflow` / `delete_workflow` | 30620 / 46020 / 5, tyler | create+update: `d`+`h` + YAML content; trigger: `d`; delete: `a=30620:owner:id` |
 
 ## Verification commands
 
@@ -202,17 +205,15 @@ that command — confirmed where noted).
 | `update_persona_and_publish` | **Fixed in #144.** `publishMockPersonaHead` posts kind **30175** via `submitSignedEvent` (content/tags mirror `persona_event_content` / NIP-AP); mock catalog bookkeeping skipped on success. Also covers `set_persona_shared` through the same helper. Spec: `bridge-relay-mutations.spec.ts`. |
 | `archive_identity`, `unarchive_identity` | **Fixed in #144.** Relay posts kind **9035** / **9036** with `-` + `p` (+ optional `reason` / `replaced-by`); owner path attaches live kind:0 NIP-OA `auth` tag when present. Mirrors `identity_archive.rs` / `events::build_*_identity_request`. Spec: `bridge-relay-mutations.spec.ts`. |
 | `send_managed_agent_channel_message` | **Fixed in #144.** Relay path signs kind **9** as the managed agent (`MockManagedAgentSeed.privateKeyHex` → real nsec), attaches client markers, and sends NIP-OA `x-auth-tag` from the owner identity (mirrors `managed_agent_submission_auth_tag`). Without a real agent key the command errors visibly rather than silently mocking. Spec: `bridge-relay-mutations.spec.ts`. |
+| `create_workflow`, `update_workflow`, `delete_workflow`, `trigger_workflow` | **Fixed in #172.** Relay publishes kind **30620** (`d`+`h`, YAML content), kind **5** (`a=30620:owner:id`), kind **46020** (`d`). Skips mock workflow stores. Mirrors `commands/workflows.rs` + `events::build_workflow_*`. Spec: `bridge-relay-mutations.spec.ts`. |
 
 ### (b) Mock-only traps
 
-None remaining from the #133/#144 lists. Commands that still stop at the mock
-boundary despite a real Rust Nostr mutation are recorded under
-[(c)](#c-legitimately-local-only-or-confirmed--misclassified) as
-**misclassified / follow-up** (workflows).
+None remaining from the #133/#144/#172 lists.
 
 ### (c) Legitimately local-only or confirmed / misclassified
 
-| Command(s) | Classification after Rust confirmation (#144) |
+| Command(s) | Classification after Rust confirmation (#144 / #172) |
 |---|---|
 | `create_persona`, `update_persona`, `delete_persona`, `set_persona_active` | Local persona catalog persistence; `update_persona` queues local pending state. Publishing is the separate `update_persona_and_publish` / `set_persona_shared` path (now relay-aware). |
 | `create_channel_template` | E2E-only local template fixture state. |
@@ -222,11 +223,10 @@ boundary despite a real Rust Nostr mutation are recorded under
 | `save_custom_harness`, `delete_custom_harness`, `connect_acp_runtime`, `install_acp_runtime` | Local ACP configuration/process installation. |
 | `plugin:process\|restart`, updater, opener, window/resource/plugin commands | OS/plugin/process shims, not relay mutations. |
 | Pairing and identity-recovery UI commands | Native pairing flow; relay interaction is outside this mocked command state. |
-| `create_workflow`, `update_workflow`, `delete_workflow`, `trigger_workflow` | **Misclassified on the bridge side.** Rust (`commands/workflows.rs`) **does** publish via `submit_event`: kind **30620** definition (`d`+`h`), kind **5** delete targeting `a=30620:owner:id`, kind **46020** trigger (`d`). Bridge handlers remain mock-local. Follow-up candidate (not in #144 DoD command list). |
 | `create_save_subscription`, `delete_save_subscription`, `merge_save_subscription_kinds`, `remove_save_subscription_kind`, `archive_events` | **Confirmed local-only against Rust.** `archive/mod.rs`: `create_save_subscription` probes access then upserts SQLite; `archive_events` queries the relay then persists to the local archive DB — neither command publishes a mutation event. Bridge mock state matches that boundary. |
 | Sleep prevention, clipboard/download/save, and media picker/upload shims | OS/filesystem/native media shims; separate message commands publish relay events. |
 
-## Rust confirmation (#144)
+## Rust confirmation (#144 / #172)
 
 Checked against:
 
@@ -236,7 +236,7 @@ Checked against:
 | Persona publish | `desktop/src-tauri/src/commands/personas/sharing.rs` | Kind 30175 via `submit_signed_event_at_with_keys`. Bridge now mirrors. |
 | Identity archive | `desktop/src-tauri/src/commands/identity_archive.rs` + `events.rs` | Kind 9035/9036. Bridge now mirrors. |
 | Managed agent message | `desktop/src-tauri/src/commands/messages.rs` | Kind 9 signed as agent + optional `x-auth-tag`. Bridge now mirrors when `privateKeyHex` is seeded. |
-| Workflows | `desktop/src-tauri/src/commands/workflows.rs` + `events.rs` | **Do publish** 30620 / 5 / 46020. Bridge still mock-only → follow-up. |
+| Workflows | `desktop/src-tauri/src/commands/workflows.rs` + `events.rs` | **Fixed in #172.** Kind **30620** definition (`d`+`h`, YAML content), kind **5** delete (`a=30620:owner:id`), kind **46020** trigger (`d`). No kind **30625** in Rust (issue title hypothesis only). Bridge relay branches mirror; return shapes match Rust (`WorkflowSaveWire` / `{ event_id }` for trigger). Spec: `bridge-relay-mutations.spec.ts`. |
 | Local archive | `desktop/src-tauri/src/archive/mod.rs` | **No mutation publish**; SQLite + query. Bridge local-only confirmed. |
 
 ## Limits

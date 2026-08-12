@@ -1468,6 +1468,10 @@ const DEFAULT_RELAY_WS_URL = "ws://localhost:3000";
 const KIND_REACTION = 7; // NIP-25 reaction
 const KIND_DELETION = 5; // NIP-09 deletion
 const KIND_NIP29_DELETION = 9005;
+/** Kind 30620 — replaceable workflow definition (`d` + `h`, YAML content). */
+const KIND_WORKFLOW_DEFINITION = 30620;
+/** Kind 46020 — workflow trigger (`d` = workflow id). */
+const KIND_WORKFLOW_TRIGGER = 46020;
 const CHANNEL_WINDOW_AUX_KINDS = new Set([
   KIND_REACTION,
   KIND_DELETION,
@@ -3559,6 +3563,65 @@ function parseWorkflowDefinition(
   return parsed as Record<string, unknown>;
 }
 
+/**
+ * Soft YAML→object parse matching Rust `parse_definition`: on failure return
+ * `{}` so a malformed body cannot break the local save wire record after a
+ * successful relay submit.
+ */
+function parseWorkflowDefinitionSoft(
+  yamlDefinition: string,
+): Record<string, unknown> {
+  try {
+    const parsed = yamlParse(yamlDefinition);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Fall through to empty object (mirrors Rust).
+  }
+  return {};
+}
+
+/** Build the WorkflowWire record Rust returns from create/update inputs. */
+function workflowWireRecord(args: {
+  id: string;
+  channelId: string | null;
+  ownerPubkey: string;
+  yamlDefinition: string;
+  createdAt: number;
+  updatedAt: number;
+}): MockWorkflow {
+  const definition = parseWorkflowDefinitionSoft(args.yamlDefinition);
+  const nameCandidate =
+    typeof definition.name === "string" ? definition.name.trim() : "";
+  return {
+    id: args.id,
+    name: nameCandidate.length > 0 ? nameCandidate : args.id,
+    owner_pubkey: args.ownerPubkey,
+    channel_id: args.channelId,
+    definition,
+    status: "active",
+    created_at: args.createdAt,
+    updated_at: args.updatedAt,
+  };
+}
+
+/** Parse `response:{...}` / raw JSON from a command OK message (Rust-compatible). */
+function parseCommandResponseMessage(message: string): Record<string, unknown> {
+  const json = message.startsWith("response:")
+    ? message.slice("response:".length)
+    : message;
+  try {
+    const parsed = JSON.parse(json || "{}") as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Ignore — same as Rust `.ok().and_then(...)` for webhook_secret.
+  }
+  return {};
+}
+
 function handleGetChannelWorkflows(args: { channelId: string }) {
   return mockWorkflows.filter((w) => w.channel_id === args.channelId);
 }
@@ -3576,10 +3639,49 @@ function handleGetWorkflow(args: { workflowId: string }) {
   return workflow;
 }
 
-function handleCreateWorkflow(args: {
-  channelId: string;
-  yamlDefinition: string;
-}) {
+/**
+ * Handle `create_workflow`. Relay mode publishes kind 30620 (`d`+`h`, YAML
+ * content) via `submitSignedEvent` and does not touch mock workflow stores
+ * (D-042). Mirrors `commands/workflows.rs` / `events::build_workflow_definition`.
+ */
+async function handleCreateWorkflow(
+  args: {
+    channelId: string;
+    yamlDefinition: string;
+  },
+  config: E2eConfig | undefined,
+) {
+  const identity = getIdentity(config);
+  if (identity) {
+    const workflowId = crypto.randomUUID();
+    const result = await submitSignedEvent(config, {
+      kind: KIND_WORKFLOW_DEFINITION,
+      content: args.yamlDefinition,
+      tags: [
+        ["d", workflowId],
+        ["h", args.channelId],
+      ],
+    });
+    const response = parseCommandResponseMessage(result.message);
+    const webhookSecret =
+      typeof response.webhook_secret === "string"
+        ? response.webhook_secret
+        : undefined;
+    const now = Math.floor(Date.now() / 1000);
+    const workflow = workflowWireRecord({
+      id: workflowId,
+      channelId: args.channelId,
+      ownerPubkey: identity.pubkey,
+      yamlDefinition: args.yamlDefinition,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return {
+      ...workflow,
+      webhook_secret: webhookSecret,
+    };
+  }
+
   mockWorkflowIdCounter += 1;
   const now = Math.floor(Date.now() / 1000);
   const definition = parseWorkflowDefinition(args.yamlDefinition);
@@ -3609,10 +3711,56 @@ function handleCreateWorkflow(args: {
   };
 }
 
-function handleUpdateWorkflow(args: {
-  workflowId: string;
-  yamlDefinition: string;
-}) {
+/**
+ * Handle `update_workflow`. Relay mode looks up the prior kind 30620 for `h`
+ * + created_at, then replaces via the same (pubkey, d) with a new 30620.
+ * Does not update mock stores. Mirrors Rust `update_workflow`.
+ */
+async function handleUpdateWorkflow(
+  args: {
+    workflowId: string;
+    yamlDefinition: string;
+  },
+  config: E2eConfig | undefined,
+) {
+  const identity = getIdentity(config);
+  if (identity) {
+    const prior = await relayQuery(config, [
+      {
+        kinds: [KIND_WORKFLOW_DEFINITION],
+        "#d": [args.workflowId],
+        limit: 1,
+      },
+    ]);
+    const priorEvent = prior[0];
+    if (!priorEvent) {
+      throw new Error("workflow not found");
+    }
+    const channelId = priorEvent.tags.find((tag) => tag[0] === "h")?.[1];
+    if (!channelId) {
+      throw new Error("workflow not found");
+    }
+    await submitSignedEvent(config, {
+      kind: KIND_WORKFLOW_DEFINITION,
+      content: args.yamlDefinition,
+      tags: [
+        ["d", args.workflowId],
+        ["h", channelId],
+      ],
+    });
+    const updatedAt = Math.floor(Date.now() / 1000);
+    const workflow = workflowWireRecord({
+      id: args.workflowId,
+      channelId,
+      ownerPubkey: identity.pubkey,
+      yamlDefinition: args.yamlDefinition,
+      createdAt: priorEvent.created_at,
+      updatedAt,
+    });
+    // Updates never rotate the webhook secret (Rust returns None).
+    return { ...workflow };
+  }
+
   const workflow = mockWorkflows.find((w) => w.id === args.workflowId);
   if (!workflow) throw new Error(`Workflow ${args.workflowId} not found`);
   const definition = parseWorkflowDefinition(args.yamlDefinition);
@@ -3630,7 +3778,26 @@ function handleUpdateWorkflow(args: {
   };
 }
 
-function handleDeleteWorkflow(args: { workflowId: string }) {
+/**
+ * Handle `delete_workflow`. Relay mode publishes kind 5 with
+ * `a=30620:owner:id` and skips mock stores. Mirrors
+ * `events::build_workflow_delete`.
+ */
+async function handleDeleteWorkflow(
+  args: { workflowId: string },
+  config: E2eConfig | undefined,
+) {
+  const identity = getIdentity(config);
+  if (identity) {
+    const coord = `30620:${identity.pubkey}:${args.workflowId}`;
+    await submitSignedEvent(config, {
+      kind: KIND_DELETION,
+      content: "",
+      tags: [["a", coord]],
+    });
+    return;
+  }
+
   const index = mockWorkflows.findIndex((w) => w.id === args.workflowId);
   if (index === -1) throw new Error(`Workflow ${args.workflowId} not found`);
   mockWorkflows.splice(index, 1);
@@ -3699,7 +3866,25 @@ function buildMockWorkflowRun(workflow: MockWorkflow): RawWorkflowRun {
   };
 }
 
-function handleTriggerWorkflow(args: { workflowId: string }) {
+/**
+ * Handle `trigger_workflow`. Relay mode publishes kind 46020 with `d` and
+ * returns `{ event_id }` (Rust `trigger_workflow`). Mock mode keeps the
+ * existing run-shaped response for smoke.
+ */
+async function handleTriggerWorkflow(
+  args: { workflowId: string },
+  config: E2eConfig | undefined,
+) {
+  const identity = getIdentity(config);
+  if (identity) {
+    const result = await submitSignedEvent(config, {
+      kind: KIND_WORKFLOW_TRIGGER,
+      content: "",
+      tags: [["d", args.workflowId]],
+    });
+    return { event_id: result.event_id };
+  }
+
   const workflow = mockWorkflows.find((w) => w.id === args.workflowId);
   if (!workflow) throw new Error(`Workflow ${args.workflowId} not found`);
   const run = buildMockWorkflowRun(workflow);
@@ -14009,18 +14194,22 @@ export function maybeInstallE2eTauriMocks() {
       case "create_workflow":
         return handleCreateWorkflow(
           payload as Parameters<typeof handleCreateWorkflow>[0],
+          activeConfig,
         );
       case "update_workflow":
         return handleUpdateWorkflow(
           payload as Parameters<typeof handleUpdateWorkflow>[0],
+          activeConfig,
         );
       case "delete_workflow":
         return handleDeleteWorkflow(
           payload as Parameters<typeof handleDeleteWorkflow>[0],
+          activeConfig,
         );
       case "trigger_workflow":
         return handleTriggerWorkflow(
           payload as Parameters<typeof handleTriggerWorkflow>[0],
+          activeConfig,
         );
       case "get_workflow_runs":
         return handleGetWorkflowRuns(
