@@ -12517,16 +12517,10 @@ export function maybeInstallE2eTauriMocks() {
             rows,
             totalDiskBytes:
               seeded.totalDiskBytes ??
-              rows.reduce(
-                (sum, row) => sum + Number(row.diskBytes ?? 0),
-                0,
-              ),
+              rows.reduce((sum, row) => sum + Number(row.diskBytes ?? 0), 0),
             totalCacheBytes:
               seeded.totalCacheBytes ??
-              rows.reduce(
-                (sum, row) => sum + Number(row.cacheBytes ?? 0),
-                0,
-              ),
+              rows.reduce((sum, row) => sum + Number(row.cacheBytes ?? 0), 0),
             reclaimableBytes:
               seeded.reclaimableBytes ??
               rows
@@ -12535,9 +12529,7 @@ export function maybeInstallE2eTauriMocks() {
                   (sum, row) =>
                     sum +
                     Number(
-                      row.tier === "hibernate"
-                        ? row.diskBytes
-                        : row.cacheBytes,
+                      row.tier === "hibernate" ? row.diskBytes : row.cacheBytes,
                     ),
                   0,
                 ),
@@ -12576,8 +12568,10 @@ export function maybeInstallE2eTauriMocks() {
         const req = payload as { worktreePath?: string };
         const bytes = Number(
           (
-            (activeConfig?.mock?.worktreeStorageSnapshot ??
-              defaultWorktreeStorageSnapshot()).rows ?? []
+            (
+              activeConfig?.mock?.worktreeStorageSnapshot ??
+              defaultWorktreeStorageSnapshot()
+            ).rows ?? []
           ).find((row) => row.worktreePath === req.worktreePath)?.cacheBytes ??
             0,
         );
@@ -12597,8 +12591,10 @@ export function maybeInstallE2eTauriMocks() {
       case "remove_project_worktree": {
         const req = payload as { worktreePath?: string };
         const row = (
-          (activeConfig?.mock?.worktreeStorageSnapshot ??
-            defaultWorktreeStorageSnapshot()).rows ?? []
+          (
+            activeConfig?.mock?.worktreeStorageSnapshot ??
+            defaultWorktreeStorageSnapshot()
+          ).rows ?? []
         ).find((entry) => entry.worktreePath === req.worktreePath);
         if (row?.busy || row?.readOnly || row?.dirty) {
           return {
