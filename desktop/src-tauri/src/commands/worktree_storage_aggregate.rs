@@ -20,7 +20,7 @@ use super::project_worktree_registry_parse::ProjectWorktreeKind;
 use super::worktree_storage_alive::load_intervals_and_threshold;
 use super::worktree_storage_policy::{
     classify_reclaim_candidate, pr_link_state, AliveInterval, PolicyInput, PrLinkState,
-    ReclaimClassification, ReclaimTier, DEFAULT_IDLE_THRESHOLD_SECS,
+    ReclaimTier,
 };
 
 /// Bound concurrent `du` / preview work so opening Storage cannot thrash disk.
@@ -254,45 +254,7 @@ async fn measure_row(
         cache_bytes,
     });
 
-    Ok(row_from_parts(
-        repository_path,
-        entry,
-        preview.dirty,
-        preview.busy,
-        branch_pushed,
-        preview.disk_bytes,
-        cache_bytes,
-        checkout_bytes,
-        cache_category_ids,
-        preview.can_clear_cache,
-        preview.can_evict,
-        last_used_at,
-        pr_number,
-        pr_state,
-        pr_title,
-        class,
-    ))
-}
-
-fn row_from_parts(
-    repository_path: String,
-    entry: ProjectWorktreeEntry,
-    dirty: bool,
-    busy: bool,
-    branch_pushed: bool,
-    disk_bytes: u64,
-    cache_bytes: u64,
-    checkout_bytes: u64,
-    cache_category_ids: Vec<String>,
-    can_clear_cache: bool,
-    can_evict: bool,
-    last_used_at: Option<i64>,
-    pr_number: Option<u64>,
-    pr_state: Option<String>,
-    pr_title: Option<String>,
-    class: ReclaimClassification,
-) -> WorktreeStorageRow {
-    WorktreeStorageRow {
+    Ok(WorktreeStorageRow {
         repository_path,
         worktree_path: entry.worktree_path,
         worktree_name: entry.worktree_name,
@@ -306,10 +268,10 @@ fn row_from_parts(
         last_used_at,
         observed_idle_secs: class.observed_idle_secs,
         wall_idle_secs: class.wall_idle_secs,
-        dirty,
-        busy,
+        dirty: preview.dirty,
+        busy: preview.busy,
         branch_pushed,
-        disk_bytes,
+        disk_bytes: preview.disk_bytes,
         cache_bytes,
         checkout_bytes,
         cache_category_ids,
@@ -318,9 +280,9 @@ fn row_from_parts(
         reason: class.reason,
         read_only: class.read_only,
         refusal_reason: class.refusal_reason,
-        can_clear_cache,
-        can_evict,
-    }
+        can_clear_cache: preview.can_clear_cache,
+        can_evict: preview.can_evict,
+    })
 }
 
 /// Revalidate a suggested row immediately before mutation (TOCTOU).
@@ -535,6 +497,9 @@ mod tests {
 
     #[test]
     fn default_threshold_is_48_observed_hours() {
-        assert_eq!(DEFAULT_IDLE_THRESHOLD_SECS, 48 * 3600);
+        assert_eq!(
+            crate::commands::worktree_storage_policy::DEFAULT_IDLE_THRESHOLD_SECS,
+            48 * 3600
+        );
     }
 }
