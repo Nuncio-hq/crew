@@ -141,9 +141,11 @@ export async function submitMessageEdit({
       ],
     );
     if (signal?.aborted) return;
+    // Edit receivers treat `[]` as "wipe attachments"; `undefined` means
+    // "leave imeta alone". Always send an explicit list on the edit path.
     await save(
       finalContent,
-      outgoingTags,
+      outgoingTags ?? [],
       addedMentionPubkeys,
       removedMentionPubkeys,
       suppressLinkPreviews ?? false,

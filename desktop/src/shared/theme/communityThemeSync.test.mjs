@@ -118,9 +118,9 @@ test("live replacement delivered during empty onboarding fetch prevents default 
       throw new Error(`unexpected command: ${command}`);
     },
   };
-  mock.method(relayClient, "subscribeLive", (_filter, callback, onReady) => {
+  mock.method(relayClient, "subscribeLive", (_filter, callback, onStatus) => {
     liveCallback = callback;
-    onReady("eose");
+    onStatus?.({ state: "open" });
     return Promise.resolve(async () => {});
   });
   mock.method(relayClient, "fetchEvents", async () => {
@@ -175,9 +175,10 @@ test("failed live setup cannot authorize hydration publishing", async () => {
 
 test("EOSE-confirmed absence authorizes hydration seeding after live delivery drains", async () => {
   let liveCallback;
-  mock.method(relayClient, "subscribeLive", (_filter, callback, onReady) => {
+  mock.method(relayClient, "subscribeLive", (_filter, callback, onStatus) => {
     liveCallback = callback;
-    onReady("eose");
+    // subscribeLive reports readiness via onStatus, not string tokens.
+    onStatus?.({ state: "open" });
     return Promise.resolve(async () => {});
   });
   mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
@@ -205,9 +206,9 @@ test("unreadable live state cannot authorize hydration publishing", async () => 
       throw new Error(`unexpected command: ${command}`);
     },
   };
-  mock.method(relayClient, "subscribeLive", (_filter, callback, onReady) => {
+  mock.method(relayClient, "subscribeLive", (_filter, callback, onStatus) => {
     liveCallback = callback;
-    onReady("eose");
+    onStatus?.({ state: "open" });
     return Promise.resolve(async () => {});
   });
   mock.method(relayClient, "fetchEvents", async () => {
@@ -228,9 +229,12 @@ test("unreadable live state cannot authorize hydration publishing", async () => 
 });
 
 test("apparently ready live setup cannot authorize hydration publishing", async () => {
-  // Timeout readiness is not proof that the live REQ reached EOSE.
-  mock.method(relayClient, "subscribeLive", (_filter, _callback, onReady) => {
-    onReady("timeout");
+  // Recovering/timeout is not proof that the live REQ reached EOSE.
+  mock.method(relayClient, "subscribeLive", (_filter, _callback, onStatus) => {
+    onStatus?.({
+      state: "recovering",
+      message: "Relay subscription readiness timed out",
+    });
     return Promise.resolve(async () => {});
   });
   mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));

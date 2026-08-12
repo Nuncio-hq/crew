@@ -490,7 +490,9 @@ test("first-event request resolves null when EOSE arrives without an event", asy
 });
 
 test("live readiness distinguishes EOSE from CLOSED", () => {
-  const readiness = [];
+  // Live readiness is reported via onStatus ({ state }), not resolveReady
+  // string tokens — resolveReady only unblocks the setup Promise.
+  const statuses = [];
   const subscriptions = new Map([
     [
       "live-eose",
@@ -498,7 +500,8 @@ test("live readiness distinguishes EOSE from CLOSED", () => {
         mode: "live",
         filter: { kinds: [9], limit: 0 },
         onEvent: () => {},
-        resolveReady: (result) => readiness.push(result),
+        onStatus: (status) => statuses.push(status.state),
+        resolveReady: () => {},
       },
     ],
     [
@@ -507,7 +510,9 @@ test("live readiness distinguishes EOSE from CLOSED", () => {
         mode: "live",
         filter: { kinds: [9], limit: 0 },
         onEvent: () => {},
-        resolveReady: (result) => readiness.push(result),
+        onStatus: (status) => statuses.push(status.state),
+        resolveReady: () => {},
+        rejectReady: () => {},
       },
     ],
   ]);
@@ -524,7 +529,7 @@ test("live readiness distinguishes EOSE from CLOSED", () => {
     sendReq: () => Promise.resolve(),
   });
 
-  assert.deepEqual(readiness, ["eose", "closed"]);
+  assert.deepEqual(statuses, ["open", "closed"]);
 });
 
 test("production CLOSED handler removes terminal live subscriptions", () => {

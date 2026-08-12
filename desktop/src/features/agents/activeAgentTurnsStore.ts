@@ -554,9 +554,13 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
   }
 }
 
-function startPruneInterval() {
+function startPruneInterval(options?: { refreshNow?: boolean }) {
   if (pruneInterval || !isDocumentVisible()) return;
-  pruneExpired();
+  // Do not pruneExpired() on first subscribe: Crew's attention refresh notifies
+  // whenever any turns remain, which would spuriously notify new listeners
+  // (breaking replay/no-op restore tests and useSyncExternalStore subscribe
+  // expectations). Refresh immediately only when returning to the foreground.
+  if (options?.refreshNow) pruneExpired();
   pruneInterval = setInterval(pruneExpired, PRUNE_INTERVAL_MS);
 }
 
@@ -570,7 +574,7 @@ function ensurePruneInterval() {
   if (unsubscribePruneVisibility) return;
   startPruneInterval();
   unsubscribePruneVisibility = subscribeDocumentVisibility((visible) => {
-    if (visible) startPruneInterval();
+    if (visible) startPruneInterval({ refreshNow: true });
     else pausePruneInterval();
   });
 }
