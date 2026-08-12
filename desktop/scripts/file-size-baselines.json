@@ -30,6 +30,11 @@
       "lines": 1067,
       "reason": "Upstream-owned / Crew attention-recovery merge at desktop-v0.5.10 pin; hold recorded wc -l.",
       "recordedAt": "2026-08-12"
+    },
+    "src-tauri/src/managed_agents/readiness.rs": {
+      "lines": 1738,
+      "reason": "Upstream-owned Hermes readiness growth landed in desktop-v0.5.10 sync.",
+      "recordedAt": "2026-08-12"
     }
   }
 }
