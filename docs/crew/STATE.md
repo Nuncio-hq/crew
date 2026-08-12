@@ -63,6 +63,8 @@ In scope:
   --evidence <kind>` tag surface;
 - desktop evidence cards with owner Accept/Reject reactions on ordinary kind-9
   messages;
+- relay-backed reaction, deletion, and canvas publication in the desktop E2E
+  bridge, with a relay-mode evidence-card Accept/Reject spec;
 - ordered Project-thread handoff state from mentions, active-turn telemetry,
   and signed agent replies;
 - ordered multi-agent Project task routing through normal composer mentions;
@@ -147,10 +149,8 @@ Out of scope for this slice:
   state.
 - Phase 09 live probe results are recorded in
   [`verification/0010-evidence-on-thread-log-probes.md`](verification/0010-evidence-on-thread-log-probes.md).
-  Probe 1 is explicitly split between the mock desktop command-payload check
-  and the separate real-relay reaction read-back; the single-process
-  click-to-relay chain remains unverified; issue #133 tracks the relay-backed
-  `add_reaction` bridge follow-up.
+- Verification 0011 records the closed headless click-to-real-relay reaction
+  path and the remaining relay-mutation audit.
 - The desktop unit suite passes with 5045 tests passing, one skipped, and zero
   failures.
 - `buzz-acp` uses the process cwd for ordinary sessions and one validated,
