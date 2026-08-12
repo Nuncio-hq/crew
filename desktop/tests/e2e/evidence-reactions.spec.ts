@@ -47,7 +47,12 @@ test("owner Accept and Reject round-trip as reactions on the evidence card", asy
   page,
 }) => {
   const evidence = await openEvidence(page);
-  const card = page.getByTestId("evidence-card-test-run");
+  // Reject opens the reply composer (`onReply`), which mounts the same message
+  // as the thread-head card. Scope to the timeline card so the dual render
+  // (intentional product behavior) does not trip strict-mode uniqueness.
+  const card = page
+    .getByTestId("message-timeline")
+    .getByTestId("evidence-card-test-run");
   await expect(card).toBeVisible();
 
   await page.evaluate(

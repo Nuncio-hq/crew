@@ -10,6 +10,7 @@ import {
 } from "@/features/messages/lib/threading";
 import { shouldNotifyForEvent } from "@/features/notifications/lib/shouldNotify";
 import { relayClient } from "@/shared/api/relayClient";
+import { CHANNEL_LIVE_BACKLOG_GRACE_SECONDS } from "@/shared/api/relayClientTimings";
 import {
   CHANNEL_EVENT_KINDS,
   CHANNEL_MESSAGE_EVENT_KINDS,
@@ -387,7 +388,13 @@ export function useLiveChannelUpdates(
                 kinds: [...CHANNEL_EVENT_KINDS],
                 "#h": [channelId],
                 limit: 1000,
-                since: Math.floor(Date.now() / 1_000),
+                // Match timeline live (`buildChannelLiveFilter`): bare `since:
+                // now` drops slightly lagged self roots before
+                // `onSelfChannelMessage` can grow authoredRootIds, which starves
+                // the channel-activity hover path for non-mention thread replies.
+                since:
+                  Math.floor(Date.now() / 1_000) -
+                  CHANNEL_LIVE_BACKLOG_GRACE_SECONDS,
               },
               (event) =>
                 handleIncomingMessage(withChannelTagFallback(event, channelId)),

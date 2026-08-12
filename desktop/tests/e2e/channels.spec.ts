@@ -1952,25 +1952,47 @@ test("channel date divider keeps the date sticky while the separator rule scroll
   page,
 }) => {
   await page.goto("/");
+  await page.waitForFunction(
+    () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+  );
 
-  await page.getByTestId("channel-engineering").click();
-  await expect(page.getByTestId("chat-title")).toHaveText("engineering");
-  await waitForMockLiveSubscription(page, "engineering");
-
+  // Seed two recent local days into the mock store BEFORE opening the channel.
+  // Live emits after open are filtered by CHANNEL_LIVE_BACKLOG_GRACE_SECONDS, and
+  // timestamps from 2023 never enter the timeline. Seeding first also lets the
+  // head window resolve with hasMore:false so both virtualized day dividers
+  // prove (historyExhausted) rather than only the newer day.
   await page.evaluate(() => {
-    const firstDay = 1_700_000_000;
-    for (let day = 0; day < 2; day += 1) {
+    const now = new Date();
+    const startOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+    const startOfYesterdaySec =
+      Math.floor(startOfToday.getTime() / 1000) - 86_400;
+    const startOfTodaySec = Math.floor(startOfToday.getTime() / 1000);
+    for (const [day, dayStart] of [
+      [0, startOfYesterdaySec],
+      [1, startOfTodaySec],
+    ] as const) {
       for (let index = 0; index < 14; index += 1) {
         window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
           channelName: "engineering",
           content: `date handoff day ${day + 1} row ${index + 1}\nsecond line for scroll height`,
-          createdAt: firstDay + day * 86_400 + index,
+          // Stay inside the local calendar day (mid-morning + index seconds).
+          createdAt: dayStart + 10 * 3_600 + index,
           pubkey:
             "953d3363262e86b770419834c53d2446409db6d918a57f8f339d495d54ab001f",
+          // Store-only: channel is not open yet.
+          emitLive: false,
         });
       }
     }
   });
+
+  await page.getByTestId("channel-engineering").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("engineering");
+  await waitForMockLiveSubscription(page, "engineering");
 
   await expect(page.getByTestId("message-timeline-day-group")).toHaveCount(2);
   await expect(page.getByTestId("message-timeline-day-divider")).toHaveCount(2);
