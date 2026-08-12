@@ -544,7 +544,14 @@ Crew delta out of both `buzz-sdk` and `buzz-core`.
 Evidence is self-reported and can be fabricated, including numbers and test
 excerpts. This raises the cost of lying and the odds of getting caught, but it
 does not cryptographically verify work. Independent verification remains with
-CI and PR review.
+CI and PR review, and the desktop now performs the mechanical half of that
+review automatically: for `test-run` and `diff-stat` claims that include the
+structured claim lines taught in the office prompt, an evidence-card badge
+compares the claim to the thread PR's `statusCheckRollup` / diff counts
+(Matches CI / Diverges / CI running / Not comparable). The badge informs the
+owner's Accept/Reject decision and never gates or auto-rejects. `metrics` and
+`before-after-visual` stay permanently Not comparable — the machine cannot
+honestly judge them (#175).
 
 Only the CLI can emit the tag in this slice; the desktop composer and mobile
 cannot. Only kind 9 renders an evidence card. Accept/Reject reuse existing

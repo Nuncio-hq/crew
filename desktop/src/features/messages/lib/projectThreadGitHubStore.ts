@@ -27,6 +27,8 @@ const entries = new Map<
 >();
 const listeners = new Set<() => void>();
 let cacheEpoch = 0;
+/** Bumped to force mounted hooks to re-fetch (e2e live rollup transitions). */
+let reloadGeneration = 0;
 let statusFetcher: GitHubStatusFetcher = getThreadGitHubStatus;
 
 /** Test-only seam — ESM named exports are not redefinable via mock.method. */
@@ -92,9 +94,13 @@ export function useProjectThreadGitHub(target: Target | null) {
     [key],
   );
   const snapshot = React.useSyncExternalStore(subscribe, getSnapshot);
+  const generation = React.useSyncExternalStore(
+    subscribe,
+    () => reloadGeneration,
+  );
   React.useEffect(() => {
-    if (target) void load(target, false);
-  }, [target]);
+    if (target) void load(target, generation > 0);
+  }, [target, generation]);
   const refresh = React.useCallback(
     () => (target ? load(target, true) : Promise.resolve()),
     [target],
@@ -102,9 +108,18 @@ export function useProjectThreadGitHub(target: Target | null) {
   return { refresh, snapshot };
 }
 
+/** Clear cache and force every mounted hook to re-fetch. */
+export function reloadProjectThreadGitHubStore(): void {
+  cacheEpoch += 1;
+  entries.clear();
+  reloadGeneration += 1;
+  notify();
+}
+
 export function resetProjectThreadGitHubStore(): void {
   cacheEpoch += 1;
   entries.clear();
+  reloadGeneration = 0;
   statusFetcher = getThreadGitHubStatus;
   notify();
 }

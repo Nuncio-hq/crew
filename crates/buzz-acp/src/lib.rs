@@ -4756,12 +4756,13 @@ mod agent_draft_prompt_tests {
         assert!(section.contains("UI/visual → before/after capture"));
         assert!(section.contains("Capture in place"));
         assert!(section.contains("text-first"));
-        assert!(section.contains("excerpt, don't dump"));
-        assert!(section.contains("No cheap proof exists"));
-        assert!(section.contains("never add a decorative screenshot"));
+        assert!(section.contains("No cheap proof"));
+        assert!(section.contains("no decorative screenshots"));
         assert!(section.contains("Do not use computer interaction"));
+        assert!(section.contains("Tests: <N> passed, <M> failed"));
+        assert!(section.contains("Diff: +<A>/−<D> across <F> files"));
         assert!(section.contains("just desktop-screenshot"));
-        assert!(section.contains("buzz messages send --file"));
+        assert!(section.contains("--file"));
         assert!(section.contains("buzz messages send --evidence <kind>"));
         assert!(section.lines().count() <= 18, "section exceeds 18-line cap");
     }

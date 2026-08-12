@@ -20,6 +20,7 @@ import type { ThreadGitHubStatus } from "@/shared/api/thread-workspace-types";
 import type { ChannelTemplate, RelayEvent } from "@/shared/api/types";
 import { getMarkdownParseCount } from "@/shared/ui/markdown/nodeCache";
 import { syncAgentTurnsFromEvents } from "@/features/agents/activeAgentTurnsStore";
+import { reloadProjectThreadGitHubStore } from "@/features/messages/lib/projectThreadGitHubStore";
 import { recordTimeoutFromRejection } from "@/features/moderation/lib/timeoutStore";
 import {
   injectObserverEventsForE2E,
@@ -1416,6 +1417,10 @@ declare global {
         payload: unknown;
       }>;
     }) => void;
+    __BUZZ_E2E_SET_THREAD_GITHUB_BY_BRANCH__?: (
+      branch: string,
+      status: ThreadGitHubStatus,
+    ) => void;
     __BUZZ_E2E_RESET_OBSERVER_EVENTS__?: () => void;
     __BUZZ_E2E_EMIT_MOCK_READ_STATE__?: (input: {
       clientId: string;
@@ -11047,6 +11052,15 @@ export function maybeInstallE2eTauriMocks() {
   window.__BUZZ_E2E_COMMANDS__ = [];
   window.__BUZZ_E2E_COMMAND_PAYLOADS__ = [];
   window.__BUZZ_E2E_COMMAND_LOG__ = [];
+  window.__BUZZ_E2E_SET_THREAD_GITHUB_BY_BRANCH__ = (branch, status) => {
+    const active = getConfig();
+    if (!active?.mock) return;
+    active.mock.threadGitHubByBranch = {
+      ...(active.mock.threadGitHubByBranch ?? {}),
+      [branch]: status,
+    };
+    reloadProjectThreadGitHubStore();
+  };
   window.__BUZZ_E2E_EMIT_MOCK_HUDDLE_TTS_SPEAKER__ = (payload) =>
     emit("huddle-tts-speaker-level", payload);
   window.__BUZZ_E2E_SIGNED_EVENTS__ = [];

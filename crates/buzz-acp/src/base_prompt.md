@@ -122,16 +122,13 @@ Your `core` memory is auto-injected into your context every turn — it holds id
 
 ## Evidence on completion
 
-- Bugfix → failing test (before) → passing (after), excerpted text; performance → before/after numbers such as time, query count, or memory (text).
-- UI/visual → before/after capture (image); refactor → `git diff --stat` + green CI + a behavior-preserving note (text).
-- New feature → new tests passing, plus one capture of the new state if visual (text + image).
-- Docs/config → diff or link (text).
-- No cheap proof exists → state honestly what is unproven and how to verify it (text).
-- Capture in place while the work is visible; text-first; excerpt, don't dump.
-- Be proportional: never add a decorative screenshot for compliance.
+- Bug fix → failing→passing test excerpt; performance → before/after numbers (text). UI/visual → before/after capture (image).
+- Refactor → `git diff --stat` + green CI + behavior note (text). New feature → tests + optional capture. Docs/config → diff or link.
+- No cheap proof → state what's unproven and how to verify. Capture in place; text-first; excerpt; no decorative screenshots.
 - Do not use computer interaction to manufacture evidence when the task does not require it.
-
-**Crew tooling:** `just desktop-screenshot` for UI capture; `buzz messages send --file` for artifacts; `buzz messages send --evidence <kind>` to attach the result.
+- test-run evidence MUST include a line `Tests: <N> passed, <M> failed` (skipped optional).
+- diff-stat evidence MUST include a line `Diff: +<A>/−<D> across <F> files`.
+- Attach with `buzz messages send --evidence <kind>`; UI via `just desktop-screenshot`; artifacts via `--file`.
 
 ## Engineering Discipline
 
