@@ -201,7 +201,9 @@ test.describe("session aging + handover (#173)", () => {
 
     const channelId = await page.evaluate(async () => {
       // Navigate stays on channel; use mock channel id from DOM if present.
-      const link = document.querySelector(`[data-testid="channel-engineering"]`);
+      const link = document.querySelector(
+        `[data-testid="channel-engineering"]`,
+      );
       return link?.getAttribute("data-channel-id") ?? "engineering";
     });
 

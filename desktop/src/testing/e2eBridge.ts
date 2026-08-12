@@ -13727,6 +13727,9 @@ export function maybeInstallE2eTauriMocks() {
               provider: string | null;
               model: string | null;
               preferred_runtime: string | null;
+              handover_summarizer_model?: string | null;
+              compaction_aging_threshold?: number | null;
+              turn_aging_threshold?: number | null;
             };
           }
         ).config;

@@ -81,7 +81,10 @@ async function runGuidedHandover(
   }
 
   const unsubscribe = subscribeControlResults(entry.agentPubkey, (frame) => {
-    if (frame.type !== "guided_handover" && frame.type !== "blind_session_reset") {
+    if (
+      frame.type !== "guided_handover" &&
+      frame.type !== "blind_session_reset"
+    ) {
       return;
     }
     unsubscribe();

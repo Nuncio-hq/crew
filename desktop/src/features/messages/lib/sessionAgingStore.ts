@@ -122,9 +122,7 @@ export function parseSessionAgingPayload(
   const channelId =
     typeof value.channelId === "string" ? value.channelId : null;
   const conversationId =
-    typeof value.conversationId === "string"
-      ? value.conversationId
-      : channelId;
+    typeof value.conversationId === "string" ? value.conversationId : channelId;
   if (!channelId || !conversationId) {
     return null;
   }

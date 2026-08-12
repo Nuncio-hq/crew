@@ -36,9 +36,7 @@ export function HandoverSummarizerSettingsCard() {
         );
       })
       .catch((error) => {
-        toast.error(
-          error instanceof Error ? error.message : String(error),
-        );
+        toast.error(error instanceof Error ? error.message : String(error));
       });
   }, []);
 
@@ -80,8 +78,8 @@ export function HandoverSummarizerSettingsCard() {
             className="text-sm font-normal text-muted-foreground/70"
             data-settings-subcopy
           >
-            Cheap model used for owner-triggered guided handover notes. Same
-            for every agent — not a per-agent setting.
+            Cheap model used for owner-triggered guided handover notes. Same for
+            every agent — not a per-agent setting.
           </p>
           <Input
             data-testid="handover-summarizer-model-input"
@@ -130,7 +128,10 @@ export function HandoverSummarizerSettingsCard() {
                 ...config,
                 compaction_aging_threshold: clamped,
               };
-              if (next.compaction_aging_threshold === config.compaction_aging_threshold) {
+              if (
+                next.compaction_aging_threshold ===
+                config.compaction_aging_threshold
+              ) {
                 return;
               }
               void persist(next);
