@@ -154,7 +154,9 @@ Out of scope for this slice:
 - Phase 09 live probe results are recorded in
   [`verification/0010-evidence-on-thread-log-probes.md`](verification/0010-evidence-on-thread-log-probes.md).
 - Verification 0011 records the closed headless click-to-real-relay reaction
-  path and the remaining relay-mutation audit.
+  path (#133) and the #144 remaining-mutation pass (user-input answer, persona
+  publish, identity archive, managed-agent message) plus Rust confirmation of
+  workflow (still mock-only on the bridge) vs local-archive (confirmed local).
 - The desktop unit suite passes with 5045 tests passing, one skipped, and zero
   failures.
 - `buzz-acp` uses the process cwd for ordinary sessions and one validated,

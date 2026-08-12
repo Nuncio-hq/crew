@@ -177,6 +177,7 @@ export default defineConfig({
         "**/integration.spec.ts",
         "**/dm-double-notification.spec.ts",
         "**/evidence-reactions-relay.spec.ts",
+        "**/bridge-relay-mutations.spec.ts",
         "**/profile.spec.ts",
         "**/sidebar.spec.ts",
         "**/sidebar-relay-card.spec.ts",

@@ -1,3 +1,5 @@
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { emit, listen } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
@@ -111,6 +113,13 @@ export type MockManagedAgentSeed = {
   envVars?: Record<string, string>;
   /** Hermes profile binding (D-019). */
   hermesProfile?: string | null;
+  /**
+   * Real 64-hex private key for relay-mode agent authorship. When set, the
+   * seeded `private_key_nsec` is a real nsec and
+   * `send_managed_agent_channel_message` can sign kind-9 events as this agent.
+   * Omitted → mock nsec string (smoke-only).
+   */
+  privateKeyHex?: string;
   profileReadiness?:
     | { state: "ready" }
     | { state: "missing"; profile: string }
@@ -2372,7 +2381,9 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     respond_to_allowlist: seed.respondToAllowlist ?? [],
     hermes_profile: seed.hermesProfile ?? null,
     profile_readiness: seed.profileReadiness ?? null,
-    private_key_nsec: `nsec1mock${seed.pubkey.slice(0, 20)}`,
+    private_key_nsec: seed.privateKeyHex
+      ? nsecEncode(hexToBytes(seed.privateKeyHex))
+      : `nsec1mock${seed.pubkey.slice(0, 20)}`,
     log_lines: [
       `buzz-acp starting: relay=${DEFAULT_RELAY_WS_URL} agent_pubkey=${seed.pubkey} parallelism=1`,
       "profile created; harness not started",
@@ -5897,6 +5908,111 @@ async function submitSignedEvent(
   });
 }
 
+/**
+ * Sign and POST an event as an arbitrary identity (not necessarily the bridge
+ * user). Used by managed-agent authorship where the event pubkey is the agent.
+ * Optional `authTagJson` is the NIP-OA `x-auth-tag` header (mirrors Rust
+ * `submit_event_with_keys` / managed-agent membership delegation).
+ */
+async function submitSignedEventWithIdentity(
+  config: E2eConfig | undefined,
+  identity: TestIdentity,
+  template: { kind: number; content: string; tags: string[][] },
+  authTagJson?: string | null,
+): Promise<{ event_id: string; accepted: boolean; message: string }> {
+  const signed = await signWithIdentity(identity, template);
+  const headers = new Headers({
+    "Content-Type": "application/json",
+    "X-Pubkey": identity.pubkey,
+  });
+  if (authTagJson?.trim()) {
+    headers.set("x-auth-tag", authTagJson.trim());
+  }
+  const response = await fetch(`${getRelayHttpUrl(config)}/events`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(signed),
+  });
+  await assertOk(response);
+  return response.json() as Promise<{
+    event_id: string;
+    accepted: boolean;
+    message: string;
+  }>;
+}
+
+/** Parse a managed agent's stored nsec into a TestIdentity, or null if mock. */
+function managedAgentSigningIdentity(
+  agent: MockManagedAgent,
+): TestIdentity | null {
+  try {
+    const decoded = decode(agent.private_key_nsec.trim());
+    if (decoded.type !== "nsec") return null;
+    const privateKey = bytesToHex(decoded.data);
+    const pubkey = getPublicKey(decoded.data);
+    if (pubkey.toLowerCase() !== agent.pubkey.toLowerCase()) {
+      throw new Error(
+        `managed agent key does not match stored pubkey ${agent.pubkey}`,
+      );
+    }
+    return { privateKey, pubkey, username: agent.name };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * NIP-OA auth tag JSON for the `x-auth-tag` header, mirroring
+ * `buzz_sdk::nip_oa::compute_auth_tag` with empty conditions (legacy
+ * managed-agent path). Returns null when owner == agent (self).
+ */
+function computeManagedAgentAuthTagJson(
+  owner: TestIdentity,
+  agentPubkey: string,
+): string | null {
+  const agent = agentPubkey.trim().toLowerCase();
+  if (!agent || owner.pubkey.toLowerCase() === agent) return null;
+  const conditions = "";
+  const preimage = new TextEncoder().encode(
+    `nostr:agent-auth:${agent}:${conditions}`,
+  );
+  const message = sha256(preimage);
+  const sig = bytesToHex(schnorr.sign(message, hexToBytes(owner.privateKey)));
+  return JSON.stringify(["auth", owner.pubkey, conditions, sig]);
+}
+
+const KIND_IA_ARCHIVE_REQUEST = 9035;
+const KIND_IA_UNARCHIVE_REQUEST = 9036;
+
+/** Build the kind:30175 content body mirroring `persona_event_content`. */
+function personaCatalogEventContent(persona: RawPersona): string {
+  // Field order matches PersonaEventContent / NIP-AP (display_name first).
+  const content: Record<string, unknown> = {
+    display_name: persona.display_name,
+    // Always emit system_prompt (including empty) so hash stability matches Rust.
+    system_prompt: persona.system_prompt,
+  };
+  if (persona.avatar_url) content.avatar_url = persona.avatar_url;
+  if (persona.runtime) content.runtime = persona.runtime;
+  if (persona.model) content.model = persona.model;
+  if (persona.provider) content.provider = persona.provider;
+  if (persona.name_pool && persona.name_pool.length > 0) {
+    content.name_pool = persona.name_pool;
+  }
+  if (persona.respond_to) content.respond_to = persona.respond_to;
+  if (persona.respond_to_allowlist && persona.respond_to_allowlist.length > 0) {
+    content.respond_to_allowlist = persona.respond_to_allowlist;
+  }
+  if (persona.parallelism != null) content.parallelism = persona.parallelism;
+  return JSON.stringify(content);
+}
+
+function personaCatalogTags(persona: RawPersona): string[][] {
+  const tags: string[][] = [["d", persona.id]];
+  if (persona.shared) tags.push(["shared", "true"]);
+  return tags;
+}
+
 /** Build the channel-id → last-message-at map from the returned channel list. */
 function buildLastMessages(
   channels: Array<{ id: string; last_message_at: string | null }>,
@@ -8388,11 +8504,40 @@ type MockPersonaPublicationResult = {
  * Publish a persona's catalog head and report the relay outcome, like
  * `publish_prepared_persona`. A `queued` outcome must NOT make the event
  * visible to catalog readers — that is the whole distinction the UI reports.
+ *
+ * Relay mode posts kind:30175 via `submitSignedEvent` (D-042) and skips mock
+ * catalog bookkeeping; the real WebSocket/subscription supplies the echo.
  */
-function publishMockPersonaHead(
+async function publishMockPersonaHead(
   persona: RawPersona,
   config: E2eConfig | undefined,
-): MockPersonaPublicationResult {
+): Promise<MockPersonaPublicationResult> {
+  const identity = getIdentity(config);
+  if (identity) {
+    try {
+      await submitSignedEvent(config, {
+        kind: KIND_PERSONA,
+        content: personaCatalogEventContent(persona),
+        tags: personaCatalogTags(persona),
+      });
+      return {
+        persona: { ...persona },
+        publicationStatus: "published",
+      };
+    } catch (error) {
+      // Mirror Rust: relay rejection / unreachable stays queued for flush.
+      const message =
+        error instanceof Error
+          ? error.message
+          : "relay unreachable: could not connect to relay";
+      return {
+        persona: { ...persona },
+        publicationStatus: "queued",
+        relayMessage: message,
+      };
+    }
+  }
+
   const publicationStatus =
     config?.mock?.personaSharePublicationStatuses?.[
       personaSharePublicationCallCount++
@@ -9520,10 +9665,90 @@ async function handleSendManagedAgentChannelMessage(
     parentEventId?: string | null;
     additionalMarkers?: string[] | null;
   },
-  _config: E2eConfig | undefined,
+  config: E2eConfig | undefined,
 ): Promise<RawSendChannelMessageResponse> {
   const agent = getMockManagedAgent(args.agentPubkey);
+  const trimmed = args.content.trim();
+  if (!trimmed) {
+    throw new Error("message content is required");
+  }
   const marker = args.marker?.trim();
+  const identity = getIdentity(config);
+
+  if (identity) {
+    // Relay mode: sign as the managed agent (kind 9), mirroring
+    // `send_managed_agent_channel_message` in messages.rs. Requires a real
+    // agent signing key on the mock record (`MockManagedAgentSeed.privateKeyHex`).
+    const agentIdentity = managedAgentSigningIdentity(agent);
+    if (!agentIdentity) {
+      throw new Error(
+        "send_managed_agent_channel_message in relay mode requires a real agent signing key (seed managedAgents[].privateKeyHex)",
+      );
+    }
+
+    if (marker) {
+      const filter: Record<string, unknown> = {
+        kinds: [KIND_STREAM_MESSAGE],
+        "#h": [args.channelId],
+        limit: 50,
+      };
+      if (args.markerScope !== "channel") {
+        filter.authors = [agent.pubkey];
+      }
+      const existingEvents = await relayQuery(config, [filter]);
+      const existing = existingEvents.find((event) =>
+        event.tags.some((tag) => tag[0] === "client" && tag[1] === marker),
+      );
+      if (existing) {
+        return {
+          event_id: existing.id,
+          parent_event_id: args.parentEventId ?? null,
+          root_event_id: args.parentEventId ?? null,
+          depth: args.parentEventId ? 1 : 0,
+          created_at: existing.created_at,
+        };
+      }
+    }
+
+    const tags = args.parentEventId
+      ? buildReplyMessageTags(
+          args.channelId,
+          agent.pubkey,
+          args.parentEventId,
+          args.parentEventId,
+          args.mentionPubkeys ?? undefined,
+        )
+      : buildTopLevelMessageTags(
+          args.channelId,
+          args.mentionPubkeys ?? undefined,
+          agent.pubkey,
+        );
+    for (const clientMarker of [marker, ...(args.additionalMarkers ?? [])]) {
+      if (clientMarker?.trim()) tags.push(["client", clientMarker.trim()]);
+    }
+
+    // Membership delegation: when the agent is not the owner, attach the
+    // owner-signed NIP-OA tag so the relay accepts the kind-9 write.
+    const authTagJson = computeManagedAgentAuthTagJson(identity, agent.pubkey);
+    const result = await submitSignedEventWithIdentity(
+      config,
+      agentIdentity,
+      {
+        kind: KIND_STREAM_MESSAGE,
+        content: trimmed,
+        tags,
+      },
+      authTagJson,
+    );
+    return {
+      event_id: result.event_id,
+      parent_event_id: args.parentEventId ?? null,
+      root_event_id: args.parentEventId ?? null,
+      depth: args.parentEventId ? 1 : 0,
+      created_at: Math.floor(Date.now() / 1000),
+    };
+  }
+
   if (marker) {
     const existing = getMockMessageStore(args.channelId).find(
       (event) =>
@@ -9559,8 +9784,8 @@ async function handleSendManagedAgentChannelMessage(
     if (clientMarker?.trim()) tags.push(["client", clientMarker.trim()]);
   }
   const event = createMockEvent(
-    9,
-    args.content.trim(),
+    KIND_STREAM_MESSAGE,
+    trimmed,
     tags,
     agent.pubkey,
     createdAt,
@@ -13460,12 +13685,71 @@ export function maybeInstallE2eTauriMocks() {
           payload as Parameters<typeof handleSendChannelMessage>[0],
           activeConfig,
         );
-      case "send_channel_user_input_answer":
+      case "send_channel_user_input_answer": {
+        const answerArgs = payload as {
+          channelId: string;
+          requestEventId: string;
+          answers: unknown;
+        };
+        if (getIdentity(activeConfig)) {
+          // Mirror user_input.rs / build_agent_user_input_answer: look up the
+          // request, then publish kind 46041 with h + e + p (requesting agent).
+          if (
+            !answerArgs.answers ||
+            typeof answerArgs.answers !== "object" ||
+            Array.isArray(answerArgs.answers)
+          ) {
+            throw new Error("answers must be a JSON object");
+          }
+          const requestEventId = answerArgs.requestEventId.toLowerCase();
+          const events = await relayQuery(activeConfig, [
+            {
+              ids: [requestEventId],
+              kinds: [KIND_AGENT_USER_INPUT_REQUESTED],
+              "#h": [answerArgs.channelId],
+              limit: 1,
+            },
+          ]);
+          const request = events.find((event) => event.id === requestEventId);
+          if (!request) {
+            throw new Error("user-input request was not found");
+          }
+          if (request.kind !== KIND_AGENT_USER_INPUT_REQUESTED) {
+            throw new Error("user-input request has the wrong event kind");
+          }
+          const hTags = request.tags.filter((tag) => tag[0] === "h");
+          const pTags = request.tags.filter((tag) => tag[0] === "p");
+          const ownerPubkey = getRelayIdentity(activeConfig).pubkey;
+          if (hTags.length !== 1 || hTags[0]?.[1] !== answerArgs.channelId) {
+            throw new Error(
+              "user-input request channel relationship is invalid",
+            );
+          }
+          if (
+            pTags.length !== 1 ||
+            pTags[0]?.[1]?.toLowerCase() !== ownerPubkey.toLowerCase()
+          ) {
+            throw new Error(
+              "user-input request is not intended for the current owner",
+            );
+          }
+          const requestingAgent = request.pubkey;
+          return submitSignedEvent(activeConfig, {
+            kind: KIND_AGENT_USER_INPUT_ANSWER,
+            content: JSON.stringify(answerArgs.answers),
+            tags: [
+              ["h", answerArgs.channelId],
+              ["e", requestEventId],
+              ["p", requestingAgent],
+            ],
+          });
+        }
         return {
           event_id: `mock-user-input-answer-${Date.now()}`,
           accepted: true,
           message: "accepted",
         };
+      }
       case "has_managed_agent_channel_message_marker": {
         const args = payload as {
           channelId: string;
@@ -13796,10 +14080,64 @@ export function maybeInstallE2eTauriMocks() {
         }
         return activeConfig?.mock?.relaySelf ?? null;
       case "archive_identity":
-      case "unarchive_identity":
-        // The spec only verifies UI state, not the submitted request shape;
-        // returning null mirrors the Rust submit_event success path.
+      case "unarchive_identity": {
+        // Rust: identity_archive.rs → kind 9035 / 9036 via build_*_identity_request.
+        // Self path attaches no auth tag; owner-of-agent attaches the verified
+        // NIP-OA auth tag from the target's live kind:0 when is_me.
+        if (getIdentity(activeConfig)) {
+          const isArchive = command === "archive_identity";
+          const req = (
+            payload as {
+              req: {
+                targetPubkey: string;
+                content?: string;
+                reason?: string | null;
+                replacedBy?: string | null;
+              };
+            }
+          ).req;
+          const target = req.targetPubkey.trim().toLowerCase();
+          const content = req.content ?? "";
+          const tags: string[][] = [["-"], ["p", target]];
+          if (req.reason?.trim()) {
+            tags.push(["reason", req.reason.trim()]);
+          }
+          if (isArchive && req.replacedBy?.trim()) {
+            const replacedBy = req.replacedBy.trim().toLowerCase();
+            if (replacedBy === target) {
+              throw new Error("replaced-by must differ from the target");
+            }
+            tags.push(["replaced-by", replacedBy]);
+          }
+          // Owner path: attach auth tag when live kind:0 proves we own target.
+          const me = getRelayIdentity(activeConfig).pubkey.toLowerCase();
+          if (me !== target) {
+            const profiles = await relayQuery(activeConfig, [
+              { kinds: [0], authors: [target], limit: 1 },
+            ]);
+            const kind0 = profiles[0];
+            const auth = kind0?.tags.find(
+              (tag) =>
+                tag[0] === "auth" &&
+                tag.length === 4 &&
+                tag[1]?.toLowerCase() === me,
+            );
+            if (auth && auth[1] && auth[3]) {
+              tags.push(["auth", auth[1], auth[2] ?? "", auth[3]]);
+            }
+          }
+          return submitSignedEvent(activeConfig, {
+            kind: isArchive
+              ? KIND_IA_ARCHIVE_REQUEST
+              : KIND_IA_UNARCHIVE_REQUEST,
+            content,
+            tags,
+          });
+        }
+        // The mock path only verifies UI state, not the submitted request shape;
+        // returning null mirrors a swallowed submit success for smoke specs.
         return null;
+      }
       case "set_canvas": {
         const canvasArgs = payload as { channelId: string; content: string };
         if (getIdentity(activeConfig)) {
