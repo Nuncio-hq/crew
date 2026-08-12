@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { setDesktopAppBadge } from "@/features/notifications/lib/desktop";
+import { useLocalWorkspaceSnapshotFocusRefresh } from "@/features/projects/useLocalWorkspaceSnapshotFocusRefresh";
 import { relayClient } from "@/shared/api/relayClient";
 import { useRelayResumeTriggers } from "@/shared/api/useRelayResumeTriggers";
 
@@ -20,6 +21,10 @@ export function useAppShellLifecycleEffects({
   // Event-driven reconnect: network online / focus / visibility short-circuit
   // the backoff timer when the relay session is degraded (CMD+R gap G1).
   useRelayResumeTriggers();
+
+  // D-037 / #139: debounced exact local workspace snapshot re-read on focus
+  // for visible Project surfaces (active `local-repo-snapshot` queries).
+  useLocalWorkspaceSnapshotFocusRefresh();
 
   // Prevent webview file:/// navigation on file drop outside the composer.
   // Scoped to file drags only (text drag-and-drop into inputs still works).
