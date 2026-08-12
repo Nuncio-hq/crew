@@ -332,7 +332,7 @@ pub async fn delete_ledger_entry(dir: &Path, key: &SessionLedgerKey) -> Result<b
     remove_secure_entry(dir, &key.entry_name()).await
 }
 
-fn hermes_provenance<'a>(value: &'a Value) -> Option<&'a Value> {
+fn hermes_provenance(value: &Value) -> Option<&Value> {
     value
         .pointer("/_meta/hermes/sessionProvenance")
         .or_else(|| value.pointer("/params/update/_meta/hermes/sessionProvenance"))

@@ -60,6 +60,7 @@ impl<P> PoolLifecycle<P> {
         Self::Listening
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn is_listening(&self) -> bool {
         matches!(self, Self::Listening)
     }
