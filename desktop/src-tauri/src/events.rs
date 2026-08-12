@@ -11,14 +11,14 @@
 #[path = "event_mention_tags.rs"]
 mod event_mention_tags;
 use buzz_core_pkg::kind::{KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST};
-use event_mention_tags::{mention_reference_tags, mention_tags, removed_mention_tags};
+use event_mention_tags::{mention_tags, removed_mention_tags};
 use nostr::{EventBuilder, EventId, Kind, Tag};
 use uuid::Uuid;
 
 mod message_tags;
 
 use message_tags::{
-    append_client_tags, append_sent_from_thread_tag, emoji_tags, imeta_tags,
+    append_client_tags, append_sent_from_thread_tag, emoji_tags, imeta_tags, mention_reference_tags,
 };
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -63,7 +63,6 @@ fn thread_tags(tr: &ThreadRef) -> Result<Vec<Tag>, String> {
         ])
     }
 }
-
 
 /// Validate a hex pubkey is exactly 64 hex characters.
 pub(crate) fn check_pubkey(pubkey: &str) -> Result<(), String> {

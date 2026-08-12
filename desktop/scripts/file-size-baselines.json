@@ -1,10 +1,35 @@
 {
   "$comment": "Recorded lines use wc -l semantics; keep the exact count printed by the file-size guard.",
   "files": {
+    "src/features/agents/activeAgentTurnsStore.ts": {
+      "lines": 1014,
+      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (focus-refetch / agent turn store).",
+      "recordedAt": "2026-08-12"
+    },
+    "src/features/messages/lib/useRichTextEditor.ts": {
+      "lines": 1002,
+      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (composer paste / message-link handling).",
+      "recordedAt": "2026-08-12"
+    },
+    "src/features/messages/ui/MessageComposer.tsx": {
+      "lines": 1040,
+      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (imeta edit lifecycle + send-to-channel seams).",
+      "recordedAt": "2026-08-12"
+    },
+    "src/features/messages/ui/MessageRow.tsx": {
+      "lines": 1014,
+      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (Send to channel); Crew evidence pass-through remains additive.",
+      "recordedAt": "2026-08-12"
+    },
     "src/features/messages/ui/MessageThreadPanel.tsx": {
-      "lines": 999,
-      "reason": "Upstream-owned file; recorded for issue #111 so upstream sync growth is reviewed without restructuring upstream code.",
-      "recordedAt": "2026-08-10"
+      "lines": 1007,
+      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (Send to channel on replies).",
+      "recordedAt": "2026-08-12"
+    },
+    "src/shared/api/relayClientSession.ts": {
+      "lines": 1067,
+      "reason": "Upstream-owned / Crew attention-recovery merge at desktop-v0.5.10 pin; hold recorded wc -l.",
+      "recordedAt": "2026-08-12"
     }
   }
 }
