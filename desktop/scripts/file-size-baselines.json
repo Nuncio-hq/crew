@@ -2,8 +2,8 @@
   "$comment": "Recorded lines use wc -l semantics; keep the exact count printed by the file-size guard.",
   "files": {
     "src/features/agents/activeAgentTurnsStore.ts": {
-      "lines": 1014,
-      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (focus-refetch / agent turn store).",
+      "lines": 1018,
+      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (focus-refetch / agent turn store); +4 for prune-on-subscribe no-notify guard.",
       "recordedAt": "2026-08-12"
     },
     "src/features/messages/lib/useRichTextEditor.ts": {
