@@ -8,7 +8,7 @@ Assignments carry a free-form label and founder-authored definition text.
 The harness resolves them when creating a fresh channel session and ignores
 non-owner or malformed canvas blocks. Channels without an assignment retain
 the existing prompt behavior.
-Last updated: 2026-08-11
+Last updated: 2026-08-12
 
 ## Founder product direction (docs)
 
@@ -290,10 +290,12 @@ and in flight.
 - **Resolved by D-037(2):** Final board event kind and tag schema is deferred;
   no board event kind or tag schema is defined until a board-like surface is
   prioritized.
-- **Decided: yes; task:** Exact local snapshots refresh on app focus with a
-  debounced point-in-time re-read. File-watcher liveness is a future upgrade
-  tied to the work overview lens in D-037(3). The small implementation task is
-  filed as #139.
+- **Implemented (#139):** Exact local snapshots refresh on app focus with a
+  debounced point-in-time re-read via
+  `useLocalWorkspaceSnapshotFocusRefresh` (trailing 500ms debounce + 5s min
+  interval; invalidates active `local-repo-snapshot` queries only). The D-015
+  exact reader path is unchanged. File-watcher liveness remains a future
+  upgrade tied to the work overview lens in D-037(3).
 - **Decided: stay unsupported:** Symlink-selected workspaces fail closed as
   shipped. GitHub identity and the real project path are the source of truth;
   revisit only on a concrete user need.
@@ -310,7 +312,6 @@ and in flight.
 - Whether a future non-local relay must hard-block local-path publication or
   use a different privacy mechanism.
 - Final board event kind and tag schema.
-- Whether exact local snapshots should additionally refresh on app focus.
 - Whether symlink-selected workspaces should remain unsupported or get a
   separately reviewed canonical-path flow.
 - When to publish or link a real Project on the manager relay for the final
