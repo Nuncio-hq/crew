@@ -16,6 +16,7 @@ type ThreadComposerBotActivityProps = {
   >["openAgentSessionPubkey"];
   openThreadHeadId: string | null | undefined;
   profiles: ComponentProps<typeof BotActivityComposerAction>["profiles"];
+  wakingBotPubkeys: string[];
 };
 
 /** Inline bot activity for the open thread composer (conversation-scoped). */
@@ -27,6 +28,7 @@ export function ThreadComposerBotActivity({
   openAgentSessionPubkey,
   openThreadHeadId,
   profiles,
+  wakingBotPubkeys,
 }: ThreadComposerBotActivityProps) {
   const {
     hasThreadComposerBotActivity,
@@ -48,6 +50,7 @@ export function ThreadComposerBotActivity({
       onOpenAgentSession={onOpenAgentSession}
       openAgentSessionPubkey={openAgentSessionPubkey}
       profiles={profiles}
+      wakingBotPubkeys={wakingBotPubkeys}
       workingBotPubkeys={threadComposerWorkingBotPubkeys}
       variant="inline"
     />

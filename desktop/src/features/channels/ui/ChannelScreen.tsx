@@ -823,6 +823,7 @@ export function ChannelScreen({
               >
                 <ChannelPane
                   activeChannel={activeChannel}
+                  activeCommunityRelayUrl={activeCommunity?.relayUrl}
                   activityAgents={channelAgentSessionAgents}
                   agentPubkeys={agentPubkeys}
                   agentPubkeysPending={agentPubkeysPending}

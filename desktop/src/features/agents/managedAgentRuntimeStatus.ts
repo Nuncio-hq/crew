@@ -2,9 +2,12 @@ import type { ManagedAgentRuntimeStatus } from "@/shared/api/types";
 
 export type AgentCommunityAvailability =
   | "Here"
+  | "Sleeping"
   | "Waking"
   | "Needs setup on this device"
   | "Unavailable";
+
+export const MANAGED_AGENT_SLEEPING_BADGE_LABEL = "Sleeping · wakes on mention";
 
 export function agentCommunityAvailability(
   runtime: ManagedAgentRuntimeStatus,
@@ -13,9 +16,10 @@ export function agentCommunityAvailability(
 
   switch (runtime.lifecycle) {
     case "starting":
-    case "listening":
     case "waking":
       return "Waking";
+    case "listening":
+      return "Sleeping";
     case "ready":
       return "Here";
     case "failed":
@@ -33,6 +37,30 @@ export function agentCommunityStatusDetail(
   if (runtime.lifecycle === "failed")
     return runtime.error ?? "Could not connect";
   return null;
+}
+
+export function isManagedAgentRuntimeSleeping(
+  runtime: ManagedAgentRuntimeStatus | undefined,
+): boolean {
+  return Boolean(runtime?.localSetup && runtime.lifecycle === "listening");
+}
+
+export function isManagedAgentRuntimeWaking(
+  runtime: ManagedAgentRuntimeStatus | undefined,
+): boolean {
+  return Boolean(runtime?.localSetup && runtime.lifecycle === "waking");
+}
+
+export function shouldShowManagedAgentSleepingBadge(
+  runtime: ManagedAgentRuntimeStatus | undefined,
+  isAgentActive: boolean,
+): boolean {
+  return isAgentActive && isManagedAgentRuntimeSleeping(runtime);
+}
+
+export function managedAgentWakingStatusLabel(agentName: string): string {
+  const label = agentName.trim() || "Agent";
+  return `⋯ ${label} is waking up…`;
 }
 
 export function managedAgentRuntimeKey(

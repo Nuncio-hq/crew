@@ -6,7 +6,10 @@ import {
   agentCommunityStatusDetail,
   canonicalRelayUrl,
   findManagedAgentRuntime,
+  MANAGED_AGENT_SLEEPING_BADGE_LABEL,
+  managedAgentWakingStatusLabel,
   managedAgentRuntimeKey,
+  shouldShowManagedAgentSleepingBadge,
 } from "./managedAgentRuntimeStatus.ts";
 
 const runtime = (overrides = {}) => ({
@@ -20,11 +23,15 @@ const runtime = (overrides = {}) => ({
   ...overrides,
 });
 
-test("projects every backend lifecycle to the four product labels", () => {
+test("projects every backend lifecycle to product labels", () => {
   assert.equal(agentCommunityAvailability(runtime()), "Here");
-  for (const lifecycle of ["starting", "listening", "waking"]) {
+  for (const lifecycle of ["starting", "waking"]) {
     assert.equal(agentCommunityAvailability(runtime({ lifecycle })), "Waking");
   }
+  assert.equal(
+    agentCommunityAvailability(runtime({ lifecycle: "listening" })),
+    "Sleeping",
+  );
   for (const lifecycle of ["failed", "stopped"]) {
     assert.equal(
       agentCommunityAvailability(runtime({ lifecycle })),
@@ -40,6 +47,46 @@ test("backend-authoritative local setup takes precedence", () => {
     ),
     "Needs setup on this device",
   );
+});
+
+test("sleeping badge is neutral active-listening copy", () => {
+  assert.equal(
+    MANAGED_AGENT_SLEEPING_BADGE_LABEL,
+    "Sleeping · wakes on mention",
+  );
+  assert.equal(
+    shouldShowManagedAgentSleepingBadge(
+      runtime({ lifecycle: "listening" }),
+      true,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldShowManagedAgentSleepingBadge(
+      runtime({ lifecycle: "listening" }),
+      false,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldShowManagedAgentSleepingBadge(runtime({ lifecycle: "waking" }), true),
+    false,
+  );
+  assert.equal(
+    shouldShowManagedAgentSleepingBadge(
+      runtime({ lifecycle: "listening", localSetup: false }),
+      true,
+    ),
+    false,
+  );
+});
+
+test("waking status label matches typing-indicator style copy", () => {
+  assert.equal(
+    managedAgentWakingStatusLabel("Hermes"),
+    "⋯ Hermes is waking up…",
+  );
+  assert.equal(managedAgentWakingStatusLabel(" "), "⋯ Agent is waking up…");
 });
 
 test("unavailable detail distinguishes stopped and failed", () => {
