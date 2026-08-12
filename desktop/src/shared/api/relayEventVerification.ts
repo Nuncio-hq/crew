@@ -26,6 +26,11 @@ export function relayEventMatchesFilter(
     if (!key.startsWith("#") || !Array.isArray(values)) continue;
     const tagValues = values as string[];
     const tagName = key.slice(1);
+    // Match buzz-core: the relay derives channel context for h-less events,
+    // while an explicit h tag remains authoritative.
+    if (tagName === "h" && !event.tags.some((tag) => tag[0] === "h")) {
+      continue;
+    }
     if (
       tagValues.length === 0 ||
       !event.tags.some(

@@ -59,6 +59,7 @@ import {
   KIND_STREAM_MESSAGE_EDIT,
   KIND_SYSTEM_MESSAGE,
   KIND_TEXT_NOTE,
+  KIND_TYPING_INDICATOR,
   KIND_USER_STATUS,
 } from "@/shared/constants/kinds";
 import type {
@@ -4484,7 +4485,14 @@ function hasMockOwnerKindSubscription(ownerPubkey: string, kind: number) {
 
 function recordMockMessage(channelId: string, event: RelayEvent) {
   const history = getMockMessageStore(channelId);
-  history.push(event);
+  const existingIndex = history.findIndex(
+    (candidate) => candidate.id === event.id,
+  );
+  if (existingIndex === -1) {
+    history.push(event);
+  } else {
+    history[existingIndex] = event;
+  }
 
   const channel = mockChannels.find((candidate) => candidate.id === channelId);
   if (!channel) {
@@ -4493,6 +4501,24 @@ function recordMockMessage(channelId: string, event: RelayEvent) {
 
   channel.last_message_at = new Date(event.created_at * 1_000).toISOString();
   touchMockChannel(channel);
+}
+
+function materializeMockFeedItem(item: RawFeedItem) {
+  if (!item.channel_id) {
+    // Feed-only items have no channel context to store against.
+    return;
+  }
+  recordMockMessage(
+    item.channel_id,
+    createMockEvent(
+      item.kind,
+      item.content,
+      item.tags,
+      item.pubkey,
+      item.created_at,
+      item.id,
+    ),
+  );
 }
 
 function resetMockUserStatuses() {
@@ -4622,13 +4648,13 @@ function emitMockChannelMessage(
   recordMockMessage(channelId, event);
   if (emitLive) emitMockLiveEvent(channelId, event);
   const rootEvent = history.find((candidate) => candidate.id === rootEventId);
-  if (rootEvent && mockHuddle?.state.ephemeral_channel_id === channelId) {
+  if (rootEvent && emitLive) {
     const summary = buildMockChannelThreadSummary(
       channelId,
       rootEvent,
       getMockMessageStore(channelId),
     );
-    if (emitLive && summary) emitMockLiveEvent(channelId, summary);
+    if (summary) emitMockLiveEvent(channelId, summary);
   }
   return event;
 }
@@ -10338,7 +10364,9 @@ function sendToMockSocket(args: {
       return;
     }
 
-    recordMockMessage(channelId, event);
+    if (event.kind !== KIND_TYPING_INDICATOR) {
+      recordMockMessage(channelId, event);
+    }
     emitMockLiveEvent(channelId, event);
     sendWsText(socket.handler, ["OK", event.id, true, ""]);
   }
@@ -10646,12 +10674,14 @@ export function maybeInstallE2eTauriMocks() {
   }) => hasMockOwnerKindSubscription(ownerPubkey, kind);
   window.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__ = (item) => {
     const category = item.category === "mention" ? "mentions" : item.category;
+    materializeMockFeedItem(item);
     mockFeedOverrides[category].unshift(item);
     window.dispatchEvent(new CustomEvent("buzz:e2e-home-feed-updated"));
     return item;
   };
   window.__BUZZ_E2E_REPLACE_MOCK_FEED_ITEM__ = (oldId, item) => {
     const category = item.category === "mention" ? "mentions" : item.category;
+    materializeMockFeedItem(item);
     // Remove the old item from every category bucket (it may have been in a
     // different bucket or the same one).
     for (const bucket of Object.values(mockFeedOverrides)) {

@@ -10,8 +10,6 @@ import {
   KIND_STREAM_MESSAGE,
   KIND_TYPING_INDICATOR,
   KIND_USER_STATUS,
-  CHANNEL_EVENT_KINDS,
-  KIND_CHANNEL_THREAD_SUMMARY,
 } from "@/shared/constants/kinds";
 import {
   getTextPayload,
@@ -26,6 +24,7 @@ import {
   buildChannelAuxDeletionFilter,
   buildChannelFilter,
   buildChannelHistoryFilter,
+  buildChannelLiveFilter,
   buildChannelMentionFilter,
   buildGlobalStreamFilter,
 } from "@/shared/api/relayChannelFilters";
@@ -328,20 +327,13 @@ export class RelayClient {
     return this.subscribe(buildChannelFilter(channelId, 50), onEvent);
   }
 
-  /** Subscribe to channel rows and aux starting now, with no history replay. */
+  /** Subscribe to channel rows, aux, and 39005 recounts for the window store. */
   async subscribeToChannelLive(
     channelId: string,
     onEvent: (event: RelayEvent) => void,
   ) {
-    // 39005 rides only this window-store subscription; other consumers must never see
-    // summary overlays.
     return this.subscribe(
-      {
-        kinds: [...CHANNEL_EVENT_KINDS, KIND_CHANNEL_THREAD_SUMMARY],
-        "#h": [channelId],
-        limit: 1000,
-        since: Math.floor(Date.now() / 1_000),
-      },
+      buildChannelLiveFilter(channelId, Math.floor(Date.now() / 1_000)),
       onEvent,
     );
   }

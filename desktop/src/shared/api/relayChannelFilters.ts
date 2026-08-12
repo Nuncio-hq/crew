@@ -1,6 +1,7 @@
 import {
   CHANNEL_AUX_EVENT_KINDS,
   CHANNEL_EVENT_KINDS,
+  KIND_CHANNEL_THREAD_SUMMARY,
   CHANNEL_TIMELINE_CONTENT_KINDS,
   HOME_MENTION_EVENT_KINDS,
   KIND_DELETION,
@@ -14,6 +15,7 @@ import {
   KIND_STREAM_MESSAGE_EDIT,
 } from "@/shared/constants/kinds";
 import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
+import { CHANNEL_LIVE_BACKLOG_GRACE_SECONDS } from "@/shared/api/relayClientTimings";
 
 // Auxiliary-event backfill: `#e` filters reference loaded message ids to pull
 // their reactions/edits/deletions. Chunk the ids so each REQ stays within
@@ -21,6 +23,32 @@ import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 // a single reaction-heavy message can have many aux events.
 export const AUX_BACKFILL_CHUNK_SIZE = 100;
 export const MAX_HISTORICAL_LIMIT = 10_000;
+
+/**
+ * Window-store live filter for an open channel: rows, aux, and the kind:39005
+ * thread-summary recounts that ride only this subscription (no other consumer
+ * may see summary overlays).
+ *
+ * A relay matches `since` against `created_at`, so a bound of exactly "now"
+ * silently drops two classes of event the timeline must not miss: one published
+ * by a peer whose clock lags ours, and one created between the window fetch that
+ * seeded the timeline and this subscription opening. The client never learns
+ * such an event exists, so nothing short of a refetch recovers it.
+ * {@link CHANNEL_LIVE_BACKLOG_GRACE_SECONDS} trades a small replay for that gap
+ * — the window store merges by event id, so a replayed event it already holds is
+ * dropped and one it does not is exactly the event that would have been lost.
+ */
+export function buildChannelLiveFilter(
+  channelId: string,
+  nowSeconds: number,
+): RelaySubscriptionFilter {
+  return {
+    kinds: [...CHANNEL_EVENT_KINDS, KIND_CHANNEL_THREAD_SUMMARY],
+    "#h": [channelId],
+    limit: 1000,
+    since: nowSeconds - CHANNEL_LIVE_BACKLOG_GRACE_SECONDS,
+  };
+}
 
 export function buildChannelUserInputFilter(
   channelId: string,
