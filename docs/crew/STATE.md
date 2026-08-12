@@ -278,6 +278,13 @@ and in flight.
 - `channel-agent-presence.spec.ts` now passes its needs-you smoke-shard
   scenario in 12/12 clean runs; the fix was an E2E fixture-fidelity gap, not
   a product break (issue #130).
+- `scroll-history.spec.ts` *fast middle-page scroll settles with continuous
+  mounted coverage* now passes; the failure was a harness setup bug, not a
+  virtualizer/page-fetch product break. The test live-emitted backdated
+  messages to force a prepend, but `mergeLiveChannelWindowEvent` correctly
+  drops events below the open oldest boundary (they wait for ordinary relay
+  paging). Setup now seeds older mock history and wheels up for a real
+  older-page prepend before the middle-scroll coverage asserts (issue #155).
 - Earlier focused live relay test: `1/1` passed with an isolated Buzz relay.
 - Typecheck, file-size gate, Biome checks, production build, and
   `git diff --check` passed.
