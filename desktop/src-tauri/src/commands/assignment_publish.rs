@@ -27,6 +27,7 @@ pub(crate) async fn publish_assignment_announcement(
         &[],
         &[],
         &[],
+        None,
         &relay_base,
     )?;
     submit_event(builder, state)

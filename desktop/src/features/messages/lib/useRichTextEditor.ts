@@ -30,7 +30,7 @@ import { CUSTOM_EMOJI_NODE_NAME } from "./customEmojiNode";
 import { useComposerCustomEmoji } from "./useComposerCustomEmoji";
 import { buildPlainTextProjection } from "./plainTextProjection";
 import { buildPreviewUpdate } from "./linkPreviewContent";
-import { handleComposerPaste } from "./composerPasteHandler";
+import { parseSnapshotClipboardHtml } from "./agentSnapshotClipboard";
 import { createLinkInteractionExtension } from "./linkInteractionExtension";
 import {
   CodeBlockAfterHardBreak,
@@ -38,6 +38,9 @@ import {
   insertNewlineInCodeBlock,
 } from "./codeBlockExtensions";
 import { SpoilerMark } from "./spoilerMark";
+import { createComposerLinkPasteHandler } from "./composerMessageLinkNode";
+import type { ComposerMessageLinkChannel } from "./useComposerMessageLinks";
+import { useComposerMessageLinks } from "./useComposerMessageLinks";
 
 function hardBreakLineBounds($from: ResolvedPos) {
   const parentStart = $from.start();
@@ -85,6 +88,7 @@ export type RichTextEditorOptions = {
   /** Lowercased agent display name → avatar URL for composer mention chips. */
   agentAvatarUrlsByName?: Record<string, string>;
   channelNames?: string[];
+  messageLinkChannels?: readonly ComposerMessageLinkChannel[];
   /** Known custom-emoji set; used to render `:shortcode:` inline as images. */
   customEmoji?: CustomEmoji[];
   /** Called on plain Enter (submit). Handled inside Tiptap's extension system
@@ -204,6 +208,7 @@ export function useRichTextEditor({
   agentMentionNames,
   agentAvatarUrlsByName,
   channelNames,
+  messageLinkChannels,
   customEmoji,
   onSubmit,
   onEditLastOwnMessage,
@@ -236,6 +241,7 @@ export function useRichTextEditor({
   // Custom-emoji atom node wiring (config + src re-resolve). Kept in a sibling
   // hook so this file stays focused on generic editor setup.
   const customEmojiWiring = useComposerCustomEmoji(customEmoji);
+  const messageLinkWiring = useComposerMessageLinks(messageLinkChannels);
 
   const editor = useEditor(
     {
@@ -460,6 +466,7 @@ export function useRichTextEditor({
         SpoilerMark,
         MentionHighlightExtension,
         customEmojiWiring.extension,
+        messageLinkWiring.extension,
         Placeholder.configure({
           placeholder: () => placeholderRef.current ?? "Write a message…",
         }),
@@ -493,7 +500,15 @@ export function useRichTextEditor({
       ],
       editorProps: {
         handleDOMEvents: {
-          paste: handleComposerPaste,
+          paste: (view, event) =>
+            parseSnapshotClipboardHtml(
+              (event as ClipboardEvent).clipboardData?.getData("text/html") ??
+                "",
+            )
+              ? false
+              : createComposerLinkPasteHandler(
+                  messageLinkWiring.resolveChannelName,
+                )(view, event as ClipboardEvent),
         },
         attributes: {
           autocapitalize: "none",
@@ -714,6 +729,11 @@ export function useRichTextEditor({
     if (!editor) return;
     customEmojiWiring.syncEmojiSrc(editor);
   }, [editor, customEmojiWiring.syncEmojiSrc]);
+
+  React.useEffect(() => {
+    if (!editor) return;
+    messageLinkWiring.syncChannelNames(editor);
+  }, [editor, messageLinkWiring.syncChannelNames]);
 
   const getMarkdown = React.useCallback((): string => {
     if (!editor) return "";

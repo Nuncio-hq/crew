@@ -861,6 +861,7 @@ export class RelayClient {
   }
 
   private handleEose(subId: string) {
+    this.flushEventBuffer(); // Deliver preceding EVENT frames before EOSE.
     closedRecovery.handleSubscriptionEose({
       subscriptions: this.subscriptions,
       subId,

@@ -9,6 +9,7 @@ export type EditMessageInput = {
   mentionPubkeys: string[];
   suppressLinkPreviews: boolean;
   removedMentionPubkeys: string[];
+  mentionTags?: string[][] | null;
 };
 
 export async function editMessage(
@@ -20,6 +21,7 @@ export async function editMessage(
   mentionPubkeys?: string[],
   suppressLinkPreviews?: boolean,
   removedMentionPubkeys?: string[],
+  mentionTags?: string[][],
 ): Promise<void> {
   await invokeTauri("edit_message", {
     input: {
@@ -31,6 +33,7 @@ export async function editMessage(
       mentionPubkeys: mentionPubkeys ?? [],
       suppressLinkPreviews: suppressLinkPreviews ?? false,
       removedMentionPubkeys: removedMentionPubkeys ?? [],
+      mentionTags: mentionTags ?? null,
     },
   });
 }
