@@ -40,6 +40,7 @@ pub mod retention;
 mod runtime;
 mod runtime_commands;
 mod runtime_types;
+mod session_aging_env;
 pub(crate) mod snapshot_avatar;
 pub(crate) mod spawn_snapshot;
 pub(crate) mod storage;

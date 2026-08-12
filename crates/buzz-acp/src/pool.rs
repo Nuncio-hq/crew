@@ -56,7 +56,9 @@ use crate::secure_spool::{
     remove_secure_entry, rename_secure_entry, write_secure_entry_if_absent,
 };
 use crate::session_ledger::{
-    decide_session_load, declare_session, delete_ledger_entry, parse_engine_rotation_signal,
+    aging_from_entry, aging_thresholds_from_env, decide_session_load, declare_session,
+    delete_ledger_entry, parse_engine_rotation_signal, record_compaction_hook,
+    record_session_turn,
     read_ledger_entry, record_rotation_signal, SessionLedgerKey, SessionLoadDecision,
     SessionLoadValidation,
 };
@@ -1716,43 +1718,127 @@ fn compose_role_and_routing_prompt(
     }
 }
 
-/// Persist a live Hermes/Codex rotation signal onto the durable ledger (#180).
+/// Persist live rotation / hook / turn signals onto the durable ledger
+/// (#180 wake lineage + #173 owner-facing compaction aging).
 async fn persist_observed_rotation(agent: &mut OwnedAgent, ctx: &PromptContext, channel_id: Uuid) {
-    let Some(snapshot) = agent.acp.take_rotation_signal() else {
-        return;
-    };
     let key = SessionLedgerKey::new(
         &ctx.relay_url,
         ctx.agent_keys.public_key().to_hex(),
         channel_id,
     );
-    match record_rotation_signal(&ctx.session_ledger_dir, &key, &snapshot).await {
+    let snapshot = agent.acp.take_rotation_signal();
+    let post_compact_hooks = agent.acp.take_post_compact_hooks();
+
+    if let Some(snapshot) = snapshot.as_ref() {
+        match record_rotation_signal(&ctx.session_ledger_dir, &key, snapshot).await {
+            Ok(Some(entry)) => {
+                tracing::info!(
+                    target: "pool::session",
+                    depth = entry.rotation_count,
+                    compaction = entry.compaction_count,
+                    tip = entry
+                        .lineage
+                        .last()
+                        .map(|t| t.internal_session_id.as_str())
+                        .unwrap_or(""),
+                    "persisted engine rotation signal on session ledger"
+                );
+            }
+            Ok(None) => {
+                tracing::debug!(
+                    target: "pool::session",
+                    "rotation signal observed but no ledger entry yet — ignored"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "pool::session",
+                    error = %error,
+                    "failed to persist engine rotation signal on ledger"
+                );
+            }
+        }
+    }
+
+    for _ in 0..post_compact_hooks {
+        match record_compaction_hook(&ctx.session_ledger_dir, &key).await {
+            Ok(Some(entry)) => {
+                tracing::info!(
+                    target: "pool::session",
+                    compaction = entry.compaction_count,
+                    "persisted _PostCompact hook on session ledger"
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    target: "pool::session",
+                    error = %error,
+                    "failed to persist _PostCompact hook on ledger"
+                );
+            }
+        }
+    }
+
+    // Turn-count safety net (#173) — every completed turn ages the session.
+    match record_session_turn(&ctx.session_ledger_dir, &key).await {
         Ok(Some(entry)) => {
-            tracing::info!(
-                target: "pool::session",
-                depth = entry.rotation_count,
-                tip = entry
-                    .lineage
-                    .last()
-                    .map(|t| t.internal_session_id.as_str())
-                    .unwrap_or(""),
-                "persisted engine rotation signal on session ledger"
-            );
+            emit_session_aging_if_needed(agent, ctx, channel_id, &entry);
         }
-        Ok(None) => {
-            tracing::debug!(
-                target: "pool::session",
-                "rotation signal observed but no ledger entry yet — ignored"
-            );
-        }
+        Ok(None) => {}
         Err(error) => {
             tracing::warn!(
                 target: "pool::session",
                 error = %error,
-                "failed to persist engine rotation signal on ledger"
+                "failed to persist session turn count on ledger"
             );
         }
     }
+}
+
+fn emit_session_aging_if_needed(
+    agent: &OwnedAgent,
+    ctx: &PromptContext,
+    channel_id: Uuid,
+    entry: &crate::session_ledger::SessionLedgerEntry,
+) {
+    let Some(observer) = agent.acp.observer_handle() else {
+        return;
+    };
+    let (compaction_threshold, turn_threshold) = aging_thresholds_from_env();
+    let aging = aging_from_entry(entry, compaction_threshold, turn_threshold);
+    if !aging.aging {
+        return;
+    }
+    let context = crate::observer::context_for_conversation(
+        Some(channel_id),
+        Some(channel_id),
+        Some(entry.current.session_id.clone()),
+        None,
+    );
+    observer.emit(
+        "session_aging",
+        agent.acp.observer_agent_index(),
+        &context,
+        serde_json::json!({
+            "pubkey": ctx.agent_keys.public_key().to_hex(),
+            "relayUrl": ctx.relay_url,
+            "channelId": channel_id.to_string(),
+            "conversationId": channel_id.to_string(),
+            "sessionId": entry.current.session_id,
+            "aging": true,
+            "reason": aging.reason,
+            "compactionCount": if aging.signal.may_show_count() {
+                aging.compaction_count
+            } else {
+                0
+            },
+            "compactionSignal": aging.signal.as_str(),
+            "sessionTurnCount": aging.session_turn_count,
+            "compactionThreshold": compaction_threshold,
+            "turnThreshold": turn_threshold,
+        }),
+    );
 }
 
 /// Return `agent` to the pool via `result_tx`, clearing any steer receiver first.

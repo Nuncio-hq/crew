@@ -75,3 +75,4 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0019-native-tool-process-cost.md`](0019-native-tool-process-cost.md)
 - [`0021-evidence-tag-roundtrip.md`](0021-evidence-tag-roundtrip.md)
 - [`0022-loadsession-reality-matrix.md`](0022-loadsession-reality-matrix.md)
+- [`0023-compaction-signal-matrix.md`](0023-compaction-signal-matrix.md)

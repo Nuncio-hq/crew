@@ -934,3 +934,39 @@ rebuild already covered corruption / `loadSession: false`; it did not cover
    eviction, multi-slot resume, spin-down changes.
 
 Contract tests: rotate-then-wake lag → rebuild; multi-thread lineage isolation.
+
+## D-050 — Honest session compaction aging + guided handover
+
+- **Status:** Accepted
+- **Date:** 2026-08-12
+- **Issue:** #173 (builds on #169 / D-048 ledger and #180 / D-049 rotation;
+  does not re-litigate wake-lag correctness)
+
+Long-lived sessions (#169) accumulate silent engine compaction. The owner needs
+an honest count, a soft aging warning, and a guided way to start fresh — never
+an automatic reset and never a fabricated number.
+
+1. **Detection (`CompactionSignal`)** — per-engine adapters only:
+   - Hermes / Codex: existing ACP / rollout signals (#180) also advance
+     owner-facing `compaction_count` + `compaction_signal=Known`.
+   - buzz-agent: `_PostCompact` hook tool_calls.
+   - Claude / Grok (unproven): `Unknown` forever + turn-count safety net
+     (default 100). No number is shown.
+   - Adapter parse failure → sticky `Unavailable` (never miscount).
+   - `used` / `contextLimit` deltas are UI decoration only.
+2. **Persistence** — ledger fields `compaction_count`, `compaction_signal`,
+   `session_turn_count` beside `rotation_count`; reset on every `session/new`
+   declare (including `OwnerReset`).
+3. **Awareness** — threshold default 3 (configurable 1–10). Crossing projects a
+   **benign thread banner** under the thread header (UI comment on #173): never
+   Lost contact / Possibly stalled, no Mission Inbox entry, no thread spam,
+   agents stay silent (`base_prompt` unchanged).
+4. **Guided handover** — owner-triggered observer control. Per-app summarizer
+   model (Settings → Agents). Note on thread tagged `["crew-handover", model]`
+   with labeled card; then session invalidate + ledger `OwnerReset`. Summarizer
+   failure returns `allowBlindReset` and never blocks reset.
+5. **Non-goals** — auto-handover on every compact; changing engine thresholds;
+   agents announcing compaction; per-agent summarizer override; wake-lag work
+   (#180).
+
+Spike: `docs/crew/spikes/0023-compaction-signal-matrix.md`.

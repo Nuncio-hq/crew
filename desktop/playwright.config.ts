@@ -147,6 +147,7 @@ export default defineConfig({
         "**/agent-provider-dropdowns.spec.ts",
         "**/agent-lifecycle-feedback.spec.ts",
         "**/agent-sleeping-state.spec.ts",
+        "**/session-aging-handover.spec.ts",
         "**/agent-access-warning.spec.ts",
         "**/edit-agent-run-on.spec.ts",
         "**/inbox-live-update.spec.ts",

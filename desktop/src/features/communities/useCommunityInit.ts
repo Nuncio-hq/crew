@@ -37,6 +37,7 @@ import { resetUserInputAttentionProjection } from "@/features/agents/userInputAt
 import { resetChannelAgentPresenceCache } from "@/features/agents/channelAgentPresence";
 import { resetMissionInboxCache } from "@/features/home/lib/missionInbox";
 import { resetAgentObserverStore } from "@/features/agents/observerRelayStore";
+import { clearAllSessionAging } from "@/features/messages/lib/sessionAgingStore";
 import { resetThreadAgentActivityHeadlineCaches } from "@/features/messages/ui/conversationActivityHeadline";
 import {
   restoreProjectThreadWorkspacesForCommunity,
@@ -70,6 +71,7 @@ function resetCommunityState({
   resetRateLimitGate();
   clearAllDrafts();
   resetAgentObserverStore();
+  clearAllSessionAging();
   resetActiveAgentTurnsStore();
   resetThreadAgentActivityHeadlineCaches();
   resetAgentWorkingSignal();

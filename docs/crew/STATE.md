@@ -1,12 +1,22 @@
 # Crew State
 
+## Issue #173 — session compaction awareness + guided handover
+
+Honest per-engine `CompactionSignal` adapters update ledger `compaction_count`
+(Known only; Unknown/Unavailable never show a number) plus a turn-count safety
+net (default 100). Crossing threshold 3 (configurable 1–10) projects a benign
+**thread banner** with owner-triggered guided handover: per-app summarizer
+model, `["crew-handover", model]` note card, ledger `OwnerReset`. Summarizer
+failure degrades to informed blind reset. See D-050 and spike 0023.
+Last updated: 2026-08-12
+
 ## Issue #180 — session ledger compaction / rotation awareness
 
 Hermes `sessionProvenance` and Codex compacted markers update ledger
 `rotation_count` + optional `lineage` tips. Wake re-validates after
 `session/load`: if the ledger lags the engine or the lineage tip mismatches,
 resume is refused and the #169 fail-closed rebuild + delta path runs. Owner
-aging UI / guided handover remains #173. See D-049.
+aging UI / guided handover is #173 / D-050. See D-049.
 Last updated: 2026-08-12
 
 ## Issue #169 — idle engine spin-down + resume-first wake

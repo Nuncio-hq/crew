@@ -39,8 +39,10 @@ The local upstream push URL is deliberately disabled. Never push to
 | `crates/buzz-acp/src/lib.rs` | machine-check the shared prompt contract; idle pool spin-down + wake restore (#169) | retain prompt assertions; keep drain/wake arms additive beside existing lazy-pool select loop |
 | `crates/buzz-acp/src/pool.rs` | resume-first session acquire + ledger declare-at-birth (#169); post-load lineage check + live rotation persist (#180) | keep resume/rebuild inside the channel session block; do not invent parallel session maps |
 | `crates/buzz-acp/src/pool_lifecycle.rs` | Ready → Draining → Listening reverse transition (#169) | merge drain helpers; preserve forward wake/retry contract tests |
-| `crates/buzz-acp/src/session_ledger.rs` | Crew-landed durable session ledger (#169) + rotation/lineage (#180; upstream-candidacy) | additive file — prefer keeping intact on sync |
-| `crates/buzz-acp/src/acp.rs` | ACP v1 `session/load` client (#169); Hermes/Codex rotation signal capture (#180) | retain beside `session_new_full`; capability-gated by callers |
+| `crates/buzz-acp/src/session_ledger.rs` | Crew-landed durable session ledger (#169) + rotation/lineage (#180) + owner `compaction_count` / turn net (#173; upstream-candidacy) | additive file — prefer keeping intact on sync |
+| `crates/buzz-acp/src/compaction_signal.rs` | Crew-landed honest CompactionSignal adapters + aging projection (#173) | additive file — prefer keeping intact on sync |
+| `crates/buzz-acp/src/guided_handover.rs` | Crew-landed owner guided/blind handover controls (#173) | additive file — prefer keeping intact on sync |
+| `crates/buzz-acp/src/acp.rs` | ACP v1 `session/load` client (#169); Hermes/Codex rotation signal capture (#180); `_PostCompact` hook count (#173) | retain beside `session_new_full`; capability-gated by callers |
 | `crates/buzz-acp/src/config.rs` | `--pool-idle-timeout` / `BUZZ_ACP_POOL_IDLE_TIMEOUT` (#169) | retain clap/env field + default 1800; 0 disables |
 | `desktop/src-tauri/src/managed_agents/runtime.rs` | desktop passes pool idle timeout for local pairs (#169) | keep env injection next to `BUZZ_ACP_LAZY_POOL` |
 | `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs` | reserve pool idle timeout from persona/user override (#169) | keep key in the shared reserved list |
@@ -51,7 +53,13 @@ The local upstream push URL is deliberately disabled. Never push to
 | `crates/buzz-cli/TESTING.md` | document the additive evidence flag in the CLI test inventory | retain the one-row flag inventory update; do not rewrite unrelated runbook steps |
 | `desktop/playwright.config.ts` | register Crew evidence contracts in the smoke project | retain the narrow test-match addition; do not reorder unrelated entries |
 | `desktop/src/features/messages/ui/MessageRow.tsx` | pass evidence-card review props through the existing default-body seam (987 lines) | retain the seven-line prop pass-through only; keep evidence logic out of this upstream-derived file |
-| `desktop/src/features/messages/ui/MessageRowDefaultBody.tsx` | dispatch known Crew evidence tags before ordinary Markdown rendering (163 lines) | preserve ordinary body fallback and keep card implementation in Crew-owned files |
+| `desktop/src/features/messages/ui/MessageRowDefaultBody.tsx` | dispatch known Crew evidence tags + handover note card before ordinary Markdown rendering (#121/#173) | preserve ordinary body fallback and keep card implementation in Crew-owned files |
+| `crates/buzz-acp/src/pool.rs` | persist rotation (#180) + compaction/turn aging emit (#173) after turns | keep additive persist/emit helpers; do not invent parallel session maps |
+| `crates/buzz-acp/src/lib.rs` | idle pool + observer controls; guided_handover / blind_session_reset (#173) | retain prompt assertions; keep control arms additive |
+| `desktop/src-tauri/src/managed_agents/runtime.rs` | desktop passes pool idle timeout (#169); #173 aging env delegated to `session_aging_env.rs` | keep one-line `apply_session_aging_env` call next to `BUZZ_ACP_LAZY_POOL` |
+| `desktop/src-tauri/src/managed_agents/session_aging_env.rs` | Crew-landed handover/aging spawn env (#173) | additive file — prefer keeping intact on sync |
+| `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs` | reserve pool idle timeout (#169) + handover/aging keys (#173) | keep keys in the shared reserved list |
+| `desktop/src-tauri/src/managed_agents/global_config/mod.rs` | per-app handover summarizer + aging thresholds (#173) | retain additive serde fields with defaults |
 | `desktop/src/features/messages/ui/AgentReceiptCard.tsx` | share PR-reference href resolution with the evidence card (173 lines) | retain the existing receipt card behavior; keep the resolver pure and additive |
 
 ## Before feature work

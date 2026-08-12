@@ -225,6 +225,9 @@ pub struct AcpClient {
     /// this client (Hermes `sessionProvenance`, Codex `context_compacted`).
     /// Consumed by the pool to persist ledger `rotation_count` / `lineage`.
     last_rotation_signal: Option<crate::session_ledger::EngineRotationSnapshot>,
+    /// Count of `_PostCompact` hook tool_calls observed this turn (buzz-agent /
+    /// buzz-dev-mcp). Consumed by the pool for honest `compaction_count` (#173).
+    post_compact_hooks_seen: u32,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -574,6 +577,7 @@ impl AcpClient {
             pending_user_input_event_id: None,
             user_input_responded: false,
             last_rotation_signal: None,
+            post_compact_hooks_seen: 0,
         })
     }
 
@@ -970,6 +974,30 @@ impl AcpClient {
         &mut self,
     ) -> Option<crate::session_ledger::EngineRotationSnapshot> {
         self.last_rotation_signal.take()
+    }
+
+    /// Take and clear the number of `_PostCompact` hooks observed this turn.
+    pub(crate) fn take_post_compact_hooks(&mut self) -> u32 {
+        std::mem::take(&mut self.post_compact_hooks_seen)
+    }
+
+    fn note_post_compact_hook(&mut self, update: &serde_json::Value) {
+        let title = update
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let name = update
+            .get("name")
+            .and_then(|v| v.as_str())
+            .or_else(|| update.pointer("/_meta/toolName").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        if title == "_PostCompact" || name == "_PostCompact" {
+            self.post_compact_hooks_seen = self.post_compact_hooks_seen.saturating_add(1);
+            tracing::info!(
+                target: "acp::compaction",
+                "observed _PostCompact hook — counting toward session compaction"
+            );
+        }
     }
 
     /// Whether the agent advertised the [`ACP_STEER_METHOD`] extension at
@@ -2124,6 +2152,7 @@ impl AcpClient {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
                 tracing::info!(target: "acp::tool", "tool_call: {title} ({kind})");
+                self.note_post_compact_hook(update);
                 true
             }
             "tool_call_update" => {

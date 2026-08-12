@@ -19,6 +19,9 @@ const EMPTY_CONFIG: GlobalAgentConfig = {
   provider: null,
   model: null,
   preferred_runtime: null,
+  handover_summarizer_model: null,
+  compaction_aging_threshold: null,
+  turn_aging_threshold: null,
 };
 
 export const globalAgentConfigQueryKey = ["globalAgentConfig"] as const;

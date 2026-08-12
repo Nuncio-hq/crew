@@ -76,6 +76,47 @@ export async function switchManagedAgentModel(
   });
 }
 
+/**
+ * Owner-triggered guided handover (#173): one-shot summarizer → handover note
+ * on the thread → session/new with OwnerReset. Outcome arrives as
+ * `control_result` (`guided_handover`). On summarizer failure the frame sets
+ * `allowBlindReset` so the owner can call {@link blindSessionResetManagedAgent}.
+ */
+export async function guidedHandoverManagedAgent(
+  pubkey: string,
+  channelId: string,
+  conversationId: string,
+  options?: {
+    modelId?: string | null;
+    rootEventId?: string | null;
+    latestOwnerMessage?: string;
+  },
+): Promise<void> {
+  await sendAgentObserverControl(pubkey, {
+    type: "guided_handover",
+    channelId,
+    conversationId,
+    ...(options?.modelId ? { modelId: options.modelId } : {}),
+    ...(options?.rootEventId ? { rootEventId: options.rootEventId } : {}),
+    ...(options?.latestOwnerMessage
+      ? { latestOwnerMessage: options.latestOwnerMessage }
+      : {}),
+  });
+}
+
+/** Blind session reset when guided handover's summarizer path fails (#173). */
+export async function blindSessionResetManagedAgent(
+  pubkey: string,
+  channelId: string,
+  conversationId: string,
+): Promise<void> {
+  await sendAgentObserverControl(pubkey, {
+    type: "blind_session_reset",
+    channelId,
+    conversationId,
+  });
+}
+
 type ThreadWorkspaceTarget = {
   repositoryPath: string;
   branch: string;

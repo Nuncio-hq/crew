@@ -4,7 +4,6 @@ import { subscribeToAgentObserverFrames } from "@/shared/api/observerRelay";
 import { relayClient } from "@/shared/api/relayClient";
 import type { RelayLiveEventContext } from "@/shared/api/relayClientShared";
 import type { RelayEvent, ManagedAgent } from "@/shared/api/types";
-import type { ControlResultFrame } from "@/shared/api/types";
 import { putAgentSessionConfig } from "@/shared/api/tauri";
 import { putManagedAgentRuntimeLifecycle } from "@/shared/api/tauriManagedAgents";
 import { getIdentity } from "@/shared/api/tauriIdentity";
@@ -33,7 +32,6 @@ import {
   processTranscriptEvent,
 } from "./ui/agentSessionTranscript";
 import {
-  clearPendingAgentRequestsForConversation,
   ingestObserverFrameForEditAsUndo,
   prunePendingAgentRequests,
   resetDispatchedEventIdsStore,
@@ -48,7 +46,14 @@ import {
   observerEventIdentity,
   unwrapObserverBatch,
 } from "./observerEventIdentity";
+import { applySessionAgingObserverPayload } from "./sessionAgingObserverEffects";
+import {
+  clearControlResultListeners,
+  dispatchControlResult,
+  subscribeControlResults,
+} from "./controlResultDispatch";
 export { getObserverDropCountsForTest as _testGetObserverDropCounts } from "./observerDropLogger";
+export { subscribeControlResults };
 
 const MAX_OBSERVER_EVENTS = 3000;
 const MAX_PENDING_UNKNOWN_AGENT_FRAMES = 100;
@@ -105,14 +110,6 @@ export function getLatestLiveSessionId(
 ): string | null {
   return getLatestAuthorizedLiveSessionId(agentPubkey, channelId);
 }
-
-// Per-agent listeners for `control_result` frames. The ModelPicker subscribes
-// here to learn the async outcome of a `switch_model` frame (the send is
-// fire-and-forget; the harness replies out-of-band over the observer relay).
-const controlResultListeners = new Map<
-  string,
-  Set<(frame: ControlResultFrame) => void>
->();
 
 const agentManagementListeners = new Set<
   (agentPubkey: string, request: AgentManagementRequest) => void
@@ -461,6 +458,8 @@ function processLiveObserverEvent(agentPubkey: string, parsed: ObserverEvent) {
     onSessionConfigCaptured?.(agentPubkey);
   } else if (parsed.kind === "control_result") {
     dispatchControlResult(agentPubkey, parsed.payload);
+  } else if (parsed.kind === "session_aging") {
+    applySessionAgingObserverPayload(agentPubkey, parsed.payload);
   } else if (parsed.kind === "managed_agent_runtime_lifecycle") {
     void putManagedAgentRuntimeLifecycle(agentPubkey, parsed.payload).catch(
       (error) => {
@@ -649,40 +648,9 @@ export function subscribeAgentObserverStore(listener: () => void) {
   };
 }
 
-function isControlResultFrame(payload: unknown): payload is ControlResultFrame {
-  return (
-    typeof payload === "object" &&
-    payload !== null &&
-    typeof (payload as { type?: unknown }).type === "string" &&
-    typeof (payload as { status?: unknown }).status === "string"
-  );
-}
-
-function dispatchControlResult(agentPubkey: string, payload: unknown) {
-  if (!isControlResultFrame(payload)) {
-    return;
-  }
-  if (
-    payload.type === "cancel_turn" &&
-    payload.status === "cancelled_queued" &&
-    typeof payload.conversationId === "string" &&
-    payload.conversationId.length > 0
-  ) {
-    clearPendingAgentRequestsForConversation(payload.conversationId);
-  }
-  const subscribers = controlResultListeners.get(normalizePubkey(agentPubkey));
-  if (!subscribers) {
-    return;
-  }
-  for (const subscriber of subscribers) {
-    subscriber(payload);
-  }
-}
-
 /**
- * Subscribe to `control_result` frames for a single agent. Returns an
- * unsubscribe function. Used by the ModelPicker to learn the async outcome of
- * a `switch_model` frame.
+ * Subscribe to agent-management request frames. Returns an unsubscribe
+ * function.
  */
 export function subscribeAgentManagementRequests(
   listener: (agentPubkey: string, request: AgentManagementRequest) => void,
@@ -690,26 +658,6 @@ export function subscribeAgentManagementRequests(
   agentManagementListeners.add(listener);
   return () => {
     agentManagementListeners.delete(listener);
-  };
-}
-
-export function subscribeControlResults(
-  agentPubkey: string,
-  listener: (frame: ControlResultFrame) => void,
-) {
-  const key = normalizePubkey(agentPubkey);
-  const subscribers = controlResultListeners.get(key) ?? new Set();
-  subscribers.add(listener);
-  controlResultListeners.set(key, subscribers);
-  return () => {
-    const current = controlResultListeners.get(key);
-    if (!current) {
-      return;
-    }
-    current.delete(listener);
-    if (current.size === 0) {
-      controlResultListeners.delete(key);
-    }
   };
 }
 
@@ -908,6 +856,12 @@ export function injectObserverEventsForE2E(
   for (const event of events) {
     if (!event.replayed) markAgentLiveContact(agentPubkey);
     appendAgentEvent(agentPubkey, event);
+    // Side-effect kinds that production frames apply in processLiveObserverEvent.
+    if (event.kind === "session_aging") {
+      applySessionAgingObserverPayload(agentPubkey, event.payload);
+    } else if (event.kind === "control_result") {
+      dispatchControlResult(agentPubkey, event.payload);
+    }
   }
   notifyListeners();
 }
@@ -954,6 +908,7 @@ export function resetAgentObserverStore() {
   pendingUnknownAgentFrames.length = 0;
   resetObserverDropLogger();
   resetLiveSessionAuthority();
+  clearControlResultListeners();
   agentManagementListeners.clear();
   onSessionConfigCaptured = null;
   connectionState = "idle";

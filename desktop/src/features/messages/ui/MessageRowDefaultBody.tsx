@@ -15,7 +15,9 @@ import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import type { TimelineReaction } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { EvidenceCard } from "./EvidenceCard";
+import { HandoverNoteCard } from "./HandoverNoteCard";
 import { parseEvidenceKind } from "@/features/messages/lib/evidenceTag";
+import { parseHandoverModel } from "@/features/messages/lib/handoverTag";
 
 export function MessageRowDefaultBody({
   message,
@@ -124,6 +126,11 @@ export function MessageRowDefaultBody({
       videoReviewContext={videoReviewContext}
     />
   );
+
+  const handoverModel = parseHandoverModel(message.tags);
+  if (handoverModel) {
+    return <HandoverNoteCard message={message} modelId={handoverModel} />;
+  }
 
   const evidenceKind = parseEvidenceKind(message.tags);
   if (evidenceKind) {
