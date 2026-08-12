@@ -63,6 +63,8 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     // desktop/provider-owned bounds while the saved record still promises them.
     "BUZZ_ACP_EXIT_AFTER_INACTIVITY",
     "BUZZ_ACP_NO_PRESENCE",
+    // Local pair idle engine spin-down (issue #169): desktop owns the timeout.
+    "BUZZ_ACP_POOL_IDLE_TIMEOUT",
     // Readiness handoff: desktop is the ONLY readiness source. A saved or
     // ambient env var must not be able to forge setup mode (NotReady) on a
     // Ready agent or suppress it (empty/stale payload) on a NotReady one.

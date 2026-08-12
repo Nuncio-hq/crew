@@ -536,6 +536,9 @@ pub fn spawn_agent_child(
     command.env("BUZZ_PRIVATE_KEY", &record.private_key_nsec);
     command.env("BUZZ_RELAY_URL", &effective_relay_url);
     command.env("BUZZ_ACP_LAZY_POOL", if lazy { "true" } else { "false" });
+    // Idle engine spin-down (issue #169): default 30 minutes. Reserved so
+    // layered persona/user env cannot disable desktop-owned sleep policy.
+    command.env("BUZZ_ACP_POOL_IDLE_TIMEOUT", "1800");
     // Crew's review state is receipt-backed. This key is reserved, so layered
     // harness/persona/user env written below cannot disable managed receipts.
     command.env("BUZZ_ACP_AGENT_RECEIPTS", "true");

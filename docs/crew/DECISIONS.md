@@ -870,3 +870,33 @@ Promotion path: making the lane required is an **explicit future founder
 decision**, not an automatic follow-up when a single spec turns green. Revisit
 once Crew owns a meaningful share of the integration suite and the lane's
 failure rate on `main` is attributed and stable enough to gate on.
+
+## D-048 — Idle engine spin-down with resume-first wake (durable session ledger)
+
+- **Status:** Accepted
+- **Date:** 2026-08-12
+- **Issue:** #169
+
+Local managed agents wake on first work (`BUZZ_ACP_LAZY_POOL`) but must also
+sleep. The sleep unit is the ACP/engine subprocess pool, not the harness:
+
+1. **Pool lifecycle** extends with `Ready → Draining → Listening`. Sleep
+   requires: no turn in flight, empty dispatch queue, receipt outbox idle, no
+   cancel-drain. Default idle timeout is 30 minutes via
+   `BUZZ_ACP_POOL_IDLE_TIMEOUT` / `--pool-idle-timeout` (`0` = off). Heartbeat
+   must not wake a `Listening` pool.
+2. **Durable session ledger** (secure_spool pattern) declares the live session
+   id at `session/new` birth keyed by `(relay_url, agent_pubkey, thread_id)`.
+   Resume is lookup-only; validate-then-load checks engine identity, workspace
+   generation, and `loadSession` before `session/load`. Fail closed → rebuild
+   via today's `session/new` + context refetch and overwrite the ledger entry.
+3. **Crew surface:** spun-down engines are a benign **Sleeping · wakes on
+   mention** card state — never Lost contact / Possibly stalled — and do not
+   appear in Mission Inbox. Wake emits the existing typing/working feedback
+   (`⋯ <agent> is waking up…`).
+
+Spike 0022 narrows usable resume to Hermes ACP and Codex ACP; buzz-agent stays
+rebuild-only; Claude is capability-gated at runtime. The spin-down/resume core
+is Crew-free and tracked for upstream proposal under
+`docs/crew/upstream-proposals/idle-engine-spin-down.md`. Compaction-awareness
+and multi-slot resume are explicit non-goals for this decision.

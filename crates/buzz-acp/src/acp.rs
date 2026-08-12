@@ -708,6 +708,35 @@ impl AcpClient {
             .session_id)
     }
 
+    /// Send ACP v1 `session/load` to resume a previously declared session.
+    ///
+    /// Callers MUST gate on `agentCapabilities.loadSession == true` from
+    /// `initialize` before invoking this. On any agent/protocol error the
+    /// harness deletes the ledger entry and rebuilds via `session/new`.
+    pub async fn session_load(
+        &mut self,
+        session_id: &str,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<SessionNewResponse, AcpError> {
+        let params = serde_json::json!({
+            "sessionId": session_id,
+            "cwd": cwd,
+            "mcpServers": mcp_servers,
+        });
+        let result = self.send_request("session/load", params).await?;
+        let loaded_id = result
+            .get("sessionId")
+            .and_then(|v| v.as_str())
+            .unwrap_or(session_id)
+            .to_owned();
+        tracing::info!(target: "acp::session", "session loaded: {loaded_id}");
+        Ok(SessionNewResponse {
+            session_id: loaded_id,
+            raw: result,
+        })
+    }
+
     /// Send Goose's custom system-prompt request after `session/new`.
     pub async fn session_set_goose_system_prompt(
         &mut self,
@@ -3754,6 +3783,47 @@ done
             received["params"]["systemPrompt"].as_str(),
             Some("Custom system prompt"),
             "systemPrompt should be included in params when Some"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_load_sends_session_id_cwd_and_mcp_servers() {
+        let script = r#"
+            read -t 2 _init
+            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}'
+            read -t 2 REQ
+            echo '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"ses_loaded","_receivedRequest":'"$REQ"'}}'
+            sleep 1
+        "#;
+        let mut client = spawn_script(script).await;
+        client.initialize().await.expect("initialize");
+        let resp = client
+            .session_load(
+                "ses_prior",
+                "/workspace/project",
+                vec![McpServer {
+                    name: "buzz-mcp".into(),
+                    command: "buzz-dev-mcp".into(),
+                    args: vec![],
+                    env: vec![],
+                }],
+            )
+            .await
+            .expect("session_load");
+        assert_eq!(resp.session_id, "ses_loaded");
+        let received = &resp.raw["_receivedRequest"];
+        assert_eq!(received["method"].as_str(), Some("session/load"));
+        assert_eq!(
+            received["params"]["sessionId"].as_str(),
+            Some("ses_prior")
+        );
+        assert_eq!(
+            received["params"]["cwd"].as_str(),
+            Some("/workspace/project")
+        );
+        assert_eq!(
+            received["params"]["mcpServers"][0]["name"].as_str(),
+            Some("buzz-mcp")
         );
     }
 
