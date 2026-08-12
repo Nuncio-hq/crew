@@ -621,7 +621,13 @@ test("reconnect backfills more missed channel messages than the live subscriptio
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
-  const baseCreatedAt = Math.floor(Date.now() / 1_000) - 300;
+  // Live channel subscriptions use `since = now - CHANNEL_LIVE_BACKLOG_GRACE_SECONDS`
+  // (120s). Mock #general seeds sit at now-120..now-30. The pre-disconnect
+  // marker must land inside the live backlog window AND after the seed
+  // timestamps so `relayEventMatchesFilter` accepts the mock live emit; a
+  // 300s backdate (older than the 120s grace) is silently dropped before the
+  // window store ever sees it (#154).
+  const baseCreatedAt = Math.floor(Date.now() / 1_000) - 15;
   const seenBeforeDisconnect = "reconnect e2e seen before disconnect";
   await emitMockMessages(page, [
     { content: seenBeforeDisconnect, createdAt: baseCreatedAt },

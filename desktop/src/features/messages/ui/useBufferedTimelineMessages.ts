@@ -27,23 +27,27 @@ export function selectBufferedTimelineMessages<T extends { id: string }>({
     return messages;
   }
 
-  const firstFrozenIndex = messages.findIndex(
-    (message) => message.id === frozenMessageIds[0],
+  // Cut on the NEWEST frozen id, not the oldest. Freezing at bottom captures
+  // the full chronological list — including live-overlay rows that may sort
+  // *older* than the authoritative page head (e.g. a pre-disconnect marker
+  // retained across reconnect). Keying the cut on frozen[0] then treats that
+  // overlay row as the start of the frozen block, so older-history pages that
+  // insert *between* the overlay row and the previous head are neither "before
+  // the frozen block" nor members of the frozen id set and are silently
+  // dropped from the rendered model (#154).
+  const newestFrozenId = frozenMessageIds[frozenMessageIds.length - 1];
+  const newestFrozenIndex = messages.findIndex(
+    (message) => message.id === newestFrozenId,
   );
-  const prepended = messages.slice(0, firstFrozenIndex);
-  const frozen = frozenMessageIds.map((id) => currentById.get(id) as T);
-  const buffered = [...prepended, ...frozen];
-  if (
-    buffered.length === messages.length &&
-    buffered.every((message, index) => message.id === messages[index]?.id)
-  ) {
-    // Crossing the bottom threshold without a live arrival must be a semantic
-    // no-op for Virtua. Preserve the source array identity until there is
-    // actually something to buffer; otherwise the threshold transition can
-    // rebuild its model while a prepend is starting.
+  if (newestFrozenIndex === -1) return messages;
+
+  const cut = newestFrozenIndex + 1;
+  if (cut >= messages.length) {
+    // No arrivals newer than the frozen newest. Keep the full list so any
+    // older-history prepends above that floor remain visible.
     return messages;
   }
-  return buffered;
+  return messages.slice(0, cut);
 }
 
 export function useBufferedTimelineMessages<T extends { id: string }>({

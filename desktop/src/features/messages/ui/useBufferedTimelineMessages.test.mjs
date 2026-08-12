@@ -50,3 +50,26 @@ test("accepts an authoritative replacement when its old tail disappeared", () =>
     messages,
   );
 });
+
+test("admits older pages that sort between a frozen live-overlay row and the page head (#154)", () => {
+  // Reconnect keeps a pre-disconnect live-overlay event (`seen`) that is older
+  // than the refreshed head page (`h1`…`h3`). Freezing at bottom captures
+  // [seen, h1, h2, h3]. Paging older then inserts interstitial rows between
+  // `seen` and `h1`. Those rows must render while the reader is scrolled up.
+  assert.deepEqual(
+    selectBufferedTimelineMessages({
+      frozenMessageIds: ["seen", "h1", "h2", "h3"],
+      isAtBottom: false,
+      messages: rows(
+        "seen",
+        "older-a",
+        "older-b",
+        "h1",
+        "h2",
+        "h3",
+        "live-new",
+      ),
+    }).map(({ id }) => id),
+    ["seen", "older-a", "older-b", "h1", "h2", "h3"],
+  );
+});
