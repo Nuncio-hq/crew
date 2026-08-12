@@ -68,7 +68,7 @@ mod tests {
     use nostr::{EventId, Keys};
     use uuid::Uuid;
 
-    use super::super::build_message_edit;
+    use super::super::{build_message_edit, MessageEditTags};
 
     // ── build_message_edit `p`-tag emission (lane 8ace8eed) ──────────────
     //
@@ -91,10 +91,13 @@ mod tests {
             channel,
             target,
             "hi @alice",
-            &[],
-            &[],
-            mentions,
-            removed,
+            MessageEditTags {
+                media: &[],
+                custom_emoji: &[],
+                mentions,
+                mention_refs: None,
+                removed_mentions: removed,
+            },
             false,
         )
         .unwrap();

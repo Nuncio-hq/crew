@@ -91,7 +91,7 @@ Out of scope for this slice:
 - Identity store: existing system-Keychain service `buzz-desktop`.
 - Buzz and NuncioCrew must not run concurrently.
 - The build includes real release versions of all five agent sidecars.
-- Settings displays the pinned Buzz version `v0.5.7 · Local`; the
+- Settings displays the pinned Buzz version `v0.5.10 · Local`; the
   machine-readable source is [`upstream-buzz.json`](upstream-buzz.json).
 - Updater configuration and updater signing are disabled for this flavor.
 
@@ -115,8 +115,8 @@ Out of scope for this slice:
   manifests, public versioned assets before channel advance, updater key-ID
   match, and explicit entitlements verification.
 - Buzz source pin: [`upstream-buzz.json`](upstream-buzz.json), currently
-  `0.5.7` / `desktop-v0.5.7` at
-  `f167818d25dd9f03115ab907a16f07daee2ece5c`.
+  `0.5.10` / `desktop-v0.5.10` at
+  `1fb49103002e898607a7f6fd554cb51e94d92e08`.
 - The protected Environment, reviewer, nine encrypted release secrets, updater
   public variable, and Nuncio updater keypair are configured.
 - Signed dry run `30537460233` and publish run `30538712572` passed.

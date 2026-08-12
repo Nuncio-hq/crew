@@ -40,6 +40,10 @@ import {
   type ActiveTurn,
 } from "@/features/agents/activeAgentTurnModel";
 import { normalizePubkey } from "@/shared/lib/pubkey";
+import {
+  isDocumentVisible,
+  subscribeDocumentVisibility,
+} from "@/shared/lib/useDocumentVisible";
 import type { ObserverEvent } from "./ui/agentSessionTypes";
 
 export {
@@ -106,6 +110,7 @@ let activeTurnsGeneration = 0;
 const terminalAtByAgent = new Map<string, Map<string, number>>();
 
 let pruneInterval: ReturnType<typeof setInterval> | null = null;
+let unsubscribePruneVisibility: (() => void) | null = null;
 
 function bumpActiveTurnsGeneration() {
   cachedAgentsByConversation.clear();
@@ -549,16 +554,31 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
   }
 }
 
-function ensurePruneInterval() {
-  if (pruneInterval) return;
+function startPruneInterval() {
+  if (pruneInterval || !isDocumentVisible()) return;
+  pruneExpired();
   pruneInterval = setInterval(pruneExpired, PRUNE_INTERVAL_MS);
 }
 
+function pausePruneInterval() {
+  if (!pruneInterval) return;
+  clearInterval(pruneInterval);
+  pruneInterval = null;
+}
+
+function ensurePruneInterval() {
+  if (unsubscribePruneVisibility) return;
+  startPruneInterval();
+  unsubscribePruneVisibility = subscribeDocumentVisibility((visible) => {
+    if (visible) startPruneInterval();
+    else pausePruneInterval();
+  });
+}
+
 function stopPruneInterval() {
-  if (pruneInterval) {
-    clearInterval(pruneInterval);
-    pruneInterval = null;
-  }
+  pausePruneInterval();
+  unsubscribePruneVisibility?.();
+  unsubscribePruneVisibility = null;
 }
 
 export function subscribeActiveAgentTurns(listener: () => void) {

@@ -53,8 +53,8 @@ import { usePersistentAgentMentionHydration } from "./usePersistentAgentMentionH
 import { useComposerContentState } from "./useComposerContentState";
 import { useDraftPersistLifecycle } from "./useDraftPersistSnapshot";
 import { submitMessageEdit } from "./submitMessageEdit";
-import { useComposerEditTargetLifecycle } from "./use-composer-edit-target-lifecycle";
 import { useComposerLinkPreviews } from "./useComposerLinkPreviews";
+import { scheduleSettleGatedAutoSubmit } from "./messageComposerAutoSubmit";
 import type { MessageComposerProps } from "./MessageComposer.types";
 function MessageComposerImpl({
   audienceContext = null,
@@ -97,11 +97,13 @@ function MessageComposerImpl({
     syncContentRefFromEditorRef,
   } = useComposerContentState();
   const [previewContent, setPreviewContent] = React.useState("");
-  const deferredPreviewContent = React.useDeferredValue(previewContent);
   const {
     previewList: composerLinkPreviews,
     getReadyTags: getReadyLinkPreviewTags,
-  } = useComposerLinkPreviews(deferredPreviewContent);
+    hasPendingSnapshots: hasPendingLinkPreviewSnapshots,
+    // Ref lets the submit guard block Enter/form/auto-submit until snapshots settle.
+    hasPendingSnapshotsRef: hasPendingLinkPreviewSnapshotsRef,
+  } = useComposerLinkPreviews(previewContent, editTarget == null);
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = React.useState(false);
   const [isFormattingOpen, setIsFormattingOpen] = React.useState(false);
   const [spoileredAttachmentUrls, setSpoileredAttachmentUrls] = React.useState<
@@ -162,7 +164,6 @@ function MessageComposerImpl({
     media.queuedAttachmentsRef.current.length === 0;
   const ownsDropZone = mediaController === undefined;
   const backgroundUpload = useBackgroundMediaUpload();
-  // Restore/persist drafts at a key boundary; the hook handles StrictMode.
   useDraftPersistLifecycle({
     effectiveDraftKey,
     channelId,
@@ -199,6 +200,8 @@ function MessageComposerImpl({
   const disabledRef = React.useRef(disabled);
   const isSendingRef = React.useRef(isSending);
   const isUploadingRef = React.useRef(media.isUploading);
+  // Sync lock: taken before any async send so rapid Enter can't double-submit.
+  const isSubmitLockedRef = React.useRef(false);
   const onSendRef = React.useRef(onSend);
   const onEditSaveRef = React.useRef(onEditSave);
   const onEditLastOwnMessageRef = React.useRef(onEditLastOwnMessage);
@@ -249,6 +252,7 @@ function MessageComposerImpl({
     agentMentionNames: mentions.agentKnownNames,
     agentAvatarUrlsByName: mentions.agentAvatarUrlsByName,
     channelNames: channelLinks.knownChannelNames,
+    messageLinkChannels: channelLinks.channels,
     customEmoji,
     onSubmit: () => submitMessageRef.current(),
     onEditLastOwnMessage: () => {
@@ -335,17 +339,59 @@ function MessageComposerImpl({
     onDeferredEditPendingChange?.(isDeferredEditPending);
     return () => onDeferredEditPendingChange?.(false);
   }, [isDeferredEditPending, onDeferredEditPendingChange]);
-  useComposerEditTargetLifecycle({
-    editTarget,
-    media,
-    onCancelEdit,
-    preEditSnapshotRef,
-    richText,
-    setComposerContent,
-    setSpoileredAttachmentUrls,
-    spoileredAttachmentUrls,
-    syncComposerContentFromEditor,
-  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: editTarget?.id is the trigger
+  React.useEffect(() => {
+    if (editTarget && media.isUploading) return onCancelEdit?.();
+    if (editTarget) {
+      preEditSnapshotRef.current = {
+        content: syncComposerContentFromEditor(),
+        pendingImeta: [...media.pendingImetaRef.current],
+        queuedAttachments: [...media.queuedAttachmentsRef.current],
+        spoileredAttachmentUrls: new Set(spoileredAttachmentUrls),
+      };
+      // Strip the trailing `![image|video](url)` lines that correspond to
+      // imeta attachments — the user manages those via the attachments row,
+      // not via raw markdown in the editor.
+      const editableImeta = restoreImetaMediaDisplayLabels(
+        editTarget.body,
+        editTarget.imetaMedia ?? [],
+      );
+      const editableBody = stripImetaMediaLines(editTarget.body, editableImeta);
+      setComposerContent(editableBody);
+      richText.setContent(editableBody);
+      // Seed pending imeta with removable originals before saving the edit.
+      // New attachments can then be added through the same row.
+      mentions.restoreDraftMentionRefs(editTarget.mentionRefs ?? []);
+      media.setPendingImeta(editableImeta);
+      media.clearQueuedAttachments();
+      setSpoileredAttachmentUrls(
+        findSpoileredImetaMediaUrls(editTarget.body, editableImeta),
+      );
+      // Defer focus to the next frame so it runs after any focus-
+      // restoration the trigger UI (e.g. the message-row context menu)
+      // fires on close. Without this, Radix-style focus-restoration races
+      // our call and leaves DOM focus on the message row — global keybinds
+      // like Delete then fire there instead of in the editor. `focusEnd`
+      // also lands the caret at end of the loaded content.
+      const rafId = requestAnimationFrame(() => richText.focusEnd());
+      return () => cancelAnimationFrame(rafId);
+    } else if (preEditSnapshotRef.current !== null) {
+      const {
+        content: restoredContent,
+        pendingImeta: restoredImeta,
+        queuedAttachments: restoredQueuedAttachments,
+        spoileredAttachmentUrls: restoredSpoileredAttachmentUrls,
+      } = preEditSnapshotRef.current;
+      preEditSnapshotRef.current = null;
+      setComposerContent(restoredContent);
+      restoredContent
+        ? richText.setContent(restoredContent)
+        : richText.clearContent();
+      media.setPendingImeta(restoredImeta);
+      media.restoreQueuedAttachments(restoredQueuedAttachments);
+      setSpoileredAttachmentUrls(restoredSpoileredAttachmentUrls);
+    }
+  }, [editTarget?.id]);
   // ── Focus on reply ──────────────────────────────────────────────────
   // Use focusPreserve so that re-renders (e.g. new messages arriving in
   // a thread) don't yank the cursor to the end while the user is editing.
@@ -438,7 +484,6 @@ function MessageComposerImpl({
     },
     [richText.editor, mentions.clearMentions, customEmoji],
   );
-  // ── @ mention picker (toolbar button) ───────────────────────────────
   const openMentionPicker = React.useCallback(() => {
     if (!richText.editor) return;
     const { text, cursor } = richText.getPlainTextAndCursor();
@@ -484,6 +529,7 @@ function MessageComposerImpl({
         customEmoji,
         originalContent: editTargetRef.current.body,
         ownerPubkey: ownerPubkeyRef.current,
+        editTarget: editTargetRef.current,
         getMentionRefs: mentions.getDraftMentionRefs,
         pendingImeta: media.pendingImetaRef.current,
         queuedAttachments: media.queuedAttachmentsRef.current,
@@ -540,7 +586,9 @@ function MessageComposerImpl({
       (!trimmed && !hasMedia) ||
       disabledRef.current ||
       isSendingRef.current ||
+      isSubmitLockedRef.current ||
       isUploadingRef.current ||
+      hasPendingLinkPreviewSnapshotsRef.current ||
       mentionSendFlow.isPreparingMentionSend
     ) {
       return;
@@ -552,6 +600,7 @@ function MessageComposerImpl({
     ) {
       return;
     }
+    isSubmitLockedRef.current = true;
     onPreparingMentionSendChange?.(true);
     persistentMentionHydration.beginSubmit();
     try {
@@ -572,6 +621,7 @@ function MessageComposerImpl({
         audienceRevision: audienceScope ? persistentAudience.revision : null,
       });
     } finally {
+      isSubmitLockedRef.current = false;
       persistentMentionHydration.endSubmit();
       onPreparingMentionSendChange?.(false);
     }
@@ -582,6 +632,7 @@ function MessageComposerImpl({
     drafts.loadDraft,
     emojiAutocomplete.clearEmojis,
     getReadyLinkPreviewTags,
+    hasPendingLinkPreviewSnapshotsRef,
     media.clearQueuedAttachments,
     media.pendingImetaRef,
     media.queuedAttachmentsRef,
@@ -633,15 +684,10 @@ function MessageComposerImpl({
     // Clear the trigger BEFORE firing so any navigation from the send cannot
     // loop back with the param still present.
     onAutoSubmitCompleteRef.current?.();
-    // Defer by one macrotask so the draft-persist lifecycle effect (which runs
-    // synchronously after mount) has a chance to load the draft content into
-    // the Tiptap editor before we try to submit.
-    const timer = window.setTimeout(() => {
-      submitMessageRef.current();
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-    };
+    return scheduleSettleGatedAutoSubmit({
+      isPending: () => hasPendingLinkPreviewSnapshotsRef.current,
+      submit: () => submitMessageRef.current(),
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // mount-only
   const handleSubmit = React.useCallback(
@@ -781,23 +827,14 @@ function MessageComposerImpl({
     });
   }, [media.setPendingImeta, richText.editor, scrollComposerToBottom]);
   // ── Send button state ───────────────────────────────────────────────
-  const sendDisabled = React.useMemo(
-    () =>
-      composerDisabled ||
-      media.isUploading ||
-      mentionSendFlow.isPreparingMentionSend ||
-      (isContentEmpty &&
-        media.pendingImeta.length === 0 &&
-        media.queuedAttachments.length === 0),
-    [
-      composerDisabled,
-      media.isUploading,
-      mentionSendFlow.isPreparingMentionSend,
-      isContentEmpty,
-      media.pendingImeta.length,
-      media.queuedAttachments.length,
-    ],
-  );
+  const sendDisabled =
+    composerDisabled ||
+    media.isUploading ||
+    hasPendingLinkPreviewSnapshots ||
+    mentionSendFlow.isPreparingMentionSend ||
+    (isContentEmpty &&
+      media.pendingImeta.length === 0 &&
+      media.queuedAttachments.length === 0);
   const handleCaptureSelection = React.useCallback(() => {}, []);
 
   const handlePaperclipClick = React.useCallback(() => {

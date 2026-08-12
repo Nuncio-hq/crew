@@ -12,6 +12,7 @@ import type {
 } from "@/features/projects/hooks";
 import { firstCloneUrl } from "@/features/projects/lib/projectCloneUrl";
 import { useProjectRepoHost } from "@/features/projects/useProjectRepoHost";
+import { useFocusedRefetchInterval } from "@/shared/lib/useDocumentVisible";
 import { publishProjectPullRequestUpdate } from "./pullRequestMutations";
 
 function mutableManagedProject(project: Project | null | undefined): Project {
@@ -34,6 +35,7 @@ export function useProjectRepoSyncStatusQuery(
   baseBranch?: string | null,
 ) {
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
+  const refetchInterval = useFocusedRefetchInterval(60_000);
   const selectedBaseBranch = baseBranch ?? project?.defaultBranch ?? null;
   const host = useProjectRepoHost(project);
   const cloneUrl = firstCloneUrl(project);
@@ -62,7 +64,7 @@ export function useProjectRepoSyncStatusQuery(
       });
     },
     staleTime: 10_000,
-    refetchInterval: 60_000,
+    refetchInterval,
     refetchOnWindowFocus: true,
     retry: 1,
   });
