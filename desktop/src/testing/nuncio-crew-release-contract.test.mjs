@@ -375,10 +375,10 @@ test("Buzz manifests stay pinned and the exact upstream source is machine-readab
   const upstreamPin = JSON.parse(readFileSync(upstreamPinPath, "utf8"));
   const pinValues = Object.values(upstreamPin);
 
-  assert.equal(packageJson.version, "0.5.7");
-  assert.equal(tauriConfig.version, "0.5.7");
-  assert.match(cargoToml, /^\[package\][\s\S]*?^version = "0\.5\.7"$/m);
-  assert.ok(pinValues.includes("0.5.7"));
-  assert.ok(pinValues.includes("desktop-v0.5.7"));
-  assert.ok(pinValues.includes("f167818d25dd9f03115ab907a16f07daee2ece5c"));
+  assert.equal(packageJson.version, "0.5.10");
+  assert.equal(tauriConfig.version, "0.5.10");
+  assert.match(cargoToml, /^\[package\][\s\S]*?^version = "0\.5\.10"$/m);
+  assert.ok(pinValues.includes("0.5.10"));
+  assert.ok(pinValues.includes("desktop-v0.5.10"));
+  assert.ok(pinValues.includes("1fb49103002e898607a7f6fd554cb51e94d92e08"));
 });
