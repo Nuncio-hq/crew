@@ -1284,6 +1284,11 @@ test("mounted rows cover the viewport beneath the composer in both directions", 
 // A stale shifted range can stop with no mounted row covering part of the
 // viewport and remain blank until another scroll event. The idle samples below
 // deliberately dispatch no follow-up scroll.
+//
+// Setup note (issue #155): a genuine prepend must come through older-page
+// pagination. Live-emitting backdated messages after the channel is open does
+// not grow the timeline — `mergeLiveChannelWindowEvent` correctly drops events
+// below the open oldest boundary and waits for ordinary relay paging.
 test("fast middle-page scroll settles with continuous mounted coverage", async ({
   page,
 }) => {
@@ -1295,6 +1300,8 @@ test("fast middle-page scroll settles with continuous mounted coverage", async (
       typeof window.__BUZZ_E2E_PREPEND_MOCK_HISTORY__ === "function",
   );
 
+  // Seed the live window plus enough older mock history that the first
+  // scroll-up can page at least one 50-event window into the timeline.
   await page.evaluate(() => {
     for (let index = 0; index < 180; index += 1) {
       window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
@@ -1303,6 +1310,12 @@ test("fast middle-page scroll settles with continuous mounted coverage", async (
         createdAt: 1_700_000_000 + index,
       });
     }
+    window.__BUZZ_E2E_PREPEND_MOCK_HISTORY__?.({
+      channelName: "general",
+      count: 100,
+      lineCount: 3,
+      createdAtStart: 1_699_999_000,
+    });
   });
 
   await page.getByTestId("channel-general").click();
@@ -1316,19 +1329,21 @@ test("fast middle-page scroll settles with continuous mounted coverage", async (
     return element && element.scrollHeight > element.clientHeight * 3;
   });
 
-  // Land a genuine prepend first. This is what turns `shift` on; subsequent
-  // ordinary list updates and measurements must happen with it cleared.
+  // Land a genuine prepend via older-page fetch. This is what turns `shift`
+  // on; subsequent ordinary list updates and measurements must happen with it
+  // cleared. Drive the scroll with real wheel input so Virtua observes the
+  // offset change and the top-edge sentinel can arm the page fetch.
   const scrollHeightBeforePrepend = (await getTimelineMetrics(page))
     .scrollHeight;
-  await page.evaluate(() => {
-    for (let index = 0; index < 100; index += 1) {
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
-        channelName: "general",
-        content: `prepended settle row ${index}\nolder line two ${index}\nolder line three ${index}`,
-        createdAt: 1_699_999_000 + index,
-      });
+  await timeline.hover();
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const metrics = await getTimelineMetrics(page);
+    if (metrics.scrollTop < 500) {
+      break;
     }
-  });
+    await page.mouse.wheel(0, -2000);
+    await page.waitForTimeout(25);
+  }
   await expect
     .poll(() =>
       getTimelineMetrics(page).then((metrics) => metrics.scrollHeight),
