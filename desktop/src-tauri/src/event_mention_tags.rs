@@ -43,32 +43,12 @@ pub(super) fn removed_mention_tags(mentions: &[&str]) -> Result<Vec<Tag>, String
     Ok(tags)
 }
 
-pub(super) fn mention_reference_tags(
-    mentions: &[Vec<String>],
-    tags: &mut Vec<Tag>,
-) -> Result<(), String> {
-    for mention in mentions {
-        if mention.first().map(String::as_str) != Some("mention") {
-            return Err(format!(
-                "mention reference tags must use 'mention' prefix (got {:?})",
-                mention.first()
-            ));
-        }
-        let Some(pubkey) = mention.get(1) else {
-            return Err("mention reference tag missing pubkey".into());
-        };
-        check_pubkey(pubkey)?;
-        tags.push(tag(vec!["mention", &pubkey.to_ascii_lowercase()])?);
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use nostr::{EventId, Keys};
     use uuid::Uuid;
 
-    use super::super::build_message_edit;
+    use super::super::{build_message_edit, MessageEditTags};
 
     // ── build_message_edit `p`-tag emission (lane 8ace8eed) ──────────────
     //
@@ -91,10 +71,13 @@ mod tests {
             channel,
             target,
             "hi @alice",
-            &[],
-            &[],
-            mentions,
-            removed,
+            MessageEditTags {
+                media: &[],
+                custom_emoji: &[],
+                mentions,
+                mention_refs: None,
+                removed_mentions: removed,
+            },
             false,
         )
         .unwrap();

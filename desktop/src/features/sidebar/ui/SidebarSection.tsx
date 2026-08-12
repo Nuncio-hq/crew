@@ -322,7 +322,7 @@ export function ChannelMenuButton({
       isMuted &&
       !hasTopLevelUnread &&
       !hasThreadUnread &&
-      "opacity-50 dark:opacity-45",
+      "sidebar-muted-content opacity-50 dark:opacity-45",
   );
 
   const button = (
