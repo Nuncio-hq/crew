@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { parseHandoverModel } from "./handoverTag.mjs";
+import { parseHandoverModel } from "./handoverTag.test-support.mjs";
 
 describe("handoverTag (#173)", () => {
   it("parses crew-handover model id", () => {

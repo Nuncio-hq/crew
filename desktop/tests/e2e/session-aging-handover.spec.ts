@@ -11,6 +11,23 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 const AGENT_PUBKEY = TEST_IDENTITIES.alice.pubkey;
 const CHANNEL = "engineering";
 
+async function waitForMockLiveSubscription(
+  page: import("@playwright/test").Page,
+  channelName: string,
+) {
+  await expect
+    .poll(async () => {
+      return page.evaluate((name) => {
+        return (
+          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            channelName: name,
+          }) ?? false
+        );
+      }, channelName);
+    })
+    .toBe(true);
+}
+
 async function openChannel(page: import("@playwright/test").Page) {
   await installMockBridge(page, {
     managedAgents: [
@@ -44,8 +61,88 @@ async function openChannel(page: import("@playwright/test").Page) {
   await page.goto("/");
   await page.getByTestId(`channel-${CHANNEL}`).click();
   await expect(page.getByTestId("chat-title")).toHaveText(CHANNEL);
+  await waitForMockLiveSubscription(page, CHANNEL);
   await page.waitForFunction(
     () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+  );
+}
+
+async function emitAndOpenThread(
+  page: import("@playwright/test").Page,
+  content: string,
+) {
+  const messageId = await page.evaluate(
+    ({ channelName, content, pubkey }) =>
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName,
+        content,
+        pubkey,
+      })?.id ?? null,
+    {
+      channelName: CHANNEL,
+      content,
+      pubkey: TEST_IDENTITIES.tyler.pubkey,
+    },
+  );
+  expect(messageId).toBeTruthy();
+
+  const row = page.locator(`[data-message-id="${messageId}"]`).first();
+  await expect(row).toBeVisible({ timeout: 10_000 });
+
+  const replyButton = page.locator(
+    `[data-testid="reply-message-${messageId}"]`,
+  );
+  await expect(replyButton).toBeVisible({ timeout: 10_000 });
+  await replyButton.click({ force: true });
+  await expect(page.getByTestId("message-thread-panel")).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("message-thread-body")).toBeVisible();
+  return messageId as string;
+}
+
+async function injectAging(
+  page: import("@playwright/test").Page,
+  input: {
+    conversationId: string;
+    channelId: string;
+    reason: "compaction_threshold" | "turn_count_net";
+    compactionCount: number;
+    compactionSignal: "known" | "unknown";
+    sessionTurnCount: number;
+  },
+) {
+  await page.evaluate(
+    ({ agentPubkey, ...payload }) => {
+      window.__BUZZ_E2E_INJECT_OBSERVER_EVENTS__?.({
+        agentPubkey,
+        events: [
+          {
+            seq: Date.now(),
+            timestamp: new Date().toISOString(),
+            kind: "session_aging",
+            agentIndex: 0,
+            channelId: payload.channelId,
+            conversationId: payload.conversationId,
+            sessionId: "sess-aging",
+            turnId: null,
+            payload: {
+              pubkey: agentPubkey,
+              channelId: payload.channelId,
+              conversationId: payload.conversationId,
+              aging: true,
+              reason: payload.reason,
+              compactionCount: payload.compactionCount,
+              compactionSignal: payload.compactionSignal,
+              sessionTurnCount: payload.sessionTurnCount,
+              compactionThreshold: 3,
+              turnThreshold: 100,
+            },
+          },
+        ],
+      });
+    },
+    { agentPubkey: AGENT_PUBKEY, ...input },
   );
 }
 
@@ -54,103 +151,16 @@ test.describe("session aging + handover (#173)", () => {
 
   test("aging banner is benign and never failure copy", async ({ page }) => {
     await openChannel(page);
+    const messageId = await emitAndOpenThread(page, "Root for aging thread");
 
-    const root = await page.evaluate(
-      ({ channelName, pubkey }) =>
-        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
-          channelName,
-          content: "Root for aging thread",
-          pubkey,
-        }),
-      { channelName: CHANNEL, pubkey: TEST_IDENTITIES.tyler.pubkey },
-    );
-    const rootId =
-      typeof root === "object" && root && "id" in root
-        ? String((root as { id: string }).id)
-        : null;
-    expect(rootId).toBeTruthy();
-
-    // Open the thread so the banner slot is mounted.
-    await page.getByText("Root for aging thread").click();
-    await expect(page.getByTestId("message-thread-body")).toBeVisible();
-
-    const channelId = await page.evaluate(() => {
-      const el = document.querySelector("[data-channel-id]");
-      return el?.getAttribute("data-channel-id");
+    await injectAging(page, {
+      conversationId: messageId,
+      channelId: messageId,
+      reason: "compaction_threshold",
+      compactionCount: 3,
+      compactionSignal: "known",
+      sessionTurnCount: 12,
     });
-
-    await page.evaluate(
-      ({ agentPubkey, channelId, conversationId }) => {
-        window.__BUZZ_E2E_INJECT_OBSERVER_EVENTS__?.({
-          agentPubkey,
-          events: [
-            {
-              seq: 1,
-              timestamp: new Date().toISOString(),
-              kind: "session_aging",
-              agentIndex: 0,
-              channelId: channelId ?? conversationId,
-              conversationId,
-              sessionId: "sess-aging-1",
-              turnId: null,
-              payload: {
-                pubkey: agentPubkey,
-                channelId: channelId ?? conversationId,
-                conversationId,
-                aging: true,
-                reason: "compaction_threshold",
-                compactionCount: 3,
-                compactionSignal: "known",
-                sessionTurnCount: 12,
-                compactionThreshold: 3,
-                turnThreshold: 100,
-              },
-            },
-          ],
-        });
-      },
-      {
-        agentPubkey: AGENT_PUBKEY,
-        channelId,
-        conversationId: rootId,
-      },
-    );
-
-    // Prefer thread-head conversation id; if banner keys on channel, still show.
-    // Re-inject with channel id as conversationId for channel-pane threads.
-    await page.evaluate(
-      ({ agentPubkey, channelId }) => {
-        if (!channelId) return;
-        window.__BUZZ_E2E_INJECT_OBSERVER_EVENTS__?.({
-          agentPubkey,
-          events: [
-            {
-              seq: 2,
-              timestamp: new Date().toISOString(),
-              kind: "session_aging",
-              agentIndex: 0,
-              channelId,
-              conversationId: channelId,
-              sessionId: "sess-aging-1",
-              turnId: null,
-              payload: {
-                pubkey: agentPubkey,
-                channelId,
-                conversationId: channelId,
-                aging: true,
-                reason: "compaction_threshold",
-                compactionCount: 3,
-                compactionSignal: "known",
-                sessionTurnCount: 12,
-                compactionThreshold: 3,
-                turnThreshold: 100,
-              },
-            },
-          ],
-        });
-      },
-      { agentPubkey: AGENT_PUBKEY, channelId },
-    );
 
     const banner = page.getByTestId("session-aging-banner");
     await expect(banner).toBeVisible({ timeout: 10_000 });
@@ -197,105 +207,19 @@ test.describe("session aging + handover (#173)", () => {
     page,
   }) => {
     await openChannel(page);
-    await page.getByTestId(`channel-${CHANNEL}`).click();
+    const messageId = await emitAndOpenThread(
+      page,
+      "Seed message for unknown aging",
+    );
 
-    const channelId = await page.evaluate(async () => {
-      // Navigate stays on channel; use mock channel id from DOM if present.
-      const link = document.querySelector(
-        `[data-testid="channel-engineering"]`,
-      );
-      return link?.getAttribute("data-channel-id") ?? "engineering";
+    await injectAging(page, {
+      conversationId: messageId,
+      channelId: messageId,
+      reason: "turn_count_net",
+      compactionCount: 0,
+      compactionSignal: "unknown",
+      sessionTurnCount: 100,
     });
-
-    await page.evaluate(
-      ({ agentPubkey, channelId }) => {
-        window.__BUZZ_E2E_INJECT_OBSERVER_EVENTS__?.({
-          agentPubkey,
-          events: [
-            {
-              seq: 3,
-              timestamp: new Date().toISOString(),
-              kind: "session_aging",
-              agentIndex: 0,
-              channelId,
-              conversationId: channelId,
-              sessionId: "sess-unknown",
-              turnId: null,
-              payload: {
-                pubkey: agentPubkey,
-                channelId,
-                conversationId: channelId,
-                aging: true,
-                reason: "turn_count_net",
-                compactionCount: 0,
-                compactionSignal: "unknown",
-                sessionTurnCount: 100,
-                compactionThreshold: 3,
-                turnThreshold: 100,
-              },
-            },
-          ],
-        });
-      },
-      { agentPubkey: AGENT_PUBKEY, channelId },
-    );
-
-    // Channel pane may not show thread banner without an open thread — open any message thread.
-    await page.evaluate(
-      ({ channelName }) =>
-        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
-          channelName,
-          content: "Seed message for unknown aging",
-        }),
-      { channelName: CHANNEL },
-    );
-    await page.getByText("Seed message for unknown aging").click();
-    await expect(page.getByTestId("message-thread-body")).toBeVisible();
-
-    // Re-key aging to the thread head id after open.
-    const threadId = await page.evaluate(() => {
-      const head = document.querySelector(
-        "[data-testid='message-thread-head'] [data-message-id]",
-      );
-      return head?.getAttribute("data-message-id") ?? null;
-    });
-
-    await page.evaluate(
-      ({ agentPubkey, channelId, conversationId }) => {
-        window.__BUZZ_E2E_INJECT_OBSERVER_EVENTS__?.({
-          agentPubkey,
-          events: [
-            {
-              seq: 4,
-              timestamp: new Date().toISOString(),
-              kind: "session_aging",
-              agentIndex: 0,
-              channelId,
-              conversationId: conversationId ?? channelId,
-              sessionId: "sess-unknown",
-              turnId: null,
-              payload: {
-                pubkey: agentPubkey,
-                channelId,
-                conversationId: conversationId ?? channelId,
-                aging: true,
-                reason: "turn_count_net",
-                compactionCount: 0,
-                compactionSignal: "unknown",
-                sessionTurnCount: 100,
-                compactionThreshold: 3,
-                turnThreshold: 100,
-              },
-            },
-          ],
-        });
-      },
-      {
-        agentPubkey: AGENT_PUBKEY,
-        channelId,
-        conversationId: threadId,
-      },
-    );
 
     const banner = page.getByTestId("session-aging-banner");
     await expect(banner).toBeVisible({ timeout: 10_000 });

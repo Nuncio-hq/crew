@@ -8,7 +8,7 @@ import {
   parseSessionAgingPayload,
   putSessionAging,
   sessionAgingBannerText,
-} from "./sessionAgingStore.mjs";
+} from "./sessionAgingStore.test-support.mjs";
 
 describe("sessionAgingStore (#173)", () => {
   beforeEach(() => {

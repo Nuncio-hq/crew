@@ -539,25 +539,7 @@ pub fn spawn_agent_child(
     // Idle engine spin-down (issue #169): default 30 minutes. Reserved so
     // layered persona/user env cannot disable desktop-owned sleep policy.
     command.env("BUZZ_ACP_POOL_IDLE_TIMEOUT", "1800");
-    // Guided handover / compaction aging (#173): inject per-app settings when
-    // present so the harness summarizer + thresholds match Settings → Agents.
-    if let Some(model) = global
-        .handover_summarizer_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        command.env("BUZZ_ACP_HANDOVER_MODEL", model);
-    }
-    if let Some(threshold) = global.compaction_aging_threshold {
-        command.env(
-            "BUZZ_ACP_COMPACTION_THRESHOLD",
-            threshold.clamp(1, 10).to_string(),
-        );
-    }
-    if let Some(threshold) = global.turn_aging_threshold.filter(|v| *v > 0) {
-        command.env("BUZZ_ACP_TURN_AGING_THRESHOLD", threshold.to_string());
-    }
+    super::session_aging_env::apply_session_aging_env(&mut command, &global);
     // Crew's review state is receipt-backed. This key is reserved, so layered
     // harness/persona/user env written below cannot disable managed receipts.
     command.env("BUZZ_ACP_AGENT_RECEIPTS", "true");
