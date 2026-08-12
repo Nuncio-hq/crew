@@ -430,7 +430,13 @@ test("send_channel_user_input_answer publishes a real kind 46041", async ({
         id: "q0",
         header: "Choice",
         question: "Which path?",
-        options: [{ value: "a", label: "A" }],
+        options: [
+          {
+            value: "a",
+            label: "A",
+            description: "Option A",
+          },
+        ],
       },
     ],
   });
