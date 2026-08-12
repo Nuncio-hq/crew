@@ -533,13 +533,17 @@ test("workflow create/update/trigger/delete publish real 30620 / 46020 / 5", asy
   });
 
   const marker = `bridge-wf-${Date.now()}`;
+  // TriggerDef accepts message_posted|reaction_added|diff_posted|schedule|webhook
+  // (not "manual"). Use webhook + a valid delay step so relay YAML validation
+  // accepts the definition (issue #177).
   const createYaml = [
     `name: ${marker}`,
     "trigger:",
-    "  on: manual",
+    "  on: webhook",
     "steps:",
     "  - id: step_1",
-    "    action: noop",
+    "    action: delay",
+    "    duration: 1s",
   ].join("\n");
 
   const created = (await invokeBridgeCommand(page, "create_workflow", {
@@ -594,10 +598,11 @@ test("workflow create/update/trigger/delete publish real 30620 / 46020 / 5", asy
   const updateYaml = [
     `name: ${updatedName}`,
     "trigger:",
-    "  on: manual",
+    "  on: webhook",
     "steps:",
     "  - id: step_1",
-    "    action: noop",
+    "    action: delay",
+    "    duration: 1s",
   ].join("\n");
 
   const updated = (await invokeBridgeCommand(page, "update_workflow", {
