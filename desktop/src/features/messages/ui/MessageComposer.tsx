@@ -9,7 +9,12 @@ import { resolveSentDraftKey } from "@/features/messages/ui/draftSubmitKey";
 import { useEmojiAutocomplete } from "@/features/messages/lib/useEmojiAutocomplete";
 import type { EmojiSuggestion } from "@/features/messages/lib/useEmojiAutocomplete";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
-import type { ImetaMedia } from "@/features/messages/lib/imetaMediaMarkdown";
+import {
+  findSpoileredImetaMediaUrls,
+  type ImetaMedia,
+  restoreImetaMediaDisplayLabels,
+  stripImetaMediaLines,
+} from "@/features/messages/lib/imetaMediaMarkdown";
 import { useAttachmentEditing } from "@/features/messages/lib/useAttachmentEditing";
 import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
 import {

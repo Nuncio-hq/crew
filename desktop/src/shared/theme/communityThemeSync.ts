@@ -1,4 +1,5 @@
 import { relayClient } from "@/shared/api/relayClient";
+import type { RelayLiveSubscriptionStatus } from "@/shared/api/relayClientShared";
 import {
   nip44DecryptFromSelf,
   nip44EncryptToSelf,
@@ -311,10 +312,14 @@ export class CommunityThemeSyncManager {
     // an existing preference.
     let unsubscribe: () => Promise<void> = async () => {};
     const readiness = {
-      value: "failed" as "eose" | "closed" | "timeout" | "failed",
+      value: "failed" as "open" | "closed" | "failed",
     };
-    const setReadiness = (result: "eose" | "closed" | "timeout") => {
-      readiness.value = result;
+    const setReadiness = (status: RelayLiveSubscriptionStatus) => {
+      if (status.state === "open") {
+        readiness.value = "open";
+      } else if (status.state === "closed") {
+        readiness.value = "closed";
+      }
     };
     try {
       unsubscribe = await relayClient.subscribeLive(
@@ -344,7 +349,7 @@ export class CommunityThemeSyncManager {
       hydrationResult = { status: "unavailable" };
     } else if (this.observedInvalidLiveRemote) {
       hydrationResult = { status: "invalid" };
-    } else if (readiness.value === "eose") {
+    } else if (readiness.value === "open") {
       hydrationResult = { status: "confirmed-absent" };
     } else {
       hydrationResult = { status: "unavailable" };
