@@ -131,11 +131,15 @@ test("desktop smoke e2e runs on PRs as an advisory signal until flakes are triag
   const ci = workflow("nuncio-crew-ci.yml");
   const smokeStart = ci.indexOf("desktop-smoke-e2e:");
   assert.ok(smokeStart > 0, "desktop-smoke-e2e job must exist");
+  const nextJob = ci.indexOf("\n  desktop-e2e-integration:", smokeStart);
   const gateStart = ci.indexOf("\n  gate:", smokeStart);
-  const smoke = ci.slice(
-    smokeStart,
-    gateStart > smokeStart ? gateStart : undefined,
-  );
+  const smokeEnd =
+    nextJob > smokeStart
+      ? nextJob
+      : gateStart > smokeStart
+        ? gateStart
+        : undefined;
+  const smoke = ci.slice(smokeStart, smokeEnd);
 
   assert.match(smoke, /name:\s*Desktop Smoke E2E/);
   assert.match(smoke, /continue-on-error:\s*true/);
@@ -153,6 +157,41 @@ test("desktop smoke e2e runs on PRs as an advisory signal until flakes are triag
     "utf8",
   );
   assert.doesNotMatch(gateHelper, /desktop-smoke-e2e/);
+});
+
+test("desktop e2e integration runs on PRs as an advisory relay-backed lane", () => {
+  const ci = workflow("nuncio-crew-ci.yml");
+  const integStart = ci.indexOf("desktop-e2e-integration:");
+  assert.ok(integStart > 0, "desktop-e2e-integration job must exist");
+  const gateStart = ci.indexOf("\n  gate:", integStart);
+  const integ = ci.slice(
+    integStart,
+    gateStart > integStart ? gateStart : undefined,
+  );
+
+  assert.match(integ, /name:\s*Desktop E2E Integration/);
+  assert.match(integ, /continue-on-error:\s*true/);
+  assert.match(integ, /shard:\s*\[1,\s*2\]/);
+  assert.match(integ, /docker compose up -d postgres redis minio minio-init/);
+  assert.match(integ, /cargo build --profile ci -p buzz-relay/);
+  assert.match(integ, /BUZZ_RECONCILE_CHANNELS=true/);
+  assert.match(integ, /setup-desktop-test-data\.sh/);
+  assert.match(integ, /pnpm -C desktop build:e2e/);
+  assert.match(
+    integ,
+    /playwright test --project=integration --shard=\$\{\{ matrix\.shard \}\}\/2/,
+  );
+  assert.match(integ, /needs\.changes\.outputs\.desktop == 'true'/);
+  // Advisory (D-047): must not be registered in the merge gate.
+  assert.doesNotMatch(ci, /needs\.desktop-e2e-integration\.result/);
+  const gateHelper = readFileSync(gateHelperPath, "utf8");
+  assert.doesNotMatch(gateHelper, /desktop-e2e-integration/);
+  // Gate needs list must stay free of the integration job id.
+  const gateNeeds = ci.match(
+    /name:\s*NuncioCrew Gate[\s\S]*?needs:\s*\[([^\]]+)\]/,
+  );
+  assert.ok(gateNeeds, "gate needs list must be present");
+  assert.doesNotMatch(gateNeeds[1], /desktop-e2e-integration/);
 });
 
 test("upstream compatibility is explicit and manual", () => {

@@ -134,6 +134,10 @@ Out of scope for this slice:
   baseline bump while D-022 governs Crew-authored growth.
 - Automatic checks: desktop fast gate, unsigned macOS ARM64 package, and a
   path-filtered real-relay Project contract.
+- Advisory (non-blocking) on desktop path changes: Desktop Smoke E2E (D-032)
+  and Desktop E2E Integration — real relay + Postgres/Redis/MinIO,
+  `playwright --project=integration`, two shards (D-047 / #147). A green Gate
+  is not evidence either advisory lane passed.
 - Web, mobile, Windows, Linux distribution, Docker publishing, Helm, Sprig,
   and optional mesh-llm builds are outside automatic Crew CI.
 - Core root and desktop Tauri Rust format, lint, unit, and dependency-policy

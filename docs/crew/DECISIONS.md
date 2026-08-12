@@ -839,3 +839,34 @@ classifications.
 
 This decision changes no reaction semantics, event kinds, or evidence tag
 schema. D-036 remains authoritative for evidence tags and reaction behavior.
+
+## D-047 — Keep Desktop E2E Integration advisory until Crew owns more of the lane
+
+- **Status:** Accepted
+- **Date:** 2026-08-12
+- **Issue:** #147
+- **Precedent:** D-032 (Desktop Smoke E2E advisory)
+
+The founder decided that the relay-backed Desktop E2E Integration lane
+(`playwright test --project=integration` in `nuncio-crew-ci.yml`) is **advisory**:
+`continue-on-error: true`, excluded from `NuncioCrew Gate` `needs`, and absent
+from `JOB_RELEVANCE` in `check-nuncio-crew-ci-results.mjs`. A green Gate is not
+evidence that integration passed.
+
+Rationale matches D-032's trade-off, applied to a heavier lane:
+
+1. Only one configured integration spec is Crew-specific today
+   (`evidence-reactions-relay.spec.ts` from #133 / PR #146); the rest are
+   inherited Buzz coverage that Crew deliberately stopped requiring when the
+   upstream `CI` workflow was disabled.
+2. The lane needs Postgres, Redis, MinIO, a built `buzz-relay`, schema and
+   community seed, `scripts/setup-desktop-test-data.sh`, Playwright, and
+   `BUZZ_RECONCILE_CHANNELS=true`. Relay and service flakiness must not block
+   every desktop merge.
+3. Restoring the lane as advisory recovers continuous signal (including the
+   D-042 headless click → real kind-7 proof) without red-walling merges.
+
+Promotion path: making the lane required is an **explicit future founder
+decision**, not an automatic follow-up when a single spec turns green. Revisit
+once Crew owns a meaningful share of the integration suite and the lane's
+failure rate on `main` is attributed and stable enough to gate on.
