@@ -5,6 +5,7 @@ mod compaction_signal;
 mod config;
 mod conversation;
 mod cowork_turn;
+mod declared_plan;
 mod elicitation;
 mod engram_fetch;
 mod filter;

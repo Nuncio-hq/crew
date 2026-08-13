@@ -231,6 +231,10 @@ pub struct AcpClient {
     standard_usage: StandardUsageTracker,
     /// Known adapter identity for prompt-response usage mapping.
     standard_adapter: Option<StandardAdapterKind>,
+    /// Latest structured ACP `sessionUpdate: plan` snapshot for this client.
+    /// Cleared on `session/new` and on `entries: []`. Unstructured plan
+    /// updates (no `entries` array) do not clobber a previous snapshot.
+    last_declared_plan: Option<crate::declared_plan::DeclaredPlanSnapshot>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -591,6 +595,7 @@ impl AcpClient {
             post_compact_hooks_seen: 0,
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
+            last_declared_plan: None,
         })
     }
 
@@ -707,6 +712,7 @@ impl AcpClient {
             .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
             .to_owned();
         tracing::info!(target: "acp::session", "session created: {session_id}");
+        self.last_declared_plan = None;
         self.note_rotation_from_value(&result);
         Ok(SessionNewResponse {
             session_id,
@@ -960,6 +966,12 @@ impl AcpClient {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn active_run_id(&self) -> Option<&str> {
         self.active_run_id.as_deref()
+    }
+
+    /// Latest structured ACP plan snapshot retained from `sessionUpdate: plan`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn last_declared_plan(&self) -> Option<&crate::declared_plan::DeclaredPlanSnapshot> {
+        self.last_declared_plan.as_ref()
     }
 
     /// Parse and retain an engine rotation signal from an ACP value, if any.
@@ -2176,6 +2188,11 @@ impl AcpClient {
             }
             "plan" => {
                 tracing::info!(target: "acp::plan", "plan update received");
+                crate::declared_plan::apply_plan_update(
+                    &mut self.last_declared_plan,
+                    update,
+                    msg["params"]["sessionId"].as_str(),
+                );
                 false
             }
             "agent_thought_chunk" => {
@@ -4283,6 +4300,80 @@ done
         assert_eq!(snap.compression_depth, 1);
         assert_eq!(snap.current_internal_id, "hermes-child-1");
         assert_eq!(snap.source, "hermes.sessionProvenance");
+    }
+
+    fn plan_update_msg(session_id: &str, entries: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": session_id,
+                "update": {
+                    "sessionUpdate": "plan",
+                    "entries": entries,
+                },
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn plan_update_retains_structured_entries() {
+        let mut client = spawn_inert_client().await;
+        let _ = client.handle_session_update(&plan_update_msg(
+            "sess-dev",
+            serde_json::json!([
+                {"content": "Fetch tags", "status": "completed"},
+                {"content": "Compare ACP lifecycle", "status": "in_progress"}
+            ]),
+        ));
+        let snapshot = client.last_declared_plan().expect("retained");
+        assert_eq!(snapshot.session_id.as_deref(), Some("sess-dev"));
+        assert_eq!(snapshot.entries.len(), 2);
+        assert_eq!(
+            snapshot.entries[1].status,
+            crate::declared_plan::DeclaredPlanStatus::InProgress
+        );
+    }
+
+    #[tokio::test]
+    async fn plan_update_empty_entries_clears_retained_snapshot() {
+        let mut client = spawn_inert_client().await;
+        let _ = client.handle_session_update(&plan_update_msg(
+            "sess-dev",
+            serde_json::json!([{"content": "Stale", "status": "pending"}]),
+        ));
+        assert!(client.last_declared_plan().is_some());
+        let _ = client.handle_session_update(&plan_update_msg("sess-dev", serde_json::json!([])));
+        assert!(client.last_declared_plan().is_none());
+    }
+
+    #[tokio::test]
+    async fn session_new_clears_plan_owned_by_previous_session() {
+        let script = r#"
+            read -t 2 _init
+            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+            read -t 2 _new
+            echo '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"sess-rebuilt"}}'
+            sleep 1
+        "#;
+        let mut client = spawn_script(script).await;
+        client
+            .initialize()
+            .await
+            .expect("initialize should succeed");
+        let _ = client.handle_session_update(&plan_update_msg(
+            "sess-old",
+            serde_json::json!([{"content": "Dead session plan", "status": "pending"}]),
+        ));
+        assert!(client.last_declared_plan().is_some());
+        client
+            .session_new("/tmp", vec![], None, None)
+            .await
+            .expect("session/new rebuild");
+        assert!(
+            client.last_declared_plan().is_none(),
+            "failed session/load rebuild via session/new must drop the dead snapshot"
+        );
     }
 
     #[tokio::test]

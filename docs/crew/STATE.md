@@ -1,5 +1,16 @@
 # Crew State
 
+## Issue #190 — Thread-visible declared plans (ACP snapshot per agent)
+
+Open thread shows a persistent right rail of per-agent declared plans.
+One card per participating agent; latest full ACP `sessionUpdate: plan`
+snapshot wins; structured todo/plan tool is same-agent fallback only.
+Missing signal is muted unknown — never a guessed checklist, never a
+shared backlog, never Mission Inbox. Sleeping/disconnected keep
+last-declared and say so. Empty `entries: []` clears. Variant A (rail);
+B/C rejected. Not Workbench (#186). See D-056 and spike 0025.
+Last updated: 2026-08-13
+
 ## Issue #186 — Thread Workbench (one thread, two doors)
 
 Full-screen session view of a thread. Rail: By thread (primary,

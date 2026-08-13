@@ -26,7 +26,6 @@ import { AuxiliaryPanelBody } from "@/shared/layout/AuxiliaryPanel";
 import {
   AuxiliaryPanelHeader,
   AuxiliaryPanelHeaderGroup,
-  getAuxiliaryPanelBodyClass,
   getAuxiliaryPanelMode,
 } from "@/shared/layout/AuxiliaryPanel";
 import {
@@ -43,7 +42,7 @@ import { MessageThreadPanelHead } from "./message-thread-panel-head";
 import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
-import { ProjectThreadWorkspacePanel } from "./ProjectThreadWorkspacePanel";
+import { ThreadPanelDeclaredPlansBody } from "./ThreadPanelDeclaredPlansBody";
 import { ProjectThreadActivityPeek } from "./ProjectThreadActivityPeek";
 import { useProjectThreadWorkspaceModel } from "./useProjectThreadWorkspaceModel";
 import type { ThreadBreadcrumb } from "@/features/messages/lib/threadOrientation";
@@ -987,20 +986,18 @@ export function MessageThreadPanel({
         {/* Sticky status bar lives outside the scroll region so expand/collapse
             cannot fight useAnchoredScroll's ResizeObserver. Sibling padded
             column keeps docked header chrome from stealing Workspace clicks. */}
-        <div
-          className={cn(
-            "flex min-h-0 flex-1 flex-col",
-            getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
-          )}
+        <ThreadPanelDeclaredPlansBody
+          channelId={channelId}
+          isFocusMode={isFocusMode}
+          isHuddleTranscript={Boolean(isHuddleTranscript)}
+          panelChromeMode={panelChromeMode}
+          profiles={profiles}
+          threadHead={threadHead}
+          threadMessages={threadMessages}
+          workspaceModel={projectThreadWorkspaceModel}
         >
-          <ProjectThreadWorkspacePanel
-            channelId={channelId}
-            isFocusMode={isFocusMode}
-            profiles={profiles}
-            model={projectThreadWorkspaceModel}
-          />
           {threadScrollRegion}
-        </div>
+        </ThreadPanelDeclaredPlansBody>
       </AuxiliaryPanel>
     </VideoReviewNavigationProvider>
   );
