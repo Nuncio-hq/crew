@@ -1,0 +1,27 @@
+Build (linux/arm64)	UNKNOWN STEP	﻿2026-08-13T11:52:40.1194845Z Current runner version: '2.336.0'
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:52:40.1228177Z ##[group]Runner Image Provisioner
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:52:40.1229764Z Hosted Compute Agent
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:52:40.1230356Z Version: 20260707.563
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:52:40.1230976Z Commit: 02667638d2b423fbc733a8e32a88b44996a3ba6e
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:52:40.1231742Z Build Date: 2026-07-07T19:33:50Z
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:52:40.1232396Z Worker ID: {a03f723b-c3b8-4d4f-b991-cf104ee88af4}
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:52:40.1233133Z Azure Region: southcentralus
+…
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:58:33.2423236Z builder-202dad8c-95f0-48b5-958b-1c89cf12ce73/builder-202dad8c-95f0-48b5-958b-1c89cf12ce730/peoavu73i5w4hsjhxpabgni00
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:58:33.2424350Z ##[endgroup]
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:58:33.2425680Z ##[group]Check build summary support
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:58:33.2426388Z Build summary supported!
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:58:33.2428817Z ##[endgroup]
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:58:33.2455817Z ##[error]buildx failed with: ERROR: failed to build: failed to solve: failed to push ghcr.io/block/buzz-sprig: denied: permission_denied: The requested installation does not exist.
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:58:33.2651166Z Post job cleanup.
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:58:33.5049479Z ##[group]Generating build summary
+Build (linux/arm64)	UNKNOWN STEP	2026-08-13T11:58:33.5649062Z exporting build record to /home/runner/work/_temp/docker-actions-toolkit-lwrSwM/export
+…
+Build (linux/amd64)	UNKNOWN STEP	2026-08-13T11:58:39.4764897Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Build (linux/amd64)	UNKNOWN STEP	2026-08-13T11:58:39.4980581Z Removing HTTP extra header
+Build (linux/amd64)	UNKNOWN STEP	2026-08-13T11:58:39.4985500Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Build (linux/amd64)	UNKNOWN STEP	2026-08-13T11:58:39.5015716Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Build (linux/amd64)	UNKNOWN STEP	2026-08-13T11:58:39.5248696Z Removing includeIf entries pointing to credentials config files
+Build (linux/amd64)	UNKNOWN STEP	2026-08-13T11:58:39.5249548Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Build (linux/amd64)	UNKNOWN STEP	2026-08-13T11:58:39.5276352Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Build (linux/amd64)	UNKNOWN STEP	2026-08-13T11:58:39.5608347Z Cleaning up orphan processes

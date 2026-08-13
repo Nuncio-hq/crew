@@ -1,0 +1,137 @@
+query ForgePullRequestDetail($owner: String!, $name: String!, $number: Int!) {
+  rateLimit {
+    remaining
+    resetAt
+  }
+  repository(owner: $owner, name: $name) {
+    mergeCommitAllowed
+    squashMergeAllowed
+    rebaseMergeAllowed
+    pullRequest(number: $number) {
+      id
+      number
+      title
+      body
+      url
+      state
+      isDraft
+      mergeable
+      mergeStateStatus
+      reviewDecision
+      additions
+      deletions
+      changedFiles
+      headRefName
+      baseRefName
+      createdAt
+      updatedAt
+      author {
+        login
+      }
+      comments(first: 20) {
+        nodes {
+          id
+          author {
+            login
+          }
+          body
+          createdAt
+          url
+        }
+      }
+      reviews(first: 20) {
+        nodes {
+          id
+          author {
+            login
+          }
+          body
+          state
+          submittedAt
+          url
+        }
+      }
+      reviewThreads(first: 20) {
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          line
+          comments(first: 10) {
+            nodes {
+              id
+              author {
+                login
+              }
+              body
+              createdAt
+              url
+            }
+          }
+        }
+      }
+      history: commits(last: 20) {
+        nodes {
+          commit {
+            oid
+            messageHeadline
+            committedDate
+            additions
+            deletions
+            author {
+              name
+              email
+            }
+          }
+        }
+      }
+      files(first: 50) {
+        nodes {
+          path
+          additions
+          deletions
+          viewerViewedState
+        }
+      }
+      head: commits(last: 1) {
+        nodes {
+          commit {
+            oid
+            statusCheckRollup {
+              state
+              contexts(first: 40) {
+                nodes {
+                  __typename
+                  ... on CheckRun {
+                    name
+                    status
+                    conclusion
+                    detailsUrl
+                    startedAt
+                    completedAt
+                    databaseId
+                    checkSuite {
+                      workflowRun {
+                        databaseId
+                        url
+                        workflow {
+                          name
+                        }
+                      }
+                    }
+                  }
+                  ... on StatusContext {
+                    context
+                    state
+                    targetUrl
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

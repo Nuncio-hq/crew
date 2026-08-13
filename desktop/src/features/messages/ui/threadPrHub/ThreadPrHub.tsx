@@ -1,0 +1,222 @@
+import { LoaderCircle, RefreshCw } from "lucide-react";
+import * as React from "react";
+
+import { parseCrewFinding } from "@/features/messages/lib/parseCrewFinding";
+import type { ThreadForgeHubSubject } from "@/features/messages/lib/threadForgeHubSubjectStore";
+import { useThreadForgePullRequest } from "@/features/messages/lib/threadForgePullRequestStore";
+import { useThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
+import { cn } from "@/shared/lib/cn";
+
+import { FORGE_TAB_TRIGGER_CLASS, formatIsoRelative } from "./forgeHubCopy";
+import { ThreadPrHubBugs } from "./ThreadPrHubBugs";
+import { ThreadPrHubChanges } from "./ThreadPrHubChanges";
+import { ThreadPrHubChecks } from "./ThreadPrHubChecks";
+import { ThreadPrHubCommits } from "./ThreadPrHubCommits";
+import { ThreadPrHubDegraded } from "./ThreadPrHubDegraded";
+import { ThreadPrHubDescription } from "./ThreadPrHubDescription";
+import { ThreadPrHubDiscussion } from "./ThreadPrHubDiscussion";
+import { ThreadPrHubHeader } from "./ThreadPrHubHeader";
+import { ThreadPrHubNoPullRequest } from "./ThreadPrHubNoPullRequest";
+
+export function ThreadPrHub({ subject }: { subject: ThreadForgeHubSubject }) {
+  const ref =
+    subject.kind === "pr"
+      ? {
+          owner: subject.owner,
+          name: subject.name,
+          number: subject.number,
+        }
+      : null;
+  const worktreePath = subject.worktreePath;
+  const baseRef =
+    subject.kind === "pr" ? undefined : (subject.baseRef ?? undefined);
+  const { refresh, snapshot } = useThreadForgePullRequest(
+    ref,
+    worktreePath,
+    baseRef,
+  );
+  const view = useThreadForgeViewContext();
+  const [tab, setTab] = React.useState("changes");
+  const [refreshing, setRefreshing] = React.useState(false);
+  const lastRefresh = React.useRef(Date.now());
+  const findingCount = (view?.messages ?? []).filter((message) =>
+    parseCrewFinding(message.tags),
+  ).length;
+
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    lastRefresh.current = Date.now();
+    await refresh();
+    setRefreshing(false);
+  }, [refresh]);
+
+  if (subject.kind === "empty") {
+    return <ThreadPrHubNoPullRequest subject={subject} />;
+  }
+
+  if (snapshot.status === "pending") {
+    return (
+      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+        <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+        Loading pull request…
+      </div>
+    );
+  }
+
+  const { detail, diff } = snapshot;
+  if (
+    detail.availability === "cli-missing" ||
+    detail.availability === "cli-failed" ||
+    detail.availability === "rate-limited"
+  ) {
+    return (
+      <ThreadPrHubDegraded
+        availability={detail.availability}
+        message={detail.message}
+        rateLimitedUntil={detail.rateLimitedUntil}
+        onRecheck={() => void onRefresh()}
+        refreshDisabled={detail.availability === "rate-limited"}
+      />
+    );
+  }
+
+  const pr = detail.detail;
+  if (!pr) {
+    return (
+      <ThreadPrHubDegraded
+        availability="cli-failed"
+        message={detail.message ?? "Pull request was not found."}
+        rateLimitedUntil={null}
+        onRecheck={() => void onRefresh()}
+        refreshDisabled={false}
+      />
+    );
+  }
+
+  const failedChecks = pr.checks.filter(
+    (check) =>
+      check.conclusion === "failure" ||
+      check.conclusion === "cancelled" ||
+      check.conclusion === "timed-out",
+  ).length;
+  const commentCount =
+    pr.comments.length +
+    pr.reviews.length +
+    pr.reviewThreads.reduce((sum, thread) => sum + thread.comments.length, 0);
+
+  return (
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <ThreadPrHubHeader
+        diffSource={diff?.diff?.source ?? null}
+        name={subject.name}
+        onRefresh={() => void onRefresh()}
+        owner={subject.owner}
+        pr={pr}
+        refreshDisabled={false}
+        refreshing={refreshing}
+        refreshedLabel={`refreshed ${formatIsoRelative(new Date(lastRefresh.current).toISOString())}`}
+      />
+      <Tabs
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
+        onValueChange={setTab}
+        value={tab}
+      >
+        <TabsList className="h-9 w-full justify-start gap-1 overflow-x-auto bg-transparent px-3 scrollbar-none">
+          <HubTab label="Changes" value="changes" count={pr.files.length} />
+          <HubTab label="Bugs" value="bugs" count={findingCount} />
+          <HubTab label="Description" value="description" count={null} />
+          <HubTab label="Discussion" value="discussion" count={commentCount} />
+          <HubTab label="Commits" value="commits" count={pr.commits.length} />
+          <HubTab label="Checks" value="checks" count={failedChecks} />
+        </TabsList>
+        <TabsContent
+          className="mt-0 min-h-0 flex-1 overflow-hidden"
+          value="changes"
+        >
+          <ThreadPrHubChanges
+            diff={diff}
+            files={pr.files}
+            onRefresh={() => void onRefresh()}
+            pr={pr}
+            refIdentity={subject}
+          />
+        </TabsContent>
+        <TabsContent
+          className="mt-0 min-h-0 flex-1 overflow-hidden"
+          value="bugs"
+        >
+          <ThreadPrHubBugs
+            channelId={subject.channelId}
+            pr={pr}
+            rootEventId={subject.rootEventId}
+          />
+        </TabsContent>
+        <TabsContent
+          className="mt-0 min-h-0 flex-1 overflow-auto p-3"
+          value="description"
+        >
+          <ThreadPrHubDescription body={pr.body} />
+        </TabsContent>
+        <TabsContent
+          className="mt-0 min-h-0 flex-1 overflow-hidden"
+          value="discussion"
+        >
+          <ThreadPrHubDiscussion
+            onRefresh={() => void onRefresh()}
+            pr={pr}
+            refIdentity={subject}
+          />
+        </TabsContent>
+        <TabsContent
+          className="mt-0 min-h-0 flex-1 overflow-hidden"
+          value="commits"
+        >
+          <ThreadPrHubCommits
+            commits={pr.commits}
+            diff={diff}
+            worktreePath={subject.worktreePath}
+          />
+        </TabsContent>
+        <TabsContent
+          className="mt-0 min-h-0 flex-1 overflow-hidden"
+          value="checks"
+        >
+          <ThreadPrHubChecks
+            checks={pr.checks}
+            onRefresh={() => void onRefresh()}
+            refIdentity={subject}
+          />
+        </TabsContent>
+      </Tabs>
+      {refreshing ? (
+        <div className="pointer-events-none absolute right-4 top-4">
+          <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function HubTab({
+  count,
+  label,
+  value,
+}: {
+  count: number | null;
+  label: string;
+  value: string;
+}) {
+  return (
+    <TabsTrigger className={cn(FORGE_TAB_TRIGGER_CLASS)} value={value}>
+      {label}
+      {count === null ? (
+        <span className="text-2xs text-muted-foreground">—</span>
+      ) : (
+        <span className="rounded-full bg-muted px-1.5 py-0.5 text-2xs">
+          {count}
+        </span>
+      )}
+    </TabsTrigger>
+  );
+}

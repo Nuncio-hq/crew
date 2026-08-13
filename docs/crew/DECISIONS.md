@@ -1201,3 +1201,40 @@ Missing signal is unknown, not guessed from prose.
 5. **Not a shared backlog, not Mission #151, not Workbench #186.** Do not
    invent a Crew task protocol or a second store that agents must write to.
 
+## D-057 — GitHub PR hub in thread focus (two tiers, `gh` data plane)
+
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Issue:** #193
+
+The review surface for a forge pull request is a **hub in thread focus**,
+not a NIP-34 conversation and not a Crew GitHub protocol.
+
+1. **Two tiers exactly.** Split-view thread panel shows a glance-only
+   summary card (state, title, head→base, +/−, files, checks, review).
+   The whole card is one click: open focus with the hub mounted. Focus
+   is a two-pane workbench (chat ~40% | hub ~60%). Narrow windows collapse
+   to Chat ⇄ PR. No tabs or diffs on the card.
+2. **Two inputs, never a destination toggle.** The thread composer posts
+   to the relay thread. The Discussion tab has its own box labeled
+   `Comment on GitHub`. Mixing those audiences is a product bug.
+3. **`gh` is the data plane; contracts are forge-neutral.** Hub reads and
+   GitHub writes go through a provider trait whose GitHub impl wraps `gh`
+   (`gh_cli.rs`). Types and Tauri commands do not hard-code GitHub
+   semantics beyond that impl. GitLab/`glab` is not this issue. Detail
+   reads batch in one GraphQL query (spike 0026). Diffs prefer local
+   worktree `git diff`; API fallback when the worktree is gone, the PR
+   is merged, or the hub was opened by URL. Mark-as-viewed is GitHub
+   `viewerViewedState`, not a local flag. No webhooks — Refresh, focus
+   open, and post-write refetch.
+4. **Findings are tagged thread messages.** Bugs tab is a filtered view
+   of ordinary messages with a tolerant `["crew-finding", severity, file,
+   range]` tag (D-036 pattern). No parallel finding store. "Run analysis"
+   dispatches the channel Reviewer via `code-review` routing or a
+   `Reviewer` role label; unheld → picker persisted per channel, overridable
+   per thread. Wire format stays plain mentions.
+5. **Ship the whole surface.** Six tabs, write actions, PR-by-URL, and
+   degraded states land together. Do not reuse NIP-34 write mutations.
+   Mobile, GitLab, webhooks, and Workbench (#186) mounting are out of
+   scope. Workbench may later embed the hub as a component.
+

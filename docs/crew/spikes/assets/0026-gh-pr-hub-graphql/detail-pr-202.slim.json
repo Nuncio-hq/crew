@@ -1,0 +1,188 @@
+{
+  "data": {
+    "rateLimit": {
+      "remaining": 4853,
+      "resetAt": "2026-08-13T12:15:26Z"
+    },
+    "repository": {
+      "mergeCommitAllowed": true,
+      "squashMergeAllowed": true,
+      "rebaseMergeAllowed": true,
+      "pullRequest": {
+        "id": "PR_kwDOTnxGBc7-jTvR",
+        "number": 202,
+        "title": "feat(desktop): thread declared-plans rail (ACP snapshot per agent)",
+        "body": "<!-- CURSOR_AGENT_PR_BODY_BEGIN -->\n## Summary\n\nOpen threads now show a **persistent right rail** of declared plans \u2014 one card per participating agent, never a shared backlog. Authority is the latest ACP `sessionUpdate: plan` snapshot (`entries[]`), with the existing structured todo / `plan:todo` tool as same-agent fallback only. Missing signal is muted **Plan unknown**, not a guessed checklist.\n\n\n\u2026",
+        "url": "https://github.com/Nuncio-hq/crew/pull/202",
+        "state": "MERGED",
+        "isDraft": false,
+        "mergeable": "UNKNOWN",
+        "mergeStateStatus": "UNKNOWN",
+        "reviewDecision": null,
+        "additions": 1952,
+        "deletions": 29,
+        "changedFiles": 21,
+        "headRefName": "cursor/thread-declared-plans-rail-83ec",
+        "baseRefName": "main",
+        "createdAt": "2026-08-13T11:26:51Z",
+        "updatedAt": "2026-08-13T11:52:35Z",
+        "author": {
+          "login": "oscarlehuu"
+        },
+        "comments": {
+          "nodes": []
+        },
+        "reviews": {
+          "nodes": []
+        },
+        "reviewThreads": {
+          "nodes": []
+        },
+        "history": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "420b3d59ff765c7ac57a0bcafec8e02abd97ed5e",
+                "messageHeadline": "feat(desktop): thread declared-plans rail (ACP snapshot per agent)",
+                "committedDate": "2026-08-13T11:26:06Z",
+                "additions": 1925,
+                "deletions": 18,
+                "author": {
+                  "name": "Cursor Agent",
+                  "email": "cursoragent@cursor.com"
+                }
+              }
+            },
+            {
+              "commit": {
+                "oid": "5955d4eb2f187268878de951268544973bb1a5ec",
+                "messageHeadline": "test(desktop): follow status-bar mount into declared-plans body",
+                "committedDate": "2026-08-13T11:41:38Z",
+                "additions": 27,
+                "deletions": 11,
+                "author": {
+                  "name": "Cursor Agent",
+                  "email": "cursoragent@cursor.com"
+                }
+              }
+            }
+          ]
+        },
+        "files": {
+          "nodes": [
+            {
+              "path": "crates/buzz-acp/src/acp.rs",
+              "additions": 91,
+              "deletions": 0,
+              "viewerViewedState": "UNVIEWED"
+            },
+            {
+              "path": "crates/buzz-acp/src/declared_plan.rs",
+              "additions": 202,
+              "deletions": 0,
+              "viewerViewedState": "UNVIEWED"
+            },
+            {
+              "path": "crates/buzz-acp/src/lib.rs",
+              "additions": 1,
+              "deletions": 0,
+              "viewerViewedState": "UNVIEWED"
+            }
+          ]
+        },
+        "head": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "5955d4eb2f187268878de951268544973bb1a5ec",
+                "statusCheckRollup": {
+                  "state": "FAILURE",
+                  "contexts": {
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "Desktop Release Candidate",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/Nuncio-hq/crew/actions/runs/31696638939/job/94435816399",
+                        "startedAt": "2026-08-13T11:41:47Z",
+                        "completedAt": "2026-08-13T11:42:07Z",
+                        "databaseId": 94435816399,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 31696638939,
+                            "url": "https://github.com/Nuncio-hq/crew/actions/runs/31696638939",
+                            "workflow": {
+                              "name": "Desktop Release Candidate"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "CI Policy",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/Nuncio-hq/crew/actions/runs/31696638935/job/94435880691",
+                        "startedAt": "2026-08-13T11:42:06Z",
+                        "completedAt": "2026-08-13T11:42:19Z",
+                        "databaseId": 94435880691,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 31696638935,
+                            "url": "https://github.com/Nuncio-hq/crew/actions/runs/31696638935",
+                            "workflow": {
+                              "name": "NuncioCrew CI"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "Desktop Fast",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/Nuncio-hq/crew/actions/runs/31696638935/job/94435943864",
+                        "startedAt": "2026-08-13T11:42:22Z",
+                        "completedAt": "2026-08-13T11:47:20Z",
+                        "databaseId": 94435943864,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 31696638935,
+                            "url": "https://github.com/Nuncio-hq/crew/actions/runs/31696638935",
+                            "workflow": {
+                              "name": "NuncioCrew CI"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "Desktop Rust",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "detailsUrl": "https://github.com/Nuncio-hq/crew/actions/runs/31696638935/job/94435943853",
+                        "startedAt": "2026-08-13T11:42:21Z",
+                        "completedAt": "2026-08-13T11:49:11Z",
+                        "databaseId": 94435943853,
+                        "checkSuite": {
+                          "workflowRun": {
+                            "databaseId": 31696638935,
+                            "url": "https://github.com/Nuncio-hq/crew/actions/runs/31696638935",
+                            "workflow": {
+                              "name": "NuncioCrew CI"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
