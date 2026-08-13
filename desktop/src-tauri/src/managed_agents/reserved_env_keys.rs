@@ -76,6 +76,9 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     "BUZZ_SIMULATOR_UDID",
     "BUZZ_DEV_SERVER_URL",
     "BUZZ_GOVERNOR_SNAPSHOT_PATH",
+    "BUZZ_DESKTOP_CONTROL_URL",
+    "BUZZ_DESKTOP_CONTROL_TOKEN",
+    "BUZZ_GIT_ORIGIN_THREAD_ROOT_ID",
     // Readiness handoff: desktop is the ONLY readiness source. A saved or
     // ambient env var must not be able to forge setup mode (NotReady) on a
     // Ready agent or suppress it (empty/stale payload) on a NotReady one.

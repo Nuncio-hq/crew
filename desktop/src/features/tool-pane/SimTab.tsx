@@ -24,6 +24,9 @@ import {
 } from "./governorClient";
 import { invokeGovernor, useGovernorStatus } from "./governorStore";
 import { captureSimPng, postCaptureEvidence } from "./postEvidenceCapture";
+import { leaseFor, useAgentControlUi } from "./agentControlStore";
+import { DrivingBanner } from "./DrivingBanner";
+import { GhostCursorOverlay } from "./GhostCursorOverlay";
 import type { CanvasTooling, SimHolding, SimLifecycle } from "./types";
 
 const ENTER_EASE = [0.32, 0.72, 0, 1] as const;
@@ -40,6 +43,8 @@ export function SimTab({
   tooling: CanvasTooling | null;
 }) {
   const status = useGovernorStatus();
+  const control = useAgentControlUi();
+  const lease = leaseFor(control, channelId, "sim");
   const holding = holdingForChannel(status, channelId);
   const bridge = status.bridge;
   const face: SimLifecycle | "bridge-missing" =
@@ -71,16 +76,28 @@ export function SimTab({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col"
+      className="relative flex min-h-0 flex-1 flex-col"
       data-testid="tool-pane-sim"
       data-sim-face={face}
+      onPointerDown={() => {
+        void invokeGovernor("agent_control_note_human", {
+          input: { channelId, instrument: "sim" },
+        });
+      }}
     >
+      <DrivingBanner instrument="sim" lease={lease} />
+      <GhostCursorOverlay
+        channelId={channelId}
+        instrument="sim"
+        overlay={control.overlay}
+      />
       <SimStatusLine holding={holding} onOpenSettings={() => undefined} />
       <div className="flex min-h-0 flex-1 items-center justify-center p-4">
         {face === "bridge-missing" ? (
           <BridgeMissingCard
             hint={bridge.installHint}
             message={bridge.message}
+            waitingAgent={lease?.state === "agentHeld" ? lease.agentName : null}
           />
         ) : face === "absent" ? (
           <CreateDeviceCard
@@ -398,9 +415,11 @@ function MirrorFace({
 function BridgeMissingCard({
   hint,
   message,
+  waitingAgent,
 }: {
   hint: string | null;
   message: string | null;
+  waitingAgent?: string | null;
 }) {
   const command = hint ?? "brew install baguette";
   return (
@@ -418,6 +437,11 @@ function BridgeMissingCard({
       <pre className="mt-3 overflow-x-auto rounded-md bg-background p-2 text-2xs">
         {command}
       </pre>
+      {waitingAgent ? (
+        <p className="mt-2 text-2xs text-muted-foreground">
+          {waitingAgent} is waiting on this too.
+        </p>
+      ) : null}
       <Button
         className="mt-3"
         data-testid="sim-bridge-recheck"

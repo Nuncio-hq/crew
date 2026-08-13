@@ -4,6 +4,10 @@ import type {
   UserInputAnswers,
   UserInputEvent,
 } from "@/features/channels/lib/userInput";
+import {
+  OriginApprovalCard,
+  isOriginApprovalRequest,
+} from "@/features/tool-pane/OriginApprovalCard";
 
 type Props = {
   pending: UserInputEvent[];
@@ -51,6 +55,17 @@ export function ChannelUserInputStack({
     >
       {([...sent, ...resolved, ...pending] as CardItem[]).map((item) => {
         const resolution = "resolution" in item ? item.resolution : undefined;
+        if (isOriginApprovalRequest(item) && !resolution) {
+          return (
+            <OriginApprovalCard
+              item={item}
+              key={item.event.id}
+              sending={sendingRequestId === item.event.id}
+              onSkip={onSkip}
+              onSubmit={onSubmit}
+            />
+          );
+        }
         return (
           <ChannelUserInputCard
             currentPubkey={currentPubkey}

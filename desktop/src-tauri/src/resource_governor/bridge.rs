@@ -81,6 +81,19 @@ pub fn bridge_mjpeg_args(binary: &str, udid: &str) -> Vec<String> {
     }
 }
 
+pub fn bridge_describe_ui_args(binary: &str, udid: &str) -> Vec<String> {
+    if binary.contains("baguette") {
+        vec!["describe-ui".into(), "--udid".into(), udid.into()]
+    } else {
+        vec![
+            "ui".into(),
+            "describe-all".into(),
+            "--udid".into(),
+            udid.into(),
+        ]
+    }
+}
+
 pub fn bridge_tap_args(binary: &str, udid: &str, x: f64, y: f64) -> Vec<String> {
     if binary.contains("baguette") {
         vec![
@@ -122,7 +135,14 @@ mod tests {
     }
 
     #[test]
-    fn baguette_stream_args_request_mjpeg() {
+    fn baguette_describe_ui_args() {
+        let args = bridge_describe_ui_args("baguette", "UDID-1");
+        assert!(args.iter().any(|a| a == "describe-ui"));
+        assert!(args.iter().any(|a| a == "UDID-1"));
+    }
+
+    #[test]
+    fn baguette_mjpeg_args() {
         let args = bridge_mjpeg_args("baguette", "UDID-1");
         assert!(args.iter().any(|a| a == "mjpeg"));
         assert!(args.iter().any(|a| a == "UDID-1"));

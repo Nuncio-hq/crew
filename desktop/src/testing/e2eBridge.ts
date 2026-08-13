@@ -26,10 +26,12 @@ import {
   handleToolPaneCommand,
   isToolPaneCommand,
   resetE2eGovernor,
+  setE2eAgentControl,
   setE2eGovernorStatus,
 } from "./e2eToolPane.ts";
 import { applyGovernorStatus } from "@/features/tool-pane/governorStore";
 import type { GovernorStatus } from "@/features/tool-pane/types";
+import type { AgentControlUi } from "@/features/tool-pane/agentControlStore";
 
 import { relayClient } from "@/shared/api/relayClient";
 import { activateRateLimit } from "@/shared/api/relayRateLimitGate";
@@ -1487,6 +1489,7 @@ declare global {
       patch: Partial<GovernorStatus>,
     ) => GovernorStatus;
     __BUZZ_E2E_GOVERNOR_STATUS__?: () => GovernorStatus;
+    __BUZZ_E2E_SET_AGENT_CONTROL__?: (next: AgentControlUi) => AgentControlUi;
     __BUZZ_E2E_RESET_OBSERVER_EVENTS__?: () => void;
     __BUZZ_E2E_EMIT_MOCK_READ_STATE__?: (input: {
       clientId: string;
@@ -11151,6 +11154,7 @@ export function maybeInstallE2eTauriMocks() {
     return next;
   };
   window.__BUZZ_E2E_GOVERNOR_STATUS__ = () => setE2eGovernorStatus({});
+  window.__BUZZ_E2E_SET_AGENT_CONTROL__ = (next) => setE2eAgentControl(next);
   if (config.mock?.forgePr) {
     setE2eForgeSnapshot(config.mock.forgePr);
   }

@@ -16,6 +16,7 @@ abstract final class EventKind {
   static const typingIndicator = 20002;
   static const auth = 22242;
   static const agentObserverFrame = 24200;
+  static const agentInstrumentOverlay = 24201;
   static const agentReceipt = 46043;
   static const huddleReaction = 24810;
   static const readState = 30078;

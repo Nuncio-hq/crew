@@ -1,11 +1,21 @@
 import { useGovernorStatus } from "./governorStore";
+import { leaseFor, useAgentControlUi } from "./agentControlStore";
 
 export function SidebarResourceDots({ channelId }: { channelId: string }) {
   const status = useGovernorStatus();
+  const control = useAgentControlUi();
   const sim = status.sims.find((entry) => entry.channelId === channelId);
   const server = status.servers.find((entry) => entry.channelId === channelId);
-  const simOn = sim?.lifecycle === "booted" || sim?.lifecycle === "mirroring";
-  const serverOn = server?.face === "running" || server?.face === "idleStop";
+  const simLease = leaseFor(control, channelId, "sim");
+  const browserLease = leaseFor(control, channelId, "browser");
+  const simOn =
+    sim?.lifecycle === "booted" ||
+    sim?.lifecycle === "mirroring" ||
+    simLease?.state === "agentHeld";
+  const serverOn =
+    server?.face === "running" ||
+    server?.face === "idleStop" ||
+    browserLease?.state === "agentHeld";
   if (!simOn && !serverOn) return null;
   return (
     <span

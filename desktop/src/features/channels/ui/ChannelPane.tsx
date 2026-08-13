@@ -53,6 +53,7 @@ import {
 } from "@/features/agents/managedAgentRuntimeStatus";
 import { ChannelComposerActivityAccessory } from "@/features/channels/ui/ChannelComposerActivityAccessory";
 import { ChannelUserInputStack } from "@/features/channels/ui/ChannelUserInputStack";
+import { ChannelOriginPrompt } from "@/features/tool-pane/ChannelOriginPrompt";
 import { useChannelUserInput } from "@/features/channels/hooks/useChannelUserInput";
 import { useChannelComposerBotActivity } from "@/features/channels/ui/useChannelComposerBotActivity";
 import {
@@ -718,6 +719,9 @@ export const ChannelPane = React.memo(function ChannelPane({
                     onSubmit={userInput.answer}
                     onDismiss={userInput.dismissResolved}
                   />
+                ) : null}
+                {activeChannel?.id ? (
+                  <ChannelOriginPrompt channelId={activeChannel.id} />
                 ) : null}
                 <ComposerWorkspaceBindingProvider value={workspaceBinding}>
                   <MessageComposer

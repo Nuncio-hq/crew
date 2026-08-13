@@ -1419,6 +1419,17 @@ fn mcp_servers_with_git_origin(
                 server.env.push(entry.clone());
             }
         }
+        if let Ok(thread) = std::env::var("BUZZ_GIT_ORIGIN_THREAD_ROOT_ID") {
+            if !thread.is_empty() {
+                let entry = EnvVar {
+                    name: "BUZZ_GIT_ORIGIN_THREAD_ROOT_ID".into(),
+                    value: thread,
+                };
+                for server in &mut servers {
+                    server.env.push(entry.clone());
+                }
+            }
+        }
     }
     servers
 }
@@ -5635,6 +5646,14 @@ impl Drop for TurnCompletionGuard {
                 }),
             );
         }
+        crate::desktop_control::notify_lease_release(
+            self.channel_id.map(|id| id.to_string()),
+            if self.completed {
+                "turn_end"
+            } else {
+                "turn_error"
+            },
+        );
     }
 }
 

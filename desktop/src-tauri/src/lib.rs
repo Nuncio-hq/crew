@@ -1,4 +1,5 @@
 #![recursion_limit = "256"] // Deep Tauri command futures exceed the default layout query depth.
+mod agent_control;
 mod app_menu;
 mod app_state;
 mod archive;
@@ -48,6 +49,10 @@ mod tray_menu;
 mod util;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
+use agent_control::{
+    agent_control_note_human, agent_control_origin_decision, agent_control_release,
+    agent_control_status, agent_control_take_over,
+};
 use app_state::{build_app_state, resolve_persisted_identity, AppState};
 use builderlab::*;
 use commands::*;
@@ -308,6 +313,7 @@ pub fn run() {
             .manage(terminal_runtime::TerminalSessions::default())
             .manage(crate::resource_governor::ResourceGovernorHandle::new())
             .manage(crate::resource_governor::MjpegFrames(Default::default()))
+            .manage(crate::agent_control::AgentControlHandle::new())
             .setup(move |app| {
                 let app_handle = app.handle().clone();
                 #[cfg(target_os = "macos")]
@@ -458,6 +464,20 @@ pub fn run() {
                     state
                         .media_proxy_port
                         .store(port, std::sync::atomic::Ordering::Relaxed);
+                });
+
+                // Bind agent-control before restore so spawn_agent_child can inject
+                // BUZZ_DESKTOP_CONTROL_URL. Live host attaches to #196 Governor.
+                let control = {
+                    let state = app_handle.state::<crate::agent_control::AgentControlHandle>();
+                    (*state).clone()
+                };
+                let prebound = control.bind_now();
+                control
+                    .runtime
+                    .attach_live(app_handle.clone(), control.port.clone());
+                tauri::async_runtime::spawn(async move {
+                    crate::agent_control::spawn_agent_control_on(control, prebound).await;
                 });
 
                 start_background(&app_handle);

@@ -109,6 +109,7 @@ export type GovernorStatus = {
 export type CanvasTooling = {
   simulator?: { deviceType: string; runtime: string };
   devServer?: { command: string; readyPattern?: string };
+  browserAllowlist?: string[];
 };
 
 export const DEFAULT_GOVERNOR_POLICY: GovernorPolicy = {

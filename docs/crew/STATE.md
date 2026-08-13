@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #197 — Agent desktop tools (`browser_*` / `sim_*`)
+
+14 MCP tools in `buzz-dev-mcp` drive the #196 Governor instruments
+through `POST /agent-control` (axum, `127.0.0.1:0`, Bearer token,
+Origin gate, `v: 1`). Input lease: humans preempt instantly.
+Subject binding is channel (+ optional thread root). Origin policy
+uses canvas `tooling.browserAllowlist` + elicitation. Overlay kind
+24201. Flat access. Host-bound. Spikes 0031–0034. D-059.
+Last updated: 2026-08-13
+
 ## Issue #196 — Channel Tool Pane (sim mirror + browser + governor)
 
 Unified right-side Tool Pane: `PR · Browser · Sim` in thread focus (composes

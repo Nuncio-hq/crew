@@ -14,6 +14,8 @@ import {
   type GovernorStatus,
   type SimHolding,
 } from "@/features/tool-pane/types";
+import type { AgentControlUi } from "@/features/tool-pane/agentControlStore";
+import { applyAgentControlUi } from "@/features/tool-pane/agentControlStore";
 
 const TOOL_PANE_COMMANDS = new Set([
   "governor_status",
@@ -47,6 +49,11 @@ const TOOL_PANE_COMMANDS = new Set([
   "probe_browser_backend",
   "get_canvas_tooling",
   "set_canvas_tooling",
+  "agent_control_status",
+  "agent_control_take_over",
+  "agent_control_release",
+  "agent_control_note_human",
+  "agent_control_origin_decision",
   "terminal_attach",
   "terminal_input",
 ]);
@@ -59,6 +66,17 @@ let status: GovernorStatus = structuredClone(EMPTY_GOVERNOR_STATUS);
 let canvasByChannel = new Map<string, string>();
 const hiddenAt = new Map<string, number>();
 let lastBrowserUrl: string | null = null;
+let agentControl: AgentControlUi = {
+  leases: [],
+  overlay: null,
+  pendingOrigin: null,
+};
+
+function publishAgentControl(): AgentControlUi {
+  const next = structuredClone(agentControl);
+  applyAgentControlUi(next);
+  return next;
+}
 
 status.bridge = {
   availability: "available",
@@ -438,6 +456,70 @@ export function handleToolPaneCommand(
       };
     case "terminal_input":
       return null;
+    case "agent_control_status":
+      return publishAgentControl();
+    case "agent_control_take_over": {
+      const channelId = String(input.channelId ?? "");
+      const instrument = String(input.instrument ?? "browser");
+      agentControl.leases = agentControl.leases.map((lease) =>
+        lease.channelId === channelId && lease.instrument === instrument
+          ? {
+              ...lease,
+              state: "humanHeld",
+              humanHeldUntilMs: Date.now() + 10_000,
+            }
+          : lease,
+      );
+      return publishAgentControl();
+    }
+    case "agent_control_release": {
+      const channelId = String(input.channelId ?? "");
+      const instrument = String(input.instrument ?? "browser");
+      agentControl.leases = agentControl.leases.filter(
+        (lease) =>
+          !(lease.channelId === channelId && lease.instrument === instrument),
+      );
+      return publishAgentControl();
+    }
+    case "agent_control_note_human": {
+      const channelId = String(input.channelId ?? "");
+      const instrument = String(input.instrument ?? "browser");
+      const existing = agentControl.leases.find(
+        (lease) =>
+          lease.channelId === channelId && lease.instrument === instrument,
+      );
+      if (existing) {
+        existing.state = "humanHeld";
+        existing.humanHeldUntilMs = Date.now() + 10_000;
+      } else {
+        agentControl.leases.push({
+          channelId,
+          instrument,
+          state: "humanHeld",
+          agentName: "Hermes",
+          humanHeldUntilMs: Date.now() + 10_000,
+        });
+      }
+      return publishAgentControl();
+    }
+    case "agent_control_origin_decision": {
+      const decision = String(input.decision ?? args.decision ?? "");
+      const origin = String(input.origin ?? args.origin ?? "");
+      const channelId = String(input.channelId ?? args.channelId ?? "");
+      if (decision === "allow_domain" && origin) {
+        const current = parseTooling(canvasByChannel.get(channelId) ?? "");
+        const allowlist = [...(current?.browserAllowlist ?? []), origin];
+        canvasByChannel.set(
+          channelId,
+          writeTooling(canvasByChannel.get(channelId) ?? "", {
+            ...(current ?? {}),
+            browserAllowlist: allowlist,
+          }),
+        );
+      }
+      agentControl.pendingOrigin = null;
+      return { ok: true };
+    }
     default:
       throw new Error(`Unhandled tool-pane command: ${command}`);
   }
@@ -469,6 +551,13 @@ export function resetE2eGovernor(): void {
   canvasByChannel = new Map();
   hiddenAt.clear();
   lastBrowserUrl = null;
+  agentControl = { leases: [], overlay: null, pendingOrigin: null };
+  publishAgentControl();
+}
+
+export function setE2eAgentControl(next: AgentControlUi): AgentControlUi {
+  agentControl = structuredClone(next);
+  return publishAgentControl();
 }
 
 export function seedE2eCanvas(channelId: string, content: string): void {
