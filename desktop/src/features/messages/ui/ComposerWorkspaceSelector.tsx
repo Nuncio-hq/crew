@@ -36,6 +36,11 @@ export function ComposerWorkspaceSelector({
     localBranches: string[];
     remoteBranches: string[];
   } | null>(null);
+  const [open, setOpen] = React.useState(false);
+  const [menuShowsBasePicker, setMenuShowsBasePicker] = React.useState(
+    value.mode === "new",
+  );
+  const reopenLockRef = React.useRef(false);
 
   React.useEffect(() => {
     if (!workspace?.localPath) {
@@ -68,7 +73,10 @@ export function ComposerWorkspaceSelector({
     };
   }, [workspace?.defaultBranch, workspace?.localPath]);
 
-  if (!workspace) return null;
+  if (!workspace) {
+    if (open) setOpen(false);
+    return null;
+  }
 
   const defaultBranch =
     probe?.defaultBranch ?? workspace.defaultBranch ?? "main";
@@ -77,7 +85,33 @@ export function ComposerWorkspaceSelector({
     probe?.localBranches ?? [defaultBranch],
   );
   const binding = value;
-  const commit = onChange;
+  const handleOpenChange = (next: boolean) => {
+    if (!next && reopenLockRef.current) {
+      return;
+    }
+    reopenLockRef.current = false;
+    if (next) {
+      setMenuShowsBasePicker(binding.mode === "new");
+    }
+    setOpen(next);
+  };
+  const applyBinding = (next: WorkspaceBindingChoice) => {
+    reopenLockRef.current = false;
+    onChange(next);
+    setOpen(false);
+  };
+  const openMenuFromTrigger = (
+    event: React.PointerEvent | React.MouseEvent,
+  ) => {
+    if (open) return;
+    event.preventDefault();
+    reopenLockRef.current = true;
+    setMenuShowsBasePicker(binding.mode === "new");
+    setOpen(true);
+    queueMicrotask(() => {
+      reopenLockRef.current = false;
+    });
+  };
   let label: string;
   switch (binding.mode) {
     case "main":
@@ -96,11 +130,13 @@ export function ComposerWorkspaceSelector({
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false} onOpenChange={handleOpenChange} open={open}>
       <DropdownMenuTrigger asChild>
         <Button
           className="max-w-48 truncate text-xs"
           data-testid="composer-workspace-selector"
+          onClick={openMenuFromTrigger}
+          onPointerDown={openMenuFromTrigger}
           size="sm"
           type="button"
           variant="ghost"
@@ -108,20 +144,36 @@ export function ComposerWorkspaceSelector({
           {label}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent
+        align="end"
+        className="w-64 data-[state=closed]:animate-none data-[state=closed]:duration-0"
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        onPointerDownOutside={(event) => {
+          const target = event.detail.originalEvent.target;
+          if (
+            target instanceof Element &&
+            target.closest('[data-testid="composer-workspace-selector"]')
+          ) {
+            event.preventDefault();
+          }
+        }}
+      >
         <DropdownMenuLabel>Where this thread works</DropdownMenuLabel>
         <DropdownMenuRadioGroup
           onValueChange={(next) => {
             if (next === "main") {
-              commit({ mode: "main" });
+              applyBinding({ mode: "main" });
               return;
             }
             if (next === "new") {
-              commit({ mode: "new", base: null });
+              applyBinding({ mode: "new", base: null });
               return;
             }
             if (next.startsWith("branch:")) {
-              commit({ mode: "branch", name: next.slice("branch:".length) });
+              applyBinding({
+                mode: "branch",
+                name: next.slice("branch:".length),
+              });
             }
           }}
           value={
@@ -141,18 +193,20 @@ export function ComposerWorkspaceSelector({
             ⌂ Main checkout
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
-        {binding.mode === "new" ? (
+        {menuShowsBasePicker ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Base branch</DropdownMenuLabel>
             <DropdownMenuRadioGroup
               onValueChange={(next) =>
-                commit({
+                applyBinding({
                   mode: "new",
                   base: next === defaultBranch ? null : next,
                 })
               }
-              value={binding.base ?? defaultBranch}
+              value={
+                binding.mode === "new" ? (binding.base ?? defaultBranch) : ""
+              }
             >
               {branches.map((branch) => (
                 <DropdownMenuRadioItem
@@ -171,7 +225,7 @@ export function ComposerWorkspaceSelector({
         <DropdownMenuLabel>Existing branch</DropdownMenuLabel>
         <DropdownMenuRadioGroup
           onValueChange={(next) =>
-            commit({ mode: "branch", name: next.slice("branch:".length) })
+            applyBinding({ mode: "branch", name: next.slice("branch:".length) })
           }
           value={binding.mode === "branch" ? `branch:${binding.name}` : ""}
         >
