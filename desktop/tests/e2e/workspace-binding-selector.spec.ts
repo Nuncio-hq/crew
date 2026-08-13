@@ -111,7 +111,17 @@ test("selector is only in git Project channels and default send matches today", 
 
   await page.getByTestId("composer-workspace-main").click();
   await expect(selector).toHaveText(/Main checkout/);
+  await expect(selector).toHaveAttribute("aria-expanded", "false");
   await selector.click();
+  await expect(selector).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByTestId("composer-workspace-branch-release"),
+  ).toBeVisible();
+  await waitForAnimations(page);
+  await page.screenshot({
+    path: `${SHOTS}/04-reopen-after-main.png`,
+    clip: { x: 700, y: 420, width: 520, height: 300 },
+  });
   await page.getByTestId("composer-workspace-branch-release").click();
   await expect(selector).toHaveText(/release/);
   await selector.click();
