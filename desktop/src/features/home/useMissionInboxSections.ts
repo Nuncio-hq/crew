@@ -28,6 +28,10 @@ import {
   isManagedAgentRuntimeSleeping,
 } from "@/features/agents/managedAgentRuntimeStatus";
 import { useCommunities } from "@/features/communities/useCommunities";
+import { useOrgRosterQuery } from "@/features/org/hooks/useOrgRosterQuery";
+import { escalationHopLabel } from "@/features/org/lib/escalationHop";
+import { useUsersBatchQuery } from "@/features/profile/hooks";
+
 type UseMissionInboxSectionsInput = {
   channels?: readonly Pick<Channel, "id" | "name">[];
   effectiveDoneSet: ReadonlySet<string>;
@@ -116,40 +120,58 @@ export function useMissionInboxSections({
       ]),
     );
   }, [activeTurns, snoozeGeneration]);
+  const roster = useOrgRosterQuery().data;
+  const hopPubkeys = React.useMemo(
+    () => [...ownedAgentPubkeys],
+    [ownedAgentPubkeys],
+  );
+  const hopProfiles = useUsersBatchQuery(hopPubkeys);
 
-  return React.useMemo(
-    () =>
-      deriveMissionInboxSections({
-        acknowledgedConversationIds: new Set(
-          inboxItems
-            .filter((item) => effectiveDoneSet.has(item.id))
-            .map((item) => item.conversationId),
-        ),
-        activeTurns,
-        channels: channels ?? [],
-        inboxItems,
-        needsYou,
-        ownedAgentPubkeys,
-        outcomes,
-        receipts,
-        connectionState,
-        connectionStateByAgent,
-        sleepingAgentPubkeys,
-        snoozedUntilByConversation,
-      }),
-    [
+  return React.useMemo(() => {
+    const sections = deriveMissionInboxSections({
+      acknowledgedConversationIds: new Set(
+        inboxItems
+          .filter((item) => effectiveDoneSet.has(item.id))
+          .map((item) => item.conversationId),
+      ),
       activeTurns,
-      channels,
-      connectionState,
-      connectionStateByAgent,
-      effectiveDoneSet,
+      channels: channels ?? [],
       inboxItems,
       needsYou,
       ownedAgentPubkeys,
       outcomes,
       receipts,
+      connectionState,
+      connectionStateByAgent,
       sleepingAgentPubkeys,
       snoozedUntilByConversation,
-    ],
-  );
+    });
+    const profiles = hopProfiles.data?.profiles ?? {};
+    return {
+      ...sections,
+      needsYou: sections.needsYou.map((row) => ({
+        ...row,
+        escalationHop: escalationHopLabel(
+          roster ?? null,
+          row.agentPubkey,
+          profiles,
+        ),
+      })),
+    };
+  }, [
+    activeTurns,
+    channels,
+    connectionState,
+    connectionStateByAgent,
+    effectiveDoneSet,
+    hopProfiles.data?.profiles,
+    inboxItems,
+    needsYou,
+    ownedAgentPubkeys,
+    outcomes,
+    receipts,
+    roster,
+    sleepingAgentPubkeys,
+    snoozedUntilByConversation,
+  ]);
 }

@@ -112,6 +112,34 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src/features/channels/ui/ChannelPane.tsx` | #196 Tool Pane mount when tools open and not in focus drawer | pane lives in Crew-owned `features/tool-pane` |
 | `desktop/src/features/channels/ui/ChannelScreenHeader.tsx` | #196 Tools header button next to Term | one component; not on DMs |
 | `desktop/src/features/channels/ui/FocusThreadDrawer.tsx` | #196 `channelId` / `threadRootId` pass-through | props only; tabs live in `ChannelToolPane` |
+| `crates/buzz-core/src/kind.rs` | #198 `KIND_ORG_ROSTER` = 30680 | keep the constant + ALL_KINDS + parameterized-replaceable assert |
+| `crates/buzz-core/src/lib.rs` | #198 `pub mod org_roster` | retain the module line |
+| `crates/buzz-relay/src/handlers/mod.rs` | #198 `pub mod org_roster` | retain the module line |
+| `crates/buzz-relay/src/handlers/ingest.rs` | #198 UsersWrite + global-only + pre-storage validate | keep next to `KIND_PROJECT`; do not invent a post-insert side effect |
+| `crates/buzz-acp/src/lib.rs` | #198 roster cache on PromptContext + inbound handoff gate | keep `mod org_roster`; gate after `author_allowed` |
+| `crates/buzz-acp/src/pool.rs` | #198 ORG-CHECK + turn-start budget before workspace bind | must not hold a worktree lease |
+| `crates/buzz-cli/src/lib.rs` | #198 `org` subcommand + `--handoff` | retain additive clap; do not reorder unrelated commands |
+| `crates/buzz-cli/src/commands/mod.rs` | #198 `pub mod org` | retain the module line |
+| `crates/buzz-cli/src/commands/messages.rs` | #198 `--handoff` / `--goal` on send | sub-kickoff without `--reply-to` stays rejected for non-founder |
+| `desktop/src/shared/constants/kinds.ts` | #198 `KIND_ORG_ROSTER` | keep next to project kinds |
+| `mobile/lib/shared/relay/nostr_models.dart` | #198 `orgRoster = 30680` | mirror desktop; no mobile org UI in this PR |
+| `desktop/src/app/routes.ts` | #198 `/org` | one `route()` line next to projects |
+| `desktop/src/app/routeTree.gen.ts` | #198 generated `/org` | regenerate on desktop build |
+| `desktop/src/app/AppShell.helpers.ts` | #198 `AppView` + `deriveShellRoute` include `"org"` | one union member + one pathname arm |
+| `desktop/src/app/navigation/useAppNavigation.ts` | #198 `goOrg` | keep next to `goProjects` |
+| `desktop/src/app/AppShell.tsx` | #198 `onSelectOrg` | one callback pass-through |
+| `desktop/src/features/sidebar/ui/AppSidebar.tsx` | #198 `onSelectOrg` prop | keep the union compact (D-022) |
+| `desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx` | #198 Org nav item after Projects | one `SidebarMenuItem` |
+| `desktop/src/features/communities/useCommunityInit.ts` | #198 `resetOrgRosterProjection` | one call in `resetCommunityState` |
+| `desktop/src/features/messages/ui/MessageRowDefaultBody.tsx` | #198 wrap body in `MessageOrgDecorations` | keep card implementation in Crew-owned files |
+| `desktop/src/features/channels/ui/ChannelPane.tsx` | #198 `HandoffAssignControl` in toolbar extras | selector lives in Crew-owned files |
+| `desktop/src/features/messages/hooks.ts` | #198 optional `extraTags` on send | extraTags use `relayClient.sendMessage`; do not grow Tauri `messages.rs` |
+| `desktop/src/features/channels/useChannelPaneHandlers.ts` | #198 consume pending handoff tags | keep helper in Crew `goalDigest.ts` |
+| `desktop/src/features/home/lib/missionInbox.ts` | #198 optional `escalationHop` | additive field |
+| `desktop/src/features/home/ui/MissionInboxSections.tsx` | #198 hop meta + founder officer-level filter | keep Needs-You routing in this file |
+| `desktop/src/features/home/useMissionInboxSections.ts` | #198 annotate hops from roster | projection only |
+| `desktop/src/testing/e2eBridge.ts` | #198 mock 30680 via `e2eOrgRoster.ts` | keep additive REQ/EVENT + window hook |
+| `desktop/playwright.config.ts` | #198 `org-hierarchy.spec.ts` smoke match | retain the glob |
 | `desktop/src/features/messages/ui/threadPrHub/ThreadFocusForgeSplit.tsx` | #196 PR hub is a sibling Tool Pane tab | compose with `ChannelToolPane`; do not start Workbench |
 | `desktop/src/features/sidebar/ui/SidebarSection.tsx` | #196 resource dots on channel rows | `SidebarResourceDots`; no numbers, no motion |
 | `desktop/src/features/settings/ui/SettingsPanels.tsx` | #196 `"devices-preview"` arm | card lives in Crew-owned feature module |

@@ -68,6 +68,8 @@ export const KIND_REPO_ANNOUNCEMENT = 30617;
 export const KIND_REPO_STATE = 30618;
 // NIP-MP: project grouping above NIP-34 repositories.
 export const KIND_PROJECT_ANNOUNCEMENT = 30621;
+// Crew: founder-signed community org roster (d=org).
+export const KIND_ORG_ROSTER = 30680;
 export const KIND_GIT_PATCH = 1617;
 export const KIND_GIT_PULL_REQUEST = 1618;
 export const KIND_GIT_PR_UPDATE = 1619;

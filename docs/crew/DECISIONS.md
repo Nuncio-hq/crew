@@ -1305,4 +1305,55 @@ or `simctl` stack.
 
 See spikes 0031–0034.
 
+## D-060 — Founder-signed org roster is relay state; the chart is a projection
+
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Issue:** #198
+
+A functional org tree lives as one founder-signed addressable event
+(`KIND_ORG_ROSTER` = 30680, `d` = `org`). The org chart is a **pure
+projection** of that event plus maintainer/steward tags on 30617/30621.
+There is no client-authoritative org store (D-003, D-010).
+
+1. **Topology.** Each agent has exactly one manager (tree, not DAG).
+   Agent↔project is stewardship, not a second reporting line. Labels are
+   free-form (D-030); “CTO” is an example, not a kind. Depth is unbounded
+   in the model; **budgets are the brake**, not a protocol depth cap.
+2. **`d` tag.** Issue text said `d = community`. The community boundary is
+   the relay tenant; clients do not have the internal community UUID.
+   The well-known `d` is `org` (`ORG_ROSTER_D_TAG`). Recorded here so
+   syncs do not “fix” it back to a UUID.
+3. **Ingest.** Validation runs **before storage** (not a post-insert side
+   effect). Rejects non-founder authors (`relay_members.role == "owner"`),
+   cycles, orphans, self-managers, founder-as-node, unknown agents, and
+   child budgets that exceed the parent. A reorg is one LWW replaceable
+   event. Kind is UsersWrite, global-only, not p-gated.
+4. **Three-flow split.** Peer mentions/DMs stay flat. Work assignment is
+   top-down: `["crew-handoff", executor, goal-digest]` auto-creates work
+   only when the author is in `manager-chain(executor)` or is the
+   founder. Non-chain handoffs remain visible ordinary conversation (no
+   silent drop, no chip). Budget is cascading and enforced at **turn
+   start only** (spike 0037); founder-assigned work is never charged.
+   Hitting a ceiling publishes stop-and-report (`["crew-budget","stop"]`),
+   never silent. Report cadence is convention, not protocol.
+5. **Kickoff gate placement.** The gate runs **after** `author_allowed`,
+   not inside it. Ordinary sibling wakes do not fetch the roster.
+   Fetch/cache happens on handoff targeting this agent, fresh-session
+   ORG-CHECK, or inbound 30680. Roster cache is community-global on
+   `PromptContext`.
+6. **Authority.** Officers draft; the founder signs (D-028). Agents never
+   self-appoint. Founder skip-level is always allowed.
+7. **Stewardship.** Maintainer/steward tags on founder-signed 30617/30621.
+   Portfolio is a projection of those events. No new registry.
+8. **Reorg race.** Newer `created_at` (then event id) wins. An in-flight
+   turn keeps the roster clone it already read (spike 0038).
+9. **Rejected.** Per-agent `manager` tags on 30177. An `org:` section in
+   the home-channel canvas. Matrix/dotted-line. Client-side authoritative
+   org store. Protocol-enforced report cadence. Protocol depth limits.
+   A separate task-assignment bus or new work-item kinds.
+
+See spikes 0035–0038.
+
+
 

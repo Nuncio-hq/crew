@@ -87,3 +87,7 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0032-hidden-webview-pane-closed.md`](0032-hidden-webview-pane-closed.md)
 - [`0033-describe-ui-ref-stability.md`](0033-describe-ui-ref-stability.md)
 - [`0034-sim-tap-e2e-latency.md`](0034-sim-tap-e2e-latency.md)
+- [`0035-org-roster-ingest.md`](0035-org-roster-ingest.md)
+- [`0036-kickoff-gate-latency.md`](0036-kickoff-gate-latency.md)
+- [`0037-budget-cutoff-turn-start.md`](0037-budget-cutoff-turn-start.md)
+- [`0038-org-reorg-race.md`](0038-org-reorg-race.md)
