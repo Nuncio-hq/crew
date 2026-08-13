@@ -1,5 +1,17 @@
 # Crew State
 
+## Issue #186 — Thread Workbench (one thread, two doors)
+
+Full-screen session view of a thread. Rail: By thread (primary,
+channel-grouped) / By agent (same destination). Composer uses a target
+chip (last-interacting default, Tab cycles, `@` overrides; Stop/Steer
+follow the chip; wire = ordinary mentions). Office view is a per-thread
+presentation filter, not a second app. Transcript reuses channel
+components (messages, evidence+#175 badge, 46040/46041, observer tools,
+#169 sleep/wake, #173 aging, catch-up `UnreadDivider`). No new
+authoritative state. See D-055.
+Last updated: 2026-08-13
+
 ## Issue #188 — Cowork Projects (non-git folders + shadow-git)
 
 Add-Project accepts a non-git folder as a Cowork Project (`mode=folder`,

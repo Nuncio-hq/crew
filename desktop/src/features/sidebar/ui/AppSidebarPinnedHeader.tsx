@@ -1,4 +1,4 @@
-import { Activity, Bot, FolderGit2, Inbox, Zap } from "lucide-react";
+import { Activity, Bot, FolderGit2, Hammer, Inbox, Zap } from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { FeatureGate } from "@/shared/features";
@@ -12,14 +12,15 @@ import {
 } from "@/shared/ui/sidebar";
 import { SidebarMenuLabel } from "@/shared/ui/sidebar-menu-label";
 
-type SidebarSelectedView =
+export type SidebarSelectedView =
   | "home"
   | "channel"
   | "messages"
   | "agents"
   | "workflows"
   | "pulse"
-  | "projects";
+  | "projects"
+  | "workbench";
 
 type AppSidebarPinnedHeaderProps = {
   channelLabels: Record<string, string>;
@@ -42,6 +43,7 @@ type AppSidebarPrimaryMenuProps = {
   onSelectAgents: () => void;
   onSelectHome: () => void;
   onSelectProjects: () => void;
+  onSelectWorkbench: () => void;
   onSelectPulse: () => void;
   onSelectWorkflows: () => void;
   selectedView: SidebarSelectedView;
@@ -91,6 +93,7 @@ export function AppSidebarPrimaryMenu({
   onSelectAgents,
   onSelectHome,
   onSelectProjects,
+  onSelectWorkbench,
   onSelectPulse,
   onSelectWorkflows,
   selectedView,
@@ -158,6 +161,18 @@ export function AppSidebarPrimaryMenu({
             </SidebarMenuButton>
           </SidebarMenuItem>
         </FeatureGate>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            data-testid="open-workbench-view"
+            isActive={selectedView === "workbench"}
+            onClick={onSelectWorkbench}
+            tooltip="Workbench"
+            type="button"
+          >
+            <Hammer className="h-4 w-4" />
+            <SidebarMenuLabel>Workbench</SidebarMenuLabel>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
             className="data-[active=true]:font-normal"

@@ -166,6 +166,7 @@ export default defineConfig({
         "**/needs-restart-screenshots.spec.ts",
         "**/hermes-profile-lifecycle.spec.ts",
         "**/mission-inbox.spec.ts",
+        "**/workbench.spec.ts",
         "**/evidence-cards.spec.ts",
         "**/evidence-cross-check.spec.ts",
         "**/evidence-reactions.spec.ts",
