@@ -1,1 +1,32 @@
-{"data":{"markFileAsViewed":{"pullRequest":{"files":{"nodes":[{"path":"crates/buzz-acp/src/acp.rs","viewerViewedState":"VIEWED"},{"path":"crates/buzz-acp/src/declared_plan.rs","viewerViewedState":"UNVIEWED"},{"path":"crates/buzz-acp/src/lib.rs","viewerViewedState":"UNVIEWED"},{"path":"desktop/scripts/file-size-baselines.json","viewerViewedState":"UNVIEWED"},{"path":"desktop/src/features/agents/declaredPlanProjection.test.mjs","viewerViewedState":"UNVIEWED"}]}}}}}
+{
+  "data": {
+    "markFileAsViewed": {
+      "pullRequest": {
+        "files": {
+          "nodes": [
+            {
+              "path": "crates/buzz-acp/src/acp.rs",
+              "viewerViewedState": "VIEWED"
+            },
+            {
+              "path": "crates/buzz-acp/src/declared_plan.rs",
+              "viewerViewedState": "UNVIEWED"
+            },
+            {
+              "path": "crates/buzz-acp/src/lib.rs",
+              "viewerViewedState": "UNVIEWED"
+            },
+            {
+              "path": "desktop/scripts/file-size-baselines.json",
+              "viewerViewedState": "UNVIEWED"
+            },
+            {
+              "path": "desktop/src/features/agents/declaredPlanProjection.test.mjs",
+              "viewerViewedState": "UNVIEWED"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

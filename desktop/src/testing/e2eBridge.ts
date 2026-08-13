@@ -11130,7 +11130,8 @@ export function maybeInstallE2eTauriMocks() {
     };
     reloadProjectThreadGitHubStore();
   };
-  window.__BUZZ_E2E_SET_FORGE_PR_DETAIL__ = (patch) => setE2eForgeSnapshot(patch);
+  window.__BUZZ_E2E_SET_FORGE_PR_DETAIL__ = (patch) =>
+    setE2eForgeSnapshot(patch);
   if (config.mock?.forgePr) {
     setE2eForgeSnapshot(config.mock.forgePr);
   }
