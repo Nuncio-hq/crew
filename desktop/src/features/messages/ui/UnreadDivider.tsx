@@ -3,7 +3,7 @@
  * message, mirroring Slack's read/unread boundary. Computed from the
  * channel's read frontier as it stood when the channel was opened.
  */
-export function UnreadDivider() {
+export function UnreadDivider({ label = "New" }: { label?: string } = {}) {
   return (
     <section
       aria-label="New messages"
@@ -12,7 +12,7 @@ export function UnreadDivider() {
     >
       <div className="h-px flex-1 bg-primary/40" />
       <span className="shrink-0 px-2 text-2xs font-semibold uppercase tracking-[0.04em] text-primary">
-        New
+        {label}
       </span>
       <div className="h-px flex-1 bg-primary/40" />
     </section>

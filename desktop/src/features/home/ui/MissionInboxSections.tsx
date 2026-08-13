@@ -3,6 +3,7 @@ import {
   ChevronDown,
   Circle,
   ExternalLink,
+  Hammer,
   Zap,
   PackageCheck,
 } from "lucide-react";
@@ -60,11 +61,13 @@ function MissionRow({
   row,
   onSelect,
   onOpenChannel,
+  onOpenWorkbench,
   selected,
 }: {
   row: MissionInboxRow;
   onSelect: (row: MissionInboxRow) => void;
   onOpenChannel: (row: MissionInboxRow) => void;
+  onOpenWorkbench?: (row: MissionInboxRow) => void;
   selected: boolean;
 }) {
   const isException = row.state !== "working" && row.state !== "readyToReview";
@@ -119,6 +122,18 @@ function MissionRow({
         </div>
       ) : null}
       <button
+        aria-label="Open workbench"
+        className="absolute right-8 top-1/2 -translate-y-1/2 rounded-md bg-background/90 p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+        data-testid={`mission-inbox-workbench-${row.conversationId}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenWorkbench?.(row);
+        }}
+        type="button"
+      >
+        <Hammer className="h-3.5 w-3.5" />
+      </button>
+      <button
         aria-label="Open in channel"
         className="absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-md bg-background/90 p-1 text-muted-foreground hover:text-foreground group-hover/mission:block focus-visible:block"
         data-testid={`mission-inbox-channel-${row.conversationId}`}
@@ -137,11 +152,13 @@ function MissionRow({
 export function MissionInboxSectionsView({
   sections,
   onOpenChannel,
+  onOpenWorkbench,
   onSelect,
   selectedConversationId,
 }: {
   sections: MissionInboxSections;
   onOpenChannel: (row: MissionInboxRow) => void;
+  onOpenWorkbench?: (row: MissionInboxRow) => void;
   onSelect: (row: MissionInboxRow) => void;
   selectedConversationId?: string | null;
 }) {
@@ -177,6 +194,7 @@ export function MissionInboxSectionsView({
               <MissionRow
                 key={row.conversationId}
                 onOpenChannel={onOpenChannel}
+                onOpenWorkbench={onOpenWorkbench}
                 onSelect={onSelect}
                 row={row}
                 selected={selectedConversationId === row.conversationId}
@@ -215,6 +233,7 @@ export function MissionInboxSectionsView({
               <MissionRow
                 key={row.conversationId}
                 onOpenChannel={onOpenChannel}
+                onOpenWorkbench={onOpenWorkbench}
                 onSelect={onSelect}
                 row={row}
                 selected={selectedConversationId === row.conversationId}

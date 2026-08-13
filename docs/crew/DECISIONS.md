@@ -1129,3 +1129,36 @@ the folder itself. Versioning is always on and invisible as git.
    badge stays Not comparable (no CI). No Cowork↔git conversion in this
    issue. Shadow-git is not applied to git `⌂ main`.
 
+## D-055 — Thread Workbench: one thread, two doors
+
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Issue:** #186
+
+Crew already maps thread → ACP session. The missing piece was a view that
+renders a thread as that session. The Thread Workbench is a **different
+layout of existing components**, not a second product.
+
+1. **Two grains, one data source.** Workbench (full-screen session) and
+   office (channel / thread panel) are doors into the same thread, stores,
+   and relay projections. No new authoritative state (D-003 / D-010). No
+   role-based gating — doors are self-selected.
+2. **Rail.** By thread is primary (channel-grouped rows with facepile,
+   status, CI/unread). By agent is the same index pivoted. Both lenses
+   select the same workbench destination.
+3. **Target chip, not implicit send.** Default = last agent that
+   interacted in the thread. Tab cycles. `@` overrides for that send.
+   Stop/Steer follow the chip. Wire format stays ordinary `p` mentions.
+4. **Office view** is a per-thread presentation filter (kickoff, receipts,
+   evidence, questions) plus an explanation bar. Tool calls, ROLE-CHECK,
+   and session controls stay in the workbench layout.
+5. **Component-reuse contract.** `MessageRow`, `EvidenceCard`,
+   `ChannelUserInputCard`, `ProjectThreadGitHubRow` /
+   `ProjectThreadWorkspacePanel`, observer `TranscriptActivityItem`,
+   `UnreadDivider`, and `SessionAgingBannerSlot` are identity-reexported.
+   A second handler for the same event kind is a design bug.
+6. **Upstream-absorbable.** The concept is Crew-free: a session-shaped
+   layout over NIP-29 threads. Same route as evidence-on-completion —
+   propose upstream when Buzz wants a session grain; until then the
+   feature lives in Crew-owned `desktop/src/features/workbench/`.
+

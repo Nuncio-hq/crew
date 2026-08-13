@@ -51,7 +51,7 @@ The local upstream push URL is deliberately disabled. Never push to
 | `crates/buzz-cli/src/commands/mod.rs` | register the Crew-owned evidence kind module | retain the module declaration; do not move validation into upstream command code |
 | `crates/buzz-cli/src/commands/evidence.rs` | Crew-owned exact evidence-kind parsing and tag construction | keep canonical wire strings and enum-only validation in this module |
 | `crates/buzz-cli/TESTING.md` | document the additive evidence flag in the CLI test inventory | retain the one-row flag inventory update; do not rewrite unrelated runbook steps |
-| `desktop/playwright.config.ts` | register Crew evidence contracts + #174 worktree-storage smoke + #175 cross-check + #187 selector spec + #188 Cowork Versions spec | retain the narrow test-match additions; do not reorder unrelated entries |
+| `desktop/playwright.config.ts` | register Crew evidence contracts + #174 worktree-storage smoke + #175 cross-check + #187 selector spec + #188 Cowork Versions spec + #186 workbench spec | retain the narrow test-match additions; do not reorder unrelated entries |
 | `desktop/src/features/messages/lib/projectThreadGitHubStore.ts` | reload generation for live evidence↔CI badge recompute (#175) | keep additive reload helper beside existing cache reset |
 | `desktop/src/testing/e2eBridge.ts` | mock storage snapshot + reclaim (#174); `__BUZZ_E2E_SET_THREAD_GITHUB_BY_BRANCH__` (#175); #187 `probe_project_git_workspace` + extra project events; #188 Cowork Versions commands via `e2eCoworkVersions.ts` | keep additive cases; default fixture is self-contained |
 | `desktop/src/features/settings/ui/SettingsPanels.tsx` | Settings → Storage section registration (#174) | keep `"storage"` arm + nav descriptor; card lives in Crew-owned feature module |
@@ -78,6 +78,18 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src-tauri/src/commands/project_worktree_registry_parse.rs` | classify managed by `.buzz-worktrees` parent, not `buzz/<12hex>` only (#187) | primary stays Main / never GC; shared `ws=branch:` worktrees are Managed |
 | `desktop/src-tauri/src/commands/worktree_storage_aggregate.rs` | shared idle = max lastUsedAt across path (#187) | keep #174 suggest-and-confirm; do not GC the canonical checkout |
 | `desktop/src-tauri/src/commands/project_worktree_reclaim.rs` | path-lease busy probe (#187) | Busy remains a refusal, not an error |
+| `desktop/src/app/routes.ts` | register `/workbench` + `/workbench/$channelId/$threadRootId` (#186) | keep the two `route()` lines next to projects; screens live in Crew-owned files |
+| `desktop/src/app/routeTree.gen.ts` | TanStack generated tree for the workbench routes (#186) | regenerate on desktop build; do not hand-edit on sync unless the generator is skipped |
+| `desktop/src/app/AppShell.helpers.ts` | `AppView` + `deriveShellRoute` include `"workbench"` (#186) | one union member + one pathname arm |
+| `desktop/src/app/navigation/useAppNavigation.ts` | `goWorkbench` (#186) | keep next to `goProjects`; search is lens/office/messageId only |
+| `desktop/src/app/AppShell.tsx` | sidebar `onSelectWorkbench` (#186) | one callback pass-through |
+| `desktop/src/features/sidebar/ui/AppSidebar.tsx` | `selectedView` + `onSelectWorkbench` prop (#186) | keep the union compact (D-022); menu markup lives in `AppSidebarPinnedHeader` |
+| `desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx` | Workbench nav item after Projects (#186) | one `SidebarMenuItem`; do not restyle neighboring entries |
+| `desktop/src/features/messages/ui/message-thread-panel-head.tsx` | "Open workbench" entry (#186) | keep the button in the Crew-owned `ThreadWorkbenchEntryButton` |
+| `desktop/src/features/messages/ui/UnreadDivider.tsx` | optional `label` for workbench catch-up copy (#186) | default remains `"New"`; workbench passes `"NEW since you were here"` |
+| `desktop/src/features/home/ui/HomeView.tsx` | Mission Inbox workbench deep-link via `getMissionInboxEventTarget` (#186) | do not navigate on unverified `row.channelId` |
+| `desktop/src/features/home/ui/InboxListPane.tsx` | `onOpenMissionWorkbench` pass-through (#186) | one prop; hammer lives in `MissionInboxSections` |
+| `desktop/src/features/home/ui/MissionInboxSections.tsx` | workbench hammer distinct from channel door (#186) | `getMissionInboxEventTarget` then `goWorkbench` — do not reuse `openMissionRow` |
 
 ## Before feature work
 

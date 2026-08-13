@@ -10,6 +10,11 @@ export const routes = rootRoute("root.tsx", [
   route("/workflows/$workflowId", "workflows.$workflowId.tsx"),
   route("/projects", "projects.tsx"),
   route("/projects/$projectId", "projects.$projectId.tsx"),
+  route("/workbench", "workbench.tsx"),
+  route(
+    "/workbench/$channelId/$threadRootId",
+    "workbench.$channelId.$threadRootId.tsx",
+  ),
   route("/messages/new", "messages.new.tsx"),
   route("/channels/$channelId", "channels.$channelId.tsx"),
   route(

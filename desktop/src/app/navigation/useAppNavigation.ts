@@ -102,6 +102,43 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  const goWorkbench = React.useCallback(
+    (
+      channelId?: string | null,
+      threadRootId?: string | null,
+      options?: {
+        lens?: "thread" | "agent";
+        messageId?: string | null;
+        office?: boolean;
+        replace?: boolean;
+      },
+    ) =>
+      channelId && threadRootId
+        ? commitNavigation(
+            {
+              to: "/workbench/$channelId/$threadRootId",
+              params: { channelId, threadRootId },
+              search: {
+                ...(options?.lens === "agent" ? { lens: "agent" } : {}),
+                ...(options?.office ? { office: "1" } : {}),
+                ...(options?.messageId ? { messageId: options.messageId } : {}),
+              },
+            },
+            { replace: options?.replace },
+          )
+        : commitNavigation(
+            {
+              to: "/workbench",
+              search: {
+                ...(options?.lens === "agent" ? { lens: "agent" } : {}),
+                ...(options?.office ? { office: "1" } : {}),
+              },
+            },
+            { replace: options?.replace },
+          ),
+    [commitNavigation],
+  );
+
   const goProject = React.useCallback(
     (
       projectId: string,
@@ -322,6 +359,7 @@ export function useAppNavigation() {
     goProject,
     goProjects,
     goPulse,
+    goWorkbench,
     goProfile,
     goSettings,
     goWorkflow,
