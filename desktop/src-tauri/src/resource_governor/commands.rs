@@ -431,7 +431,7 @@ pub fn browser_close(
 #[tauri::command]
 pub fn browser_devtools(channel_id: String, app: AppHandle) -> Result<(), String> {
     let label = window_label(&channel_id);
-    #[cfg(any(debug_assertions, feature = "devtools"))]
+    #[cfg(debug_assertions)]
     {
         if let Some(window) = app.get_webview_window(&label) {
             window.open_devtools();
@@ -441,9 +441,9 @@ pub fn browser_devtools(channel_id: String, app: AppHandle) -> Result<(), String
             webview.open_devtools();
             return Ok(());
         }
-        return Err("browser window is not open".into());
+        Err("browser window is not open".into())
     }
-    #[cfg(not(any(debug_assertions, feature = "devtools")))]
+    #[cfg(not(debug_assertions))]
     {
         let _ = (label, app);
         Err("devtools are unavailable in this build".into())
