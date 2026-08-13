@@ -153,6 +153,9 @@ test("the 30617 add flow never calls the repository a Project in user-visible co
   assert.match(dialog, /Add this Repository\?/);
   assert.match(dialog, /Repository name/);
   assert.match(dialog, /"Add Repository"/);
+  assert.match(dialog, /Add this Cowork Project\?/);
+  assert.match(dialog, /Cowork Project name/);
+  assert.match(dialog, /"Add Cowork Project"/);
   assert.match(lib, /Could not create Repository\./);
   assert.match(lib, /Repository name must include letters or numbers\./);
   assert.match(lib, /already have a Repository named/);
@@ -170,7 +173,8 @@ test("the 30617 add flow never calls the repository a Project in user-visible co
     const offending = userStrings.filter(
       (s) =>
         !s.includes("ProjectLocalWorkspaceCreateError") &&
-        !s.includes("Project channel"),
+        !s.includes("Project channel") &&
+        !s.includes("Cowork Project"),
     );
     assert.deepEqual(
       offending,

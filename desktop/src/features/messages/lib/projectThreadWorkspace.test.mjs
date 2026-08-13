@@ -45,6 +45,7 @@ test("Project context parses workspace binding params", () => {
       ws: "main",
       branch: null,
       base: null,
+      mode: "git",
     },
   );
   assert.deepEqual(
@@ -57,6 +58,7 @@ test("Project context parses workspace binding params", () => {
       ws: "branch",
       branch: "release",
       base: null,
+      mode: "git",
     },
   );
   const content =
@@ -67,7 +69,21 @@ test("Project context parses workspace binding params", () => {
     ws: "new",
     branch: null,
     base: null,
+    mode: "git",
   });
+  assert.deepEqual(
+    parseProjectThreadContext(
+      "[ctx]: <buzz://project-workspace?repo=Nuncio-hq%2Fcrew&path=%2Ftmp%2Fcrew&mode=folder>\n\n@agent",
+    ),
+    {
+      localPath: "/tmp/crew",
+      repoAddress: "Nuncio-hq/crew",
+      ws: "new",
+      branch: null,
+      base: null,
+      mode: "folder",
+    },
+  );
   assert.equal(parseProjectThreadContext("ordinary chat"), null);
 });
 

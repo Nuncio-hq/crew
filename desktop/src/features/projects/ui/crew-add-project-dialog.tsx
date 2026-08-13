@@ -69,7 +69,7 @@ export function CrewAddProjectDialog({
         </AlertDialogHeader>
         <label className="space-y-2 text-sm" htmlFor="crew-project-name">
           <span className="font-medium">
-            {cowork ? "Project name" : "Repository name"}
+            {cowork ? "Cowork Project name" : "Repository name"}
           </span>
           <Input
             autoFocus
