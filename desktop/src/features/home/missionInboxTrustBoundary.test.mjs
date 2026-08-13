@@ -30,6 +30,10 @@ const homeViewSource = readFileSync(
   new URL("./ui/HomeView.tsx", import.meta.url),
   "utf8",
 );
+const homeMissionListActionsSource = readFileSync(
+  new URL("./useHomeMissionInboxListActions.ts", import.meta.url),
+  "utf8",
+);
 const verifiedMissionSource = readFileSync(
   new URL("./useVerifiedMissionSelection.ts", import.meta.url),
   "utf8",
@@ -86,9 +90,12 @@ test("stale verified row lookups cannot supersede a newer selection", () => {
     homeViewSource,
     /onRemindLater=\{\(item\) => \{[\s\S]*clearVerifiedTarget\(\)/,
   );
+  // Unread-only clear moved into useHomeMissionInboxListActions (D-022 extract
+  // during desktop-v0.5.11 sync); HomeView still wires the handler prop.
+  assert.match(homeViewSource, /onUnreadOnlyChange=\{handleUnreadOnlyChange\}/);
   assert.match(
-    homeViewSource,
-    /onUnreadOnlyChange=\{\(nextUnreadOnly\) => \{[\s\S]*clearVerifiedTarget\(\)/,
+    homeMissionListActionsSource,
+    /handleUnreadOnlyChange[\s\S]*clearVerifiedTarget\(\)/,
   );
 });
 

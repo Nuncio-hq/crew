@@ -881,7 +881,9 @@ export function injectObserverEventsForE2E(
   agentPubkey: string,
   events: ObserverEvent[],
 ) {
-  setConnectionState("open", null);
+  // One publication per inject (upstream #5680 contract). Live-contact and
+  // Crew side effects must not notify on their own — connection/"open" is
+  // owned by setObserverConnectionStateForE2E when a spec needs it.
   for (const event of events) {
     if (!event.replayed) {
       markAgentLiveContact(agentPubkey, { notify: false });
