@@ -1,5 +1,7 @@
 import * as React from "react";
 
+import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
+
 /**
  * Mermaid fences in the desktop markdown pipeline.
  *
@@ -13,6 +15,8 @@ export function MarkdownMermaid({ source }: { source: string }) {
   const [zoom, setZoom] = React.useState(1);
   const [pan, setPan] = React.useState({ x: 0, y: 0 });
   const drag = React.useRef<{ x: number; y: number } | null>(null);
+  const closeLightbox = React.useCallback(() => setOpen(false), []);
+  useEscapeKey(closeLightbox, open);
 
   React.useEffect(() => {
     const fallback = renderFlowchartSvg(source);

@@ -144,6 +144,7 @@ test.describe("Crew Wiki (#200)", () => {
       clip: { x: 200, y: 40, width: 880, height: 520 },
     });
     await page.keyboard.press("Escape");
+    await expect(page.getByTestId("wiki-mermaid-lightbox")).toHaveCount(0);
 
     await page.getByTestId("wiki-ask-mode").selectOption("qa");
     await page.getByTestId("wiki-ask-input").fill("What is Crew Wiki?");

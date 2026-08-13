@@ -9,7 +9,8 @@ regen from source-file manifests. Mermaid + `buzz://file` citations.
 Spikes 0039–0042. D-061.
 Mock-bridge e2e: wiki jobs key on the visible card owner
 (`deadbeef…` for `buzz`), not tyler; library cards unique by
-`repoAddress`.
+`repoAddress`. Mermaid lightbox Escape uses the shared escape
+surface so Ask is reachable.
 Last updated: 2026-08-13
 
 ## Issue #198 — Org hierarchy (founder-signed roster)
@@ -34,7 +35,8 @@ uses canvas `tooling.browserAllowlist` + elicitation. Overlay kind
 24201. Flat access. Host-bound. Spikes 0031–0034. D-059.
 Mock-bridge e2e: Take over stays on the human-held banner (pointer-down
 does not also Release); origin elicitation is one card; Deny is
-`origin_blocked`.
+`origin_blocked`. Nested pane controls skip `note_human` so Deny / Shot
+clicks are not remounted away.
 Last updated: 2026-08-13
 
 ## Issue #196 — Channel Tool Pane (sim mirror + browser + governor)
@@ -47,6 +49,7 @@ are labeled Buzz Term sessions with `$PORT` + readiness. Canvas `tooling`
 key stores intent only. Spikes 0027–0030. D-058.
 Mock-bridge e2e: unique `channel-tool-pane` testid, cap-keep on a
 protected mirror, owner setup card, pane remounts per channel.
+Shot / Deny clicks are not stolen by pane `note_human`.
 Last updated: 2026-08-13
 
 ## Issue #193 — GitHub PR hub in thread focus

@@ -24,7 +24,11 @@ import {
 } from "./governorClient";
 import { invokeGovernor, useGovernorStatus } from "./governorStore";
 import { captureSimPng, postCaptureEvidence } from "./postEvidenceCapture";
-import { leaseFor, useAgentControlUi } from "./agentControlStore";
+import {
+  isAgentControlChromeTarget,
+  leaseFor,
+  useAgentControlUi,
+} from "./agentControlStore";
 import { DrivingBanner } from "./DrivingBanner";
 import { GhostCursorOverlay } from "./GhostCursorOverlay";
 import type { CanvasTooling, SimHolding, SimLifecycle } from "./types";
@@ -79,7 +83,8 @@ export function SimTab({
       className="relative flex min-h-0 flex-1 flex-col"
       data-testid="tool-pane-sim"
       data-sim-face={face}
-      onPointerDown={() => {
+      onPointerDown={(event) => {
+        if (isAgentControlChromeTarget(event.target)) return;
         void invokeGovernor("agent_control_note_human", {
           input: { channelId, instrument: "sim" },
         });
