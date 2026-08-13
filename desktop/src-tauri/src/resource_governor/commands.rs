@@ -361,11 +361,12 @@ pub fn browser_open(
 #[cfg(target_os = "macos")]
 fn open_child_webview(app: &AppHandle, channel_id: &str, url: &str) -> Result<(), String> {
     use tauri::webview::WebviewBuilder;
-    let Some(window) = app.get_webview_window("main") else {
+    // `add_child` is on `Window` (unstable), not `WebviewWindow`.
+    let Some(window) = app.get_window("main") else {
         return Err("main window missing".into());
     };
     let label = window_label(channel_id);
-    if window.get_webview(&label).is_some() {
+    if app.get_webview(&label).is_some() {
         return Ok(());
     }
     let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
@@ -396,11 +397,9 @@ pub fn set_browser_bounds(
     }
     #[cfg(target_os = "macos")]
     {
-        if let Some(main) = app.get_webview_window("main") {
-            if let Some(child) = main.get_webview(&label) {
-                let _ = child.set_position(tauri::LogicalPosition::new(x, y));
-                let _ = child.set_size(tauri::LogicalSize::new(width.max(120.0), height.max(80.0)));
-            }
+        if let Some(child) = app.get_webview(&label) {
+            let _ = child.set_position(tauri::LogicalPosition::new(x, y));
+            let _ = child.set_size(tauri::LogicalSize::new(width.max(120.0), height.max(80.0)));
         }
     }
     let _ = (x, y);
@@ -421,6 +420,10 @@ pub fn browser_close(
     if let Some(window) = app.get_webview_window(&label) {
         let _ = window.hide();
     }
+    #[cfg(target_os = "macos")]
+    if let Some(child) = app.get_webview(&label) {
+        let _ = child.hide();
+    }
     emit_status(&app, &handle);
     Ok(())
 }
@@ -428,11 +431,23 @@ pub fn browser_close(
 #[tauri::command]
 pub fn browser_devtools(channel_id: String, app: AppHandle) -> Result<(), String> {
     let label = window_label(&channel_id);
-    if let Some(window) = app.get_webview_window(&label) {
-        window.open_devtools();
-        return Ok(());
+    #[cfg(any(debug_assertions, feature = "devtools"))]
+    {
+        if let Some(window) = app.get_webview_window(&label) {
+            window.open_devtools();
+            return Ok(());
+        }
+        if let Some(webview) = app.get_webview(&label) {
+            webview.open_devtools();
+            return Ok(());
+        }
+        return Err("browser window is not open".into());
     }
-    Err("browser window is not open".into())
+    #[cfg(not(any(debug_assertions, feature = "devtools")))]
+    {
+        let _ = (label, app);
+        Err("devtools are unavailable in this build".into())
+    }
 }
 
 #[derive(Debug, Deserialize)]

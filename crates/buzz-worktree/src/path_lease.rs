@@ -30,6 +30,12 @@ impl PathExclusiveLease {
     }
 }
 
+impl Drop for PathExclusiveLease {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self._file);
+    }
+}
+
 /// Identity of the thread currently holding a path lease.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

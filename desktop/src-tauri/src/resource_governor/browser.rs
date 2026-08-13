@@ -1,7 +1,7 @@
 //! Child-webview probe + WebviewWindow fallback (huddle precedent).
 //!
-//! Spike 0027: this Linux VM cannot exercise macOS `add_child`. The probe
-//! reports true only on macOS; commands fall back to `WebviewWindow`.
+//! Spike 0027: this Linux VM cannot exercise macOS `Window::add_child`.
+//! The probe reports true only on macOS; commands fall back to `WebviewWindow`.
 
 use serde::{Deserialize, Serialize};
 

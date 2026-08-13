@@ -78,6 +78,8 @@ use managed_agents::{
 use mesh_llm_stubs::*;
 use resource_governor::*;
 use std::sync::{atomic::AtomicBool, Arc};
+#[cfg(target_os = "macos")]
+use tauri::Listener;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::StateFlags;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

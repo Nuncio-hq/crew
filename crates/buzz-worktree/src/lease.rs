@@ -31,6 +31,12 @@ impl SharedLease {
     }
 }
 
+impl Drop for SharedLease {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self._file);
+    }
+}
+
 /// Exclusive (eviction) lease guard. Releases on drop.
 #[derive(Debug)]
 pub struct ExclusiveLease {
@@ -42,6 +48,12 @@ impl ExclusiveLease {
     /// Path of the underlying lockfile.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+impl Drop for ExclusiveLease {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self._file);
     }
 }
 

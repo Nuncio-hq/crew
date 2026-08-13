@@ -74,7 +74,7 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src/features/messages/ui/AgentReceiptCard.tsx` | share PR-reference href resolution with the evidence card (173 lines) | retain the existing receipt card behavior; keep the resolver pure and additive |
 | `crates/buzz-acp/src/thread_workspace.rs` | #187 `ws`/`base` parse + `plan_thread_worktree` binding arms; #188 `mode=folder` → skip-worktree | keep absent-params identical to today's isolated worktree; Main skips `worktree add`; Folder is a separate query param, not `ws=` |
 | `crates/buzz-acp/src/thread_workspace/base.rs` | optional requested base for new worktrees (#187) | default path (`None`) must still fetch remote default / local HEAD |
-| `crates/buzz-worktree/src/lib.rs` / `record.rs` / `paths.rs` | LifecycleRecord `base`; path-keyed exclusive leases; `max_last_used_at_for_path` (#187) | additive files/fields; do not change root-keyed eviction leases |
+| `crates/buzz-worktree/src/lib.rs` / `record.rs` / `paths.rs` / `lease.rs` / `path_lease.rs` | LifecycleRecord `base`; path-keyed exclusive leases; `max_last_used_at_for_path` (#187); #196 explicit flock unlock on lease Drop | additive files/fields; do not change root-keyed eviction semantics |
 | `desktop/src/features/channels/ui/ChannelPane.tsx` | composer workspace selector wiring (#187) | retain provider + `toolbarExtraActions` only; selector lives in Crew-owned files |
 | `desktop/src/features/projects/ui/crew-add-project-flow.tsx` | #188 Cowork accept-at-add (replaces #187 refuse-at-add) | probe then confirm; `isGit: false` opens Cowork copy, not a toast |
 | `desktop/src-tauri/src/commands/project_worktree_registry_parse.rs` | classify managed by `.buzz-worktrees` parent, not `buzz/<12hex>` only (#187) | primary stays Main / never GC; shared `ws=branch:` worktrees are Managed |
@@ -92,7 +92,9 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src/features/home/ui/HomeView.tsx` | Mission Inbox workbench deep-link via `getMissionInboxEventTarget` (#186) | do not navigate on unverified `row.channelId` |
 | `desktop/src/features/home/ui/InboxListPane.tsx` | `onOpenMissionWorkbench` pass-through (#186) | one prop; hammer lives in `MissionInboxSections` |
 | `desktop/src/features/home/ui/MissionInboxSections.tsx` | workbench hammer distinct from channel door (#186) | `getMissionInboxEventTarget` then `goWorkbench` — do not reuse `openMissionRow` |
-| `desktop/src-tauri/src/lib.rs` | #196 Tool Pane: `start_background` + `invoke::desktop_invoke_handler!()` (command table extracted so this file stays ≤1000; macro expands at crate root for Tauri `__cmd__*` macros) | keep `manage(ResourceGovernorHandle)` + `start_background`; do not move `generate_handler!` into a submodule |
+| `desktop/src-tauri/src/lib.rs` | #196 Tool Pane: `start_background` + `invoke::desktop_invoke_handler!()` (command table extracted so this file stays ≤1000; macro expands at crate root for Tauri `__cmd__*` macros); restore `tauri::Listener` for macOS `.once` | keep `manage(ResourceGovernorHandle)` + `start_background`; do not move `generate_handler!` into a submodule |
+| `desktop/src-tauri/src/invoke.rs` | #196 command table extracted from `lib.rs` | names only; expand the macro from crate root |
+| `desktop/src-tauri/src/egress_guard_tests.rs` | #196 invoke table moved to `invoke.rs` | keep `invoke.rs` on the ncryptsec filename allowlist next to `lib.rs` |
 | `desktop/src-tauri/src/commands/mod.rs` | #196 `canvas_tooling` module | retain `mod` + `pub use`; commands live in the Crew file |
 | `desktop/src-tauri/src/commands/canvas.rs` | #196 `pub(crate)` on `fenced_crew_block` / `ensure_canvas_author` | visibility only; do not move YAML parse here |
 | `desktop/src-tauri/src/commands/channels.rs` | #196 archive=erase / delete=`simctl delete` via governor | keep the two `try_state` hooks next to existing channel mutations |

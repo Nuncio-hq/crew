@@ -1,7 +1,7 @@
 //! Per-session Tool Pane env (`BUZZ_SIMULATOR_UDID`, `BUZZ_DEV_SERVER_URL`).
 //! Desktop writes a machine-local snapshot; UDIDs never go on the relay.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -27,10 +27,14 @@ fn snapshot_path() -> Option<PathBuf> {
 }
 
 pub fn env_for_channel(channel_id: &str) -> Vec<(String, String)> {
-    let Some(path) = snapshot_path() else {
+    env_for_channel_at(snapshot_path().as_deref(), channel_id)
+}
+
+fn env_for_channel_at(path: Option<&Path>, channel_id: &str) -> Vec<(String, String)> {
+    let Some(path) = path else {
         return Vec::new();
     };
-    let Ok(bytes) = std::fs::read(&path) else {
+    let Ok(bytes) = std::fs::read(path) else {
         return Vec::new();
     };
     let Ok(snap) = serde_json::from_slice::<Snapshot>(&bytes) else {
@@ -65,8 +69,7 @@ mod tests {
 
     #[test]
     fn missing_file_yields_empty() {
-        std::env::remove_var(SNAPSHOT_PATH_ENV);
-        assert!(env_for_channel("abc").is_empty());
+        assert!(env_for_channel_at(None, "abc").is_empty());
     }
 
     #[test]
@@ -78,9 +81,7 @@ mod tests {
             br#"{"channels":{"chan-1":{"simulatorUdid":"UDID-9","devServerUrl":"http://127.0.0.1:5173"}}}"#,
         )
         .expect("write");
-        std::env::set_var(SNAPSHOT_PATH_ENV, &path);
-        let env = env_for_channel("chan-1");
-        std::env::remove_var(SNAPSHOT_PATH_ENV);
+        let env = env_for_channel_at(Some(&path), "chan-1");
         let _ = std::fs::remove_file(&path);
         assert!(env
             .iter()
