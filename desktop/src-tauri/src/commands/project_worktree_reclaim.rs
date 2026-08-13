@@ -7,7 +7,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use buzz_worktree::{read_lifecycle_record, try_acquire_exclusive, LeaseError};
+use buzz_worktree::{
+    read_lifecycle_record, try_acquire_exclusive, try_acquire_path_exclusive, LeaseError,
+    PathLeaseHolder,
+};
 use serde::Serialize;
 
 use super::project_worktree_auth::{
@@ -285,10 +288,21 @@ pub async fn clear_project_worktree_cache(
 }
 
 fn probe_busy(prepared: &PreparedRemoval) -> bool {
-    let Some(root) = prepared.root_event_id.as_deref() else {
-        return false;
+    if let Some(root) = prepared.root_event_id.as_deref() {
+        match try_acquire_exclusive(&prepared.common_git, root) {
+            Ok(_lease) => {}
+            Err(LeaseError::Busy) => return true,
+            Err(_) => {}
+        }
+    }
+    let holder = PathLeaseHolder {
+        root_event_id: prepared
+            .root_event_id
+            .clone()
+            .unwrap_or_else(|| "0".repeat(64)),
+        label: "storage-probe".into(),
     };
-    match try_acquire_exclusive(&prepared.common_git, root) {
+    match try_acquire_path_exclusive(&prepared.common_git, &prepared.worktree, &holder) {
         Ok(_lease) => false,
         Err(LeaseError::Busy) => true,
         Err(_) => false,
@@ -436,6 +450,7 @@ mod tests {
                 None,
                 "buzz/aaaaaaaaaaaa",
                 managed_worktree.to_str().expect("utf8"),
+                None,
             )
             .expect("record");
             Self {

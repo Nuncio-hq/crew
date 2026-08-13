@@ -1,5 +1,4 @@
 import * as React from "react";
-import { toast } from "sonner";
 
 import { resolveCurrentProjectChannelAgentMessage } from "@/features/projects/lib/project-local-workspace-runtime";
 import { filterEffectiveExplicitAgentPubkeys } from "@/features/messages/lib/effectiveExplicitAgentPubkeys";
@@ -26,6 +25,7 @@ import {
   type PendingNonMemberMentionSend,
   uniqueNormalizedPubkeys,
 } from "./useMentionSendFlow.helpers";
+import { useComposerWorkspaceBinding } from "./composerWorkspaceBinding";
 
 type UseMentionSendCompleteOptions = {
   channelIdRef: React.MutableRefObject<string | null>;
@@ -99,6 +99,7 @@ export function useMentionSendComplete({
   setPendingImeta,
   setSpoileredAttachmentUrls,
 }: UseMentionSendCompleteOptions) {
+  const workspaceBinding = useComposerWorkspaceBinding();
   return React.useCallback(
     async (
       draft: PendingNonMemberMentionSend,
@@ -289,6 +290,7 @@ export function useMentionSendComplete({
                 channelId: sendChannelId ?? draft.capturedChannelId ?? "",
                 content: finalContent,
                 explicitAgentPubkeys: effectiveExplicitAgentPubkeys,
+                binding: workspaceBinding,
               });
             } catch (error) {
               const message = `Could not resolve Project workspace: ${getErrorMessage(
@@ -418,6 +420,7 @@ export function useMentionSendComplete({
       setNonMemberPromptError,
       setPendingImeta,
       setSpoileredAttachmentUrls,
+      workspaceBinding,
     ],
   );
 }

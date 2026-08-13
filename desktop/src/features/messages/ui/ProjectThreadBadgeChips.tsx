@@ -23,7 +23,7 @@ export function ProjectThreadBadgeChips({
         )}
         title={badge.branch}
       >
-        <span aria-hidden="true">⎇</span>
+        <span aria-hidden="true">{badge.glyph}</span>
         <span
           className={cn(
             "truncate",

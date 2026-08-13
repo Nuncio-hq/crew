@@ -22,6 +22,7 @@ export type ProjectThreadBadge = {
   label: string | null;
   branch: string;
   shortBranch: string;
+  glyph: "🌿" | "⌂" | "⎇";
   mono: boolean;
   pullRequests: ProjectThreadBadgePr[];
   overflow: number;
@@ -46,6 +47,7 @@ export function buildProjectThreadBadge(
     label,
     branch: entry.branch,
     shortBranch,
+    glyph: "🌿",
     mono: label == null,
     pullRequests,
     overflow,

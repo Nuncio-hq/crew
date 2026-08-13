@@ -106,31 +106,18 @@ fn is_hex64(value: &str) -> bool {
 
 pub fn classify_worktree(
     worktree_path: &Path,
-    branch: Option<&str>,
+    _branch: Option<&str>,
     managed_root: &Path,
     is_primary: bool,
 ) -> ProjectWorktreeKind {
     if is_primary {
         return ProjectWorktreeKind::Main;
     }
-    let Some(branch) = branch else {
-        return ProjectWorktreeKind::External;
-    };
-    if !is_managed_branch(branch) {
-        return ProjectWorktreeKind::External;
-    }
     let Ok(canonical) = std::fs::canonicalize(worktree_path) else {
         // Path may be prunable / missing — still classify by parent string.
         return classify_by_parent_string(worktree_path, managed_root);
     };
-    let Some(parent) = canonical.parent() else {
-        return ProjectWorktreeKind::External;
-    };
-    if parent == managed_root {
-        ProjectWorktreeKind::Managed
-    } else {
-        ProjectWorktreeKind::External
-    }
+    classify_by_parent_string(&canonical, managed_root)
 }
 
 fn classify_by_parent_string(worktree_path: &Path, managed_root: &Path) -> ProjectWorktreeKind {
@@ -225,12 +212,30 @@ branch.bad.buzzthreadroot not-hex
         );
         assert_eq!(
             classify_worktree(
+                Path::new("/repo/.buzz-worktrees/crew-ws-feature-x"),
+                Some("feature/x"),
+                managed,
+                false,
+            ),
+            ProjectWorktreeKind::Managed
+        );
+        assert_eq!(
+            classify_worktree(
                 Path::new("/repo/.worktrees/crew-docs-fork-identity"),
                 Some("docs/nunciocrew-fork-identity"),
                 managed,
                 false,
             ),
             ProjectWorktreeKind::External
+        );
+    }
+
+    #[test]
+    fn canonical_checkout_is_main_not_a_managed_gc_candidate() {
+        let managed = Path::new("/repo/.buzz-worktrees");
+        assert_eq!(
+            classify_worktree(Path::new("/repo/crew"), Some("main"), managed, true),
+            ProjectWorktreeKind::Main
         );
     }
 }

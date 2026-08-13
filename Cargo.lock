@@ -1448,8 +1448,10 @@ name = "buzz-worktree"
 version = "0.1.0"
 dependencies = [
  "fs4",
+ "hex",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.18",
 ]

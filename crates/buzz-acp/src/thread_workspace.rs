@@ -8,9 +8,16 @@ use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 
 mod base;
+mod binding;
+mod checkout;
 
 pub(crate) use base::BaseSource;
-use base::{resolve_workspace_base, WorkspaceBase};
+use base::{resolve_workspace_base, resolve_workspace_base_ref, WorkspaceBase};
+pub(crate) use binding::WorkspaceBindingSpec;
+use checkout::{
+    attach_existing_branch, current_branch, existing_branch_worktree_path,
+    find_worktree_for_branch, list_worktrees, uncommitted_count,
+};
 
 const CONTEXT_URL_PREFIX: &str = "buzz://project-workspace?";
 const ROOT_CLAIM_DIRECTORY: &str = "buzz-thread-workspace-roots";
@@ -25,10 +32,24 @@ const IN_PROGRESS_MARKERS: [&str; 7] = [
     "rebase-apply",
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CheckoutKind {
+    IsolatedWorktree,
+    MainCheckout,
+    SharedBranch,
+}
+
+impl CheckoutKind {
+    pub(crate) fn skips_lifecycle_record(self) -> bool {
+        matches!(self, Self::MainCheckout)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectWorkspace {
     pub repo_address: String,
     pub local_path: PathBuf,
+    pub binding: WorkspaceBindingSpec,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +66,9 @@ pub(crate) struct ThreadWorkspace {
     /// Canonical common Git directory (`git rev-parse --git-common-dir`),
     /// used to key `buzz-worktree` leases and lifecycle records.
     pub(crate) common_git: PathBuf,
+    pub(crate) checkout_kind: CheckoutKind,
+    pub(crate) requested_base: Option<String>,
+    pub(crate) uncommitted_count: u64,
 }
 
 /// How `ensure_planned_thread_worktree` obtained a verified checkout.
@@ -60,6 +84,8 @@ pub(crate) enum EnsureKind {
     Created,
     /// Existing branch was reattached or recovered via checkout under the lease.
     Reattached,
+    /// `git worktree add` without `-b` attached an existing named branch.
+    AttachedExisting,
 }
 
 impl EnsureKind {
@@ -82,6 +108,8 @@ pub(crate) struct ThreadWorkspacePlan {
     pub(crate) branch: String,
     pub(crate) common_git: PathBuf,
     pub(crate) workspace_base: WorkspaceBase,
+    pub(crate) checkout_kind: CheckoutKind,
+    pub(crate) claim_exclusive_root: bool,
 }
 
 #[derive(Debug)]
@@ -252,10 +280,14 @@ pub fn parse_project_workspace(content: &str) -> Result<Option<ProjectWorkspace>
     let url = url::Url::parse(&suffix[..end]).context("invalid Project workspace URL")?;
     let mut repo_address = None;
     let mut local_path = None;
+    let mut ws = None;
+    let mut base = None;
     for (key, value) in url.query_pairs() {
         match key.as_ref() {
             "repo" => repo_address = Some(value.into_owned()),
             "path" => local_path = Some(PathBuf::from(value.into_owned())),
+            "ws" => ws = Some(value.into_owned()),
+            "base" => base = Some(value.into_owned()),
             _ => {}
         }
     }
@@ -264,9 +296,11 @@ pub fn parse_project_workspace(content: &str) -> Result<Option<ProjectWorkspace>
     if repo_address.trim().is_empty() || !local_path.is_absolute() {
         bail!("Project workspace metadata is invalid");
     }
+    let binding = WorkspaceBindingSpec::from_params(ws.as_deref(), base.as_deref())?;
     Ok(Some(ProjectWorkspace {
         repo_address,
         local_path,
+        binding,
     }))
 }
 
@@ -299,18 +333,63 @@ pub async fn plan_thread_worktree(
         .parent()
         .context("git repository has no parent directory")?
         .join(".buzz-worktrees");
-    let worktree_path = parent.join(format!("{repo_name}-{short_root}"));
-    let branch = format!("buzz/{short_root}");
-    let workspace_base = resolve_workspace_base(&repo_root).await?;
 
-    Ok(ThreadWorkspacePlan {
-        root_event_id: root_event_id.to_string(),
-        repository_path: repo_root,
-        worktree_path,
-        branch,
-        common_git,
-        workspace_base,
-    })
+    match &workspace.binding {
+        WorkspaceBindingSpec::NewWorktree { base } => {
+            let worktree_path = parent.join(format!("{repo_name}-{short_root}"));
+            let branch = format!("buzz/{short_root}");
+            let workspace_base = resolve_workspace_base_ref(&repo_root, base.as_deref()).await?;
+            Ok(ThreadWorkspacePlan {
+                root_event_id: root_event_id.to_string(),
+                repository_path: repo_root,
+                worktree_path,
+                branch,
+                common_git,
+                workspace_base,
+                checkout_kind: CheckoutKind::IsolatedWorktree,
+                claim_exclusive_root: true,
+            })
+        }
+        WorkspaceBindingSpec::Main => {
+            let branch = current_branch(&repo_root).await;
+            let workspace_base = resolve_workspace_base(&repo_root).await?;
+            Ok(ThreadWorkspacePlan {
+                root_event_id: root_event_id.to_string(),
+                repository_path: repo_root.clone(),
+                worktree_path: repo_root,
+                branch,
+                common_git,
+                workspace_base,
+                checkout_kind: CheckoutKind::MainCheckout,
+                claim_exclusive_root: false,
+            })
+        }
+        WorkspaceBindingSpec::ExistingBranch { name } => {
+            let listed = list_worktrees(&repo_root).await.unwrap_or_default();
+            let existing = find_worktree_for_branch(&listed, name);
+            let worktree_path = match existing {
+                Some(found) => found.path.clone(),
+                None => existing_branch_worktree_path(&repo_root, name)?,
+            };
+            let checkout_kind = if existing.is_some_and(|found| found.is_primary) {
+                CheckoutKind::MainCheckout
+            } else {
+                CheckoutKind::SharedBranch
+            };
+            let workspace_base =
+                resolve_workspace_base_ref(&repo_root, Some(name.as_str())).await?;
+            Ok(ThreadWorkspacePlan {
+                root_event_id: root_event_id.to_string(),
+                repository_path: repo_root,
+                worktree_path,
+                branch: name.clone(),
+                common_git,
+                workspace_base,
+                checkout_kind,
+                claim_exclusive_root: false,
+            })
+        }
+    }
 }
 
 /// Ensure a previously planned worktree exists and return verified metadata
@@ -327,6 +406,7 @@ pub async fn ensure_planned_thread_worktree(
     let branch = &plan.branch;
     let root_event_id = plan.root_event_id.as_str();
     let workspace_base = &plan.workspace_base;
+    let claim_root = plan.claim_exclusive_root;
 
     if let Some(metadata) = verified_metadata(
         repo_root,
@@ -335,11 +415,60 @@ pub async fn ensure_planned_thread_worktree(
         branch,
         root_event_id,
         workspace_base,
+        plan.checkout_kind,
+        claim_root,
     )
     .await?
     {
         return Ok((metadata, EnsureKind::AlreadyPresent));
     }
+
+    if matches!(plan.checkout_kind, CheckoutKind::MainCheckout) {
+        let metadata = main_checkout_metadata(
+            repo_root,
+            worktree_path,
+            common_git,
+            branch,
+            root_event_id,
+            workspace_base,
+        )
+        .await?;
+        return Ok((metadata, EnsureKind::AlreadyPresent));
+    }
+
+    if matches!(plan.checkout_kind, CheckoutKind::SharedBranch) {
+        if let Err(error) = attach_existing_branch(repo_root, worktree_path, branch).await {
+            if let Some(metadata) = verified_metadata(
+                repo_root,
+                worktree_path,
+                common_git,
+                branch,
+                root_event_id,
+                workspace_base,
+                plan.checkout_kind,
+                claim_root,
+            )
+            .await?
+            {
+                return Ok((metadata, EnsureKind::AlreadyPresent));
+            }
+            return Err(error);
+        }
+        let metadata = verified_metadata(
+            repo_root,
+            worktree_path,
+            common_git,
+            branch,
+            root_event_id,
+            workspace_base,
+            plan.checkout_kind,
+            claim_root,
+        )
+        .await?
+        .context("attached worktree failed repository verification")?;
+        return Ok((metadata, EnsureKind::AttachedExisting));
+    }
+
     let parent = worktree_path
         .parent()
         .context("planned worktree path has no parent directory")?;
@@ -366,6 +495,8 @@ pub async fn ensure_planned_thread_worktree(
                 branch,
                 root_event_id,
                 workspace_base,
+                CheckoutKind::IsolatedWorktree,
+                true,
             )
             .await?
             {
@@ -400,6 +531,8 @@ pub async fn ensure_planned_thread_worktree(
                         branch,
                         root_event_id,
                         workspace_base,
+                        CheckoutKind::IsolatedWorktree,
+                        true,
                     )
                     .await?
                     {
@@ -439,6 +572,8 @@ pub async fn ensure_planned_thread_worktree(
                 branch,
                 root_event_id,
                 workspace_base,
+                CheckoutKind::IsolatedWorktree,
+                true,
             )
             .await?
             {
@@ -456,6 +591,8 @@ pub async fn ensure_planned_thread_worktree(
         branch,
         root_event_id,
         workspace_base,
+        CheckoutKind::IsolatedWorktree,
+        true,
     )
     .await?
     .context("created worktree failed repository verification")?;
@@ -559,6 +696,7 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn verified_metadata(
     repo_root: &Path,
     path: &Path,
@@ -566,10 +704,62 @@ async fn verified_metadata(
     expected_branch: &str,
     root_event_id: &str,
     workspace_base: &WorkspaceBase,
+    checkout_kind: CheckoutKind,
+    claim_exclusive_root: bool,
 ) -> Result<Option<ThreadWorkspace>> {
-    if !verify_worktree(path, expected_common_git, expected_branch, root_event_id).await {
+    if !verify_worktree(
+        path,
+        expected_common_git,
+        expected_branch,
+        root_event_id,
+        claim_exclusive_root,
+    )
+    .await
+    {
         return Ok(None);
     }
+    assemble_metadata(
+        repo_root,
+        path,
+        expected_common_git,
+        expected_branch,
+        root_event_id,
+        workspace_base,
+        checkout_kind,
+    )
+    .await
+    .map(Some)
+}
+
+async fn main_checkout_metadata(
+    repo_root: &Path,
+    path: &Path,
+    expected_common_git: &Path,
+    expected_branch: &str,
+    root_event_id: &str,
+    workspace_base: &WorkspaceBase,
+) -> Result<ThreadWorkspace> {
+    assemble_metadata(
+        repo_root,
+        path,
+        expected_common_git,
+        expected_branch,
+        root_event_id,
+        workspace_base,
+        CheckoutKind::MainCheckout,
+    )
+    .await
+}
+
+async fn assemble_metadata(
+    repo_root: &Path,
+    path: &Path,
+    expected_common_git: &Path,
+    expected_branch: &str,
+    root_event_id: &str,
+    workspace_base: &WorkspaceBase,
+    checkout_kind: CheckoutKind,
+) -> Result<ThreadWorkspace> {
     let worktree_path =
         fs::canonicalize(path).context("could not canonicalize verified worktree path")?;
     let worktree_name = worktree_path
@@ -577,16 +767,21 @@ async fn verified_metadata(
         .and_then(|name| name.to_str())
         .context("verified worktree name is not valid UTF-8")?
         .to_string();
-    // On creation this is exactly the source checkout HEAD supplied to
-    // `git worktree add`. On normal idempotent reuse, merge-base preserves
-    // that branch point after either the source or worktree branch advances.
+    let head = git_output(&worktree_path, ["rev-parse", "HEAD"])
+        .await?
+        .trim()
+        .to_string();
     let base_revision = git_output(
         &worktree_path,
         ["merge-base", "HEAD", workspace_base.revision.as_str()],
     )
-    .await?
-    .trim()
-    .to_string();
+    .await
+    .ok()
+    .map(|value| value.trim().to_string())
+    .filter(|value| {
+        value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
+    })
+    .unwrap_or(head);
     if base_revision.len() != 40
         || !base_revision
             .chars()
@@ -594,28 +789,22 @@ async fn verified_metadata(
     {
         bail!("git returned an invalid worktree base revision");
     }
-    // Freshness belongs to the thread worktree, not to the source checkout.
-    // A reused worktree may have been created from an older remote tip even
-    // though the latest fetch succeeded, so compare its actual HEAD with the
-    // fetched revision. When fetch failed, the remote distance is unknowable.
     let commits_behind_remote = match workspace_base.source {
-        BaseSource::Remote => Some(
-            git_output(
-                &worktree_path,
-                [
-                    "rev-list",
-                    "--count",
-                    &format!("HEAD..{}", workspace_base.revision),
-                ],
-            )
-            .await?
-            .trim()
-            .parse()
-            .context("git returned an invalid remote distance")?,
-        ),
+        BaseSource::Remote => git_output(
+            &worktree_path,
+            [
+                "rev-list",
+                "--count",
+                &format!("HEAD..{}", workspace_base.revision),
+            ],
+        )
+        .await
+        .ok()
+        .and_then(|value| value.trim().parse().ok()),
         BaseSource::LocalFallback => None,
     };
-    Ok(Some(ThreadWorkspace {
+    let uncommitted_count = uncommitted_count(&worktree_path).await;
+    Ok(ThreadWorkspace {
         root_event_id: root_event_id.to_string(),
         repository_path: repo_root.to_path_buf(),
         worktree_path,
@@ -626,7 +815,10 @@ async fn verified_metadata(
         remote_default_branch: workspace_base.remote_default_branch.clone(),
         commits_behind_remote,
         common_git: expected_common_git.to_path_buf(),
-    }))
+        checkout_kind,
+        requested_base: workspace_base.requested_base.clone(),
+        uncommitted_count,
+    })
 }
 
 async fn verify_worktree(
@@ -634,6 +826,7 @@ async fn verify_worktree(
     expected_common_git: &Path,
     expected_branch: &str,
     expected_root_event_id: &str,
+    claim_exclusive_root: bool,
 ) -> bool {
     let Ok(root) = git_output(path, ["rev-parse", "--show-toplevel"]).await else {
         return false;
@@ -647,19 +840,25 @@ async fn verify_worktree(
     let Ok(common_path) = canonical_git_path(&root, common.trim()) else {
         return false;
     };
-    let Ok(branch) = git_output(path, ["symbolic-ref", "--short", "HEAD"]).await else {
+    let Ok(path) = fs::canonicalize(path) else {
         return false;
     };
-    root == path
-        && common_path == expected_common_git
-        && branch.trim() == expected_branch
-        && verify_or_claim_branch_root(
-            path,
-            expected_common_git,
-            expected_branch,
-            expected_root_event_id,
-        )
-        .await
+    let Ok(branch) = git_output(&path, ["symbolic-ref", "--short", "HEAD"]).await else {
+        return false;
+    };
+    if root != path || common_path != expected_common_git || branch.trim() != expected_branch {
+        return false;
+    }
+    if !claim_exclusive_root {
+        return true;
+    }
+    verify_or_claim_branch_root(
+        &path,
+        expected_common_git,
+        expected_branch,
+        expected_root_event_id,
+    )
+    .await
 }
 
 async fn record_branch_root(repo_root: &Path, branch: &str, root_event_id: &str) -> Result<()> {

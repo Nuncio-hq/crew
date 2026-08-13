@@ -1,4 +1,9 @@
 import {
+  DEFAULT_WORKSPACE_BINDING,
+  workspaceBindingQuerySuffix,
+  type WorkspaceBindingChoice,
+} from "@/features/messages/lib/workspaceBindingSpec";
+import {
   projectLocalWorkspaceFromEvent,
   type LocalWorkspaceState,
 } from "./project-local-workspace";
@@ -115,6 +120,8 @@ export function projectContextForChannel(
 export function appendProjectChannelAgentContext(
   content: string,
   context: ProjectChannelContext,
+  binding: WorkspaceBindingChoice = DEFAULT_WORKSPACE_BINDING,
+  defaultBranch: string | null = null,
 ): string {
   if (context.status === "none") return content;
   if (context.status === "invalid") {
@@ -137,6 +144,7 @@ export function appendProjectChannelAgentContext(
     "buzz://project-workspace",
     `?repo=${encodeURIComponent(context.repoAddress)}`,
     `&path=${encodeURIComponent(context.localPath)}`,
+    workspaceBindingQuerySuffix(binding, defaultBranch),
   ].join("");
   return `[${label}]: <${workspaceUrl}> "${title}"\n\n${content}`;
 }
@@ -147,6 +155,8 @@ export async function resolveProjectChannelAgentMessage(
     content: string;
     explicitAgentPubkeys: string[];
     ownerPubkey: string;
+    binding?: WorkspaceBindingChoice;
+    defaultBranch?: string | null;
   },
   dependencies: ResolverDependencies,
 ): Promise<string> {
@@ -163,5 +173,7 @@ export async function resolveProjectChannelAgentMessage(
   return appendProjectChannelAgentContext(
     input.content,
     projectContextForChannel(input.channelId, projects),
+    input.binding,
+    input.defaultBranch ?? null,
   );
 }

@@ -3,9 +3,13 @@
 use std::path::{Path, PathBuf};
 
 use crate::identity::normalize_root_event_id;
+use sha2::{Digest, Sha256};
 
 /// Directory for per-root advisory lease lockfiles.
 pub const LEASE_DIRECTORY: &str = "buzz-thread-workspace-leases";
+
+/// Directory for path-keyed exclusive turn leases (shared checkouts).
+pub const PATH_LEASE_DIRECTORY: &str = "buzz-thread-workspace-path-leases";
 
 /// Directory for versioned lifecycle records (one file per full root).
 pub const LIFECYCLE_RECORD_DIRECTORY: &str = "buzz-thread-workspace-lifecycle";
@@ -25,6 +29,26 @@ pub fn lease_dir(common_git: &Path) -> PathBuf {
 pub fn lease_lock_path(common_git: &Path, root_event_id: &str) -> Result<PathBuf, String> {
     let root = normalize_root_event_id(root_event_id)?;
     Ok(lease_dir(common_git).join(format!("{root}.lease")))
+}
+
+/// Directory holding path-keyed exclusive turn lockfiles.
+pub fn path_lease_dir(common_git: &Path) -> PathBuf {
+    common_git.join(PATH_LEASE_DIRECTORY)
+}
+
+/// Lockfile path for a canonical checkout path (sha256 stem).
+pub fn path_lease_lock_path(common_git: &Path, worktree_path: &Path) -> Result<PathBuf, String> {
+    if worktree_path.as_os_str().is_empty() {
+        return Err("worktree path is empty".into());
+    }
+    Ok(path_lease_dir(common_git).join(format!("{}.lease", path_lease_key(worktree_path))))
+}
+
+/// Stable lockfile stem for a checkout path (sha256 hex of the UTF-8 path).
+pub fn path_lease_key(worktree_path: &Path) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(worktree_path.to_string_lossy().as_bytes());
+    hex::encode(hasher.finalize())
 }
 
 /// Directory holding lifecycle JSON records.

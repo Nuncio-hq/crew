@@ -77,6 +77,7 @@ impl Fixture {
             None,
             "buzz/aaaaaaaaaaaa",
             managed_worktree.to_str().expect("UTF-8"),
+            None,
         )
         .expect("lifecycle record");
         Self {

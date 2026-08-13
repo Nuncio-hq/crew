@@ -17,6 +17,69 @@ fn parses_encoded_project_workspace_context() {
         .expect("context present");
     assert_eq!(workspace.repo_address, "github.com/acme/app");
     assert_eq!(workspace.local_path, PathBuf::from("/tmp/app"));
+    assert_eq!(workspace.binding, Default::default());
+}
+
+#[test]
+fn absent_ws_and_base_are_todays_isolated_worktree() {
+    let content = "buzz://project-workspace?repo=acme%2Fapp&path=%2Ftmp%2Fapp";
+    let workspace = parse_project_workspace(content).unwrap().unwrap();
+    assert!(workspace.binding.is_default_new_worktree());
+}
+
+#[test]
+fn parses_ws_main_and_branch_and_base() {
+    let main = parse_project_workspace(
+        "buzz://project-workspace?repo=acme%2Fapp&path=%2Ftmp%2Fapp&ws=main",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        main.binding,
+        crate::thread_workspace::WorkspaceBindingSpec::Main
+    );
+
+    let branch = parse_project_workspace(
+        "buzz://project-workspace?repo=acme%2Fapp&path=%2Ftmp%2Fapp&ws=branch:feature%2Fx",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        branch.binding,
+        crate::thread_workspace::WorkspaceBindingSpec::ExistingBranch {
+            name: "feature/x".into()
+        }
+    );
+
+    let base = parse_project_workspace(
+        "buzz://project-workspace?repo=acme%2Fapp&path=%2Ftmp%2Fapp&base=release",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        base.binding,
+        crate::thread_workspace::WorkspaceBindingSpec::NewWorktree {
+            base: Some("release".into())
+        }
+    );
+}
+
+#[test]
+fn malformed_branch_param_is_a_named_error() {
+    assert!(parse_project_workspace(
+        "buzz://project-workspace?repo=acme%2Fapp&path=%2Ftmp%2Fapp&ws=branch:"
+    )
+    .is_err());
+}
+
+#[test]
+fn unknown_ws_fails_closed_to_default() {
+    let workspace = parse_project_workspace(
+        "buzz://project-workspace?repo=acme%2Fapp&path=%2Ftmp%2Fapp&ws=cowork",
+    )
+    .unwrap()
+    .unwrap();
+    assert!(workspace.binding.is_default_new_worktree());
 }
 
 #[test]
@@ -53,6 +116,103 @@ async fn plan_thread_worktree_resolves_identity_without_creating_checkout() {
         .expect("idempotent ensure");
     assert_eq!(reuse_kind, EnsureKind::AlreadyPresent);
 
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn ws_main_plans_canonical_checkout_without_creating_a_worktree() {
+    let (fixture, mut workspace, _) = git_fixture().await;
+    workspace.binding = crate::thread_workspace::WorkspaceBindingSpec::Main;
+    let root = "d".repeat(64);
+    let plan = plan_thread_worktree(&workspace, &root)
+        .await
+        .expect("plan succeeds");
+    assert_eq!(
+        plan.worktree_path,
+        fs::canonicalize(&workspace.local_path).expect("canonicalize fixture")
+    );
+    assert_eq!(
+        plan.checkout_kind,
+        crate::thread_workspace::CheckoutKind::MainCheckout
+    );
+    assert!(!plan.worktree_path.join(".buzz-worktrees").exists());
+
+    let (ensured, kind) = ensure_planned_thread_worktree(&plan)
+        .await
+        .expect("main checkout ensures");
+    assert_eq!(kind, EnsureKind::AlreadyPresent);
+    assert_eq!(
+        ensured.worktree_path,
+        fs::canonicalize(&workspace.local_path).expect("canonicalize fixture")
+    );
+    let parent = workspace
+        .local_path
+        .parent()
+        .unwrap()
+        .join(".buzz-worktrees");
+    if parent.exists() {
+        let entries: Vec<_> = fs::read_dir(&parent).unwrap().collect();
+        assert!(
+            entries.is_empty()
+                || entries.iter().all(|entry| {
+                    entry.as_ref().ok().is_none_or(|value| {
+                        value.path().file_name() != Some("project-dddddddddddd".as_ref())
+                    })
+                }),
+            "ws=main must not create a managed worktree"
+        );
+    }
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn ws_branch_reuses_existing_worktree_and_attaches_when_absent() {
+    let (fixture, mut workspace, _) = git_fixture().await;
+    run_git(&workspace.local_path, &["branch", "feature-x"]).await;
+    workspace.binding = crate::thread_workspace::WorkspaceBindingSpec::ExistingBranch {
+        name: "feature-x".into(),
+    };
+    let root_a = "e".repeat(64);
+    let (first, kind) = ensure_planned_thread_worktree(
+        &plan_thread_worktree(&workspace, &root_a)
+            .await
+            .expect("plan"),
+    )
+    .await
+    .expect("attach creates a shared worktree");
+    assert_eq!(kind, EnsureKind::AttachedExisting);
+    assert_eq!(first.branch, "feature-x");
+    assert_ne!(first.worktree_path, workspace.local_path);
+
+    let root_b = "f".repeat(64);
+    let (second, reuse_kind) = ensure_planned_thread_worktree(
+        &plan_thread_worktree(&workspace, &root_b)
+            .await
+            .expect("plan"),
+    )
+    .await
+    .expect("second thread reuses the shared worktree");
+    assert_eq!(reuse_kind, EnsureKind::AlreadyPresent);
+    assert_eq!(second.worktree_path, first.worktree_path);
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn requested_base_is_recorded_on_the_plan() {
+    let (fixture, mut workspace, remote) = remote_git_fixture("main").await;
+    run_git(&workspace.local_path, &["branch", "release"]).await;
+    run_git(&workspace.local_path, &["push", "-u", "origin", "release"]).await;
+    workspace.binding = crate::thread_workspace::WorkspaceBindingSpec::NewWorktree {
+        base: Some("release".into()),
+    };
+    let plan = plan_thread_worktree(&workspace, &"9".repeat(64))
+        .await
+        .expect("plan");
+    assert_eq!(
+        plan.workspace_base.requested_base.as_deref(),
+        Some("release")
+    );
+    let _ = remote;
     fs::remove_dir_all(&fixture).expect("fixture cleanup");
 }
 
@@ -702,6 +862,7 @@ async fn git_fixture() -> (PathBuf, ProjectWorkspace, String) {
     let workspace = ProjectWorkspace {
         repo_address: "fixture/project".to_string(),
         local_path: repo,
+        binding: Default::default(),
     };
     (fixture, workspace, base_revision)
 }
@@ -751,6 +912,7 @@ async fn remote_git_fixture(default_branch: &str) -> (PathBuf, ProjectWorkspace,
         ProjectWorkspace {
             repo_address: "fixture/project".to_string(),
             local_path: repo,
+            binding: Default::default(),
         },
         remote,
     )

@@ -37,7 +37,7 @@ The local upstream push URL is deliberately disabled. Never push to
 | --- | --- | --- |
 | `crates/buzz-acp/src/base_prompt.md` | office-level behavioral rule belongs in the office-level prompt | self-contained Markdown section — on conflict, keep it and re-place it after Communication Patterns |
 | `crates/buzz-acp/src/lib.rs` | machine-check the shared prompt contract; **one** idle reaper (#189 compose of #5682 + #169) feeding Ready → Draining → Listening | retain prompt assertions; keep a single `idle_pool_sleep_reaper` that calls `enter_draining` — never a second top-of-loop timer or sync teardown path |
-| `crates/buzz-acp/src/pool.rs` | resume-first session acquire + ledger declare-at-birth (#169); post-load lineage check + live rotation persist (#180) | keep resume/rebuild inside the channel session block; do not invent parallel session maps |
+| `crates/buzz-acp/src/pool.rs` | resume-first session acquire + ledger declare-at-birth (#169); post-load lineage check + live rotation persist (#180); #187 path leases + Busy refusal + checkout notice | keep resume/rebuild inside the channel session block; path exclusive lease before ensure; Busy is `PromptOutcome::Ok(Refusal)` |
 | `crates/buzz-acp/src/pool_lifecycle.rs` | Ready → Draining → Listening reverse transition (#169) | merge drain helpers; preserve forward wake/retry contract tests |
 | `crates/buzz-acp/src/session_ledger.rs` | Crew-landed durable session ledger (#169) + rotation/lineage (#180) + owner `compaction_count` / turn net (#173; upstream-candidacy) | additive file — prefer keeping intact on sync |
 | `crates/buzz-acp/src/compaction_signal.rs` | Crew-landed honest CompactionSignal adapters + aging projection (#173) | additive file — prefer keeping intact on sync |
@@ -51,15 +51,15 @@ The local upstream push URL is deliberately disabled. Never push to
 | `crates/buzz-cli/src/commands/mod.rs` | register the Crew-owned evidence kind module | retain the module declaration; do not move validation into upstream command code |
 | `crates/buzz-cli/src/commands/evidence.rs` | Crew-owned exact evidence-kind parsing and tag construction | keep canonical wire strings and enum-only validation in this module |
 | `crates/buzz-cli/TESTING.md` | document the additive evidence flag in the CLI test inventory | retain the one-row flag inventory update; do not rewrite unrelated runbook steps |
-| `desktop/playwright.config.ts` | register Crew evidence contracts + #174 worktree-storage smoke + #175 cross-check | retain the narrow test-match additions; do not reorder unrelated entries |
+| `desktop/playwright.config.ts` | register Crew evidence contracts + #174 worktree-storage smoke + #175 cross-check + #187 selector spec | retain the narrow test-match additions; do not reorder unrelated entries |
 | `desktop/src/features/messages/lib/projectThreadGitHubStore.ts` | reload generation for live evidence↔CI badge recompute (#175) | keep additive reload helper beside existing cache reset |
-| `desktop/src/testing/e2eBridge.ts` | mock storage snapshot + reclaim (#174); `__BUZZ_E2E_SET_THREAD_GITHUB_BY_BRANCH__` (#175) | keep additive cases; default fixture is self-contained |
+| `desktop/src/testing/e2eBridge.ts` | mock storage snapshot + reclaim (#174); `__BUZZ_E2E_SET_THREAD_GITHUB_BY_BRANCH__` (#175); #187 `probe_project_git_workspace` + extra project events | keep additive cases; default fixture is self-contained |
 | `desktop/src/features/settings/ui/SettingsPanels.tsx` | Settings → Storage section registration (#174) | keep `"storage"` arm + nav descriptor; card lives in Crew-owned feature module |
 | `desktop/src/features/settings/ui/SettingsView.tsx` | Personal nav entry for Storage (#174) | retain one-line `"storage"` nav add next to local-archive |
 | `desktop/src/app/useAppShellLifecycleEffects.ts` | upstream foreground-ready scheduler (#5696) + #164 workspace snapshot refresh + #174 alive heartbeat | attach Crew hooks beside `useForegroundQueryRefresh`; do not turn app absence into observed idle |
 | `desktop/src/features/agents/observerRelayStore.ts` | upstream envelope batching (#5680) + Crew identity/session_aging/control_result | one `notifyListeners` per envelope; Crew variants live in `observerRelayStoreCrew.ts` under D-022 |
 | `desktop/src-tauri/src/commands/project_worktree_details.rs` | `branch_is_pushed` helper for Hibernate tier (#174) | retain pub(crate) helper beside ahead/behind; no mutation path changes |
-| `desktop/src-tauri/src/commands/mod.rs` / `lib.rs` | register #174 storage commands | retain module + invoke_handler entries only |
+| `desktop/src-tauri/src/commands/mod.rs` / `lib.rs` | register #174 storage commands + #187 `probe_project_git_workspace` | retain module + invoke_handler entries only |
 | `desktop/src/features/messages/ui/MessageRow.tsx` | pass evidence-card review props through the existing default-body seam (987 lines) | retain the seven-line prop pass-through only; keep evidence logic out of this upstream-derived file |
 | `desktop/src/features/messages/ui/MessageRowDefaultBody.tsx` | dispatch known Crew evidence tags + handover note card before ordinary Markdown rendering (#121/#173) | preserve ordinary body fallback and keep card implementation in Crew-owned files |
 | `crates/buzz-acp/src/pool.rs` | persist rotation (#180) + compaction/turn aging emit (#173) after turns | keep additive persist/emit helpers; do not invent parallel session maps |
@@ -69,6 +69,14 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs` | reserve pool idle timeout (#169) + handover/aging keys (#173) | keep keys in the shared reserved list |
 | `desktop/src-tauri/src/managed_agents/global_config/mod.rs` | per-app handover summarizer + aging thresholds (#173) | retain additive serde fields with defaults |
 | `desktop/src/features/messages/ui/AgentReceiptCard.tsx` | share PR-reference href resolution with the evidence card (173 lines) | retain the existing receipt card behavior; keep the resolver pure and additive |
+| `crates/buzz-acp/src/thread_workspace.rs` | #187 `ws`/`base` parse + `plan_thread_worktree` binding arms | keep absent-params identical to today's isolated worktree; Main skips `worktree add` |
+| `crates/buzz-acp/src/thread_workspace/base.rs` | optional requested base for new worktrees (#187) | default path (`None`) must still fetch remote default / local HEAD |
+| `crates/buzz-worktree/src/lib.rs` / `record.rs` / `paths.rs` | LifecycleRecord `base`; path-keyed exclusive leases; `max_last_used_at_for_path` (#187) | additive files/fields; do not change root-keyed eviction leases |
+| `desktop/src/features/channels/ui/ChannelPane.tsx` | composer workspace selector wiring (#187) | retain provider + `toolbarExtraActions` only; selector lives in Crew-owned files |
+| `desktop/src/features/projects/ui/crew-add-project-flow.tsx` | non-git refuse-at-add (#187 / spike 0024) | probe then toast; do not open confirm for `isGit: false` |
+| `desktop/src-tauri/src/commands/project_worktree_registry_parse.rs` | classify managed by `.buzz-worktrees` parent, not `buzz/<12hex>` only (#187) | primary stays Main / never GC; shared `ws=branch:` worktrees are Managed |
+| `desktop/src-tauri/src/commands/worktree_storage_aggregate.rs` | shared idle = max lastUsedAt across path (#187) | keep #174 suggest-and-confirm; do not GC the canonical checkout |
+| `desktop/src-tauri/src/commands/project_worktree_reclaim.rs` | path-lease busy probe (#187) | Busy remains a refusal, not an error |
 
 ## Before feature work
 

@@ -1345,6 +1345,15 @@ declare global {
     __BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__?: number[];
     /** Captured aggregate project-history filters for request-count assertions. */
     __BUZZ_E2E_PROJECT_QUERY_FILTERS__?: MockFilter[];
+    __BUZZ_E2E_PROJECT_GIT_PROBE__?: {
+      isGit: boolean;
+      defaultBranch: string | null;
+      currentBranch: string | null;
+      dirty: boolean;
+      uncommittedCount: number;
+      localBranches: string[];
+      remoteBranches: string[];
+    };
     __BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__?: {
       local_path: string | null;
       local_branch: string | null;
@@ -12813,6 +12822,18 @@ export function maybeInstallE2eTauriMocks() {
         };
       case "get_project_local_repo_diff":
         return null;
+      case "probe_project_git_workspace":
+        return (
+          window.__BUZZ_E2E_PROJECT_GIT_PROBE__ ?? {
+            isGit: true,
+            defaultBranch: "main",
+            currentBranch: "main",
+            dirty: false,
+            uncommittedCount: 0,
+            localBranches: ["main", "release"],
+            remoteBranches: ["main"],
+          }
+        );
       case "get_project_repo_sync_status":
         return (
           window.__BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__ ?? {

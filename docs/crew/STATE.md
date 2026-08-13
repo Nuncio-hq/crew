@@ -1,5 +1,16 @@
 # Crew State
 
+## Issue #187 — workspace binding per thread
+
+Composer selector on git Project channels: New worktree (default, pickable
+base) / Main checkout (`ws=main`) / Existing branch (`ws=branch:`). Absent
+marker params keep today's isolated worktree. Path-keyed exclusive turn
+leases serialize shared checkouts with a named Busy refusal. Dirty main
+checkout is allowed with a prompt notice. Canonical checkout is never a #174
+GC candidate; shared idle is `max(lastUsedAt)`. Non-git folders are refused
+at add-Project (spike 0024); Cowork is #188. See D-053.
+Last updated: 2026-08-13
+
 ## Issue #189 — upstream sync Buzz Desktop 0.5.10 → 0.5.11
 
 Pinned to `desktop-v0.5.11` / `248b9d1b7666aacbcb1485b76e81de30a271ba0e`.
