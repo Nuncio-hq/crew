@@ -157,7 +157,9 @@ export function appendProjectChannelAgentContext(
     "buzz://project-workspace",
     `?repo=${encodeURIComponent(context.repoAddress)}`,
     `&path=${encodeURIComponent(context.localPath)}`,
-    cowork ? "&mode=folder" : workspaceBindingQuerySuffix(binding, defaultBranch),
+    cowork
+      ? "&mode=folder"
+      : workspaceBindingQuerySuffix(binding, defaultBranch),
   ].join("");
   return `[${label}]: <${workspaceUrl}> "${title}"\n\n${content}`;
 }

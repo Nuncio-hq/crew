@@ -130,7 +130,16 @@ impl ShadowRepo {
             path: history_root.to_path_buf(),
             source,
         })?;
-        let git_dir = history_git_dir(history_root, repo_address);
+        // Absolute git-dir: `git()` sets cwd to the work-tree so a deleted
+        // process cwd cannot make spawn fail, and relative history roots
+        // must not resolve inside the folder.
+        let history_root = history_root
+            .canonicalize()
+            .map_err(|source| CoworkError::Io {
+                path: history_root.to_path_buf(),
+                source,
+            })?;
+        let git_dir = history_git_dir(&history_root, repo_address);
         let size_threshold = size_threshold.unwrap_or(DEFAULT_SIZE_THRESHOLD);
         let mut rebuilt = false;
         let mut notice = None;
@@ -180,8 +189,12 @@ impl ShadowRepo {
             path: work_tree.to_path_buf(),
             source,
         })?;
+        let git_dir = git_dir.canonicalize().map_err(|source| CoworkError::Io {
+            path: git_dir.to_path_buf(),
+            source,
+        })?;
         Ok(Self {
-            git_dir: git_dir.to_path_buf(),
+            git_dir,
             work_tree,
             repo_address: String::new(),
             size_threshold: DEFAULT_SIZE_THRESHOLD,
@@ -561,15 +574,17 @@ impl ShadowRepo {
 }
 
 fn init_git_dir(git_dir: &Path, work_tree: &Path) -> Result<(), CoworkError> {
-    fs::create_dir_all(git_dir).map_err(|source| CoworkError::Io {
-        path: git_dir.to_path_buf(),
-        source,
-    })?;
+    if let Some(parent) = git_dir.parent() {
+        fs::create_dir_all(parent).map_err(|source| CoworkError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    git_ok(git_dir, work_tree, ["init"])?;
     fs::create_dir_all(empty_hooks_dir(git_dir)).map_err(|source| CoworkError::Io {
         path: empty_hooks_dir(git_dir),
         source,
     })?;
-    git_ok(git_dir, work_tree, ["init"])?;
     git_ok(git_dir, work_tree, ["config", "core.bare", "false"])?;
     git_ok(
         git_dir,

@@ -136,7 +136,9 @@ export function localWorkspacePrivacyNotice(relayUrl: string): string {
 }
 
 export function readCrewWorkspaceMode(tags: string[][]): CrewWorkspaceMode {
-  const tag = tags.find((candidate) => candidate[0] === CREW_WORKSPACE_MODE_TAG);
+  const tag = tags.find(
+    (candidate) => candidate[0] === CREW_WORKSPACE_MODE_TAG,
+  );
   return tag?.[1] === "folder" ? "folder" : "git";
 }
 

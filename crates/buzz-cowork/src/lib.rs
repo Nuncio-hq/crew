@@ -78,6 +78,27 @@ mod tests {
     }
 
     #[test]
+    fn open_or_init_creates_missing_history_git_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("docs");
+        let history = temp.path().join("history");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("a.txt"), "one").unwrap();
+        assert!(!history.exists());
+        let repo = ShadowRepo::open_or_init(&history, "30617:ab:docs", &folder, None)
+            .unwrap()
+            .repo;
+        assert!(history.is_dir(), "history root must be created");
+        assert!(
+            repo.git_dir().is_dir(),
+            "Versions git dir missing: {}",
+            repo.git_dir().display()
+        );
+        assert!(repo.git_dir().join("HEAD").exists());
+        assert!(!folder.join(".git").exists());
+    }
+
+    #[test]
     fn folder_stays_byte_clean_no_dot_git() {
         let (_temp, repo) = setup();
         let names = listing_without_dot_git(repo.work_tree());

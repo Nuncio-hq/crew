@@ -168,6 +168,7 @@ mod tests {
         let folder = temp.path().join("docs");
         let history = temp.path().join("history");
         fs::create_dir_all(&folder).unwrap();
+        fs::create_dir_all(&history).unwrap();
         fs::write(folder.join("a.txt"), "one").unwrap();
         let (repo, _, _) = open_repo(&history, "30617:ab:docs", folder.to_str().unwrap()).unwrap();
         let holder = PathLeaseHolder {
@@ -188,8 +189,14 @@ mod tests {
         let folder = temp.path().join("docs");
         let history = temp.path().join("history");
         fs::create_dir_all(&folder).unwrap();
+        fs::create_dir_all(&history).unwrap();
         fs::write(folder.join("a.txt"), "one").unwrap();
         let (repo, _, _) = open_repo(&history, "30617:ab:docs", folder.to_str().unwrap()).unwrap();
+        assert!(
+            repo.git_dir().is_dir(),
+            "Versions git dir missing: {}",
+            repo.git_dir().display()
+        );
         fs::write(folder.join("a.txt"), "two").unwrap();
         repo.checkpoint(&CheckpointSpec {
             kind: CheckpointKind::Turn,
