@@ -1,5 +1,6 @@
 //! Resource Governor state machine. Caps, LRU, idle, reconciliation.
 
+#![allow(dead_code)]
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -768,10 +769,10 @@ impl ResourceGovernor {
             if !wv.hidden {
                 return true;
             }
-            match wv.hidden_since_ms {
-                Some(since) if now.saturating_sub(since) >= ttl => false,
-                _ => true,
-            }
+            !matches!(
+                wv.hidden_since_ms,
+                Some(since) if now.saturating_sub(since) >= ttl
+            )
         });
         let mut hidden: Vec<(String, u64)> = self
             .webviews

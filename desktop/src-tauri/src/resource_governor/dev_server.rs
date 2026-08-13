@@ -1,5 +1,6 @@
 //! Dev-server helpers on top of labeled Buzz Term sessions.
 
+#![allow(dead_code)]
 use super::port::{expand_command, output_matches_ready};
 
 pub const MAX_CRASH_RESTARTS: u32 = 3;

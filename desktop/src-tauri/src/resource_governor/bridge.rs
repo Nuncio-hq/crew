@@ -1,6 +1,7 @@
 //! Sim-bridge discovery ladder (baguette preferred, then idb_companion).
 //! Same shape as `gh_cli.rs`: available / missing / failed + install hint.
 
+#![allow(dead_code)]
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};

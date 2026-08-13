@@ -1,5 +1,6 @@
 //! Free-port allocation and `$PORT` expansion for Crew-owned dev servers.
 
+#![allow(dead_code)]
 use std::net::TcpListener;
 
 /// Pick a free localhost TCP port. `preferred` is tried first; if it is busy

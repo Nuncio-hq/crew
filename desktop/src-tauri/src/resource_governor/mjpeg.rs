@@ -1,6 +1,7 @@
 //! Localhost MJPEG multipart proxy. Production pulls frames from the sim-bridge
 //! process; tests and bridge-missing serve a static placeholder JPEG.
 
+#![allow(dead_code)]
 use axum::body::Body;
 use axum::extract::Path;
 use axum::http::{header, HeaderValue, StatusCode};

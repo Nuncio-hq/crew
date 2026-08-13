@@ -1,6 +1,7 @@
 //! Agent-facing snapshot: `BUZZ_SIMULATOR_UDID` + `BUZZ_DEV_SERVER_URL` per
 //! channel. Machine-local file; never published to the relay.
 
+#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

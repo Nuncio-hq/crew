@@ -58,7 +58,7 @@ fn persist_agent_env(app: &AppHandle, handle: &ResourceGovernorHandle) {
         );
     }
     drop(gov);
-    if let Some(dir) = app.path().app_data_dir().ok() {
+    if let Ok(dir) = app.path().app_data_dir() {
         let path = super::snapshot::snapshot_path(&dir);
         let _ = write_agent_env_snapshot(&path, &snap);
     }

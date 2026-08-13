@@ -1,6 +1,7 @@
 //! Monotonic millisecond clock so tests can advance idle timers.
 //! Production uses wall time; tests freeze and `advance`.
 
+#![allow(dead_code)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

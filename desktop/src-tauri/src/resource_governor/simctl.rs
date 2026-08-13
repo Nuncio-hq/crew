@@ -2,6 +2,7 @@
 //! Tests inject [`FakeSimctl`] with fixture JSON — CI never needs a real
 //! simulator.
 
+#![allow(dead_code)]
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::Command;
