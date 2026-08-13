@@ -46,7 +46,10 @@ async function seedGitProjectChannel(page: Page) {
           created_at: Math.floor(Date.now() / 1000),
           content: "Crew workspace",
           tags: [
-            ["d", "workspace-binding"],
+            // Same d-tag as the mock `buzz` repo so this linked checkout
+            // replaces it (LWW). A second 30617 on #general makes send fail
+            // with "Multiple Projects are bound to this channel."
+            ["d", "buzz"],
             ["name", "Crew"],
             ["buzz-channel", channelId],
             ["buzz-location", "local", "/tmp/crew"],
@@ -111,6 +114,7 @@ test("selector is only in git Project channels and default send matches today", 
 
   await page.getByTestId("composer-workspace-main").click();
   await expect(selector).toHaveText(/Main checkout/);
+  await expect(page.getByTestId("composer-workspace-main")).toHaveCount(0);
   await expect(selector).toHaveAttribute("aria-expanded", "false");
   await selector.click();
   await expect(selector).toHaveAttribute("aria-expanded", "true");
@@ -237,8 +241,15 @@ test("thread chips render each workspace binding", async ({ page }) => {
   });
   await expect(page.getByTestId("project-thread-badge-chips")).toHaveCount(2);
   await expect(
-    page.getByTestId("project-thread-badge-branch-text").first(),
-  ).toHaveText(/main/);
+    page
+      .getByTestId("project-thread-badge-branch-text")
+      .filter({ hasText: /^main$/ }),
+  ).toHaveCount(1);
+  await expect(
+    page
+      .getByTestId("project-thread-badge-branch-text")
+      .filter({ hasText: /^release$/ }),
+  ).toHaveCount(1);
   await waitForAnimations(page);
   await page
     .getByTestId("project-thread-badge-chips")

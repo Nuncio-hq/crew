@@ -40,6 +40,7 @@ export function ComposerWorkspaceSelector({
   const [menuShowsBasePicker, setMenuShowsBasePicker] = React.useState(
     value.mode === "new",
   );
+  const reopenLockRef = React.useRef(false);
 
   React.useEffect(() => {
     if (!workspace?.localPath) {
@@ -85,14 +86,31 @@ export function ComposerWorkspaceSelector({
   );
   const binding = value;
   const handleOpenChange = (next: boolean) => {
+    if (!next && reopenLockRef.current) {
+      return;
+    }
+    reopenLockRef.current = false;
     if (next) {
       setMenuShowsBasePicker(binding.mode === "new");
     }
     setOpen(next);
   };
   const applyBinding = (next: WorkspaceBindingChoice) => {
+    reopenLockRef.current = false;
     onChange(next);
     setOpen(false);
+  };
+  const openMenuFromTrigger = (
+    event: React.PointerEvent | React.MouseEvent,
+  ) => {
+    if (open) return;
+    event.preventDefault();
+    reopenLockRef.current = true;
+    setMenuShowsBasePicker(binding.mode === "new");
+    setOpen(true);
+    queueMicrotask(() => {
+      reopenLockRef.current = false;
+    });
   };
   let label: string;
   switch (binding.mode) {
@@ -117,6 +135,8 @@ export function ComposerWorkspaceSelector({
         <Button
           className="max-w-48 truncate text-xs"
           data-testid="composer-workspace-selector"
+          onClick={openMenuFromTrigger}
+          onPointerDown={openMenuFromTrigger}
           size="sm"
           type="button"
           variant="ghost"
@@ -126,8 +146,17 @@ export function ComposerWorkspaceSelector({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="w-64"
+        className="w-64 data-[state=closed]:animate-none data-[state=closed]:duration-0"
         onCloseAutoFocus={(event) => event.preventDefault()}
+        onPointerDownOutside={(event) => {
+          const target = event.detail.originalEvent.target;
+          if (
+            target instanceof Element &&
+            target.closest('[data-testid="composer-workspace-selector"]')
+          ) {
+            event.preventDefault();
+          }
+        }}
       >
         <DropdownMenuLabel>Where this thread works</DropdownMenuLabel>
         <DropdownMenuRadioGroup
