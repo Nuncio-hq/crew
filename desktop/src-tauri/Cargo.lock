@@ -1107,6 +1107,7 @@ dependencies = [
  "bytes",
  "bzip2 0.6.1",
  "chrono",
+ "crew-wiki",
  "ctrlc",
  "dirs",
  "earshot",
@@ -1915,6 +1916,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if 1.0.4",
+]
+
+[[package]]
+name = "crew-wiki"
+version = "0.1.0"
+dependencies = [
+ "buzz-core",
+ "nostr 0.44.8",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

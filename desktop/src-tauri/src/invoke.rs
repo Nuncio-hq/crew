@@ -390,6 +390,7 @@ macro_rules! desktop_invoke_handler {
             archive::read_unindexed_observer_rows,
             archive::get_agent_usage_series,
             is_auto_update_supported,
+            wiki_generate,
             set_window_vibrancy,
             #[cfg(target_os = "macos")]
             tray_menu::clear_tray_agent_activity,

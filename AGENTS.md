@@ -107,9 +107,10 @@ crates/
   # Agent surface
   buzz-acp            # ACP harness bridging Buzz events to AI agents
   buzz-agent          # Minimal ACP-compliant agent (non-streaming, tool-calls-as-output)
-  buzz-dev-mcp        # Developer MCP server — shell + file-edit tools
+  buzz-dev-mcp        # Developer MCP server — shell + file-edit tools + Crew Wiki
   buzz-persona        # Agent persona packs
   buzz-workflow       # YAML-as-code workflow engine (evalexpr conditions)
+  crew-wiki           # Crew Wiki engine (planning, regen, generate); MCP + argv0 faces
   # Clients + interop
   buzz-pair-relay     # Ephemeral sidecar relay for NIP-AB device pairing
   buzz-pairing-cli    # CLI for NIP-AB device pairing interop testing
@@ -568,6 +569,8 @@ reconnects preserve pending avatar verification work):
 - `clearSearchHitEventCache()` — search result event cache
 - `clearMarkdownNodeCache()` — markdown parse-node cache
 - `resetLinkPreviewTitleCache()` — link preview title cache (Buzz entity titles come from relay events)
+- `resetOrgRosterProjection()` — founder-signed org roster cache
+- `resetWikiStore()` — Crew Wiki generate-job map
 
 **If you add a new module-level cache, Map, or class instance that holds
 community-scoped data, you must add its reset to `resetCommunityState()`.**
@@ -671,6 +674,14 @@ agents without those env vars get `instrument_unreachable` — do not
 tunnel HID or spawn a second Playwright/`simctl`. Snapshot refs (`e1..eN`)
 and `snapshot_digest` go stale after UI mutation; re-snapshot. Humans
 preempt instantly (`lease_held`). Foreign origins need owner approval.
+
+### Crew Wiki MCP (`ask_question` / `read_wiki_*` / `wiki_generate` / `wiki_propose`)
+
+DeepWiki-named tools plus Crew `wiki_generate` (governed lock) and
+`wiki_propose` (owner-reviewed 30023 draft) live in `buzz-dev-mcp`. Flat
+access. Errors are `{code, message}`. The engine crate is `crew-wiki`;
+argv0 `crew-wiki` is the same binary personality as `rg`/`tree`/`buzz`.
+Storage is kind 30623 (repo pages + TOC) and 30023 (company wiki).
 
 ### ACP user-input elicitation
 

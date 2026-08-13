@@ -295,8 +295,19 @@ function createPreview(
  * markdown-label override it must not overwrite.
  */
 export function buzzEntityFallbackTitle(link: ParsedEntityLink): string {
-  if (link.type === "repo") return link.dtag;
-  return `${link.dtag} #${link.id.slice(0, 8)}`;
+  switch (link.type) {
+    case "repo":
+      return link.dtag;
+    case "file":
+      return `${link.dtag}:${link.path}`;
+    case "pr":
+    case "issue":
+      return `${link.dtag} #${link.id.slice(0, 8)}`;
+    default: {
+      const _exhaustive: never = link;
+      return _exhaustive;
+    }
+  }
 }
 
 /**
@@ -310,31 +321,38 @@ function parseBuzzEntityPreview(href: string): SupportedLinkPreview | null {
 
   const link = parsed.value;
   const title = buzzEntityFallbackTitle(link);
-  if (link.type === "pr") {
-    return {
-      kind: "buzz-pull-request",
-      href: buildPullRequestLink(link),
-      provider: "Buzz",
-      title,
-      typeLabel: "PR",
-    };
+  switch (link.type) {
+    case "pr":
+      return {
+        kind: "buzz-pull-request",
+        href: buildPullRequestLink(link),
+        provider: "Buzz",
+        title,
+        typeLabel: "PR",
+      };
+    case "issue":
+      return {
+        kind: "buzz-issue",
+        href: buildIssueLink(link),
+        provider: "Buzz",
+        title,
+        typeLabel: "issue",
+      };
+    case "repo":
+      return {
+        kind: "buzz-repository",
+        href: buildRepoLink(link),
+        provider: "Buzz",
+        title,
+        typeLabel: "repo",
+      };
+    case "file":
+      return null;
+    default: {
+      const _exhaustive: never = link;
+      return _exhaustive;
+    }
   }
-  if (link.type === "issue") {
-    return {
-      kind: "buzz-issue",
-      href: buildIssueLink(link),
-      provider: "Buzz",
-      title,
-      typeLabel: "issue",
-    };
-  }
-  return {
-    kind: "buzz-repository",
-    href: buildRepoLink(link),
-    provider: "Buzz",
-    title,
-    typeLabel: "repo",
-  };
 }
 
 const BUZZ_GIT_PATH_RE =

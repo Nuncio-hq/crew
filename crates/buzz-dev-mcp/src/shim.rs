@@ -35,6 +35,7 @@ impl Shim {
             "buzz",
             "git-credential-nostr",
             "git-sign-nostr",
+            "crew-wiki",
         ] {
             symlink(&self_exe, &dir.path().join(name))?;
         }

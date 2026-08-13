@@ -659,6 +659,14 @@ pub const KIND_PROJECT: u32 = 30621;
 /// projection of this event plus maintainer/steward tags on 30617/30621.
 pub const KIND_ORG_ROSTER: u32 = 30680;
 
+/// Crew: repository wiki page or TOC manifest (parameterized replaceable).
+///
+/// Git-family addressable event. `d` is `<repo-d>/<page-slug>` for a page or
+/// `<repo-d>/_toc` for the ordered two-level table of contents. An `a` tag
+/// holds the NIP-34 coordinate `30617:<owner-hex>:<repo-d>`. Page events
+/// carry `source` (repeated) and `commit` tags for incremental regen.
+pub const KIND_REPO_WIKI_PAGE: u32 = 30623;
+
 /// All registered kind constants — used for duplicate detection and iteration.
 pub const ALL_KINDS: &[u32] = &[
     KIND_PROFILE,
@@ -797,6 +805,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_GIT_STATUS_DRAFT,
     KIND_PROJECT,
     KIND_ORG_ROSTER,
+    KIND_REPO_WIKI_PAGE,
 ];
 
 /// Returns `true` if `kind` is in the ephemeral range (20000–29999).
@@ -897,6 +906,7 @@ const _: () = assert!(is_parameterized_replaceable(KIND_EVENT_REMINDER)); // 303
 const _: () = assert!(is_parameterized_replaceable(KIND_DM_VISIBILITY)); // 30622 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT)); // 30621 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_ORG_ROSTER)); // 30680 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_REPO_WIKI_PAGE)); // 30623 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_THREAD_SUMMARY)); // 39005 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WINDOW_BOUNDS)); // 39006 ∈ 30000–39999
 

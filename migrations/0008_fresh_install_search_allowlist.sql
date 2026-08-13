@@ -13,7 +13,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM events LIMIT 1) THEN
         ALTER TABLE events DROP COLUMN search_tsv;
         ALTER TABLE events ADD COLUMN search_tsv TSVECTOR GENERATED ALWAYS AS (
-            CASE WHEN kind IN (0, 9, 40002, 45001, 45003)
+            CASE WHEN kind IN (0, 9, 40002, 45001, 45003, 30023, 30623)
                  THEN to_tsvector('simple', content)
                  ELSE NULL::tsvector
             END

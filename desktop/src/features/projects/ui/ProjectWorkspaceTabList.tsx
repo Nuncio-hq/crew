@@ -40,6 +40,13 @@ export function ProjectTabsList({ prsActive }: { prsActive?: boolean }) {
       <TabsTrigger className={PROJECT_TAB_TRIGGER_CLASS} value="files">
         <ProjectTabLabel>Files</ProjectTabLabel>
       </TabsTrigger>
+      <TabsTrigger
+        className={PROJECT_TAB_TRIGGER_CLASS}
+        data-testid="project-wiki-tab"
+        value="wiki"
+      >
+        <ProjectTabLabel>Wiki</ProjectTabLabel>
+      </TabsTrigger>
       <TabsTrigger className={PROJECT_TAB_TRIGGER_CLASS} value="activity">
         <ProjectTabLabel>Commits</ProjectTabLabel>
       </TabsTrigger>

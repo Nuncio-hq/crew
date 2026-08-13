@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildFileLink,
   buildIssueLink,
   buildPullRequestLink,
   buildRepoLink,
@@ -29,6 +30,15 @@ test("builders emit the canonical cross-language link format", () => {
   assert.equal(
     buildRepoLink({ owner: OWNER, dtag: "buzz-world" }),
     `buzz://repo?owner=${OWNER}&d=buzz-world`,
+  );
+  assert.equal(
+    buildFileLink({
+      owner: OWNER,
+      dtag: "buzz-world",
+      path: "README.md",
+      lines: "1-12",
+    }),
+    `buzz://file?owner=${OWNER}&d=buzz-world&path=README.md&lines=1-12`,
   );
 });
 
@@ -58,6 +68,24 @@ test("parseEntityLink round-trips built links", () => {
   assert.deepEqual(parseEntityLink(repoLink), {
     ok: true,
     value: { type: "repo", owner: OWNER, dtag: "buzz-world" },
+  });
+
+  const fileLink = buildFileLink({
+    owner: OWNER,
+    dtag: "buzz-world",
+    path: "README.md",
+    lines: "1-12",
+  });
+  assert.deepEqual(parseEntityLink(fileLink), {
+    ok: true,
+    value: {
+      type: "file",
+      owner: OWNER,
+      dtag: "buzz-world",
+      path: "README.md",
+      startLine: 1,
+      endLine: 12,
+    },
   });
 });
 
@@ -91,6 +119,10 @@ test("isEntityLink matches entity hosts and excludes message links", () => {
   assert.equal(isEntityLink(`buzz://pr?id=${EVENT_ID}`), true);
   assert.equal(isEntityLink(`buzz://issue?id=${EVENT_ID}`), true);
   assert.equal(isEntityLink(`buzz://repo?owner=${OWNER}`), true);
+  assert.equal(
+    isEntityLink(`buzz://file?owner=${OWNER}&d=buzz&path=a.ts&lines=1-2`),
+    true,
+  );
   assert.equal(isEntityLink("buzz://message?channel=x&id=y"), false);
   assert.equal(isEntityLink("https://github.com/block/buzz"), false);
   assert.equal(isEntityLink(null), false);

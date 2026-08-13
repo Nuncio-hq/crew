@@ -66,8 +66,12 @@ export const KIND_AGENT_TURN_METRIC = 44200;
 export const KIND_EVENT_REMINDER = 30300;
 export const KIND_REPO_ANNOUNCEMENT = 30617;
 export const KIND_REPO_STATE = 30618;
+// NIP-23 long-form content — company wiki pages (`buzz notes`).
+export const KIND_LONG_FORM = 30023;
 // NIP-MP: project grouping above NIP-34 repositories.
 export const KIND_PROJECT_ANNOUNCEMENT = 30621;
+// Crew: repo wiki page or TOC manifest (`d=<repo-d>/<slug>`, TOC slug `_toc`).
+export const KIND_REPO_WIKI_PAGE = 30623;
 // Crew: founder-signed community org roster (d=org).
 export const KIND_ORG_ROSTER = 30680;
 export const KIND_GIT_PATCH = 1617;

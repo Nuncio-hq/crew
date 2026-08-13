@@ -35,6 +35,18 @@ import {
   resetE2eOrgRoster,
   setE2eOrgRoster,
 } from "./e2eOrgRoster.ts";
+import {
+  acceptPublishedWikiEvent,
+  applyE2eWikiJob,
+  filterE2eWikiEvents,
+  handleWikiCommand,
+  isWikiCommand,
+  isWikiKind,
+  resetE2eWiki,
+  seedGeneratedWiki,
+  seedCompanyWiki,
+  setE2eWikiEvents,
+} from "./e2eWiki.ts";
 import { applyGovernorStatus } from "@/features/tool-pane/governorStore";
 import type { GovernorStatus } from "@/features/tool-pane/types";
 import type { AgentControlUi } from "@/features/tool-pane/agentControlStore";
@@ -1421,6 +1433,24 @@ declare global {
       pull_block_reason: string | null;
     };
     __BUZZ_E2E_SET_ORG_ROSTER__?: (input: { content: string }) => void;
+    __BUZZ_E2E_SET_WIKI_EVENTS__?: (events: RelayEvent[]) => void;
+    __BUZZ_E2E_SEED_WIKI__?: (input: {
+      owner: string;
+      repoD: string;
+      commit?: string;
+    }) => void;
+    __BUZZ_E2E_SEED_COMPANY_WIKI__?: (input: {
+      pubkey: string;
+      proposal?: boolean;
+    }) => void;
+    __BUZZ_E2E_SET_WIKI_JOB__?: (job: {
+      repoKey: string;
+      status: "idle" | "generating" | "failed";
+      done: number;
+      total: number;
+      error: string | null;
+      costNote: string | null;
+    }) => void;
     __BUZZ_E2E_SET_RELAY_CONNECTION_STATE__?: (state: ConnectionState) => void;
     __BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?: () => ConnectionState;
     /** Queue deterministic mock AUTH outcomes, consumed in order. */
@@ -10808,6 +10838,14 @@ function sendToMockSocket(args: {
       return;
     }
 
+    if (filter.kinds?.some((kind) => isWikiKind(kind))) {
+      for (const event of filterE2eWikiEvents(filter)) {
+        sendWsText(socket.handler, ["EVENT", subId, event]);
+      }
+      sendWsText(socket.handler, ["EOSE", subId]);
+      return;
+    }
+
     // Project queries: NIP-34 kinds, or kind:1 comments scoped by repo `a`
     // tag (PR/issue discussions, approvals, review requests).
     if (
@@ -10950,6 +10988,13 @@ function sendToMockSocket(args: {
 
     if (event.kind === KIND_ORG_ROSTER) {
       acceptPublishedOrgRoster(event);
+      emitMockGlobalEvent(event);
+      sendWsText(socket.handler, ["OK", event.id, true, ""]);
+      return;
+    }
+
+    if (isWikiKind(event.kind)) {
+      acceptPublishedWikiEvent(event);
       emitMockGlobalEvent(event);
       sendWsText(socket.handler, ["OK", event.id, true, ""]);
       return;
@@ -11172,9 +11217,22 @@ export function maybeInstallE2eTauriMocks() {
     setE2eForgeSnapshot(patch);
   resetE2eGovernor();
   resetE2eOrgRoster();
+  resetE2eWiki();
   window.__BUZZ_E2E_SET_ORG_ROSTER__ = ({ content }) => {
     const ident = getConfig()?.identity ?? DEFAULT_MOCK_IDENTITY;
     setE2eOrgRoster({ content, pubkey: ident.pubkey });
+  };
+  window.__BUZZ_E2E_SET_WIKI_EVENTS__ = (events) => {
+    setE2eWikiEvents(events);
+  };
+  window.__BUZZ_E2E_SEED_WIKI__ = ({ owner, repoD, commit }) => {
+    seedGeneratedWiki(owner, repoD, commit);
+  };
+  window.__BUZZ_E2E_SEED_COMPANY_WIKI__ = ({ pubkey, proposal }) => {
+    seedCompanyWiki(pubkey, { proposal });
+  };
+  window.__BUZZ_E2E_SET_WIKI_JOB__ = (job) => {
+    applyE2eWikiJob(job);
   };
   window.__BUZZ_E2E_SET_GOVERNOR__ = (patch) => {
     const next = setE2eGovernorStatus(patch);
@@ -11786,6 +11844,9 @@ export function maybeInstallE2eTauriMocks() {
         applyGovernorStatus(setE2eGovernorStatus({}));
         throw error;
       }
+    }
+    if (isWikiCommand(command)) {
+      return handleWikiCommand(command, payload);
     }
 
     switch (command) {
@@ -12852,6 +12913,13 @@ export function maybeInstallE2eTauriMocks() {
             },
           ],
           files: [
+            {
+              path: "README.md",
+              kind: "blob",
+              size: 240,
+              preview_content:
+                "# Buzz\n\nRelay, desktop, and mobile clients.\n",
+            },
             {
               path: "desktop/src/features/projects/ui/ProjectDetailScreen.tsx",
               kind: "blob",

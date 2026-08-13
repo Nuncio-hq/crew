@@ -91,3 +91,7 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0036-kickoff-gate-latency.md`](0036-kickoff-gate-latency.md)
 - [`0037-budget-cutoff-turn-start.md`](0037-budget-cutoff-turn-start.md)
 - [`0038-org-reorg-race.md`](0038-org-reorg-race.md)
+- [`0039-wiki-page-planning-quality.md`](0039-wiki-page-planning-quality.md)
+- [`0040-wiki-incremental-regen.md`](0040-wiki-incremental-regen.md)
+- [`0041-wiki-mermaid-pipeline.md`](0041-wiki-mermaid-pipeline.md)
+- [`0042-wiki-generator-model-plumbing.md`](0042-wiki-generator-model-plumbing.md)

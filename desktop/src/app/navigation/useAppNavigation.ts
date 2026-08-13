@@ -113,6 +113,17 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  const goWiki = React.useCallback(
+    (behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/wiki",
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
   const goWorkbench = React.useCallback(
     (
       channelId?: string | null,
@@ -369,6 +380,7 @@ export function useAppNavigation() {
     goNewMessage,
     goProject,
     goOrg,
+    goWiki,
     goProjects,
     goPulse,
     goWorkbench,

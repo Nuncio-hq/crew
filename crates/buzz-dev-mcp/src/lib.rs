@@ -20,6 +20,7 @@ mod str_replace;
 mod todo;
 mod tree;
 mod view_image;
+mod wiki_tools;
 
 #[derive(Clone)]
 struct DevMcp {
@@ -320,6 +321,61 @@ impl DevMcp {
     ) -> Result<CallToolResult, ErrorData> {
         desktop_tools::sim_logs(p).await
     }
+
+    #[tool(
+        name = "ask_question",
+        description = "Ask the Crew Wiki (repo pages + company notes). mode: auto | qa | plan. Grounded in the wiki TOC and source files."
+    )]
+    async fn ask_question(
+        &self,
+        Parameters(p): Parameters<wiki_tools::AskQuestionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        wiki_tools::ask_question(p).await
+    }
+
+    #[tool(
+        name = "read_wiki_structure",
+        description = "Return the repo wiki TOC manifest (two-level tree, commit, cadence)."
+    )]
+    async fn read_wiki_structure(
+        &self,
+        Parameters(p): Parameters<wiki_tools::WikiRepoParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        wiki_tools::read_wiki_structure(p).await
+    }
+
+    #[tool(
+        name = "read_wiki_contents",
+        description = "Read generated wiki page markdown. Optional slug; omit to list pages."
+    )]
+    async fn read_wiki_contents(
+        &self,
+        Parameters(p): Parameters<wiki_tools::ReadWikiContentsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        wiki_tools::read_wiki_contents(p).await
+    }
+
+    #[tool(
+        name = "wiki_generate",
+        description = "Request a governed wiki refresh for the current repo. Rejects if a generate is already running."
+    )]
+    async fn wiki_generate(
+        &self,
+        Parameters(p): Parameters<wiki_tools::WikiRepoParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        wiki_tools::wiki_generate(p).await
+    }
+
+    #[tool(
+        name = "wiki_propose",
+        description = "Draft a company wiki page (or engram promotion) for owner review. Does not publish."
+    )]
+    async fn wiki_propose(
+        &self,
+        Parameters(p): Parameters<wiki_tools::WikiProposeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        wiki_tools::wiki_propose(p).await
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -349,6 +405,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         "tree" => std::process::exit(tree::run(std::env::args().skip(1).collect())),
         "git-credential-nostr" => std::process::exit(git_credential_nostr::run()),
         "git-sign-nostr" => std::process::exit(git_sign_nostr::run()),
+        "crew-wiki" => std::process::exit(crew_wiki::run_cli(std::env::args().skip(1).collect())),
         _ => {}
     }
 

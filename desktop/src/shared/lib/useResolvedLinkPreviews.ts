@@ -264,6 +264,15 @@ export async function fetchBuzzEntityMetadata(
       ]),
     };
   }
+  if (parsed.value.type === "file") {
+    return {
+      ...base,
+      title: parsed.value.path,
+      description: compactMetadata([
+        `L${parsed.value.startLine}-${parsed.value.endLine}`,
+      ]),
+    };
+  }
 
   const { id, type } = parsed.value;
   const rootEvents = await fetchEvents({

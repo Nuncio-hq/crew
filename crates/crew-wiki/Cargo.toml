@@ -1,0 +1,27 @@
+[package]
+name = "crew-wiki"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Crew Wiki engine: cluster planning, incremental regen, heuristic/LLM generation, publish"
+
+[[bin]]
+name = "crew-wiki"
+path = "src/main.rs"
+
+[dependencies]
+buzz-core = { workspace = true }
+nostr = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[features]
+default = []
+llm = ["dep:reqwest", "dep:tokio"]
+
+[dev-dependencies]
+serde_json = { workspace = true }

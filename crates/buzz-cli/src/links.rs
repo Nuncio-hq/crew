@@ -24,6 +24,12 @@ pub fn issue_link(event_id: &str, owner: &str, repo_id: &str) -> String {
     format!("buzz://issue?id={event_id}&owner={owner}&d={repo_id}")
 }
 
+/// Build a `buzz://file` link for a repository path and line range.
+#[allow(dead_code)] // format sibling of repo/pr/issue; desktop is the click target
+pub fn file_link(owner: &str, repo_id: &str, path: &str, lines: &str) -> String {
+    format!("buzz://file?owner={owner}&d={repo_id}&path={path}&lines={lines}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,6 +52,10 @@ mod tests {
         assert_eq!(
             repo_link(OWNER, "buzz-world"),
             format!("buzz://repo?owner={OWNER}&d=buzz-world")
+        );
+        assert_eq!(
+            file_link(OWNER, "buzz-world", "README.md", "1-12"),
+            format!("buzz://file?owner={OWNER}&d=buzz-world&path=README.md&lines=1-12")
         );
     }
 }
