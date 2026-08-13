@@ -3,9 +3,7 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 import { prepareAgentSessionObservation } from "./activeAgentSessionGeneration";
 import { observeLiveSessionAuthority } from "./observerLiveSessionAuthority";
 import { dispatchControlResult } from "./controlResultDispatch";
-import {
-  ingestObserverFrameForEditAsUndo,
-} from "./dispatchedEventIds";
+import { ingestObserverFrameForEditAsUndo } from "./dispatchedEventIds";
 import { ingestProjectThreadWorkspaceEvent } from "./projectThreadWorkspaceStore";
 import { applySessionAgingObserverPayload } from "./sessionAgingObserverEffects";
 import type { ObserverEvent } from "./ui/agentSessionTypes";

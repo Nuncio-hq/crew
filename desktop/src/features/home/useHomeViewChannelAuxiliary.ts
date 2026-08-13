@@ -2,9 +2,7 @@ import * as React from "react";
 
 import type { Channel } from "@/shared/api/types";
 
-export function useHomeViewChannelAuxiliary(
-  channels: Channel[] | undefined,
-) {
+export function useHomeViewChannelAuxiliary(channels: Channel[] | undefined) {
   const [managedChannelId, setManagedChannelId] = React.useState<string | null>(
     null,
   );

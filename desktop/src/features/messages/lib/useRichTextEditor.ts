@@ -22,9 +22,7 @@ export type { LinkSelectionInfo } from "./resolveLinkAt";
 
 import { MESSAGE_MARKDOWN_CLASS } from "@/shared/ui/mentionChip";
 
-import {
-  MentionHighlightExtension,
-} from "./mentionHighlightExtension";
+import { MentionHighlightExtension } from "./mentionHighlightExtension";
 import { useRichTextEditorMentionHighlightSync } from "./useRichTextEditorMentionHighlightSync";
 import { CUSTOM_EMOJI_NODE_NAME } from "./customEmojiNode";
 import { useComposerCustomEmoji } from "./useComposerCustomEmoji";
