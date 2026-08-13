@@ -138,9 +138,9 @@ test.describe("thread workbench (#186)", () => {
     await expect(
       page.getByTestId(`channel-user-input-card-${REQUEST_ID}`),
     ).toBeVisible();
-    await expect(
-      page.getByTestId("evidence-cross-check-badge"),
-    ).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("evidence-cross-check-badge")).toBeVisible({
+      timeout: 15_000,
+    });
 
     await waitForAnimations(page);
     await page.getByTestId("workbench-rail").screenshot({
