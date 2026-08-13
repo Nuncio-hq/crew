@@ -38,6 +38,8 @@ import { ChannelManagementAuxiliaryPanel } from "@/features/channels/ui/ChannelM
 import { RightAuxiliaryPane } from "@/features/channels/ui/RightAuxiliaryPane";
 import { ThreadViewModeToggle } from "@/features/channels/ui/ThreadViewModeToggle";
 import { FocusThreadDrawer } from "@/features/channels/ui/FocusThreadDrawer";
+import { ChannelToolPane } from "@/features/tool-pane/ChannelToolPane";
+import { useToolPane } from "@/features/tool-pane/toolPaneStore";
 import { THREAD_SURFACE_KEY } from "@/features/channels/lib/threadFocusLayout";
 import { getThreadPanelLayout } from "@/features/channels/lib/threadPanelLayout";
 import { useThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
@@ -483,6 +485,7 @@ export const ChannelPane = React.memo(function ChannelPane({
     threadViewMode === "focus" &&
     useSplitAuxiliaryPane &&
     (Boolean(threadHeadMessage) || shouldShowThreadSkeleton);
+  const toolPane = useToolPane();
   const { channelIsCovered, markExitComplete } = useFocusDrawerPresence(
     useFocusThreadDrawer,
     onCloseThread,
@@ -510,7 +513,8 @@ export const ChannelPane = React.memo(function ChannelPane({
       Boolean(threadHeadMessage) ||
       shouldShowThreadSkeleton ||
       Boolean(activeChannel && selectedAgent) ||
-      Boolean(profilePanelPubkey));
+      Boolean(profilePanelPubkey) ||
+      (toolPane.open && !useFocusThreadDrawer));
   const wrapAux = (
     panel: React.ReactNode,
     testId: string,
@@ -533,9 +537,11 @@ export const ChannelPane = React.memo(function ChannelPane({
   const wrapThreadPanel = (panel: React.ReactNode) =>
     useFocusThreadDrawer ? (
       <FocusThreadDrawer
+        channelId={activeChannel?.id ?? null}
         channelName={activeChannel?.name ?? "channel"}
         key={THREAD_SURFACE_KEY}
         onClose={onCloseThread}
+        threadRootId={threadHeadMessage?.id ?? null}
       >
         {panel}
       </FocusThreadDrawer>
@@ -958,6 +964,15 @@ export const ChannelPane = React.memo(function ChannelPane({
               widthPx={threadPanelWidthPx}
             />,
             "user-profile-panel",
+          )
+        ) : toolPane.open && activeChannel && !useFocusThreadDrawer ? (
+          wrapAux(
+            <ChannelToolPane
+              channelId={activeChannel.id}
+              channelName={activeChannel.name}
+              mode="channel"
+            />,
+            "channel-tool-pane",
           )
         ) : null}
       </AnimatePresence>

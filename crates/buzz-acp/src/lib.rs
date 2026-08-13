@@ -9,6 +9,7 @@ mod declared_plan;
 mod elicitation;
 mod engram_fetch;
 mod filter;
+mod governor_env;
 mod guided_handover;
 mod observer;
 mod pool;

@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #196 — Channel Tool Pane (sim mirror + browser + governor)
+
+Unified right-side Tool Pane: `PR · Browser · Sim` in thread focus (composes
+with #193), `Sim · Browser` in channel view. Resource Governor (Tauri) owns
+lifecycle and the policy table. Simulator is an in-app headless iOS mirror
+(option B). Browser is child webview or `WebviewWindow` fallback. Dev servers
+are labeled Buzz Term sessions with `$PORT` + readiness. Canvas `tooling`
+key stores intent only. Spikes 0027–0030. D-058.
+Last updated: 2026-08-13
+
 ## Issue #193 — GitHub PR hub in thread focus
 
 Two-tier GitHub review surface on the `gh` data plane. Split view: glance

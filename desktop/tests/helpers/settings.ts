@@ -14,6 +14,7 @@ type SettingsSection =
   | "community-members"
   | "local-archive"
   | "storage"
+  | "devices-preview"
   | "mobile"
   | "updates";
 

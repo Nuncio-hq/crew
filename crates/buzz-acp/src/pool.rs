@@ -1410,6 +1410,16 @@ fn mcp_servers_with_git_origin(
             server.env.push(origin.clone());
         }
     }
+    if let Some(channel_id) = channel_id {
+        let channel_key = channel_id.to_string();
+        let extras = crate::governor_env::env_for_channel(&channel_key);
+        for (name, value) in extras {
+            let entry = EnvVar { name, value };
+            for server in &mut servers {
+                server.env.push(entry.clone());
+            }
+        }
+    }
     servers
 }
 
@@ -11513,12 +11523,15 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let mut state = SessionState::default();
 
         // Prime the worktree/branch/record, then drop the shared lease before
-        // simulating exclusive cleanup. Binding the outcome and dropping it
-        // explicitly avoids any temporary-lifetime ambiguity under parallel
-        // tokio tests.
+        // simulating exclusive cleanup. Binding the outcome and dropping the
+        // leases explicitly avoids any temporary-lifetime ambiguity under
+        // parallel tokio tests.
         let primed = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
             .await
             .expect("priming resolution succeeds");
+        let ChannelWorkspace::Bound { leases, .. } = primed else {
+            panic!("owner-authored Project content must bind a workspace");
+        };
         let root_event_id = state
             .workspace_bindings
             .get(&cid)
@@ -11531,7 +11544,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             .unwrap()
             .common_git
             .clone();
-        drop(primed);
+        drop(leases);
 
         let exclusive = buzz_worktree::try_acquire_exclusive(&common_git, &root_event_id)
             .expect("simulated cleanup holds the exclusive eviction lease");

@@ -10,9 +10,11 @@ import { ThreadFocusForgeSplit } from "@/features/messages/ui/threadPrHub/Thread
 import { cn } from "@/shared/lib/cn";
 
 type FocusThreadDrawerProps = {
+  channelId?: string | null;
   channelName: string;
   children: React.ReactNode;
   onClose: () => void;
+  threadRootId?: string | null;
 };
 
 /**
@@ -136,9 +138,11 @@ const REDUCED_MOTION_TRANSITION = { duration: 0.12, ease: "linear" } as const;
  * drawer its own stacking context, so the panel chrome inside it is isolated.
  */
 export function FocusThreadDrawer({
+  channelId,
   channelName,
   children,
   onClose,
+  threadRootId,
 }: FocusThreadDrawerProps) {
   const prefersReducedMotion = useReducedMotion();
   const travelPx = prefersReducedMotion ? 0 : THREAD_FOCUS_DRAWER_TRAVEL_PX;
@@ -238,7 +242,13 @@ export function FocusThreadDrawer({
         }
       >
         <div className="flex min-h-0 flex-1 flex-col">
-          <ThreadFocusForgeSplit>{children}</ThreadFocusForgeSplit>
+          <ThreadFocusForgeSplit
+            channelId={channelId ?? null}
+            channelName={channelName}
+            threadRootId={threadRootId ?? null}
+          >
+            {children}
+          </ThreadFocusForgeSplit>
         </div>
       </motion.div>
     </div>

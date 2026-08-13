@@ -82,6 +82,22 @@ export const KEYBOARD_SHORTCUTS: KeyboardShortcut[] = [
     category: "Navigation",
   },
   {
+    id: "open-browser-tab",
+    label: "Browser",
+    description: "Open the channel Tool Pane Browser tab",
+    keys: "⇧⌘B",
+    keysWindows: "Shift+Ctrl+B",
+    category: "Navigation",
+  },
+  {
+    id: "open-simulator-tab",
+    label: "Simulator",
+    description: "Open the channel Tool Pane Simulator tab",
+    keys: "⇧⌘M",
+    keysWindows: "Shift+Ctrl+M",
+    category: "Navigation",
+  },
+  {
     id: "go-home",
     label: "Home",
     description: "Navigate to the home feed",

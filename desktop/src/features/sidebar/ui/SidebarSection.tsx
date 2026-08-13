@@ -38,6 +38,7 @@ import {
   SidebarMenuItem,
 } from "@/shared/ui/sidebar";
 import { ChannelActivityPopover } from "@/features/sidebar/ui/ChannelActivityPopover";
+import { SidebarResourceDots } from "@/features/tool-pane/SidebarResourceDots";
 import { useAppShell } from "@/app/AppShellContext";
 
 const SECTION_LABEL_BUTTON_CLASS =
@@ -386,6 +387,7 @@ export function ChannelMenuButton({
           count={needsYouConversationCount}
         />
       ) : null}
+      <SidebarResourceDots channelId={channel.id} />
       {hasThreadUnread ? (
         <UnreadDotBadge
           channelName={channel.name}

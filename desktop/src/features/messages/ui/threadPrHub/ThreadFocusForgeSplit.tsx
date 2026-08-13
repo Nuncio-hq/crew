@@ -1,5 +1,7 @@
 import * as React from "react";
 
+import { ChannelToolPane } from "@/features/tool-pane/ChannelToolPane";
+import { useToolPane } from "@/features/tool-pane/toolPaneStore";
 import {
   clampAuxiliaryPanelWidth,
   getAuxiliaryPanelMaxWidth,
@@ -8,17 +10,23 @@ import { cn } from "@/shared/lib/cn";
 import { useThreadForgeHubSubject } from "@/features/messages/lib/threadForgeHubSubjectStore";
 
 import { FORGE_HUB_NARROW_PX } from "./forgeHubCopy";
-import { ThreadPrHub } from "./ThreadPrHub";
 
 export function ThreadFocusForgeSplit({
+  channelId,
+  channelName,
   children,
+  threadRootId,
 }: {
+  channelId: string | null;
+  channelName: string;
   children: React.ReactNode;
+  threadRootId: string | null;
 }) {
   const subject = useThreadForgeHubSubject();
+  const pane = useToolPane();
   const rootRef = React.useRef<HTMLDivElement>(null);
   const [width, setWidth] = React.useState(1400);
-  const [pane, setPane] = React.useState<"chat" | "pr">("pr");
+  const [chatPane, setChatPane] = React.useState<"chat" | "tools">("tools");
 
   React.useEffect(() => {
     void subject;
@@ -33,7 +41,8 @@ export function ThreadFocusForgeSplit({
     return () => observer.disconnect();
   }, [subject]);
 
-  if (!subject) {
+  const showTools = Boolean(subject) || pane.open;
+  if (!showTools || !channelId) {
     return <>{children}</>;
   }
 
@@ -56,14 +65,14 @@ export function ThreadFocusForgeSplit({
           data-testid="thread-forge-pane-toggle"
         >
           <ToggleChip
-            active={pane === "chat"}
+            active={chatPane === "chat"}
             label="Chat"
-            onClick={() => setPane("chat")}
+            onClick={() => setChatPane("chat")}
           />
           <ToggleChip
-            active={pane === "pr"}
-            label="PR"
-            onClick={() => setPane("pr")}
+            active={chatPane === "tools"}
+            label={subject ? "PR" : "Tools"}
+            onClick={() => setChatPane("tools")}
           />
         </div>
       ) : null}
@@ -71,7 +80,7 @@ export function ThreadFocusForgeSplit({
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-col",
-            narrow && pane !== "chat" ? "hidden" : "flex-1",
+            narrow && chatPane !== "chat" ? "hidden" : "flex-1",
           )}
         >
           {children}
@@ -79,12 +88,19 @@ export function ThreadFocusForgeSplit({
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-col border-l border-border/60 bg-background",
-            narrow && pane !== "pr" ? "hidden" : null,
+            narrow && chatPane !== "tools" ? "hidden" : null,
           )}
           data-testid="thread-pr-hub"
           style={narrow ? undefined : { width: hubWidth }}
         >
-          <ThreadPrHub subject={subject} />
+          <ChannelToolPane
+            channelId={channelId}
+            channelName={channelName}
+            forgeSubject={subject}
+            mode="thread"
+            threadRootId={threadRootId}
+            worktreePath={subject?.worktreePath}
+          />
         </div>
       </div>
     </div>

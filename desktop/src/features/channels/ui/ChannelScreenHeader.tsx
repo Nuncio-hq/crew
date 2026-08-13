@@ -30,6 +30,7 @@ import {
   toggleTerminalPanel,
   useTerminalPanel,
 } from "@/features/terminal/terminalPanelStore";
+import { ToolsHeaderButton } from "@/features/tool-pane/ToolsHeaderButton";
 
 const DM_HEADER_AVATAR_SIZE = 32;
 const DM_HEADER_AVATAR_STATUS_GEOMETRY = scaleProfileAvatarStatusGeometry(
@@ -135,6 +136,7 @@ export function ChannelScreenHeader({
   const actions = activeChannel ? (
     <div className="flex items-center gap-1">
       {terminalButton}
+      {activeChannel.channelType !== "dm" ? <ToolsHeaderButton /> : null}
       {channelActions}
     </div>
   ) : null;

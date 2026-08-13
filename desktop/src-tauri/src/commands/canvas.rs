@@ -56,7 +56,7 @@ pub(crate) fn update_canvas_crew_assignment(
     Ok(updated)
 }
 
-fn fenced_crew_block(content: &str) -> Option<(String, String, String)> {
+pub(crate) fn fenced_crew_block(content: &str) -> Option<(String, String, String)> {
     let start = content.find("```crew")?;
     let body_start = content[start..].find('\n').map(|offset| start + offset + 1)?;
     let end = content[body_start..].find("```").map(|offset| body_start + offset)?;
@@ -236,7 +236,7 @@ pub async fn assign_channel_agent_role(
     }))
 }
 
-fn ensure_canvas_author(canvas_author: &str, signing_key: &str) -> Result<(), String> {
+pub(crate) fn ensure_canvas_author(canvas_author: &str, signing_key: &str) -> Result<(), String> {
     if canvas_author.trim().eq_ignore_ascii_case(signing_key.trim()) {
         Ok(())
     } else {
