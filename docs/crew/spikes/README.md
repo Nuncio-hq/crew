@@ -77,3 +77,4 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0022-loadsession-reality-matrix.md`](0022-loadsession-reality-matrix.md)
 - [`0023-compaction-signal-matrix.md`](0023-compaction-signal-matrix.md)
 - [`0024-non-git-add-project.md`](0024-non-git-add-project.md)
+- [`0025-acp-plan-live-wire.md`](0025-acp-plan-live-wire.md)

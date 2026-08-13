@@ -8,30 +8,46 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 describe("project thread sticky status bar", () => {
   it("mounts the status bar outside the scroll region in MessageThreadPanel", () => {
-    const source = readFileSync(join(here, "MessageThreadPanel.tsx"), "utf8");
-    const scrollStart = source.indexOf("const threadScrollRegion");
-    const stickyMount = source.indexOf("<ProjectThreadWorkspacePanel");
-    const scrollUsage = source.indexOf("{threadScrollRegion}", stickyMount);
+    const panel = readFileSync(join(here, "MessageThreadPanel.tsx"), "utf8");
+    const body = readFileSync(
+      join(here, "ThreadPanelDeclaredPlansBody.tsx"),
+      "utf8",
+    );
+    const scrollStart = panel.indexOf("const threadScrollRegion");
+    const wrapperMount = panel.indexOf("<ThreadPanelDeclaredPlansBody");
+    const scrollUsage = panel.indexOf("{threadScrollRegion}", wrapperMount);
+    const stickyMount = body.indexOf("<ProjectThreadWorkspacePanel");
+    const childrenUsage = body.indexOf("{children}", stickyMount);
     assert.ok(scrollStart > 0, "scroll region declaration exists");
+    assert.ok(wrapperMount > 0, "declared-plans body wraps the thread pane");
     assert.ok(stickyMount > 0, "status bar is mounted");
     assert.ok(
-      stickyMount > scrollStart,
-      "status bar mount is after the scroll region is defined",
+      wrapperMount > scrollStart,
+      "status bar wrapper is after the scroll region is defined",
     );
     assert.ok(
-      scrollUsage > stickyMount,
+      scrollUsage > wrapperMount,
+      "scroll region is a child of the declared-plans body",
+    );
+    assert.ok(
+      childrenUsage > stickyMount,
       "status bar is rendered before the scroll region child",
     );
-    assert.equal(source.includes("ProjectThreadWorkspacePanel"), true);
+    assert.equal(body.includes("ProjectThreadWorkspacePanel"), true);
     // Must not remount inside the head/message scroll content.
-    const headBlock = source.slice(
-      source.indexOf('data-testid="message-thread-head"'),
-      source.indexOf('data-testid="message-thread-replies"'),
+    const headBlock = panel.slice(
+      panel.indexOf('data-testid="message-thread-head"'),
+      panel.indexOf('data-testid="message-thread-replies"'),
     );
     assert.equal(
       headBlock.includes("ProjectThreadWorkspacePanel"),
       false,
       "status bar must not sit inside the scrollable thread head",
+    );
+    assert.equal(
+      headBlock.includes("ThreadPanelDeclaredPlansBody"),
+      false,
+      "declared-plans wrapper must not sit inside the scrollable thread head",
     );
   });
 

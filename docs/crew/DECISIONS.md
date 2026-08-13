@@ -1162,3 +1162,42 @@ layout of existing components**, not a second product.
    propose upstream when Buzz wants a session grain; until then the
    feature lives in Crew-owned `desktop/src/features/workbench/`.
 
+## D-056 — Thread-visible declared plans: one latest ACP snapshot per agent
+
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Issue:** #190 (Workbench #186 may later reuse the rail; it is not a
+  prerequisite)
+
+Crew never invents, merges, or infers a shared task. A thread shows only
+the latest declared plan of each agent that participates in that thread.
+Missing signal is unknown, not guessed from prose.
+
+1. **Authority.** A plan row exists only when an adapter declared it:
+   native ACP `sessionUpdate: plan` with `entries[]` (`pending` /
+   `in_progress` / `completed`), or, same agent/session only, a structured
+   `todo` / `plan:todo` tool snapshot already understood by
+   `parseAgentPlanTodos`. `{text, done}` maps `done=true → completed`,
+   `done=false → pending` — do not invent `in_progress`. Do not parse
+   markdown checklists, assistant prose, Mission markers, receipts, or
+   GitHub issues into tasks.
+2. **One snapshot per `(agentPubkey, conversationId)`.** Latest full
+   replacement wins. Do not merge two snapshots or two agents. Two Hermes
+   agents (Dev vs Scout) are two plans even on one ACP binary. Agent owner
+   is the Crew pubkey, not the runtime. Binding key is the existing
+   session-ledger / `sessionAgingStore` pair — do not invent a second
+   identity key.
+3. **Empty and invalidation.** `entries: []` clears the card. Hide/clear
+   only when the exact session/lineage that owned the snapshot is
+   invalidated (failed `session/load`, stale-lineage refusal from #180, or
+   a later empty `plan` snapshot from that same agent/thread). Idle
+   spin-down (#169) keeps last-declared and labels it sleeping.
+4. **UI is variant A (persistent right rail) on the current thread pane.**
+   Founder rejected B (in-stream cards) and C (header pills) — not
+   deferred. Full latest snapshot (pending + in_progress + completed).
+   Sleeping / disconnected cards stay visible and say so. Unknown is a
+   dashed/muted card. The rail is information, not a composer target, not
+   owner-editable. Benign: do not put plan noise into Mission Inbox.
+5. **Not a shared backlog, not Mission #151, not Workbench #186.** Do not
+   invent a Crew task protocol or a second store that agents must write to.
+

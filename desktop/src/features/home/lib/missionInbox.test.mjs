@@ -799,3 +799,35 @@ test("a same-trigger rerun requires the receipt from the exact producer turn", (
 
   assert.equal(sections.readyToReview.length, 0);
 });
+
+test("ACP plan snapshots are not Mission Inbox rows (#190)", () => {
+  const sections = deriveMissionInboxSections({
+    ...attentionDefaults,
+    acknowledgedConversationIds: new Set(),
+    activeTurns: [
+      activeTurn("conversation-plan", {
+        lastSeenAt: 109_000,
+        lastSubstantiveProgressAt: 109_000,
+        progressLabel: "Plan updated",
+      }),
+    ],
+    channels,
+    inboxItems: [item("conversation-plan", "channel-a", 100)],
+    needsYou: [],
+    now: 110_000,
+    outcomes: [],
+  });
+  assert.deepEqual(Object.keys(sections).sort(), [
+    "needsYou",
+    "readyToReview",
+    "working",
+  ]);
+  assert.equal(sections.needsYou.length, 0);
+  assert.equal(sections.readyToReview.length, 0);
+  assert.equal(sections.working.length, 1);
+  assert.equal(sections.working[0].state, "working");
+  assert.doesNotMatch(
+    sections.working[0].phaseOrHeadline ?? "",
+    /declared plan/i,
+  );
+});
