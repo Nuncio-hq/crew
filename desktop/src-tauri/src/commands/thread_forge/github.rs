@@ -26,12 +26,13 @@ impl ForgeProvider for GitHubGhProvider {
         &self,
         target: &ForgePullRequestRef,
     ) -> Result<ForgeDetailResult, ForgeError> {
+        let number = target.number.to_string();
         let stdout = gh_graphql(
             DETAIL_QUERY,
             &[
                 ("owner", target.owner.as_str()),
                 ("name", target.name.as_str()),
-                ("number", &target.number.to_string()),
+                ("number", &number),
             ],
         )
         .await?;
@@ -71,15 +72,10 @@ impl ForgeProvider for GitHubGhProvider {
         target: &ForgePullRequestRef,
         run_id: u64,
     ) -> Result<ForgeCheckLogResult, ForgeError> {
+        let run_id = run_id.to_string();
+        let slug = repo_slug(target);
         let stdout = gh_text(
-            &[
-                "run",
-                "view",
-                &run_id.to_string(),
-                "--log-failed",
-                "--repo",
-                &repo_slug(target),
-            ],
+            &["run", "view", &run_id, "--log-failed", "--repo", &slug],
             None,
         )
         .await?;
@@ -128,16 +124,10 @@ impl ForgeProvider for GitHubGhProvider {
                 "Comment body must not be empty.".to_string(),
             ));
         }
+        let number = target.number.to_string();
+        let slug = repo_slug(target);
         gh_text(
-            &[
-                "pr",
-                "comment",
-                &target.number.to_string(),
-                "--repo",
-                &repo_slug(target),
-                "--body",
-                body,
-            ],
+            &["pr", "comment", &number, "--repo", &slug, "--body", body],
             None,
         )
         .await?;
@@ -167,14 +157,9 @@ impl ForgeProvider for GitHubGhProvider {
                 "Review body is required for this action.".to_string(),
             ));
         }
-        let mut args = vec![
-            "pr",
-            "review",
-            &target.number.to_string(),
-            "--repo",
-            &repo_slug(target),
-            flag,
-        ];
+        let number = target.number.to_string();
+        let slug = repo_slug(target);
+        let mut args = vec!["pr", "review", &number, "--repo", &slug, flag];
         if !body.trim().is_empty() {
             args.push("--body");
             args.push(body);
@@ -196,18 +181,9 @@ impl ForgeProvider for GitHubGhProvider {
             ForgeMergeStrategy::Squash => "--squash",
             ForgeMergeStrategy::Rebase => "--rebase",
         };
-        gh_text(
-            &[
-                "pr",
-                "merge",
-                &target.number.to_string(),
-                "--repo",
-                &repo_slug(target),
-                flag,
-            ],
-            None,
-        )
-        .await?;
+        let number = target.number.to_string();
+        let slug = repo_slug(target);
+        gh_text(&["pr", "merge", &number, "--repo", &slug, flag], None).await?;
         Ok(ForgeActionResult {
             ok: true,
             message: "Merged the pull request.".to_string(),
@@ -291,17 +267,9 @@ fn repo_slug(target: &ForgePullRequestRef) -> String {
 }
 
 async fn api_diff(target: &ForgePullRequestRef) -> Result<super::types::ForgeDiff, ForgeError> {
-    let stdout = gh_text(
-        &[
-            "pr",
-            "diff",
-            &target.number.to_string(),
-            "--repo",
-            &repo_slug(target),
-        ],
-        None,
-    )
-    .await?;
+    let number = target.number.to_string();
+    let slug = repo_slug(target);
+    let stdout = gh_text(&["pr", "diff", &number, "--repo", &slug], None).await?;
     Ok(diff_from_files(
         parse_unified_diff(&stdout),
         ForgeDiffSource::Api,

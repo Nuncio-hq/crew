@@ -13,7 +13,8 @@ pub fn select_diff_source(worktree_path: Option<&str>) -> ForgeDiffSource {
     }
 }
 
-pub fn parse_numstat_line(line: &str) -> Option<(String, u64, u64)> {
+#[cfg(test)]
+fn parse_numstat_line(line: &str) -> Option<(String, u64, u64)> {
     let mut parts = line.split('\t');
     let additions = parse_count(parts.next()?);
     let deletions = parse_count(parts.next()?);
@@ -25,7 +26,8 @@ pub fn parse_numstat_line(line: &str) -> Option<(String, u64, u64)> {
 }
 
 /// `old => new` / `{old => new}` become the destination path.
-pub fn normalize_numstat_path(path: &str) -> String {
+#[cfg(test)]
+fn normalize_numstat_path(path: &str) -> String {
     if let Some((left, right)) = path.split_once(" => ") {
         let right = right.trim();
         if let Some(prefix) = left.find('{') {
@@ -37,6 +39,7 @@ pub fn normalize_numstat_path(path: &str) -> String {
     path.to_string()
 }
 
+#[cfg(test)]
 fn parse_count(value: &str) -> u64 {
     if value == "-" {
         0

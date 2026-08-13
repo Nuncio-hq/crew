@@ -14,4 +14,3 @@ mod provider;
 mod types;
 
 pub use commands::*;
-pub use types::*;

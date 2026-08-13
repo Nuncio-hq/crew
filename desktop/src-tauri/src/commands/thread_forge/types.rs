@@ -240,15 +240,6 @@ pub struct ForgeCheckLogResult {
 }
 
 impl ForgeDetailResult {
-    pub fn missing() -> Self {
-        Self {
-            availability: ForgeAvailability::CliMissing,
-            rate_limited_until: None,
-            detail: None,
-            message: Some("Forge CLI was not found.".to_string()),
-        }
-    }
-
     pub fn from_error(error: &super::error::ForgeError) -> Self {
         Self {
             availability: error.availability(),
