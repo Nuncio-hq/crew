@@ -176,6 +176,7 @@ fn reserved_keys_include_respond_to_gate() {
 fn reserved_keys_include_remote_lifetime_policy() {
     for key in [
         "BUZZ_ACP_EXIT_AFTER_INACTIVITY",
+        "BUZZ_ACP_IDLE_POOL_SLEEP",
         "BUZZ_ACP_NO_PRESENCE",
         "BUZZ_ACP_POOL_IDLE_TIMEOUT",
         "BUZZ_ACP_HANDOVER_MODEL",

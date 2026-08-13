@@ -6,11 +6,6 @@
       "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (focus-refetch / agent turn store); +4 for prune-on-subscribe no-notify guard.",
       "recordedAt": "2026-08-12"
     },
-    "src/features/messages/lib/useRichTextEditor.ts": {
-      "lines": 1002,
-      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (composer paste / message-link handling).",
-      "recordedAt": "2026-08-12"
-    },
     "src/features/messages/ui/MessageComposer.tsx": {
       "lines": 1040,
       "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (imeta edit lifecycle + send-to-channel seams).",
@@ -28,13 +23,13 @@
     },
     "src/shared/api/relayClientSession.ts": {
       "lines": 1067,
-      "reason": "Upstream-owned / Crew attention-recovery merge at desktop-v0.5.10 pin; hold recorded wc -l.",
-      "recordedAt": "2026-08-12"
+      "reason": "Upstream-owned / Crew attention-recovery merge at desktop-v0.5.11 pin; hold exact wc -l.",
+      "recordedAt": "2026-08-13"
     },
     "src-tauri/src/managed_agents/readiness.rs": {
-      "lines": 1738,
-      "reason": "Upstream-owned Hermes readiness growth landed in desktop-v0.5.10 sync.",
-      "recordedAt": "2026-08-12"
+      "lines": 1733,
+      "reason": "Upstream-owned Hermes readiness at desktop-v0.5.11 pin; tightened after sync shrink.",
+      "recordedAt": "2026-08-13"
     }
   }
 }

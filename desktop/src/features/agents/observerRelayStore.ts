@@ -15,7 +15,6 @@ import {
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   getLatestAuthorizedLiveSessionId,
-  observeLiveSessionAuthority,
   resetLiveSessionAuthority,
 } from "./observerLiveSessionAuthority";
 import { useQueryClient } from "@tanstack/react-query";
@@ -32,28 +31,43 @@ import {
   processTranscriptEvent,
 } from "./ui/agentSessionTranscript";
 import {
-  ingestObserverFrameForEditAsUndo,
   prunePendingAgentRequests,
   resetDispatchedEventIdsStore,
 } from "./dispatchedEventIds";
-import {
-  ingestProjectThreadWorkspaceEvent,
-  resetProjectThreadWorkspaceStore,
-} from "./projectThreadWorkspaceStore";
+import { resetProjectThreadWorkspaceStore } from "./projectThreadWorkspaceStore";
 import { logObserverDrop, resetObserverDropLogger } from "./observerDropLogger";
-import { prepareAgentSessionObservation } from "./activeAgentSessionGeneration";
 import {
   observerEventIdentity,
   unwrapObserverBatch,
 } from "./observerEventIdentity";
-import { applySessionAgingObserverPayload } from "./sessionAgingObserverEffects";
+import {
+  applyCrewAppendBatchSideEffects,
+  applyCrewLiveFrameSideEffects,
+  effectiveCrewObserverConnectionState,
+  filterLiveObserverEventsForCrew,
+} from "./observerRelayStoreCrew";
+import {
+  bindObserverRelayStoreE2E,
+  injectObserverEventsForE2E,
+  resetAgentObserverLiveEventsForE2E,
+  setObserverConnectionStateForE2E,
+  _testGetArchivedChannelEvents,
+  _testProcessLiveObserverEvents,
+  _testRegisterKnownAgents,
+} from "./observerRelayStoreE2E";
 import {
   clearControlResultListeners,
-  dispatchControlResult,
   subscribeControlResults,
 } from "./controlResultDispatch";
-export { getObserverDropCountsForTest as _testGetObserverDropCounts } from "./observerDropLogger";
-export { subscribeControlResults };
+
+export {
+  injectObserverEventsForE2E,
+  resetAgentObserverLiveEventsForE2E,
+  setObserverConnectionStateForE2E,
+  _testGetArchivedChannelEvents,
+  _testProcessLiveObserverEvents,
+  _testRegisterKnownAgents,
+};
 
 const MAX_OBSERVER_EVENTS = 3000;
 const MAX_PENDING_UNKNOWN_AGENT_FRAMES = 100;
@@ -63,6 +77,9 @@ export type ObserverSnapshot = {
   errorMessage: string | null;
   events: ObserverEvent[];
 };
+
+export { getObserverDropCountsForTest as _testGetObserverDropCounts } from "./observerDropLogger";
+export { subscribeControlResults };
 
 const IDLE_SNAPSHOT: ObserverSnapshot = {
   connectionState: "idle",
@@ -219,12 +236,17 @@ function setConnectionState(
   notifyListeners();
 }
 
-function markAgentLiveContact(agentPubkey: string) {
+function markAgentLiveContact(
+  agentPubkey: string,
+  options?: { notify?: boolean },
+) {
   const key = normalizePubkey(agentPubkey);
   if (agentsWithCurrentLiveContact.has(key)) return;
   agentsWithCurrentLiveContact.add(key);
   invalidateSnapshot(key);
-  notifyListeners();
+  if (options?.notify !== false) {
+    notifyListeners();
+  }
 }
 
 function setAgentConnectionError(agentPubkey: string, message: string | null) {
@@ -241,49 +263,62 @@ function observerTag(event: RelayEvent, tagName: string) {
   return event.tags.find((tag) => tag[0] === tagName)?.[1] ?? null;
 }
 
-function appendAgentEvent(agentPubkey: string, event: ObserverEvent) {
+function appendAgentEvents(
+  agentPubkey: string,
+  events: readonly ObserverEvent[],
+): boolean {
+  if (events.length === 0) return false;
+
   const key = normalizePubkey(agentPubkey);
   const current = eventsByAgent.get(key) ?? [];
-  if (
-    current.some(
-      (existing) =>
-        observerEventIdentity(existing) === observerEventIdentity(event),
-    )
-  ) {
-    return;
+  const seen = new Set(current.map((event) => observerEventIdentity(event)));
+  const added: ObserverEvent[] = [];
+  for (const event of events) {
+    const identity = observerEventIdentity(event);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    added.push(event);
   }
+  if (added.length === 0) return false;
 
-  const sorted = [...current, event].sort(compareObserverEvents);
+  const sortedAdded = added.sort(compareObserverEvents);
+  const sorted = [...current, ...sortedAdded].sort(compareObserverEvents);
   const trimmed = sorted.length > MAX_OBSERVER_EVENTS;
   const final = trimmed
     ? sorted.slice(sorted.length - MAX_OBSERVER_EVENTS)
     : sorted;
   eventsByAgent.set(key, final);
-  ingestProjectThreadWorkspaceEvent(key, event);
 
-  // Determine whether the new event landed at the end of the sorted array.
-  // If it did (common case), we can incrementally process just this event.
-  // If not (out-of-order arrival) or if we trimmed, fall back to full rebuild.
-  const eventAtEnd = sorted[sorted.length - 1] === event;
-
-  if (eventAtEnd && !trimmed) {
-    // Fast path: incremental update
-    const transcriptState =
+  // The common live path appends a sorted batch after the retained window. Fold
+  // that batch through the transcript state once without rebuilding history.
+  // Out-of-order arrivals and cap eviction rebuild from the final window so
+  // stateful tool/permission relationships remain correct.
+  const currentLast = current.at(-1);
+  const allAtEnd =
+    !currentLast ||
+    sortedAdded.every((event) => compareObserverEvents(event, currentLast) > 0);
+  if (allAtEnd && !trimmed) {
+    let transcriptState =
       transcriptByAgent.get(key) ?? createEmptyTranscriptState();
-    const updatedTranscript = processTranscriptEvent(transcriptState, event);
-    transcriptByAgent.set(key, updatedTranscript);
+    for (const event of sortedAdded) {
+      transcriptState = processTranscriptEvent(transcriptState, event);
+    }
+    transcriptByAgent.set(key, transcriptState);
   } else {
-    // Slow path: full rebuild (out-of-order insertion or trim fired)
     transcriptByAgent.set(key, buildTranscriptState(final));
   }
 
-  ingestObserverFrameForEditAsUndo(event);
-  if (event.kind === "turn_started") {
-    prunePendingAgentRequests(collectTriggeringEventIds());
-  }
+  applyCrewAppendBatchSideEffects(key, sortedAdded, () =>
+    prunePendingAgentRequests(collectTriggeringEventIds()),
+  );
   invalidateSnapshot(key);
+  return true;
+}
 
-  notifyListeners();
+function appendAgentEvent(agentPubkey: string, event: ObserverEvent) {
+  if (appendAgentEvents(agentPubkey, [event])) {
+    notifyListeners();
+  }
 }
 
 /**
@@ -423,51 +458,66 @@ export function isObserverEventAfter(
 
 // Per-event processing shared by every event a live frame carries (one for a
 // plain frame, many for a batch envelope).
-function processLiveObserverEvent(agentPubkey: string, parsed: ObserverEvent) {
-  const sessionObservation = prepareAgentSessionObservation(
-    normalizePubkey(agentPubkey),
-    parsed,
-  );
-  if (sessionObservation === "retired") {
-    return false;
-  }
-  const authority = observeLiveSessionAuthority(
-    agentPubkey,
-    parsed,
-    sessionObservation,
-  );
-  if (!authority.accepted) {
-    if (authority.unavailable) {
-      setAgentConnectionError(
-        agentPubkey,
-        "Observer session authority exceeded its safe recovery bound",
-      );
-    }
-    return false;
-  }
-  if (!parsed.replayed) markAgentLiveContact(agentPubkey);
-  appendAgentEvent(agentPubkey, parsed);
-  const managementRequest = parseAgentManagementRequest(parsed.payload);
-  if (managementRequest) {
-    for (const listener of agentManagementListeners) {
-      listener(agentPubkey, managementRequest);
-    }
-  }
-  if (parsed.kind === "session_config_captured") {
-    void putAgentSessionConfig(agentPubkey, parsed.payload);
-    onSessionConfigCaptured?.(agentPubkey);
-  } else if (parsed.kind === "control_result") {
-    dispatchControlResult(agentPubkey, parsed.payload);
-  } else if (parsed.kind === "session_aging") {
-    applySessionAgingObserverPayload(agentPubkey, parsed.payload);
-  } else if (parsed.kind === "managed_agent_runtime_lifecycle") {
-    void putManagedAgentRuntimeLifecycle(agentPubkey, parsed.payload).catch(
-      (error) => {
-        console.debug("Late/untracked lifecycle frame dropped:", error);
-      },
+function processLiveObserverEvents(
+  agentPubkey: string,
+  events: readonly ObserverEvent[],
+): boolean {
+  if (events.length === 0) return false;
+
+  const { acceptedEvents, authorityUnavailable } =
+    filterLiveObserverEventsForCrew(agentPubkey, events);
+  if (authorityUnavailable) {
+    setAgentConnectionError(
+      agentPubkey,
+      "Observer session authority exceeded its safe recovery bound",
     );
   }
+  if (acceptedEvents.length === 0) return false;
+
+  for (const parsed of acceptedEvents) {
+    if (!parsed.replayed) {
+      markAgentLiveContact(agentPubkey, { notify: false });
+    }
+  }
+
+  // Commit the full envelope before dispatching synchronous specialized
+  // callbacks. Those callbacks historically observed their triggering frame
+  // in the raw/transcript stores; batching must preserve that visibility while
+  // deferring only the global external-store publication.
+  const observerChanged = appendAgentEvents(agentPubkey, acceptedEvents);
+
+  for (const parsed of acceptedEvents) {
+    const managementRequest = parseAgentManagementRequest(parsed.payload);
+    if (managementRequest) {
+      for (const listener of agentManagementListeners) {
+        listener(agentPubkey, managementRequest);
+      }
+    }
+    if (parsed.kind === "session_config_captured") {
+      void putAgentSessionConfig(agentPubkey, parsed.payload);
+      onSessionConfigCaptured?.(agentPubkey);
+    } else if (parsed.kind === "managed_agent_runtime_lifecycle") {
+      void putManagedAgentRuntimeLifecycle(agentPubkey, parsed.payload).catch(
+        (error) => {
+          console.debug("Late/untracked lifecycle frame dropped:", error);
+        },
+      );
+    } else {
+      applyCrewLiveFrameSideEffects(agentPubkey, parsed);
+    }
+  }
+
+  if (observerChanged) {
+    notifyListeners();
+  }
   return true;
+}
+
+function processLiveObserverEvent(
+  agentPubkey: string,
+  parsed: ObserverEvent,
+): boolean {
+  return processLiveObserverEvents(agentPubkey, [parsed]);
 }
 
 export { processLiveObserverEvent as _testProcessLiveObserverEvent };
@@ -478,15 +528,12 @@ function processDecryptedObserverFrame(
   context: RelayLiveEventContext,
   sourceEventId?: string,
 ) {
-  let accepted = false;
-  for (const inner of unwrapObserverBatch(parsed)) {
-    accepted =
-      processLiveObserverEvent(agentPubkey, {
-        ...inner,
-        sourceEventId,
-        replayed: context.replay,
-      }) || accepted;
-  }
+  const events = unwrapObserverBatch(parsed).map((inner) => ({
+    ...inner,
+    sourceEventId,
+    replayed: context.replay,
+  }));
+  const accepted = processLiveObserverEvents(agentPubkey, events);
   if (!accepted) return false;
   setAgentConnectionError(agentPubkey, null);
   if (relayConnectionHealthy && observerSubscriptionReady) {
@@ -673,15 +720,12 @@ export function getAgentObserverSnapshot(
   const key = normalizePubkey(agentPubkey);
   const agentError = connectionErrorByAgent.get(key) ?? null;
   const agentEvents = eventsByAgent.get(key) ?? [];
-  // connecting only when restored events lack live contact; empty is idle open.
-  const effectiveConnectionState =
-    connectionState === "open" && agentError
-      ? "error"
-      : connectionState === "open" &&
-          !agentsWithCurrentLiveContact.has(key) &&
-          agentEvents.length > 0
-        ? "connecting"
-        : connectionState;
+  const effectiveConnectionState = effectiveCrewObserverConnectionState({
+    connectionState,
+    agentError,
+    hasLiveContact: agentsWithCurrentLiveContact.has(key),
+    eventCount: agentEvents.length,
+  });
   const effectiveErrorMessage = agentError ?? errorMessage;
   const cached = snapshotByAgent.get(key);
   if (
@@ -840,39 +884,6 @@ export async function ingestArchivedObserverEvents(
 }
 
 /**
- * E2E-only: inject synthetic observer events directly into the store, bypassing
- * the relay-security knownAgentPubkeys filter. Exercises the real
- * appendAgentEvent → processTranscriptEvent ingestion path so screenshot specs
- * prove the production render, not a stub.
- *
- * Never call this from production code — it is intentionally not re-exported
- * from the public agent feature barrel.
- */
-export function injectObserverEventsForE2E(
-  agentPubkey: string,
-  events: ObserverEvent[],
-) {
-  setConnectionState("open", null);
-  for (const event of events) {
-    if (!event.replayed) markAgentLiveContact(agentPubkey);
-    appendAgentEvent(agentPubkey, event);
-    // Side-effect kinds that production frames apply in processLiveObserverEvent.
-    if (event.kind === "session_aging") {
-      applySessionAgingObserverPayload(agentPubkey, event.payload);
-    } else if (event.kind === "control_result") {
-      dispatchControlResult(agentPubkey, event.payload);
-    }
-  }
-  notifyListeners();
-}
-
-/** E2E-only: drive observer telemetry health through the production store. */
-export function setObserverConnectionStateForE2E(state: ConnectionState) {
-  setConnectionState(state, state === "error" ? "Mock observer error" : null);
-  notifyListeners();
-}
-
-/**
  * Synchronize the observer store with a sorted buffer of events for one agent.
  * Used by test harnesses and replay bridges that already hold decoded frames.
  */
@@ -880,8 +891,8 @@ export function syncAgentObserverEvents(
   agentPubkey: string,
   events: ObserverEvent[],
 ) {
-  for (const event of events) {
-    appendAgentEvent(agentPubkey, event);
+  if (appendAgentEvents(agentPubkey, events)) {
+    notifyListeners();
   }
 }
 
@@ -917,38 +928,29 @@ export function resetAgentObserverStore() {
   void unsubscribe?.();
 }
 
-/** E2E-only: remove live frames while retaining the hydrated archive journal. */
-export function resetAgentObserverLiveEventsForE2E() {
-  eventsByAgent.clear();
-  transcriptByAgent.clear();
-  snapshotByAgent.clear();
-  connectionErrorByAgent.clear();
-  agentsWithCurrentLiveContact.clear();
-  notifyListeners();
-}
-
-/**
- * Test-only: register a set of agent pubkeys as trusted for a given
- * subscription id. Mirrors the effect of mounting `useManagedAgentObserverBridge`
- * in a React tree. Only call from tests — never from production code.
- */
-export function _testRegisterKnownAgents(
-  subscriptionId: string,
-  pubkeys: readonly string[],
-): void {
-  registerKnownAgents(subscriptionId, pubkeys);
-}
-
-/**
- * Test-only: read the raw archived observer events for a (agent, channel) pair.
- * Production callers should use `getArchivedChannelEvents`.
- * Only call from tests — never from production code.
- */
-export function _testGetArchivedChannelEvents(
-  agentPubkey: string,
-  channelId: string,
-): ObserverEvent[] {
-  return (
-    archiveEventsByChannel.get(archiveChannelKey(agentPubkey, channelId)) ?? []
-  );
-}
+bindObserverRelayStoreE2E({
+  getConnectionState: () => connectionState,
+  getErrorMessage: () => errorMessage,
+  openSilently: () => {
+    connectionState = "open";
+    errorMessage = null;
+    snapshotByAgent.clear();
+  },
+  markLiveContactQuiet: (agentPubkey) =>
+    markAgentLiveContact(agentPubkey, { notify: false }),
+  appendAgentEvents,
+  notifyListeners,
+  setConnectionState,
+  clearLiveEvents: () => {
+    eventsByAgent.clear();
+    transcriptByAgent.clear();
+    snapshotByAgent.clear();
+    connectionErrorByAgent.clear();
+    agentsWithCurrentLiveContact.clear();
+    notifyListeners();
+  },
+  registerKnownAgents,
+  processLiveObserverEvents,
+  getArchivedChannelEvents: (agentPubkey, channelId) =>
+    archiveEventsByChannel.get(archiveChannelKey(agentPubkey, channelId)) ?? [],
+});

@@ -22,10 +22,8 @@ export type { LinkSelectionInfo } from "./resolveLinkAt";
 
 import { MESSAGE_MARKDOWN_CLASS } from "@/shared/ui/mentionChip";
 
-import {
-  MentionHighlightExtension,
-  mentionHighlightKey,
-} from "./mentionHighlightExtension";
+import { MentionHighlightExtension } from "./mentionHighlightExtension";
+import { useRichTextEditorMentionHighlightSync } from "./useRichTextEditorMentionHighlightSync";
 import { CUSTOM_EMOJI_NODE_NAME } from "./customEmojiNode";
 import { useComposerCustomEmoji } from "./useComposerCustomEmoji";
 import { buildPlainTextProjection } from "./plainTextProjection";
@@ -691,37 +689,12 @@ export function useRichTextEditor({
   }, [editor, placeholder]);
 
   // Keep mention/channel-highlight decorations in sync with known names.
-  // NOTE: We use `editor.storage.mentionHighlight` (the mutable storage object
-  // shared with the ProseMirror plugin closure) rather than finding the
-  // extension instance via extensionManager — the instance's `.storage` getter
-  // returns a fresh spread-copy on every access, so mutations are silently lost.
-  React.useEffect(() => {
-    if (!editor) return;
-    // biome-ignore lint/suspicious/noExplicitAny: TipTap's Storage type doesn't include dynamic extension keys
-    const storage = (editor.storage as any).mentionHighlight as
-      | {
-          names: string[];
-          agentNames: string[];
-          agentAvatarsByName: Record<string, string>;
-          channelNames: string[];
-        }
-      | undefined;
-    if (storage) {
-      storage.names = mentionNames ?? [];
-      storage.agentNames = agentMentionNames ?? [];
-      storage.agentAvatarsByName = agentAvatarUrlsByName ?? {};
-      storage.channelNames = channelNames ?? [];
-      // Force the plugin to re-decorate by dispatching a metadata transaction.
-      const { tr } = editor.state;
-      editor.view.dispatch(tr.setMeta(mentionHighlightKey, true));
-    }
-  }, [
-    editor,
-    mentionNames,
-    agentMentionNames,
+  useRichTextEditorMentionHighlightSync(editor, {
     agentAvatarUrlsByName,
+    agentMentionNames,
     channelNames,
-  ]);
+    mentionNames,
+  });
 
   // Custom-emoji set changes: re-resolve the `src` attr on any existing
   // node in the doc (e.g. an emoji's image was just published).
@@ -757,17 +730,26 @@ export function useRichTextEditor({
     [editor],
   );
 
-  const setContentAndFocusEnd = React.useCallback(
-    (markdown: string) => {
+  /**
+   * Replace the editor document with literal plain text and focus its end.
+   *
+   * Unlike markdown `setContent`, this preserves trailing whitespace. The
+   * transaction is marked as programmatic so authored-update observers do not
+   * reconcile against the intermediate post-send restoration.
+   */
+  const restorePlainTextAndFocusEnd = React.useCallback(
+    (text: string) => {
       if (!editor) return;
-      // The caller already synchronizes composer state. Keep this programmatic
-      // restoration out of user-edit observers (autocomplete/reconciliation),
-      // then move selection in the same command chain.
-      editor
-        .chain()
-        .setContent(markdown, { emitUpdate: false })
-        .focus("end")
-        .run();
+      const paragraph = editor.schema.nodes.paragraph.create(
+        null,
+        text ? editor.schema.text(text) : undefined,
+      );
+      const tr = editor.state.tr
+        .replaceWith(0, editor.state.doc.content.size, paragraph)
+        .setMeta("preventUpdate", true);
+      tr.setSelection(TextSelection.atEnd(tr.doc));
+      editor.view.dispatch(tr);
+      editor.view.focus();
     },
     [editor],
   );
@@ -965,7 +947,7 @@ export function useRichTextEditor({
     isEmpty,
     clearContent,
     setContent,
-    setContentAndFocusEnd,
+    restorePlainTextAndFocusEnd,
     focus,
     focusEnd,
     focusPreserve,

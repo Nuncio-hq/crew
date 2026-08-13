@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use tauri::AppHandle;
 
-use super::agent_env::build_buzz_agent_provider_defaults;
+use super::agent_env::{build_buzz_agent_provider_defaults, idle_pool_sleep_env};
 
 use crate::{
     managed_agents::{
@@ -536,9 +536,11 @@ pub fn spawn_agent_child(
     command.env("BUZZ_PRIVATE_KEY", &record.private_key_nsec);
     command.env("BUZZ_RELAY_URL", &effective_relay_url);
     command.env("BUZZ_ACP_LAZY_POOL", if lazy { "true" } else { "false" });
-    // Idle engine spin-down (issue #169): default 30 minutes. Reserved so
-    // layered persona/user env cannot disable desktop-owned sleep policy.
-    command.env("BUZZ_ACP_POOL_IDLE_TIMEOUT", "1800");
+    // Single idle policy: both env names get the same resolved value (1800 lazy /
+    // 0 eager) so they cannot arm independent harness timers (D-052 / #189).
+    let idle = idle_pool_sleep_env(lazy);
+    command.env("BUZZ_ACP_POOL_IDLE_TIMEOUT", idle);
+    command.env("BUZZ_ACP_IDLE_POOL_SLEEP", idle);
     super::session_aging_env::apply_session_aging_env(&mut command, &global);
     // Crew's review state is receipt-backed. This key is reserved, so layered
     // harness/persona/user env written below cannot disable managed receipts.
