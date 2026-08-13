@@ -41,6 +41,7 @@ mod runtime;
 mod runtime_commands;
 mod runtime_types;
 mod session_aging_env;
+mod cowork_history_env;
 pub(crate) mod snapshot_avatar;
 pub(crate) mod spawn_snapshot;
 pub(crate) mod storage;

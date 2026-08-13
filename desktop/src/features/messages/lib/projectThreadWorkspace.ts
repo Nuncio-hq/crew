@@ -13,6 +13,7 @@ export type ProjectThreadContext = {
   ws: "new" | "main" | "branch";
   branch: string | null;
   base: string | null;
+  mode: "git" | "folder";
 };
 
 export type ProjectThreadAgentStep = {
@@ -71,7 +72,8 @@ export function parseProjectThreadContext(
       url.searchParams.get("ws"),
       url.searchParams.get("base"),
     );
-    return { localPath, repoAddress, ...parsed };
+    const mode = url.searchParams.get("mode") === "folder" ? "folder" : "git";
+    return { localPath, repoAddress, ...parsed, mode };
   } catch {
     return null;
   }

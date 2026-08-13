@@ -1,6 +1,7 @@
 import {
   linkProjectWorkspaceTags,
   validateLocalWorkspacePath,
+  withCrewWorkspaceMode,
 } from "./project-local-workspace";
 
 export type ExistingLocalWorkspaceProject<Saved> = {
@@ -21,6 +22,7 @@ export type LocalWorkspaceProjectInput = {
   localPath: string;
   name: string;
   retryChannel?: ProjectChannelRetry | null;
+  workspaceMode?: "git" | "folder";
 };
 
 export type LocalWorkspaceProjectDraft = {
@@ -78,6 +80,7 @@ export function buildLocalWorkspaceProject(input: {
   channelId: string;
   localPath: string;
   name: string;
+  workspaceMode?: "git" | "folder";
 }): LocalWorkspaceProjectDraft {
   const name = input.name.trim();
   const dtag = projectDtagFromName(name);
@@ -87,12 +90,15 @@ export function buildLocalWorkspaceProject(input: {
   if (!input.channelId.trim()) {
     throw new Error("Project channel is required.");
   }
-  const tags = linkProjectWorkspaceTags(
-    [
-      ["d", dtag],
-      ["name", name],
-    ],
-    { channelId: input.channelId, localPath: input.localPath },
+  const tags = withCrewWorkspaceMode(
+    linkProjectWorkspaceTags(
+      [
+        ["d", dtag],
+        ["name", name],
+      ],
+      { channelId: input.channelId, localPath: input.localPath },
+    ),
+    input.workspaceMode ?? "git",
   );
   return { content: "", dtag, tags };
 }
@@ -139,6 +145,7 @@ export async function createLocalWorkspaceProject<Saved>(
     channelId,
     localPath: input.localPath,
     name: input.name,
+    workspaceMode: input.workspaceMode,
   });
 
   try {

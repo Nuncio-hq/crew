@@ -13,6 +13,12 @@ import { projectThreadLabel } from "@/features/messages/lib/projectThreadLabel";
 import type { TimelineMessage } from "@/features/messages/types";
 import { useStableJsonValue } from "@/shared/hooks/useStableReference";
 
+function coworkVersionsHref(repoAddress: string, threadId: string): string {
+  // Hash history: colons in 30617 coordinates must stay unencoded so the
+  // route param matches `projectMatchesRouteId`.
+  return `#/projects/${repoAddress}?thread=${threadId}`;
+}
+
 export function useProjectThreadBadge(
   message: TimelineMessage | null | undefined,
 ): ProjectThreadBadge | null {
@@ -36,6 +42,20 @@ export function useProjectThreadBadge(
         ? getProjectWorktreeEntryByRoot(repositoryPath, message.id)
         : null;
     const fromRegistry = entry ? buildProjectThreadBadge(entry, label) : null;
+    if (context.mode === "folder") {
+      return {
+        label: "cowork",
+        branch: "cowork",
+        shortBranch: "cowork",
+        glyph: "📁" as const,
+        mono: false,
+        pullRequests: [],
+        overflow: 0,
+        diff: null,
+        openIssues: null,
+        href: coworkVersionsHref(context.repoAddress, message.id),
+      };
+    }
     if (context.ws === "main") {
       return {
         label: "main",

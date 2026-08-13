@@ -5,8 +5,8 @@ import { usePreviewFeatureWarning } from "@/shared/features";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
 
 const ProjectDetailScreen = React.lazy(async () => {
-  const module = await import("@/features/projects/ui/ProjectDetailScreen");
-  return { default: module.ProjectDetailScreen };
+  const module = await import("@/features/projects/ui/CrewProjectDetailGate");
+  return { default: module.CrewProjectDetailGate };
 });
 
 export const Route = createFileRoute("/projects/$projectId")({
@@ -21,13 +21,14 @@ export const Route = createFileRoute("/projects/$projectId")({
     issueId: typeof search.issueId === "string" ? search.issueId : undefined,
     repositoryId:
       typeof search.repositoryId === "string" ? search.repositoryId : undefined,
+    thread: typeof search.thread === "string" ? search.thread : undefined,
   }),
 });
 
 function ProjectDetailRouteComponent() {
   usePreviewFeatureWarning("projects");
   const { projectId } = Route.useParams();
-  const { commitHash, pullRequestId, issueId, repositoryId } =
+  const { commitHash, pullRequestId, issueId, repositoryId, thread } =
     Route.useSearch();
 
   return (
@@ -38,6 +39,7 @@ function ProjectDetailRouteComponent() {
         projectId={projectId}
         pullRequestId={pullRequestId}
         repositoryId={repositoryId}
+        thread={thread}
       />
     </React.Suspense>
   );

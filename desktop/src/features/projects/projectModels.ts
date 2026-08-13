@@ -13,6 +13,8 @@ export type Repository = {
   cloneUrls: string[];
   localWorkspacePath: string | null;
   localWorkspaceStatus: "invalid" | "linked" | "unlinked";
+  /** Absent means git (pre-Cowork announcements). */
+  workspaceMode?: "git" | "folder";
   webUrl: string | null;
   owner: string;
   contributors: string[];
@@ -260,6 +262,7 @@ export function eventToRepository(
     localWorkspaceStatus,
     cloneUrls,
     canonicalChannel,
+    workspaceMode,
   } = projectWorkspaceReadFields(event, relayOrigin);
   const channelId =
     canonicalChannel.status === "ready"
@@ -278,6 +281,7 @@ export function eventToRepository(
     cloneUrls,
     localWorkspacePath,
     localWorkspaceStatus,
+    workspaceMode,
     webUrl: getTag(event, "web") ?? null,
     owner,
     contributors: [...new Set([...getAllTags(event, "p"), ...setupUsers])],

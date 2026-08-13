@@ -66,6 +66,17 @@ test("matches a legacy 30617 wrapper via repository.channelId", () => {
   );
 });
 
+test("ignores Cowork folders so the composer selector stays hidden", () => {
+  assert.equal(
+    gitProjectWorkspaceForChannel(CHANNEL, [
+      project({
+        repositories: [repo({ workspaceMode: "folder" })],
+      }),
+    ]),
+    null,
+  );
+});
+
 test("ignores unlinked workspaces and other channels", () => {
   assert.equal(
     gitProjectWorkspaceForChannel(CHANNEL, [

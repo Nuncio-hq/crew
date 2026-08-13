@@ -11,6 +11,7 @@ members = [
     "crates/buzz-audit",
     "crates/buzz-acp",
     "crates/buzz-worktree",
+    "crates/buzz-cowork",
     "crates/buzz-agent",
     "crates/sprig",
     "crates/buzz-test-client",
@@ -148,6 +149,7 @@ buzz-sdk = { path = "crates/buzz-sdk" }
 buzz-ws-client = { path = "crates/buzz-ws-client" }
 buzz-relay-mesh = { path = "crates/buzz-relay-mesh" }
 buzz-worktree = { path = "crates/buzz-worktree" }
+buzz-cowork = { path = "crates/buzz-cowork" }
 buzz-datastore-tracing = { path = "crates/buzz-datastore-tracing" }
 
 # CI profile — builds the relay for desktop e2e. Dependencies keep full

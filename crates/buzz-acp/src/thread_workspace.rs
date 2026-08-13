@@ -10,6 +10,7 @@ use tokio::process::Command;
 mod base;
 mod binding;
 mod checkout;
+mod folder;
 
 pub(crate) use base::BaseSource;
 use base::{resolve_workspace_base, resolve_workspace_base_ref, WorkspaceBase};
@@ -37,12 +38,19 @@ pub(crate) enum CheckoutKind {
     IsolatedWorktree,
     MainCheckout,
     SharedBranch,
+    Folder,
 }
 
 impl CheckoutKind {
     pub(crate) fn skips_lifecycle_record(self) -> bool {
-        matches!(self, Self::MainCheckout)
+        matches!(self, Self::MainCheckout | Self::Folder)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceMode {
+    Git,
+    Folder,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +58,7 @@ pub struct ProjectWorkspace {
     pub repo_address: String,
     pub local_path: PathBuf,
     pub binding: WorkspaceBindingSpec,
+    pub mode: WorkspaceMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,12 +291,14 @@ pub fn parse_project_workspace(content: &str) -> Result<Option<ProjectWorkspace>
     let mut local_path = None;
     let mut ws = None;
     let mut base = None;
+    let mut mode = WorkspaceMode::Git;
     for (key, value) in url.query_pairs() {
         match key.as_ref() {
             "repo" => repo_address = Some(value.into_owned()),
             "path" => local_path = Some(PathBuf::from(value.into_owned())),
             "ws" => ws = Some(value.into_owned()),
             "base" => base = Some(value.into_owned()),
+            "mode" if value.as_ref() == "folder" => mode = WorkspaceMode::Folder,
             _ => {}
         }
     }
@@ -301,6 +312,7 @@ pub fn parse_project_workspace(content: &str) -> Result<Option<ProjectWorkspace>
         repo_address,
         local_path,
         binding,
+        mode,
     }))
 }
 
@@ -311,6 +323,9 @@ pub async fn plan_thread_worktree(
     root_event_id: &str,
 ) -> Result<ThreadWorkspacePlan> {
     validate_root_event_id(root_event_id)?;
+    if workspace.mode == WorkspaceMode::Folder {
+        return folder::plan_folder_workspace(workspace, root_event_id);
+    }
     let selected_path = fs::canonicalize(&workspace.local_path).with_context(|| {
         format!(
             "Project workspace does not exist: {}",
@@ -401,6 +416,9 @@ pub async fn ensure_planned_thread_worktree(
     plan: &ThreadWorkspacePlan,
 ) -> Result<(ThreadWorkspace, EnsureKind)> {
     let repo_root = &plan.repository_path;
+    if matches!(plan.checkout_kind, CheckoutKind::Folder) {
+        return folder::ensure_folder_workspace(plan);
+    }
     let worktree_path = &plan.worktree_path;
     let common_git = &plan.common_git;
     let branch = &plan.branch;

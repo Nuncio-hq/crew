@@ -72,6 +72,7 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     "BUZZ_ACP_HANDOVER_MODEL",
     "BUZZ_ACP_COMPACTION_THRESHOLD",
     "BUZZ_ACP_TURN_AGING_THRESHOLD",
+    "BUZZ_ACP_COWORK_HISTORY_DIR",
     // Readiness handoff: desktop is the ONLY readiness source. A saved or
     // ambient env var must not be able to forge setup mode (NotReady) on a
     // Ready agent or suppress it (empty/stale payload) on a NotReady one.

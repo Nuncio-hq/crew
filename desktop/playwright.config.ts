@@ -48,6 +48,7 @@ export default defineConfig({
         "**/project-outcomes.spec.ts",
         "**/project-thread-worktree.spec.ts",
         "**/workspace-binding-selector.spec.ts",
+        "**/cowork-projects.spec.ts",
         "**/message-feedback-snapshots.spec.ts",
         "**/custom-emoji.spec.ts",
         "**/profile-custom-emoji-status.spec.ts",
