@@ -273,6 +273,8 @@ impl ResourceGovernor {
         visible: bool,
     ) -> Result<SimHolding, String> {
         let now = self.clock.now();
+        let can_mirror =
+            visible && self.stream_count_excluding(channel_id) < self.policy.max_mirror_streams;
         let rec = self
             .sims
             .get_mut(channel_id)
@@ -282,9 +284,7 @@ impl ResourceGovernor {
             rec.hidden_since_ms = None;
             rec.holding.last_used_ms = now;
             rec.holding.idle_deadline_ms = Some(now + self.policy.sim_idle_shutdown_ms);
-            if rec.holding.lifecycle == DeviceLifecycle::Booted
-                && self.stream_count_excluding(channel_id) < self.policy.max_mirror_streams
-            {
+            if rec.holding.lifecycle == DeviceLifecycle::Booted && can_mirror {
                 rec.holding.lifecycle = DeviceLifecycle::Mirroring;
                 rec.holding.mirroring = true;
             }

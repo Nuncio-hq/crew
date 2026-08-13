@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use super::agent_env::{build_buzz_agent_provider_defaults, idle_pool_sleep_env};
 

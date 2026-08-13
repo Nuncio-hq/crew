@@ -3,6 +3,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
+use super::bridge::discover_sim_bridge;
 use super::browser::{backend, window_label, BrowserBackend};
 use super::device::crew_device_name;
 use super::mjpeg::FrameStore;
@@ -10,7 +11,7 @@ use super::policy::GovernorPolicy;
 use super::simctl::RealSimctl;
 use super::snapshot::{write_agent_env_snapshot, AgentChannelEnv, GovernorAgentSnapshot};
 use super::types::{GovernorStatus, StopKind};
-use super::{discover_sim_bridge, ResourceGovernorHandle};
+use super::ResourceGovernorHandle;
 
 const EVENT: &str = "resource-governor";
 
@@ -534,7 +535,7 @@ pub fn start_background(app: &AppHandle) {
         let Some(store) = frames else {
             return;
         };
-        if let Ok(port) = super::bind_mjpeg(store).await {
+        if let Ok(port) = super::mjpeg::bind_local(store).await {
             mjpeg_handle.manage(MjpegPort(port));
         }
     });

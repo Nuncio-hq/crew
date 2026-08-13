@@ -51,9 +51,32 @@ pub mod webkit_rendering;
 use app_state::{build_app_state, resolve_persisted_identity, AppState};
 use builderlab::*;
 use commands::*;
-use deep_link::{handle_deep_link_url, PendingCommunityDeepLinks};
-use managed_agents::{backfill_persona_snapshots, ensure_nest, try_regenerate_nest};
-use resource_governor::start_background;
+use deep_link::{
+    acknowledge_pending_community_deep_link, handle_deep_link_url,
+    take_pending_community_deep_link, PendingCommunityDeepLinks,
+};
+use huddle::audio_output::{
+    get_audio_output_device, list_audio_output_devices, set_audio_output_device,
+};
+use huddle::reconnect::reconnect_huddle_audio;
+use huddle::{
+    add_agent_to_huddle, check_pipeline_hotstart, close_huddle_companion, confirm_huddle_active,
+    download_voice_models, end_huddle, get_huddle_agent_pubkeys, get_huddle_state,
+    get_model_status, get_voice_input_mode, interrupt_huddle_speech, join_huddle, leave_huddle,
+    open_huddle_window, push_audio_pcm, remove_agent_from_huddle, set_huddle_manual_mic_unmuted,
+    set_huddle_transcription_enabled, set_tts_enabled, set_voice_input_mode, speak_agent_message,
+    start_huddle, start_stt_pipeline,
+};
+use initial_window::*;
+use managed_agents::{
+    backfill_persona_snapshots, ensure_nest, list_managed_agent_runtimes,
+    put_managed_agent_runtime_lifecycle, reconcile_managed_agent_runtimes,
+    restart_managed_agent_runtime, start_managed_agent_runtime, stop_managed_agent_runtime,
+    try_regenerate_nest,
+};
+#[cfg(not(feature = "mesh-llm"))]
+use mesh_llm_stubs::*;
+use resource_governor::*;
 use std::sync::{atomic::AtomicBool, Arc};
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::StateFlags;
@@ -266,8 +289,7 @@ pub fn run() {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     };
 
-    let app = crate::invoke::with_handlers(
-        app_menu::install(builder)
+    let app = app_menu::install(builder)
             .register_asynchronous_uri_scheme_protocol("buzz-media", |ctx, request, responder| {
                 let app = ctx.app_handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -596,9 +618,9 @@ pub fn run() {
                     });
                 }
                 Ok(())
-            }),
-    )
-    .build(tauri::generate_context!())
+            })
+        .invoke_handler(crate::invoke::desktop_invoke_handler!())
+        .build(tauri::generate_context!())
     .expect("error while building tauri application");
     let shutdown_done = Arc::new(AtomicBool::new(false));
 

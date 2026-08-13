@@ -92,7 +92,7 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src/features/home/ui/HomeView.tsx` | Mission Inbox workbench deep-link via `getMissionInboxEventTarget` (#186) | do not navigate on unverified `row.channelId` |
 | `desktop/src/features/home/ui/InboxListPane.tsx` | `onOpenMissionWorkbench` pass-through (#186) | one prop; hammer lives in `MissionInboxSections` |
 | `desktop/src/features/home/ui/MissionInboxSections.tsx` | workbench hammer distinct from channel door (#186) | `getMissionInboxEventTarget` then `goWorkbench` — do not reuse `openMissionRow` |
-| `desktop/src-tauri/src/lib.rs` | #196 Tool Pane: `start_background` + `invoke::with_handlers` (handler table extracted so this file stays ≤1000) | keep `manage(ResourceGovernorHandle)` + `start_background`; do not inline the command list |
+| `desktop/src-tauri/src/lib.rs` | #196 Tool Pane: `start_background` + `invoke::desktop_invoke_handler!()` (command table extracted so this file stays ≤1000; macro expands at crate root for Tauri `__cmd__*` macros) | keep `manage(ResourceGovernorHandle)` + `start_background`; do not move `generate_handler!` into a submodule |
 | `desktop/src-tauri/src/commands/mod.rs` | #196 `canvas_tooling` module | retain `mod` + `pub use`; commands live in the Crew file |
 | `desktop/src-tauri/src/commands/canvas.rs` | #196 `pub(crate)` on `fenced_crew_block` / `ensure_canvas_author` | visibility only; do not move YAML parse here |
 | `desktop/src-tauri/src/commands/channels.rs` | #196 archive=erase / delete=`simctl delete` via governor | keep the two `try_state` hooks next to existing channel mutations |

@@ -80,7 +80,7 @@ fn cap_proposes_idle_victim_not_mirror() {
         .boot(chan_c, Some("C"), None, None, &simctl)
         .expect_err("cap");
     assert!(err.contains("cap"));
-    let conflict = g.cap_conflict.expect("conflict");
+    let conflict = g.cap_conflict.clone().expect("conflict");
     assert_eq!(conflict.victim_channel_id, chan_b());
     assert_ne!(conflict.victim_channel_id, chan_a());
     g.keep_sim(chan_b()).expect("keep B");
