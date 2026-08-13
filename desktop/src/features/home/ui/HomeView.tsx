@@ -9,10 +9,8 @@ import { RightAuxiliaryPane } from "@/features/channels/ui/RightAuxiliaryPane";
 import { ChannelManagementSheet } from "@/features/channels/ui/ChannelManagementSheet";
 import {
   type InboxFilter,
-  type InboxReply,
   buildInboxItems,
   findInboxItemByEventId,
-  formatInboxFullTimestamp,
   getInboxItemConversationId,
 } from "@/features/home/lib/inbox";
 import { useInboxSelectionAnchor } from "@/features/home/useInboxSelectionAnchor";
@@ -27,15 +25,14 @@ import { useHomeInboxReadState } from "@/features/home/useHomeInboxReadState";
 import { useHomeInboxAutoSelection } from "@/features/home/useHomeInboxAutoSelection";
 import { useHomeInboxContextMessages } from "@/features/home/useHomeInboxContextMessages";
 import { useHomePersonalInbox } from "@/features/home/useHomePersonalInbox";
-import type { MissionInboxRow } from "@/features/home/lib/missionInbox";
 import { useVerifiedMissionSelection } from "@/features/home/useVerifiedMissionSelection";
 import { useMissionInboxSections } from "@/features/home/useMissionInboxSections";
+import { useHomeInboxSendReply } from "@/features/home/useHomeInboxSendReply";
+import { useHomeMissionInboxListActions } from "@/features/home/useHomeMissionInboxListActions";
+import { useHomeViewChannelAuxiliary } from "@/features/home/useHomeViewChannelAuxiliary";
+import { useHomeViewProfilePanelSearch } from "@/features/home/useHomeViewProfilePanelSearch";
 import { useInboxThreadContext } from "@/features/home/useInboxThreadContext";
-import {
-  type ProfilePanelTab,
-  type ProfilePanelView,
-  UserProfilePanel,
-} from "@/features/profile/ui/UserProfilePanel";
+import { UserProfilePanel } from "@/features/profile/ui/UserProfilePanel";
 import {
   profilePanelTabFromSearch,
   profilePanelViewFromSearch,
@@ -55,14 +52,10 @@ import {
   useToggleReactionMutation,
 } from "@/features/messages/hooks";
 import { collectMessageMentionPubkeys } from "@/features/messages/lib/formatTimelineMessages";
-import { formatTime } from "@/features/messages/lib/dateFormatters";
-import { splitOutgoingTags } from "@/features/messages/lib/imetaMediaMarkdown";
 import { getThreadReference } from "@/features/messages/lib/threading";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { useRelaySelfQuery } from "@/features/moderation/hooks";
-import { resolveUserLabel } from "@/features/profile/lib/identity";
 import { useRemindLater } from "@/features/reminders/ui/RemindMeLaterProvider";
-import { sendChannelMessage } from "@/shared/api/tauri";
 import type { HomeFeedResponse } from "@/shared/api/types";
 import { KIND_REACTION } from "@/shared/constants/kinds";
 import { topChromeInset } from "@/shared/layout/chromeLayout";
@@ -74,6 +67,7 @@ import { AUXILIARY_PANEL_SINGLE_COLUMN_BREAKPOINT_PX } from "@/shared/layout/Aux
 import { useHistorySearchState } from "@/shared/hooks/useHistorySearchState";
 import { ProfilePanelProvider } from "@/shared/context/ProfilePanelContext";
 import { Button } from "@/shared/ui/button";
+import { HomeMembersSidebarOverlay } from "./HomeMembersSidebarOverlay";
 
 const INBOX_SEARCH_KEYS = [
   "item",
@@ -171,9 +165,6 @@ export function HomeView({
     applyInboxSearchPatch,
     onOpenContext,
   );
-  const [managedChannelId, setManagedChannelId] = React.useState<string | null>(
-    null,
-  );
   const { goChannel } = useAppNavigation();
   const openDmMutation = useOpenDmMutation();
   const openDm = openDmMutation.mutateAsync;
@@ -185,43 +176,6 @@ export function HomeView({
     },
     [applyInboxSearchPatch, clearVerifiedTarget],
   );
-  const handleOpenProfilePanel = React.useCallback(
-    (pubkey: string) => {
-      clearVerifiedTarget();
-      setManagedChannelId(null);
-      applyInboxSearchPatch({
-        profile: pubkey,
-        profileTab: null,
-        profileView: null,
-      });
-    },
-    [applyInboxSearchPatch, clearVerifiedTarget],
-  );
-  const handleCloseProfilePanel = React.useCallback(() => {
-    clearVerifiedTarget();
-    applyInboxSearchPatch({
-      profile: null,
-      profileTab: null,
-      profileView: null,
-    });
-  }, [applyInboxSearchPatch, clearVerifiedTarget]);
-  const handleProfilePanelViewChange = React.useCallback(
-    (view: ProfilePanelView, options?: { replace?: boolean }) =>
-      applyInboxSearchPatch(
-        { profileView: view === "summary" ? null : view },
-        options,
-      ),
-    [applyInboxSearchPatch],
-  );
-  const handleProfilePanelTabChange = React.useCallback(
-    (tab: ProfilePanelTab, options?: { replace?: boolean }) =>
-      applyInboxSearchPatch(
-        { profileTab: tab === "info" ? null : tab },
-        options,
-      ),
-    [applyInboxSearchPatch],
-  );
-  const [isSendingReply, setIsSendingReply] = React.useState(false);
   const handleOpenDm = React.useCallback(
     async (pubkeys: string[]) => {
       clearVerifiedTarget();
@@ -231,9 +185,6 @@ export function HomeView({
     [clearVerifiedTarget, goChannel, openDm],
   );
   const { activeReminderEventIds, openReminder } = useRemindLater();
-  const [localRepliesByItemId, setLocalRepliesByItemId] = React.useState<
-    Record<string, InboxReply[]>
-  >({});
   const {
     canReset: canResetThreadPanelWidth,
     onResetWidth: handleThreadPanelWidthReset,
@@ -277,6 +228,26 @@ export function HomeView({
       : null;
   const channelsQuery = useChannelsQuery();
   const channels = channelsQuery.data;
+  const {
+    handleCloseChannelManagement,
+    handleCloseMembers,
+    handleManageChannel,
+    handleOpenMembers,
+    isChannelManagementOpen,
+    managedChannel,
+    membersChannel,
+    setManagedChannelId,
+  } = useHomeViewChannelAuxiliary(channels);
+  const {
+    handleCloseProfilePanel,
+    handleOpenProfilePanel,
+    handleProfilePanelTabChange,
+    handleProfilePanelViewChange,
+  } = useHomeViewProfilePanelSearch(
+    applyInboxSearchPatch,
+    clearVerifiedTarget,
+    setManagedChannelId,
+  );
   const selectedChannelIdCandidate = React.useMemo(() => {
     return (
       activeVerifiedMissionTarget?.channelId ??
@@ -291,11 +262,6 @@ export function HomeView({
       null
     );
   }, [channels, selectedChannelIdCandidate]);
-  const managedChannel = React.useMemo(() => {
-    if (!managedChannelId || !channels) return null;
-    return channels.find((channel) => channel.id === managedChannelId) ?? null;
-  }, [channels, managedChannelId]);
-  const isChannelManagementOpen = managedChannel !== null;
   const hasAuxiliaryPane =
     isChannelManagementOpen || profilePanelPubkey !== null;
   const isSinglePanelAuxiliaryView =
@@ -483,13 +449,20 @@ export function HomeView({
     selectedItem,
     structuralEvents: threadContext.structuralEvents,
   });
-  const selectedItemReplies = React.useMemo<InboxReply[]>(() => {
-    if (!selectedItem) return [];
-    const localReplies =
-      localRepliesByItemId[selectedItem.conversationId] ?? [];
-    const contextIds = new Set(contextMessages.map((message) => message.id));
-    return localReplies.filter((reply) => !contextIds.has(reply.id));
-  }, [contextMessages, localRepliesByItemId, selectedItem]);
+  const contextMessageIds = React.useMemo(
+    () => new Set(contextMessages.map((message) => message.id)),
+    [contextMessages],
+  );
+  const { handleSelectMission, handleUnreadOnlyChange } =
+    useHomeMissionInboxListActions({
+      clearVerifiedTarget,
+      handleMissionSelect,
+      markItemRead,
+      setSelectedDraftKey,
+      setSelectedReminderId,
+      setUnreadBoundary,
+      setUnreadOnly,
+    });
   useHomeInboxAutoSelection({
     coldResolutionPending,
     filteredItems,
@@ -504,11 +477,6 @@ export function HomeView({
     setAutoSelectedEventId,
     urlSelectedItemId,
   });
-
-  React.useEffect(() => {
-    void selectedConversationId;
-    setIsSendingReply(false);
-  }, [selectedConversationId]);
 
   const handleFilterChange = React.useCallback(
     (nextFilter: InboxFilter) => {
@@ -566,6 +534,17 @@ export function HomeView({
       currentPubkey,
       availableChannelIds,
     );
+  const { handleSendReply, isSendingReply, selectedItemReplies } =
+    useHomeInboxSendReply({
+      activeVerifiedMissionTarget,
+      canReply,
+      contextMessageIds,
+      currentPubkey,
+      feedProfiles,
+      onRefresh,
+      selectedConversationId,
+      selectedItem,
+    });
   const inboxEdit = useHomeInboxEdit({
     selectedChannel,
     selectedItem,
@@ -735,18 +714,8 @@ export function HomeView({
               missionSections={missionSections}
               missionSelectedConversationId={selectedConversationId}
               onOpenMissionChannel={openMissionRow}
-              onSelectMission={(row: MissionInboxRow) => {
-                setUnreadBoundary(null);
-                setSelectedDraftKey(null);
-                setSelectedReminderId(null);
-                void handleMissionSelect(row).then((target) => {
-                  if (target) markItemRead(target.messageId);
-                });
-              }}
-              onUnreadOnlyChange={(nextUnreadOnly) => {
-                clearVerifiedTarget();
-                setUnreadOnly(nextUnreadOnly);
-              }}
+              onSelectMission={handleSelectMission}
+              onUnreadOnlyChange={handleUnreadOnlyChange}
               reminderPubkey={currentPubkey}
               reminders={pendingReminders}
               selectedConversationId={selectedConversationId}
@@ -817,8 +786,9 @@ export function HomeView({
               onDelete={inboxEdit.onDelete}
               onManageChannel={(channelId) => {
                 handleCloseProfilePanel();
-                setManagedChannelId(
-                  activeVerifiedMissionTarget?.channelId ?? channelId,
+                handleManageChannel(
+                  channelId,
+                  activeVerifiedMissionTarget?.channelId,
                 );
               }}
               onEditSave={inboxEdit.editMessage}
@@ -834,76 +804,7 @@ export function HomeView({
                 }
                 onOpenContext(channelId, messageId, threadRootId);
               }}
-              onSendReply={async ({
-                content,
-                mediaTags,
-                mentionPubkeys,
-                parentEventId,
-              }) => {
-                const channelId =
-                  activeVerifiedMissionTarget?.channelId ??
-                  selectedItem?.item.channelId;
-                if (!selectedItem || !channelId || !canReply) {
-                  throw new Error("Replies are not available for this item.");
-                }
-
-                const itemToReply = selectedItem;
-                setIsSendingReply(true);
-                try {
-                  const {
-                    mediaTags: imetaTags,
-                    emojiTags,
-                    mentionTags,
-                  } = splitOutgoingTags(mediaTags);
-                  const result = await sendChannelMessage(
-                    channelId,
-                    content,
-                    parentEventId,
-                    imetaTags,
-                    mentionPubkeys,
-                    undefined,
-                    emojiTags,
-                    mentionTags,
-                  );
-                  const authorPubkey = currentPubkey ?? itemToReply.item.pubkey;
-                  const reply: InboxReply = {
-                    authorLabel: currentPubkey
-                      ? resolveUserLabel({
-                          currentPubkey,
-                          profiles: feedProfiles,
-                          pubkey: authorPubkey,
-                        })
-                      : "You",
-                    authorPubkey,
-                    avatarUrl:
-                      currentPubkey && feedProfiles
-                        ? (feedProfiles[currentPubkey.trim().toLowerCase()]
-                            ?.avatarUrl ?? null)
-                        : null,
-                    content,
-                    createdAt: result.createdAt,
-                    depth: result.depth,
-                    fullTimestampLabel: formatInboxFullTimestamp(
-                      result.createdAt,
-                    ),
-                    id: result.eventId,
-                    parentId: result.parentEventId,
-                    rootId: result.rootEventId,
-                    tags: [...imetaTags, ...emojiTags, ...mentionTags],
-                    timeLabel: formatTime(result.createdAt),
-                  };
-                  setLocalRepliesByItemId((current) => ({
-                    ...current,
-                    [itemToReply.conversationId]: [
-                      ...(current[itemToReply.conversationId] ?? []),
-                      reply,
-                    ],
-                  }));
-                  onRefresh();
-                } finally {
-                  setIsSendingReply(false);
-                }
-              }}
+              onSendReply={handleSendReply}
               onToggleReaction={
                 canReact
                   ? async (message, emoji, remove) => {
@@ -983,9 +884,10 @@ export function HomeView({
                 channel={managedChannel}
                 currentPubkey={currentPubkey}
                 layout="split"
+                onOpenMembers={handleOpenMembers}
                 onOpenChange={(nextOpen) => {
                   if (!nextOpen) {
-                    setManagedChannelId(null);
+                    handleCloseChannelManagement();
                   }
                 }}
                 open={true}
@@ -994,6 +896,11 @@ export function HomeView({
           ) : null}
         </div>
       </div>
+      <HomeMembersSidebarOverlay
+        channel={membersChannel}
+        currentPubkey={currentPubkey}
+        onClose={handleCloseMembers}
+      />
     </ProfilePanelProvider>
   );
 }

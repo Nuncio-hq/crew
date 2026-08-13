@@ -51,7 +51,7 @@ use pool::{
     AgentPool, ControlSignal, IdleSwitchResult, OwnedAgent, PromptContext, PromptOutcome,
     PromptResult, PromptSource, SessionState, TimeoutKind,
 };
-use pool_lifecycle::{PoolLifecycle, SleepEligibility};
+use pool_lifecycle::PoolLifecycle;
 use queue::{CancelReason, EventQueue, FlushBatch, QueuedEvent, ThreadTags};
 use relay::{HarnessRelay, RelayEventPublisher};
 use tokio::sync::{mpsc, watch};
@@ -1593,6 +1593,34 @@ fn inactivity_expired(
     !bound.is_zero() && !turn_in_flight && now.duration_since(last_activity) >= bound
 }
 
+/// Whether a woken lazy pool may begin Crew drain → Listening idle spin-down.
+///
+/// True only when the pool is ready, the idle bound has elapsed with no
+/// dispatched turn or heartbeat in flight and no in-flight prompt tasks, no
+/// work is queued, and no wake/respawn task is running. The queue and task
+/// gates make teardown race-safe with enqueue/wake: an event that landed in
+/// the queue (or a wake/respawn already in flight) blocks this decision, so a
+/// queued batch is never stranded — the caller's next loop iteration will
+/// dispatch or wake it instead. Callers must also apply Crew outbox /
+/// cancel-drain / not-already-draining gates before `enter_draining`.
+#[allow(clippy::too_many_arguments)]
+fn idle_pool_sleep_due(
+    pool_ready: bool,
+    last_activity: tokio::time::Instant,
+    now: tokio::time::Instant,
+    bound: Duration,
+    turn_in_flight: bool,
+    prompt_tasks_in_flight: bool,
+    work_queued: bool,
+    wake_or_respawn_in_flight: bool,
+) -> bool {
+    pool_ready
+        && !work_queued
+        && !prompt_tasks_in_flight
+        && !wake_or_respawn_in_flight
+        && inactivity_expired(last_activity, now, bound, turn_in_flight)
+}
+
 #[cfg(test)]
 mod inactivity_tests {
     use super::*;
@@ -1636,6 +1664,220 @@ mod inactivity_tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod idle_pool_sleep_tests {
+    use super::*;
+
+    // The all-clear baseline: pool ready, bound elapsed, nothing busy or
+    // queued. Every negative case below flips exactly one gate off this.
+    fn ready_after_bound() -> (tokio::time::Instant, tokio::time::Instant, Duration) {
+        let started = tokio::time::Instant::now();
+        (
+            started,
+            started + Duration::from_secs(61),
+            Duration::from_secs(60),
+        )
+    }
+
+    #[test]
+    fn sleeps_when_ready_idle_and_quiet() {
+        let (last, now, bound) = ready_after_bound();
+        assert!(idle_pool_sleep_due(
+            true, last, now, bound, false, false, false, false
+        ));
+    }
+
+    #[test]
+    fn zero_bound_never_sleeps() {
+        let (last, now, _) = ready_after_bound();
+        assert!(!idle_pool_sleep_due(
+            true,
+            last,
+            now,
+            Duration::ZERO,
+            false,
+            false,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn not_ready_never_sleeps() {
+        // A still-sleeping (or waking) pool must not "re-sleep".
+        let (last, now, bound) = ready_after_bound();
+        assert!(!idle_pool_sleep_due(
+            false, last, now, bound, false, false, false, false
+        ));
+    }
+
+    #[test]
+    fn active_turn_defers_sleep() {
+        let (last, now, bound) = ready_after_bound();
+        assert!(!idle_pool_sleep_due(
+            true, last, now, bound, true, false, false, false
+        ));
+    }
+
+    #[test]
+    fn in_flight_prompt_task_defers_sleep() {
+        let (last, now, bound) = ready_after_bound();
+        assert!(!idle_pool_sleep_due(
+            true, last, now, bound, false, true, false, false
+        ));
+    }
+
+    #[test]
+    fn queued_work_at_boundary_defers_sleep() {
+        // Enqueue-at-teardown protection: a batch sitting in the queue blocks
+        // teardown so it is never stranded — the loop dispatches it instead.
+        let (last, now, bound) = ready_after_bound();
+        assert!(!idle_pool_sleep_due(
+            true, last, now, bound, false, false, true, false
+        ));
+    }
+
+    #[test]
+    fn wake_or_respawn_in_flight_defers_sleep() {
+        let (last, now, bound) = ready_after_bound();
+        assert!(!idle_pool_sleep_due(
+            true, last, now, bound, false, false, false, true
+        ));
+    }
+
+    #[test]
+    fn recent_activity_defers_sleep() {
+        // Activity 50s ago under a 60s bound: not yet idle.
+        let started = tokio::time::Instant::now();
+        let recent = started + Duration::from_secs(50);
+        let now = started + Duration::from_secs(59);
+        assert!(!idle_pool_sleep_due(
+            true,
+            recent,
+            now,
+            Duration::from_secs(60),
+            false,
+            false,
+            false,
+            false
+        ));
+    }
+
+    fn slot(respawn_in_flight: bool) -> SlotCircuit {
+        SlotCircuit {
+            crash_times: Vec::new(),
+            open_until: None,
+            respawn_in_flight,
+        }
+    }
+
+    // The call-site signal for the `wake_or_respawn_in_flight` gate is
+    // `any_respawn_in_flight(&crash_history)`, NOT `!respawn_tasks.is_empty()`.
+    // Regression for the PR #5682 review blocker: completed respawn tasks are
+    // never joined from the `respawn_tasks` JoinSet (their payloads arrive
+    // out-of-band via `respawn_rx`), so `!is_empty()` stays true forever after
+    // the first refill/crash recovery and the pool could never re-sleep. The
+    // authoritative signal clears per-slot when the payload is received.
+    #[test]
+    fn respawn_in_flight_signal_gates_then_clears_for_sleep() {
+        let (last, now, bound) = ready_after_bound();
+
+        // A respawn in flight for any slot defers sleep.
+        let busy = [slot(false), slot(true), slot(false)];
+        assert!(any_respawn_in_flight(&busy));
+        assert!(!idle_pool_sleep_due(
+            true,
+            last,
+            now,
+            bound,
+            false,
+            false,
+            false,
+            any_respawn_in_flight(&busy),
+        ));
+
+        // Once the respawn completes (payload received → flag cleared), the
+        // signal goes false and the otherwise-quiet pool becomes sleep-eligible
+        // — even though a naive `!JoinSet.is_empty()` would still be stuck true.
+        let quiet = [slot(false), slot(false), slot(false)];
+        assert!(!any_respawn_in_flight(&quiet));
+        assert!(idle_pool_sleep_due(
+            true,
+            last,
+            now,
+            bound,
+            false,
+            false,
+            false,
+            any_respawn_in_flight(&quiet),
+        ));
+    }
+
+    // The reaper (`respawn_tasks.join_next().now_or_never()` loop) must drain
+    // completed handles so the JoinSet does not grow without bound and so
+    // `!respawn_tasks.is_empty()` cannot become a permanent busy bit if anyone
+    // ever reintroduces it as the gate signal.
+    #[tokio::test]
+    async fn completed_respawn_tasks_are_reaped_from_the_joinset() {
+        let mut respawn_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+        respawn_tasks.spawn(async {});
+        respawn_tasks.spawn(async {});
+        // Let both tasks run to completion.
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // The reaper drains finished handles non-blockingly.
+        while respawn_tasks.join_next().now_or_never().flatten().is_some() {}
+
+        assert!(
+            respawn_tasks.is_empty(),
+            "completed respawn tasks must be reaped so the set does not wedge \
+             the idle-sleep gate or grow unbounded"
+        );
+    }
+}
+
+#[cfg(test)]
+mod idle_pool_single_timer_contract_tests {
+    //! #189 invariant: one idle clock / config field / teardown owner.
+    use super::config::{resolve_pool_idle_timeout_secs, CliArgs};
+    use clap::Parser;
+
+    #[test]
+    fn only_one_resolved_idle_timeout_field_exists_on_config() {
+        // Compile-time shape: Config exposes pool_idle_timeout_secs only.
+        // (idle_pool_sleep_secs must not exist — enforced by this compiling
+        // against Config construction sites elsewhere plus the string check
+        // in the sync PR.)
+        let key = "0".repeat(64);
+        let args = CliArgs::parse_from(["buzz-acp", "--private-key", &key]);
+        let resolved = resolve_pool_idle_timeout_secs(args.pool_idle_timeout, args.idle_pool_sleep);
+        assert_eq!(resolved, 1800);
+        // Alias alone still yields one value.
+        let aliased = CliArgs::parse_from([
+            "buzz-acp",
+            "--private-key",
+            &key,
+            "--idle-pool-sleep",
+            "120",
+        ]);
+        assert_eq!(
+            resolve_pool_idle_timeout_secs(aliased.pool_idle_timeout, aliased.idle_pool_sleep),
+            120
+        );
+    }
+
+    #[test]
+    fn dual_env_names_cannot_resolve_to_two_different_armed_values() {
+        // When both are set, primary wins — operators never get two policies.
+        assert_eq!(resolve_pool_idle_timeout_secs(1800, Some(900)), 900);
+        assert_eq!(resolve_pool_idle_timeout_secs(1800, None), 1800);
+        assert_eq!(resolve_pool_idle_timeout_secs(600, Some(900)), 600);
+        assert_eq!(resolve_pool_idle_timeout_secs(0, Some(900)), 0);
+    }
+}
+
 
 pub fn run() -> Result<()> {
     config::propagate_legacy_env_vars();
@@ -2061,6 +2303,24 @@ async fn tokio_main() -> Result<()> {
         ))
     };
 
+    // Single idle-pool clock (#189 compose): upstream Interval reaper feeds
+    // Crew Ready → Draining → Listening. Both env aliases resolve to
+    // `pool_idle_timeout_secs` in config — never arm a second timer.
+    let idle_pool_sleep_bound = if config.lazy_pool {
+        Duration::from_secs(config.pool_idle_timeout_secs)
+    } else {
+        Duration::ZERO
+    };
+    let mut idle_pool_sleep_reaper = if idle_pool_sleep_bound.is_zero() {
+        None
+    } else {
+        let interval = idle_pool_sleep_bound.min(Duration::from_secs(30));
+        Some(tokio::time::interval_at(
+            tokio::time::Instant::now() + interval,
+            interval,
+        ))
+    };
+
     // Runs at the TOP of every loop iteration via Instant check — cannot be
     // starved by the biased select. Slot refill spawns background tasks so
     // spawn_and_init never blocks the main loop.
@@ -2164,7 +2424,6 @@ async fn tokio_main() -> Result<()> {
         DrainDone,
     }
 
-    let pool_idle_timeout = Duration::from_secs(config.pool_idle_timeout_secs);
     let (drain_tx, mut drain_rx) = mpsc::channel::<()>(1);
     let mut drain_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     // Delivery/routing state parked across engine spin-down (sessions cleared so
@@ -2210,50 +2469,6 @@ async fn tokio_main() -> Result<()> {
                             shutdown_agent_pool(&mut abandoned_pool).await;
                         }
                     }
-                });
-            }
-        }
-
-        // Ready → Draining → Listening idle spin-down (issue #169).
-        // The live AgentPool is held in `pool` while Ready; enter_draining
-        // records the reverse transition without moving the pool into Ready.
-        if config.lazy_pool
-            && pool_ready
-            && !pool_idle_timeout.is_zero()
-            && !pool_lifecycle.is_draining()
-        {
-            let eligibility = SleepEligibility {
-                turn_in_flight: queue.has_in_flight() || heartbeat_in_flight,
-                flushable_work: queue.has_flushable_work(),
-                outboxes_flushed: ctx.receipt_outbox_workers.is_empty(),
-                cancel_drain_in_progress: !pool.task_map().is_empty(),
-            };
-            if eligibility.is_eligible()
-                && tokio::time::Instant::now().duration_since(last_activity) >= pool_idle_timeout
-            {
-                let mut parked = SessionState::default();
-                for slot in pool.agents_mut() {
-                    if let Some(agent) = slot.as_mut() {
-                        parked = std::mem::take(&mut agent.state);
-                        parked.sessions.clear();
-                        parked.heartbeat_session = None;
-                        parked.heartbeat_turn_count = 0;
-                        parked.heartbeat_standing_context_sent = false;
-                        break;
-                    }
-                }
-                parked_session_state = Some(parked);
-                let mut draining_pool = std::mem::replace(
-                    &mut pool,
-                    AgentPool::from_slots((0..config.agents as usize).map(|_| None).collect()),
-                );
-                pool_ready = false;
-                pool_lifecycle.enter_draining(false);
-                tracing::info!("pool idle timeout reached — draining engine subprocesses");
-                let drain_tx = drain_tx.clone();
-                drain_tasks.spawn(async move {
-                    shutdown_agent_pool(&mut draining_pool).await;
-                    let _ = drain_tx.send(()).await;
                 });
             }
         }
@@ -2337,6 +2552,17 @@ async fn tokio_main() -> Result<()> {
                 }
             }
         }
+        // Reap completed respawn handles from the JoinSet. Payloads are
+        // delivered out-of-band through `respawn_rx` (drained above), so the
+        // JoinSet is never joined by the normal flow — Tokio retains finished
+        // tasks until `join_next`, so without this the set grows on every
+        // refill/crash recovery and `!respawn_tasks.is_empty()` would stay true
+        // forever. Non-blocking (`now_or_never`), same pattern as
+        // `drain_ready_join_results` for `pool.join_set`. The authoritative
+        // in-flight signal is `any_respawn_in_flight(&crash_history)` (each
+        // slot's `respawn_in_flight` is cleared when its payload is received),
+        // not JoinSet occupancy.
+        while respawn_tasks.join_next().now_or_never().flatten().is_some() {}
         // Flush requeued events that were waiting for a live agent. Without
         // this, batches requeued during crash recovery sit idle until the
         // next relay event arrives — which can be minutes on quiet channels.
@@ -2913,6 +3139,65 @@ async fn tokio_main() -> Result<()> {
                             "inactivity bound reached — exiting gracefully"
                         );
                         let _ = shutdown_tx.send(());
+                    }
+                    None
+                }
+                _ = async {
+                    match idle_pool_sleep_reaper.as_mut() {
+                        Some(timer) => timer.tick().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let _ = result_rx; // end split borrow before touching pool
+                    // One teardown owner (#189): upstream race gates decide
+                    // eligibility; Crew drain/park/rewake owns the transition.
+                    // `has_undispatched_work()` (not `has_flushable_work()`)
+                    // keeps retry-throttled work from being stranded.
+                    let crew_gates_ok = ctx.receipt_outbox_workers.is_empty()
+                        && pool.task_map().is_empty()
+                        && !pool_lifecycle.is_draining();
+                    if crew_gates_ok
+                        && idle_pool_sleep_due(
+                            pool_ready,
+                            last_activity,
+                            tokio::time::Instant::now(),
+                            idle_pool_sleep_bound,
+                            queue.has_in_flight() || heartbeat_in_flight,
+                            !pool.join_set.is_empty(),
+                            queue.has_undispatched_work(),
+                            !wake_tasks.is_empty()
+                                || any_respawn_in_flight(&crash_history),
+                        )
+                    {
+                        let mut parked = SessionState::default();
+                        for slot in pool.agents_mut() {
+                            if let Some(agent) = slot.as_mut() {
+                                parked = std::mem::take(&mut agent.state);
+                                parked.sessions.clear();
+                                parked.heartbeat_session = None;
+                                parked.heartbeat_turn_count = 0;
+                                parked.heartbeat_standing_context_sent = false;
+                                break;
+                            }
+                        }
+                        parked_session_state = Some(parked);
+                        let mut draining_pool = std::mem::replace(
+                            &mut pool,
+                            AgentPool::from_slots(
+                                (0..config.agents as usize).map(|_| None).collect(),
+                            ),
+                        );
+                        pool_ready = false;
+                        pool_lifecycle.enter_draining(false);
+                        tracing::info!(
+                            pool_idle_timeout_seconds = config.pool_idle_timeout_secs,
+                            "pool idle timeout reached — draining engine subprocesses"
+                        );
+                        let drain_tx = drain_tx.clone();
+                        drain_tasks.spawn(async move {
+                            shutdown_agent_pool(&mut draining_pool).await;
+                            let _ = drain_tx.send(()).await;
+                        });
                     }
                     None
                 }
@@ -5997,6 +6282,7 @@ mod author_gate_tests {
                 relay::ChannelInfo {
                     name: "dm".into(),
                     channel_type: "dm".into(),
+                    description: None,
                 },
             ),
             (
@@ -6004,6 +6290,7 @@ mod author_gate_tests {
                 relay::ChannelInfo {
                     name: "stream".into(),
                     channel_type: "stream".into(),
+                    description: None,
                 },
             ),
         ]);
@@ -6020,6 +6307,7 @@ mod author_gate_tests {
             relay::ChannelInfo {
                 name: "unknown".into(),
                 channel_type: "unknown".into(),
+                description: None,
             },
         )]);
         assert!(

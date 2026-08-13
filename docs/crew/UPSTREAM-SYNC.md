@@ -36,16 +36,16 @@ The local upstream push URL is deliberately disabled. Never push to
 | File | Justification | Resolve hint |
 | --- | --- | --- |
 | `crates/buzz-acp/src/base_prompt.md` | office-level behavioral rule belongs in the office-level prompt | self-contained Markdown section — on conflict, keep it and re-place it after Communication Patterns |
-| `crates/buzz-acp/src/lib.rs` | machine-check the shared prompt contract; idle pool spin-down + wake restore (#169) | retain prompt assertions; keep drain/wake arms additive beside existing lazy-pool select loop |
+| `crates/buzz-acp/src/lib.rs` | machine-check the shared prompt contract; **one** idle reaper (#189 compose of #5682 + #169) feeding Ready → Draining → Listening | retain prompt assertions; keep a single `idle_pool_sleep_reaper` that calls `enter_draining` — never a second top-of-loop timer or sync teardown path |
 | `crates/buzz-acp/src/pool.rs` | resume-first session acquire + ledger declare-at-birth (#169); post-load lineage check + live rotation persist (#180) | keep resume/rebuild inside the channel session block; do not invent parallel session maps |
 | `crates/buzz-acp/src/pool_lifecycle.rs` | Ready → Draining → Listening reverse transition (#169) | merge drain helpers; preserve forward wake/retry contract tests |
 | `crates/buzz-acp/src/session_ledger.rs` | Crew-landed durable session ledger (#169) + rotation/lineage (#180) + owner `compaction_count` / turn net (#173; upstream-candidacy) | additive file — prefer keeping intact on sync |
 | `crates/buzz-acp/src/compaction_signal.rs` | Crew-landed honest CompactionSignal adapters + aging projection (#173) | additive file — prefer keeping intact on sync |
 | `crates/buzz-acp/src/guided_handover.rs` | Crew-landed owner guided/blind handover controls (#173) | additive file — prefer keeping intact on sync |
-| `crates/buzz-acp/src/acp.rs` | ACP v1 `session/load` client (#169); Hermes/Codex rotation signal capture (#180); `_PostCompact` hook count (#173) | retain beside `session_new_full`; capability-gated by callers |
-| `crates/buzz-acp/src/config.rs` | `--pool-idle-timeout` / `BUZZ_ACP_POOL_IDLE_TIMEOUT` (#169) | retain clap/env field + default 1800; 0 disables |
-| `desktop/src-tauri/src/managed_agents/runtime.rs` | desktop passes pool idle timeout for local pairs (#169) | keep env injection next to `BUZZ_ACP_LAZY_POOL` |
-| `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs` | reserve pool idle timeout from persona/user override (#169) | keep key in the shared reserved list |
+| `crates/buzz-acp/src/acp.rs` | ACP v1 `session/load` client (#169); Hermes/Codex rotation signal capture (#180); `_PostCompact` hook count (#173); upstream standard usage tracker (#4950) | retain Crew elicitation/rotation/hooks **and** upstream `standard_usage` field sets; do not fold usage into compaction |
+| `crates/buzz-acp/src/config.rs` | single idle policy: `--pool-idle-timeout` / `BUZZ_ACP_POOL_IDLE_TIMEOUT` default 1800; alias `--idle-pool-sleep` / `BUZZ_ACP_IDLE_POOL_SLEEP` (#189) | one resolved `pool_idle_timeout_secs`; aliases must not arm a second timer; primary wins when both set |
+| `desktop/src-tauri/src/managed_agents/runtime.rs` | desktop injects the same 1800s value for both idle env names on lazy pairs (#169/#189) | inject identical values next to `BUZZ_ACP_LAZY_POOL`; keep `apply_session_aging_env` + receipts |
+| `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs` | reserve both idle env names + handover/aging keys from persona/user override (#169/#189) | keep both idle keys in the reserved list; they alias one harness field |
 | `crates/buzz-cli/src/commands/messages.rs` | CLI contract tests pin the existing message-build seam | keep tests local to the command module; preserve upstream send behavior |
 | `crates/buzz-cli/src/lib.rs` | expose the Crew evidence flag on `messages send` | retain the additive clap field; preserve upstream command variants and help text |
 | `crates/buzz-cli/src/commands/mod.rs` | register the Crew-owned evidence kind module | retain the module declaration; do not move validation into upstream command code |
@@ -56,7 +56,8 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src/testing/e2eBridge.ts` | mock storage snapshot + reclaim (#174); `__BUZZ_E2E_SET_THREAD_GITHUB_BY_BRANCH__` (#175) | keep additive cases; default fixture is self-contained |
 | `desktop/src/features/settings/ui/SettingsPanels.tsx` | Settings → Storage section registration (#174) | keep `"storage"` arm + nav descriptor; card lives in Crew-owned feature module |
 | `desktop/src/features/settings/ui/SettingsView.tsx` | Personal nav entry for Storage (#174) | retain one-line `"storage"` nav add next to local-archive |
-| `desktop/src/app/useAppShellLifecycleEffects.ts` | app-scoped alive-interval heartbeat (#174) | keep one-line hook call; ledger logic stays in Crew-owned module |
+| `desktop/src/app/useAppShellLifecycleEffects.ts` | upstream foreground-ready scheduler (#5696) + #164 workspace snapshot refresh + #174 alive heartbeat | attach Crew hooks beside `useForegroundQueryRefresh`; do not turn app absence into observed idle |
+| `desktop/src/features/agents/observerRelayStore.ts` | upstream envelope batching (#5680) + Crew identity/session_aging/control_result | one `notifyListeners` per envelope; Crew variants live in `observerRelayStoreCrew.ts` under D-022 |
 | `desktop/src-tauri/src/commands/project_worktree_details.rs` | `branch_is_pushed` helper for Hibernate tier (#174) | retain pub(crate) helper beside ahead/behind; no mutation path changes |
 | `desktop/src-tauri/src/commands/mod.rs` / `lib.rs` | register #174 storage commands | retain module + invoke_handler entries only |
 | `desktop/src/features/messages/ui/MessageRow.tsx` | pass evidence-card review props through the existing default-body seam (987 lines) | retain the seven-line prop pass-through only; keep evidence logic out of this upstream-derived file |

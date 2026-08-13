@@ -1010,3 +1010,34 @@ primitives and without changing #72 refusal/lease/auth boundaries.
 
 Non-goals: branch deletion, object-store GC, #72 auth/lease changes, RAM
 lifecycle (#169).
+
+## D-052 — Compose upstream idle re-sleep onto Crew drain/resume (0.5.11 sync)
+
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Issue:** #189 (upstream sync `desktop-v0.5.11`; amends D-048 seam ownership)
+
+Buzz #5682 added `idle_pool_sleep_due` + an Interval reaper with stronger
+queue/wake/respawn race gates. A naive merge kept that reaper **and** Crew's
+Ready → Draining → Listening path as two independent timers — a failed spike.
+
+Compose rule for the post-sync seam:
+
+1. **One clock** — upstream's Interval reaper is the only idle timer.
+2. **One eligibility decision** — `idle_pool_sleep_due` (undispatched work,
+   prompt JoinSet, wake/respawn-in-flight) plus Crew outbox / cancel-drain /
+   not-already-draining gates at the call site.
+3. **One teardown owner** — the reaper calls `enter_draining` + async
+   `shutdown_agent_pool` (park + `DrainDone` + re-wake). The sync
+   "tear back to Listening" path is deleted.
+4. **One config value** — `pool_idle_timeout_secs` default **1800** (founder
+   30-minute policy; not upstream's desktop 900). `BUZZ_ACP_IDLE_POOL_SLEEP`
+   / `--idle-pool-sleep` alias the same field; they must not arm a second loop.
+5. **Resume-first wake** — durable ledger, capability-gated `session/load`,
+   stale-lineage refusal, and fail-closed rebuild remain Crew contracts
+   (D-048 / D-049); upstream has no equivalent.
+
+Community deletion (`buzz-deletion`, migrations 0029/0030) is taken from
+upstream as-is. Crew has no community-scoped Postgres tables to add to
+`EXPECTED_SCOPED_TABLES`; Crew durable session state is local filesystem /
+Nostr events, not a parallel deletion engine.

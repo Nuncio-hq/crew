@@ -1,5 +1,16 @@
 # Crew State
 
+## Issue #189 — upstream sync Buzz Desktop 0.5.10 → 0.5.11
+
+Pinned to `desktop-v0.5.11` / `248b9d1b7666aacbcb1485b76e81de30a271ba0e`.
+Idle sleep is one composed seam (D-052): upstream eligibility/race reaper
+feeds Crew Ready → Draining → Listening with resume-first `session/load`.
+Also adopted: standard ACP usage, channel description context, observer
+envelope batching, foreground-ready scheduler (+ #164/#174 hooks), profile
+component split (Hermes re-homed), timeline #5662 + #167, community deletion
+engine/migrations. See sync PR for the overlap verdict table.
+Last updated: 2026-08-13
+
 ## Issue #175 — evidence–CI cross-check badge
 
 Evidence cards compare machine-readable `test-run` / `diff-stat` claim lines
@@ -79,7 +90,8 @@ Implementation slices below remain the code truth for what is built today.
 - GitHub: `https://github.com/Nuncio-hq/crew`
 - Fork parent: `https://github.com/block/buzz`
 - Default branch: `main`
-- Baseline upstream commit: `63496cc1d4c6f1b7c613801bdcc694169dcf391a`
+- Baseline upstream commit: `248b9d1b7666aacbcb1485b76e81de30a271ba0e`
+  (`desktop-v0.5.11`; see [`upstream-buzz.json`](upstream-buzz.json))
 - Production code changes: merged through PR #1 and PR #2
 - Required merge gate: additive `NuncioCrew CI`, macOS Apple Silicon only;
   `NuncioCrew Gate` is enforced on `main`
@@ -147,7 +159,7 @@ Out of scope for this slice:
 - Identity store: existing system-Keychain service `buzz-desktop`.
 - Buzz and NuncioCrew must not run concurrently.
 - The build includes real release versions of all five agent sidecars.
-- Settings displays the pinned Buzz version `v0.5.10 · Local`; the
+- Settings displays the pinned Buzz version `v0.5.11 · Local`; the
   machine-readable source is [`upstream-buzz.json`](upstream-buzz.json).
 - Updater configuration and updater signing are disabled for this flavor.
 
@@ -171,8 +183,8 @@ Out of scope for this slice:
   manifests, public versioned assets before channel advance, updater key-ID
   match, and explicit entitlements verification.
 - Buzz source pin: [`upstream-buzz.json`](upstream-buzz.json), currently
-  `0.5.10` / `desktop-v0.5.10` at
-  `1fb49103002e898607a7f6fd554cb51e94d92e08`.
+  `0.5.11` / `desktop-v0.5.11` at
+  `248b9d1b7666aacbcb1485b76e81de30a271ba0e`.
 - The protected Environment, reviewer, nine encrypted release secrets, updater
   public variable, and Nuncio updater keypair are configured.
 - Signed dry run `30537460233` and publish run `30538712572` passed.

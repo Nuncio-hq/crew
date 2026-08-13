@@ -503,11 +503,29 @@ pub struct CliArgs {
     pub lazy_pool: bool,
 
     /// Spin down the engine pool after this many idle seconds while Ready.
-    /// Default 1800 (30 minutes). 0 disables idle spin-down (today's behavior).
+    /// Default 1800 (30 minutes). 0 disables idle spin-down.
     /// The harness stays connected (Listening); only the engine/MCP subprocesses
-    /// exit. See issue #169.
+    /// exit. Requires `--lazy-pool`. See issue #169 / upstream sync #189.
     #[arg(long, env = "BUZZ_ACP_POOL_IDLE_TIMEOUT", default_value_t = 1800)]
     pub pool_idle_timeout: u64,
+
+    /// Deprecated alias for [`Self::pool_idle_timeout`] / `BUZZ_ACP_POOL_IDLE_TIMEOUT`.
+    /// When set and the primary still has its default (1800), this value is used.
+    /// When both are set to different values, the primary wins. Never arms a
+    /// second timer — both names resolve to one `pool_idle_timeout_secs`.
+    #[arg(long, env = "BUZZ_ACP_IDLE_POOL_SLEEP")]
+    pub idle_pool_sleep: Option<u64>,
+}
+
+
+/// Resolve the single idle-pool timeout from primary + optional upstream alias.
+///
+/// Both env names map to one runtime field so they cannot arm independent timers.
+pub(crate) fn resolve_pool_idle_timeout_secs(primary: u64, alias: Option<u64>) -> u64 {
+    match alias {
+        Some(alias) if primary == 1800 => alias,
+        _ => primary,
+    }
 }
 
 /// Merged NIP-01 subscription filter for a single channel.
@@ -591,7 +609,10 @@ pub struct Config {
     pub exit_after_inactivity_secs: u64,
     /// Whether ACP/LLM subprocess initialization is deferred until accepted work arrives.
     pub lazy_pool: bool,
-    /// Seconds of Ready-state idle before engine spin-down. 0 = disabled.
+    /// Seconds of Ready-state idle before engine spin-down (drain → Listening).
+    /// 0 = disabled. Only meaningful when `lazy_pool` is true. Resolved from
+    /// `--pool-idle-timeout` / `BUZZ_ACP_POOL_IDLE_TIMEOUT` with optional
+    /// `--idle-pool-sleep` / `BUZZ_ACP_IDLE_POOL_SLEEP` alias (one timer).
     pub pool_idle_timeout_secs: u64,
     /// Agent owner pubkey (hex). Used for `--respond-to=owner-only` gate.
     /// Replaces the old REST-based owner lookup.
@@ -1145,7 +1166,10 @@ impl Config {
             relay_observer: args.relay_observer,
             exit_after_inactivity_secs: args.exit_after_inactivity,
             lazy_pool: args.lazy_pool,
-            pool_idle_timeout_secs: args.pool_idle_timeout,
+            pool_idle_timeout_secs: resolve_pool_idle_timeout_secs(
+                args.pool_idle_timeout,
+                args.idle_pool_sleep,
+            ),
             agent_owner: args.agent_owner.map(|s| s.trim().to_ascii_lowercase()),
             no_base_prompt: args.no_base_prompt,
             base_prompt_content,
@@ -2274,6 +2298,47 @@ channels = "ALL"
     fn lazy_pool_defaults_off() {
         let key = "0".repeat(64);
         assert!(!CliArgs::parse_from(["buzz-acp", "--private-key", &key]).lazy_pool);
+    }
+
+    #[test]
+    fn idle_pool_sleep_alias_resolves_to_same_timeout_field() {
+        let key = "0".repeat(64);
+        let default = CliArgs::parse_from(["buzz-acp", "--private-key", &key]);
+        assert_eq!(default.idle_pool_sleep, None);
+        assert_eq!(default.pool_idle_timeout, 1800);
+        assert_eq!(
+            resolve_pool_idle_timeout_secs(default.pool_idle_timeout, default.idle_pool_sleep),
+            1800
+        );
+
+        let aliased = CliArgs::parse_from([
+            "buzz-acp",
+            "--private-key",
+            &key,
+            "--idle-pool-sleep",
+            "300",
+        ]);
+        assert_eq!(aliased.idle_pool_sleep, Some(300));
+        assert_eq!(
+            resolve_pool_idle_timeout_secs(aliased.pool_idle_timeout, aliased.idle_pool_sleep),
+            300,
+            "alias fills in when primary is still the default"
+        );
+
+        let both = CliArgs::parse_from([
+            "buzz-acp",
+            "--private-key",
+            &key,
+            "--pool-idle-timeout",
+            "600",
+            "--idle-pool-sleep",
+            "300",
+        ]);
+        assert_eq!(
+            resolve_pool_idle_timeout_secs(both.pool_idle_timeout, both.idle_pool_sleep),
+            600,
+            "primary wins when both names are set"
+        );
     }
 
     #[test]
