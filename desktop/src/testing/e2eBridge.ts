@@ -1323,8 +1323,9 @@ declare global {
      * Extra project events appended to the mock store on first access.
      * Use to seed standalone repositories (kind 30617) or other project-scoped
      * events before a test interaction, without mutating the fixed seed data.
-     * Events must be complete RelayEvent shapes; id is a required field so that
-     * id-keyed queries (e.g. lost-ACK recovery) can match them.
+     * Events must be complete RelayEvent shapes: a 64-char `id` (id-keyed
+     * queries, e.g. lost-ACK recovery) and `sig` starting with `mocksig`
+     * (`isVerifiedRelayEvent` drops anything else in e2e mode).
      */
     __BUZZ_E2E_EXTRA_PROJECT_EVENTS__?: Array<{
       id: string;
@@ -1333,6 +1334,7 @@ declare global {
       created_at: number;
       content: string;
       tags: string[][];
+      sig: string;
     }>;
     /** Structured merge error returned by the mock native merge command. */
     __BUZZ_E2E_PROJECT_MERGE_ERROR__?: {
