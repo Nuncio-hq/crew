@@ -7,6 +7,7 @@ import { ACTIVITY_RENDER_CLASS_PRESENTERS } from "@/features/agents/ui/activityR
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { TimelineMessage } from "@/features/messages/types";
 import { cn } from "@/shared/lib/cn";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
   ChannelUserInputCard,
   MessageRow,
@@ -178,7 +179,7 @@ function WorkbenchTranscriptItem({
         >
           <TranscriptActivityItem
             agentAvatarUrl={profile?.avatarUrl ?? null}
-            agentName={profile?.displayName ?? row.agentPubkey.slice(0, 8)}
+            agentName={profile?.displayName ?? truncatePubkey(row.agentPubkey)}
             agentPubkey={row.agentPubkey}
             item={row.item}
             profiles={profiles}

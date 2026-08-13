@@ -1,6 +1,6 @@
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
-import { normalizePubkey } from "@/shared/lib/pubkey";
+import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import type { ThreadAgentRef } from "./workbenchComposerTarget";
 
 export function collectThreadAgents(args: {
@@ -41,7 +41,7 @@ export function collectThreadAgents(args: {
   }
 
   return ordered.map((pubkey) => ({
-    name: names.get(pubkey) ?? pubkey.slice(0, 8),
+    name: names.get(pubkey) ?? truncatePubkey(pubkey),
     pubkey,
   }));
 }
