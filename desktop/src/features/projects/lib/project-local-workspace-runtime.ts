@@ -1,4 +1,5 @@
 import { resolveProjectChannelAgentMessage } from "./project-channel-agent-context";
+import type { WorkspaceBindingChoice } from "@/features/messages/lib/workspaceBindingSpec";
 import {
   linkProjectLocalWorkspace,
   selectCurrentProjectAnnouncement,
@@ -69,6 +70,8 @@ export async function resolveCurrentProjectChannelAgentMessage(input: {
   channelId: string;
   content: string;
   explicitAgentPubkeys: string[];
+  binding?: WorkspaceBindingChoice;
+  defaultBranch?: string | null;
 }): Promise<string> {
   const identity = await getIdentity();
   return resolveProjectChannelAgentMessage(

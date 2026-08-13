@@ -26,6 +26,7 @@ import {
   type PendingNonMemberMentionSend,
   uniqueNormalizedPubkeys,
 } from "./useMentionSendFlow.helpers";
+import { useComposerWorkspaceBinding } from "./composerWorkspaceBinding";
 
 type UseMentionSendCompleteOptions = {
   channelIdRef: React.MutableRefObject<string | null>;
@@ -99,6 +100,7 @@ export function useMentionSendComplete({
   setPendingImeta,
   setSpoileredAttachmentUrls,
 }: UseMentionSendCompleteOptions) {
+  const workspaceBinding = useComposerWorkspaceBinding();
   return React.useCallback(
     async (
       draft: PendingNonMemberMentionSend,
@@ -289,6 +291,7 @@ export function useMentionSendComplete({
                 channelId: sendChannelId ?? draft.capturedChannelId ?? "",
                 content: finalContent,
                 explicitAgentPubkeys: effectiveExplicitAgentPubkeys,
+                binding: workspaceBinding,
               });
             } catch (error) {
               const message = `Could not resolve Project workspace: ${getErrorMessage(
@@ -418,6 +421,7 @@ export function useMentionSendComplete({
       setNonMemberPromptError,
       setPendingImeta,
       setSpoileredAttachmentUrls,
+      workspaceBinding,
     ],
   );
 }

@@ -5,6 +5,12 @@ import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
 import { ComposerDockBackdrop } from "@/features/messages/ui/ComposerDockBackdrop";
 import { ComposerUploadProgressOverlay } from "@/features/messages/ui/ComposerUploadProgressOverlay";
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
+import { ComposerWorkspaceBindingProvider } from "@/features/messages/ui/composerWorkspaceBinding";
+import { ComposerWorkspaceSelector } from "@/features/messages/ui/ComposerWorkspaceSelector";
+import {
+  DEFAULT_WORKSPACE_BINDING,
+  type WorkspaceBindingChoice,
+} from "@/features/messages/lib/workspaceBindingSpec";
 import { ComposerTimeoutBanner } from "@/features/moderation/ui/ComposerTimeoutBanner";
 import { useTimeoutState } from "@/features/moderation/lib/timeoutStore";
 import { isModerationDm } from "@/features/moderation/lib/moderationDm";
@@ -304,6 +310,15 @@ export const ChannelPane = React.memo(function ChannelPane({
 
     return pubkeys;
   }, [activityAgents, agentPubkeys, agentSessionAgents]);
+  const composerChannelId = activeChannel?.id ?? null;
+  const [workspaceBinding, setWorkspaceBinding] =
+    React.useState<WorkspaceBindingChoice>(DEFAULT_WORKSPACE_BINDING);
+  const [bindingChannelId, setBindingChannelId] =
+    React.useState(composerChannelId);
+  if (bindingChannelId !== composerChannelId) {
+    setBindingChannelId(composerChannelId);
+    setWorkspaceBinding(DEFAULT_WORKSPACE_BINDING);
+  }
   const handleSendMessage = React.useCallback(
     async (
       content: string,
@@ -698,48 +713,57 @@ export const ChannelPane = React.memo(function ChannelPane({
                     onDismiss={userInput.dismissResolved}
                   />
                 ) : null}
-                <MessageComposer
-                  channelId={activeChannel?.id ?? null}
-                  channelName={activeChannel?.name ?? "channel"}
-                  channelType={activeChannel?.channelType ?? null}
-                  containerClassName="px-5 pb-0"
-                  layoutMode="dock"
-                  disabled={isComposerDisabled}
-                  editTarget={mainEditTarget}
-                  autoSubmitDraftKey={autoSendDraftKey}
-                  onAutoSubmitComplete={handleAutoSubmitComplete}
-                  isSending={isSending}
-                  mediaController={mainComposerMedia}
-                  onDeferredEditPendingChange={setMainDeferredEditPending}
-                  onCancelEdit={onCancelEdit}
-                  onEditLastOwnMessage={handleEditLastOwnMainMessage}
-                  onEditSave={onEditSave}
-                  onPrepareSendChannel={
-                    activeChannel?.channelType === "dm"
-                      ? prepareDmSendChannel
-                      : undefined
-                  }
-                  onSend={handleSendMessage}
-                  profiles={profiles}
-                  showBackgroundUploadProgress={false}
-                  placeholder={
-                    timeoutState.active
-                      ? "You're timed out by community moderators."
-                      : isModerationDmChannel
-                        ? "This channel is read-only."
-                        : activeChannel?.archivedAt
-                          ? "Archived channels are read-only."
-                          : activeChannel?.channelType === "forum"
-                            ? "Forum posting is not wired in this pass."
-                            : activeChannel
-                              ? activeChannel.channelType === "dm" &&
-                                directMessageIntro
-                                ? `Message ${directMessageIntro.displayName}`
-                                : `Message #${activeChannel.name}`
-                              : "Select a channel"
-                  }
-                  showTopBorder={false}
-                />
+                <ComposerWorkspaceBindingProvider value={workspaceBinding}>
+                  <MessageComposer
+                    channelId={activeChannel?.id ?? null}
+                    channelName={activeChannel?.name ?? "channel"}
+                    channelType={activeChannel?.channelType ?? null}
+                    containerClassName="px-5 pb-0"
+                    layoutMode="dock"
+                    disabled={isComposerDisabled}
+                    editTarget={mainEditTarget}
+                    autoSubmitDraftKey={autoSendDraftKey}
+                    onAutoSubmitComplete={handleAutoSubmitComplete}
+                    isSending={isSending}
+                    mediaController={mainComposerMedia}
+                    onDeferredEditPendingChange={setMainDeferredEditPending}
+                    onCancelEdit={onCancelEdit}
+                    onEditLastOwnMessage={handleEditLastOwnMainMessage}
+                    onEditSave={onEditSave}
+                    onPrepareSendChannel={
+                      activeChannel?.channelType === "dm"
+                        ? prepareDmSendChannel
+                        : undefined
+                    }
+                    onSend={handleSendMessage}
+                    profiles={profiles}
+                    showBackgroundUploadProgress={false}
+                    placeholder={
+                      timeoutState.active
+                        ? "You're timed out by community moderators."
+                        : isModerationDmChannel
+                          ? "This channel is read-only."
+                          : activeChannel?.archivedAt
+                            ? "Archived channels are read-only."
+                            : activeChannel?.channelType === "forum"
+                              ? "Forum posting is not wired in this pass."
+                              : activeChannel
+                                ? activeChannel.channelType === "dm" &&
+                                  directMessageIntro
+                                  ? `Message ${directMessageIntro.displayName}`
+                                  : `Message #${activeChannel.name}`
+                                : "Select a channel"
+                    }
+                    showTopBorder={false}
+                    toolbarExtraActions={
+                      <ComposerWorkspaceSelector
+                        channelId={activeChannel?.id ?? null}
+                        onChange={setWorkspaceBinding}
+                        value={workspaceBinding}
+                      />
+                    }
+                  />
+                </ComposerWorkspaceBindingProvider>
                 {/* The activity accessory is anchored in the dock's reserved
                     bottom rail, so fading it cannot change the observed
                     overlay height or move the conversation. Its natural

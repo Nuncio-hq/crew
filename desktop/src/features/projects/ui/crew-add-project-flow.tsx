@@ -12,6 +12,10 @@ import { currentRelayWsUrl } from "@/features/projects/lib/project-local-workspa
 import { type Project, projectsQueryKey } from "@/features/projects/hooks";
 import { CrewAddProjectDialog } from "@/features/projects/ui/crew-add-project-dialog";
 import { chooseProjectWorkspaceFolder } from "@/shared/api/tauri-project-folder-dialog";
+import {
+  NON_GIT_PROJECT_REFUSAL,
+  probeProjectGitWorkspace,
+} from "@/shared/api/projectGitWorkspaceProbe";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Could not add Repository.";
@@ -37,6 +41,11 @@ export function CrewAddProjectFlow({
     try {
       const path = await chooseProjectWorkspaceFolder();
       if (!path) return;
+      const probe = await probeProjectGitWorkspace(path);
+      if (!probe.isGit) {
+        toast.error(NON_GIT_PROJECT_REFUSAL);
+        return;
+      }
       setLocalPath(path);
       setName(projectNameFromLocalPath(path));
       setRetryChannel(null);

@@ -190,6 +190,7 @@ async fn successful_thread_eviction_retains_branch_and_advances_generation() {
         None,
         &fixture.branch,
         fixture.worktree.to_str().expect("utf8"),
+        None,
     )
     .expect("record");
     let (repository, branch, root) = fixture.args();

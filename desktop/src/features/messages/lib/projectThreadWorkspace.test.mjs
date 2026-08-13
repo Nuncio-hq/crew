@@ -34,12 +34,39 @@ test("Plain threads never hand the agent signal to the sticky bar", () => {
   assert.equal(projectThreadStickyBarOwnsAgentSignal(undefined, 0), false);
 });
 
-test("Project context parses the hidden workspace URL", () => {
+test("Project context parses workspace binding params", () => {
+  assert.deepEqual(
+    parseProjectThreadContext(
+      "[ctx]: <buzz://project-workspace?repo=Nuncio-hq%2Fcrew&path=%2Ftmp%2Fcrew&ws=main>\n\n@agent",
+    ),
+    {
+      localPath: "/tmp/crew",
+      repoAddress: "Nuncio-hq/crew",
+      ws: "main",
+      branch: null,
+      base: null,
+    },
+  );
+  assert.deepEqual(
+    parseProjectThreadContext(
+      "[ctx]: <buzz://project-workspace?repo=Nuncio-hq%2Fcrew&path=%2Ftmp%2Fcrew&ws=branch:release>\n\n@agent",
+    ),
+    {
+      localPath: "/tmp/crew",
+      repoAddress: "Nuncio-hq/crew",
+      ws: "branch",
+      branch: "release",
+      base: null,
+    },
+  );
   const content =
     "[ctx]: <buzz://project-workspace?repo=Nuncio-hq%2Fcrew&path=%2Ftmp%2Fcrew>\n\n@agent fix";
   assert.deepEqual(parseProjectThreadContext(content), {
     localPath: "/tmp/crew",
     repoAddress: "Nuncio-hq/crew",
+    ws: "new",
+    branch: null,
+    base: null,
   });
   assert.equal(parseProjectThreadContext("ordinary chat"), null);
 });

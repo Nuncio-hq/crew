@@ -1041,3 +1041,48 @@ Community deletion (`buzz-deletion`, migrations 0029/0030) is taken from
 upstream as-is. Crew has no community-scoped Postgres tables to add to
 `EXPECTED_SCOPED_TABLES`; Crew durable session state is local filesystem /
 Nostr events, not a parallel deletion engine.
+
+## D-053 — Workspace binding per thread (git Projects)
+
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Issue:** #187 (Cowork non-git mode is #188; Thread Workbench product is #186)
+
+Every thread in a git Project channel used to get an isolated worktree. The
+binding is now chosen once in the channel composer and stored in the
+owner-signed thread-root `buzz://project-workspace` marker.
+
+1. **Absent params = today.** No `ws` / `base` means a new isolated worktree
+   off the repository default base. Existing threads do not migrate. Unknown
+   `ws` values fail closed to that default. Empty or illegal branch names are
+   a named error.
+2. **Three bindings.**
+   - New worktree (default): today's `git worktree add -b`; optional `base=`
+     feeds `plan_thread_worktree` / `resolve_workspace_base_ref` and is stored
+     on the LifecycleRecord.
+   - Main checkout (`ws=main`): skip `worktree add`; cwd is the canonical
+     checkout; no LifecycleRecord mutation; canonical path is never a #174
+     GC candidate.
+   - Existing branch (`ws=branch:<name>`): reuse a managed worktree on that
+     branch if one exists, else `git worktree add` without `-b`. If that
+     branch is the primary checkout, bind as Main checkout.
+3. **Authority.** The marker lives in owner-signed thread-root content.
+   Mid-thread changes are owner-signed amendments (`edited_content` on the
+   root). Existing `WorkspaceBinding` revalidation invalidates cached ACP
+   sessions when path / branch / common-git / generation change.
+4. **Path-keyed exclusive turn leases.** Root-keyed shared leases still
+   coordinate eviction of one managed worktree. Path-keyed exclusive leases
+   serialize turns across threads that share a checkout. A blocked turn is a
+   named refusal outcome (`Main checkout busy — thread '…' is working`), not
+   an error (#174 posture).
+5. **Dirty is visible, not blocking.** Binding a dirty main checkout is
+   allowed. The agent prompt gets a `[Checkout]` live-checkout notice with
+   the uncommitted count. Thread-row chips show `⌂` / `⎇` / `🌿` from the
+   marker. The #186 workbench product is out of scope.
+6. **Shared idle.** #174 idle for a shared managed worktree is
+   `max(lastUsedAt)` across LifecycleRecords on that path.
+7. **Non-git is refused at add-Project.** Spike 0024: pre-#187 accepted any
+   absolute folder and errored on turn one. The add flow now probes
+   `rev-parse --show-toplevel` and toasts copy pointing at #188. Do not
+   implement Cowork here.
+

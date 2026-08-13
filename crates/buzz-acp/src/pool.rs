@@ -30,7 +30,7 @@ use buzz_core::crew_role::{
     resolve_assignment, resolve_capabilities, resolve_routing, RoleAssignment, RoutingAssignment,
     CAPABILITY_DEV_MCP,
 };
-use buzz_worktree::SharedLease;
+use buzz_worktree::{PathExclusiveLease, PathLeaseHolder, SharedLease};
 use nostr::FromBech32;
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
@@ -57,9 +57,8 @@ use crate::secure_spool::{
 };
 use crate::session_ledger::{
     aging_from_entry, aging_thresholds_from_env, decide_session_load, declare_session,
-    delete_ledger_entry, parse_engine_rotation_signal, record_compaction_hook,
-    record_session_turn,
-    read_ledger_entry, record_rotation_signal, SessionLedgerKey, SessionLoadDecision,
+    delete_ledger_entry, parse_engine_rotation_signal, read_ledger_entry, record_compaction_hook,
+    record_rotation_signal, record_session_turn, SessionLedgerKey, SessionLoadDecision,
     SessionLoadValidation,
 };
 
@@ -1082,6 +1081,7 @@ async fn create_session_and_apply_model(
     channel_name: Option<&str>,
     channel_id: Option<Uuid>,
     channel_type: Option<&str>,
+    checkout_notice: Option<&str>,
 ) -> Result<String, AcpError> {
     // Build base_prompt + system_prompt + agent core + canvas metadata into a
     // single prompt. Standard protocol-v2 agents receive it in `session/new`;
@@ -1092,12 +1092,21 @@ async fn create_session_and_apply_model(
     let is_goose = agent.agent_name == "goose";
     let system_with_role =
         compose_role_and_routing_prompt(ctx.system_prompt.as_deref(), role_assignment, routing);
+    let framed = match checkout_notice
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(notice) => framed_system_prompt_with_notice(
+            session_cwd,
+            ctx.base_prompt,
+            system_with_role.as_deref(),
+            Some(notice),
+        ),
+        None => framed_system_prompt(session_cwd, ctx.base_prompt, system_with_role.as_deref()),
+    };
     let combined_system_prompt = with_canvas(
         with_core(
-            with_team(
-                framed_system_prompt(session_cwd, ctx.base_prompt, system_with_role.as_deref()),
-                ctx.team_instructions.as_deref(),
-            ),
+            with_team(framed, ctx.team_instructions.as_deref()),
             agent_core,
         ),
         agent_canvas,
@@ -1610,6 +1619,15 @@ fn framed_system_prompt(
     base_prompt: Option<&str>,
     system_prompt: Option<&str>,
 ) -> Option<String> {
+    framed_system_prompt_with_notice(cwd, base_prompt, system_prompt, None)
+}
+
+fn framed_system_prompt_with_notice(
+    cwd: &str,
+    base_prompt: Option<&str>,
+    system_prompt: Option<&str>,
+    checkout_notice: Option<&str>,
+) -> Option<String> {
     let body = match (base_prompt, system_prompt) {
         (Some(bp), Some(sp)) => Some(format!(
             "{}\n\n[System]\n{sp}",
@@ -1619,11 +1637,15 @@ fn framed_system_prompt(
         (None, Some(sp)) => Some(format!("[System]\n{sp}")),
         (None, None) => None,
     }?;
-    // Anchor the workspace only when a base prompt is present — the workspace
-    // section grounds the base prompt's layout description, so it is meaningless
-    // for a persona-only (`[System]`-only) agent that never received that layout.
     match (base_prompt, workspace_section(cwd)) {
-        (Some(_), Some(workspace)) => Some(format!("{workspace}\n\n{body}")),
+        (Some(_), Some(workspace)) => {
+            let notice = checkout_notice
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("\n\n[Checkout]\n{value}"))
+                .unwrap_or_default();
+            Some(format!("{workspace}{notice}\n\n{body}"))
+        }
         _ => Some(body),
     }
 }
@@ -2008,21 +2030,50 @@ pub async fn run_prompt_task(
     // Declared here so it releases on every exit path below, including the
     // early returns in this block and every later `send_prompt_result` +
     // `return` on error.
-    let mut _workspace_lease: Option<SharedLease> = None;
+    let mut _workspace_lease: Option<WorkspaceTurnLeases> = None;
+    let mut checkout_notice: Option<String> = None;
     let session_cwd = match (&source, &batch) {
         (PromptSource::Channel(cid), Some(batch)) => {
             match resolve_and_bind_channel_workspace(cid, batch, &ctx, &mut agent.state).await {
                 Ok(ChannelWorkspace::Bound {
                     workspace,
                     session_cwd,
-                    lease,
+                    leases,
+                    checkout_notice: notice,
                 }) => {
                     agent.acp.observe(
                         "thread_workspace_ready",
                         thread_workspace_ready_payload(&workspace),
                     );
-                    _workspace_lease = Some(lease);
+                    _workspace_lease = Some(leases);
+                    checkout_notice = notice;
                     session_cwd
+                }
+                Ok(ChannelWorkspace::Busy {
+                    message,
+                    root_event_id,
+                }) => {
+                    tracing::info!(
+                        channel = %batch.routing_channel_id(),
+                        root = %root_event_id,
+                        "{message}"
+                    );
+                    agent.acp.observe(
+                        "thread_workspace_busy",
+                        serde_json::json!({
+                            "rootEventId": root_event_id,
+                            "message": message,
+                        }),
+                    );
+                    send_prompt_result(
+                        &result_tx,
+                        &turn_id,
+                        agent,
+                        source,
+                        PromptOutcome::Ok(StopReason::Refusal),
+                        None,
+                    );
+                    return;
                 }
                 Ok(ChannelWorkspace::NotProject) => ctx.cwd.clone(),
                 Err(error) => {
@@ -2391,6 +2442,7 @@ pub async fn run_prompt_task(
                         title_channel.as_deref(),
                         Some(*cid),
                         origin_channel_type.as_deref(),
+                        checkout_notice.as_deref(),
                     )
                     .await
                     {
@@ -2477,6 +2529,7 @@ pub async fn run_prompt_task(
                     None,
                     None,
                     &[],
+                    None,
                     None,
                     None,
                     None,
@@ -3954,6 +4007,13 @@ fn thread_workspace_ready_payload(
         "baseSource": workspace.base_source.as_str(),
         "remoteDefaultBranch": workspace.remote_default_branch,
         "commitsBehindRemote": workspace.commits_behind_remote,
+        "checkoutKind": match workspace.checkout_kind {
+            crate::thread_workspace::CheckoutKind::IsolatedWorktree => "new-worktree",
+            crate::thread_workspace::CheckoutKind::MainCheckout => "main",
+            crate::thread_workspace::CheckoutKind::SharedBranch => "branch",
+        },
+        "uncommittedCount": workspace.uncommitted_count,
+        "requestedBase": workspace.requested_base,
     })
 }
 
@@ -4006,11 +4066,15 @@ async fn resolve_thread_workspace_plan(
     } else {
         None
     };
+    let direct_content = last_event
+        .edited_content
+        .as_deref()
+        .unwrap_or(&last_event.event.content);
     let trusted_content = if let Some(owner) = owner.as_deref() {
         select_trusted_workspace_content(
             owner,
             &last_event.event.pubkey.to_hex(),
-            &last_event.event.content,
+            direct_content,
             thread_root_id.is_some(),
             &root_event_id,
             fetched_root.as_ref(),
@@ -4049,8 +4113,22 @@ enum ChannelWorkspace {
     Bound {
         workspace: Box<crate::thread_workspace::ThreadWorkspace>,
         session_cwd: String,
-        lease: SharedLease,
+        leases: WorkspaceTurnLeases,
+        checkout_notice: Option<String>,
     },
+    /// Shared checkout is busy with another thread's turn — named outcome.
+    Busy {
+        message: String,
+        root_event_id: String,
+    },
+}
+
+/// RAII guards covering path-exclusive turn serialization and optional
+/// per-root shared eviction coordination.
+#[derive(Debug)]
+struct WorkspaceTurnLeases {
+    _path: PathExclusiveLease,
+    _root: Option<SharedLease>,
 }
 
 /// Resolve, cross-process lease, and durably bind a Project-thread workspace
@@ -4088,9 +4166,36 @@ async fn resolve_and_bind_channel_workspace(
     let root_event_id = plan.root_event_id.clone();
     let wrap = |source: anyhow::Error| thread_workspace_provision_error(&root_event_id, source);
 
-    // Shared lease before any create/reattach mutation (BLOCKER 4).
-    let lease = buzz_worktree::try_acquire_shared(&plan.common_git, &root_event_id)
-        .map_err(|source| wrap(source.into()))?;
+    let holder = PathLeaseHolder {
+        root_event_id: root_event_id.clone(),
+        label: thread_label_from_batch(batch),
+    };
+    let path_lease = match buzz_worktree::try_acquire_path_exclusive(
+        &plan.common_git,
+        &plan.worktree_path,
+        &holder,
+    ) {
+        Ok(lease) => lease,
+        Err(buzz_worktree::LeaseError::Busy) => {
+            let other =
+                buzz_worktree::read_path_lease_holder(&plan.common_git, &plan.worktree_path);
+            let message = path_busy_message(plan.checkout_kind, other.as_ref());
+            return Ok(ChannelWorkspace::Busy {
+                message,
+                root_event_id,
+            });
+        }
+        Err(error) => return Err(wrap(error.into()).into()),
+    };
+
+    let root_lease = if plan.checkout_kind.skips_lifecycle_record() {
+        None
+    } else {
+        Some(
+            buzz_worktree::try_acquire_shared(&plan.common_git, &root_event_id)
+                .map_err(|source| wrap(source.into()))?,
+        )
+    };
 
     let (workspace, ensure_kind) = crate::thread_workspace::ensure_planned_thread_worktree(&plan)
         .await
@@ -4100,23 +4205,29 @@ async fn resolve_and_bind_channel_workspace(
         root = %root_event_id,
         cwd = %workspace.worktree_path.display(),
         ensure_kind = ?ensure_kind,
-        "resolved isolated thread worktree"
+        checkout_kind = ?workspace.checkout_kind,
+        "resolved thread workspace"
     );
 
     let routing_channel_id = batch.routing_channel_id();
     let worktree_path_str = workspace.worktree_path.to_string_lossy().into_owned();
-    buzz_worktree::adopt_or_create_record(
-        &workspace.common_git,
-        &root_event_id,
-        &routing_channel_id.to_string(),
-        None,
-        &workspace.branch,
-        &worktree_path_str,
-    )
-    .map_err(|source| wrap(source.into()))?;
-    let record =
+    let eviction_generation = if workspace.checkout_kind.skips_lifecycle_record() {
+        0
+    } else {
+        buzz_worktree::adopt_or_create_record(
+            &workspace.common_git,
+            &root_event_id,
+            &routing_channel_id.to_string(),
+            None,
+            &workspace.branch,
+            &worktree_path_str,
+            workspace.requested_base.as_deref(),
+        )
+        .map_err(|source| wrap(source.into()))?;
         buzz_worktree::touch_last_used_at(&workspace.common_git, &root_event_id, unix_now())
-            .map_err(|source| wrap(source.into()))?;
+            .map_err(|source| wrap(source.into()))?
+            .eviction_generation
+    };
 
     let checkout_exists = workspace.worktree_path.is_dir();
     let mismatch = workspace_binding_mismatch(
@@ -4124,7 +4235,7 @@ async fn resolve_and_bind_channel_workspace(
         &workspace.worktree_path,
         &workspace.branch,
         &workspace.common_git,
-        record.eviction_generation,
+        eviction_generation,
         checkout_exists,
         ensure_kind.mutated_checkout(),
     );
@@ -4138,16 +4249,78 @@ async fn resolve_and_bind_channel_workspace(
             worktree_path: workspace.worktree_path.clone(),
             branch: workspace.branch.clone(),
             common_git: workspace.common_git.clone(),
-            eviction_generation: record.eviction_generation,
+            eviction_generation,
             routing_channel_id,
         },
     );
 
+    let checkout_notice = live_checkout_notice(&workspace);
     Ok(ChannelWorkspace::Bound {
         workspace: Box::new(workspace),
         session_cwd: worktree_path_str,
-        lease,
+        leases: WorkspaceTurnLeases {
+            _path: path_lease,
+            _root: root_lease,
+        },
+        checkout_notice,
     })
+}
+
+fn live_checkout_notice(workspace: &crate::thread_workspace::ThreadWorkspace) -> Option<String> {
+    if !matches!(
+        workspace.checkout_kind,
+        crate::thread_workspace::CheckoutKind::MainCheckout
+    ) {
+        return None;
+    }
+    let mut notice =
+        "You are working on the owner's live checkout, not a clean isolated branch.".to_string();
+    if workspace.uncommitted_count > 0 {
+        notice.push_str(&format!(
+            " There are {} uncommitted changes.",
+            workspace.uncommitted_count
+        ));
+    }
+    Some(notice)
+}
+
+fn thread_label_from_batch(batch: &FlushBatch) -> String {
+    let Some(event) = batch.events.last() else {
+        return "thread".into();
+    };
+    let content = event
+        .edited_content
+        .as_deref()
+        .unwrap_or(&event.event.content);
+    content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.contains("buzz://project-workspace"))
+        .take(1)
+        .map(|line| line.trim_start_matches('>').trim())
+        .map(|line| line.chars().take(48).collect::<String>())
+        .find(|line| !line.is_empty())
+        .unwrap_or_else(|| "thread".into())
+}
+
+fn path_busy_message(
+    kind: crate::thread_workspace::CheckoutKind,
+    holder: Option<&PathLeaseHolder>,
+) -> String {
+    let thread = holder
+        .map(|holder| {
+            if holder.label.is_empty() {
+                "another thread".to_string()
+            } else {
+                format!("thread '{}'", holder.label)
+            }
+        })
+        .unwrap_or_else(|| "another thread".to_string());
+    if matches!(kind, crate::thread_workspace::CheckoutKind::MainCheckout) {
+        format!("Main checkout busy — {thread} is working")
+    } else {
+        format!("Workspace busy — {thread} is working")
+    }
 }
 
 /// True when the previously verified binding no longer matches the freshly
@@ -4405,6 +4578,9 @@ mod thread_session_cwd_tests {
             remote_default_branch: Some("main".into()),
             commits_behind_remote: Some(0),
             common_git: PathBuf::from("/private/project/.git"),
+            checkout_kind: crate::thread_workspace::CheckoutKind::IsolatedWorktree,
+            requested_base: None,
+            uncommitted_count: 0,
         };
 
         let ready = thread_workspace_ready_payload(&workspace);
@@ -11106,9 +11282,16 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     }
 
     fn project_workspace_content(repo_path: &Path) -> String {
+        project_workspace_content_with(repo_path, &[])
+    }
+
+    fn project_workspace_content_with(repo_path: &Path, extra: &[(&str, &str)]) -> String {
         let mut serializer = url::form_urlencoded::Serializer::new(String::new());
         serializer.append_pair("repo", "fixture/project");
         serializer.append_pair("path", &repo_path.to_string_lossy());
+        for (key, value) in extra {
+            serializer.append_pair(key, value);
+        }
         format!("buzz://project-workspace?{}", serializer.finish())
     }
 
@@ -11121,9 +11304,21 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         owner_keys: &Keys,
         repo_path: &Path,
     ) -> FlushBatch {
-        let event = EventBuilder::new(Kind::Custom(9), project_workspace_content(repo_path))
-            .sign_with_keys(owner_keys)
-            .expect("event signs");
+        owner_project_workspace_batch_with(channel_id, owner_keys, repo_path, &[])
+    }
+
+    fn owner_project_workspace_batch_with(
+        channel_id: Uuid,
+        owner_keys: &Keys,
+        repo_path: &Path,
+        extra: &[(&str, &str)],
+    ) -> FlushBatch {
+        let event = EventBuilder::new(
+            Kind::Custom(9),
+            project_workspace_content_with(repo_path, extra),
+        )
+        .sign_with_keys(owner_keys)
+        .expect("event signs");
         FlushBatch {
             channel_id,
             events: vec![crate::queue::BatchEvent {
@@ -11177,13 +11372,16 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             .await
             .expect("verified Project workspace resolves");
         let ChannelWorkspace::Bound {
-            workspace, lease, ..
+            workspace, leases, ..
         } = outcome
         else {
             panic!("owner-authored Project content must bind a workspace");
         };
         assert_eq!(workspace.root_event_id, expected_root);
-        assert!(lease.path().exists(), "lease lockfile must be created");
+        assert!(
+            leases._path.path().exists(),
+            "path lease lockfile must be created"
+        );
 
         let binding = state
             .workspace_bindings
@@ -11198,7 +11396,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             .expect("record was adopted");
         assert_eq!(record.eviction_generation, 0);
 
-        drop(lease);
+        drop(leases);
         std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
     }
 
@@ -11245,11 +11443,15 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
             .await
             .expect("first resolution succeeds");
-        let ChannelWorkspace::Bound { workspace, .. } = outcome else {
+        let ChannelWorkspace::Bound {
+            workspace, leases, ..
+        } = outcome
+        else {
             panic!("expected a bound Project workspace");
         };
         let root_event_id = workspace.root_event_id.clone();
         let common_git = workspace.common_git.clone();
+        drop(leases);
 
         // Model cleanup advancing the eviction generation after this turn's
         // lease was released (Phase 4 cleanup flow — exercised here directly
@@ -11329,6 +11531,179 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         );
 
         drop(exclusive);
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    #[tokio::test]
+    async fn ws_main_binds_canonical_checkout_without_a_lifecycle_record() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch_with(
+            Uuid::new_v4(),
+            &owner_keys,
+            &repo,
+            &[("ws", "main")],
+        );
+        let mut state = SessionState::default();
+        std::fs::write(repo.join("dirty.txt"), "live").expect("dirty file");
+
+        let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("main checkout binds");
+        let ChannelWorkspace::Bound {
+            workspace,
+            checkout_notice,
+            ..
+        } = outcome
+        else {
+            panic!("expected a bound Project workspace");
+        };
+        let canonical = std::fs::canonicalize(&repo).expect("canonicalize repo");
+        assert_eq!(workspace.worktree_path, canonical);
+        assert!(matches!(
+            workspace.checkout_kind,
+            crate::thread_workspace::CheckoutKind::MainCheckout
+        ));
+        assert!(workspace.uncommitted_count >= 1);
+        let notice = checkout_notice.expect("dirty main checkout is visible");
+        assert!(notice.contains("live checkout"));
+        assert!(notice.contains("uncommitted"));
+        assert!(
+            buzz_worktree::read_lifecycle_record(&workspace.common_git, &workspace.root_event_id)
+                .expect("read")
+                .is_none(),
+            "ws=main must not write a LifecycleRecord"
+        );
+        let parent = repo.parent().unwrap().join(".buzz-worktrees");
+        assert!(
+            !parent.exists()
+                || std::fs::read_dir(&parent)
+                    .map(|entries| entries.count() == 0)
+                    .unwrap_or(true),
+            "ws=main must not create a managed worktree"
+        );
+
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    #[tokio::test]
+    async fn path_lease_busy_is_a_named_refusal_not_an_error() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let first_cid = Uuid::new_v4();
+        let second_cid = Uuid::new_v4();
+        let first = owner_project_workspace_batch_with(
+            Uuid::new_v4(),
+            &owner_keys,
+            &repo,
+            &[("ws", "main")],
+        );
+        let second = owner_project_workspace_batch_with(
+            Uuid::new_v4(),
+            &owner_keys,
+            &repo,
+            &[("ws", "main")],
+        );
+        let mut first_state = SessionState::default();
+        let mut second_state = SessionState::default();
+
+        let held = resolve_and_bind_channel_workspace(&first_cid, &first, &ctx, &mut first_state)
+            .await
+            .expect("first turn binds");
+        assert!(matches!(held, ChannelWorkspace::Bound { .. }));
+
+        let outcome =
+            resolve_and_bind_channel_workspace(&second_cid, &second, &ctx, &mut second_state)
+                .await
+                .expect("busy is an outcome, not an error");
+        let ChannelWorkspace::Busy { message, .. } = outcome else {
+            panic!("expected a named Busy outcome");
+        };
+        assert!(
+            message.contains("Main checkout busy"),
+            "named busy copy: {message}"
+        );
+        assert!(message.contains("is working"), "named busy copy: {message}");
+
+        drop(held);
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    #[tokio::test]
+    async fn owner_amendment_to_binding_invalidates_cached_session() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let mut batch = owner_project_workspace_batch(Uuid::new_v4(), &owner_keys, &repo);
+        let mut state = SessionState::default();
+
+        resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("default new-worktree binds");
+        let original_path = state
+            .workspace_bindings
+            .get(&cid)
+            .expect("binding stored")
+            .worktree_path
+            .clone();
+        state.sessions.insert(cid, "cached-session".into());
+
+        batch.events[0].edited_content =
+            Some(project_workspace_content_with(&repo, &[("ws", "main")]));
+        resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("amended binding binds");
+        let amended_path = &state
+            .workspace_bindings
+            .get(&cid)
+            .expect("binding stored")
+            .worktree_path;
+        assert_ne!(
+            original_path, *amended_path,
+            "ws=main amendment must move cwd to the canonical checkout"
+        );
+        assert!(
+            !state.sessions.contains_key(&cid),
+            "binding change must invalidate the cached ACP session"
+        );
+
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    #[tokio::test]
+    async fn requested_base_is_recorded_on_the_lifecycle_record() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch_with(
+            Uuid::new_v4(),
+            &owner_keys,
+            &repo,
+            &[("base", "main")],
+        );
+        let mut state = SessionState::default();
+
+        let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("named-base worktree binds");
+        let ChannelWorkspace::Bound { workspace, .. } = outcome else {
+            panic!("expected a bound Project workspace");
+        };
+        let record =
+            buzz_worktree::read_lifecycle_record(&workspace.common_git, &workspace.root_event_id)
+                .expect("read")
+                .expect("LifecycleRecord exists for new worktrees");
+        assert_eq!(record.base.as_deref(), Some("main"));
+
         std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
     }
 
@@ -11494,7 +11869,10 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
             .await
             .expect("first resolution succeeds");
-        let ChannelWorkspace::Bound { workspace, .. } = outcome else {
+        let ChannelWorkspace::Bound {
+            workspace, leases, ..
+        } = outcome
+        else {
             panic!("expected a bound Project workspace");
         };
         let worktree_path = workspace.worktree_path.clone();
@@ -11504,6 +11882,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             .get(&cid)
             .expect("binding")
             .eviction_generation;
+        drop(leases);
 
         // Evict checkout while retaining the branch; skip generation advance to
         // model a failed write after remove.

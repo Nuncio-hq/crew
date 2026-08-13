@@ -168,3 +168,39 @@ test("ordinary channel messages are unchanged", () => {
     "Hello team.",
   );
 });
+
+test("absent binding params keep today's workspace URL", () => {
+  const context = projectContextForChannel(CHANNEL_ID, [project()]);
+  const outgoing = appendProjectChannelAgentContext("@codex inspect.", context);
+  assert.match(
+    outgoing,
+    /buzz:\/\/project-workspace\?repo=30617%3A[a-f0-9]+%3Acrew&path=%2FUsers%2Foscar%2FProjects%2FNuncio%20Crew>/,
+  );
+  assert.doesNotMatch(outgoing, /[?&]ws=/);
+  assert.doesNotMatch(outgoing, /[?&]base=/);
+});
+
+test("non-default bindings add ws or base query params", () => {
+  const context = projectContextForChannel(CHANNEL_ID, [project()]);
+  const main = appendProjectChannelAgentContext(
+    "@codex inspect.",
+    context,
+    { mode: "main" },
+    "main",
+  );
+  assert.match(main, /&ws=main>/);
+  const branch = appendProjectChannelAgentContext(
+    "@codex inspect.",
+    context,
+    { mode: "branch", name: "feature/x" },
+    "main",
+  );
+  assert.match(branch, /&ws=branch%3Afeature%2Fx>/);
+  const namedBase = appendProjectChannelAgentContext(
+    "@codex inspect.",
+    context,
+    { mode: "new", base: "release" },
+    "main",
+  );
+  assert.match(namedBase, /&base=release>/);
+});

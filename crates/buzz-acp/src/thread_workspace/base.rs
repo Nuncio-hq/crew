@@ -34,12 +34,26 @@ pub(crate) struct WorkspaceBase {
     pub(crate) revision: String,
     pub(crate) source: BaseSource,
     pub(crate) remote_default_branch: Option<String>,
+    pub(crate) requested_base: Option<String>,
 }
 
 pub(crate) async fn resolve_workspace_base(repo_root: &Path) -> Result<WorkspaceBase> {
+    resolve_workspace_base_ref(repo_root, None).await
+}
+
+pub(crate) async fn resolve_workspace_base_ref(
+    repo_root: &Path,
+    requested_base: Option<&str>,
+) -> Result<WorkspaceBase> {
     let local_revision = git_output(repo_root, ["rev-parse", "HEAD"]).await?;
     let local_revision = local_revision.trim().to_string();
     let fetched = git_success(repo_root, ["fetch", REMOTE_NAME, "--quiet"]).await;
+    if let Some(branch) = requested_base
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return resolve_named_base(repo_root, branch, fetched, local_revision).await;
+    }
     let default_branch = resolve_default_branch(repo_root, fetched).await;
     let remote_revision = match default_branch.as_deref() {
         Some(branch) => git_optional_output(
@@ -56,6 +70,7 @@ pub(crate) async fn resolve_workspace_base(repo_root: &Path) -> Result<Workspace
                 revision,
                 source: BaseSource::Remote,
                 remote_default_branch: default_branch,
+                requested_base: None,
             });
         }
     }
@@ -64,7 +79,47 @@ pub(crate) async fn resolve_workspace_base(repo_root: &Path) -> Result<Workspace
         revision: local_revision,
         source: BaseSource::LocalFallback,
         remote_default_branch: default_branch,
+        requested_base: None,
     })
+}
+
+async fn resolve_named_base(
+    repo_root: &Path,
+    branch: &str,
+    fetched: bool,
+    local_revision: String,
+) -> Result<WorkspaceBase> {
+    let default_branch = resolve_default_branch(repo_root, fetched).await;
+    let remote_ref = format!("{REMOTE_NAME}/{branch}");
+    if let Some(revision) =
+        git_optional_output(repo_root, ["rev-parse", "--verify", remote_ref.as_str()])
+            .await
+            .map(|revision| revision.trim().to_string())
+    {
+        return Ok(WorkspaceBase {
+            revision,
+            source: if fetched {
+                BaseSource::Remote
+            } else {
+                BaseSource::LocalFallback
+            },
+            remote_default_branch: default_branch,
+            requested_base: Some(branch.to_string()),
+        });
+    }
+    if let Some(revision) = git_optional_output(repo_root, ["rev-parse", "--verify", branch])
+        .await
+        .map(|revision| revision.trim().to_string())
+    {
+        return Ok(WorkspaceBase {
+            revision,
+            source: BaseSource::LocalFallback,
+            remote_default_branch: default_branch,
+            requested_base: Some(branch.to_string()),
+        });
+    }
+    let _ = local_revision;
+    bail!("base branch '{branch}' was not found");
 }
 
 async fn resolve_default_branch(repo_root: &Path, allow_remote_query: bool) -> Option<String> {

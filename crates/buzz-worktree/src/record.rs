@@ -40,6 +40,9 @@ pub struct LifecycleRecord {
     pub branch: String,
     /// Canonical worktree checkout path.
     pub worktree_path: String,
+    /// Optional named base branch used when this record was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
     /// Unix seconds when the record was first created.
     pub created_at: i64,
     /// Unix seconds of last trusted ACP use (monotonic).
@@ -58,6 +61,27 @@ impl LifecycleRecord {
         worktree_path: String,
         now: i64,
     ) -> Self {
+        Self::new_with_base(
+            root_event_id,
+            routing_channel_id,
+            community_scope,
+            branch,
+            worktree_path,
+            None,
+            now,
+        )
+    }
+
+    /// Build a verified record that records the requested base branch.
+    pub fn new_with_base(
+        root_event_id: String,
+        routing_channel_id: String,
+        community_scope: Option<String>,
+        branch: String,
+        worktree_path: String,
+        base: Option<String>,
+        now: i64,
+    ) -> Self {
         Self {
             version: RECORD_SCHEMA_VERSION,
             root_event_id,
@@ -65,6 +89,7 @@ impl LifecycleRecord {
             community_scope,
             branch,
             worktree_path,
+            base,
             created_at: now,
             last_used_at: now,
             eviction_generation: 0,
@@ -124,6 +149,7 @@ pub fn adopt_or_create_record(
     community_scope: Option<&str>,
     branch: &str,
     worktree_path: &str,
+    base: Option<&str>,
 ) -> Result<LifecycleRecord, RecordError> {
     let root = validate_root_for_record(root_event_id)?;
     let now = unix_now();
@@ -141,12 +167,13 @@ pub fn adopt_or_create_record(
             )?;
             return Ok(existing);
         }
-        let record = LifecycleRecord::new(
+        let record = LifecycleRecord::new_with_base(
             root.clone(),
             routing_channel_id.to_string(),
             community_scope.map(str::to_string),
             branch.to_string(),
             worktree_path.to_string(),
+            base.map(str::to_string).filter(|value| !value.is_empty()),
             now,
         );
         atomic_write_json(&path, &record)?;
@@ -268,9 +295,9 @@ fn parse_record_bytes(path: &Path, bytes: &[u8]) -> Result<LifecycleRecord, Reco
             "lifecycle record routing channel is invalid".into(),
         ));
     }
-    if record.branch.trim().is_empty() || !record.branch.starts_with("buzz/") {
+    if record.branch.trim().is_empty() || !is_acceptable_lifecycle_branch(&record.branch) {
         return Err(RecordError::Conflict(
-            "lifecycle record branch is not a managed Buzz branch".into(),
+            "lifecycle record branch is not a valid git branch".into(),
         ));
     }
     if record.worktree_path.trim().is_empty() {
@@ -282,6 +309,55 @@ fn parse_record_bytes(path: &Path, bytes: &[u8]) -> Result<LifecycleRecord, Reco
         root_event_id: normalized_root,
         ..record
     })
+}
+
+/// List every readable lifecycle record under `common_git`.
+pub fn list_lifecycle_records(common_git: &Path) -> Result<Vec<LifecycleRecord>, RecordError> {
+    let dir = lifecycle_records_dir(common_git);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let entries = fs::read_dir(&dir).map_err(|source| RecordError::Io {
+        path: dir.clone(),
+        source,
+    })?;
+    let mut records = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| RecordError::Io {
+            path: dir.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        match fs::read(&path) {
+            Ok(bytes) => match parse_record_bytes(&path, &bytes) {
+                Ok(record) => records.push(record),
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        }
+    }
+    Ok(records)
+}
+
+/// Shared-worktree idle input: max `last_used_at` across records on `worktree_path`.
+pub fn max_last_used_at_for_path(common_git: &Path, worktree_path: &Path) -> Option<i64> {
+    let records = list_lifecycle_records(common_git).ok()?;
+    records
+        .into_iter()
+        .filter(|record| Path::new(&record.worktree_path) == worktree_path)
+        .map(|record| record.last_used_at)
+        .max()
+}
+
+fn is_acceptable_lifecycle_branch(branch: &str) -> bool {
+    let branch = branch.trim();
+    if branch.is_empty() || branch.starts_with('-') || branch.contains("..") {
+        return false;
+    }
+    !branch.contains('\0') && !branch.contains(' ')
 }
 
 fn is_plausible_routing_channel(value: &str) -> bool {
@@ -474,6 +550,7 @@ mod tests {
             None,
             "buzz/aaaaaaaaaaaa",
             "/wt",
+            None,
         )
         .unwrap();
         let err = adopt_or_create_record(
@@ -483,6 +560,7 @@ mod tests {
             None,
             "buzz/aaaaaaaaaaaa",
             "/wt",
+            None,
         )
         .unwrap_err();
         assert!(matches!(err, RecordError::Conflict(_)));
@@ -533,6 +611,7 @@ mod tests {
             None,
             "buzz/aaaaaaaaaaaa",
             "/wt",
+            None,
         )
         .unwrap();
         // Force a low baseline so concurrent touches exercise monotonic max.
@@ -550,6 +629,42 @@ mod tests {
         touch_last_used_at(&common, &root_a(), 40).unwrap();
         let record = read_lifecycle_record(&common, &root_a()).unwrap().unwrap();
         assert_eq!(record.last_used_at, 80);
+    }
+
+    #[test]
+    fn records_optional_base_and_shared_path_idle_is_max() {
+        let temp = TempDir::new().unwrap();
+        let common = temp.path();
+        let shared = "/tmp/.buzz-worktrees/crew-ws-feature";
+        let first = adopt_or_create_record(
+            common,
+            &root_a(),
+            "11111111-1111-1111-1111-111111111111",
+            None,
+            "feature/x",
+            shared,
+            Some("main"),
+        )
+        .unwrap();
+        assert_eq!(first.base.as_deref(), Some("main"));
+        let first_used = first.last_used_at + 10;
+        touch_last_used_at(common, &root_a(), first_used).unwrap();
+        let second = adopt_or_create_record(
+            common,
+            &root_b(),
+            "22222222-2222-2222-2222-222222222222",
+            None,
+            "feature/x",
+            shared,
+            None,
+        )
+        .unwrap();
+        let second_used = second.last_used_at.max(first_used) + 30;
+        touch_last_used_at(common, &root_b(), second_used).unwrap();
+        assert_eq!(
+            max_last_used_at_for_path(common, Path::new(shared)),
+            Some(second_used)
+        );
     }
 
     #[test]

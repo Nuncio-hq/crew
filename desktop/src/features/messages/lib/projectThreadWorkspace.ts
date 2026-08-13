@@ -1,3 +1,4 @@
+import { parseWorkspaceBindingParams } from "@/features/messages/lib/workspaceBindingSpec";
 import type { TimelineMessage } from "@/features/messages/types";
 import { orderMentionPubkeysByText } from "@/features/messages/lib/orderMentionPubkeys";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
@@ -9,6 +10,9 @@ const PROJECT_WORKSPACE_PREFIX = "buzz://project-workspace?";
 export type ProjectThreadContext = {
   localPath: string;
   repoAddress: string;
+  ws: "new" | "main" | "branch";
+  branch: string | null;
+  base: string | null;
 };
 
 export type ProjectThreadAgentStep = {
@@ -63,7 +67,11 @@ export function parseProjectThreadContext(
     const repoAddress = url.searchParams.get("repo")?.trim();
     const localPath = url.searchParams.get("path")?.trim();
     if (!repoAddress || !localPath?.startsWith("/")) return null;
-    return { localPath, repoAddress };
+    const parsed = parseWorkspaceBindingParams(
+      url.searchParams.get("ws"),
+      url.searchParams.get("base"),
+    );
+    return { localPath, repoAddress, ...parsed };
   } catch {
     return null;
   }

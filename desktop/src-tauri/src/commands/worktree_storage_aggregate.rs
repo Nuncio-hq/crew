@@ -4,7 +4,7 @@
 //! state, dual clocks, and Lean/Hibernate classification. Measurement is lazy
 //! and concurrency-bounded. Mutation still goes through existing #72 commands.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -19,8 +19,7 @@ use super::project_worktree_registry::{
 use super::project_worktree_registry_parse::ProjectWorktreeKind;
 use super::worktree_storage_alive::load_intervals_and_threshold;
 use super::worktree_storage_policy::{
-    classify_reclaim_candidate, pr_link_state, AliveInterval, PolicyInput, PrLinkState,
-    ReclaimTier,
+    classify_reclaim_candidate, pr_link_state, AliveInterval, PolicyInput, PrLinkState, ReclaimTier,
 };
 
 /// Bound concurrent `du` / preview work so opening Storage cannot thrash disk.
@@ -237,7 +236,12 @@ async fn measure_row(
         (pr_number, pr_state, pr_title)
     };
 
-    let last_used_at = preview.last_used_at.or(entry.last_used_at);
+    let last_used_at = git_common_dir(Path::new(&repository_path))
+        .and_then(|common| {
+            buzz_worktree::max_last_used_at_for_path(&common, Path::new(&entry.worktree_path))
+        })
+        .or(preview.last_used_at)
+        .or(entry.last_used_at);
     let class = classify_reclaim_candidate(&PolicyInput {
         last_used_at,
         intervals,
@@ -283,6 +287,26 @@ async fn measure_row(
         can_clear_cache: preview.can_clear_cache,
         can_evict: preview.can_evict,
     })
+}
+
+fn git_common_dir(repo: &Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--git-common-dir"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8(output.stdout).ok()?;
+    let path = Path::new(raw.trim());
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo.join(path)
+    };
+    std::fs::canonicalize(resolved).ok()
 }
 
 /// Revalidate a suggested row immediately before mutation (TOCTOU).
@@ -402,6 +426,7 @@ mod tests {
                 None,
                 "buzz/aaaaaaaaaaaa",
                 managed_worktree.to_str().expect("utf8"),
+                None,
             )
             .expect("record");
             Self {
