@@ -37,6 +37,25 @@ export function defaultComposerTarget(
   return normalizePubkey(agents[0].pubkey);
 }
 
+/**
+ * Keep a Tab/@ choice across agent-list identity refreshes. Fall back to
+ * last-interacting only when the current chip is empty or left the thread.
+ */
+export function retainComposerTarget(
+  agents: readonly ThreadAgentRef[],
+  currentPubkey: string | null,
+  lastInteractingPubkey: string | null,
+): string | null {
+  const current = currentPubkey ? normalizePubkey(currentPubkey) : null;
+  if (
+    current &&
+    agents.some((agent) => normalizePubkey(agent.pubkey) === current)
+  ) {
+    return current;
+  }
+  return defaultComposerTarget(agents, lastInteractingPubkey);
+}
+
 export function cycleComposerTarget(
   agents: readonly ThreadAgentRef[],
   currentPubkey: string | null,

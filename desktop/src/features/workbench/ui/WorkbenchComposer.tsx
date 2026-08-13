@@ -77,17 +77,19 @@ export function WorkbenchComposer({
     onTargetChange(cycleComposerTarget(agents, targetPubkey));
   }, [agents, onTargetChange, targetPubkey]);
 
-  const onDockKeyDown = React.useCallback(
+  const onDockKeyDownCapture = React.useCallback(
     (event: React.KeyboardEvent) => {
       if (
         event.key !== "Tab" ||
         event.altKey ||
         event.ctrlKey ||
-        event.metaKey
+        event.metaKey ||
+        event.shiftKey
       ) {
         return;
       }
       event.preventDefault();
+      event.stopPropagation();
       cycle();
     },
     [cycle],
@@ -109,7 +111,7 @@ export function WorkbenchComposer({
       aria-label="Thread composer"
       className="m-0 min-w-0 shrink-0 border-0 border-t border-border/60 p-0"
       data-testid="workbench-composer"
-      onKeyDown={onDockKeyDown}
+      onKeyDownCapture={onDockKeyDownCapture}
     >
       <div className="flex flex-wrap items-center gap-2 px-4 pt-2">
         <button

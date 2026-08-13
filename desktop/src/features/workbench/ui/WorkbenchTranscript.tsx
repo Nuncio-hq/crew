@@ -3,6 +3,7 @@ import type {
   UserInputEvent,
 } from "@/features/channels/lib/userInput";
 import { AgentSessionTranscriptVariantProvider } from "@/features/agents/ui/agentSessionTranscriptContext";
+import { ACTIVITY_RENDER_CLASS_PRESENTERS } from "@/features/agents/ui/activityRenderClasses/TranscriptActivityItem";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { TimelineMessage } from "@/features/messages/types";
 import { cn } from "@/shared/lib/cn";
@@ -162,6 +163,12 @@ function WorkbenchTranscriptItem({
             {text ? ` · ${text}` : ""}
           </p>
         );
+      }
+      if (
+        !("renderClass" in row.item) ||
+        !ACTIVITY_RENDER_CLASS_PRESENTERS[row.item.renderClass]
+      ) {
+        return null;
       }
       const profile = profiles?.[row.agentPubkey];
       return (

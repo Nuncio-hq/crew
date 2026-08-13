@@ -32,8 +32,8 @@ import { useIdentityQuery } from "@/shared/api/hooks";
 import { getEventById } from "@/shared/api/tauri";
 import { collectThreadAgents } from "../lib/workbenchAgents";
 import {
-  defaultComposerTarget,
   lastInteractingAgentPubkey,
+  retainComposerTarget,
 } from "../lib/workbenchComposerTarget";
 import { firstUnreadAfterReadAt } from "../lib/workbenchCatchUp";
 import {
@@ -124,18 +124,28 @@ export function useWorkbenchThreadData(
     [agents, messages],
   );
   const [targetPubkey, setTargetPubkey] = React.useState<string | null>(null);
+  const targetThreadKeyRef = React.useRef("");
   React.useEffect(() => {
-    setTargetPubkey(defaultComposerTarget(agents, lastInteracting));
-  }, [agents, lastInteracting]);
+    const threadKey = `${channelId ?? ""}:${threadRootId ?? ""}`;
+    setTargetPubkey((current) => {
+      if (targetThreadKeyRef.current !== threadKey) {
+        targetThreadKeyRef.current = threadKey;
+        return retainComposerTarget(agents, null, lastInteracting);
+      }
+      return retainComposerTarget(agents, current, lastInteracting);
+    });
+  }, [agents, channelId, lastInteracting, threadRootId]);
 
   const userInput = useChannelUserInput(channelId ?? null);
   const conversationId = deriveAgentConversationIdOrNull(
     channelId,
     threadRootId,
   );
-  const observerByAgent = useWorkbenchObserverBundles(
-    agents.map((agent) => agent.pubkey),
+  const observerPubkeys = React.useMemo(
+    () => agents.map((agent) => agent.pubkey),
+    [agents],
   );
+  const observerByAgent = useWorkbenchObserverBundles(observerPubkeys);
   const { activeCommunity } = useCommunities();
   const runtimesQuery = useManagedAgentRuntimesQuery({
     enabled: Boolean(activeCommunity?.relayUrl && agents.length > 0),
@@ -179,11 +189,13 @@ export function useWorkbenchThreadData(
   const { getThreadReadAt, markThreadRead } = useAppShell();
   const openedKey = `${channelId ?? ""}:${threadRootId ?? ""}`;
   const openedKeyRef = React.useRef<string | null>(null);
+  const markedReadAtRef = React.useRef<number | null>(null);
   const [readAtOnOpen, setReadAtOnOpen] = React.useState<number | null>(null);
   React.useEffect(() => {
     if (!threadRootId) return;
     if (openedKeyRef.current === openedKey) return;
     openedKeyRef.current = openedKey;
+    markedReadAtRef.current = null;
     setReadAtOnOpen(getThreadReadAt(threadRootId, channelId));
   }, [channelId, getThreadReadAt, openedKey, threadRootId]);
   const catchUpAfterId = React.useMemo(
@@ -193,6 +205,8 @@ export function useWorkbenchThreadData(
   React.useEffect(() => {
     if (!threadRootId || messages.length === 0) return;
     const latest = Math.max(...messages.map((message) => message.createdAt));
+    if (markedReadAtRef.current === latest) return;
+    markedReadAtRef.current = latest;
     markThreadRead(threadRootId, latest);
   }, [markThreadRead, messages, threadRootId]);
 

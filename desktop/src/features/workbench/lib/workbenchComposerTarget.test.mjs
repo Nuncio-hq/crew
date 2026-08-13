@@ -8,6 +8,7 @@ import {
   lastInteractingAgentPubkey,
   mentionPubkeysForTarget,
   resolveSendTarget,
+  retainComposerTarget,
 } from "./workbenchComposerTarget.ts";
 
 const agents = [
@@ -36,6 +37,21 @@ describe("workbenchComposerTarget", () => {
       agents[0].pubkey,
     );
     assert.equal(defaultComposerTarget([], null), null);
+  });
+
+  it("retains a Tab choice when the agent list refreshes", () => {
+    assert.equal(
+      retainComposerTarget(agents, agents[0].pubkey, agents[1].pubkey),
+      agents[0].pubkey,
+    );
+    assert.equal(
+      retainComposerTarget(agents, null, agents[1].pubkey),
+      agents[1].pubkey,
+    );
+    assert.equal(
+      retainComposerTarget(agents, "ff".repeat(32), agents[1].pubkey),
+      agents[1].pubkey,
+    );
   });
 
   it("Tab cycles agents and wraps", () => {

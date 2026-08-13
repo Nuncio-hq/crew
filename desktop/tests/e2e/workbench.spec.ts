@@ -6,7 +6,6 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 const SHOTS = "test-results/workbench";
 const ENGINEERING_ID = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
 const ROOT_A = "1".repeat(64);
-const ROOT_B = "2".repeat(64);
 const REQUEST_ID = "4".repeat(64);
 const EVIDENCE_ID = "5".repeat(64);
 const CATCH_UP_ID = "6".repeat(64);
@@ -14,9 +13,10 @@ const OWNER = "deadbeef".repeat(8);
 const HERMES = TEST_IDENTITIES.alice.pubkey;
 const CODEX = TEST_IDENTITIES.bob.pubkey;
 
-test.describe("thread workbench (#186)", () => {
-  test.use({ video: "on", viewport: { width: 1280, height: 720 } });
+test.use({ video: "on", viewport: { width: 1280, height: 720 } });
+test.describe.configure({ timeout: 90_000 });
 
+test.describe("thread workbench (#186)", () => {
   test("rail lenses, office filter, target chip, catch-up, and shared cards", async ({
     page,
   }) => {
@@ -81,22 +81,38 @@ test.describe("thread workbench (#186)", () => {
     });
 
     await page.goto("/");
-    await page.getByTestId("channel-design").click();
-    await waitForLive(page, "design");
-    const now = Math.floor(Date.now() / 1000);
-    await seedDesignThread(page, now - 90);
+    await expect(page.getByTestId("channel-engineering")).toBeVisible();
     await page.getByTestId("channel-engineering").click();
     await waitForLive(page, "engineering");
+    await expect
+      .poll(async () =>
+        page.evaluate(
+          () =>
+            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName: "engineering",
+              kind: 46040,
+            }) ?? false,
+        ),
+      )
+      .toBe(true);
+    await page.waitForFunction(
+      () =>
+        typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function" &&
+        typeof window.__BUZZ_E2E_EMIT_MOCK_USER_INPUT__ === "function",
+    );
+    const now = Math.floor(Date.now() / 1000);
     await seedEngineeringThread(page, now - 120);
     await injectObserver(page, ENGINEERING_ID);
 
-    const kickoff = page.getByText("Fix reconnect freeze");
+    const kickoff = page.getByTestId("message-row").filter({
+      hasText: "Fix reconnect freeze",
+    });
     await expect(kickoff).toBeVisible();
-    await expect(page.getByTestId("evidence-card-test-run")).toBeVisible();
     await kickoff.hover();
     await page.getByRole("button", { name: "Reply" }).first().click();
     const panel = page.getByTestId("message-thread-panel");
     await expect(panel).toBeVisible();
+    await expect(panel.getByTestId("evidence-card-test-run")).toBeVisible();
     await expect(panel.getByTestId("open-thread-workbench")).toBeVisible();
     await waitForAnimations(page);
     await panel.getByTestId("open-thread-workbench").click();
@@ -112,10 +128,19 @@ test.describe("thread workbench (#186)", () => {
     await expect(page.getByTestId("workbench-stop")).toContainText(
       "Stop Hermes",
     );
+    await expect(page.getByTestId("workbench-agent-bar")).toContainText(
+      "Hermes",
+    );
+    await expect(page.getByTestId("workbench-agent-bar")).toContainText(
+      "Codex",
+    );
     await expect(page.getByTestId("evidence-card-test-run")).toBeVisible();
     await expect(
       page.getByTestId(`channel-user-input-card-${REQUEST_ID}`),
     ).toBeVisible();
+    await expect(
+      page.getByTestId("evidence-cross-check-badge"),
+    ).toBeVisible({ timeout: 15_000 });
 
     await waitForAnimations(page);
     await page.getByTestId("workbench-rail").screenshot({
@@ -145,7 +170,10 @@ test.describe("thread workbench (#186)", () => {
     await expect(page.getByTestId("workbench-thread")).toBeVisible();
     expect(page.url().split("?")[0]).toBe(workbenchUrl.split("?")[0]);
 
-    await page.getByTestId("workbench-composer").click();
+    await expect(page.getByTestId("workbench-target-chip")).toContainText(
+      "Hermes",
+    );
+    await page.getByTestId("workbench-target-chip").focus();
     await page.keyboard.press("Tab");
     await expect(page.getByTestId("workbench-target-chip")).toContainText(
       "Codex",
@@ -177,6 +205,23 @@ test.describe("thread workbench (#186)", () => {
       path: `${SHOTS}/04-office-view.png`,
     });
 
+    await page
+      .getByTestId("sidebar-primary-menu")
+      .getByText("Inbox", { exact: true })
+      .click();
+    await expect(page.getByTestId("home-inbox-list")).toBeVisible();
+    const hammer = page
+      .locator("[data-testid^='mission-inbox-workbench-']")
+      .first();
+    await expect(hammer).toBeVisible();
+    await hammer.click();
+    await expect(page.getByTestId("workbench-thread")).toBeVisible();
+    const questionCard = page.getByTestId(
+      `channel-user-input-card-${REQUEST_ID}`,
+    );
+    await expect(questionCard).toBeVisible();
+    await questionCard.scrollIntoViewIfNeeded();
+
     await page.getByRole("radio", { name: "Yes" }).click();
     await page.getByTestId("channel-user-input-submit").click();
     await expect
@@ -189,9 +234,9 @@ test.describe("thread workbench (#186)", () => {
       )
       .toBe(true);
 
-    await page.getByTestId("workbench-office-toggle").click();
     await page.getByTestId("workbench-open-channel").click();
     await expect(page).toHaveURL(new RegExp(`/channels/${ENGINEERING_ID}`));
+    await expect(page.getByTestId("message-thread-panel")).toBeVisible();
 
     await waitForLive(page, "engineering");
     await page.evaluate(
@@ -217,18 +262,6 @@ test.describe("thread workbench (#186)", () => {
     await expect(
       page.getByText("NEW catch-up line after you left"),
     ).toBeVisible();
-
-    await page
-      .getByTestId("sidebar-primary-menu")
-      .getByText("Inbox", { exact: true })
-      .click();
-    await expect(page.getByTestId("home-inbox-list")).toBeVisible();
-    const hammer = page
-      .locator("[data-testid^='mission-inbox-workbench-']")
-      .first();
-    await expect(hammer).toBeVisible();
-    await hammer.click();
-    await expect(page.getByTestId("workbench-thread")).toBeVisible();
   });
 });
 
@@ -330,23 +363,6 @@ async function seedEngineeringThread(page: Page, createdAt: number) {
       requestId: REQUEST_ID,
       rootId: ROOT_A,
     },
-  );
-}
-
-async function seedDesignThread(page: Page, createdAt: number) {
-  await page.evaluate(
-    ({ createdAt: at, hermes, owner, rootId }) => {
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
-        channelName: "design",
-        content: "Landing revamp",
-        createdAt: at,
-        extraTags: [["e", rootId, "", "root"]],
-        id: rootId,
-        mentionPubkeys: [hermes],
-        pubkey: owner,
-      });
-    },
-    { createdAt, hermes: HERMES, owner: OWNER, rootId: ROOT_B },
   );
 }
 

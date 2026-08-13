@@ -18,14 +18,26 @@ export function useWorkbenchObserverBundles(
       ].filter(Boolean),
     [agentPubkeys],
   );
-  const getSnapshot = React.useCallback(
-    () =>
-      keys.map((agentPubkey) => ({
-        agentPubkey,
-        items: getAgentTranscript(agentPubkey, true),
-      })),
-    [keys],
-  );
+  const cacheRef = React.useRef<WorkbenchObserverBundle[]>([]);
+  const getSnapshot = React.useCallback(() => {
+    const next = keys.map((agentPubkey) => ({
+      agentPubkey,
+      items: getAgentTranscript(agentPubkey, true),
+    }));
+    const prev = cacheRef.current;
+    if (
+      prev.length === next.length &&
+      prev.every(
+        (bundle, index) =>
+          bundle.agentPubkey === next[index]?.agentPubkey &&
+          bundle.items === next[index]?.items,
+      )
+    ) {
+      return prev;
+    }
+    cacheRef.current = next;
+    return next;
+  }, [keys]);
   const snapshot = React.useSyncExternalStore(
     subscribeAgentObserverStore,
     getSnapshot,
