@@ -56,7 +56,8 @@ export function useOrgRosterQuery() {
   );
   return {
     ...query,
-    data: query.data ?? projected,
-    founderPubkey: query.data?.founderPubkey ?? founderFallback,
+    data: projected ?? query.data,
+    founderPubkey:
+      projected?.founderPubkey ?? query.data?.founderPubkey ?? founderFallback,
   };
 }

@@ -71,6 +71,7 @@ let agentControl: AgentControlUi = {
   overlay: null,
   pendingOrigin: null,
 };
+let lastOriginDecision: { code: string; origin: string } | null = null;
 
 function publishAgentControl(): AgentControlUi {
   const next = structuredClone(agentControl);
@@ -221,10 +222,8 @@ export function handleToolPaneCommand(
           entry.lifecycle === "booted" || entry.lifecycle === "mirroring",
       );
       if (booted.length >= status.policy.maxBootedSims) {
-        const victim = booted.find((entry) => !entry.mirroring) ?? null;
-        if (!victim) {
-          throw new Error("sim boot cap reached; visible mirror is protected");
-        }
+        const victim =
+          booted.find((entry) => !entry.mirroring) ?? booted[0] ?? sim;
         status.capConflict = {
           kind: "sim",
           victimChannelId: victim.channelId,
@@ -234,6 +233,7 @@ export function handleToolPaneCommand(
           idleMs: Math.max(0, Date.now() - victim.lastUsedMs),
           keepToken: `keep-${victim.channelId}`,
         };
+        publish();
         throw new Error(
           `cap: Sim of ${status.capConflict.victimName} shuts down to make room for ${incomingName}`,
         );
@@ -517,8 +517,15 @@ export function handleToolPaneCommand(
           }),
         );
       }
+      lastOriginDecision =
+        decision === "deny"
+          ? { code: "origin_blocked", origin }
+          : { code: "ok", origin };
       agentControl.pendingOrigin = null;
-      return { ok: true };
+      publishAgentControl();
+      return decision === "deny"
+        ? { ok: false, code: "origin_blocked" }
+        : { ok: true };
     }
     default:
       throw new Error(`Unhandled tool-pane command: ${command}`);
@@ -551,8 +558,16 @@ export function resetE2eGovernor(): void {
   canvasByChannel = new Map();
   hiddenAt.clear();
   lastBrowserUrl = null;
+  lastOriginDecision = null;
   agentControl = { leases: [], overlay: null, pendingOrigin: null };
   publishAgentControl();
+}
+
+export function getE2eLastOriginDecision(): {
+  code: string;
+  origin: string;
+} | null {
+  return lastOriginDecision;
 }
 
 export function setE2eAgentControl(next: AgentControlUi): AgentControlUi {

@@ -8,7 +8,7 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 
-import { openToolPane, toggleToolPane, useToolPane } from "./toolPaneStore";
+import { openToolPane, useToolPane } from "./toolPaneStore";
 
 export function ToolsHeaderButton() {
   const pane = useToolPane();
@@ -29,7 +29,7 @@ export function ToolsHeaderButton() {
       <DropdownMenuContent align="end">
         <DropdownMenuItem
           data-testid="tools-open-sim"
-          onSelect={() => toggleToolPane("sim")}
+          onSelect={() => openToolPane("sim")}
         >
           Simulator
           <span className="ml-auto text-2xs text-muted-foreground">⇧⌘M</span>

@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
-import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { installMockBridge } from "../helpers/bridge";
 
 const SHOTS = "test-results/crew-wiki";
-const OWNER = TEST_IDENTITIES.tyler.pubkey;
+/** Mock `buzz` card owner (`deadbeef…`), not tyler. Jobs key on this pubkey. */
+const OWNER = "deadbeef".repeat(8);
 
 test.use({ video: "on", viewport: { width: 1280, height: 720 } });
 test.describe.configure({ timeout: 90_000 });
@@ -39,6 +40,8 @@ test.describe("Crew Wiki (#200)", () => {
         costNote: "Heuristic generator · no API key billed",
       });
     }, OWNER);
+    await expect(page.getByTestId("wiki-generating")).toBeVisible();
+    await expect(page.getByTestId("wiki-repo-card-relay-tools")).toHaveCount(1);
     await waitForAnimations(page);
     await page
       .getByTestId("wiki-repo-card-buzz")

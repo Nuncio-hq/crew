@@ -31,7 +31,11 @@ export function DrivingBanner({
             : `${instrument}-lease-take-over`
         }
         type="button"
-        onClick={() => {
+        onPointerDown={(event) => {
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.stopPropagation();
           const command = human
             ? "agent_control_release"
             : "agent_control_take_over";

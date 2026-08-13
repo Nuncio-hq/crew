@@ -50,6 +50,7 @@ export function ChannelToolPane({
   return (
     <div
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
+      data-channel-id={channelId}
       data-mode={mode}
       data-popped-out={pane.poppedOut ? "true" : "false"}
       data-testid="channel-tool-pane"

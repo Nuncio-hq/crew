@@ -84,6 +84,8 @@ test.describe("agent desktop tools (#197)", () => {
     await expect(page.getByTestId("browser-driving-banner")).toContainText(
       "You have control",
     );
+    await expect(page.getByTestId("browser-lease-release")).toBeVisible();
+    await expect(page.getByTestId("browser-lease-take-over")).toHaveCount(0);
     await waitForAnimations(page);
     await page.getByTestId("browser-driving-banner").screenshot({
       path: `${SHOTS}/02-human-take-over.png`,
@@ -95,6 +97,7 @@ test.describe("agent desktop tools (#197)", () => {
   }) => {
     await installMockBridge(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("channel-general")).toBeVisible();
     await seedControl(page, {
       leases: [
         {
@@ -161,6 +164,7 @@ test.describe("agent desktop tools (#197)", () => {
     await page.getByTestId("origin-approval-card").screenshot({
       path: `${SHOTS}/05-origin-elicitation.png`,
     });
+    await expect(page.getByTestId("origin-approval-card")).toHaveCount(1);
     await page.getByTestId("origin-allow-domain").click();
     const tooling = await page.evaluate((channelId) => {
       return window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("get_canvas_tooling", {
@@ -178,8 +182,16 @@ test.describe("agent desktop tools (#197)", () => {
         agentName: "Hermes",
       },
     });
+    await expect(page.getByTestId("origin-approval-card")).toHaveCount(1);
     await page.getByTestId("origin-deny").click();
     await expect(page.getByTestId("origin-approval-card")).toHaveCount(0);
+    const denied = await page.evaluate(
+      () => window.__BUZZ_E2E_LAST_ORIGIN_DECISION__?.() ?? null,
+    );
+    expect(denied).toEqual({
+      code: "origin_blocked",
+      origin: "https://evil.example",
+    });
   });
 
   test("agent boot countdown and cap conflict name the agent path", async ({
@@ -242,3 +254,12 @@ test.describe("agent desktop tools (#197)", () => {
     });
   });
 });
+
+declare global {
+  interface Window {
+    __BUZZ_E2E_LAST_ORIGIN_DECISION__?: () => {
+      code: string;
+      origin: string;
+    } | null;
+  }
+}

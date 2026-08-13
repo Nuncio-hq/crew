@@ -60,7 +60,7 @@ export function BrowserTab({
   const isOwner = role === "owner" || role == null;
   const [tooling, setTooling] = React.useState<CanvasTooling | null>(null);
   const [subject, setSubject] = React.useState<SubjectKind>(() =>
-    worktreePath ? "worktree" : checkoutPath ? "checkout" : "custom",
+    worktreePath ? "worktree" : "checkout",
   );
   const [customUrl, setCustomUrl] = React.useState("http://127.0.0.1:5173");
   const [viewport, setViewport] =

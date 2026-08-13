@@ -162,6 +162,7 @@ test.describe("channel Tool Pane (#196)", () => {
   test("sidebar dots and governor strip match holdings", async ({ page }) => {
     await installMockBridge(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("channel-general")).toBeVisible();
     await seedGovernor(page, {
       sims: [
         simHolding({
@@ -361,8 +362,16 @@ test.describe("channel Tool Pane (#196)", () => {
     await expect(
       page.getByTestId(`channel-resource-dots-${RANDOM}`),
     ).toBeVisible();
+    await expect(page.getByTestId("channel-tool-pane")).toHaveAttribute(
+      "data-channel-id",
+      RANDOM,
+    );
     await page.getByTestId("channel-general").click();
     await openTools(page, "sim");
+    await expect(page.getByTestId("channel-tool-pane")).toHaveAttribute(
+      "data-channel-id",
+      GENERAL,
+    );
     const a = await page.evaluate(
       (id) =>
         window

@@ -3,10 +3,12 @@ import { BookOpen } from "lucide-react";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useProjectsQuery } from "@/features/projects/hooks";
+import type { Repository } from "@/features/projects/projectModels";
 import { useWikiEventsQuery } from "@/features/wiki/hooks/useWikiEventsQuery";
 import { useWikiGenerate } from "@/features/wiki/hooks/useWikiGenerate";
 import { useWikiRefresh } from "@/features/wiki/hooks/useWikiRefresh";
 import {
+  jobForRepo,
   repoKey,
   wikiFreshness,
   type CompanyWikiPage,
@@ -38,10 +40,18 @@ export function WikiLibraryScreen() {
     slug?: string;
   } | null>(null);
 
-  const repositories = React.useMemo(
-    () => (projectsQuery.data ?? []).flatMap((project) => project.repositories),
-    [projectsQuery.data],
-  );
+  const repositories = React.useMemo(() => {
+    const seen = new Set<string>();
+    const unique: Repository[] = [];
+    for (const repo of (projectsQuery.data ?? []).flatMap(
+      (project) => project.repositories,
+    )) {
+      if (seen.has(repo.repoAddress)) continue;
+      seen.add(repo.repoAddress);
+      unique.push(repo);
+    }
+    return unique;
+  }, [projectsQuery.data]);
   const tocs = eventsQuery.data?.tocs ?? [];
   const pages = eventsQuery.data?.pages ?? [];
   const company = eventsQuery.data?.company ?? [];
@@ -156,7 +166,7 @@ export function WikiLibraryScreen() {
             {filteredRepos.map((repo) => {
               const toc = tocs.find((item) => item.repoD === repo.dtag) ?? null;
               const key = repoKey(repo.owner, repo.dtag);
-              const job = jobs.get(key);
+              const job = jobForRepo(jobs, repo.owner, repo.dtag);
               const state = eventsQuery.data?.states.find((event) =>
                 event.tags.some(
                   (tag) => tag[0] === "d" && tag[1] === repo.dtag,

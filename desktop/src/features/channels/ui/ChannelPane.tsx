@@ -980,7 +980,8 @@ export const ChannelPane = React.memo(function ChannelPane({
               channelName={activeChannel.name}
               mode="channel"
             />,
-            "channel-tool-pane",
+            "channel-tool-pane-wrap",
+            { key: `channel-tool-pane-${activeChannel.id}` },
           )
         ) : null}
       </AnimatePresence>
