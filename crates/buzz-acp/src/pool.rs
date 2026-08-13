@@ -1410,6 +1410,16 @@ fn mcp_servers_with_git_origin(
             server.env.push(origin.clone());
         }
     }
+    if let Some(channel_id) = channel_id {
+        let channel_key = channel_id.to_string();
+        let extras = crate::governor_env::env_for_channel(&channel_key);
+        for (name, value) in extras {
+            let entry = EnvVar { name, value };
+            for server in &mut servers {
+                server.env.push(entry.clone());
+            }
+        }
+    }
     servers
 }
 

@@ -168,6 +168,7 @@ export default defineConfig({
         "**/mission-inbox.spec.ts",
         "**/workbench.spec.ts",
         "**/thread-pr-hub.spec.ts",
+        "**/tool-pane.spec.ts",
         "**/evidence-cards.spec.ts",
         "**/evidence-cross-check.spec.ts",
         "**/evidence-reactions.spec.ts",

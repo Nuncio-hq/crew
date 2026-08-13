@@ -18,5 +18,7 @@ pub fn apply_cowork_history_env(command: &mut Command, app_data_dir: &Path) {
 pub fn apply_cowork_history_env_from_app(command: &mut Command, app: &AppHandle) {
     if let Ok(data_dir) = app.path().app_data_dir() {
         apply_cowork_history_env(command, &data_dir);
+        // Tool Pane (#196): same app-data dir as Cowork history (D-058).
+        crate::resource_governor::apply_snapshot_env(command, &data_dir);
     }
 }

@@ -22,6 +22,7 @@ import { useChannelActivityProjection } from "@/app/useChannelActivityProjection
 import { useTauriWindowDrag } from "@/app/useTauriWindowDrag";
 import { useWebviewZoomShortcuts } from "@/app/useWebviewZoomShortcuts";
 import { useHuddlePresentation } from "@/app/useHuddlePresentation";
+import { useToolPaneShortcuts } from "@/features/tool-pane/useToolPaneShortcuts";
 import { shouldShowSidebarChannel } from "@/app/huddleChannelVisibility";
 import {
   channelsQueryKey,
@@ -663,6 +664,7 @@ export function AppShell() {
     onOpenSettings: handleOpenSettings,
     open: isHuddleRoom ? undefined : settingsOpen,
   });
+  useToolPaneShortcuts();
   useMarkAsReadShortcuts({
     activeChannelId: activeChannel?.id ?? null,
     activeChannelLastMessageAt: activeChannel?.lastMessageAt,

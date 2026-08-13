@@ -1238,3 +1238,37 @@ not a NIP-34 conversation and not a Crew GitHub protocol.
    Mobile, GitLab, webhooks, and Workbench (#186) mounting are out of
    scope. Workbench may later embed the hub as a component.
 
+## D-058 — Channel Tool Pane: Resource Governor owns sim, browser, and dev servers
+
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Issue:** #196
+
+The channel Tool Pane is one surface (`PR · Browser · Sim` in thread focus,
+`Sim · Browser` in channel view) with a single Rust Resource Governor.
+
+1. **Governor ownership.** UI and agents request; the Tauri governor decides
+   booted sims, mirror streams, hidden webviews, and Crew-owned dev servers.
+   Caps, idle timers, LRU, and quit cleanup live in one module. The
+   user-visible mirror is never the LRU victim. Nothing boots on channel
+   open. Nothing is reclaimed silently — every auto-stop has a countdown
+   and Keep.
+2. **Identity split (D-010).** Device name is `crew-<channel-id-prefix>`.
+   Relay stores intent only (`tooling.simulator` / `tooling.devServer` on
+   the kind 40100 canvas ` ```crew ` YAML block). Machine UDIDs never go
+   on the relay. Find-or-create by name; no parallel registry.
+3. **In-app iOS mirror.** Headless CoreSimulator boot; frames via a
+   discovered sim-bridge (`baguette` preferred, then `idb_companion`);
+   MJPEG localhost proxy; HID injected back. Simulator.app is not the
+   mirror. Linux/CI uses the discovery ladder and a placeholder stream.
+4. **Browser.** Child webview on macOS when the probe passes; otherwise
+   a `WebviewWindow` fallback (huddle precedent) behind the same TS API
+   (spike 0027 INCONCLUSIVE on this Linux VM). Crew owns the dev server
+   as a labeled Buzz Term PTY; subject is thread worktree, else channel
+   checkout (`buzz-location`), else a manual URL.
+5. **Non-goals stay out.** Android, physical devices, mobile-app surface,
+   new Nostr kinds, multi-machine handoff, Workbench (#186), #197.
+
+See spikes 0027–0030.
+
+

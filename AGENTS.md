@@ -655,6 +655,13 @@ usage.
 
 ## See Also
 
+### Crew Tool Pane simulator target
+
+Crew injects `BUZZ_SIMULATOR_UDID` and `BUZZ_DEV_SERVER_URL` into ACP sessions
+from the Resource Governor snapshot (`BUZZ_GOVERNOR_SNAPSHOT_PATH`). Target the
+injected UDID with `simctl` / `idb` / `baguette` via `buzz-dev-mcp` `shell`.
+Do not invent a relay-side device registry; machine UDIDs stay local.
+
 ### ACP user-input elicitation
 
 `buzz-acp` advertises ACP form elicitation and handles `elicitation/create`

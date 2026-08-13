@@ -19,6 +19,7 @@ import {
   Smile,
   Sun,
   SunMoon,
+  TabletSmartphone,
   Ticket,
   UserRound,
   Volume2,
@@ -33,6 +34,7 @@ import { CommunityMembersSettingsCard } from "@/features/community-members/ui/Co
 import { CustomEmojiSettingsCard } from "@/features/custom-emoji/ui/CustomEmojiSettingsCard";
 import { LocalArchiveSettingsCard } from "@/features/local-archive/ui/LocalArchiveSettingsCard";
 import { StorageSettingsCard } from "@/features/worktree-storage/ui/StorageSettingsCard";
+import { DevicesPreviewSettings } from "@/features/tool-pane/DevicesPreviewSettings";
 import { cn } from "@/shared/lib/cn";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { Badge } from "@/shared/ui/badge";
@@ -93,6 +95,7 @@ export type SettingsSection =
   | "custom-emoji"
   | "local-archive"
   | "storage"
+  | "devices-preview"
   | "mobile"
   | "updates";
 
@@ -114,6 +117,7 @@ const SETTINGS_SECTION_VALUES: readonly SettingsSection[] = [
   "custom-emoji",
   "local-archive",
   "storage",
+  "devices-preview",
   "mobile",
   "updates",
 ];
@@ -226,6 +230,11 @@ export const settingsSections: SettingsSectionDescriptor[] = [
     value: "storage",
     label: "Storage",
     icon: HardDrive,
+  },
+  {
+    value: "devices-preview",
+    label: "Devices & Preview",
+    icon: TabletSmartphone,
   },
   {
     value: "mobile",
@@ -878,6 +887,8 @@ export function renderSettingsSection(
       return <LocalArchiveSettingsCard />;
     case "storage":
       return <StorageSettingsCard />;
+    case "devices-preview":
+      return <DevicesPreviewSettings />;
     case "mobile":
       return <MobilePairingCard currentPubkey={props.currentPubkey} />;
     case "updates":

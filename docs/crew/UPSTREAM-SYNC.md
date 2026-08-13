@@ -45,7 +45,7 @@ The local upstream push URL is deliberately disabled. Never push to
 | `crates/buzz-acp/src/acp.rs` | ACP v1 `session/load` client (#169); Hermes/Codex rotation signal capture (#180); `_PostCompact` hook count (#173); upstream standard usage tracker (#4950); #190 retain latest `sessionUpdate: plan` | retain Crew elicitation/rotation/hooks/plan snapshot **and** upstream `standard_usage` field sets; do not fold usage into compaction or invent a second plan protocol |
 | `crates/buzz-acp/src/declared_plan.rs` | Crew-landed ACP plan parse/retain (#190) | additive file — prefer keeping intact on sync |
 | `crates/buzz-acp/src/config.rs` | single idle policy: `--pool-idle-timeout` / `BUZZ_ACP_POOL_IDLE_TIMEOUT` default 1800; alias `--idle-pool-sleep` / `BUZZ_ACP_IDLE_POOL_SLEEP` (#189) | one resolved `pool_idle_timeout_secs`; aliases must not arm a second timer; primary wins when both set |
-| `desktop/src-tauri/src/managed_agents/runtime.rs` | desktop injects the same 1800s value for both idle env names on lazy pairs (#169/#189); #188 `BUZZ_ACP_COWORK_HISTORY_DIR` | inject identical values next to `BUZZ_ACP_LAZY_POOL`; keep `apply_session_aging_env` + `apply_cowork_history_env` |
+| `desktop/src-tauri/src/managed_agents/runtime.rs` | desktop injects the same 1800s value for both idle env names on lazy pairs (#169/#189); #188 `BUZZ_ACP_COWORK_HISTORY_DIR`; #196 snapshot path via cowork helper | inject identical values next to `BUZZ_ACP_LAZY_POOL`; keep `apply_session_aging_env` + `apply_cowork_history_env` |
 | `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs` | reserve both idle env names + handover/aging keys from persona/user override (#169/#189); #188 `BUZZ_ACP_COWORK_HISTORY_DIR` | keep both idle keys in the reserved list; they alias one harness field |
 | `crates/buzz-cli/src/commands/messages.rs` | CLI contract tests pin the existing message-build seam | keep tests local to the command module; preserve upstream send behavior |
 | `crates/buzz-cli/src/lib.rs` | expose the Crew evidence flag on `messages send` | retain the additive clap field; preserve upstream command variants and help text |
@@ -92,6 +92,30 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src/features/home/ui/HomeView.tsx` | Mission Inbox workbench deep-link via `getMissionInboxEventTarget` (#186) | do not navigate on unverified `row.channelId` |
 | `desktop/src/features/home/ui/InboxListPane.tsx` | `onOpenMissionWorkbench` pass-through (#186) | one prop; hammer lives in `MissionInboxSections` |
 | `desktop/src/features/home/ui/MissionInboxSections.tsx` | workbench hammer distinct from channel door (#186) | `getMissionInboxEventTarget` then `goWorkbench` — do not reuse `openMissionRow` |
+| `desktop/src-tauri/src/lib.rs` | #196 Tool Pane: `start_background` + `invoke::with_handlers` (handler table extracted so this file stays ≤1000) | keep `manage(ResourceGovernorHandle)` + `start_background`; do not inline the command list |
+| `desktop/src-tauri/src/commands/mod.rs` | #196 `canvas_tooling` module | retain `mod` + `pub use`; commands live in the Crew file |
+| `desktop/src-tauri/src/commands/canvas.rs` | #196 `pub(crate)` on `fenced_crew_block` / `ensure_canvas_author` | visibility only; do not move YAML parse here |
+| `desktop/src-tauri/src/commands/channels.rs` | #196 archive=erase / delete=`simctl delete` via governor | keep the two `try_state` hooks next to existing channel mutations |
+| `desktop/src-tauri/src/shutdown.rs` | #196 `quit_governor` on app quit and signals | keep next to `TerminalSessions::shutdown_all` |
+| `desktop/src-tauri/Cargo.toml` | #196 `tauri` `unstable` for child webview | keep the feature; fallback window does not need it |
+| `desktop/src-tauri/capabilities/default.json` | #196 `crew-browser-*` / `tool-pane-*` window labels | additive labels only |
+| `desktop/src-tauri/src/managed_agents/cowork_history_env.rs` | #188 history dir + #196 governor snapshot path from the same app-data dir | keep `HISTORY_DIR_ENV`; snapshot inject stays next to it |
+| `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs` | #196 `BUZZ_SIMULATOR_UDID` / `BUZZ_DEV_SERVER_URL` / snapshot path | keep in the reserved list |
+| `crates/buzz-acp/src/lib.rs` | #196 `governor_env` module | retain `mod governor_env`; injection stays in `pool.rs` |
+| `crates/buzz-acp/src/pool.rs` | #196 per-session `BUZZ_SIMULATOR_UDID` / `BUZZ_DEV_SERVER_URL` | bind `channel_key` before `env_for_channel`; extras go on every MCP server |
+| `desktop/playwright.config.ts` | #196 `tool-pane.spec.ts` smoke match | retain the glob; do not reorder unrelated entries |
+| `desktop/src/testing/e2eBridge.ts` | #196 Tool Pane commands via `e2eToolPane.ts` | keep `isToolPaneCommand` delegate; do not grow the switch |
+| `desktop/src/app/AppShell.tsx` | #196 `useToolPaneShortcuts` | one hook call next to other shortcut mounts |
+| `desktop/src/shared/lib/keyboard-shortcuts.ts` | #196 ⇧⌘B Browser / ⇧⌘M Simulator | additive shortcut entries |
+| `desktop/src/features/channels/ui/ChannelPane.tsx` | #196 Tool Pane mount when tools open and not in focus drawer | pane lives in Crew-owned `features/tool-pane` |
+| `desktop/src/features/channels/ui/ChannelScreenHeader.tsx` | #196 Tools header button next to Term | one component; not on DMs |
+| `desktop/src/features/channels/ui/FocusThreadDrawer.tsx` | #196 `channelId` / `threadRootId` pass-through | props only; tabs live in `ChannelToolPane` |
+| `desktop/src/features/messages/ui/threadPrHub/ThreadFocusForgeSplit.tsx` | #196 PR hub is a sibling Tool Pane tab | compose with `ChannelToolPane`; do not start Workbench |
+| `desktop/src/features/sidebar/ui/SidebarSection.tsx` | #196 resource dots on channel rows | `SidebarResourceDots`; no numbers, no motion |
+| `desktop/src/features/settings/ui/SettingsPanels.tsx` | #196 `"devices-preview"` arm | card lives in Crew-owned feature module |
+| `desktop/src/features/settings/ui/SettingsView.tsx` | #196 Devices & Preview nav | one Personal nav entry |
+| `desktop/src/features/communities/useCommunityInit.ts` | #196 reset governor + tool pane stores | add next to other community-scoped resets |
+| `desktop/tests/helpers/settings.ts` | #196 `"devices-preview"` section id | keep in the settings helper union |
 
 ## Before feature work
 

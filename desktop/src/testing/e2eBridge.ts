@@ -22,6 +22,14 @@ import {
   setE2eForgeSnapshot,
   type E2eForgeSnapshot,
 } from "./e2eThreadForge.ts";
+import {
+  handleToolPaneCommand,
+  isToolPaneCommand,
+  resetE2eGovernor,
+  setE2eGovernorStatus,
+} from "./e2eToolPane.ts";
+import { applyGovernorStatus } from "@/features/tool-pane/governorStore";
+import type { GovernorStatus } from "@/features/tool-pane/types";
 
 import { relayClient } from "@/shared/api/relayClient";
 import { activateRateLimit } from "@/shared/api/relayRateLimitGate";
@@ -1475,6 +1483,10 @@ declare global {
     __BUZZ_E2E_SET_FORGE_PR_DETAIL__?: (
       patch: Partial<E2eForgeSnapshot>,
     ) => E2eForgeSnapshot;
+    __BUZZ_E2E_SET_GOVERNOR__?: (
+      patch: Partial<GovernorStatus>,
+    ) => GovernorStatus;
+    __BUZZ_E2E_GOVERNOR_STATUS__?: () => GovernorStatus;
     __BUZZ_E2E_RESET_OBSERVER_EVENTS__?: () => void;
     __BUZZ_E2E_EMIT_MOCK_READ_STATE__?: (input: {
       clientId: string;
@@ -11132,6 +11144,13 @@ export function maybeInstallE2eTauriMocks() {
   };
   window.__BUZZ_E2E_SET_FORGE_PR_DETAIL__ = (patch) =>
     setE2eForgeSnapshot(patch);
+  resetE2eGovernor();
+  window.__BUZZ_E2E_SET_GOVERNOR__ = (patch) => {
+    const next = setE2eGovernorStatus(patch);
+    applyGovernorStatus(next);
+    return next;
+  };
+  window.__BUZZ_E2E_GOVERNOR_STATUS__ = () => setE2eGovernorStatus({});
   if (config.mock?.forgePr) {
     setE2eForgeSnapshot(config.mock.forgePr);
   }
@@ -11719,6 +11738,22 @@ export function maybeInstallE2eTauriMocks() {
     }
     if (isForgeCommand(command)) {
       return handleForgeCommand(command, payload);
+    }
+    if (isToolPaneCommand(command)) {
+      try {
+        const result = handleToolPaneCommand(command, payload);
+        if (
+          result &&
+          typeof result === "object" &&
+          "sims" in (result as Record<string, unknown>)
+        ) {
+          applyGovernorStatus(result as GovernorStatus);
+        }
+        return result;
+      } catch (error) {
+        applyGovernorStatus(setE2eGovernorStatus({}));
+        throw error;
+      }
     }
 
     switch (command) {

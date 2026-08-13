@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::{
     app_state::AppState,
@@ -853,10 +853,19 @@ pub async fn set_channel_purpose(
 }
 
 #[tauri::command]
-pub async fn archive_channel(channel_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn archive_channel(
+    channel_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let uuid = parse_channel_uuid(&channel_id)?;
     let builder = events::build_archive(uuid)?;
     submit_event(builder, &state).await?;
+    if let Some(handle) = app.try_state::<crate::resource_governor::ResourceGovernorHandle>() {
+        if let Ok(mut gov) = handle.lock() {
+            let _ = gov.on_channel_archived(&channel_id, &crate::resource_governor::RealSimctl);
+        }
+    }
     Ok(())
 }
 
@@ -872,10 +881,19 @@ pub async fn unarchive_channel(
 }
 
 #[tauri::command]
-pub async fn delete_channel(channel_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn delete_channel(
+    channel_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let uuid = parse_channel_uuid(&channel_id)?;
     let builder = events::build_delete_channel(uuid)?;
     submit_event(builder, &state).await?;
+    if let Some(handle) = app.try_state::<crate::resource_governor::ResourceGovernorHandle>() {
+        if let Ok(mut gov) = handle.lock() {
+            let _ = gov.on_channel_deleted(&channel_id, &crate::resource_governor::RealSimctl);
+        }
+    }
     Ok(())
 }
 
