@@ -17,6 +17,7 @@ import { useSmoothCorners } from "@/shared/ui/smoothCorners";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 import { getReactNodeText } from "./utils";
+import { MarkdownMermaid } from "./MarkdownMermaid";
 
 let shikiHighlighter: HighlighterGeneric<BundledLanguage, BundledTheme> | null =
   null;
@@ -95,6 +96,13 @@ export function MarkdownCodeBlock({
     [code],
   );
 
+  if (language === "mermaid") {
+    if (!code.trim()) {
+      return <>{children}</>;
+    }
+    return <MarkdownMermaid source={code} />;
+  }
+
   return (
     <div className="group relative" data-code-block="">
       <pre
@@ -133,10 +141,14 @@ export function MarkdownCodeBlock({
 export function SyntaxHighlightedCode({
   code,
   language,
+  highlightStart,
+  highlightEnd,
   ...props
 }: {
   code: string;
   language: string;
+  highlightStart?: number;
+  highlightEnd?: number;
 } & React.ComponentProps<"code">) {
   const { themeName } = useTheme();
   // Buzz aliases ("buzz" / "buzz-dark") are not bundled Shiki themes — resolve
@@ -214,16 +226,33 @@ export function SyntaxHighlightedCode({
 
   const codeClassName = CODE_BLOCK_CLASS;
 
+  if (language === "mermaid") {
+    return <MarkdownMermaid source={code} />;
+  }
+
   if (!tokens) {
     const lines = code.split("\n");
     return (
       <code {...props} className={codeClassName}>
-        {lines.map((line, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: lines are positional
-          <span key={i} data-line="">
-            {line}
-          </span>
-        ))}
+        {lines.map((line, i) => {
+          const lineNumber = i + 1;
+          const highlighted =
+            highlightStart != null &&
+            highlightEnd != null &&
+            lineNumber >= highlightStart &&
+            lineNumber <= highlightEnd;
+          return (
+            <span
+              className={highlighted ? "bg-amber-500/25" : undefined}
+              data-line={String(lineNumber)}
+              data-testid={highlighted ? "wiki-file-highlight" : undefined}
+              // biome-ignore lint/suspicious/noArrayIndexKey: lines are positional
+              key={i}
+            >
+              {line}
+            </span>
+          );
+        })}
       </code>
     );
   }
@@ -245,12 +274,21 @@ export function SyntaxHighlightedCode({
             ? stripDiffMarker(line, isAdd ? DIFF_ADD_RE : DIFF_REMOVE_RE)
             : line;
 
+        const lineNumber = lineIdx + 1;
+        const highlighted =
+          highlightStart != null &&
+          highlightEnd != null &&
+          lineNumber >= highlightStart &&
+          lineNumber <= highlightEnd;
         return (
           <span
+            className={[diffClass, highlighted ? "bg-amber-500/25" : ""]
+              .filter(Boolean)
+              .join(" ")}
+            data-line={String(lineNumber)}
+            data-testid={highlighted ? "wiki-file-highlight" : undefined}
             // biome-ignore lint/suspicious/noArrayIndexKey: tokens are positional and never reordered
             key={lineIdx}
-            data-line=""
-            className={diffClass}
           >
             {renderedTokens.map((token, tokenIdx) => (
               <span

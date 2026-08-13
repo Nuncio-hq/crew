@@ -1,5 +1,14 @@
 # Crew State
 
+## Issue #200 — Crew Wiki (relay-native repo + company wiki)
+
+Separable `crew-wiki` engine with MCP + argv0 faces. Repo pages are
+kind 30623; company wiki is 30023. Two doors (library canonical, Projects
+Wiki tab filtered). Ask Auto/Q&A/Plan with Plan-to-thread. Incremental
+regen from source-file manifests. Mermaid + `buzz://file` citations.
+Spikes 0039–0042. D-061.
+Last updated: 2026-08-13
+
 ## Issue #198 — Org hierarchy (founder-signed roster)
 
 One addressable `KIND_ORG_ROSTER` (30680, `d=org`) is the tree. Relay

@@ -23,6 +23,8 @@ abstract final class EventKind {
   static const eventReminder = 30300;
   static const userStatus = 30315;
   static const dmVisibility = 30622;
+  static const longForm = 30023;
+  static const repoWikiPage = 30623;
   static const orgRoster = 30680;
   static const streamMessageV2 = 40002;
   static const channelThreadSummary = 39005;

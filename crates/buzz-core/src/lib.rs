@@ -46,6 +46,8 @@ pub mod tenant;
 pub mod user_input;
 /// Schnorr signature and event ID verification.
 pub mod verification;
+/// Crew repository wiki page / TOC envelope (kind 30623).
+pub mod wiki_page;
 
 pub use error::VerificationError;
 pub use event::StoredEvent;

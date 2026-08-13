@@ -5,6 +5,7 @@ mod app_state;
 mod archive;
 mod builderlab;
 mod commands;
+mod wiki_worker;
 mod deep_link;
 mod egress_guard;
 mod event_sync;
@@ -87,6 +88,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use tauri::Listener;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::StateFlags;
+use wiki_worker::wiki_generate;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // mesh-llm's async chains (model download, node start/join) overflow

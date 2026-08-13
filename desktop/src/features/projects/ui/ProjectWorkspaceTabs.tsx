@@ -62,6 +62,8 @@ import {
   type CreateIssueDialogInput,
 } from "./CreateIssueDialog";
 import { PROJECT_PANEL_ACTION_BUTTON_CLASS } from "./projectPanelStyles";
+import { WikiProjectTab } from "@/features/wiki/ui/WikiProjectTab";
+import { peekPendingWikiFileOpen } from "@/features/wiki/lib/wikiFileOpenStore";
 
 type CreatePullRequestAction = {
   projects: Project[];
@@ -274,6 +276,12 @@ export function WorkspaceTabs({
   React.useEffect(() => {
     onSelectedTabChange?.(selectedTab);
   }, [onSelectedTabChange, selectedTab]);
+
+  React.useEffect(() => {
+    if (peekPendingWikiFileOpen(project.id)) {
+      setSelectedTab("files");
+    }
+  }, [project.id]);
 
   React.useEffect(() => {
     if (isPullRequestSelected) {
@@ -559,6 +567,10 @@ export function WorkspaceTabs({
               : undefined
           }
         />
+      </TabsContent>
+
+      <TabsContent className="m-0" value="wiki">
+        <WikiProjectTab project={project} />
       </TabsContent>
 
       <TabsContent className="m-0" value="contributors">

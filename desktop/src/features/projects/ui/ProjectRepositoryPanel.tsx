@@ -7,7 +7,6 @@ import {
   FileAudio,
   FileCode2,
   FileCog,
-  FileDiff,
   FileImage,
   FileJson,
   FileLock2,
@@ -32,12 +31,13 @@ import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { UserSearchResult } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { normalizePubkey } from "@/shared/lib/pubkey";
-import { SyntaxHighlightedCode } from "@/shared/ui/markdown";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
 import {
   PROJECT_DETAIL_PANEL_CLASS,
   PROJECT_DETAIL_PANEL_MESSAGE_CLASS,
 } from "./projectPanelStyles";
+import { ProjectFileContentPanel } from "./ProjectFileContentPanel";
+import { consumePendingWikiFileOpen } from "@/features/wiki/lib/wikiFileOpenStore";
 import {
   type RepoSourceHeaderControls,
   RepoSourceDropdown,
@@ -57,13 +57,6 @@ export function formatLastChangedAt(timestamp: number | null) {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function formatFileSize(size: number | null) {
-  if (size === null) return "—";
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function normalizeAuthorLookupValue(value: string | null | undefined) {
@@ -541,75 +534,6 @@ function BreadcrumbButton({
   );
 }
 
-function FileContentPanel({
-  file,
-  onOpenPath,
-}: {
-  file: ProjectRepoFile;
-  onOpenPath: (path: string) => void;
-}) {
-  const language = languageForPath(file.path);
-  const pathSegments = file.path.split("/").filter(Boolean);
-  const fileName = pathSegments[pathSegments.length - 1] ?? file.path;
-  const directorySegments = pathSegments.slice(0, -1);
-
-  return (
-    <div className={PROJECT_DETAIL_PANEL_CLASS} data-project-detail-panel>
-      <div className="flex min-h-14 items-center gap-1 border-border/50 border-b bg-muted/20 px-3 py-3">
-        <BreadcrumbButton onClick={() => onOpenPath("")}>
-          Files
-        </BreadcrumbButton>
-        {directorySegments.map((segment, index) => {
-          const nextPath = directorySegments.slice(0, index + 1).join("/");
-          return (
-            <React.Fragment key={nextPath}>
-              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-              <BreadcrumbButton onClick={() => onOpenPath(nextPath)}>
-                {segment}
-              </BreadcrumbButton>
-            </React.Fragment>
-          );
-        })}
-        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-        <FileDiff className="h-4 w-4 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate px-1.5 py-1 font-mono text-xs text-foreground">
-          {fileName}
-        </span>
-        <div className="hidden shrink-0 items-center gap-3 text-2xs text-muted-foreground sm:flex">
-          <span>Last changed {formatLastChangedAt(file.lastChangedAt)}</span>
-          <span>{formatFileSize(file.size)}</span>
-        </div>
-        <span className="shrink-0 text-2xs text-muted-foreground sm:hidden">
-          {formatFileSize(file.size)}
-        </span>
-      </div>
-      <div className="border-border/50 border-b bg-muted/10 px-4 py-2 text-2xs text-muted-foreground sm:hidden">
-        Last changed {formatLastChangedAt(file.lastChangedAt)}
-      </div>
-      {file.previewContent ? (
-        <pre className="max-h-[36rem] overflow-auto bg-background/60 p-4">
-          {language ? (
-            <SyntaxHighlightedCode
-              className="text-xs leading-relaxed"
-              code={file.previewContent}
-              language={language}
-            />
-          ) : (
-            <code className="block min-w-full whitespace-pre font-mono text-xs leading-relaxed text-foreground">
-              {file.previewContent}
-            </code>
-          )}
-        </pre>
-      ) : (
-        <div className="p-6 text-sm text-muted-foreground">
-          Preview unavailable for this file. Large and binary files only show
-          metadata.
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function RepositoryFilesPanel({
   files,
   snapshot,
@@ -633,6 +557,10 @@ export function RepositoryFilesPanel({
   const [currentPath, setCurrentPath] = React.useState("");
   const [selectedFile, setSelectedFile] =
     React.useState<ProjectRepoFile | null>(null);
+  const [lineHighlight, setLineHighlight] = React.useState<{
+    start: number;
+    end: number;
+  } | null>(null);
   const entries = React.useMemo(
     () => repositoryEntries(files, currentPath),
     [currentPath, files],
@@ -675,11 +603,25 @@ export function RepositoryFilesPanel({
     [files],
   );
 
+  const appliedFilesKey = React.useRef("");
   React.useEffect(() => {
     if (!filesKey) return;
+    const pending = consumePendingWikiFileOpen();
+    if (pending) {
+      const file = files.find((item) => item.path === pending.path) ?? null;
+      if (file) {
+        setSelectedFile(file);
+        setLineHighlight({ start: pending.startLine, end: pending.endLine });
+        appliedFilesKey.current = filesKey;
+        return;
+      }
+    }
+    if (appliedFilesKey.current === filesKey) return;
+    appliedFilesKey.current = filesKey;
     setCurrentPath("");
     setSelectedFile(null);
-  }, [filesKey]);
+    setLineHighlight(null);
+  }, [files, filesKey]);
 
   // Loading/error/empty states keep the header controls visible — the
   // remote/local toggle must stay reachable when one source fails to load.
@@ -733,10 +675,13 @@ export function RepositoryFilesPanel({
 
   if (selectedFile) {
     return (
-      <FileContentPanel
+      <ProjectFileContentPanel
         file={selectedFile}
+        highlightEnd={lineHighlight?.end}
+        highlightStart={lineHighlight?.start}
         onOpenPath={(path) => {
           setSelectedFile(null);
+          setLineHighlight(null);
           setCurrentPath(path);
         }}
       />

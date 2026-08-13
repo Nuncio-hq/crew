@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+import { setPendingWikiFileOpen } from "@/features/wiki/lib/wikiFileOpenStore";
 import {
   entityLinkProjectRouteId,
   isEntityLink,
@@ -21,10 +22,31 @@ export function useOpenEntityLink(): (link: ParsedEntityLink) => void {
   const { goProject } = useAppNavigation();
   return React.useCallback(
     (link: ParsedEntityLink) => {
-      void goProject(entityLinkProjectRouteId(link), {
-        ...(link.type === "pr" ? { pullRequestId: link.id } : {}),
-        ...(link.type === "issue" ? { issueId: link.id } : {}),
-      });
+      const projectId = entityLinkProjectRouteId(link);
+      switch (link.type) {
+        case "pr":
+          void goProject(projectId, { pullRequestId: link.id });
+          return;
+        case "issue":
+          void goProject(projectId, { issueId: link.id });
+          return;
+        case "repo":
+          void goProject(projectId);
+          return;
+        case "file":
+          setPendingWikiFileOpen({
+            projectId,
+            path: link.path,
+            startLine: link.startLine,
+            endLine: link.endLine,
+          });
+          void goProject(projectId);
+          return;
+        default: {
+          const _exhaustive: never = link;
+          return _exhaustive;
+        }
+      }
     },
     [goProject],
   );

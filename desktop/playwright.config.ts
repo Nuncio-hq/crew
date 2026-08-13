@@ -168,6 +168,7 @@ export default defineConfig({
         "**/mission-inbox.spec.ts",
         "**/workbench.spec.ts",
         "**/org-hierarchy.spec.ts",
+        "**/crew-wiki.spec.ts",
         "**/thread-pr-hub.spec.ts",
         "**/tool-pane.spec.ts",
         "**/agent-desktop-tools.spec.ts",

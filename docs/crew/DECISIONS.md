@@ -1355,5 +1355,38 @@ There is no client-authoritative org store (D-003, D-010).
 
 See spikes 0035–0038.
 
+## D-061 — Crew Wiki is a separable engine on relay events
+
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Issue:** #200
+
+Repo wikis and company knowledge share one `crew-wiki` library. Faces are
+MCP tools inside `buzz-dev-mcp` (still one `mcp_command`) and argv0
+`crew-wiki`. There is no standalone wiki service.
+
+1. **Storage.** Repo pages and the TOC are `KIND_REPO_WIKI_PAGE` (30623),
+   `d = <repo-d>/<slug>` and `d = <repo-d>/_toc`. Company wiki is existing
+   NIP-23 `KIND_LONG_FORM` (30023 / `buzz notes`). No new database. FTS is
+   the generated tsvector allowlist (30023 + 30623); do not add 30623 to
+   the privacy exclusion CASE.
+2. **Two doors.** Sidebar Wiki library is canonical (company wiki, global
+   Ask, Generate, cadence). Projects → Wiki tab is the same projection
+   filtered to that repo (Ask scoped, Generate mirror + freshness only).
+3. **Refresh.** Manual / on-push (kind 30618 debounce 30s, default branch)
+   / daily / weekly. Incremental regen uses per-page `source` tags +
+   commit. Generator is caller-agnostic (`crew-wiki generate`). Day-one
+   model path: heuristic; OpenAI-compatible HTTP when `CREW_WIKI_API_KEY`
+   is set (`llm` feature). Agent-runtime generate is not day-one.
+4. **Ask.** Auto / Q&A / Plan. Plan ends with Start thread → prefilled
+   kickoff in the repo channel (library door: channel picker).
+5. **Engram promotion.** `wiki_propose` drafts a 30023 `_proposal/<slug>`
+   page; the founder publishes (D-028).
+6. **Rejected.** Standalone wiki service. Third-party/public repo index.
+   Per-branch wikis in UI. NIP-54 interop. Hand-editing generated repo
+   pages. Replacing `docs/crew/`. A vector/RAG database.
+
+See spikes 0039–0042.
+
 
 

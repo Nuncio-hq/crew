@@ -160,6 +160,37 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src/features/channels/ui/ChannelPane.tsx` | #197 origin prompt when pane closed | keep `ChannelOriginPrompt` next to user-input stack |
 | `desktop/src/testing/e2eBridge.ts` | #197 `__BUZZ_E2E_SET_AGENT_CONTROL__` | keep next to governor seed; logic in `e2eToolPane.ts` |
 | `desktop/playwright.config.ts` | #197 `agent-desktop-tools.spec.ts` smoke match | retain the glob |
+| `crates/buzz-core/src/kind.rs` | #200 `KIND_REPO_WIKI_PAGE` = 30623 | keep the constant + ALL_KINDS + parameterized-replaceable assert |
+| `crates/buzz-core/src/lib.rs` | #200 `pub mod wiki_page` | retain the module line |
+| `crates/buzz-relay/src/handlers/mod.rs` | #200 `pub mod wiki_page` | retain the module line |
+| `crates/buzz-relay/src/handlers/ingest.rs` | #200 ReposWrite + `validate_roster_or_wiki` | keep next to git kinds; wiki validate stays extracted (D-022) |
+| `crates/buzz-dev-mcp/src/lib.rs` | #200 wiki `#[tool]` + argv0 `crew-wiki` | wrappers only; impl lives in `wiki_tools.rs` |
+| `crates/buzz-dev-mcp/src/shim.rs` | #200 `crew-wiki` multicall name | keep next to `rg`/`tree`/`buzz` |
+| `crates/buzz-cli/src/links.rs` | #200 `file_link` | keep format sibling of repo/pr/issue |
+| `desktop/src/shared/constants/kinds.ts` | #200 `KIND_LONG_FORM` + `KIND_REPO_WIKI_PAGE` | keep next to git kinds |
+| `mobile/lib/shared/relay/nostr_models.dart` | #200 `longForm` / `repoWikiPage` | mirror desktop; no mobile wiki UI in this PR |
+| `desktop/src/app/routes.ts` | #200 `/wiki` | one `route()` line next to org |
+| `desktop/src/app/routeTree.gen.ts` | #200 generated `/wiki` | regenerate on desktop build |
+| `desktop/src/app/AppShell.helpers.ts` | #200 `AppView` + `deriveShellRoute` include `"wiki"` | one union member + one pathname arm |
+| `desktop/src/app/navigation/useAppNavigation.ts` | #200 `goWiki` | keep next to `goOrg` |
+| `desktop/src/app/AppShell.tsx` | #200 `onSelectWiki` | one callback pass-through |
+| `desktop/src/features/sidebar/ui/AppSidebar.tsx` | #200 `onSelectWiki` prop | keep the union compact (D-022); props live in `AppSidebarProps.ts` |
+| `desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx` | #200 Wiki nav item after Org | one `SidebarMenuItem` |
+| `desktop/src/features/communities/useCommunityInit.ts` | #200 `resetWikiStore` | one call in `resetCommunityState` |
+| `desktop/src/shared/lib/entityLink.ts` | #200 `buzz://file` host | keep next to pr/issue/repo; file is inline, not a preview card |
+| `desktop/src/shared/ui/markdown/utils.ts` | #200 `buzzDeepLinkUrlTransform` preserves valid file links | `parseEntityLink` is the allowlist |
+| `desktop/src/shared/ui/markdown/CodeBlock.tsx` | #200 mermaid fence → `MarkdownMermaid` | keep the language arm; renderer lives in Crew file |
+| `desktop/src/shared/ui/markdown/entityLinks.tsx` | #200 `file` case opens file panel | exhaustive switch |
+| `desktop/src/features/projects/ui/ProjectWorkspaceTabList.tsx` | #200 Wiki tab | one tab next to Files |
+| `desktop/src/features/projects/ui/ProjectWorkspaceTabs.tsx` | #200 wiki `TabsContent` + pending file-open | tab body lives in Crew `WikiProjectTab` |
+| `desktop/src/features/projects/ui/ProjectRepositoryPanel.tsx` | #200 consume pending wiki file open | do not reset selection when `filesKey` is unchanged |
+| `desktop/src-tauri/src/lib.rs` | #200 `mod wiki_worker` + `wiki_generate` import | keep next to other command modules |
+| `desktop/src-tauri/src/invoke.rs` | #200 `wiki_generate` | additive generate_handler entry only |
+| `desktop/src-tauri/Cargo.toml` | #200 `crew-wiki` path dep | keep the path dep |
+| `desktop/src/testing/e2eBridge.ts` | #200 wiki mock via `e2eWiki.ts` | keep additive REQ/EVENT + window hooks |
+| `desktop/playwright.config.ts` | #200 `crew-wiki.spec.ts` smoke match | retain the glob |
+| `migrations/0008_fresh_install_search_allowlist.sql` | #200 30023 + 30623 on fresh-install allowlist | do not add 30623 to the privacy exclusion CASE |
+| `scripts/maintenance/nip_rs_search_allowlist.sql` | #200 30023 + 30623 | same allowlist; exclusion CASE untouched |
 
 ## Before feature work
 

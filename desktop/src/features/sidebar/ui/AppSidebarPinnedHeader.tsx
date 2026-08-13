@@ -1,5 +1,6 @@
 import {
   Activity,
+  BookOpen,
   Bot,
   FolderGit2,
   Hammer,
@@ -29,6 +30,7 @@ export type SidebarSelectedView =
   | "pulse"
   | "projects"
   | "org"
+  | "wiki"
   | "workbench";
 
 type AppSidebarPinnedHeaderProps = {
@@ -53,6 +55,7 @@ type AppSidebarPrimaryMenuProps = {
   onSelectHome: () => void;
   onSelectProjects: () => void;
   onSelectOrg: () => void;
+  onSelectWiki: () => void;
   onSelectWorkbench: () => void;
   onSelectPulse: () => void;
   onSelectWorkflows: () => void;
@@ -104,6 +107,7 @@ export function AppSidebarPrimaryMenu({
   onSelectHome,
   onSelectProjects,
   onSelectOrg,
+  onSelectWiki,
   onSelectWorkbench,
   onSelectPulse,
   onSelectWorkflows,
@@ -182,6 +186,18 @@ export function AppSidebarPrimaryMenu({
           >
             <Network className="h-4 w-4" />
             <SidebarMenuLabel>Org</SidebarMenuLabel>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            data-testid="open-wiki-view"
+            isActive={selectedView === "wiki"}
+            onClick={onSelectWiki}
+            tooltip="Wiki"
+            type="button"
+          >
+            <BookOpen className="h-4 w-4" />
+            <SidebarMenuLabel>Wiki</SidebarMenuLabel>
           </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem>
