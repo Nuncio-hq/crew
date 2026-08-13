@@ -881,16 +881,27 @@ export function injectObserverEventsForE2E(
   agentPubkey: string,
   events: ObserverEvent[],
 ) {
-  // One publication per inject (upstream #5680 contract). Live-contact and
-  // Crew side effects must not notify on their own — connection/"open" is
-  // owned by setObserverConnectionStateForE2E when a spec needs it.
+  // Crew per-agent telemetry treats store-open + live contact as the
+  // readiness proof (replayed-only frames stay "connecting"). Open the
+  // connection silently so we still publish at most once below — matching
+  // upstream #5680's one-notify-per-envelope contract for batch injects.
+  let opened = false;
+  if (connectionState !== "open" || errorMessage !== null) {
+    connectionState = "open";
+    errorMessage = null;
+    snapshotByAgent.clear();
+    opened = true;
+  }
   for (const event of events) {
     if (!event.replayed) {
       markAgentLiveContact(agentPubkey, { notify: false });
     }
   }
-  if (appendAgentEvents(agentPubkey, events)) {
+  const appended = appendAgentEvents(agentPubkey, events);
+  if (appended) {
     applyCrewE2EInjectSideEffects(agentPubkey, events);
+  }
+  if (opened || appended) {
     notifyListeners();
   }
 }
