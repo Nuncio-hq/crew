@@ -187,6 +187,7 @@ test.describe("thread workbench (#186)", () => {
     ).toBeVisible();
     await expect(page.getByTestId("workbench-role-check")).toBeVisible();
 
+    await page.getByTestId("workbench-lens-thread").click();
     await page.getByTestId("workbench-office-toggle").click();
     await expect(page.getByTestId("workbench-office-bar")).toBeVisible();
     await expect(
@@ -207,7 +208,7 @@ test.describe("thread workbench (#186)", () => {
 
     await page
       .getByTestId("sidebar-primary-menu")
-      .getByText("Inbox", { exact: true })
+      .getByRole("button", { name: "Inbox" })
       .click();
     await expect(page.getByTestId("home-inbox-list")).toBeVisible();
     const hammer = page
