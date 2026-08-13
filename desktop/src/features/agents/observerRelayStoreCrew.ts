@@ -6,7 +6,25 @@ import { dispatchControlResult } from "./controlResultDispatch";
 import { ingestObserverFrameForEditAsUndo } from "./dispatchedEventIds";
 import { ingestProjectThreadWorkspaceEvent } from "./projectThreadWorkspaceStore";
 import { applySessionAgingObserverPayload } from "./sessionAgingObserverEffects";
-import type { ObserverEvent } from "./ui/agentSessionTypes";
+import type { ConnectionState, ObserverEvent } from "./ui/agentSessionTypes";
+
+/** Crew per-agent readiness: open + restored events without live contact → connecting. */
+export function effectiveCrewObserverConnectionState(args: {
+  connectionState: ConnectionState;
+  agentError: string | null;
+  hasLiveContact: boolean;
+  eventCount: number;
+}): ConnectionState {
+  if (args.connectionState === "open" && args.agentError) return "error";
+  if (
+    args.connectionState === "open" &&
+    !args.hasLiveContact &&
+    args.eventCount > 0
+  ) {
+    return "connecting";
+  }
+  return args.connectionState;
+}
 
 export type LiveObservationFilterResult = {
   acceptedEvents: ObserverEvent[];

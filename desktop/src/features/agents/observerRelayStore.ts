@@ -42,14 +42,32 @@ import {
 } from "./observerEventIdentity";
 import {
   applyCrewAppendBatchSideEffects,
-  applyCrewE2EInjectSideEffects,
   applyCrewLiveFrameSideEffects,
+  effectiveCrewObserverConnectionState,
   filterLiveObserverEventsForCrew,
 } from "./observerRelayStoreCrew";
+import {
+  bindObserverRelayStoreE2E,
+  injectObserverEventsForE2E,
+  resetAgentObserverLiveEventsForE2E,
+  setObserverConnectionStateForE2E,
+  _testGetArchivedChannelEvents,
+  _testProcessLiveObserverEvents,
+  _testRegisterKnownAgents,
+} from "./observerRelayStoreE2E";
 import {
   clearControlResultListeners,
   subscribeControlResults,
 } from "./controlResultDispatch";
+
+export {
+  injectObserverEventsForE2E,
+  resetAgentObserverLiveEventsForE2E,
+  setObserverConnectionStateForE2E,
+  _testGetArchivedChannelEvents,
+  _testProcessLiveObserverEvents,
+  _testRegisterKnownAgents,
+};
 
 const MAX_OBSERVER_EVENTS = 3000;
 const MAX_PENDING_UNKNOWN_AGENT_FRAMES = 100;
@@ -702,15 +720,12 @@ export function getAgentObserverSnapshot(
   const key = normalizePubkey(agentPubkey);
   const agentError = connectionErrorByAgent.get(key) ?? null;
   const agentEvents = eventsByAgent.get(key) ?? [];
-  // connecting only when restored events lack live contact; empty is idle open.
-  const effectiveConnectionState =
-    connectionState === "open" && agentError
-      ? "error"
-      : connectionState === "open" &&
-          !agentsWithCurrentLiveContact.has(key) &&
-          agentEvents.length > 0
-        ? "connecting"
-        : connectionState;
+  const effectiveConnectionState = effectiveCrewObserverConnectionState({
+    connectionState,
+    agentError,
+    hasLiveContact: agentsWithCurrentLiveContact.has(key),
+    eventCount: agentEvents.length,
+  });
   const effectiveErrorMessage = agentError ?? errorMessage;
   const cached = snapshotByAgent.get(key);
   if (
@@ -869,50 +884,6 @@ export async function ingestArchivedObserverEvents(
 }
 
 /**
- * E2E-only: inject synthetic observer events directly into the store, bypassing
- * the relay-security knownAgentPubkeys filter. Exercises the real
- * appendAgentEvent → processTranscriptEvent ingestion path so screenshot specs
- * prove the production render, not a stub.
- *
- * Never call this from production code — it is intentionally not re-exported
- * from the public agent feature barrel.
- */
-export function injectObserverEventsForE2E(
-  agentPubkey: string,
-  events: ObserverEvent[],
-) {
-  // Crew per-agent telemetry treats store-open + live contact as the
-  // readiness proof (replayed-only frames stay "connecting"). Open the
-  // connection silently so we still publish at most once below — matching
-  // upstream #5680's one-notify-per-envelope contract for batch injects.
-  let opened = false;
-  if (connectionState !== "open" || errorMessage !== null) {
-    connectionState = "open";
-    errorMessage = null;
-    snapshotByAgent.clear();
-    opened = true;
-  }
-  for (const event of events) {
-    if (!event.replayed) {
-      markAgentLiveContact(agentPubkey, { notify: false });
-    }
-  }
-  const appended = appendAgentEvents(agentPubkey, events);
-  if (appended) {
-    applyCrewE2EInjectSideEffects(agentPubkey, events);
-  }
-  if (opened || appended) {
-    notifyListeners();
-  }
-}
-
-/** E2E-only: drive observer telemetry health through the production store. */
-export function setObserverConnectionStateForE2E(state: ConnectionState) {
-  setConnectionState(state, state === "error" ? "Mock observer error" : null);
-  notifyListeners();
-}
-
-/**
  * Synchronize the observer store with a sorted buffer of events for one agent.
  * Used by test harnesses and replay bridges that already hold decoded frames.
  */
@@ -957,46 +928,29 @@ export function resetAgentObserverStore() {
   void unsubscribe?.();
 }
 
-/** E2E-only: remove live frames while retaining the hydrated archive journal. */
-export function resetAgentObserverLiveEventsForE2E() {
-  eventsByAgent.clear();
-  transcriptByAgent.clear();
-  snapshotByAgent.clear();
-  connectionErrorByAgent.clear();
-  agentsWithCurrentLiveContact.clear();
-  notifyListeners();
-}
-
-/**
- * Test-only: register a set of agent pubkeys as trusted for a given
- * subscription id. Mirrors the effect of mounting `useManagedAgentObserverBridge`
- * in a React tree. Only call from tests — never from production code.
- */
-export function _testRegisterKnownAgents(
-  subscriptionId: string,
-  pubkeys: readonly string[],
-): void {
-  registerKnownAgents(subscriptionId, pubkeys);
-}
-
-/** Test-only: exercise live envelope ordering without relay/decryption setup. */
-export function _testProcessLiveObserverEvents(
-  agentPubkey: string,
-  events: readonly ObserverEvent[],
-): void {
-  processLiveObserverEvents(agentPubkey, events);
-}
-
-/**
- * Test-only: read the raw archived observer events for a (agent, channel) pair.
- * Production callers should use `getArchivedChannelEvents`.
- * Only call from tests — never from production code.
- */
-export function _testGetArchivedChannelEvents(
-  agentPubkey: string,
-  channelId: string,
-): ObserverEvent[] {
-  return (
-    archiveEventsByChannel.get(archiveChannelKey(agentPubkey, channelId)) ?? []
-  );
-}
+bindObserverRelayStoreE2E({
+  getConnectionState: () => connectionState,
+  getErrorMessage: () => errorMessage,
+  openSilently: () => {
+    connectionState = "open";
+    errorMessage = null;
+    snapshotByAgent.clear();
+  },
+  markLiveContactQuiet: (agentPubkey) =>
+    markAgentLiveContact(agentPubkey, { notify: false }),
+  appendAgentEvents,
+  notifyListeners,
+  setConnectionState,
+  clearLiveEvents: () => {
+    eventsByAgent.clear();
+    transcriptByAgent.clear();
+    snapshotByAgent.clear();
+    connectionErrorByAgent.clear();
+    agentsWithCurrentLiveContact.clear();
+    notifyListeners();
+  },
+  registerKnownAgents,
+  processLiveObserverEvents,
+  getArchivedChannelEvents: (agentPubkey, channelId) =>
+    archiveEventsByChannel.get(archiveChannelKey(agentPubkey, channelId)) ?? [],
+});
