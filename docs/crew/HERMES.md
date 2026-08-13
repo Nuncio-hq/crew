@@ -278,3 +278,22 @@ Hermes-side ask lands.
   rule rather than a wall for that engine only. Hermes profile ownership remains a boundary for profile
   memory/skills/credentials/model, not the capability boundary (D-024,
   D-029, D-044).
+
+## Officer loop (issue #198)
+
+When the founder-signed org roster names a Hermes agent as an officer
+(someone with direct reports):
+
+1. **ORG-CHECK** on a fresh session (same idea as ROLE-CHECK): confirm
+   domain, duties, and cadence from the roster. Do not invent a title.
+2. **Heartbeat** may survey reports when there is a delta (new receipt,
+   stalled thread, budget stop). Do not poll the floor on every beat.
+3. **Handoff** to a report uses `crew-handoff` and must link the parent
+   thread so the executor can read the founder’s original words.
+4. **Rollups** are ordinary messages in the officer’s office thread
+   (`crew-office`). Cadence is a convention, not a protocol timer.
+5. **Budget ceiling** → stop-and-report in the office thread. Never
+   continue self-initiated work silently. Founder-assigned work is not
+   blocked by the self-initiated cap.
+6. Peer chat stays flat. The tree constrains assignment and budget, not
+   who may mention whom.

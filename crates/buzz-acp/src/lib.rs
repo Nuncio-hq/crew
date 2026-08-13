@@ -13,6 +13,7 @@ mod filter;
 mod governor_env;
 mod guided_handover;
 mod observer;
+mod org_roster;
 mod pool;
 mod pool_lifecycle;
 mod queue;
@@ -36,7 +37,7 @@ use acp::{AcpClient, EnvVar, McpServer};
 use anyhow::Result;
 use buzz_core::kind::{
     KIND_AGENT_USER_INPUT_ANSWER, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
-    KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_REMINDER,
+    KIND_ORG_ROSTER, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_REMINDER,
     KIND_WORKFLOW_APPROVAL_REQUESTED,
 };
 use buzz_core::observer::{
@@ -2246,6 +2247,8 @@ async fn tokio_main() -> Result<()> {
             &config.relay_url,
             &pubkey_hex,
         ),
+        org_roster_cache: crate::org_roster::empty_roster_cache(),
+        org_budget: Arc::new(crate::org_roster::OrgBudgetTracker::default()),
     });
     pool::prepare_receipt_outbox(&ctx)
         .await
@@ -3001,6 +3004,43 @@ async fn tokio_main() -> Result<()> {
                                         mode = %config.respond_to,
                                         is_dm,
                                         "inbound author gate — dropping event"
+                                    );
+                                    continue;
+                                }
+                            }
+
+                            ctx.org_budget.last_inbound_at.store(
+                                buzz_event.event.created_at.as_secs(),
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+
+                            if kind_u32 == KIND_ORG_ROSTER {
+                                crate::org_roster::cache_inbound_roster(
+                                    &ctx.org_roster_cache,
+                                    &buzz_event.event,
+                                )
+                                .await;
+                                continue;
+                            }
+
+                            if let Some(handoff) =
+                                crate::org_roster::parse_event_handoff(&buzz_event.event)
+                            {
+                                let founder = owner_cache.get().unwrap_or("").to_string();
+                                let creates = crate::org_roster::handoff_should_create_work(
+                                    &ctx.org_roster_cache,
+                                    &ctx.rest_client,
+                                    &buzz_event.event.pubkey.to_hex(),
+                                    &handoff.executor,
+                                    &founder,
+                                    &pubkey_hex,
+                                )
+                                .await;
+                                if !creates {
+                                    tracing::info!(
+                                        channel_id = %buzz_event.channel_id,
+                                        executor = %handoff.executor,
+                                        "crew-handoff from outside manager chain — conversation only"
                                     );
                                     continue;
                                 }

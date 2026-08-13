@@ -167,6 +167,7 @@ export default defineConfig({
         "**/hermes-profile-lifecycle.spec.ts",
         "**/mission-inbox.spec.ts",
         "**/workbench.spec.ts",
+        "**/org-hierarchy.spec.ts",
         "**/thread-pr-hub.spec.ts",
         "**/tool-pane.spec.ts",
         "**/agent-desktop-tools.spec.ts",

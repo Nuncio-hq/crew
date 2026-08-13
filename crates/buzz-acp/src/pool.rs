@@ -699,6 +699,10 @@ pub struct PromptContext {
     pub engine_identity: String,
     /// Absolute directory root for per-thread session ledger files.
     pub session_ledger_dir: PathBuf,
+    /// Community org roster cache (Crew). Fetch on handoff / new session only.
+    pub org_roster_cache: crate::org_roster::OrgRosterCache,
+    /// Self-initiated budget counters (Crew). Turn-start enforcement.
+    pub org_budget: Arc<crate::org_roster::OrgBudgetTracker>,
 }
 
 impl AgentPool {
@@ -1092,6 +1096,13 @@ async fn create_session_and_apply_model(
     let is_goose = agent.agent_name == "goose";
     let system_with_role =
         compose_role_and_routing_prompt(ctx.system_prompt.as_deref(), role_assignment, routing);
+    let me = ctx.agent_keys.public_key().to_hex();
+    let org_section = {
+        let guard = ctx.org_roster_cache.read().await;
+        guard
+            .as_ref()
+            .and_then(|cached| crate::org_roster::org_check_section(Some(&cached.roster), &me))
+    };
     let framed = match checkout_notice
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -1104,12 +1115,15 @@ async fn create_session_and_apply_model(
         ),
         None => framed_system_prompt(session_cwd, ctx.base_prompt, system_with_role.as_deref()),
     };
-    let combined_system_prompt = with_canvas(
-        with_core(
-            with_team(framed, ctx.team_instructions.as_deref()),
-            agent_core,
+    let combined_system_prompt = with_org(
+        with_canvas(
+            with_core(
+                with_team(framed, ctx.team_instructions.as_deref()),
+                agent_core,
+            ),
+            agent_canvas,
         ),
-        agent_canvas,
+        org_section.as_deref(),
     );
 
     let session_title = ctx
@@ -1733,6 +1747,15 @@ fn with_canvas(prompt: Option<String>, canvas: Option<&str>) -> Option<String> {
     }
 }
 
+fn with_org(prompt: Option<String>, org: Option<&str>) -> Option<String> {
+    match (prompt, org) {
+        (Some(prompt), Some(org)) => Some(format!("{prompt}\n\n{org}")),
+        (Some(prompt), None) => Some(prompt),
+        (None, Some(org)) => Some(org.to_string()),
+        (None, None) => None,
+    }
+}
+
 fn combine_optional_prompt(base: Option<&str>, addition: Option<&str>) -> Option<String> {
     match (
         base.map(str::trim).filter(|value| !value.is_empty()),
@@ -1943,6 +1966,94 @@ pub async fn run_prompt_task(
         Some(b) => PromptSource::Channel(b.channel_id),
         None => PromptSource::Heartbeat,
     };
+    let me = ctx.agent_keys.public_key().to_hex();
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    let cached_roster = ctx
+        .org_roster_cache
+        .read()
+        .await
+        .as_ref()
+        .map(|cached| cached.roster.clone());
+    if matches!(source, PromptSource::Heartbeat)
+        && crate::org_roster::officer_should_skip_heartbeat(
+            cached_roster.as_ref(),
+            &me,
+            &ctx.org_budget,
+        )
+    {
+        send_prompt_result(
+            &result_tx,
+            &turn_id,
+            agent,
+            source,
+            PromptOutcome::Ok(StopReason::EndTurn),
+            None,
+        );
+        return;
+    }
+    let founder = ctx
+        .agent_owner_pubkey
+        .as_ref()
+        .map(|pk| pk.to_hex())
+        .unwrap_or_default();
+    let assigned = batch.as_ref().is_some_and(|batch| {
+        crate::org_roster::batch_is_assigned_work(
+            batch.events.iter().map(|item| &item.event),
+            &me,
+            cached_roster.as_ref(),
+            &founder,
+        )
+    });
+    let _self_initiated_guard = match crate::org_roster::evaluate_budget(
+        &ctx.org_budget,
+        cached_roster.as_ref(),
+        &me,
+        assigned,
+        now,
+    ) {
+        crate::org_roster::BudgetDecision::Allow => {
+            let in_tree = cached_roster.as_ref().is_some_and(|roster| {
+                buzz_core::org_roster::canonical_pubkey(&me)
+                    .ok()
+                    .is_some_and(|key| roster.nodes.contains_key(&key))
+            });
+            if !assigned && in_tree {
+                Some(crate::org_roster::SelfInitiatedTurnGuard::acquire(
+                    Arc::clone(&ctx.org_budget),
+                ))
+            } else {
+                None
+            }
+        }
+        crate::org_roster::BudgetDecision::StopAndReport { office_channel, .. } => {
+            let (tokens_today, open_work) = ctx.org_budget.queued_summary(now);
+            if let Some(channel) = office_channel {
+                if let Err(error) = crate::org_roster::publish_stop_and_report(
+                    &ctx.rest_client,
+                    &ctx.agent_keys,
+                    &channel,
+                    tokens_today,
+                    open_work,
+                )
+                .await
+                {
+                    tracing::warn!(error = %error, "org budget stop-and-report failed");
+                }
+            }
+            send_prompt_result(
+                &result_tx,
+                &turn_id,
+                agent,
+                source,
+                PromptOutcome::Ok(StopReason::EndTurn),
+                None,
+            );
+            return;
+        }
+    };
+    if matches!(source, PromptSource::Heartbeat) {
+        crate::org_roster::mark_heartbeat_fired(&ctx.org_budget, now);
+    }
     let observer_channel_id = batch.as_ref().map(FlushBatch::routing_channel_id);
     let observer_conversation_id = batch.as_ref().map(|batch| batch.channel_id);
     // Freeze every signed triggering-event relationship before the agent turn
@@ -2236,6 +2347,15 @@ pub async fn run_prompt_task(
                     pending_canvas = Some((*cid, section));
                 }
             }
+        }
+        if is_new_channel_session {
+            let founder = ctx.agent_owner_pubkey.map(|pk| pk.to_hex());
+            let _ = crate::org_roster::cached_or_fetch_roster(
+                &ctx.org_roster_cache,
+                &ctx.rest_client,
+                founder.as_deref(),
+            )
+            .await;
         }
     }
 
@@ -5748,6 +5868,20 @@ async fn publish_agent_turn_metric(
 ) {
     use buzz_core::agent_turn_metric::AgentTurnMetricPayload;
     use nostr::{EventBuilder, Kind, Tag};
+
+    if let Some(ref usage) = usage {
+        let tokens = usage.turn_total_tokens.unwrap_or_else(|| {
+            usage
+                .turn_input_tokens
+                .unwrap_or(0)
+                .saturating_add(usage.turn_output_tokens.unwrap_or(0))
+        });
+        ctx.org_budget.record_self_initiated_turn_tokens(
+            tokens,
+            turn_id,
+            chrono::Utc::now().timestamp().max(0) as u64,
+        );
+    }
 
     let (usage, owner_pk) = match (usage, ctx.agent_owner_pubkey.as_ref()) {
         (Some(u), Some(pk)) => (u, pk),
@@ -11295,6 +11429,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             receipt_outbox_workers: TaskTracker::new(),
             engine_identity: "test-engine".to_string(),
             session_ledger_dir: std::env::temp_dir().join("buzz-acp-session-ledger-pool-tests"),
+            org_roster_cache: crate::org_roster::empty_roster_cache(),
+            org_budget: Arc::new(crate::org_roster::OrgBudgetTracker::default()),
         }
     }
 

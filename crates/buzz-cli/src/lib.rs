@@ -243,6 +243,38 @@ enum Cmd {
     /// List and answer pending agent user-input questions
     #[command(subcommand)]
     UserInput(UserInputCmd),
+    /// Founder-signed org roster (Crew)
+    #[command(subcommand)]
+    Org(OrgCmd),
+}
+
+#[derive(Subcommand)]
+pub enum OrgCmd {
+    /// Show the founder-signed org roster JSON
+    Show,
+    /// Print the reporting tree
+    Tree,
+    /// List repositories/projects that name an agent as maintainer or steward
+    Portfolio {
+        /// Agent pubkey (hex or npub)
+        #[arg(long)]
+        pubkey: String,
+    },
+    /// Publish a roster JSON file (founder-signed)
+    Publish {
+        /// Path to roster JSON
+        #[arg(long)]
+        file: String,
+    },
+    /// Add a steward/maintainer tag on a kind:30617 announcement you own
+    Steward {
+        /// Repository `d` tag
+        #[arg(long)]
+        repo: String,
+        /// Agent pubkey to add
+        #[arg(long)]
+        pubkey: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -420,6 +452,12 @@ pub enum MessagesCmd {
         /// Pubkey to mention (hex or npub; repeatable). Supplying any explicit identity permits unresolved or ambiguous @Name text as presentation-only; uniquely resolved member names still notify.
         #[arg(long = "mention")]
         mentions: Vec<String>,
+        /// Assign work to this executor (`crew-handoff`). Auto-creates work only if you are in their manager chain or are the founder.
+        #[arg(long)]
+        handoff: Option<String>,
+        /// Goal text hashed into the handoff tag (defaults to message content)
+        #[arg(long)]
+        goal: Option<String>,
     },
     /// Send a code diff / patch to a channel
     SendDiff {
@@ -2044,6 +2082,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
         Cmd::UserInput(sub) => commands::user_input::dispatch(sub, &client).await,
+        Cmd::Org(sub) => commands::org::dispatch(sub, &client, &cli.format).await,
         Cmd::Pack(_) => unreachable!("handled above"),
     }
 }

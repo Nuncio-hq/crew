@@ -29,6 +29,12 @@ import {
   setE2eAgentControl,
   setE2eGovernorStatus,
 } from "./e2eToolPane.ts";
+import {
+  acceptPublishedOrgRoster,
+  filterE2eOrgRosterEvents,
+  resetE2eOrgRoster,
+  setE2eOrgRoster,
+} from "./e2eOrgRoster.ts";
 import { applyGovernorStatus } from "@/features/tool-pane/governorStore";
 import type { GovernorStatus } from "@/features/tool-pane/types";
 import type { AgentControlUi } from "@/features/tool-pane/agentControlStore";
@@ -76,6 +82,7 @@ import {
   KIND_MEMBER_ADDED_NOTIFICATION,
   KIND_MEMBER_REMOVED_NOTIFICATION,
   KIND_PERSONA,
+  KIND_ORG_ROSTER,
   KIND_PROJECT_ANNOUNCEMENT,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
@@ -1413,6 +1420,7 @@ declare global {
       can_pull: boolean;
       pull_block_reason: string | null;
     };
+    __BUZZ_E2E_SET_ORG_ROSTER__?: (input: { content: string }) => void;
     __BUZZ_E2E_SET_RELAY_CONNECTION_STATE__?: (state: ConnectionState) => void;
     __BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?: () => ConnectionState;
     /** Queue deterministic mock AUTH outcomes, consumed in order. */
@@ -10792,6 +10800,14 @@ function sendToMockSocket(args: {
       return;
     }
 
+    if (filter.kinds?.includes(KIND_ORG_ROSTER)) {
+      for (const event of filterE2eOrgRosterEvents(filter)) {
+        sendWsText(socket.handler, ["EVENT", subId, event]);
+      }
+      sendWsText(socket.handler, ["EOSE", subId]);
+      return;
+    }
+
     // Project queries: NIP-34 kinds, or kind:1 comments scoped by repo `a`
     // tag (PR/issue discussions, approvals, review requests).
     if (
@@ -10928,6 +10944,13 @@ function sendToMockSocket(args: {
         if (idx >= 0) mockReminderEvents.splice(idx, 1);
       }
       mockReminderEvents.push(event);
+      sendWsText(socket.handler, ["OK", event.id, true, ""]);
+      return;
+    }
+
+    if (event.kind === KIND_ORG_ROSTER) {
+      acceptPublishedOrgRoster(event);
+      emitMockGlobalEvent(event);
       sendWsText(socket.handler, ["OK", event.id, true, ""]);
       return;
     }
@@ -11148,6 +11171,11 @@ export function maybeInstallE2eTauriMocks() {
   window.__BUZZ_E2E_SET_FORGE_PR_DETAIL__ = (patch) =>
     setE2eForgeSnapshot(patch);
   resetE2eGovernor();
+  resetE2eOrgRoster();
+  window.__BUZZ_E2E_SET_ORG_ROSTER__ = ({ content }) => {
+    const ident = getConfig()?.identity ?? DEFAULT_MOCK_IDENTITY;
+    setE2eOrgRoster({ content, pubkey: ident.pubkey });
+  };
   window.__BUZZ_E2E_SET_GOVERNOR__ = (patch) => {
     const next = setE2eGovernorStatus(patch);
     applyGovernorStatus(next);

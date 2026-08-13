@@ -14,6 +14,9 @@ import type {
   MissionInboxSections,
 } from "@/features/home/lib/missionInbox";
 import { snoozeAgentAttention } from "@/features/agents/agentAttentionSnoozeStore";
+import { useOrgRosterQuery } from "@/features/org/hooks/useOrgRosterQuery";
+import { isOfficer, managerOf } from "@/features/org/lib/orgRoster";
+import { useMyRelayMembershipQuery } from "@/features/community-members/hooks";
 
 function ageLabel(ageMs: number) {
   const minutes = Math.max(0, Math.floor(ageMs / 60_000));
@@ -94,6 +97,11 @@ function MissionRow({
             {stateLabel(row.state)} · {row.agentPubkey || "Agent"} ·{" "}
             {row.phaseOrHeadline}
           </span>
+          {row.escalationHop ? (
+            <span className="block truncate text-2xs text-muted-foreground">
+              {row.escalationHop}
+            </span>
+          ) : null}
         </span>
         <span className="shrink-0 text-2xs text-muted-foreground">
           {ageLabel(row.age)}
@@ -163,8 +171,22 @@ export function MissionInboxSectionsView({
   selectedConversationId?: string | null;
 }) {
   const [workingOpen, setWorkingOpen] = React.useState(false);
+  const [showAllLevels, setShowAllLevels] = React.useState(false);
+  const roster = useOrgRosterQuery().data;
+  const isFounder = useMyRelayMembershipQuery().data?.role === "owner";
+  const needsYouRows = React.useMemo(() => {
+    if (!isFounder || !roster || showAllLevels) {
+      return sections.needsYou;
+    }
+    return sections.needsYou.filter((row) => {
+      const manager = managerOf(roster, row.agentPubkey);
+      return (
+        manager === roster.founderPubkey || isOfficer(roster, row.agentPubkey)
+      );
+    });
+  }, [isFounder, roster, sections.needsYou, showAllLevels]);
   const groups = [
-    { key: "needsYou", label: "Needs attention", rows: sections.needsYou },
+    { key: "needsYou", label: "Needs attention", rows: needsYouRows },
     {
       key: "readyToReview",
       label: "Ready to review",
@@ -189,6 +211,16 @@ export function MissionInboxSectionsView({
               {group.rows.length}
             </span>
           </div>
+          {group.key === "needsYou" && isFounder ? (
+            <button
+              className="px-3 pb-1 text-2xs text-primary"
+              data-testid="mission-inbox-show-all-levels"
+              onClick={() => setShowAllLevels((value) => !value)}
+              type="button"
+            >
+              {showAllLevels ? "Officer level" : "Show all levels"}
+            </button>
+          ) : null}
           {group.rows.length > 0 ? (
             group.rows.map((row) => (
               <MissionRow

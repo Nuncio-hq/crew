@@ -1,4 +1,12 @@
-import { Activity, Bot, FolderGit2, Hammer, Inbox, Zap } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  FolderGit2,
+  Hammer,
+  Inbox,
+  Network,
+  Zap,
+} from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { FeatureGate } from "@/shared/features";
@@ -20,6 +28,7 @@ export type SidebarSelectedView =
   | "workflows"
   | "pulse"
   | "projects"
+  | "org"
   | "workbench";
 
 type AppSidebarPinnedHeaderProps = {
@@ -43,6 +52,7 @@ type AppSidebarPrimaryMenuProps = {
   onSelectAgents: () => void;
   onSelectHome: () => void;
   onSelectProjects: () => void;
+  onSelectOrg: () => void;
   onSelectWorkbench: () => void;
   onSelectPulse: () => void;
   onSelectWorkflows: () => void;
@@ -93,6 +103,7 @@ export function AppSidebarPrimaryMenu({
   onSelectAgents,
   onSelectHome,
   onSelectProjects,
+  onSelectOrg,
   onSelectWorkbench,
   onSelectPulse,
   onSelectWorkflows,
@@ -161,6 +172,18 @@ export function AppSidebarPrimaryMenu({
             </SidebarMenuButton>
           </SidebarMenuItem>
         </FeatureGate>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            data-testid="open-org-view"
+            isActive={selectedView === "org"}
+            onClick={onSelectOrg}
+            tooltip="Org"
+            type="button"
+          >
+            <Network className="h-4 w-4" />
+            <SidebarMenuLabel>Org</SidebarMenuLabel>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
             data-testid="open-workbench-view"

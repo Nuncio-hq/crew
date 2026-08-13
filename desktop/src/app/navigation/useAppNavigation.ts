@@ -102,6 +102,17 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  const goOrg = React.useCallback(
+    (behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/org",
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
   const goWorkbench = React.useCallback(
     (
       channelId?: string | null,
@@ -357,6 +368,7 @@ export function useAppNavigation() {
     goHome,
     goNewMessage,
     goProject,
+    goOrg,
     goProjects,
     goPulse,
     goWorkbench,

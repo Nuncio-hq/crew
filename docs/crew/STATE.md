@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #198 — Org hierarchy (founder-signed roster)
+
+One addressable `KIND_ORG_ROSTER` (30680, `d=org`) is the tree. Relay
+validates founder-author, acyclicity, single manager, known members, and
+budget cascade before storage. Kickoff `crew-handoff` auto-creates work
+only on the manager chain (founder skip-level always). Budgets enforce
+at turn start; ceiling → stop-and-report. Org chart is a projection.
+Officers draft; founder signs. Spikes 0035–0038. D-060.
+Last updated: 2026-08-13
+
 ## Issue #197 — Agent desktop tools (`browser_*` / `sim_*`)
 
 14 MCP tools in `buzz-dev-mcp` drive the #196 Governor instruments

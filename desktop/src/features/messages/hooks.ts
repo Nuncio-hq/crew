@@ -455,6 +455,7 @@ export function useSendMessageMutation(
       mediaTags?: string[][];
       sentFromThreadRootId?: string | null;
       sentFromThreadRootExcerpt?: string | null;
+      extraTags?: string[][];
     },
     MessageQueryContext | undefined
   >({
@@ -468,6 +469,7 @@ export function useSendMessageMutation(
       mediaTags,
       sentFromThreadRootId,
       sentFromThreadRootExcerpt,
+      extraTags,
     }) => {
       // Prefer a channel captured by the caller at compose time. Otherwise,
       // resolve a captured id from the shared channel cache so navigation
@@ -522,6 +524,26 @@ export function useSendMessageMutation(
             sentFromThreadRootExcerpt,
           )
         : undefined;
+      const extra = extraTags ?? [];
+
+      if (extra.length > 0) {
+        const tags: string[][] = [...mentionTags, ...extra];
+        if (parentEventId) {
+          tags.push(["e", parentEventId, "", "reply"]);
+          if (threadHeadId && threadHeadId !== parentEventId) {
+            tags.push(["e", threadHeadId, "", "root"]);
+          }
+        }
+        if (sentFromThreadTag) {
+          tags.push(sentFromThreadTag);
+        }
+        return relayClient.sendMessage(
+          effectiveChannel.id,
+          content,
+          recipientPubkeys,
+          tags,
+        );
+      }
 
       // Messages carrying media OR custom-emoji tags MUST go through REST so
       // the relay's tag validation runs. The WebSocket path emits no extra
@@ -608,6 +630,7 @@ export function useSendMessageMutation(
       mediaTags,
       sentFromThreadRootId,
       sentFromThreadRootExcerpt,
+      extraTags,
     }) => {
       // Mirror mutationFn's target resolution so the optimistic message lands
       // in the cache for the same channel as the real send. A caller-supplied
@@ -646,6 +669,9 @@ export function useSendMessageMutation(
         sentFromThreadRootId ?? null,
         sentFromThreadRootExcerpt ?? null,
       );
+      if (extraTags && extraTags.length > 0) {
+        optimisticMessage.tags.push(...extraTags);
+      }
 
       const nextWindow = mergeLiveChannelWindowEvent(
         previousWindow ?? emptyChannelWindowStore(),

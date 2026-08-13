@@ -49,6 +49,7 @@ export type MissionInboxRow = {
   inboxItem: InboxItem | null;
   rootEventId: string | null;
   messageEventId: string | null;
+  escalationHop?: string | null;
 };
 
 export type MissionInboxSections = {

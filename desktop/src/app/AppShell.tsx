@@ -141,6 +141,7 @@ export function AppShell() {
     goChannel,
     goHome,
     goNewMessage,
+    goOrg,
     goProjects,
     goPulse,
     goWorkbench,
@@ -859,6 +860,7 @@ export function AppShell() {
                         ]}
                         onSelectHome={() => void goHome()}
                         onSelectProjects={() => void goProjects()}
+                        onSelectOrg={() => void goOrg()}
                         onSelectWorkbench={() => void goWorkbench()}
                         onSelectPulse={() => void goPulse()}
                         onSelectSettings={handleOpenSettings}

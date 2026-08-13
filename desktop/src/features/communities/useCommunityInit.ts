@@ -51,6 +51,7 @@ import { resetAvatarProfileSync } from "@/features/profile/avatarProfileSync";
 import { resetSidebarRelayConnectionCardState } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
 import { clearMarkdownNodeCache } from "@/shared/ui/markdown/nodeCache";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
+import { resetOrgRosterProjection } from "@/features/org/lib/orgProjectionStore";
 import { resetGovernorStatusForTests } from "@/features/tool-pane/governorStore";
 import { resetToolPaneForTests } from "@/features/tool-pane/toolPaneStore";
 import { resetAgentControlForTests } from "@/features/tool-pane/agentControlStore";
@@ -109,6 +110,7 @@ function resetCommunityState({
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
   resetGovernorStatusForTests();
+  resetOrgRosterProjection();
   resetToolPaneForTests();
   resetAgentControlForTests();
 }
