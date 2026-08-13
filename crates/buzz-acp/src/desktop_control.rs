@@ -16,9 +16,12 @@ pub fn notify_lease_release(channel_id: Option<String>, reason: &str) {
     if url.is_empty() || token.is_empty() {
         return;
     }
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
     let channel = channel_id.to_string();
     let reason = reason.to_string();
-    tokio::spawn(async move {
+    handle.spawn(async move {
         let client = reqwest::Client::new();
         let body = json!({
             "v": 1,

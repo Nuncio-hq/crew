@@ -6,7 +6,9 @@
   };
 
   function pushConsole(kind, text, extra) {
-    state.console.push(Object.assign({ t_ms: Date.now(), kind, text }, extra || {}));
+    state.console.push(
+      Object.assign({ t_ms: Date.now(), kind, text }, extra || {}),
+    );
     if (state.console.length > 200) state.console.shift();
   }
 
@@ -15,17 +17,17 @@
     warn: console.warn,
     error: console.error,
   };
-  console.log = function () {
-    pushConsole("log", Array.from(arguments).join(" "));
-    return orig.log.apply(console, arguments);
+  console.log = (...args) => {
+    pushConsole("log", args.join(" "));
+    return orig.log.apply(console, args);
   };
-  console.warn = function () {
-    pushConsole("warn", Array.from(arguments).join(" "));
-    return orig.warn.apply(console, arguments);
+  console.warn = (...args) => {
+    pushConsole("warn", args.join(" "));
+    return orig.warn.apply(console, args);
   };
-  console.error = function () {
-    pushConsole("error", Array.from(arguments).join(" "));
-    return orig.error.apply(console, arguments);
+  console.error = (...args) => {
+    pushConsole("error", args.join(" "));
+    return orig.error.apply(console, args);
   };
   window.addEventListener("error", (ev) => {
     pushConsole("pageerror", String(ev.message || ev.error || "error"));
@@ -35,9 +37,9 @@
   if (origFetch) {
     window.fetch = function (input, init) {
       const started = Date.now();
-      const method = (init && init.method) || "GET";
-      const url = typeof input === "string" ? input : (input && input.url) || "";
-      return origFetch.apply(this, arguments).then((res) => {
+      const method = init?.method || "GET";
+      const url = typeof input === "string" ? input : input?.url || "";
+      return origFetch.call(this, input, init).then((res) => {
         const size = Number(res.headers.get("content-length") || 0);
         pushConsole("network", `${method} ${url} ${res.status}`, {
           method,
@@ -54,11 +56,11 @@
   if (XO) {
     const open = XO.prototype.open;
     const send = XO.prototype.send;
-    XO.prototype.open = function (method, url) {
+    XO.prototype.open = function (method, url, ...rest) {
       this.__crew = { method, url, started: 0 };
-      return open.apply(this, arguments);
+      return open.call(this, method, url, ...rest);
     };
-    XO.prototype.send = function () {
+    XO.prototype.send = function (...args) {
       if (this.__crew) this.__crew.started = Date.now();
       this.addEventListener("loadend", () => {
         const meta = this.__crew || {};
@@ -70,21 +72,22 @@
           size: 0,
         });
       });
-      return send.apply(this, arguments);
+      return send.apply(this, args);
     };
   }
 
   function roleOf(el) {
     return (
       el.getAttribute("role") ||
-      ({
+      {
         A: "link",
         BUTTON: "button",
         INPUT: el.type === "checkbox" ? "checkbox" : "textbox",
         SELECT: "combobox",
         TEXTAREA: "textbox",
         SUMMARY: "button",
-      }[el.tagName] || "generic")
+      }[el.tagName] ||
+      "generic"
     );
   }
   function nameOf(el) {
@@ -97,27 +100,40 @@
   }
   function interactive(el) {
     const tag = el.tagName;
-    if (["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "SUMMARY"].includes(tag)) return true;
+    if (["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "SUMMARY"].includes(tag))
+      return true;
     const role = el.getAttribute("role");
     return (
       !!el.onclick ||
       el.isContentEditable ||
-      ["button", "link", "textbox", "checkbox", "radio", "combobox", "menuitem", "tab", "switch"].includes(role)
+      [
+        "button",
+        "link",
+        "textbox",
+        "checkbox",
+        "radio",
+        "combobox",
+        "menuitem",
+        "tab",
+        "switch",
+      ].includes(role)
     );
   }
   function visible(el) {
     const s = window.getComputedStyle(el);
-    if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") return false;
+    if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0")
+      return false;
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   }
 
   function visit(el, filterAll, accEls) {
-    if (!el || el.nodeType !== 1) return [];
+    if (el?.nodeType !== 1) return [];
     const isInt = interactive(el);
     if (!filterAll && !isInt) {
       const out = [];
-      for (const child of el.children) out.push(...visit(child, filterAll, accEls));
+      for (const child of el.children)
+        out.push(...visit(child, filterAll, accEls));
       return out;
     }
     const r = el.getBoundingClientRect();
@@ -139,7 +155,7 @@
 
   function mint(nodes, n, els, i) {
     for (const node of nodes) {
-      node.ref = "e" + n.value;
+      node.ref = `e${n.value}`;
       if (els[i.value]) state.refEls.set(node.ref, els[i.value]);
       n.value += 1;
       i.value += 1;
@@ -171,7 +187,9 @@
   window.__CREW_AGENT_BRIDGE__ = {
     snapshot(filter) {
       const els = [];
-      const nodes = document.body ? visit(document.body, filter === "all", els) : [];
+      const nodes = document.body
+        ? visit(document.body, filter === "all", els)
+        : [];
       mint(nodes, { value: 1 }, els, { value: 0 });
       return {
         url: location.href,
@@ -183,50 +201,70 @@
     async clickAt(x, y) {
       const el = document.elementFromPoint(x, y);
       if (!el) return { ok: false, reason: "missing" };
-      if (!(await waitActionable(el, 5000))) return { ok: false, reason: "not_actionable" };
+      if (!(await waitActionable(el, 5000)))
+        return { ok: false, reason: "not_actionable" };
       el.click();
       return { ok: true };
     },
     async clickRef(ref) {
       const el = state.refEls.get(ref);
       if (!el) return { ok: false, reason: "missing" };
-      if (!(await waitActionable(el, 5000))) return { ok: false, reason: "not_actionable" };
+      if (!(await waitActionable(el, 5000)))
+        return { ok: false, reason: "not_actionable" };
       el.click();
       return { ok: true };
     },
     async typeAt(x, y, text, submit) {
       const el = document.elementFromPoint(x, y);
       if (!el) return { ok: false, reason: "missing" };
-      if (!(await waitActionable(el, 5000))) return { ok: false, reason: "not_actionable" };
+      if (!(await waitActionable(el, 5000)))
+        return { ok: false, reason: "not_actionable" };
       el.focus();
       if ("value" in el) el.value = text;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       if (submit) {
-        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        el.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+        );
       }
       return { ok: true };
     },
     async typeRef(ref, text, submit) {
       const el = state.refEls.get(ref);
       if (!el) return { ok: false, reason: "missing" };
-      if (!(await waitActionable(el, 5000))) return { ok: false, reason: "not_actionable" };
+      if (!(await waitActionable(el, 5000)))
+        return { ok: false, reason: "not_actionable" };
       el.focus();
       if ("value" in el) el.value = text;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       if (submit) {
-        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        el.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+        );
       }
       return { ok: true };
     },
     scroll(ref, direction, amount) {
-      const dx = direction === "left" ? -(amount || 400) : direction === "right" ? amount || 400 : 0;
-      const dy = direction === "up" ? -(amount || 400) : direction === "down" ? amount || 400 : 0;
+      const dx =
+        direction === "left"
+          ? -(amount || 400)
+          : direction === "right"
+            ? amount || 400
+            : 0;
+      const dy =
+        direction === "up"
+          ? -(amount || 400)
+          : direction === "down"
+            ? amount || 400
+            : 0;
       const el = ref ? state.refEls.get(ref) : null;
       if (el) el.scrollBy(dx, dy);
       else window.scrollBy(dx, dy);
       return { ok: true };
     },
     evaluate(js) {
+      // D-059: full browser_evaluate — arbitrary JS in the subject origin.
+      // biome-ignore lint/security/noGlobalEval: this is the evaluate tool
       return window.eval(js);
     },
     console(since) {
