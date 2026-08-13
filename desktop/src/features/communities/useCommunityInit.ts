@@ -21,6 +21,9 @@ import {
 } from "@/features/messages/lib/useDrafts";
 import { resetRenderScopedReactionHydration } from "@/features/messages/lib/renderScopedReactions";
 import { resetProjectThreadGitHubStore } from "@/features/messages/lib/projectThreadGitHubStore";
+import { resetThreadForgeHubSubject } from "@/features/messages/lib/threadForgeHubSubjectStore";
+import { resetThreadForgePullRequestStore } from "@/features/messages/lib/threadForgePullRequestStore";
+import { resetThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
 import { resetProjectWorktreeDetailsStore } from "@/features/agents/projectWorktreeDetailsStore";
 import { resetProjectWorktreeRegistryStore } from "@/features/agents/projectWorktreeRegistryStore";
 import { resetBackgroundMediaUploads } from "@/features/messages/lib/backgroundMediaUploadStore";
@@ -94,6 +97,9 @@ function resetCommunityState({
   resetVideoPlayerState();
   resetRenderScopedReactionHydration();
   resetProjectThreadGitHubStore();
+  resetThreadForgePullRequestStore();
+  resetThreadForgeHubSubject();
+  resetThreadForgeViewContext();
   resetProjectWorktreeRegistryStore();
   resetProjectWorktreeDetailsStore();
   resetBackgroundMediaUploads();

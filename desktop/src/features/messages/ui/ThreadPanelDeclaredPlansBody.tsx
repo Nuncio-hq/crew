@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 
 import { ProjectThreadWorkspacePanel } from "@/features/messages/ui/ProjectThreadWorkspacePanel";
 import type { ProjectThreadWorkspaceModel } from "@/features/messages/ui/useProjectThreadWorkspaceModel";
+import { setThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { useIsThreadPanelOverlay } from "@/shared/hooks/use-mobile";
@@ -43,6 +44,17 @@ export function ThreadPanelDeclaredPlansBody({
     threadMessages,
   });
   const showRail = !isHuddleTranscript && !isOverlay && plans.length > 0;
+
+  useEffect(() => {
+    setThreadForgeViewContext({
+      channelId,
+      rootEventId: threadHead.id,
+      messages: [threadHead, ...threadMessages],
+    });
+    return () => {
+      setThreadForgeViewContext(null);
+    };
+  }, [channelId, threadHead, threadMessages]);
 
   return (
     <div

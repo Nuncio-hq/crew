@@ -16,6 +16,12 @@ import {
   isCoworkVersionsCommand,
   type E2eCoworkVersionsSnapshot,
 } from "./e2eCoworkVersions.ts";
+import {
+  handleForgeCommand,
+  isForgeCommand,
+  setE2eForgeSnapshot,
+  type E2eForgeSnapshot,
+} from "./e2eThreadForge.ts";
 
 import { relayClient } from "@/shared/api/relayClient";
 import { activateRateLimit } from "@/shared/api/relayRateLimitGate";
@@ -372,6 +378,22 @@ type E2eConfig = {
     deepHistoryMessageCount?: number;
     feedReadError?: string;
     canvasReadError?: string;
+    /** Override `get_canvas` routing/assignments (snake_case wire shape). */
+    canvas?: {
+      content?: string | null;
+      routing?: Array<{
+        work_type: string;
+        role_label: string;
+        holders: string[];
+        unheld_message: string | null;
+      }>;
+      assignments?: Array<{
+        agent_pubkey: string;
+        role_label: string;
+      }>;
+    };
+    /** Initial forge hub snapshot for #193. */
+    forgePr?: E2eForgeSnapshot;
     /** Delay (ms) for `apply_workspace` so e2e tests can observe the
      *  community-switch gate. 0/undefined = instant. */
     applyCommunityDelayMs?: number;
@@ -1450,6 +1472,9 @@ declare global {
       branch: string,
       status: ThreadGitHubStatus,
     ) => void;
+    __BUZZ_E2E_SET_FORGE_PR_DETAIL__?: (
+      patch: Partial<E2eForgeSnapshot>,
+    ) => E2eForgeSnapshot;
     __BUZZ_E2E_RESET_OBSERVER_EVENTS__?: () => void;
     __BUZZ_E2E_EMIT_MOCK_READ_STATE__?: (input: {
       clientId: string;
@@ -11105,6 +11130,10 @@ export function maybeInstallE2eTauriMocks() {
     };
     reloadProjectThreadGitHubStore();
   };
+  window.__BUZZ_E2E_SET_FORGE_PR_DETAIL__ = (patch) => setE2eForgeSnapshot(patch);
+  if (config.mock?.forgePr) {
+    setE2eForgeSnapshot(config.mock.forgePr);
+  }
   mockMediaProxyPort = config.mock?.mediaProxyInitiallyUnavailable
     ? 0
     : MOCK_MEDIA_PROXY_PORT;
@@ -11686,6 +11715,9 @@ export function maybeInstallE2eTauriMocks() {
 
     if (isCoworkVersionsCommand(command)) {
       return handleCoworkVersionsCommand(command, payload);
+    }
+    if (isForgeCommand(command)) {
+      return handleForgeCommand(command, payload);
     }
 
     switch (command) {
@@ -14673,13 +14705,13 @@ export function maybeInstallE2eTauriMocks() {
         if (canvasReadError) {
           throw new Error(canvasReadError);
         }
-        // Return the no-canvas success shape — content null means no canvas set.
+        const seeded = activeConfig?.mock?.canvas;
         return {
-          content: null,
+          content: seeded?.content ?? null,
           updated_at: null,
           author: null,
-          routing: [],
-          assignments: [],
+          routing: seeded?.routing ?? [],
+          assignments: seeded?.assignments ?? [],
           dev_mcp_granted: null,
           crew_parse_error: null,
         };

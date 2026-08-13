@@ -6,6 +6,7 @@ import {
   THREAD_FOCUS_SLIVER_WIDTH_PX,
 } from "@/features/channels/lib/threadFocusLayout";
 import { getThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
+import { ThreadFocusForgeSplit } from "@/features/messages/ui/threadPrHub/ThreadFocusForgeSplit";
 import { cn } from "@/shared/lib/cn";
 
 type FocusThreadDrawerProps = {
@@ -236,7 +237,9 @@ export function FocusThreadDrawer({
           prefersReducedMotion ? REDUCED_MOTION_TRANSITION : ENTER_TRANSITION
         }
       >
-        <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <ThreadFocusForgeSplit>{children}</ThreadFocusForgeSplit>
+        </div>
       </motion.div>
     </div>
   );

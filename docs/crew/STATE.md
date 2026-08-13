@@ -1,5 +1,17 @@
 # Crew State
 
+## Issue #193 — GitHub PR hub in thread focus
+
+Two-tier GitHub review surface on the `gh` data plane. Split view: glance
+summary card (click → focus + hub). Focus: chat | PR hub with Changes /
+Bugs / Description / Discussion / Commits / Checks. Two inputs (thread
+composer vs GitHub comment box). Forge-neutral provider trait; GitHub impl
+wraps `gh`. Diffs prefer local worktree git. Findings are tolerant
+`crew-finding` tags on ordinary messages. Reviewer dispatch via canvas
+`code-review` / role label, picker when unheld. PR-by-URL opens the hub
+with no worktree. See D-057 and spike 0026.
+Last updated: 2026-08-13
+
 ## Issue #190 — Thread-visible declared plans (ACP snapshot per agent)
 
 Open thread shows a persistent right rail of per-agent declared plans.

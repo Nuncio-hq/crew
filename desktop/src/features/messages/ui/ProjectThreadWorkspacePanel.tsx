@@ -28,12 +28,23 @@ import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
 import { cn } from "@/shared/lib/cn";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
+import {
+  parseForgePullRequestUrl,
+  parseRepoAddress,
+} from "@/features/messages/lib/parseForgePullRequestUrl";
+import {
+  getThreadForgeHubSubject,
+  setThreadForgeHubSubject,
+} from "@/features/messages/lib/threadForgeHubSubjectStore";
 import { ProjectThreadIntegrationCell } from "./ProjectThreadIntegrationCell";
 import {
   ProjectThreadIntegrationDrawer,
   type ProjectThreadDrawer,
 } from "./ProjectThreadIntegrationDrawer";
-import { ProjectThreadGitHubRow } from "./ProjectThreadGitHubRow";
+import {
+  openThreadForgeHubFromPullRequest,
+  ProjectThreadForgeSummaryCard,
+} from "./ProjectThreadForgeSummaryCard";
 import { ProjectThreadPhaseDot } from "./ProjectThreadPhaseDot";
 import type { ProjectThreadWorkspaceModel } from "./useProjectThreadWorkspaceModel";
 
@@ -107,6 +118,76 @@ export function ProjectThreadWorkspacePanel({
       void refreshGitHub?.();
     }
   }, [activeDrawer, refreshGitHub]);
+
+  React.useEffect(() => {
+    if (!isFocusMode) return;
+    const current = getThreadForgeHubSubject();
+    const rootEventId =
+      model?.target?.rootEventId ??
+      (model &&
+      (model.workspace.status === "ready" ||
+        model.workspace.status === "derived" ||
+        model.workspace.status === "error")
+        ? model.workspace.rootEventId
+        : null);
+    if (
+      current?.kind === "pr" &&
+      current.source === "url" &&
+      current.rootEventId &&
+      current.rootEventId === rootEventId
+    ) {
+      return;
+    }
+    if (!model) {
+      if (current?.kind !== "pr" || current.source === "thread") {
+        setThreadForgeHubSubject(null);
+      }
+      return;
+    }
+    const worktreePath =
+      model.workspace.status === "ready" || model.workspace.status === "derived"
+        ? model.workspace.worktreePath
+        : null;
+    const branch =
+      model.target?.branch ??
+      (model.workspace.status === "ready" ||
+      model.workspace.status === "derived"
+        ? model.workspace.branch
+        : null);
+    if (model.pullRequest) {
+      const already =
+        current?.kind === "pr" &&
+        current.source === "thread" &&
+        current.number === model.pullRequest.number &&
+        current.rootEventId === rootEventId;
+      if (already) return;
+      const ref = parseForgePullRequestUrl(model.pullRequest.url);
+      if (!ref) return;
+      setThreadForgeHubSubject({
+        kind: "pr",
+        ...ref,
+        repositoryPath: model.target?.repositoryPath ?? model.context.localPath,
+        worktreePath,
+        branch,
+        channelId,
+        rootEventId,
+        source: "thread",
+      });
+      return;
+    }
+    const repo = parseRepoAddress(model.context.repoAddress);
+    setThreadForgeHubSubject({
+      kind: "empty",
+      owner: repo?.owner,
+      name: repo?.name,
+      repositoryPath: model.target?.repositoryPath ?? model.context.localPath,
+      worktreePath,
+      branch: branch ?? "",
+      baseRef: model.context.base,
+      channelId,
+      rootEventId: rootEventId ?? "",
+    });
+  }, [channelId, isFocusMode, model]);
 
   const workingPubkeys = model?.workingPubkeys ?? [];
   const now = useSharedNowWhen(workingPubkeys.length > 0);
@@ -300,12 +381,38 @@ export function ProjectThreadWorkspacePanel({
             <>
               <ChipButton
                 label="PR"
-                onClick={() => toggle("pr")}
+                onClick={() =>
+                  openThreadForgeHubFromPullRequest({
+                    branch: target?.branch ?? null,
+                    channelId,
+                    pullRequest,
+                    repositoryPath: target?.repositoryPath ?? context.localPath,
+                    rootEventId: target?.rootEventId ?? null,
+                    worktreePath:
+                      workspace.status === "ready" ||
+                      workspace.status === "derived"
+                        ? workspace.worktreePath
+                        : null,
+                  })
+                }
                 phase={phases.pr}
               />
               <ChipButton
                 label="CI"
-                onClick={() => toggle("ci")}
+                onClick={() =>
+                  openThreadForgeHubFromPullRequest({
+                    branch: target?.branch ?? null,
+                    channelId,
+                    pullRequest,
+                    repositoryPath: target?.repositoryPath ?? context.localPath,
+                    rootEventId: target?.rootEventId ?? null,
+                    worktreePath:
+                      workspace.status === "ready" ||
+                      workspace.status === "derived"
+                        ? workspace.worktreePath
+                        : null,
+                  })
+                }
                 phase={phases.ci}
               />
             </>
@@ -353,6 +460,23 @@ export function ProjectThreadWorkspacePanel({
           )}
         </button>
       </div>
+
+      {pullRequest && !isFocusMode ? (
+        <div className="mt-2">
+          <ProjectThreadForgeSummaryCard
+            branch={target?.branch ?? null}
+            channelId={channelId}
+            pullRequest={pullRequest}
+            repositoryPath={target?.repositoryPath ?? context.localPath}
+            rootEventId={target?.rootEventId ?? null}
+            worktreePath={
+              workspace.status === "ready" || workspace.status === "derived"
+                ? workspace.worktreePath
+                : null
+            }
+          />
+        </div>
+      ) : null}
 
       {showExpanded ? (
         <div
@@ -412,15 +536,6 @@ export function ProjectThreadWorkspacePanel({
               title={counts.working ? `${activeName} working` : "Thread crew"}
             />
           </div>
-
-          {pullRequest ? (
-            <ProjectThreadGitHubRow
-              activeDrawer={activeDrawer}
-              onToggle={toggle}
-              phases={phases}
-              pullRequest={pullRequest}
-            />
-          ) : null}
         </div>
       ) : null}
 
