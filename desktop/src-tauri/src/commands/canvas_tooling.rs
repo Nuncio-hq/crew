@@ -11,6 +11,8 @@ pub struct CanvasTooling {
     pub simulator: Option<CanvasSimulatorIntent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dev_server: Option<CanvasDevServerIntent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_allowlist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,11 +190,23 @@ mod tests {
                 command: "pnpm dev --port $PORT".into(),
                 ready_pattern: Some("Local:".into()),
             }),
+            browser_allowlist: Some(vec!["https://api.stripe.com".into()]),
         };
         let updated = update_canvas_crew_tooling(ORIGINAL, &tooling).expect("write");
         assert!(updated.contains("Research"));
         assert!(updated.contains("pnpm dev --port $PORT"));
         assert!(updated.contains("routing:"));
+        assert!(updated.contains("api.stripe.com"));
         assert!(!updated.to_ascii_lowercase().contains("udid"));
+    }
+
+    #[test]
+    fn parse_reads_browser_allowlist() {
+        let yaml = "```crew\ntooling:\n  browserAllowlist:\n    - https://api.stripe.com\n```";
+        let tooling = parse_canvas_tooling(yaml).expect("parse").expect("some");
+        assert_eq!(
+            tooling.browser_allowlist.as_deref(),
+            Some(["https://api.stripe.com".to_string()].as_slice())
+        );
     }
 }

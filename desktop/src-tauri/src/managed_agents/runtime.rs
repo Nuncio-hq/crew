@@ -401,8 +401,7 @@ pub(crate) fn configure_runtime_cli(
 }
 
 /// Spawn an agent process without holding any locks on records or runtimes.
-/// Returns the child process and log path on success. The caller is responsible
-/// for updating `ManagedAgentRecord` fields and inserting into the runtimes map.
+/// Returns the child and log path; the caller updates the record and runtimes map.
 ///
 /// `owner_hex`: the workspace owner's pubkey, used as a fallback for legacy
 /// records that have no NIP-OA `auth_tag`. See `build_respond_to_env`.
@@ -543,6 +542,7 @@ pub fn spawn_agent_child(
     command.env("BUZZ_ACP_IDLE_POOL_SLEEP", idle);
     super::session_aging_env::apply_session_aging_env(&mut command, &global);
     super::cowork_history_env::apply_cowork_history_env_from_app(&mut command, app);
+    crate::agent_control::apply_control_env_from_app(&mut command, app);
     // Crew's review state is receipt-backed. This key is reserved, so layered
     // harness/persona/user env written below cannot disable managed receipts.
     command.env("BUZZ_ACP_AGENT_RECEIPTS", "true");

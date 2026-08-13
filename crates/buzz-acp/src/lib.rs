@@ -6,6 +6,7 @@ mod config;
 mod conversation;
 mod cowork_turn;
 mod declared_plan;
+mod desktop_control;
 mod elicitation;
 mod engram_fetch;
 mod filter;
@@ -1260,6 +1261,7 @@ fn handle_cancel_turn_control(
             }),
         );
     }
+    crate::desktop_control::notify_lease_release(Some(channel_id.to_string()), "cancel");
 }
 
 /// Handle a `switch_model` control frame (Phase 3a, Option ii).
@@ -1880,7 +1882,6 @@ mod idle_pool_single_timer_contract_tests {
         assert_eq!(resolve_pool_idle_timeout_secs(0, Some(900)), 0);
     }
 }
-
 
 pub fn run() -> Result<()> {
     config::propagate_legacy_env_vars();
@@ -5683,6 +5684,23 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
                     });
                 }
             }
+            // #197: desktop control endpoint. Absent on remote/provider agents
+            // (tools then return instrument_unreachable). Forwarding process env
+            // only — no worktree / lease I/O.
+            for key in [
+                "BUZZ_DESKTOP_CONTROL_URL",
+                "BUZZ_DESKTOP_CONTROL_TOKEN",
+                "BUZZ_GIT_ORIGIN_THREAD_ROOT_ID",
+            ] {
+                if let Ok(value) = std::env::var(key) {
+                    if !value.is_empty() {
+                        env.push(EnvVar {
+                            name: key.into(),
+                            value,
+                        });
+                    }
+                }
+            }
             env
         },
     }]
@@ -7553,6 +7571,23 @@ mod build_mcp_servers_tests {
             "BUZZ_AUTH_TAG should be forwarded when set"
         );
         assert_eq!(auth_tag_env.unwrap().value, "test-attestation-tag");
+    }
+
+    #[test]
+    fn session_new_mcp_server_forwards_desktop_control_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(
+            "BUZZ_DESKTOP_CONTROL_URL",
+            "http://127.0.0.1:9/agent-control",
+        );
+        std::env::set_var("BUZZ_DESKTOP_CONTROL_TOKEN", "tok");
+        let config = test_config();
+        let servers = build_mcp_servers(&config);
+        std::env::remove_var("BUZZ_DESKTOP_CONTROL_URL");
+        std::env::remove_var("BUZZ_DESKTOP_CONTROL_TOKEN");
+        let names: Vec<&str> = servers[0].env.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"BUZZ_DESKTOP_CONTROL_URL"), "{names:?}");
+        assert!(names.contains(&"BUZZ_DESKTOP_CONTROL_TOKEN"), "{names:?}");
     }
 
     #[test]

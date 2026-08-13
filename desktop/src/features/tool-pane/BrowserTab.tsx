@@ -26,6 +26,10 @@ import {
 } from "./governorClient";
 import { invokeGovernor, useGovernorStatus } from "./governorStore";
 import { captureSimPng, postCaptureEvidence } from "./postEvidenceCapture";
+import { leaseFor, useAgentControlUi } from "./agentControlStore";
+import { DrivingBanner } from "./DrivingBanner";
+import { GhostCursorOverlay } from "./GhostCursorOverlay";
+import { PendingOriginPrompt } from "./OriginApprovalCard";
 import {
   VIEWPORT_PRESETS,
   type CanvasTooling,
@@ -49,6 +53,8 @@ export function BrowserTab({
   checkoutPath?: string | null;
 }) {
   const status = useGovernorStatus();
+  const control = useAgentControlUi();
+  const lease = leaseFor(control, channelId, "browser");
   const membership = useMyRelayMembershipQuery();
   const role = membership.data?.role;
   const isOwner = role === "owner" || role == null;
@@ -101,9 +107,27 @@ export function BrowserTab({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col"
+      className="relative flex min-h-0 flex-1 flex-col"
       data-testid="tool-pane-browser"
+      onPointerDown={() => {
+        void invokeGovernor("agent_control_note_human", {
+          input: { channelId, instrument: "browser" },
+        });
+      }}
     >
+      <DrivingBanner instrument="browser" lease={lease} />
+      {control.pendingOrigin?.channelId === channelId ? (
+        <PendingOriginPrompt
+          agentName={control.pendingOrigin.agentName}
+          channelId={channelId}
+          origin={control.pendingOrigin.origin}
+        />
+      ) : null}
+      <GhostCursorOverlay
+        channelId={channelId}
+        instrument="browser"
+        overlay={control.overlay}
+      />
       <BrowserToolbar
         customUrl={customUrl}
         onCustomUrl={setCustomUrl}

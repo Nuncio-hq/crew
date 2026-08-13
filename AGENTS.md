@@ -662,6 +662,16 @@ from the Resource Governor snapshot (`BUZZ_GOVERNOR_SNAPSHOT_PATH`). Target the
 injected UDID with `simctl` / `idb` / `baguette` via `buzz-dev-mcp` `shell`.
 Do not invent a relay-side device registry; machine UDIDs stay local.
 
+### Agent desktop tools (`browser_*` / `sim_*`)
+
+Call `desktop_status` first in a turn. Tools drive the **same** in-app
+browser and simulator the founder watches (`POST /agent-control`, env
+`BUZZ_DESKTOP_CONTROL_URL` / `BUZZ_DESKTOP_CONTROL_TOKEN`). Remote
+agents without those env vars get `instrument_unreachable` — do not
+tunnel HID or spawn a second Playwright/`simctl`. Snapshot refs (`e1..eN`)
+and `snapshot_digest` go stale after UI mutation; re-snapshot. Humans
+preempt instantly (`lease_held`). Foreign origins need owner approval.
+
 ### ACP user-input elicitation
 
 `buzz-acp` advertises ACP form elicitation and handles `elicitation/create`

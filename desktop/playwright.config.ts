@@ -169,6 +169,7 @@ export default defineConfig({
         "**/workbench.spec.ts",
         "**/thread-pr-hub.spec.ts",
         "**/tool-pane.spec.ts",
+        "**/agent-desktop-tools.spec.ts",
         "**/evidence-cards.spec.ts",
         "**/evidence-cross-check.spec.ts",
         "**/evidence-reactions.spec.ts",

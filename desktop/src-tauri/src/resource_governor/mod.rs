@@ -18,9 +18,15 @@ mod simctl;
 mod snapshot;
 mod types;
 
+pub use bridge::{
+    bridge_describe_ui_args, bridge_tap_args, discover_sim_bridge, BridgeAvailability,
+    SIM_BRIDGE_INSTALL_HINT,
+};
+pub use browser::{backend, window_label, BrowserBackend};
 pub use commands::*;
 pub use simctl::RealSimctl;
 pub use snapshot::apply_snapshot_env;
+pub use types::{DeviceLifecycle, GovernorStatus, SimHolding};
 
 use governor::ResourceGovernor;
 use std::sync::{Arc, Mutex};
@@ -42,5 +48,34 @@ impl ResourceGovernorHandle {
         self.inner
             .lock()
             .map_err(|_| "resource governor lock poisoned".to_string())
+    }
+
+    /// Agent-control ensure-on-use: boot the channel sim within caps.
+    pub fn agent_boot_sim(&self, channel_id: &str) -> Result<SimHolding, String> {
+        let mut gov = self.lock()?;
+        gov.note_agent_boot(channel_id);
+        gov.boot(channel_id, None, None, None, &RealSimctl)
+    }
+
+    pub fn agent_note_activity(&self, channel_id: &str) -> Result<(), String> {
+        self.lock()?.note_agent_boot(channel_id);
+        Ok(())
+    }
+
+    pub fn agent_attach_webview(&self, channel_id: &str, url: &str) -> Result<bool, String> {
+        let mut gov = self.lock()?;
+        gov.note_agent_boot(channel_id);
+        gov.attach_webview(channel_id, url);
+        let hidden = gov
+            .status()
+            .webviews
+            .iter()
+            .find(|w| w.channel_id == channel_id)
+            .is_none_or(|w| w.hidden);
+        Ok(hidden)
+    }
+
+    pub fn agent_status(&self) -> Result<GovernorStatus, String> {
+        Ok(self.lock()?.status())
     }
 }

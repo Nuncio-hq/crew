@@ -116,8 +116,22 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src/features/sidebar/ui/SidebarSection.tsx` | #196 resource dots on channel rows | `SidebarResourceDots`; no numbers, no motion |
 | `desktop/src/features/settings/ui/SettingsPanels.tsx` | #196 `"devices-preview"` arm | card lives in Crew-owned feature module |
 | `desktop/src/features/settings/ui/SettingsView.tsx` | #196 Devices & Preview nav | one Personal nav entry |
-| `desktop/src/features/communities/useCommunityInit.ts` | #196 reset governor + tool pane stores | add next to other community-scoped resets |
+| `desktop/src/features/communities/useCommunityInit.ts` | #196 reset governor + tool pane stores; #197 reset agent-control store | add next to other community-scoped resets |
 | `desktop/tests/helpers/settings.ts` | #196 `"devices-preview"` section id | keep in the settings helper union |
+| `desktop/src-tauri/src/lib.rs` | #197 `agent_control` module + localhost server spawn | keep next to media proxy / governor `start_background` |
+| `desktop/src-tauri/src/invoke.rs` | #197 `agent_control_*` commands | additive generate_handler entries only |
+| `desktop/src-tauri/src/managed_agents/runtime.rs` | #197 inject control URL/token at spawn | keep next to cowork/snapshot env; must not take worktree leases |
+| `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs` | #197 `BUZZ_DESKTOP_CONTROL_*` / thread root | keep in the reserved list |
+| `desktop/src-tauri/src/commands/canvas_tooling.rs` | #197 `browserAllowlist` on `tooling` | additive optional field |
+| `crates/buzz-core/src/kind.rs` | #197 `KIND_AGENT_INSTRUMENT_OVERLAY` = 24201 | keep in `ALL_KINDS` + `P_GATED_KINDS` |
+| `desktop/src/shared/constants/kinds.ts` | #197 overlay kind 24201 | keep next to other NIP-AO kinds |
+| `mobile/lib/shared/relay/nostr_models.dart` | #197 `agentInstrumentOverlay` | keep kinds in sync |
+| `crates/buzz-acp/src/lib.rs` | #197 `desktop_control` + MCP env forward | retain `mod desktop_control`; no worktree I/O |
+| `crates/buzz-acp/src/pool.rs` | #197 lease.release on turn end; thread-root MCP env | keep next to `TurnCompletionGuard` / `mcp_servers_with_git_origin` |
+| `crates/buzz-dev-mcp/src/lib.rs` | #197 14 `#[tool]` methods | wrappers only; impl lives in `desktop_tools.rs` |
+| `desktop/src/features/channels/ui/ChannelPane.tsx` | #197 origin prompt when pane closed | keep `ChannelOriginPrompt` next to user-input stack |
+| `desktop/src/testing/e2eBridge.ts` | #197 `__BUZZ_E2E_SET_AGENT_CONTROL__` | keep next to governor seed; logic in `e2eToolPane.ts` |
+| `desktop/playwright.config.ts` | #197 `agent-desktop-tools.spec.ts` smoke match | retain the glob |
 
 ## Before feature work
 

@@ -1271,4 +1271,38 @@ The channel Tool Pane is one surface (`PR · Browser · Sim` in thread focus,
 
 See spikes 0027–0030.
 
+## D-059 — Agent desktop tools drive the same instruments (flat, host-bound, humans win)
+
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Issue:** #197
+
+Managed agents drive the #196 Resource Governor instruments through a
+localhost Tauri control endpoint. They do not spawn a second Playwright
+or `simctl` stack.
+
+1. **Instrument ≠ pane.** Instruments live in the Governor and keep
+   running with the Tool Pane closed. Sidebar dots show agent activity.
+   Idle is no human input **and** no agent tool call.
+2. **Host-bound.** Tools bind to the founder's desktop. Remote agents
+   get structured `instrument_unreachable`. No relay HID/JS tunnel.
+3. **Flat access.** Every managed agent gets every `browser_*` / `sim_*`
+   / `desktop_status` tool. D-044 capability keys are not extended.
+4. **Humans always win.** Any pane interaction preempts the input lease
+   instantly; in-flight agent actions abort with `lease_held`. Turn end,
+   cancel, and agent exit release the lease. Human-held auto-releases
+   after 10 s without input.
+5. **Borrow the design, not the runtime.** Snapshot-with-stable-refs
+   comes from Playwright MCP / ios-sim-mcp. Execution stays on Crew's
+   webview and #196 sim bridge.
+6. **Two-layer origin policy.** Subject dev-server origin is
+   unrestricted. Other origins need canvas `tooling.browserAllowlist` or
+   owner elicitation (Allow once / Allow domain / Deny) via existing
+   `KIND_AGENT_USER_INPUT_*` cards — not ACP `session/request_permission`.
+7. **OSS overlay.** Kind `24201` (`KIND_AGENT_INSTRUMENT_OVERLAY`) is a
+   NIP-AO family observer frame for ghost cursor + tap ripple. Unknown
+   kinds are ignored by old clients.
+
+See spikes 0031–0034.
+
 
