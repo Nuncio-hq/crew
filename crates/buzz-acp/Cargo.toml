@@ -21,6 +21,7 @@ buzz-core = { workspace = true }
 buzz-sdk = { workspace = true }
 buzz-persona = { path = "../buzz-persona" }
 buzz-worktree = { workspace = true }
+buzz-cowork = { workspace = true }
 
 # Nostr
 nostr = { workspace = true }

@@ -11,6 +11,11 @@ import {
   handleSaveCustomHarness,
   handleDeleteCustomHarness,
 } from "./e2eBridgeCustomHarnesses.ts";
+import {
+  handleCoworkVersionsCommand,
+  isCoworkVersionsCommand,
+  type E2eCoworkVersionsSnapshot,
+} from "./e2eCoworkVersions.ts";
 
 import { relayClient } from "@/shared/api/relayClient";
 import { activateRateLimit } from "@/shared/api/relayRateLimitGate";
@@ -1354,6 +1359,7 @@ declare global {
       localBranches: string[];
       remoteBranches: string[];
     };
+    __BUZZ_E2E_COWORK_VERSIONS__?: E2eCoworkVersionsSnapshot;
     __BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__?: {
       local_path: string | null;
       local_branch: string | null;
@@ -11675,6 +11681,10 @@ export function maybeInstallE2eTauriMocks() {
       payload: loggedPayload,
     });
     window.__BUZZ_E2E_COMMAND_LOG__?.push({ command, payload });
+
+    if (isCoworkVersionsCommand(command)) {
+      return handleCoworkVersionsCommand(command, payload);
+    }
 
     switch (command) {
       case "get_huddle_state": {

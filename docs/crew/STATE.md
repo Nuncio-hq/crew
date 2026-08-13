@@ -1,5 +1,20 @@
 # Crew State
 
+## Issue #188 — Cowork Projects (non-git folders + shadow-git)
+
+Add-Project accepts a non-git folder as a Cowork Project (`mode=folder`,
+tag `crew-workspace-mode=folder`). Harness skips worktrees; cwd is the
+folder; #187 selector is hidden; writes serialize on the path-keyed turn
+lease. Always-on shadow-git lives at
+`<app-data>/cowork-history/<id>.git` — the folder stays byte-clean.
+Turn checkpoints: dirty pre-turn `"External changes"`, post-turn
+`"Turn <seq> — <agent> · thread '<title>'"`. Restore is file- and
+folder-level, checkpointed first, exclusive-lease guarded, named
+refusals. Per-project Versions timeline; `📁 cowork` chip links a
+thread filter. Owner-invoked Compact history; loud corruption rebuild.
+#175 stays Not comparable. See D-054.
+Last updated: 2026-08-13
+
 ## Issue #187 — workspace binding per thread
 
 Composer selector on git Project channels: New worktree (default, pickable

@@ -1,5 +1,8 @@
 export const PROJECT_LOCAL_LOCATION_TAG = "buzz-location";
 export const PROJECT_CHANNEL_TAG = "buzz-channel";
+export const CREW_WORKSPACE_MODE_TAG = "crew-workspace-mode";
+
+export type CrewWorkspaceMode = "git" | "folder";
 
 export type LocalWorkspaceState =
   | { status: "unlinked" }
@@ -130,4 +133,22 @@ export function localWorkspacePrivacyNotice(relayUrl: string): string {
     `It will be published to ${relayUrl}.`,
     "Anyone who can read that relay event can read the path.",
   ].join(" ");
+}
+
+export function readCrewWorkspaceMode(tags: string[][]): CrewWorkspaceMode {
+  const tag = tags.find((candidate) => candidate[0] === CREW_WORKSPACE_MODE_TAG);
+  return tag?.[1] === "folder" ? "folder" : "git";
+}
+
+export function withCrewWorkspaceMode(
+  tags: string[][],
+  mode: CrewWorkspaceMode,
+): string[][] {
+  const next = tags
+    .filter((tag) => tag[0] !== CREW_WORKSPACE_MODE_TAG)
+    .map((tag) => [...tag]);
+  if (mode === "folder") {
+    next.push([CREW_WORKSPACE_MODE_TAG, "folder"]);
+  }
+  return next;
 }

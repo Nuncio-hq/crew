@@ -23,18 +23,32 @@ export function ProjectThreadBadgeChips({
         )}
         title={badge.branch}
       >
-        <span aria-hidden="true">{badge.glyph}</span>
-        <span
-          className={cn(
-            "truncate",
-            "[@container(max-width:659.9px)]:max-w-24",
-            "[@container(max-width:519.9px)]:max-w-16",
-            "[@container(max-width:419.9px)]:hidden",
-          )}
-          data-testid="project-thread-badge-branch-text"
-        >
-          {branchText}
-        </span>
+        {badge.glyph === "📁" && badge.href ? (
+          <a
+            className="inline-flex min-w-0 items-center gap-0.5 text-inherit no-underline"
+            data-testid="project-thread-cowork-chip"
+            href={badge.href}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <span aria-hidden="true">{badge.glyph}</span>
+            <span className="truncate">{badge.label ?? "cowork"}</span>
+          </a>
+        ) : (
+          <>
+            <span aria-hidden="true">{badge.glyph}</span>
+            <span
+              className={cn(
+                "truncate",
+                "[@container(max-width:659.9px)]:max-w-24",
+                "[@container(max-width:519.9px)]:max-w-16",
+                "[@container(max-width:419.9px)]:hidden",
+              )}
+              data-testid="project-thread-badge-branch-text"
+            >
+              {branchText}
+            </span>
+          </>
+        )}
       </span>
       {badge.pullRequests.map((pr) => (
         <React.Fragment key={pr.number}>

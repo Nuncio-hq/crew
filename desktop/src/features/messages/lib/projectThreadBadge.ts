@@ -22,13 +22,14 @@ export type ProjectThreadBadge = {
   label: string | null;
   branch: string;
   shortBranch: string;
-  glyph: "🌿" | "⌂" | "⎇";
+  glyph: "🌿" | "⌂" | "⎇" | "📁";
   mono: boolean;
   pullRequests: ProjectThreadBadgePr[];
   overflow: number;
   diff: { additions: number; deletions: number } | null;
   /** Open linked issues only; null when count is zero. */
   openIssues: ProjectThreadBadgeIssues | null;
+  href?: string | null;
 };
 
 export function buildProjectThreadBadge(

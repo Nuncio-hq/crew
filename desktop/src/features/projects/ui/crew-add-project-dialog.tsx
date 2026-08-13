@@ -12,6 +12,7 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 
 export function CrewAddProjectDialog({
+  cowork = false,
   localPath,
   name,
   onConfirm,
@@ -23,6 +24,7 @@ export function CrewAddProjectDialog({
   relayUrl,
   saving,
 }: {
+  cowork?: boolean;
   localPath: string | null;
   name: string;
   onConfirm: () => void;
@@ -40,11 +42,14 @@ export function CrewAddProjectDialog({
     <AlertDialog onOpenChange={onOpenChange} open={localPath !== null}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Add this Repository?</AlertDialogTitle>
+          <AlertDialogTitle>
+            {cowork ? "Add this Cowork Project?" : "Add this Repository?"}
+          </AlertDialogTitle>
           <AlertDialogDescription className="space-y-3">
             <span className="block">
-              The folder stays where it is. NuncioCrew will not clone,
-              initialize Git, or change its files.
+              {cowork
+                ? "Agents will work in this folder. NuncioCrew keeps a private version history outside the folder — the folder itself stays unchanged."
+                : "The folder stays where it is. NuncioCrew will not clone, initialize Git, or change its files."}
             </span>
             <span className="block break-all font-mono text-xs">
               {localPath}
@@ -63,7 +68,9 @@ export function CrewAddProjectDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <label className="space-y-2 text-sm" htmlFor="crew-project-name">
-          <span className="font-medium">Repository name</span>
+          <span className="font-medium">
+            {cowork ? "Project name" : "Repository name"}
+          </span>
           <Input
             autoFocus
             disabled={saving}
@@ -83,7 +90,9 @@ export function CrewAddProjectDialog({
             {saving
               ? "Publishing…"
               : canPublish
-                ? "Add Repository"
+                ? cowork
+                  ? "Add Cowork Project"
+                  : "Add Repository"
                 : "Waiting for relay"}
           </Button>
         </AlertDialogFooter>

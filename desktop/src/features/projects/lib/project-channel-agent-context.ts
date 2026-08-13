@@ -5,6 +5,8 @@ import {
 } from "@/features/messages/lib/workspaceBindingSpec";
 import {
   projectLocalWorkspaceFromEvent,
+  readCrewWorkspaceMode,
+  type CrewWorkspaceMode,
   type LocalWorkspaceState,
 } from "./project-local-workspace";
 import type { ProjectRelayEvent } from "./project-local-workspace-relay";
@@ -14,6 +16,7 @@ type ProjectContextRecord = {
   repoAddress: string;
   projectChannelId: string | null;
   localWorkspace: LocalWorkspaceState;
+  workspaceMode?: CrewWorkspaceMode;
 };
 
 export type ProjectChannelContext =
@@ -22,7 +25,12 @@ export type ProjectChannelContext =
       status: "invalid";
       reason: "duplicate-project-channel-binding" | "invalid-local-workspace";
     }
-  | { status: "ready"; repoAddress: string; localPath: string };
+  | {
+      status: "ready";
+      repoAddress: string;
+      localPath: string;
+      workspaceMode: CrewWorkspaceMode;
+    };
 
 type RelayFilter = Record<string, unknown>;
 type ResolverDependencies = {
@@ -89,6 +97,7 @@ function recordsFromEvents(
         repoAddress,
         projectChannelId: parsed.channelId,
         localWorkspace: parsed.localWorkspace,
+        workspaceMode: readCrewWorkspaceMode(event.tags),
       },
     ];
   });
@@ -114,6 +123,7 @@ export function projectContextForChannel(
     status: "ready",
     repoAddress: match.repoAddress,
     localPath: match.localWorkspace.path,
+    workspaceMode: match.workspaceMode ?? "git",
   };
 }
 
@@ -131,10 +141,13 @@ export function appendProjectChannelAgentContext(
         : "Multiple Projects are bound to this channel.",
     );
   }
+  const cowork = context.workspaceMode === "folder";
   const title = [
     `Project ${context.repoAddress}.`,
     `Source workspace ${context.localPath}.`,
-    "The harness provisions one isolated worktree per thread.",
+    cowork
+      ? "Agents work in this folder. Version history is kept automatically."
+      : "The harness provisions one isolated worktree per thread.",
   ]
     .join(" ")
     .replaceAll("\\", "\\\\")
@@ -144,7 +157,7 @@ export function appendProjectChannelAgentContext(
     "buzz://project-workspace",
     `?repo=${encodeURIComponent(context.repoAddress)}`,
     `&path=${encodeURIComponent(context.localPath)}`,
-    workspaceBindingQuerySuffix(binding, defaultBranch),
+    cowork ? "&mode=folder" : workspaceBindingQuerySuffix(binding, defaultBranch),
   ].join("");
   return `[${label}]: <${workspaceUrl}> "${title}"\n\n${content}`;
 }

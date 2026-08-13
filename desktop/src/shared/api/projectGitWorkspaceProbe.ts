@@ -43,6 +43,3 @@ export async function probeProjectGitWorkspace(
     remoteBranches: probe.remoteBranches ?? probe.remote_branches ?? [],
   };
 }
-
-export const NON_GIT_PROJECT_REFUSAL =
-  "This folder is not a Git repository. Crew Projects currently require Git. Non-git folders (Cowork mode) are tracked in issue #188.";

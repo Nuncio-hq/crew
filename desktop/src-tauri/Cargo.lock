@@ -1074,6 +1074,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-cowork"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "buzz-desktop"
 version = "0.5.11"
 dependencies = [
@@ -1086,6 +1097,7 @@ dependencies = [
  "block2",
  "buzz-agent",
  "buzz-core",
+ "buzz-cowork",
  "buzz-media",
  "buzz-persona",
  "buzz-sdk",

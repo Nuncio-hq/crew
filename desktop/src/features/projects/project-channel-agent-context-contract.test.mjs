@@ -27,6 +27,7 @@ test("resolves workspace context only for the matching Project channel", () => {
     status: "ready",
     repoAddress: `30617:${"a".repeat(64)}:crew`,
     localPath: LOCAL_PATH,
+    workspaceMode: "git",
   });
   assert.deepEqual(projectContextForChannel("another-channel", [project()]), {
     status: "none",
@@ -102,6 +103,20 @@ test("agent context encodes the source workspace for per-thread provisioning", (
   assert.match(outgoing, /\/Users\/oscar\/Projects\/Nuncio Crew/);
   assert.match(outgoing, /path=%2FUsers%2Foscar%2FProjects%2FNuncio%20Crew/);
   assert.match(outgoing, /isolated worktree per thread/i);
+});
+
+test("Cowork context uses mode=folder and never mentions git worktrees", () => {
+  const context = projectContextForChannel(CHANNEL_ID, [
+    project({ workspaceMode: "folder" }),
+  ]);
+  const outgoing = appendProjectChannelAgentContext(
+    "Draft the proposal.",
+    context,
+  );
+  assert.match(outgoing, /mode=folder/);
+  assert.match(outgoing, /Version history is kept automatically/);
+  assert.doesNotMatch(outgoing, /worktree/i);
+  assert.doesNotMatch(outgoing, /\bgit\b/i);
 });
 
 test("machine context is invisible in rendered CommonMark", () => {

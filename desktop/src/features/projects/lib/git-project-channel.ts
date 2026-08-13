@@ -24,7 +24,8 @@ export function gitProjectWorkspaceForChannel(
     for (const repository of candidates) {
       if (
         repository.localWorkspaceStatus === "linked" &&
-        repository.localWorkspacePath
+        repository.localWorkspacePath &&
+        repository.workspaceMode !== "folder"
       ) {
         return {
           localPath: repository.localWorkspacePath,

@@ -2038,9 +2038,10 @@ pub async fn run_prompt_task(
                 Ok(ChannelWorkspace::Bound {
                     workspace,
                     session_cwd,
-                    leases,
+                    mut leases,
                     checkout_notice: notice,
                 }) => {
+                    leases.arm_cowork_agent(&agent.agent_name);
                     agent.acp.observe(
                         "thread_workspace_ready",
                         thread_workspace_ready_payload(&workspace),
@@ -4011,6 +4012,7 @@ fn thread_workspace_ready_payload(
             crate::thread_workspace::CheckoutKind::IsolatedWorktree => "new-worktree",
             crate::thread_workspace::CheckoutKind::MainCheckout => "main",
             crate::thread_workspace::CheckoutKind::SharedBranch => "branch",
+            crate::thread_workspace::CheckoutKind::Folder => "folder",
         },
         "uncommittedCount": workspace.uncommitted_count,
         "requestedBase": workspace.requested_base,
@@ -4127,8 +4129,17 @@ enum ChannelWorkspace {
 /// per-root shared eviction coordination.
 #[derive(Debug)]
 struct WorkspaceTurnLeases {
+    cowork: Option<crate::cowork_turn::CoworkTurnGuard>,
     _path: PathExclusiveLease,
     _root: Option<SharedLease>,
+}
+
+impl WorkspaceTurnLeases {
+    fn arm_cowork_agent(&mut self, name: &str) {
+        if let Some(guard) = &mut self.cowork {
+            guard.arm_agent(name);
+        }
+    }
 }
 
 /// Resolve, cross-process lease, and durably bind a Project-thread workspace
@@ -4245,7 +4256,7 @@ async fn resolve_and_bind_channel_workspace(
     state.workspace_bindings.insert(
         *cid,
         WorkspaceBinding {
-            root_event_id,
+            root_event_id: root_event_id.clone(),
             worktree_path: workspace.worktree_path.clone(),
             branch: workspace.branch.clone(),
             common_git: workspace.common_git.clone(),
@@ -4255,10 +4266,19 @@ async fn resolve_and_bind_channel_workspace(
     );
 
     let checkout_notice = live_checkout_notice(&workspace);
+    let cowork = if matches!(
+        workspace.checkout_kind,
+        crate::thread_workspace::CheckoutKind::Folder
+    ) {
+        Some(crate::cowork_turn::CoworkTurnGuard::begin(&workspace, &holder.label).map_err(&wrap)?)
+    } else {
+        None
+    };
     Ok(ChannelWorkspace::Bound {
         workspace: Box::new(workspace),
         session_cwd: worktree_path_str,
         leases: WorkspaceTurnLeases {
+            cowork,
             _path: path_lease,
             _root: root_lease,
         },

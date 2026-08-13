@@ -3,6 +3,7 @@ import type { RelayEvent } from "@/shared/api/types";
 import {
   projectLocalWorkspaceFromEvent,
   readCanonicalProjectChannel,
+  readCrewWorkspaceMode,
 } from "./project-local-workspace";
 import { effectiveCloneUrls } from "./projectCloneUrl";
 
@@ -22,10 +23,12 @@ export function projectWorkspaceReadFields(
       ? workspace.localWorkspace.path
       : null;
   const explicitCloneUrls = cloneUrls(event);
+  const workspaceMode = readCrewWorkspaceMode(event.tags);
 
   return {
     localWorkspacePath,
     localWorkspaceStatus: workspace.localWorkspace.status,
+    workspaceMode,
     cloneUrls:
       workspace.localWorkspace.status === "invalid" ||
       (localWorkspacePath && explicitCloneUrls.length === 0)

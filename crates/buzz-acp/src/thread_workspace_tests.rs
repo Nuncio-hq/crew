@@ -80,12 +80,67 @@ fn unknown_ws_fails_closed_to_default() {
     .unwrap()
     .unwrap();
     assert!(workspace.binding.is_default_new_worktree());
+    assert_eq!(workspace.mode, crate::thread_workspace::WorkspaceMode::Git);
+}
+
+#[test]
+fn mode_folder_selects_cowork_without_worktree_binding() {
+    let workspace = parse_project_workspace(
+        "buzz://project-workspace?repo=acme%2Fapp&path=%2Ftmp%2Fapp&mode=folder",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        workspace.mode,
+        crate::thread_workspace::WorkspaceMode::Folder
+    );
+    assert!(workspace.binding.is_default_new_worktree());
 }
 
 #[test]
 fn rejects_relative_workspace_path() {
     let content = "buzz://project-workspace?repo=acme%2Fapp&path=relative";
     assert!(parse_project_workspace(content).is_err());
+}
+
+#[tokio::test]
+async fn plan_folder_workspace_skips_git_and_uses_shadow_history() {
+    let fixture = std::env::temp_dir().join(format!("buzz-cowork-plan-{}", Uuid::new_v4()));
+    let folder = fixture.join("docs");
+    let history = fixture.join("history");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("notes.txt"), "hello").unwrap();
+    std::env::set_var(buzz_cowork::HISTORY_DIR_ENV, &history);
+    let workspace = ProjectWorkspace {
+        repo_address: "30617:ab:docs".into(),
+        local_path: folder.clone(),
+        binding: Default::default(),
+        mode: crate::thread_workspace::WorkspaceMode::Folder,
+    };
+    let root = "d".repeat(64);
+    let plan = plan_thread_worktree(&workspace, &root)
+        .await
+        .expect("folder plan");
+    assert_eq!(plan.worktree_path, folder.canonicalize().unwrap());
+    assert_eq!(
+        plan.checkout_kind,
+        crate::thread_workspace::CheckoutKind::Folder
+    );
+    assert!(plan.checkout_kind.skips_lifecycle_record());
+    assert!(
+        plan.common_git
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".git")),
+        "shadow git-dir should be named *.git: {}",
+        plan.common_git.display()
+    );
+    assert!(!folder.join(".git").exists(), "folder must stay byte-clean");
+    let (ensured, kind) = ensure_planned_thread_worktree(&plan).await.unwrap();
+    assert_eq!(kind, EnsureKind::AlreadyPresent);
+    assert_eq!(ensured.worktree_path, plan.worktree_path);
+    std::env::remove_var(buzz_cowork::HISTORY_DIR_ENV);
+    let _ = fs::remove_dir_all(&fixture);
 }
 
 #[tokio::test]
@@ -863,6 +918,7 @@ async fn git_fixture() -> (PathBuf, ProjectWorkspace, String) {
         repo_address: "fixture/project".to_string(),
         local_path: repo,
         binding: Default::default(),
+        mode: crate::thread_workspace::WorkspaceMode::Git,
     };
     (fixture, workspace, base_revision)
 }
@@ -913,6 +969,7 @@ async fn remote_git_fixture(default_branch: &str) -> (PathBuf, ProjectWorkspace,
             repo_address: "fixture/project".to_string(),
             local_path: repo,
             binding: Default::default(),
+            mode: crate::thread_workspace::WorkspaceMode::Git,
         },
         remote,
     )

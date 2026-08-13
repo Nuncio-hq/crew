@@ -1086,3 +1086,46 @@ owner-signed thread-root `buzz://project-workspace` marker.
    `rev-parse --show-toplevel` and toasts copy pointing at #188. Do not
    implement Cowork here.
 
+## D-054 — Cowork Projects: folder mode + always-on shadow-git
+
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Issue:** #188 (supersedes D-053 item 7; #186 Workbench product is out of
+  scope — chip/link only)
+
+A non-git folder is a **Cowork Project**, not a refused add. Agents work in
+the folder itself. Versioning is always on and invisible as git.
+
+1. **Mode at add time.** `rev-parse --show-toplevel` (the #187 probe) decides
+   git vs folder once. Persist `["crew-workspace-mode", "folder"]` on kind
+   30617 so a later `git init` in the folder does not flip mode. Thread-root
+   marker uses `mode=folder` as its own query param. `ws=cowork` stays
+   unknown and fail-closed to a new worktree (D-053).
+2. **Harness skip-worktree.** cwd = the folder. No branches, no
+   LifecycleRecord, no GitHub row. Path-keyed exclusive turn leases (#187)
+   serialize writes. The composer selector never renders in Cowork channels.
+3. **Shadow-git, byte-clean folder.**
+   `git --git-dir=<app-data>/cowork-history/<id>.git --work-tree=<folder>`.
+   Never `git init` inside the folder and never `--separate-git-dir` (that
+   writes a `.git` file). History id is SHA-256 of the repo address, first
+   16 hex bytes.
+4. **Turn-scoped checkpoints** ride the lease: dirty pre-turn →
+   `"External changes"`; post-turn →
+   `"Turn <seq> — <agent> · thread '<title>'"`. Restore is checkpointed
+   first (`"Restored version"`). Author mapping keeps agent work and
+   external/human work unconflated.
+5. **Always on.** No per-project off switch. Capture is filesystem truth
+   (any write path), not an MCP journal. Rejected: in-folder `.git`, APFS
+   snapshots, N× folder copies, MCP-level edit journaling.
+6. **Honest limits.** Default 50 MB per-file threshold: excluded **and**
+   surfaced. Retention keeps everything until the owner clicks Compact
+   history (gc + thin: all checkpoints for the last N days, one per day
+   beyond). No auto-compaction (#174 no-auto posture). Corruption moves
+   the git-dir aside and rebuilds empty with a loud notice — never silent
+   history loss.
+7. **Business vocabulary.** UI says Versions / Restore / "before X's turn",
+   never git. Per-project Versions timeline is home. Thread chip is
+   `📁 cowork` and links to the same timeline filtered by thread. #175
+   badge stays Not comparable (no CI). No Cowork↔git conversion in this
+   issue. Shadow-git is not applied to git `⌂ main`.
+
