@@ -28,6 +28,7 @@ async function seedCoworkProject(page: Page) {
           created_at: number;
           content: string;
           tags: string[][];
+          sig: string;
         }>;
         __BUZZ_E2E_PROJECT_GIT_PROBE__?: {
           isGit: boolean;
@@ -41,7 +42,8 @@ async function seedCoworkProject(page: Page) {
       };
       win.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
-          id: "mock-cowork-repo",
+          // 64-char id + mocksig: e2e `isVerifiedRelayEvent` drops anything else.
+          id: "cowork0000".padEnd(64, "0"),
           kind: 30617,
           pubkey,
           created_at: Math.floor(Date.now() / 1000),
@@ -53,6 +55,7 @@ async function seedCoworkProject(page: Page) {
             ["buzz-location", "local", "/tmp/cowork-docs"],
             ["crew-workspace-mode", "folder"],
           ],
+          sig: "mocksig".repeat(20).slice(0, 128),
         },
       ];
       win.__BUZZ_E2E_PROJECT_GIT_PROBE__ = {
@@ -104,12 +107,21 @@ test("Cowork channel has no workspace selector and shows the cowork chip", async
     .toBe(true);
   await page.evaluate(
     ({ repo, threadId }) => {
-      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      const emit = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+      if (!emit) throw new Error("Mock message emitter is unavailable.");
+      // Chips mount on MessageThreadSummaryRow, which only renders when the
+      // timeline entry has a thread summary (at least one reply).
+      emit({
         channelName: "general",
         id: threadId,
         content:
           `[ctx]: <buzz://project-workspace?repo=${encodeURIComponent(repo)}&path=%2Ftmp%2Fcowork-docs&mode=folder> "Agents work in this folder."\n\n` +
           `@Hermes draft the proposal.`,
+      });
+      emit({
+        channelName: "general",
+        content: "Drafting the proposal.",
+        parentEventId: threadId,
       });
     },
     { repo: COWORK_REPO, threadId: THREAD_ID },

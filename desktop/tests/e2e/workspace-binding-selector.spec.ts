@@ -25,6 +25,7 @@ async function seedGitProjectChannel(page: Page) {
           created_at: number;
           content: string;
           tags: string[][];
+          sig: string;
         }>;
         __BUZZ_E2E_PROJECT_GIT_PROBE__?: {
           isGit: boolean;
@@ -38,7 +39,8 @@ async function seedGitProjectChannel(page: Page) {
       };
       win.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
-          id: "mock-workspace-binding-repo",
+          // 64-char id + mocksig: e2e `isVerifiedRelayEvent` drops anything else.
+          id: "workspace00".padEnd(64, "0"),
           kind: 30617,
           pubkey,
           created_at: Math.floor(Date.now() / 1000),
@@ -50,6 +52,7 @@ async function seedGitProjectChannel(page: Page) {
             ["buzz-location", "local", "/tmp/crew"],
             ["clone", "https://github.com/Nuncio-hq/crew.git"],
           ],
+          sig: "mocksig".repeat(20).slice(0, 128),
         },
       ];
       win.__BUZZ_E2E_PROJECT_GIT_PROBE__ = {
@@ -193,17 +196,33 @@ test("thread chips render each workspace binding", async ({ page }) => {
     )
     .toBe(true);
   await page.evaluate(() => {
-    window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+    const emit = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+    if (!emit) throw new Error("Mock message emitter is unavailable.");
+    // Chips mount on MessageThreadSummaryRow, which only renders when the
+    // timeline entry has a thread summary (at least one reply). Standalone
+    // roots never show chips; `[ctx]: <buzz://…>` is also stripped from the
+    // visible body, so the assertion has to target the summary-row chips.
+    const mainRoot = emit({
       channelName: "general",
       content:
         `[ctx]: <buzz://project-workspace?repo=Nuncio-hq%2Fcrew&path=%2Ftmp%2Fcrew&ws=main>\n\n` +
         `@Claude Opus inspect the live checkout.`,
     });
-    window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+    emit({
+      channelName: "general",
+      content: "On the live checkout.",
+      parentEventId: mainRoot.id,
+    });
+    const branchRoot = emit({
       channelName: "general",
       content:
         `[ctx]: <buzz://project-workspace?repo=Nuncio-hq%2Fcrew&path=%2Ftmp%2Fcrew&ws=branch:release>\n\n` +
         `@Claude Opus continue the release branch.`,
+    });
+    emit({
+      channelName: "general",
+      content: "Continuing on release.",
+      parentEventId: branchRoot.id,
     });
   });
   await expect(page.getByTestId("project-thread-badge-chips")).toHaveCount(2);
