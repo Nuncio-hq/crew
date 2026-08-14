@@ -150,6 +150,8 @@ export function PendingOriginPrompt({
     <Card
       className="mx-3 mt-2 border-primary/30 shadow-lg"
       data-testid="origin-approval-card"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
     >
       <CardHeader className="pb-3">
         <CardTitle className="text-base">

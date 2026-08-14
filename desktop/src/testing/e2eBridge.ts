@@ -23,6 +23,7 @@ import {
   type E2eForgeSnapshot,
 } from "./e2eThreadForge.ts";
 import {
+  getE2eLastOriginDecision,
   handleToolPaneCommand,
   isToolPaneCommand,
   resetE2eGovernor,
@@ -1528,6 +1529,10 @@ declare global {
     ) => GovernorStatus;
     __BUZZ_E2E_GOVERNOR_STATUS__?: () => GovernorStatus;
     __BUZZ_E2E_SET_AGENT_CONTROL__?: (next: AgentControlUi) => AgentControlUi;
+    __BUZZ_E2E_LAST_ORIGIN_DECISION__?: () => {
+      code: string;
+      origin: string;
+    } | null;
     __BUZZ_E2E_RESET_OBSERVER_EVENTS__?: () => void;
     __BUZZ_E2E_EMIT_MOCK_READ_STATE__?: (input: {
       clientId: string;
@@ -11241,6 +11246,7 @@ export function maybeInstallE2eTauriMocks() {
   };
   window.__BUZZ_E2E_GOVERNOR_STATUS__ = () => setE2eGovernorStatus({});
   window.__BUZZ_E2E_SET_AGENT_CONTROL__ = (next) => setE2eAgentControl(next);
+  window.__BUZZ_E2E_LAST_ORIGIN_DECISION__ = () => getE2eLastOriginDecision();
   if (config.mock?.forgePr) {
     setE2eForgeSnapshot(config.mock.forgePr);
   }

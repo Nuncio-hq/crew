@@ -7,6 +7,10 @@ kind 30623; company wiki is 30023. Two doors (library canonical, Projects
 Wiki tab filtered). Ask Auto/Q&A/Plan with Plan-to-thread. Incremental
 regen from source-file manifests. Mermaid + `buzz://file` citations.
 Spikes 0039–0042. D-061.
+Mock-bridge e2e: wiki jobs key on the visible card owner
+(`deadbeef…` for `buzz`), not tyler; library cards unique by
+`repoAddress`. Mermaid lightbox Escape uses the shared escape
+surface so Ask is reachable.
 Last updated: 2026-08-13
 
 ## Issue #198 — Org hierarchy (founder-signed roster)
@@ -17,6 +21,8 @@ budget cascade before storage. Kickoff `crew-handoff` auto-creates work
 only on the manager chain (founder skip-level always). Budgets enforce
 at turn start; ceiling → stop-and-report. Org chart is a projection.
 Officers draft; founder signs. Spikes 0035–0038. D-060.
+Mock-bridge e2e: `__BUZZ_E2E_SET_ORG_ROSTER__` writes the projection
+and invalidates `["org-roster"]` so a post-`goto("/")` seed is visible.
 Last updated: 2026-08-13
 
 ## Issue #197 — Agent desktop tools (`browser_*` / `sim_*`)
@@ -27,6 +33,10 @@ Origin gate, `v: 1`). Input lease: humans preempt instantly.
 Subject binding is channel (+ optional thread root). Origin policy
 uses canvas `tooling.browserAllowlist` + elicitation. Overlay kind
 24201. Flat access. Host-bound. Spikes 0031–0034. D-059.
+Mock-bridge e2e: Take over stays on the human-held banner (pointer-down
+does not also Release); origin elicitation is one card; Deny is
+`origin_blocked`. Nested pane controls skip `note_human` so Deny / Shot
+clicks are not remounted away.
 Last updated: 2026-08-13
 
 ## Issue #196 — Channel Tool Pane (sim mirror + browser + governor)
@@ -37,6 +47,9 @@ lifecycle and the policy table. Simulator is an in-app headless iOS mirror
 (option B). Browser is child webview or `WebviewWindow` fallback. Dev servers
 are labeled Buzz Term sessions with `$PORT` + readiness. Canvas `tooling`
 key stores intent only. Spikes 0027–0030. D-058.
+Mock-bridge e2e: unique `channel-tool-pane` testid, cap-keep on a
+protected mirror, owner setup card, pane remounts per channel.
+Shot / Deny clicks are not stolen by pane `note_human`.
 Last updated: 2026-08-13
 
 ## Issue #193 — GitHub PR hub in thread focus

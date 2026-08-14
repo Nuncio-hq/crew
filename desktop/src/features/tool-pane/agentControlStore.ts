@@ -141,3 +141,19 @@ export function leaseFor(
     ) ?? null
   );
 }
+
+/**
+ * Pane-level `onPointerDown` → `agent_control_note_human` remounts the
+ * tree (lease snapshot). Nested buttons must not start that publish
+ * or the same click lands on a new node (Take over, Deny, Shot).
+ */
+export function isAgentControlChromeTarget(
+  target: EventTarget | null,
+): boolean {
+  return Boolean(
+    target instanceof Element &&
+      target.closest(
+        "button, input, select, textarea, a, [data-testid='origin-approval-card']",
+      ),
+  );
+}

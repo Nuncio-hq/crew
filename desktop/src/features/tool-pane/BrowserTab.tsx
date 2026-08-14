@@ -26,7 +26,11 @@ import {
 } from "./governorClient";
 import { invokeGovernor, useGovernorStatus } from "./governorStore";
 import { captureSimPng, postCaptureEvidence } from "./postEvidenceCapture";
-import { leaseFor, useAgentControlUi } from "./agentControlStore";
+import {
+  isAgentControlChromeTarget,
+  leaseFor,
+  useAgentControlUi,
+} from "./agentControlStore";
 import { DrivingBanner } from "./DrivingBanner";
 import { GhostCursorOverlay } from "./GhostCursorOverlay";
 import { PendingOriginPrompt } from "./OriginApprovalCard";
@@ -60,7 +64,7 @@ export function BrowserTab({
   const isOwner = role === "owner" || role == null;
   const [tooling, setTooling] = React.useState<CanvasTooling | null>(null);
   const [subject, setSubject] = React.useState<SubjectKind>(() =>
-    worktreePath ? "worktree" : checkoutPath ? "checkout" : "custom",
+    worktreePath ? "worktree" : "checkout",
   );
   const [customUrl, setCustomUrl] = React.useState("http://127.0.0.1:5173");
   const [viewport, setViewport] =
@@ -109,7 +113,8 @@ export function BrowserTab({
     <div
       className="relative flex min-h-0 flex-1 flex-col"
       data-testid="tool-pane-browser"
-      onPointerDown={() => {
+      onPointerDown={(event) => {
+        if (isAgentControlChromeTarget(event.target)) return;
         void invokeGovernor("agent_control_note_human", {
           input: { channelId, instrument: "browser" },
         });

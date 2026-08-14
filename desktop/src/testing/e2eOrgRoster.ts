@@ -1,3 +1,6 @@
+import { orgRosterQueryKey } from "@/features/org/hooks/useOrgRosterQuery";
+import { setOrgRosterProjection } from "@/features/org/lib/orgProjectionStore";
+import { parseOrgRoster } from "@/features/org/lib/orgRoster";
 import type { RelayEvent } from "@/shared/api/types";
 import { KIND_ORG_ROSTER } from "@/shared/constants/kinds";
 
@@ -19,6 +22,7 @@ function mockEventId(seed: string): string {
 
 export function resetE2eOrgRoster(): void {
   mockOrgRosterEvent = null;
+  setOrgRosterProjection(null);
 }
 
 export function setE2eOrgRoster(input: {
@@ -37,6 +41,7 @@ export function setE2eOrgRoster(input: {
     sig: `mocksig${"0".repeat(121)}`.slice(0, 128),
   };
   mockOrgRosterEvent = event;
+  projectOrgRosterEvent(event);
   return event;
 }
 
@@ -45,6 +50,7 @@ export function acceptPublishedOrgRoster(event: RelayEvent): boolean {
     return false;
   }
   mockOrgRosterEvent = event;
+  projectOrgRosterEvent(event);
   return true;
 }
 
@@ -68,4 +74,20 @@ export function filterE2eOrgRosterEvents(filter: MockFilter): RelayEvent[] {
 
 export function isOrgRosterKind(kind: number): boolean {
   return kind === KIND_ORG_ROSTER;
+}
+
+function projectOrgRosterEvent(event: RelayEvent): void {
+  const parsed = parseOrgRoster(event.content, event.pubkey);
+  if ("error" in parsed) {
+    setOrgRosterProjection(null);
+  } else {
+    setOrgRosterProjection({
+      ...parsed.roster,
+      eventId: event.id,
+      createdAt: event.created_at,
+    });
+  }
+  void window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+    queryKey: orgRosterQueryKey,
+  });
 }
