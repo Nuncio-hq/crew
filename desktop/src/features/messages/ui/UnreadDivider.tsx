@@ -10,11 +10,11 @@ export function UnreadDivider({ label = "New" }: { label?: string } = {}) {
       className="relative flex items-center py-1"
       data-testid="message-unread-divider"
     >
-      <div className="h-px flex-1 bg-primary/40" />
+      <div className="h-px min-w-0 flex-1 bg-primary/40" />
       <span className="shrink-0 px-2 text-2xs font-semibold uppercase tracking-[0.04em] text-primary">
         {label}
       </span>
-      <div className="h-px flex-1 bg-primary/40" />
+      <div className="h-px min-w-0 flex-1 bg-primary/40" />
     </section>
   );
 }

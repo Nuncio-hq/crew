@@ -4,6 +4,10 @@ import {
   AUXILIARY_PANEL_DEFAULT_WIDTH_PX,
   clampAuxiliaryPanelWidth,
 } from "@/shared/layout/AuxiliaryPanel";
+import {
+  lockPaneResizeMotion,
+  unlockPaneResizeMotion,
+} from "@/shared/layout/paneResizeLock";
 
 const THREAD_PANEL_WIDTH_SESSION_KEY = "buzz.desktop.thread-panel-width";
 
@@ -80,6 +84,7 @@ export function useThreadPanelWidth(availableWidthPx?: number) {
 
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
+      lockPaneResizeMotion();
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
         const deltaX = startX - moveEvent.clientX;
@@ -93,6 +98,7 @@ export function useThreadPanelWidth(availableWidthPx?: number) {
       const handlePointerUp = () => {
         document.body.style.cursor = previousCursor;
         document.body.style.userSelect = previousUserSelect;
+        unlockPaneResizeMotion();
         window.removeEventListener("pointermove", handlePointerMove);
       };
 

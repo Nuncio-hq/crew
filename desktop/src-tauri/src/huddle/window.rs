@@ -60,6 +60,7 @@ pub async fn open_huddle_window(
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App("index.html".into()))
         .title("Huddle")
         .inner_size(960.0, 720.0)
+        // Existing companion floor (#205 contract). Do not lower this.
         .min_inner_size(720.0, 520.0)
         .build()
         .map_err(|error| error.to_string())?;

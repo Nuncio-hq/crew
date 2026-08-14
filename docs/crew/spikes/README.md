@@ -101,3 +101,6 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0046-token-coverage-audit.md`](0046-token-coverage-audit.md)
 - [`0047-cursor-dark-aa.md`](0047-cursor-dark-aa.md)
 - [`0048-appearance-migration-mapping.md`](0048-appearance-migration-mapping.md)
+- [`0049-container-query-support.md`](0049-container-query-support.md)
+- [`0050-letter-soup-heuristic.md`](0050-letter-soup-heuristic.md)
+- [`0051-p1-grep-precision.md`](0051-p1-grep-precision.md)

@@ -97,7 +97,7 @@ export function SimTab({
         overlay={control.overlay}
       />
       <SimStatusLine holding={holding} onOpenSettings={() => undefined} />
-      <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+      <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-4">
         {face === "bridge-missing" ? (
           <BridgeMissingCard
             hint={bridge.installHint}

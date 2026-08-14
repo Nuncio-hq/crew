@@ -51,7 +51,7 @@ export function WikiTocRail({
   return (
     <nav
       aria-label="Wiki contents"
-      className="w-52 shrink-0 overflow-auto border-r border-border p-3"
+      className="hidden w-52 shrink-0 overflow-auto border-r border-border p-3 [@container(min-width:32.5rem)]:block"
       data-testid="wiki-toc"
     >
       {(toc?.sections ?? []).map((section) => (
@@ -70,8 +70,8 @@ export function WikiTocRail({
               <button
                 className={
                   page.slug === activeSlug
-                    ? "mt-0.5 block w-full rounded-md bg-muted px-2 py-1 text-left text-sm"
-                    : "mt-0.5 block w-full rounded-md px-2 py-1 text-left text-sm text-muted-foreground hover:text-foreground"
+                    ? "mt-0.5 block w-full truncate rounded-md bg-muted px-2 py-1 text-left text-sm"
+                    : "mt-0.5 block w-full truncate rounded-md px-2 py-1 text-left text-sm text-muted-foreground hover:text-foreground"
                 }
                 data-testid={`wiki-toc-${page.slug}`}
                 key={page.slug}

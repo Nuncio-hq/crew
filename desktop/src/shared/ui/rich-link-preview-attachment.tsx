@@ -170,7 +170,7 @@ function TweetPreview({
   return (
     <div
       className={cn(
-        "relative w-lg max-w-full shrink-0 border-l-[3px] border-border py-1 pl-3",
+        "@container relative w-lg min-w-0 max-w-full shrink-0 border-l-[3px] border-border py-1 pl-3",
         className,
       )}
       data-image-state={preview.imageState}
@@ -203,7 +203,7 @@ function TweetPreview({
       {contentExpanded && reserveImage ? (
         <LinkPreviewImage
           aspectClassName="aspect-video"
-          className="mt-2 w-full max-w-96"
+          className="mt-2 w-full max-w-full [@container(min-width:21.25rem)]:max-w-96"
           ImageLightbox={ImageLightbox}
           preview={preview}
         />
@@ -266,7 +266,7 @@ export function RichLinkPreviewAttachment({
   return (
     <div
       className={cn(
-        "relative w-lg max-w-full shrink-0 border-l-[3px] border-border py-1 pl-3",
+        "@container relative w-lg min-w-0 max-w-full shrink-0 border-l-[3px] border-border py-1 pl-3",
         className,
       )}
       data-image-state={preview.imageState}
@@ -322,7 +322,7 @@ export function RichLinkPreviewAttachment({
       {contentExpanded && reserveImage ? (
         <LinkPreviewImage
           aspectClassName="aspect-[1.91/1]"
-          className="mt-2 w-full max-w-96"
+          className="mt-2 w-full max-w-full [@container(min-width:21.25rem)]:max-w-96"
           ImageLightbox={ImageLightbox}
           preview={preview}
         />

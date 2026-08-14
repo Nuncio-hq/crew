@@ -144,7 +144,7 @@ export function ProjectThreadWorkspaceDetails({
           {behind}
         </p>
       ) : null}
-      <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-3">
+      <div className="grid min-w-0 grid-cols-1 gap-2 [@container(min-width:40rem)]:grid-cols-3">
         <Button
           className="h-auto min-h-8 min-w-0 w-full whitespace-normal px-2 py-2 leading-tight"
           onClick={copyPath}

@@ -445,7 +445,7 @@ export function ForumComposer({
     <>
       <form
         className={cn(
-          "relative rounded-2xl border border-input bg-card px-3 py-2 sm:px-4",
+          "relative rounded-2xl border border-input bg-card px-3 py-2 [@container(min-width:40rem)]:px-4",
           className,
         )}
         onBlurCapture={handleFormBlur}

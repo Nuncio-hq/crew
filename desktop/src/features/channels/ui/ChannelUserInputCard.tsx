@@ -78,11 +78,11 @@ export function ChannelUserInputCard({
 
   return (
     <Card
-      className="max-h-[min(42vh,28rem)] overflow-y-auto border-primary/30 shadow-lg"
+      className="@container min-w-0 max-h-[min(42vh,28rem)] overflow-y-auto border-primary/30 shadow-lg"
       data-testid={`channel-user-input-card-${item.event.id}`}
     >
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">
+        <CardTitle className="min-w-0 truncate text-base">
           {terminal
             ? resolution === "cancelled"
               ? "Question cancelled"
@@ -224,7 +224,7 @@ export function ChannelUserInputCard({
         </CardFooter>
       ) : null}
       {!sent && !terminal ? (
-        <CardFooter className="gap-2">
+        <CardFooter className="flex-col items-stretch gap-2 [@container(min-width:21.25rem)]:flex-row [@container(min-width:21.25rem)]:items-center">
           <Button
             data-testid="channel-user-input-skip"
             disabled={readOnly || sending}

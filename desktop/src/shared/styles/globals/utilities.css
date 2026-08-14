@@ -123,3 +123,11 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* #205: snap pane widths with the pointer — no transition/animation during drag. */
+html[data-pane-resizing] *,
+html[data-pane-resizing] *::before,
+html[data-pane-resizing] *::after {
+  animation: none !important;
+  transition: none !important;
+}

@@ -577,12 +577,12 @@ export const MessageRow = React.memo(
     const actionBarNode = (
       <div
         className={cn(
-          "absolute right-2 top-1 z-10 sm:pointer-events-none",
+          "absolute right-2 top-1 z-10 [@container(min-width:40rem)]:pointer-events-none",
           actionBarPlacement === "floating"
             ? isContinuation
-              ? "sm:-top-3 sm:-translate-y-1/2"
-              : "sm:top-0 sm:-translate-y-1/2"
-            : "sm:top-1 sm:translate-y-0",
+              ? "[@container(min-width:40rem)]:-top-3 [@container(min-width:40rem)]:-translate-y-1/2"
+              : "[@container(min-width:40rem)]:top-0 [@container(min-width:40rem)]:-translate-y-1/2"
+            : "[@container(min-width:40rem)]:top-1 [@container(min-width:40rem)]:translate-y-0",
         )}
       >
         <MessageActionBar
@@ -919,7 +919,7 @@ export const MessageRow = React.memo(
             isDisplayedAsContinuation ? "items-center" : "items-start",
             hasActiveReminder ? "bg-blue-500/10" : "",
             highlighted
-              ? "-mx-4 rounded-none px-6 before:absolute before:-inset-y-1.5 before:inset-x-0 before:animate-[route-target-highlight-fade_2s_ease-out_forwards] before:bg-primary/10 before:content-[''] motion-reduce:before:animate-none sm:-mx-6 sm:px-8"
+              ? "-mx-4 rounded-none px-6 before:absolute before:-inset-y-1.5 before:inset-x-0 before:animate-[route-target-highlight-fade_2s_ease-out_forwards] before:bg-primary/10 before:content-[''] motion-reduce:before:animate-none [@container(min-width:40rem)]:-mx-6 [@container(min-width:40rem)]:px-8"
               : "",
           )}
           data-message-id={message.id}

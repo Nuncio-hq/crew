@@ -4,6 +4,7 @@ import * as React from "react";
 import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog";
 
 import { cn } from "@/shared/lib/cn";
+import { DIALOG_VIEWPORT_MAX_CLASS } from "@/shared/ui/overlayCollision";
 import { buttonVariants } from "@/shared/ui/button";
 import {
   type CardTextureSize,
@@ -73,6 +74,7 @@ const AlertDialogContent = React.forwardRef<
         <AlertDialogPrimitive.Content
           className={cn(
             "pointer-events-auto grid w-[calc(100vw-2rem)] max-w-md gap-4 outline-hidden",
+            DIALOG_VIEWPORT_MAX_CLASS,
             surface === "default" && "rounded-3xl bg-background p-6 shadow-2xl",
             surface === "textured" &&
               texturedSurfaceClasses({

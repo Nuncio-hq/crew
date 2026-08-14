@@ -12,8 +12,13 @@ import { WikiCompanyEditor } from "@/features/wiki/ui/WikiCompanyEditor";
 import { WikiHeaderControls } from "@/features/wiki/ui/WikiHeaderControls";
 import { WikiMarkdown } from "@/features/wiki/ui/WikiMarkdown";
 import { WikiSourceFiles } from "@/features/wiki/ui/WikiSourceFiles";
+import { WikiTocMenu } from "@/features/wiki/ui/WikiTocMenu";
 import { WikiTocRail } from "@/features/wiki/ui/WikiTocRail";
 
+/**
+ * Wiki page + TOC (#200 / #205). TOC rail min 200px; below 520px container the
+ * rail **collapses** to a hamburger (`WikiTocMenu`). Titles truncate.
+ */
 export function WikiPageView({
   admin,
   askScope,
@@ -59,7 +64,7 @@ export function WikiPageView({
 
   return (
     <div
-      className="flex h-full min-h-0"
+      className="@container flex h-full min-h-0 min-w-0"
       data-testid={door === "project" ? "wiki-project-tab" : "wiki-page"}
     >
       <WikiTocRail
@@ -69,7 +74,7 @@ export function WikiPageView({
         toc={toc}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+        <div className="flex min-w-0 items-center gap-2 border-b border-border px-4 py-2">
           {onBack ? (
             <button
               aria-label="Back to wiki library"
@@ -83,6 +88,11 @@ export function WikiPageView({
           <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
             {shown?.title ?? repoName}
           </h1>
+          <WikiTocMenu
+            activeSlug={shown?.slug ?? ""}
+            onSelect={setActiveSlug}
+            toc={toc}
+          />
           <WikiHeaderControls
             onOpenProject={admin ? onOpenProject : undefined}
             onSearchChange={setSearch}

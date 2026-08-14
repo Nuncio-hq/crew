@@ -79,7 +79,7 @@ export function TypingIndicatorRow({
       aria-live="polite"
       className={cn(
         "shrink-0 bg-transparent",
-        isActivityVariant ? "flex items-center px-0 py-0" : "px-4 py-2 sm:px-6",
+        isActivityVariant ? "flex items-center px-0 py-0" : "px-4 py-2 [@container(min-width:40rem)]:px-6",
         className,
       )}
       {...(labels.length > 0

@@ -36,7 +36,7 @@ export default function DiffMessageExpanded({
       }}
       open
     >
-      <DialogContent className="max-w-5xl w-full h-[80vh] flex flex-col p-0 gap-0">
+      <DialogContent className="flex h-[min(80vh,calc(100dvh-2rem))] w-full max-w-[min(64rem,calc(100vw-2rem))] min-w-0 flex-col gap-0 p-0">
         <DialogHeader className="shrink-0 border-b border-border/50 px-4 py-3 pr-14">
           <div className="flex flex-wrap items-center gap-2">
             <DialogTitle className="min-w-0 truncate font-mono text-sm font-medium">

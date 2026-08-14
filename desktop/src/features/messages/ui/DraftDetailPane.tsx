@@ -201,7 +201,7 @@ function DraftActionBar({
   return (
     <div className="absolute right-2 top-1 z-10">
       <div
-        className="-m-1 p-1 opacity-100 transition-opacity duration-150 ease-out sm:pointer-events-none sm:opacity-0 sm:group-hover/message:pointer-events-auto sm:group-hover/message:opacity-100 sm:group-focus-within/message:pointer-events-auto sm:group-focus-within/message:opacity-100"
+        className="-m-1 p-1 opacity-100 transition-opacity duration-150 ease-out [@container(min-width:40rem)]:pointer-events-none [@container(min-width:40rem)]:opacity-0 [@container(min-width:40rem)]:group-hover/message:pointer-events-auto [@container(min-width:40rem)]:group-hover/message:opacity-100 [@container(min-width:40rem)]:group-focus-within/message:pointer-events-auto [@container(min-width:40rem)]:group-focus-within/message:opacity-100"
         data-testid="home-inbox-draft-action-bar"
       >
         <div className="overflow-hidden rounded-full border border-border/70 bg-background/95 shadow-xs backdrop-blur-sm supports-[backdrop-filter]:bg-background/85">

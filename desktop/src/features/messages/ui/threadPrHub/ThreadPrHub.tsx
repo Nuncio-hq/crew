@@ -57,7 +57,7 @@ export function ThreadPrHub({ subject }: { subject: ThreadForgeHubSubject }) {
 
   if (snapshot.status === "pending") {
     return (
-      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+      <div className="flex min-w-0 flex-1 items-center justify-center text-sm text-muted-foreground">
         <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
         Loading pull request…
       </div>

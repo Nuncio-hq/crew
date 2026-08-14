@@ -131,7 +131,12 @@ export function AuxiliaryPanel({
   if (isSplitLayout) {
     return (
       <AuxiliaryPanelContext.Provider value={contextValue}>
-        <div className={cn("flex min-h-0 flex-1 flex-col", className)}>
+        <div
+          className={cn(
+            "@container flex min-h-0 min-w-0 flex-1 flex-col",
+            className,
+          )}
+        >
           {header}
           {children}
           {footer}
@@ -147,6 +152,7 @@ export function AuxiliaryPanel({
       <aside
         className={cn(
           enterMotion ? PANEL_ENTER_BASE_CLASS : PANEL_BASE_CLASS,
+          "@container",
           isSinglePanelView && "border-l-0",
           isFloatingOverlay && PANEL_OVERLAY_CLASS,
           className,

@@ -144,9 +144,9 @@ export function MessageRowItem({
         className={cn(
           "group/message relative mx-1 mb-1 flex flex-col gap-0 rounded-2xl px-0 py-1 transition-colors hover:bg-muted/50 focus-within:bg-muted/50",
           isThreadAnchor &&
-            "-mx-4 bg-primary/5 px-4 hover:bg-primary/10 after:absolute after:-inset-y-1.5 after:left-0 after:w-0.5 after:rounded-full after:bg-primary after:content-[''] sm:-mx-6 sm:px-6",
+            "-mx-4 bg-primary/5 px-4 hover:bg-primary/10 after:absolute after:-inset-y-1.5 after:left-0 after:w-0.5 after:rounded-full after:bg-primary after:content-[''] [@container(min-width:40rem)]:-mx-6 [@container(min-width:40rem)]:px-6",
           isHighlighted &&
-            "-mx-4 px-4 before:absolute before:-inset-y-1.5 before:inset-x-0 before:animate-[route-target-highlight-fade_2s_ease-out_forwards] before:bg-primary/10 before:content-[''] motion-reduce:before:animate-none sm:-mx-6 sm:px-6",
+            "-mx-4 px-4 before:absolute before:-inset-y-1.5 before:inset-x-0 before:animate-[route-target-highlight-fade_2s_ease-out_forwards] before:bg-primary/10 before:content-[''] motion-reduce:before:animate-none [@container(min-width:40rem)]:-mx-6 [@container(min-width:40rem)]:px-6",
         )}
         data-thread-anchor={isThreadAnchor ? "true" : undefined}
       >

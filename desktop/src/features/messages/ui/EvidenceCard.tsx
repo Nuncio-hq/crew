@@ -54,12 +54,12 @@ function MetricsLayout({ message }: { message: TimelineMessage }) {
     <div className="grid gap-2">
       {values.size > 0 ? (
         <>
-          <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+          <div className="grid grid-cols-1 gap-2 text-xs text-muted-foreground [@container(min-width:21.25rem)]:grid-cols-3">
             <span>before</span>
             <span>after</span>
             <span>delta</span>
           </div>
-          <div className="grid grid-cols-3 gap-2 font-medium">
+          <div className="grid grid-cols-1 gap-2 font-medium [@container(min-width:21.25rem)]:grid-cols-3">
             <span>{values.get("before") ?? "—"}</span>
             <span>{values.get("after") ?? "—"}</span>
             <span>{values.get("delta") ?? "—"}</span>
@@ -132,7 +132,7 @@ function VisualLayout({
   if (entries.length === 0) return bodyMarkdown(message);
 
   return (
-    <div className="grid grid-cols-2 gap-2">
+    <div className="grid grid-cols-1 gap-2 [@container(min-width:21.25rem)]:grid-cols-2">
       {entries.map(({ url }, index) =>
         failedUrls.has(url) ? (
           <a
@@ -209,11 +209,13 @@ export function EvidenceCard({
 
   return (
     <section
-      className="max-w-2xl rounded-lg border border-border/70 bg-muted/30 p-3 text-sm"
+      className="@container min-w-0 max-w-2xl rounded-lg border border-border/70 bg-muted/30 p-3 text-sm"
       data-testid={`evidence-card-${kind}`}
     >
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="font-medium text-foreground">{heading}</h3>
+      <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
+        <h3 className="min-w-0 truncate font-medium text-foreground">
+          {heading}
+        </h3>
         <div className="flex min-w-0 items-center gap-2">
           <EvidenceCrossCheckBadge result={crossCheck} />
           {rejected ? (
@@ -226,7 +228,7 @@ export function EvidenceCard({
       <EvidenceCrossCheckDetail result={crossCheck} />
       {layout}
       {showControls ? (
-        <div className="mt-3 flex gap-2 border-t border-border/60 pt-3">
+        <div className="mt-3 flex flex-wrap gap-2 border-t border-border/60 pt-3">
           <button
             className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50"
             data-testid="evidence-accept"

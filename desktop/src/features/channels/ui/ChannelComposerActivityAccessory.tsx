@@ -66,7 +66,7 @@ export function ChannelComposerActivityAccessory({
         {typingPubkeys.length > 0 ? (
           <TypingIndicatorRow
             channel={channel}
-            className="min-w-0 flex-1 py-0 pl-[calc(0.75rem+1px)] pr-0 sm:pl-[calc(1rem+1px)]"
+            className="min-w-0 flex-1 py-0 pl-[calc(0.75rem+1px)] pr-0 [@container(min-width:40rem)]:pl-[calc(1rem+1px)]"
             currentPubkey={currentPubkey}
             profiles={profiles}
             typingPubkeys={typingPubkeys}

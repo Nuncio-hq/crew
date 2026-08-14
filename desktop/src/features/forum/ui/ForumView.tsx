@@ -7,7 +7,7 @@ import { getMentionTagPubkey } from "@/shared/lib/resolveMentionNames";
 import type { Channel } from "@/shared/api/types";
 import { channelChrome } from "@/shared/layout/chromeLayout";
 import { cn } from "@/shared/lib/cn";
-import { Skeleton } from "@/shared/ui/skeleton";
+import { PaneEmptyState } from "@/shared/ui/PaneEmptyState";
 import { VirtualizedList } from "@/shared/ui/VirtualizedList";
 
 import {
@@ -162,7 +162,7 @@ export function ForumView({
   }
 
   return (
-    <div className={cn("flex h-full flex-col", channelChrome.contentPadding)}>
+    <div className={cn("@container flex h-full min-w-0 flex-col", channelChrome.contentPadding)}>
       <div className="border-b border-border/60 p-4">
         {isComposerOpen ? (
           <ForumComposer
@@ -210,17 +210,13 @@ export function ForumView({
             <Skeleton className="h-24 w-full rounded-xl" />
           </div>
         ) : posts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
-            <MessageSquareText className="h-10 w-10 text-muted-foreground/40" />
-            <div>
-              <p className="text-sm font-medium text-foreground/70">
-                No posts yet
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Start a discussion by creating the first post.
-              </p>
-            </div>
-          </div>
+          <PaneEmptyState
+            className="border-0 bg-transparent"
+            description="Start a discussion by creating the first post."
+            icon={<MessageSquareText className="h-10 w-10" />}
+            narrowTitle="No posts yet"
+            title="No posts yet"
+          />
         ) : (
           <VirtualizedList
             estimateSize={120}

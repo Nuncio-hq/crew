@@ -6,6 +6,7 @@ import { ALargeSmall, ArrowUp, AtSign, Paperclip, X } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { ComposerEmojiPicker } from "./ComposerEmojiPicker";
+import { ComposerOverflowMenu } from "./ComposerOverflowMenu";
 import { FormattingToolbar } from "./FormattingToolbar";
 import { SelectionFormattingTray } from "./SelectionFormattingTray";
 
@@ -16,6 +17,10 @@ const presenceSpring = {
   damping: 28,
 } as const;
 
+/**
+ * Composer toolbar (#205). At any pane min: icons **collapse** into
+ * `ComposerOverflowMenu` below 340px container. Send stays visible.
+ */
 export const MessageComposerToolbar = React.memo(
   function MessageComposerToolbar({
     composerDisabled,
@@ -53,7 +58,7 @@ export const MessageComposerToolbar = React.memo(
     sendDisabled: boolean;
   }) {
     return (
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+      <div className="@container mt-2 flex flex-wrap items-center justify-between gap-3">
         <SelectionFormattingTray
           disabled={formattingDisabled}
           editor={editor}
@@ -158,11 +163,20 @@ export const MessageComposerToolbar = React.memo(
                 exit={{ opacity: 0, x: -12 }}
                 transition={presenceSpring}
               >
+                <ComposerOverflowMenu
+                  composerDisabled={composerDisabled}
+                  isUploading={isUploading}
+                  onCaptureSelection={onCaptureSelection}
+                  onFormattingToggle={() => onFormattingToggle(true)}
+                  onOpenMentionPicker={onOpenMentionPicker}
+                  onPaperclip={onPaperclip}
+                />
                 {/* disableHoverableContent keeps tooltips from lingering over the editor. */}
                 <Tooltip disableHoverableContent>
                   <TooltipTrigger asChild>
                     <Button
                       aria-label="Mention someone"
+                      className="[@container(max-width:21.25rem)]:hidden"
                       data-testid="message-insert-mention"
                       disabled={composerDisabled}
                       onClick={onOpenMentionPicker}
@@ -180,6 +194,7 @@ export const MessageComposerToolbar = React.memo(
                   <TooltipTrigger asChild>
                     <Button
                       aria-label="Attach file"
+                      className="[@container(max-width:21.25rem)]:hidden"
                       disabled={composerDisabled || isUploading}
                       onClick={onPaperclip}
                       onMouseDown={onCaptureSelection}
@@ -211,6 +226,7 @@ export const MessageComposerToolbar = React.memo(
                       <Button
                         aria-label="Toggle formatting"
                         aria-pressed={isFormattingOpen}
+                        className="[@container(max-width:21.25rem)]:hidden"
                         disabled={composerDisabled}
                         onClick={() => onFormattingToggle(!isFormattingOpen)}
                         onMouseDown={onCaptureSelection}

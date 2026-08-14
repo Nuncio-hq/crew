@@ -1451,6 +1451,36 @@ anything, it is gray.
 
 See spikes 0046–0048.
 
+## D-064 — Truncate, collapse, or stack; never squeeze (container-first panes)
+
+- **Status:** Accepted
+- **Date:** 2026-08-14
+- **Issue:** #205
+
+Panes resize independently of the window. Components adapt to **their
+own width** (`@container` / ResizeObserver), never to the viewport,
+except true window-level layout (sidebar collapse; app floor 800×500).
+
+Below a surface minimum a component must do exactly one of:
+
+1. **Truncate** — single line, end-ellipsis for titles, middle-truncate
+   for paths/branches/URLs. Counts/badges collapse instead of truncating.
+2. **Collapse** — hide the column/rail and leave a reachable affordance
+   (icon, hamburger, overflow `…`).
+3. **Stack** — reflow vertically. Overlay rails insert **between header
+   and content**, never covering chrome.
+
+Squeezing (vertical letter-soup, overlapping chrome) is never an option.
+Nothing animates during a pane-handle drag.
+
+The per-surface table lives in
+`desktop/src/shared/layout/responsiveContract.ts`. Values encode
+existing policy; they are not a license to redesign mins. Every new pane
+adds a row.
+
+See spikes 0049–0051.
+
+
 
 
 

@@ -471,11 +471,11 @@ export const MessageActionBar = React.memo(function MessageActionBar({
     <div
       className={cn(
         "-m-1 p-1 transition-opacity duration-150 ease-out",
-        "opacity-100 sm:pointer-events-none sm:opacity-0",
-        "sm:group-hover/message:pointer-events-auto sm:group-hover/message:opacity-100",
-        "sm:group-focus-within/message:pointer-events-auto sm:group-focus-within/message:opacity-100",
+        "opacity-100 [@container(min-width:40rem)]:pointer-events-none [@container(min-width:40rem)]:opacity-0",
+        "[@container(min-width:40rem)]:group-hover/message:pointer-events-auto [@container(min-width:40rem)]:group-hover/message:opacity-100",
+        "[@container(min-width:40rem)]:group-focus-within/message:pointer-events-auto [@container(min-width:40rem)]:group-focus-within/message:opacity-100",
         isReactionPickerOpen || isDropdownOpen
-          ? "sm:pointer-events-auto sm:opacity-100"
+          ? "[@container(min-width:40rem)]:pointer-events-auto [@container(min-width:40rem)]:opacity-100"
           : "",
       )}
       data-testid={`message-action-bar-${message.id}`}
@@ -484,7 +484,7 @@ export const MessageActionBar = React.memo(function MessageActionBar({
         <div className="flex items-center gap-0.5 p-1">
           {hasReactionAction && quickReactionItems.length > 0 ? (
             <>
-              <div className="hidden items-center gap-0.5 sm:flex">
+              <div className="hidden items-center gap-0.5 [@container(min-width:40rem)]:flex">
                 {quickReactionItems.map(({ customEmojiUrl, emoji }) => (
                   <QuickReactionButton
                     customEmojiUrl={customEmojiUrl}
@@ -494,7 +494,7 @@ export const MessageActionBar = React.memo(function MessageActionBar({
                   />
                 ))}
               </div>
-              <div className="mx-0.5 hidden h-4 w-px bg-border/70 sm:block" />
+              <div className="mx-0.5 hidden h-4 w-px bg-border/70 [@container(min-width:40rem)]:block" />
             </>
           ) : null}
 

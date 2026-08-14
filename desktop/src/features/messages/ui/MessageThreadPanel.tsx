@@ -43,6 +43,7 @@ import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
 import { ThreadPanelDeclaredPlansBody } from "./ThreadPanelDeclaredPlansBody";
+import { ThreadPanelEmptyState } from "./ThreadPanelEmptyState";
 import { ProjectThreadActivityPeek } from "./ProjectThreadActivityPeek";
 import { useProjectThreadWorkspaceModel } from "./useProjectThreadWorkspaceModel";
 import type { ThreadBreadcrumb } from "@/features/messages/lib/threadOrientation";
@@ -817,14 +818,7 @@ export function MessageThreadPanel({
             // Only show the empty state when the thread is GENUINELY empty.
             // Keying off `deferredThreadReplies` would flash "No replies" for a
             // frame while a non-empty list streams in on the deferred commit.
-            <div className="rounded-2xl border border-dashed border-border/70 bg-card/40 px-4 py-6 text-center">
-              <p className="text-sm font-medium text-foreground/80">
-                No replies in this branch yet
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Reply in the thread to continue this branch.
-              </p>
-            </div>
+            <ThreadPanelEmptyState />
           ) : // "pending": deferred list is empty but the live list has content —
           // rows are streaming in on the deferred commit. Paint nothing rather
           // than flashing the empty state.
@@ -928,7 +922,7 @@ export function MessageThreadPanel({
                 {threadTypingPubkeys.length > 0 ? (
                   <TypingIndicatorRow
                     channel={channel}
-                    className="min-w-0 flex-1 py-0 pl-[calc(0.75rem+1px)] pr-0 sm:pl-[calc(1rem+1px)]"
+                    className="min-w-0 flex-1 py-0 pl-[calc(0.75rem+1px)] pr-0 [@container(min-width:40rem)]:pl-[calc(1rem+1px)]"
                     currentPubkey={currentPubkey}
                     profiles={profiles}
                     typingPubkeys={threadTypingPubkeys}
