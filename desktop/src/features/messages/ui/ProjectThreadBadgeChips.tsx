@@ -19,7 +19,7 @@ export function ProjectThreadBadgeChips({
       <span
         className={cn(
           "inline-flex max-w-60 min-w-0 items-center gap-0.5",
-          badge.mono && "font-mono",
+          badge.mono && "font-machine",
         )}
         title={badge.branch}
       >
@@ -77,7 +77,7 @@ export function ProjectThreadBadgeChips({
         <>
           <span className="mx-1 text-muted-foreground/50">·</span>
           <span
-            className="inline-flex items-center gap-0.5 tabular-nums text-emerald-600 dark:text-emerald-400"
+            className="inline-flex items-center gap-0.5 tabular-nums text-success"
             data-testid="project-thread-badge-open-issues"
             title={badge.openIssues.title}
           >
@@ -96,9 +96,7 @@ export function ProjectThreadBadgeChips({
             className="tabular-nums"
             title={`+${badge.diff.additions} −${badge.diff.deletions}`}
           >
-            <span className="text-emerald-600 dark:text-emerald-400">
-              +{badge.diff.additions}
-            </span>{" "}
+            <span className="text-success">+{badge.diff.additions}</span>{" "}
             <span className="text-destructive">−{badge.diff.deletions}</span>
           </span>
         </span>

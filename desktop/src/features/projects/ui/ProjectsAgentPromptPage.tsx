@@ -526,7 +526,7 @@ export function ProjectsAgentPromptPage({
                           className={cn(
                             "ml-2 h-1.5 w-1.5 shrink-0 rounded-full",
                             candidate.isActive
-                              ? "bg-emerald-500"
+                              ? "bg-success"
                               : "bg-muted-foreground/40",
                           )}
                         />

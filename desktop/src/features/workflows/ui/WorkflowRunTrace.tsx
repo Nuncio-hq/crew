@@ -35,14 +35,14 @@ function StepStatusBadge({ status }: { status: string }) {
 function StepStatusIcon({ status }: { status: string }) {
   switch (status) {
     case "completed":
-      return <Check className="h-4 w-4 text-green-500" />;
+      return <Check className="h-4 w-4 text-success" />;
     case "failed":
     case "error":
       return <X className="h-4 w-4 text-red-500" />;
     case "skipped":
       return <SkipForward className="h-4 w-4 text-muted-foreground" />;
     case "waiting_approval":
-      return <Clock className="h-4 w-4 text-amber-500" />;
+      return <Clock className="h-4 w-4 text-attention" />;
     default:
       return <Clock className="h-4 w-4 text-blue-500" />;
   }
@@ -114,7 +114,7 @@ export function WorkflowRunTrace({
             ) : null}
             {pendingApproval ? (
               <div className="mt-3">
-                <p className="mb-2 text-2xs font-medium uppercase tracking-[0.16em] text-amber-600">
+                <p className="mb-2 text-2xs font-medium uppercase tracking-[0.16em] text-attention">
                   Pending approval
                 </p>
                 <WorkflowApprovalCard approval={pendingApproval} />

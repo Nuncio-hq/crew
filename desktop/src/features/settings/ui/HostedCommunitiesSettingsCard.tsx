@@ -477,7 +477,7 @@ export function HostedCommunitiesSettingsCard() {
           </div>
 
           {!identity ? (
-            <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-5">
+            <div className="rounded-xl border border-attention/40 bg-attention/5 p-5">
               <h3 className="font-medium">
                 Link this account to your Buzz identity
               </h3>
@@ -502,9 +502,9 @@ export function HostedCommunitiesSettingsCard() {
               </Button>
             </div>
           ) : identityMismatch ? (
-            <div className="rounded-xl border border-amber-500/50 bg-amber-500/5 p-5">
+            <div className="rounded-xl border border-attention/50 bg-attention/5 p-5">
               <div className="flex items-start gap-2">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-attention" />
                 <div>
                   <h3 className="font-medium">
                     This account is connected to a different Buzz identity
@@ -546,8 +546,8 @@ export function HostedCommunitiesSettingsCard() {
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 p-4">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" /> Buzz
-                identity connected
+                <CheckCircle2 className="h-4 w-4 text-success" /> Buzz identity
+                connected
                 {identity.npub ? (
                   <span className="font-mono text-xs">{identity.npub}</span>
                 ) : null}
@@ -669,9 +669,7 @@ export function HostedCommunitiesSettingsCard() {
                 That address is already taken.
               </p>
             ) : availability === true ? (
-              <p className="text-sm text-emerald-600">
-                That address is available.
-              </p>
+              <p className="text-sm text-success">That address is available.</p>
             ) : null}
             <Button
               disabled={

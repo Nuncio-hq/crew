@@ -165,7 +165,7 @@ export function AddChannelBotTeamsSection({
                               {persona.displayName}
                             </span>
                             {personaInChannel ? (
-                              <Check className="h-4 w-4 text-emerald-300" />
+                              <Check className="h-4 w-4 text-success" />
                             ) : null}
                           </div>
                         );

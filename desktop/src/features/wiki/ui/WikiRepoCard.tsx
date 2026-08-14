@@ -69,7 +69,7 @@ export function WikiRepoCard({
         ) : null}
         {freshness === "stale" ? (
           <button
-            className="rounded-md bg-amber-500/20 px-2 py-1 text-2xs text-amber-700"
+            className="rounded-md bg-attention/20 px-2 py-1 text-2xs text-attention"
             data-testid={`wiki-regenerate-${name}`}
             onClick={onGenerate}
             type="button"

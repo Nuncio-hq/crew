@@ -7,24 +7,39 @@ import {
   useRef,
   useState,
 } from "react";
+import { toast } from "sonner";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invokeTauri } from "@/shared/api/tauri";
 import { isMacPlatform } from "@/shared/lib/platform";
 import { getStorageItem } from "@/shared/lib/safeStorage";
-import { createThemeVars, hexToHsl } from "./adaptive-theme";
+import { hexToHsl } from "./adaptive-theme";
 import {
-  SYNTAX_THEMES,
-  type SyntaxThemeName,
-  type ThemeInfo,
-  extractThemeInfo,
-  getThemePair,
-  loadThemeData,
-  resolveSystemTheme,
-} from "./theme-loader";
+  CREW_ACCENT_HEX,
+  CREW_DARK_THEME_NAME,
+  CREW_LIGHT_ACCENT_HEX,
+  DEFAULT_CHROME_THEME,
+  type ChromeThemeName,
+  isChromeThemeName,
+  resolveChromeSystemTheme,
+} from "./chrome-theme";
+import {
+  applyCrewChromeDocument,
+  loadSyntaxTerminalPalette,
+  readThemeCache,
+  writeThemeCache,
+} from "./crew-chrome-runtime";
+import {
+  SYNTAX_STORAGE_KEY,
+  THEME_SPLIT_MIGRATION_KEY,
+  isShikiPaletteName,
+  migrateStoredAppearance,
+  normalizeChromeThemeName,
+} from "./theme-preference-migration";
+import type { SyntaxThemeName, ThemeInfo } from "./theme-loader";
 
 export const THEME_STORAGE_KEY = "buzz-theme";
-const CACHE_KEY = "buzz-theme-cache";
+export const SYNTAX_THEME_STORAGE_KEY = SYNTAX_STORAGE_KEY;
 export const ACCENT_STORAGE_KEY = "buzz-accent-color";
 export const GLASS_BACKGROUND_STORAGE_KEY = "buzz-glass-background";
 export const GLASS_OPACITY_STORAGE_KEY = "buzz-glass-opacity";
@@ -54,11 +69,12 @@ export const ACCENT_COLORS = [
   { name: "Indigo", value: "#6366f1" },
 ] as const;
 
-const DEFAULT_ACCENT = "#3b82f6";
+const DEFAULT_ACCENT = CREW_ACCENT_HEX;
 
 type ThemeContextValue = {
-  themeName: string;
-  selectedThemeName: string;
+  themeName: ChromeThemeName;
+  selectedThemeName: ChromeThemeName;
+  syntaxThemeName: SyntaxThemeName;
   isDark: boolean;
   isLoading: boolean;
   accentColor: string;
@@ -70,10 +86,12 @@ type ThemeContextValue = {
   hasPair: boolean;
   terminalPalette: ThemeInfo["terminalPalette"] | null;
   setTheme: (name: string) => void;
+  setSyntaxTheme: (name: string) => void;
   setAccentColor: (color: string) => void;
   setFollowSystem: (enabled: boolean) => void;
   applyAppearance: (appearance: {
-    theme: SyntaxThemeName;
+    theme: string;
+    syntax?: string;
     accent: string;
     followSystem: boolean;
   }) => void;
@@ -84,28 +102,45 @@ type ThemeContextValue = {
 
 type ThemeProviderProps = {
   children: ReactNode;
-  defaultTheme?: SyntaxThemeName;
+  defaultTheme?: ChromeThemeName;
 };
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-function isValidThemeName(name: string): name is SyntaxThemeName {
-  return (SYNTAX_THEMES as readonly string[]).includes(name);
+function isValidSyntaxThemeName(name: string): name is SyntaxThemeName {
+  return isShikiPaletteName(name);
 }
 
-/** Read stored theme, migrating legacy "light"/"dark"/"system" values. */
-function readStoredTheme(fallback: SyntaxThemeName): SyntaxThemeName {
-  // block/buzz#5078 — WebKit throws SecurityError from getItem under a
-  // denied-storage origin; the throw-safe helper lets the provider degrade to
-  // the fallback instead of unmounting the root during first render.
-  const stored = getStorageItem(THEME_STORAGE_KEY);
-  if (!stored) return fallback;
+/** Read stored chrome + syntax, migrating the old combined Shiki pref. */
+function readStoredAppearance(fallback: ChromeThemeName): {
+  chrome: ChromeThemeName;
+  syntax: SyntaxThemeName;
+  toastMessage: string | null;
+} {
+  const storedTheme = getStorageItem(THEME_STORAGE_KEY);
+  const storedSyntax = getStorageItem(SYNTAX_STORAGE_KEY);
+  const alreadyMigrated = getStorageItem(THEME_SPLIT_MIGRATION_KEY) === "true";
+  const migrated = migrateStoredAppearance({
+    storedTheme,
+    storedSyntax,
+    alreadyMigrated,
+  });
 
-  // Migrate legacy values
-  if (stored === "light") return "catppuccin-latte";
-  if (stored === "dark" || stored === "system") return "houston";
+  if (!alreadyMigrated) {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, migrated.chrome);
+      window.localStorage.setItem(SYNTAX_STORAGE_KEY, migrated.syntax);
+      window.localStorage.setItem(THEME_SPLIT_MIGRATION_KEY, "true");
+    } catch {
+      // Keep the in-memory result even if storage is full.
+    }
+  }
 
-  return isValidThemeName(stored) ? stored : fallback;
+  return {
+    chrome: migrated.chrome || fallback,
+    syntax: migrated.syntax,
+    toastMessage: migrated.toastMessage,
+  };
 }
 
 function getContrastColor(hex: string): string {
@@ -249,13 +284,17 @@ export function isBuzzTheme(themeName: string): boolean {
 
 /**
  * Resolve the accent to actually apply for a theme: Buzz themes are pinned to
- * the neutral accent; every other theme uses the stored/selected accent.
+ * the neutral accent; Crew chrome pins the one blue; every other leftover
+ * path uses the stored/selected accent.
  */
 function resolveEffectiveAccent(
   themeName: string,
   accentColor: string,
 ): string {
-  return isBuzzTheme(themeName) ? NEUTRAL_ACCENT : accentColor;
+  if (isBuzzTheme(themeName)) return NEUTRAL_ACCENT;
+  if (themeName === CREW_DARK_THEME_NAME) return CREW_ACCENT_HEX;
+  if (themeName === "crew-light") return CREW_LIGHT_ACCENT_HEX;
+  return accentColor;
 }
 
 /** Toggle the Buzz-specific gradient marker independently from glass. */
@@ -395,22 +434,25 @@ async function applyWindowGlass(enabled: boolean) {
 /** Apply cached CSS vars synchronously to prevent FOUC. */
 function applyCachedVars(): string | null {
   try {
-    const cached = window.localStorage.getItem(CACHE_KEY);
+    const cached = readThemeCache();
     if (!cached) return null;
-    const { themeName, vars, isDark } = JSON.parse(cached);
+    const { themeName, vars, isDark } = cached;
     const root = document.documentElement;
     for (const [key, value] of Object.entries(vars)) {
       root.style.setProperty(key, value as string);
     }
     root.classList.remove("light", "dark");
     root.classList.add(isDark ? "dark" : "light");
-    applyBuzzSidebar(themeName);
+    if (isChromeThemeName(themeName)) {
+      root.setAttribute("data-crew-chrome", themeName);
+      root.removeAttribute("data-buzz-sidebar");
+      root.removeAttribute("data-buzz-theme");
+    } else {
+      applyBuzzSidebar(themeName);
+    }
     glassThemeReady = true;
 
     const accent = getStorageItem(ACCENT_STORAGE_KEY) ?? DEFAULT_ACCENT;
-    // Pin Buzz themes to the neutral accent here too, matching applyTheme.
-    // Otherwise a cached Buzz theme + non-neutral stored accent flashes the
-    // old accent on reload until the async applyTheme effect runs.
     applyAccentColor(resolveEffectiveAccent(themeName, accent));
 
     return themeName;
@@ -422,67 +464,50 @@ function applyCachedVars(): string | null {
 /** The latest theme load is the only one allowed to write document styles. */
 let themeApplyRequest = 0;
 
-/** Apply a theme: load data, derive CSS vars, set them on :root. */
-async function applyTheme(name: SyntaxThemeName): Promise<{
+/** Apply Crew chrome tokens and load the syntax theme for the terminal. */
+async function applyTheme(
+  chrome: ChromeThemeName,
+  syntax: SyntaxThemeName,
+): Promise<{
   isDark: boolean;
-  terminalPalette: ThemeInfo["terminalPalette"];
+  terminalPalette: ThemeInfo["terminalPalette"] | null;
 } | null> {
   const requestToken = ++themeApplyRequest;
-  const themeData = await loadThemeData(name);
-  if (requestToken !== themeApplyRequest) return null;
-
-  const info = extractThemeInfo(name, themeData);
-  const { isDark, vars } = createThemeVars(info.bg, info.fg, info.comment, {
-    added: info.added,
-    deleted: info.deleted,
-    modified: info.modified,
-  });
-
-  const root = document.documentElement;
-  for (const [key, value] of Object.entries(vars)) {
-    root.style.setProperty(key, value);
-  }
-
-  root.classList.remove("light", "dark");
-  root.classList.add(isDark ? "dark" : "light");
-  applyBuzzSidebar(name);
+  const { isDark, vars } = applyCrewChromeDocument(chrome);
   glassThemeReady = true;
   maybeEnableGlassBackground(glassVibrancyRequest);
+  writeThemeCache({
+    themeName: chrome,
+    syntaxThemeName: syntax,
+    vars,
+    isDark,
+  });
 
-  // Apply the accent synchronously in the same batch as the theme vars so the
-  // browser paints the new theme + accent together. Doing this in a later
-  // microtask (e.g. the caller's `.then`) let the previous accent flash on the
-  // new theme for a frame — the flicker seen when switching to Buzz. Buzz
-  // themes resolve to the neutral accent regardless of the stored value.
-  applyAccentColor(
-    resolveEffectiveAccent(
-      name,
-      getStorageItem(ACCENT_STORAGE_KEY) ?? DEFAULT_ACCENT,
-    ),
-  );
+  const terminalPalette = await loadSyntaxTerminalPalette(syntax);
+  if (requestToken !== themeApplyRequest) return null;
 
-  // Cache for FOUC prevention
-  try {
-    window.localStorage.setItem(
-      CACHE_KEY,
-      JSON.stringify({ themeName: name, vars, isDark }),
-    );
-  } catch {
-    // Storage full — non-critical
-  }
-
-  return { isDark, terminalPalette: info.terminalPalette };
+  return { isDark, terminalPalette };
 }
 
 export function ThemeProvider({
   children,
-  defaultTheme = "buzz",
+  defaultTheme = DEFAULT_CHROME_THEME,
 }: ThemeProviderProps) {
-  // Apply cached vars synchronously before first render
-  const [selectedTheme, setSelectedTheme] = useState<string>(() => {
+  const initialAppearanceRef = useRef<ReturnType<
+    typeof readStoredAppearance
+  > | null>(null);
+  if (initialAppearanceRef.current === null) {
     applyCachedVars();
-    return readStoredTheme(defaultTheme);
-  });
+    initialAppearanceRef.current = readStoredAppearance(defaultTheme);
+  }
+  const initialAppearance = initialAppearanceRef.current;
+
+  const [selectedTheme, setSelectedTheme] = useState<ChromeThemeName>(
+    () => initialAppearance.chrome,
+  );
+  const [syntaxTheme, setSyntaxThemeState] = useState<SyntaxThemeName>(
+    () => initialAppearance.syntax,
+  );
   const [isDark, setIsDark] = useState<boolean>(() => {
     return document.documentElement.classList.contains("dark");
   });
@@ -492,14 +517,10 @@ export function ThemeProvider({
   >(null);
   const loadingRef = useRef<string | null>(null);
   const [accentColor, setAccentColorState] = useState<string>(() => {
-    // block/buzz#5078 — use the throw-safe accessor for init-time reads; a
-    // denied-storage origin would otherwise kill the root on first mount.
     return getStorageItem(ACCENT_STORAGE_KEY) ?? DEFAULT_ACCENT;
   });
   const [glassBackground, setGlassBackgroundState] = useState<boolean>(() => {
     const stored = getStorageItem(GLASS_BACKGROUND_STORAGE_KEY);
-    // Glass is opt-in. Explicitly saved preferences remain intact, while a
-    // fresh profile starts with the normal opaque window treatment.
     const enabled = stored === "true";
     glassBackgroundPreferenceEnabled = enabled;
     return enabled;
@@ -518,66 +539,55 @@ export function ThemeProvider({
   const [followSystem, setFollowSystemState] = useState<boolean>(() => {
     const stored = getStorageItem(FOLLOW_SYSTEM_KEY);
     if (stored !== null) return stored === "true";
-    // Fresh profiles (no saved theme) default to System mode so the Buzz
-    // default tracks the OS light/dark scheme. Profiles that picked a theme
-    // before this toggle existed keep their fixed theme until they opt in.
-    return getStorageItem(THEME_STORAGE_KEY) === null;
+    // Fresh profiles default to Crew Dark (not System). Existing follow-system
+    // prefs survive; the chrome pair is now Crew Light ↔ Crew Dark.
+    return false;
   });
   const [systemIsDark, setSystemIsDark] = useState<boolean>(() => {
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
   });
 
-  // Resolve the effective theme based on follow-system preference
-  const effectiveTheme = (() => {
-    if (!followSystem || !isValidThemeName(selectedTheme)) return selectedTheme;
-    return resolveSystemTheme(selectedTheme as SyntaxThemeName, systemIsDark);
-  })();
+  const effectiveTheme: ChromeThemeName = followSystem
+    ? resolveChromeSystemTheme(selectedTheme, systemIsDark)
+    : selectedTheme;
 
-  // Check if the selected theme has a pair (for UI hint)
-  const hasPair = isValidThemeName(selectedTheme)
-    ? getThemePair(selectedTheme as SyntaxThemeName) !== null
-    : false;
+  const hasPair = true;
 
   useEffect(() => {
-    if (!isValidThemeName(effectiveTheme)) return;
-
-    // Track which theme we're loading to avoid race conditions
-    const thisTheme = effectiveTheme;
+    const thisTheme = `${effectiveTheme}:${syntaxTheme}`;
     loadingRef.current = thisTheme;
     setIsLoading(true);
 
-    applyTheme(effectiveTheme as SyntaxThemeName).then((result) => {
+    applyTheme(effectiveTheme, syntaxTheme).then((result) => {
       if (!result) return;
-      // Only update if this is still the theme we want. The accent is applied
-      // inside applyTheme (synchronously with the theme vars), so there's no
-      // separate re-application here — that avoided the switch-time flicker.
       if (loadingRef.current === thisTheme) {
         setIsDark(result.isDark);
-        setTerminalPalette(result.terminalPalette);
+        if (result.terminalPalette) {
+          setTerminalPalette(result.terminalPalette);
+        }
         setIsLoading(false);
       }
     });
-  }, [effectiveTheme]);
+  }, [effectiveTheme, syntaxTheme]);
 
   useEffect(() => {
-    // `initial-render-ready` fires from a layout effect, so it is already
-    // enqueued before this passive effect's IPC call is dispatched. The native
-    // reveal can in theory precede the transparency call; the Rust-side
-    // stable-geometry wait provides the gap in practice, and a brief opaque
-    // first frame is the accepted worst case for glass users.
+    const appearance = initialAppearanceRef.current;
+    const message = appearance?.toastMessage;
+    if (!appearance || !message) return;
+    toast.info(message, { duration: 8000 });
+    initialAppearanceRef.current = { ...appearance, toastMessage: null };
+  }, []);
+
+  useEffect(() => {
     void applyWindowGlass(glassBackground);
   }, [glassBackground]);
 
-  // The stronger selected-row treatment belongs exclusively to Buzz. Keep
-  // the saved preference so it is restored when the user returns to Buzz,
-  // but remove the live marker for every other theme.
   useEffect(() => {
     setProminentActiveTabActive(
       prominentActiveTab && isBuzzTheme(effectiveTheme),
     );
   }, [effectiveTheme, prominentActiveTab]);
 
-  // Listen for system color scheme changes when followSystem is enabled
   useEffect(() => {
     if (!followSystem) return;
 
@@ -591,10 +601,6 @@ export function ThemeProvider({
     setSystemIsDark(mq.matches);
     mq.addEventListener("change", handleMediaChange);
 
-    // WKWebView can update the media query value without dispatching its
-    // change event until the page reloads. Tauri's native window event arrives
-    // immediately when macOS appearance changes, so use it as the reliable app
-    // signal while retaining matchMedia for the browser build.
     if (isTauri()) {
       void getCurrentWindow()
         .onThemeChanged(({ payload }) => {
@@ -619,18 +625,20 @@ export function ThemeProvider({
     };
   }, [followSystem]);
 
-  // Re-apply the accent when the user picks a new swatch or the effective theme
-  // changes. applyTheme already applies the (Buzz-neutral-aware) accent in the
-  // same synchronous batch as the theme vars — the flicker fix — so this effect
-  // is idempotent on theme changes and simply covers accent-only changes.
   useEffect(() => {
     applyAccentColor(resolveEffectiveAccent(effectiveTheme, accentColor));
   }, [accentColor, effectiveTheme]);
 
   const setTheme = useCallback((name: string) => {
-    if (!isValidThemeName(name)) return;
-    setSelectedTheme(name);
-    window.localStorage.setItem(THEME_STORAGE_KEY, name);
+    const chrome = normalizeChromeThemeName(name);
+    setSelectedTheme(chrome);
+    window.localStorage.setItem(THEME_STORAGE_KEY, chrome);
+  }, []);
+
+  const setSyntaxTheme = useCallback((name: string) => {
+    if (!isValidSyntaxThemeName(name)) return;
+    setSyntaxThemeState(name);
+    window.localStorage.setItem(SYNTAX_STORAGE_KEY, name);
   }, []);
 
   const setAccentColor = useCallback((color: string) => {
@@ -645,23 +653,33 @@ export function ThemeProvider({
 
   const applyAppearance = useCallback(
     (appearance: {
-      theme: SyntaxThemeName;
+      theme: string;
+      syntax?: string;
       accent: string;
       followSystem: boolean;
     }) => {
-      // Write the complete preference before updating state so applyTheme reads
-      // the target community's accent in the same batch, never the previous one.
+      const chrome = normalizeChromeThemeName(appearance.theme);
+      const syntax =
+        appearance.syntax && isValidSyntaxThemeName(appearance.syntax)
+          ? appearance.syntax
+          : isValidSyntaxThemeName(appearance.theme)
+            ? appearance.theme
+            : undefined;
       try {
-        window.localStorage.setItem(THEME_STORAGE_KEY, appearance.theme);
+        window.localStorage.setItem(THEME_STORAGE_KEY, chrome);
         window.localStorage.setItem(ACCENT_STORAGE_KEY, appearance.accent);
         window.localStorage.setItem(
           FOLLOW_SYSTEM_KEY,
           appearance.followSystem ? "true" : "false",
         );
+        if (syntax) {
+          window.localStorage.setItem(SYNTAX_STORAGE_KEY, syntax);
+        }
       } catch {
         // Keep the active appearance responsive even if the local cache is full.
       }
-      setSelectedTheme(appearance.theme);
+      setSelectedTheme(chrome);
+      if (syntax) setSyntaxThemeState(syntax);
       setAccentColorState(appearance.accent);
       setFollowSystemState(appearance.followSystem);
     },
@@ -698,6 +716,7 @@ export function ThemeProvider({
   const value: ThemeContextValue = {
     themeName: effectiveTheme,
     selectedThemeName: selectedTheme,
+    syntaxThemeName: syntaxTheme,
     isDark,
     isLoading,
     accentColor,
@@ -709,6 +728,7 @@ export function ThemeProvider({
     hasPair,
     terminalPalette,
     setTheme,
+    setSyntaxTheme,
     setAccentColor,
     setFollowSystem,
     applyAppearance,

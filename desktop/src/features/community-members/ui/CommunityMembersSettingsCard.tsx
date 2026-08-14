@@ -148,7 +148,7 @@ function RelayMemberRow({
             pubkey={member.pubkey}
           />
           {member.role === "owner" ? (
-            <Crown className="h-4 w-4 text-amber-500" />
+            <Crown className="h-4 w-4 text-muted-foreground" />
           ) : null}
           {member.role === "admin" ? (
             <Shield className="h-4 w-4 text-blue-500" />

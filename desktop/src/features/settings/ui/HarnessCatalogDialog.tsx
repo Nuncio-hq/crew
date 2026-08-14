@@ -383,7 +383,7 @@ function CatalogListItem({
       {isReady ? (
         <span
           aria-label={`${entry.label} is ready`}
-          className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-success"
           role="img"
         />
       ) : null}
@@ -487,7 +487,7 @@ function CatalogDetail({ entry }: { entry: AcpRuntimeCatalogEntry }) {
                 {statusLabel}
               </span>
             ) : isReady ? (
-              <span className="mt-1 inline-flex items-center rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+              <span className="mt-1 inline-flex items-center rounded-md bg-success/15 px-2 py-0.5 text-xs font-medium text-success">
                 Ready
               </span>
             ) : null}
@@ -529,7 +529,7 @@ function CatalogDetail({ entry }: { entry: AcpRuntimeCatalogEntry }) {
         ) : null}
         {installWarning ? (
           <p
-            className="whitespace-pre-line rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-600 dark:text-amber-400"
+            className="whitespace-pre-line rounded-lg border border-attention/30 bg-attention/10 px-3 py-1.5 text-sm text-attention"
             data-testid={`harness-catalog-install-warning-${entry.id}`}
           >
             {installWarning}

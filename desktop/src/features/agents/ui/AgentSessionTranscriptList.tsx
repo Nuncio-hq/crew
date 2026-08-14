@@ -340,7 +340,7 @@ function isRenderableCompactItem(item: TranscriptItem) {
 function TranscriptAcpSourceBadge({ source }: { source: string }) {
   return (
     <span
-      className="mb-1 inline-flex max-w-full rounded border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 font-mono text-xs leading-none text-amber-800 dark:text-amber-200"
+      className="mb-1 inline-flex max-w-full rounded border border-attention/25 bg-attention/10 px-1.5 py-0.5 font-mono text-xs leading-none text-attention"
       data-testid="transcript-acp-source"
       title={`ACP wire source: ${source}`}
     >

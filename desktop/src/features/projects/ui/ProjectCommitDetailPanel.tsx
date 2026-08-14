@@ -105,7 +105,7 @@ export function ProjectCommitDetailPanel({
               {diff ? (
                 <>
                   <span>·</span>
-                  <span className="text-green-500">+{diff.additions}</span>
+                  <span className="text-success">+{diff.additions}</span>
                   <span className="text-destructive">-{diff.deletions}</span>
                 </>
               ) : null}

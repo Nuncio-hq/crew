@@ -8,14 +8,14 @@ import { UserAvatar } from "@/shared/ui/UserAvatar";
 function StepStatus({ status }: { status: ProjectThreadAgentStep["status"] }) {
   if (status === "done") {
     return (
-      <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+      <span className="flex items-center gap-1 text-xs text-success">
         <Check className="h-3.5 w-3.5" /> Done
       </span>
     );
   }
   if (status === "working") {
     return (
-      <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+      <span className="flex items-center gap-1 text-xs text-success">
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
         Working
       </span>

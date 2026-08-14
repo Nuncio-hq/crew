@@ -259,9 +259,7 @@ export function EditAgentAdvancedFields({
           {EDIT_AGENT_PARALLELISM_HELP}
         </p>
         {parallelismHint !== null ? (
-          <p className="text-xs text-amber-600 dark:text-amber-400">
-            {parallelismHint}
-          </p>
+          <p className="text-xs text-attention">{parallelismHint}</p>
         ) : null}
       </div>
 

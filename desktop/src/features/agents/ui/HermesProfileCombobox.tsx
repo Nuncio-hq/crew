@@ -189,7 +189,7 @@ export function HermesProfileCombobox({
                     className={cn(
                       "shrink-0 text-2xs",
                       boundOther
-                        ? "text-amber-700 dark:text-amber-400"
+                        ? "text-attention dark:text-attention"
                         : "text-muted-foreground",
                     )}
                     data-testid="hermes-profile-occupancy"

@@ -156,7 +156,7 @@ function SimStatusLine({
       <Circle
         className={cn(
           "h-2 w-2 fill-current",
-          booted ? "text-emerald-500" : "text-muted-foreground",
+          booted ? "text-success" : "text-muted-foreground",
         )}
       />
       <span className="text-foreground">
@@ -475,7 +475,7 @@ function IdleStrip({
   const label = formatCountdown(deadlineMs, nowMs);
   return (
     <div
-      className="flex shrink-0 items-center gap-2 border-t border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-2xs text-amber-800 dark:text-amber-200"
+      className="flex shrink-0 items-center gap-2 border-t border-attention/40 bg-attention/10 px-3 py-1.5 text-2xs text-attention"
       data-testid="sim-idle-strip"
     >
       <span>Shuts down in {label} unless used</span>

@@ -56,7 +56,7 @@ export function OrgNodeCard({
         </span>
         <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-muted">
           <span
-            className={`block h-full ${amber ? "bg-amber-500" : "bg-primary/70"}`}
+            className={`block h-full ${amber ? "bg-attention" : "bg-primary/70"}`}
             style={{ width: `${Math.round(fill * 100)}%` }}
           />
         </span>

@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #204 — Crew Dark theme (color is information)
+
+Crew Dark (Cursor-flavored) is the default chrome; Crew Light is the
+paper twin. Chrome and syntax are separate settings (syntax default
+`dark-plus`). Color is information: chrome is achromatic; hue is
+reserved for the accent and the semantic state set. Buzz sidebar
+gradient retired on Crew themes. Stored prefs migrate once
+(`buzz-theme-split-v1`) with a toast. Spikes 0046–0048. D-063.
+Last updated: 2026-08-14
+
 ## Issue #203 — Work-tree sidebar (folder = channel, thread = session)
 
 Sidebar Projects section: exclusive project channels are folders;

@@ -158,7 +158,7 @@ export function AgentSnapshotExportDialog({
                 transition={modalResizeTransition}
               >
                 <div
-                  className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+                  className="flex items-start gap-2 rounded-md border border-attention/30 bg-attention/10 px-3 py-2 text-sm text-attention dark:text-attention"
                   data-testid="agent-snapshot-memory-warning"
                 >
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />

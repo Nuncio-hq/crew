@@ -44,10 +44,10 @@ export function ThreadPrHubDegraded({
   if (availability === "rate-limited") {
     return (
       <div
-        className="m-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3"
+        className="m-3 rounded-md border border-attention/40 bg-attention/10 p-3"
         data-testid="thread-pr-hub-rate-limited"
       >
-        <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+        <p className="text-sm font-medium text-attention dark:text-attention">
           GitHub rate limit reached
         </p>
         <p className="mt-1 text-2xs text-muted-foreground">

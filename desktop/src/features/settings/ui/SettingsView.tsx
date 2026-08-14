@@ -274,10 +274,10 @@ export function SettingsView({
           ) : null}
           {shouldWarnMissingMembershipSnapshot(myMembershipQuery.data) ? (
             <div
-              className="mx-3 flex items-start gap-2 rounded-md border border-amber-500/40 px-3 py-2 text-xs text-sidebar-foreground"
+              className="mx-3 flex items-start gap-2 rounded-md border border-attention/40 px-3 py-2 text-xs text-sidebar-foreground"
               data-testid="community-access-snapshot-missing"
             >
-              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-attention" />
               Invite settings are unavailable. Relay recovery may still be in
               progress.
             </div>

@@ -25,6 +25,23 @@ function localStorageStub() {
   };
 }
 
+test("default community appearance is Crew Dark + dark-plus", () => {
+  assert.equal(DEFAULT_COMMUNITY_THEME.theme, "crew-dark");
+  assert.equal(DEFAULT_COMMUNITY_THEME.syntax, "dark-plus");
+  assert.equal(DEFAULT_COMMUNITY_THEME.followSystem, false);
+});
+
+test("parses optional syntax without dropping a legacy Shiki theme name", () => {
+  const withSyntax = {
+    version: 1,
+    theme: "crew-dark",
+    syntax: "houston",
+    accent: "#3b82f6",
+    followSystem: false,
+  };
+  assert.deepEqual(parseCommunityThemePreference(withSyntax), withSyntax);
+});
+
 test("parses only the versioned stable appearance contract", () => {
   const valid = {
     version: 1,

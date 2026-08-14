@@ -270,18 +270,18 @@ function AgentSummary({
             )}
           </div>
           {agent.personaOrphaned ? (
-            <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+            <p className="mt-1.5 text-xs text-attention">
               This agent's configuration is missing — it may still be syncing or
               was deleted on another device.
             </p>
           ) : agent.needsRestart ? (
-            <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+            <p className="mt-1.5 text-xs text-attention">
               Configuration changed since this agent started. Restart to apply
               it.
             </p>
           ) : null}
           {agent.personaOutOfDate ? (
-            <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+            <p className="mt-1.5 text-xs text-attention">
               Template updated since this agent was created. Respawn to apply
               the new configuration.
             </p>

@@ -54,7 +54,7 @@ test("ThemeProvider renders defaults when localStorage reads are denied", async 
   render(
     createElement(
       ThemeProvider,
-      { defaultTheme: "buzz" },
+      { defaultTheme: "crew-dark" },
       createElement("p", null, "Buzz is visible"),
     ),
   );

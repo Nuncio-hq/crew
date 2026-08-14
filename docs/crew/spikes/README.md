@@ -98,3 +98,6 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0043-work-tree-eligibility-selector.md`](0043-work-tree-eligibility-selector.md)
 - [`0044-work-tree-disclosure-live-arrival.md`](0044-work-tree-disclosure-live-arrival.md)
 - [`0045-needs-you-aggregation-dedupe.md`](0045-needs-you-aggregation-dedupe.md)
+- [`0046-token-coverage-audit.md`](0046-token-coverage-audit.md)
+- [`0047-cursor-dark-aa.md`](0047-cursor-dark-aa.md)
+- [`0048-appearance-migration-mapping.md`](0048-appearance-migration-mapping.md)

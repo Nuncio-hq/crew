@@ -26,7 +26,7 @@ function GitBashCard({
     <div
       className={cn(
         "min-h-16 px-4 py-4 text-sm",
-        !prerequisite.available && "bg-amber-500/5",
+        !prerequisite.available && "bg-attention/5",
       )}
       data-testid="doctor-git-bash"
     >
@@ -41,8 +41,8 @@ function GitBashCard({
               className={cn(
                 "inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-xs font-medium",
                 prerequisite.available
-                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                  : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+                  ? "bg-success/15 text-success"
+                  : "bg-attention/15 text-attention",
               )}
             >
               {prerequisite.available ? "Available" : "Action needed"}
@@ -189,7 +189,7 @@ export function HarnessesSettingsPanel() {
               ))}
             </div>
           ) : (
-            <div className="bg-amber-500/10 px-4 py-4 text-sm text-warning">
+            <div className="bg-attention/10 px-4 py-4 text-sm text-warning">
               No agent runtimes ready yet — add one below.
             </div>
           )}

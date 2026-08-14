@@ -83,10 +83,8 @@ function TestRunLayout({ message }: { message: TimelineMessage }) {
         </div>
       ) : null}
       {passed ? (
-        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2">
-          <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
-            Passing
-          </p>
+        <div className="rounded-md border border-success/40 bg-success/10 p-2">
+          <p className="text-xs font-medium text-success">Passing</p>
           <Markdown content={passed} className="text-sm" />
         </div>
       ) : null}

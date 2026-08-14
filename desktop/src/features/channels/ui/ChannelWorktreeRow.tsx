@@ -249,7 +249,7 @@ export function ChannelWorktreeRow({
                     className={cn(
                       "inline-flex max-w-full items-center gap-1 truncate text-left text-2xs tabular-nums",
                       issue.state.toLowerCase() === "open"
-                        ? "text-emerald-600 dark:text-emerald-400"
+                        ? "text-success"
                         : "text-muted-foreground",
                     )}
                     onClick={() => void openUrl(issue.url)}

@@ -16,21 +16,21 @@ function BackendSupportHint({ action }: { action: StepFormState["action"] }) {
   switch (action) {
     case "send_dm":
       return (
-        <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-700">
+        <p className="rounded-md border border-attention/30 bg-attention/10 px-2 py-1 text-xs text-attention">
           Backend note: `send_dm` is not executed yet, so runs fail at this
           step.
         </p>
       );
     case "set_channel_topic":
       return (
-        <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-700">
+        <p className="rounded-md border border-attention/30 bg-attention/10 px-2 py-1 text-xs text-attention">
           Backend note: `set_channel_topic` is not executed yet, so runs fail at
           this step.
         </p>
       );
     case "request_approval":
       return (
-        <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-700">
+        <p className="rounded-md border border-attention/30 bg-attention/10 px-2 py-1 text-xs text-attention">
           Backend note: approval gates still stop runs with WF-08; approval
           records are not persisted yet.
         </p>
@@ -106,7 +106,7 @@ function StepConfigFields({
               Trigger runs need an explicit channel override.
             </p>
             {triggerType === "webhook" && !(step.channel ?? "").trim() ? (
-              <p className="text-xs text-amber-700">
+              <p className="text-xs text-attention">
                 This step will fail for webhook-triggered runs until a channel
                 override is set.
               </p>

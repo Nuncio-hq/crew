@@ -98,9 +98,7 @@ export function ProjectThreadForgeSummaryCard({
         <span>
           ✓ {checks.passed}{" "}
           <span className="text-destructive">✗ {checks.failed}</span>{" "}
-          <span className="text-amber-600 dark:text-amber-400">
-            ● {checks.running} running
-          </span>
+          <span className="text-attention">● {checks.running} running</span>
         </span>
         <span>{threadReviewDecisionLabel(pullRequest.reviewDecision)}</span>
       </div>

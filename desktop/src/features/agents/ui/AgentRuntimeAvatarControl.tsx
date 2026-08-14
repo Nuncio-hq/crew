@@ -186,7 +186,7 @@ export function AgentRuntimeAvatarControl({
                 hasError
                   ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   : isRestartAction
-                    ? "bg-transparent text-amber-800 hover:bg-amber-500/10 dark:text-amber-400"
+                    ? "bg-transparent text-attention hover:bg-attention/10 dark:text-attention"
                     : "bg-primary text-primary-foreground hover:bg-primary/90",
               )}
               data-testid={hasError ? errorTestId : startTestId}
@@ -221,11 +221,11 @@ export function AgentRuntimeAvatarControl({
         "transition-colors ease-in-out",
         shouldReduceMotion ? "duration-0" : "duration-300",
         showRunningDot
-          ? "bg-emerald-500"
+          ? "bg-success"
           : hasError
             ? "bg-destructive"
             : isRestartAction
-              ? "bg-amber-500/15"
+              ? "bg-attention/15"
               : "bg-primary",
       )}
       className="h-24 w-24"

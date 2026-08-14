@@ -52,7 +52,7 @@ const variants: Record<
   ready: {
     Icon: RotateCw,
     label: "Update now",
-    badgeColor: "bg-emerald-500",
+    badgeColor: "bg-success",
   },
 };
 

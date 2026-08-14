@@ -41,6 +41,7 @@ export function CommunityThemeController() {
   const initialPreferenceRef = useRef<CommunityThemePreference>({
     version: 1,
     theme: theme.selectedThemeName as CommunityThemePreference["theme"],
+    syntax: theme.syntaxThemeName,
     accent: theme.accentColor,
     followSystem: theme.followSystem,
   });
@@ -48,12 +49,14 @@ export function CommunityThemeController() {
   const currentPreferenceRef = useRef<CommunityThemePreference>({
     version: 1,
     theme: theme.selectedThemeName as CommunityThemePreference["theme"],
+    syntax: theme.syntaxThemeName,
     accent: theme.accentColor,
     followSystem: theme.followSystem,
   });
   currentPreferenceRef.current = {
     version: 1,
     theme: theme.selectedThemeName as CommunityThemePreference["theme"],
+    syntax: theme.syntaxThemeName,
     accent: theme.accentColor,
     followSystem: theme.followSystem,
   };
@@ -191,6 +194,7 @@ export function CommunityThemeController() {
     const preference: CommunityThemePreference = {
       version: 1,
       theme: theme.selectedThemeName as CommunityThemePreference["theme"],
+      syntax: theme.syntaxThemeName,
       accent: theme.accentColor,
       followSystem: theme.followSystem,
     };
@@ -213,6 +217,7 @@ export function CommunityThemeController() {
     pubkey,
     relayUrl,
     theme.selectedThemeName,
+    theme.syntaxThemeName,
     theme.accentColor,
     theme.followSystem,
   ]);

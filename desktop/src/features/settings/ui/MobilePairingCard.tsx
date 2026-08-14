@@ -76,7 +76,7 @@ function PairingStepIndicator({
       className={cn(
         "relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-base font-semibold transition-[background-color,color] duration-[250ms] ease-in-out motion-reduce:transition-none",
         complete
-          ? "bg-green-600 text-white"
+          ? "bg-success text-success-foreground"
           : "bg-secondary text-secondary-foreground",
       )}
       data-completed={complete ? "true" : "false"}
@@ -517,8 +517,8 @@ export function MobilePairingCard({
                 )
               ) : step === "done" ? (
                 <div className="flex flex-col items-center gap-3 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
-                    <Check className="h-6 w-6 text-green-600 dark:text-green-400" />
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success/15">
+                    <Check className="h-6 w-6 text-success" />
                   </div>
                   <p className="text-base font-medium">Paired</p>
                 </div>

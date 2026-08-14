@@ -1,0 +1,143 @@
+/*
+ * Crew Dark / Crew Light — first-party chrome tokens.
+ *
+ * Color is information. Surfaces are achromatic; hue is reserved for the
+ * single interactive accent and the semantic state set. ThemeProvider sets
+ * `data-crew-chrome` and applies the same values as inline CSS variables so
+ * FOUC cache stays consistent with this sheet.
+ *
+ * Gradient sidebar paint (`data-buzz-sidebar`) is not used for Crew chrome.
+ */
+
+html[data-crew-chrome="crew-light"] {
+  color-scheme: light;
+  --background: 0 0% 98.0%;
+  --card: 0 0% 100.0%;
+  --popover: 0 0% 100.0%;
+  --muted: 0 0% 94.9%;
+  --accent: 0 0% 93.3%;
+  --secondary: 0 0% 94.9%;
+  --foreground: 0 0% 7.8%;
+  --card-foreground: 0 0% 7.8%;
+  --popover-foreground: 0 0% 7.8%;
+  --muted-foreground: 0 0% 36.1%;
+  --meta-foreground: 0 0% 41.6%;
+  --accent-foreground: 0 0% 7.8%;
+  --secondary-foreground: 0 0% 7.8%;
+  --primary: 221.2 83.19% 53.3%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 355.8 71.78% 47.3%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 137.2 66.01% 30.0%;
+  --success-foreground: 0 0% 100%;
+  --attention: 39.1 100.00% 27.1%;
+  --attention-foreground: 0 0% 100%;
+  --merged: 261 69.08% 59.4%;
+  --merged-foreground: 0 0% 100%;
+  --border: 0 0% 92.2%;
+  --border-strong: 0 0% 85.9%;
+  --input: 0 0% 92.2%;
+  --ring: 221.2 83.19% 53.3%;
+  --sidebar: 0 0% 94.9%;
+  --sidebar-background: 0 0% 94.9%;
+  --sidebar-foreground: 0 0% 7.8%;
+  --sidebar-primary: 221.2 83.19% 53.3%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-active: 0 0% 89.0%;
+  --sidebar-active-foreground: 0 0% 7.8%;
+  --sidebar-accent: 0 0% 89.0%;
+  --sidebar-accent-foreground: 0 0% 7.8%;
+  --sidebar-border: 0 0% 92.2%;
+  --sidebar-ring: 221.2 83.19% 53.3%;
+  --huddle-drawer-surface: 0 0% 100.0%;
+  --huddle-control-surface: 0 0% 94.9%;
+  --huddle-control-hover-surface: 0 0% 89.0%;
+  --huddle-control-chevron-surface: 0 0% 92.2%;
+  --huddle-control-chevron-hover-surface: 0 0% 85.9%;
+  --huddle-control-foreground: 0 0% 7.8%;
+  --huddle-popover-surface: 0 0% 100.0%;
+  --huddle-popover-border: 0 0% 85.9%;
+  --huddle-tooltip-surface: 0 0% 94.9%;
+  --huddle-tooltip-foreground: 0 0% 7.8%;
+  --chart-1: 137.2 66.01% 30.0%;
+  --chart-2: 355.8 71.78% 47.3%;
+  --chart-3: 39.1 100.00% 27.1%;
+  --chart-4: 261 69.08% 59.4%;
+  --chart-5: 0 0% 45.9%;
+  --status-added: #1a7f37;
+  --status-deleted: #cf222e;
+  --status-modified: #8a5a00;
+  --ui-warning: #8a5a00;
+  --ui-warning-bg: rgba(138, 90, 0, 0.1);
+}
+
+html[data-crew-chrome="crew-dark"],
+html.dark[data-crew-chrome="crew-dark"] {
+  color-scheme: dark;
+  --background: 0 0% 9.4%;
+  --card: 0 0% 12.2%;
+  --popover: 0 0% 14.9%;
+  --muted: 0 0% 12.2%;
+  --accent: 0 0% 14.9%;
+  --secondary: 0 0% 12.2%;
+  --foreground: 0 0% 92.9%;
+  --card-foreground: 0 0% 92.9%;
+  --popover-foreground: 0 0% 92.9%;
+  --muted-foreground: 0 0% 67.5%;
+  --meta-foreground: 0 0% 59.2%;
+  --accent-foreground: 0 0% 92.9%;
+  --secondary-foreground: 0 0% 92.9%;
+  --primary: 217.2 91.22% 59.8%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 2.7 92.59% 62.9%;
+  --destructive-foreground: 0 0% 9.4%;
+  --success: 128.4 49.19% 48.6%;
+  --success-foreground: 0 0% 9.4%;
+  --attention: 40.6 72.13% 47.8%;
+  --attention-foreground: 0 0% 9.4%;
+  --merged: 262.4 89.33% 70.6%;
+  --merged-foreground: 0 0% 9.4%;
+  --border: 0 0% 16.5%;
+  --border-strong: 0 0% 22.0%;
+  --input: 0 0% 16.5%;
+  --ring: 217.2 91.22% 59.8%;
+  --sidebar: 0 0% 7.8%;
+  --sidebar-background: 0 0% 7.8%;
+  --sidebar-foreground: 0 0% 92.9%;
+  --sidebar-primary: 217.2 91.22% 59.8%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-active: 0 0% 18.4%;
+  --sidebar-active-foreground: 0 0% 92.9%;
+  --sidebar-accent: 0 0% 18.4%;
+  --sidebar-accent-foreground: 0 0% 92.9%;
+  --sidebar-border: 0 0% 16.5%;
+  --sidebar-ring: 217.2 91.22% 59.8%;
+  --huddle-drawer-surface: 0 0% 14.9%;
+  --huddle-control-surface: 0 0% 18.4%;
+  --huddle-control-hover-surface: 0 0% 22.0%;
+  --huddle-control-chevron-surface: 0 0% 12.2%;
+  --huddle-control-chevron-hover-surface: 0 0% 16.5%;
+  --huddle-control-foreground: 0 0% 92.9%;
+  --huddle-popover-surface: 0 0% 14.9%;
+  --huddle-popover-border: 0 0% 22.0%;
+  --huddle-tooltip-surface: 0 0% 18.4%;
+  --huddle-tooltip-foreground: 0 0% 92.9%;
+  --chart-1: 128.4 49.19% 48.6%;
+  --chart-2: 2.7 92.59% 62.9%;
+  --chart-3: 40.6 72.13% 47.8%;
+  --chart-4: 262.4 89.33% 70.6%;
+  --chart-5: 0 0% 59.2%;
+  --status-added: #3fb950;
+  --status-deleted: #f85149;
+  --status-modified: #d29922;
+  --ui-warning: #d29922;
+  --ui-warning-bg: rgba(210, 153, 34, 0.12);
+}
+
+html[data-crew-chrome] {
+  --sidebar-row-subtle-active-surface: rgb(0 0 0 / 6%);
+}
+
+html[data-crew-chrome="crew-dark"] {
+  --sidebar-row-subtle-active-surface: rgb(255 255 255 / 10%);
+}

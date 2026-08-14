@@ -156,11 +156,11 @@ export function PullRequestReviewersRow({
                   size="xs"
                 />
                 {hasApproved ? (
-                  <span className="-right-0.5 -bottom-0.5 absolute flex h-2.5 w-2.5 items-center justify-center rounded-full bg-green-600 text-white ring-1 ring-background">
+                  <span className="-right-0.5 -bottom-0.5 absolute flex h-2.5 w-2.5 items-center justify-center rounded-full bg-success text-success-foreground ring-1 ring-background">
                     <Check className="h-1.5 w-1.5" />
                   </span>
                 ) : hasRequestedChanges ? (
-                  <span className="-right-0.5 -bottom-0.5 absolute flex h-2.5 w-2.5 items-center justify-center rounded-full bg-amber-500 text-amber-950 ring-1 ring-background">
+                  <span className="-right-0.5 -bottom-0.5 absolute flex h-2.5 w-2.5 items-center justify-center rounded-full bg-attention text-attention-foreground ring-1 ring-background">
                     <TriangleAlert className="h-1.5 w-1.5" />
                   </span>
                 ) : null}

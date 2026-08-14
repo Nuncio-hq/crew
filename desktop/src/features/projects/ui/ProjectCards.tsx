@@ -313,7 +313,7 @@ function RepositoryUnavailableIndicator({
       <TooltipTrigger asChild>
         <span
           aria-label={`Repository ${label.toLowerCase()}`}
-          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-amber-600 hover:bg-amber-500/10 dark:text-amber-300"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-attention hover:bg-attention/10 dark:text-attention"
           role="img"
         >
           <CircleAlert className="h-3.5 w-3.5" />

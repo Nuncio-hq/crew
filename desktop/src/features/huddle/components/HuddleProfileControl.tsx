@@ -131,7 +131,7 @@ export function HuddleProfileControl({
       >
         <Headphones
           aria-hidden="true"
-          className="h-4 w-4 shrink-0 text-emerald-500"
+          className="h-4 w-4 shrink-0 text-success"
         />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium leading-tight">

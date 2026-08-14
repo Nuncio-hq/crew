@@ -150,11 +150,10 @@ export function SyntaxHighlightedCode({
   highlightStart?: number;
   highlightEnd?: number;
 } & React.ComponentProps<"code">) {
-  const { themeName } = useTheme();
-  // Buzz aliases ("buzz" / "buzz-dark") are not bundled Shiki themes — resolve
-  // to the real bundle (github-light / github-dark) before touching Shiki, or
-  // it throws and code blocks fall back to plain text.
-  const shikiTheme = resolveShikiThemeName(themeName);
+  const { syntaxThemeName } = useTheme();
+  // After the chrome/syntax split, code highlighting follows the syntax
+  // preference. Buzz aliases still resolve to a bundled Shiki name.
+  const shikiTheme = resolveShikiThemeName(syntaxThemeName);
   const [loadedKey, setLoadedKey] = React.useState(0);
 
   React.useEffect(() => {
@@ -243,7 +242,7 @@ export function SyntaxHighlightedCode({
             lineNumber <= highlightEnd;
           return (
             <span
-              className={highlighted ? "bg-amber-500/25" : undefined}
+              className={highlighted ? "bg-attention/25" : undefined}
               data-line={String(lineNumber)}
               data-testid={highlighted ? "wiki-file-highlight" : undefined}
               // biome-ignore lint/suspicious/noArrayIndexKey: lines are positional
@@ -282,7 +281,7 @@ export function SyntaxHighlightedCode({
           lineNumber <= highlightEnd;
         return (
           <span
-            className={[diffClass, highlighted ? "bg-amber-500/25" : ""]
+            className={[diffClass, highlighted ? "bg-attention/25" : ""]
               .filter(Boolean)
               .join(" ")}
             data-line={String(lineNumber)}

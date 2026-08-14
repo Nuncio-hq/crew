@@ -242,7 +242,7 @@ export function BotActivityComposerAction({
   const inlineWait =
     isInline && stuck && conversationId ? (
       <button
-        className="shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-amber-500 transition-colors hover:bg-accent hover:text-amber-400"
+        className="shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-attention transition-colors hover:bg-accent hover:text-attention"
         data-testid="bot-activity-wait"
         onClick={(event) => {
           event.preventDefault();
@@ -262,7 +262,7 @@ export function BotActivityComposerAction({
         aria-label={`${AGENT_ACTIVITY_CHROME.stop} ${singleWorkingAgent.name}`}
         className={cn(
           "shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50",
-          stuck && "text-amber-400 hover:text-amber-300",
+          stuck && "text-attention hover:text-attention",
         )}
         data-testid="bot-activity-stop"
         disabled={stoppingPubkey === singleWorkingAgent.pubkey.toLowerCase()}
@@ -291,7 +291,7 @@ export function BotActivityComposerAction({
               isInline
                 ? "min-w-0 flex-1 gap-1.5 overflow-visible border-transparent bg-transparent px-0 text-xs font-normal leading-normal shadow-none hover:border-transparent hover:bg-transparent data-[state=open]:border-transparent data-[state=open]:bg-transparent"
                 : "h-9 min-w-9 gap-1.5 px-2 text-xs",
-              stuck && "text-amber-400 hover:text-amber-300",
+              stuck && "text-attention hover:text-attention",
             )}
             data-testid="bot-activity-composer-trigger"
             onBlur={closeWithDelay}

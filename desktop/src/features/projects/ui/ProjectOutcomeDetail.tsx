@@ -130,7 +130,7 @@ export function ProjectOutcomeDetail({
                   className="flex items-center gap-3 px-4 py-3"
                   key={entry.id}
                 >
-                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  <span className="h-2 w-2 rounded-full bg-success" />
                   <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                     {entry.title}
                   </span>
@@ -154,7 +154,7 @@ export function ProjectOutcomeDetail({
           data-testid="project-in-flight"
         >
           <div className="flex items-center gap-2 border-b border-border/50 px-4 py-3">
-            <Circle className="h-4 w-4 text-amber-400" />
+            <Circle className="h-4 w-4 text-attention" />
             <h2 className="text-sm font-semibold text-foreground">In flight</h2>
           </div>
           {inFlight.length === 0 ? (
@@ -171,7 +171,7 @@ export function ProjectOutcomeDetail({
                     onClick={() => setOpenThread(turn)}
                     type="button"
                   >
-                    <Zap className="h-4 w-4 text-amber-400" />
+                    <Zap className="h-4 w-4 text-attention" />
                     <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                       Active work in {turn.channelId}
                     </span>
