@@ -8,6 +8,7 @@ import type { Channel } from "@/shared/api/types";
 import { channelChrome } from "@/shared/layout/chromeLayout";
 import { cn } from "@/shared/lib/cn";
 import { PaneEmptyState } from "@/shared/ui/PaneEmptyState";
+import { Skeleton } from "@/shared/ui/skeleton";
 import { VirtualizedList } from "@/shared/ui/VirtualizedList";
 
 import {
@@ -204,7 +205,7 @@ export function ForumView({
       </div>
 
       <div
-        className="flex-1 overflow-y-auto"
+        className="min-w-0 flex-1 overflow-y-auto"
         data-scroll-restoration-id={`forum-list:${channel.id}`}
         ref={postsScrollRef}
       >
