@@ -1388,5 +1388,37 @@ MCP tools inside `buzz-dev-mcp` (still one `mcp_command`) and argv0
 
 See spikes 0039–0042.
 
+## D-062 — Work-tree sidebar: tree shows work, hierarchy is the mode switch, no cockpit
+
+- **Status:** Accepted
+- **Date:** 2026-08-14
+- **Issue:** #203
+
+The sidebar makes the existing session-per-thread architecture visible.
+It is a projection over worktree registry, observer workspace snapshots,
+active/recent sessions, and needs-you. React is not authoritative
+(D-003 / D-010).
+
+1. **Tree shows work, timeline shows talk.** A thread is in the tree iff
+   it has a workspace/session binding (worktree, active or recent agent
+   session) **or** an unresolved needs-you. Pure conversation stays in
+   the channel timeline. No heuristic promotion by message volume.
+2. **Channel = project folder; thread = session.** Exclusive repo/project
+   bindings become folders. Shared access channels (many repos on
+   `#general`) and DMs stay Slack rows.
+3. **The hierarchy is the mode switch.** Folder name click → channel
+   timeline (office). Thread row click → workbench/focus (session). No
+   mode dial, no ⌘1/2/3.
+4. **No Cockpit room.** Glance = tree (status dots, badges) + Needs-you
+   section (hidden at 0). Needs-you is a filter over existing stores.
+5. **#186 rail.** The Workbench By-thread rail **is** this sidebar. One
+   shared `WorkThreadRow`. By-agent stays #186. Workbench remains the
+   thread-open destination.
+6. **#196 resource dots** stay on folder rows.
+7. **Rejected.** Cockpit dashboard. Auto-promoting talk threads. A
+   second authoritative tree store. Mode dials.
+
+See spikes 0043–0045.
+
 
 

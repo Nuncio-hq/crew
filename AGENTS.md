@@ -571,6 +571,7 @@ reconnects preserve pending avatar verification work):
 - `resetLinkPreviewTitleCache()` — link preview title cache (Buzz entity titles come from relay events)
 - `resetOrgRosterProjection()` — founder-signed org roster cache
 - `resetWikiStore()` — Crew Wiki generate-job map
+- `resetWorkTreeDisclosureStore()` — work-tree folder expand/pin localStorage
 
 **If you add a new module-level cache, Map, or class instance that holds
 community-scoped data, you must add its reset to `resetCommunityState()`.**

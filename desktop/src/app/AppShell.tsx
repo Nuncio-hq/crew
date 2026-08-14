@@ -853,6 +853,9 @@ export function AppShell() {
                         }}
                         onSelectAgents={() => void goAgents()}
                         onSelectChannel={handleSidebarChannelSelect}
+                        onSelectThread={(channelId, threadRootId) => {
+                          void goWorkbench(channelId, threadRootId);
+                        }}
                         onOpenSearchResult={handleOpenSearchResult}
                         searchChannels={channels}
                         searchFocusRequests={[

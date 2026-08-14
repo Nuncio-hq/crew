@@ -193,6 +193,17 @@ export function getProjectThreadWorkspaceSnapshot(
   return entry.snapshot;
 }
 
+/** Snapshot list that does not bump LRU recency. */
+export function listProjectThreadWorkspaceSnapshots(): Array<{
+  rootEventId: string;
+  snapshot: ProjectThreadWorkspaceSnapshot;
+}> {
+  return [...workspaceByRoot.entries()].map(([rootEventId, entry]) => ({
+    rootEventId,
+    snapshot: entry.snapshot,
+  }));
+}
+
 /**
  * Clear only the active community projection. Saved community snapshots must
  * survive the observer-store reset between save and restore.

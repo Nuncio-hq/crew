@@ -35,6 +35,42 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+export function subscribeProjectWorktreeRegistry(
+  listener: () => void,
+): () => void {
+  return subscribe(listener);
+}
+
+/** Ready registry rows already in memory — no extra invoke. */
+export function listReadyWorktreeRegistryEntries(): Array<{
+  entry: ProjectWorktreeEntry;
+  repositoryPath: string;
+}> {
+  const listed: Array<{
+    entry: ProjectWorktreeEntry;
+    repositoryPath: string;
+  }> = [];
+  for (const stored of entries.values()) {
+    if (stored.snapshot.status !== "ready") continue;
+    for (const entry of stored.snapshot.value.entries) {
+      listed.push({
+        entry,
+        repositoryPath: stored.snapshot.value.repositoryPath,
+      });
+    }
+  }
+  return listed;
+}
+
+export function prefetchProjectWorktreeRegistries(
+  repositoryPaths: readonly string[],
+): void {
+  for (const repositoryPath of repositoryPaths) {
+    if (!repositoryPath) continue;
+    void load(repositoryPath, false);
+  }
+}
+
 function cacheKey(repositoryPath: string): string {
   return repositoryPath;
 }
@@ -79,7 +115,10 @@ export function useProjectWorktreeRegistry(repositoryPath: string | null) {
     () => (key ? (entries.get(key)?.snapshot ?? PENDING) : PENDING),
     [key],
   );
-  const snapshot = React.useSyncExternalStore(subscribe, getSnapshot);
+  const snapshot = React.useSyncExternalStore(
+    subscribeProjectWorktreeRegistry,
+    getSnapshot,
+  );
   React.useEffect(() => {
     if (repositoryPath) void load(repositoryPath, false);
   }, [repositoryPath]);
