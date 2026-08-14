@@ -71,9 +71,12 @@ test.describe("org hierarchy (#198)", () => {
     });
 
     await page.goto("/");
-    await page.evaluate((content) => {
-      window.__BUZZ_E2E_SET_ORG_ROSTER__?.({ content });
-    }, rosterContent());
+    await page.evaluate(
+      ({ content, pubkey }) => {
+        window.__BUZZ_E2E_SET_ORG_ROSTER__?.({ content, pubkey });
+      },
+      { content: rosterContent(), pubkey: OWNER },
+    );
 
     await page.getByTestId("open-org-view").click();
     await expect(page).toHaveURL(/#\/org$/);

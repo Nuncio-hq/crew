@@ -172,8 +172,12 @@ test.describe("Crew Wiki (#200)", () => {
       .getByTestId("wiki-ask")
       .screenshot({ path: `${SHOTS}/09-ask-plan.png` });
 
-    await page.getByRole("link", { name: /ProjectDetailScreen/ }).click();
+    await page
+      .getByTestId("wiki-markdown")
+      .getByRole("link", { name: /ProjectDetailScreen/ })
+      .click();
     await expect(page).toHaveURL(/#\/projects\//);
+    await expect(page.getByTestId("wiki-file-panel")).toBeVisible();
     await expect(page.getByTestId("wiki-file-highlight").first()).toBeVisible();
     await waitForAnimations(page);
     await page

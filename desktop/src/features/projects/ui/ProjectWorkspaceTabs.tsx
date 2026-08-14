@@ -263,7 +263,11 @@ export function WorkspaceTabs({
     [pullRequests, selectedCommitHash],
   );
   const isPullRequestSelected = Boolean(selectedPullRequest);
-  const [selectedTab, setSelectedTab] = React.useState("overview");
+  const [selectedTab, setSelectedTab] = React.useState(() =>
+    peekPendingWikiFileOpen(project.id) || peekPendingWikiFileOpen(projectId)
+      ? "files"
+      : "overview",
+  );
   const [pullRequestCommentTarget, setPullRequestCommentTarget] =
     React.useState<{
       anchor: ProjectPullRequestCommentAnchor;
@@ -278,10 +282,13 @@ export function WorkspaceTabs({
   }, [onSelectedTabChange, selectedTab]);
 
   React.useEffect(() => {
-    if (peekPendingWikiFileOpen(project.id)) {
+    if (
+      peekPendingWikiFileOpen(project.id) ||
+      peekPendingWikiFileOpen(projectId)
+    ) {
       setSelectedTab("files");
     }
-  }, [project.id]);
+  }, [project.id, projectId]);
 
   React.useEffect(() => {
     if (isPullRequestSelected) {

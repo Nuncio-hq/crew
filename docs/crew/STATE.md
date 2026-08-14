@@ -21,8 +21,12 @@ Spikes 0039–0042. D-061.
 Mock-bridge e2e: wiki jobs key on the visible card owner
 (`deadbeef…` for `buzz`), not tyler; library cards unique by
 `repoAddress`. Mermaid lightbox Escape uses the shared escape
-surface so Ask is reachable.
-Last updated: 2026-08-13
+surface so Ask is reachable. `buzz://file` pending opens match
+both `30617:<owner>:<d>` (entity-link route) and Repository.id
+(`<owner>:<d>`), so the Files tab + line highlight are reachable
+from the wiki citation. Official spec also covers the Project Wiki
+tab, company proposal review, and Plan → thread.
+Last updated: 2026-08-14
 
 ## Issue #198 — Org hierarchy (founder-signed roster)
 
@@ -34,7 +38,10 @@ at turn start; ceiling → stop-and-report. Org chart is a projection.
 Officers draft; founder signs. Spikes 0035–0038. D-060.
 Mock-bridge e2e: `__BUZZ_E2E_SET_ORG_ROSTER__` writes the projection
 and invalidates `["org-roster"]` so a post-`goto("/")` seed is visible.
-Last updated: 2026-08-13
+The mock event is signed as the mock owner (`deadbeef…`) the nodes
+use as `manager`, not tyler — otherwise `parseOrgRoster` marks Hermes
+as an orphan and the chart stays empty.
+Last updated: 2026-08-14
 
 ## Issue #197 — Agent desktop tools (`browser_*` / `sim_*`)
 
