@@ -1433,7 +1433,11 @@ declare global {
       can_pull: boolean;
       pull_block_reason: string | null;
     };
-    __BUZZ_E2E_SET_ORG_ROSTER__?: (input: { content: string }) => void;
+    __BUZZ_E2E_SET_ORG_ROSTER__?: (input: {
+      content: string;
+      /** Founder pubkey that signed the roster. Defaults to the mock owner. */
+      pubkey?: string;
+    }) => void;
     __BUZZ_E2E_SET_WIKI_EVENTS__?: (events: RelayEvent[]) => void;
     __BUZZ_E2E_SEED_WIKI__?: (input: {
       owner: string;
@@ -11223,9 +11227,13 @@ export function maybeInstallE2eTauriMocks() {
   resetE2eGovernor();
   resetE2eOrgRoster();
   resetE2eWiki();
-  window.__BUZZ_E2E_SET_ORG_ROSTER__ = ({ content }) => {
-    const ident = getConfig()?.identity ?? DEFAULT_MOCK_IDENTITY;
-    setE2eOrgRoster({ content, pubkey: ident.pubkey });
+  window.__BUZZ_E2E_SET_ORG_ROSTER__ = ({ content, pubkey }) => {
+    // Sign as the mock owner (`deadbeef…`), not tyler (`e5ebc6cd…`). parseOrgRoster
+    // treats a manager that is neither the signer nor a node as an orphan.
+    setE2eOrgRoster({
+      content,
+      pubkey: pubkey ?? DEFAULT_MOCK_IDENTITY.pubkey,
+    });
   };
   window.__BUZZ_E2E_SET_WIKI_EVENTS__ = (events) => {
     setE2eWikiEvents(events);
