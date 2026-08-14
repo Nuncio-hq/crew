@@ -72,9 +72,9 @@ export function getPresenceLabel(status: PresenceStatus) {
 export function getPresenceDotClassName(status: PresenceStatus) {
   switch (status) {
     case "online":
-      return "bg-emerald-500";
+      return "bg-success";
     case "away":
-      return "bg-amber-500";
+      return "bg-attention";
     case "offline":
       return "bg-muted-foreground/35";
   }
@@ -84,9 +84,9 @@ export function getPresenceDotClassName(status: PresenceStatus) {
 export function getPresenceChipClassName(status: PresenceStatus) {
   switch (status) {
     case "online":
-      return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
+      return "bg-success/15 text-success";
     case "away":
-      return "bg-amber-500/15 text-amber-600 dark:text-amber-400";
+      return "bg-attention/15 text-attention";
     case "offline":
       return "bg-muted-foreground/15 text-muted-foreground";
   }

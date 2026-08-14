@@ -112,7 +112,7 @@ function NeedsYouBadge({
 }) {
   return (
     <span
-      className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 px-1 text-2xs font-semibold leading-none text-amber-600 tabular-nums dark:text-amber-400"
+      className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-attention/15 px-1 text-2xs font-semibold leading-none text-attention tabular-nums dark:text-attention"
       data-testid={`channel-needs-you-${channelName}`}
       title={`${count} conversation${count === 1 ? "" : "s"} waiting for your approval`}
     >

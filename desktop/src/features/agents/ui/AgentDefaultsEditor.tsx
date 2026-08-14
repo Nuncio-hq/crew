@@ -320,7 +320,7 @@ export function AgentDefaultsEditor({
       {!configSurfaceLoading && !configSurfaceError && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {saveState === "saved" && (
-            <span className="flex min-w-0 items-center gap-1 text-sm text-green-600 dark:text-green-400">
+            <span className="flex min-w-0 items-center gap-1 text-sm text-success">
               <Check className="size-3.5 shrink-0" />
               {restartedCount > 0
                 ? `Saved. Restarted ${restartedCount} agent${restartedCount === 1 ? "" : "s"}.${failedRestartCount > 0 ? ` ${failedRestartCount} couldn't restart — check the Agents page.` : ""}`

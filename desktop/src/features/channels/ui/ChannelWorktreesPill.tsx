@@ -96,7 +96,7 @@ function rollupSegments(rollup: GithubRollupCounts): RollupSegment[] {
     segments.push({
       key: "pr-merged",
       text: `${rollup.prMerged} merged`,
-      className: "text-purple-600 dark:text-purple-400",
+      className: "text-merged",
     });
   }
   if (rollup.prClosed > 0) {
@@ -110,7 +110,7 @@ function rollupSegments(rollup: GithubRollupCounts): RollupSegment[] {
     segments.push({
       key: "issues-open",
       text: `◉ ${rollup.issuesOpen}`,
-      className: "text-emerald-600 dark:text-emerald-400",
+      className: "text-success",
     });
   }
   return segments;

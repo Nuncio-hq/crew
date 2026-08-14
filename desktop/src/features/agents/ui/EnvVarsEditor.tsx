@@ -357,7 +357,7 @@ export function EnvVarsEditor({
                   className={cn(
                     "flex min-h-11 flex-1 items-center gap-1.5 px-3",
                     PERSONA_FIELD_SHELL_CLASS,
-                    "border-amber-500/40 bg-amber-50/30 dark:bg-amber-950/20",
+                    "border-attention/40 bg-attention/5",
                   )}
                 >
                   <Lock
@@ -371,7 +371,7 @@ export function EnvVarsEditor({
                     {key}
                   </span>
                   {isMissing ? (
-                    <span className="ml-1 flex items-center gap-0.5 rounded-sm bg-amber-100 px-1 py-0.5 text-2xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                    <span className="ml-1 flex items-center gap-0.5 rounded-sm bg-attention/15 px-1 py-0.5 text-2xs font-medium text-attention">
                       <AlertCircle className="h-2.5 w-2.5" aria-hidden />
                       Required
                     </span>

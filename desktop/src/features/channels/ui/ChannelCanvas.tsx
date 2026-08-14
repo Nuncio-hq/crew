@@ -167,9 +167,7 @@ export function ChannelCanvas({
                 {preset.holders.length > 0 ? (
                   preset.holders.join(", ")
                 ) : (
-                  <span className="text-amber-700 dark:text-amber-300">
-                    {preset.unheldMessage}
-                  </span>
+                  <span className="text-attention">{preset.unheldMessage}</span>
                 )}
               </li>
             ))}

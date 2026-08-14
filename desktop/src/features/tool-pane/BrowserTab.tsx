@@ -428,7 +428,7 @@ function ServerStrip({
         face === "crashed" || face === "portConflict"
           ? "border-destructive/40 bg-destructive/10"
           : face === "idleStop"
-            ? "border-amber-500/40 bg-amber-500/10"
+            ? "border-attention/40 bg-attention/10"
             : "border-border/60",
       )}
       data-server-face={face}

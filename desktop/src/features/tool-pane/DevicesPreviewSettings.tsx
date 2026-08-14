@@ -237,7 +237,7 @@ function PruneSection() {
       <h3 className="mb-2 text-sm font-medium">Prune unused</h3>
       {status.pruneCandidates.map((sim) => (
         <div
-          className="mb-2 flex items-center gap-2 rounded-lg border border-amber-500/40 px-3 py-2 text-sm"
+          className="mb-2 flex items-center gap-2 rounded-lg border border-attention/40 px-3 py-2 text-sm"
           key={sim.channelId}
         >
           <span>{sim.deviceName} unused — confirm delete?</span>

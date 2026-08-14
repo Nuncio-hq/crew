@@ -257,17 +257,15 @@ const STATE_CHROME: Record<
   { className: string; glyph: string }
 > = {
   running: {
-    className: "border-primary/25 bg-primary/10 text-primary",
+    className: "border-success/25 bg-success/10 text-success",
     glyph: "",
   },
   "needs-you": {
-    className:
-      "border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    className: "border-attention/35 bg-attention/10 text-attention",
     glyph: "⚠",
   },
   done: {
-    className:
-      "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    className: "border-success/25 bg-success/10 text-success",
     glyph: "✓",
   },
   failed: {
@@ -275,8 +273,7 @@ const STATE_CHROME: Record<
     glyph: "✕",
   },
   "possibly-stalled": {
-    className:
-      "border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    className: "border-attention/35 bg-attention/10 text-attention",
     glyph: "!",
   },
   "lost-contact": {
@@ -288,8 +285,7 @@ const STATE_CHROME: Record<
     glyph: "?",
   },
   "ready-to-review": {
-    className:
-      "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    className: "border-success/25 bg-success/10 text-success",
     glyph: "✓",
   },
 };

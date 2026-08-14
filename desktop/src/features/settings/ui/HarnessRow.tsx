@@ -223,7 +223,7 @@ function RuntimeActions({
       ) : isAvailable ? (
         isAuthNeeded ? null : ( // Signed-out rows carry the amber status chip instead; never Install.
           <span
-            className="inline-flex shrink-0 items-center rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400"
+            className="inline-flex shrink-0 items-center rounded-md bg-success/15 px-2 py-0.5 text-xs font-medium text-success"
             data-testid={`doctor-runtime-ready-${runtime.id}`}
           >
             Ready
@@ -276,7 +276,7 @@ function RuntimeStatusChip({ runtime }: { runtime: AcpRuntimeCatalogEntry }) {
           isConfigError
             ? "bg-destructive/10 text-destructive"
             : isAuthNeeded
-              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+              ? "bg-attention/15 text-attention"
               : "bg-muted text-muted-foreground",
         )}
         data-testid={`doctor-runtime-status-${runtime.id}`}
@@ -487,7 +487,7 @@ export function HarnessRow({
         ) : null}
         {installWarning ? (
           <p
-            className="mt-2 whitespace-pre-line rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-600 dark:text-amber-400"
+            className="mt-2 whitespace-pre-line rounded-lg border border-attention/30 bg-attention/10 px-3 py-1.5 text-sm text-attention"
             data-testid={`doctor-runtime-install-warning-${runtime.id}`}
           >
             {installWarning}
@@ -513,7 +513,7 @@ export function HarnessRow({
         {confirmingDelete ? (
           <div className="mt-2 space-y-2">
             <p
-              className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-600 dark:text-amber-400"
+              className="rounded-lg border border-attention/30 bg-attention/10 px-3 py-1.5 text-sm text-attention"
               data-testid={`custom-harness-delete-warning-${runtime.id}`}
             >
               {confirmState.message}

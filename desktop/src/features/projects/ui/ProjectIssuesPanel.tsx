@@ -29,19 +29,19 @@ import { ProfileIdentityButton } from "./ProjectProfileIdentity";
 import { ProjectRichContent } from "./ProjectRichContent";
 
 export function issueStatusClassName(status: ProjectIssue["status"]) {
-  if (status === "Done") return "text-purple-400";
+  if (status === "Done") return "text-merged";
   if (status === "Closed") return "text-destructive";
-  return "text-green-500";
+  return "text-success";
 }
 
 function issueStatusVisual(status: ProjectIssue["status"]) {
   if (status === "Done") {
-    return { className: "text-purple-400", icon: CircleCheck };
+    return { className: "text-merged", icon: CircleCheck };
   }
   if (status === "Closed") {
     return { className: "text-destructive", icon: CircleX };
   }
-  return { className: "text-green-500", icon: CircleDot };
+  return { className: "text-success", icon: CircleDot };
 }
 
 function issueMembers(

@@ -92,7 +92,7 @@ export function ThreadPrHubChanges({
             <span className="min-w-0 flex-1 truncate font-mono">
               {file.path}
             </span>
-            <span className="shrink-0 text-emerald-600">+{file.additions}</span>
+            <span className="shrink-0 text-success">+{file.additions}</span>
             <span className="shrink-0 text-destructive">−{file.deletions}</span>
           </button>
         ))}

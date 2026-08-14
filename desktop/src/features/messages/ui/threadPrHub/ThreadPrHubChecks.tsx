@@ -235,9 +235,9 @@ function StatusDot({ conclusion }: { conclusion: ForgeCheck["conclusion"] }) {
   const className = checkConclusionIsFailed(conclusion)
     ? "bg-destructive"
     : conclusion === "success"
-      ? "bg-emerald-500"
+      ? "bg-success"
       : conclusion === "pending"
-        ? "bg-amber-500"
+        ? "bg-attention"
         : "bg-muted-foreground";
   return (
     <span

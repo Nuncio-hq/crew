@@ -95,7 +95,7 @@ function FileContentLineView({ line }: { line: FileContentLine }) {
       className={cn(
         "block min-w-full whitespace-pre-wrap wrap-break-word px-3",
         line.kind === "add" &&
-          "border-l-2 border-green-500/50 bg-green-500/12 text-foreground dark:bg-green-500/10",
+          "border-l-2 border-success/50 bg-success/12 text-foreground dark:bg-success/10",
         line.kind === "remove" &&
           "border-l-2 border-red-500/50 bg-red-500/12 text-foreground dark:bg-red-500/10",
         line.kind === "meta" && "text-muted-foreground/70",

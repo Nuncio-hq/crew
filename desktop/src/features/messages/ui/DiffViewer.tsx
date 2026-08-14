@@ -32,7 +32,7 @@ function FileChangeBadge({
       className={cn(
         "rounded-md px-1.5 py-0.5 font-mono text-2xs font-semibold",
         tone === "positive"
-          ? "bg-emerald-500/10 text-status-added"
+          ? "bg-success/10 text-status-added"
           : "bg-rose-500/10 text-status-deleted",
       )}
     >

@@ -42,7 +42,7 @@ function CopyRow({ label, value }: { label: string; value: string }) {
         <div className="text-2xs font-medium text-muted-foreground">
           {label}
         </div>
-        <div className="break-all font-mono text-xs">{value}</div>
+        <div className="break-all font-machine text-xs">{value}</div>
       </div>
       <Button
         aria-label={`Copy ${label}`}
@@ -122,7 +122,7 @@ export function PubKey({
         className={cn("inline-flex min-w-0 items-center gap-1", className)}
         data-testid={testId}
       >
-        <span className="break-all font-mono text-xs">{npub ?? pubkey}</span>
+        <span className="break-all font-machine text-xs">{npub ?? pubkey}</span>
         <Popover>
           <PopoverTrigger asChild>
             <Button
@@ -144,7 +144,7 @@ export function PubKey({
 
   if (!interactive) {
     return (
-      <span className={cn("font-mono", className)} data-testid={testId}>
+      <span className={cn("font-machine", className)} data-testid={testId}>
         {truncatePubkey(pubkey)}
       </span>
     );
@@ -156,7 +156,7 @@ export function PubKey({
         <button
           aria-label="Show full public key"
           className={cn(
-            "cursor-pointer rounded font-mono hover:underline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
+            "cursor-pointer rounded font-machine hover:underline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
             className,
           )}
           data-testid={testId}

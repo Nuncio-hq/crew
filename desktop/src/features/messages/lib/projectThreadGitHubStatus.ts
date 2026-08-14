@@ -16,10 +16,10 @@ const TONE_CLASS_NAMES: Record<ProjectThreadStatusTone, string> = {
   closed: "text-destructive",
   draft: "text-muted-foreground",
   failure: "text-destructive",
-  merged: "text-purple-600 dark:text-purple-400",
-  open: "text-emerald-600 dark:text-emerald-400",
-  pending: "text-amber-600 dark:text-amber-400",
-  success: "text-emerald-600 dark:text-emerald-400",
+  merged: "text-merged",
+  open: "text-success",
+  pending: "text-attention",
+  success: "text-success",
 };
 
 export function projectThreadStatusClassName(tone: ProjectThreadStatusTone) {

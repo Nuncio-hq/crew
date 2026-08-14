@@ -110,4 +110,16 @@
   .avatar-sdr-clamp {
     dynamic-range-limit: standard;
   }
+
+  /*
+   * Machine values (shas, branches, ports, fps, pubkey prefixes, budget
+   * numbers) render mono. Prefer this over ad-hoc font-mono so the rule stays
+   * one class.
+   */
+  .font-machine {
+    font-family:
+      ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Monaco, Consolas,
+      "Liberation Mono", "Courier New", monospace;
+    font-variant-numeric: tabular-nums;
+  }
 }

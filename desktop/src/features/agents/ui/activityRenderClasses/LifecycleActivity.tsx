@@ -57,7 +57,7 @@ export function LifecycleActivity(props: ActivityRenderClassItemProps) {
     const tone = outcome ? permissionOutcomeTone(outcome) : null;
     return (
       <div
-        className="rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-left text-xs text-amber-700 dark:text-amber-400"
+        className="rounded-md border border-attention/20 bg-attention/5 px-2 py-1.5 text-left text-xs text-attention dark:text-attention"
         data-testid="transcript-permission-item"
         title={timestampTitle}
       >
@@ -76,11 +76,11 @@ export function LifecycleActivity(props: ActivityRenderClassItemProps) {
         {/* Row 3: decision — only when outcome is resolved */}
         {outcome && tone ? (
           <>
-            <div className="my-1 border-t border-amber-500/20" />
+            <div className="my-1 border-t border-attention/20" />
             <div
               className={
                 tone === "approve"
-                  ? "flex items-center gap-1 font-medium text-green-600 dark:text-green-400"
+                  ? "flex items-center gap-1 font-medium text-success"
                   : tone === "deny"
                     ? "flex items-center gap-1 font-medium text-destructive"
                     : "flex items-center gap-1 font-medium text-muted-foreground"

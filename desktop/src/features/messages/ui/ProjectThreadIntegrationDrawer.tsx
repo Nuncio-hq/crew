@@ -74,8 +74,8 @@ export function ProjectThreadIntegrationDrawer({
         <ProjectThreadWorkspaceDetails workspace={workspace} />
       ) : workspace.status === "derived" ? (
         <div className="space-y-1 text-xs text-muted-foreground">
-          <p className="font-mono text-foreground">{workspace.branch}</p>
-          <p className="truncate font-mono" title={workspace.worktreePath}>
+          <p className="font-machine text-foreground">{workspace.branch}</p>
+          <p className="truncate font-machine" title={workspace.worktreePath}>
             {workspace.worktreePath}
           </p>
           <p>Restored from disk</p>

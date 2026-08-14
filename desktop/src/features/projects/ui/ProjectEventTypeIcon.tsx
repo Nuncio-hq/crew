@@ -45,11 +45,11 @@ export const PROJECT_EVENT_VISUALS: Record<
   },
   "pull-request": {
     icon: GitPullRequest,
-    iconClassName: "text-green-600 dark:text-green-500",
+    iconClassName: "text-success",
     badgeClassName:
-      "bg-green-600/10 text-green-700 dark:bg-green-500/10 dark:text-green-400",
+      "bg-success/10 text-success dark:bg-success/10 dark:text-success",
     detailClassName:
-      "border-green-600/30 text-green-700 dark:border-green-500/30 dark:text-green-400",
+      "border-success/30 text-success dark:border-success/30 dark:text-success",
   },
   issue: {
     icon: CircleDot,
@@ -66,18 +66,18 @@ export const PROJECT_EVENT_VISUALS: Record<
   },
   approval: {
     icon: Check,
-    iconClassName: "text-green-600 dark:text-green-500",
+    iconClassName: "text-success",
     badgeClassName:
-      "bg-green-600/10 text-green-700 dark:bg-green-500/10 dark:text-green-400",
+      "bg-success/10 text-success dark:bg-success/10 dark:text-success",
     detailClassName:
-      "border-green-600/30 text-green-700 dark:border-green-500/30 dark:text-green-400",
+      "border-success/30 text-success dark:border-success/30 dark:text-success",
   },
   "changes-requested": {
     icon: TriangleAlert,
-    iconClassName: "text-amber-600 dark:text-amber-400",
+    iconClassName: "text-attention",
     badgeClassName:
-      "bg-amber-500/10 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
-    detailClassName: "border-amber-500/40 text-amber-700 dark:text-amber-400",
+      "bg-attention/10 text-attention dark:bg-attention/10 dark:text-attention",
+    detailClassName: "border-attention/40 text-attention dark:text-attention",
   },
   "review-request": {
     icon: UserPlus,

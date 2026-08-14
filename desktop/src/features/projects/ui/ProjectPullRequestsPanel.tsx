@@ -72,15 +72,15 @@ function pluralize(count: number, singular: string, plural = `${singular}s`) {
 function pullRequestStatusClassName(status: ProjectPullRequest["status"]) {
   if (status === "Closed") return "text-destructive";
   if (status === "Draft") return "text-muted-foreground";
-  if (status === "Merged") return "text-purple-400";
-  return "text-green-500";
+  if (status === "Merged") return "text-merged";
+  return "text-success";
 }
 
 function pullRequestStatusBadgeClassName(status: ProjectPullRequest["status"]) {
   if (status === "Closed") return "bg-destructive";
   if (status === "Draft") return "bg-muted-foreground/80";
-  if (status === "Merged") return "bg-purple-600";
-  return "bg-green-600";
+  if (status === "Merged") return "bg-merged";
+  return "bg-success";
 }
 
 function pullRequestMembers(
@@ -767,7 +767,7 @@ export function ProjectPullRequestDetail({
                         className={`h-3 w-3 ${
                           isHistoricalDecision
                             ? "text-muted-foreground"
-                            : "text-green-600 dark:text-green-500"
+                            : "text-success"
                         }`}
                       />
                     ) : timelineKind === "changes-requested" ? (
@@ -775,7 +775,7 @@ export function ProjectPullRequestDetail({
                         className={`h-3 w-3 ${
                           isHistoricalDecision
                             ? "text-muted-foreground"
-                            : "text-amber-600 dark:text-amber-400"
+                            : "text-attention"
                         }`}
                       />
                     ) : timelineKind === "review-request" ? (

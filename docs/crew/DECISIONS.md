@@ -1420,5 +1420,37 @@ active/recent sessions, and needs-you. React is not authoritative
 
 See spikes 0043–0045.
 
+## D-063 — Color is information; Crew Dark default; chrome ≠ syntax
+
+- **Status:** Accepted
+- **Date:** 2026-08-14
+- **Issue:** #204
+- **Supersedes:** D-002 for **chrome tokens only** (layout, shell, and
+  component structure stay; this is a re-skin at the token layer)
+
+Color on screen encodes state or interactivity. If a color does not mean
+anything, it is gray.
+
+1. **Crew Dark** (Cursor-flavored near-black neutrals, hairline borders,
+   opacity text tiers, one blue accent) is the default chrome. **Crew Light**
+   is the paper twin. The `.dark` class system stays. The Buzz yellow-green
+   sidebar gradient is not used on Crew chrome.
+2. **Chrome and syntax are separate settings.** First-party chrome is only
+   Crew Dark / Crew Light / System. The full Shiki list remains for code
+   blocks, default `dark-plus`. Stored `buzz-theme` values migrate by
+   luminance → chrome; a Shiki palette name is kept as syntax.
+3. **Semantic colors are reserved:** success / CI-pass green, failure red,
+   attention / needs-you amber, merged purple, agent-working green /
+   sleeping neutral, diff +/−. Do not reuse them decoratively. The accent
+   is interactive only (buttons, links, focus, active underline).
+4. **Machine values render mono** (`font-machine`): shas, branches, ports,
+   fps, pubkey prefixes, budget numbers. Pubkey prefixes go through
+   `truncatePubkey`.
+5. **Ship whole:** tokens, both themes, the split + migration, and gradient
+   retirement land together. No extra accent options. No mobile theme.
+
+See spikes 0046–0048.
+
+
 
 

@@ -121,7 +121,7 @@ export function ProjectFileContentPanel({
                   lineNumber <= highlightEnd;
                 return (
                   <span
-                    className={highlighted ? "bg-amber-500/25" : undefined}
+                    className={highlighted ? "bg-attention/25" : undefined}
                     data-line={String(lineNumber)}
                     data-testid={
                       highlighted ? "wiki-file-highlight" : undefined

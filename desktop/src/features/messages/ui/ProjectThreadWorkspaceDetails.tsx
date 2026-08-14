@@ -120,11 +120,11 @@ export function ProjectThreadWorkspaceDetails({
       </code>
       <dl className="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1.5 text-xs">
         <dt className="text-muted-foreground">Base</dt>
-        <dd className="truncate font-mono">{workspace.baseRevision}</dd>
+        <dd className="truncate font-machine">{workspace.baseRevision}</dd>
         <dt className="text-muted-foreground">Source</dt>
         <dd>{sourceLabel}</dd>
         <dt className="text-muted-foreground">Status</dt>
-        <dd className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+        <dd className="flex items-center gap-1 text-success">
           <Check className="h-3.5 w-3.5" /> Ready
         </dd>
         <dt className="text-muted-foreground">Changes</dt>

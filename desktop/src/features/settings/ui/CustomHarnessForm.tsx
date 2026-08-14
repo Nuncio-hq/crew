@@ -52,8 +52,8 @@ function CommandAvailabilityBadge({ command }: { command: string }) {
       className={cn(
         "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
         available
-          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-          : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+          ? "bg-success/15 text-success"
+          : "bg-attention/15 text-attention",
       )}
     >
       {available ? "Found on PATH" : "Not found on PATH"}

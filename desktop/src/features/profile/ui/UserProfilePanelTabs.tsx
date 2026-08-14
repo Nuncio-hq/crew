@@ -843,14 +843,12 @@ export function ProfileRuntimeTabContent({
     <div className="space-y-4" data-testid="user-profile-runtime-sections">
       {needsRestart ? (
         <div
-          className="flex items-start gap-3 rounded-2xl bg-amber-500/10 px-4 py-3"
+          className="flex items-start gap-3 rounded-2xl bg-attention/10 px-4 py-3"
           data-testid="needs-restart-banner"
         >
-          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-attention" />
           <div className="min-w-0 text-sm">
-            <p className="font-medium text-amber-600 dark:text-amber-400">
-              Restart required
-            </p>
+            <p className="font-medium text-attention">Restart required</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {autoRestartEnabled
                 ? AUTO_RESTART_ON_BLURB

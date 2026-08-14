@@ -55,12 +55,14 @@ export const BUZZ_DARK_BASE_THEME: SyntaxThemeName = "github-dark";
 export function resolveShikiThemeName(name: string): SyntaxThemeName {
   if (name === BUZZ_THEME_NAME) return BUZZ_BASE_THEME;
   if (name === BUZZ_DARK_THEME_NAME) return BUZZ_DARK_BASE_THEME;
+  // Crew chrome names are not Shiki palettes (see chrome-theme.ts).
+  if (name === "crew-dark" || name === "crew-light") return "dark-plus";
   return name as SyntaxThemeName;
 }
 
-// Available themes. "buzz" is a Buzz-branded theme that reuses the
-// github-light palette plus a sidebar gradient; the rest are the Shiki
-// bundled syntax themes, alphabetically sorted.
+// Available themes for *syntax highlighting* (code blocks + terminal
+// palette). App chrome is Crew Dark / Crew Light (`chrome-theme.ts`), not
+// this list. "buzz" / "buzz-dark" remain as Shiki aliases for migration.
 export const SYNTAX_THEMES = [
   "buzz",
   "buzz-dark",

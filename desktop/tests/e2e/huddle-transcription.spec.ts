@@ -129,7 +129,7 @@ test("keeps the drawer open until the huddle is expanded", async ({ page }) => {
   const openGradient = await gradientUnderlay.evaluate(
     (element) => getComputedStyle(element).backgroundImage,
   );
-  expect(openGradient).not.toBe("none");
+  expect(openGradient).toBe("none");
 
   const transcriptButton = page.getByRole("button", {
     name: "Stop transcript",

@@ -193,8 +193,8 @@ function changedFileIconVisual(path: string): ChangedFileIconVisual {
   if (name.includes("lock") || extension === "pem" || extension === "key") {
     return {
       Icon: FileLock2,
-      className: "fill-amber-500/20 text-amber-500",
-      containerClassName: "bg-amber-500/15",
+      className: "fill-attention/20 text-attention",
+      containerClassName: "bg-attention/15",
     };
   }
   if (extension === "json") {
@@ -251,8 +251,8 @@ function changedFileIconVisual(path: string): ChangedFileIconVisual {
   if (AUDIO_EXTENSIONS.has(extension)) {
     return {
       Icon: FileAudio,
-      className: "fill-purple-500/20 text-purple-500",
-      containerClassName: "bg-purple-500/15",
+      className: "fill-merged/20 text-merged",
+      containerClassName: "bg-merged/15",
     };
   }
   if (VIDEO_EXTENSIONS.has(extension)) {
@@ -265,8 +265,8 @@ function changedFileIconVisual(path: string): ChangedFileIconVisual {
   if (SPREADSHEET_EXTENSIONS.has(extension)) {
     return {
       Icon: FileSpreadsheet,
-      className: "fill-emerald-500/20 text-emerald-500",
-      containerClassName: "bg-emerald-500/15",
+      className: "fill-success/20 text-success",
+      containerClassName: "bg-success/15",
     };
   }
   if (extension === "sql" || extension === "db" || extension === "sqlite") {
@@ -383,7 +383,7 @@ function diffRows(file: ProjectRepoDiffFile): DiffRow[] {
 }
 
 function diffLineClassName(type: DiffRow["type"]) {
-  if (type === "add") return "border-green-500/10 border-l-2 bg-green-500/10";
+  if (type === "add") return "border-success/10 border-l-2 bg-success/10";
   if (type === "delete")
     return "border-destructive/10 border-l-2 bg-destructive/10";
   if (type === "hunk") return "bg-sky-500/10 text-sky-500";
@@ -500,7 +500,7 @@ function DiffPreview({
   return (
     <div className="overflow-x-auto bg-background/70 font-mono text-xs leading-5">
       {file.truncated ? (
-        <div className="border-border/40 border-b bg-amber-500/10 px-4 py-2 text-amber-600 dark:text-amber-400">
+        <div className="border-border/40 border-b bg-attention/10 px-4 py-2 text-attention">
           Large diff truncated — showing the first {rows.length} lines. Use a
           local checkout to review the full change.
         </div>
@@ -566,7 +566,7 @@ function DiffPreview({
               <span
                 className={cn(
                   "select-none px-2",
-                  row.type === "add" && "text-green-500",
+                  row.type === "add" && "text-success",
                   row.type === "delete" && "text-destructive",
                 )}
               >
@@ -899,7 +899,7 @@ export function ProjectDiffFilesPanel({
           </div>
           <div className="flex items-center gap-3">
             <span>{files.length} files changed</span>
-            <span className="text-green-500">+{stats.additions}</span>
+            <span className="text-success">+{stats.additions}</span>
             <span className="text-destructive">-{stats.deletions}</span>
           </div>
         </div>
@@ -922,7 +922,7 @@ export function ProjectDiffFilesPanel({
                 <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
                   <span
                     className={cn(
-                      fileAdditions(selectedFile) > 0 && "text-green-500",
+                      fileAdditions(selectedFile) > 0 && "text-success",
                     )}
                   >
                     +{fileAdditions(selectedFile)}

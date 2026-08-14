@@ -378,7 +378,7 @@ export function MeshComputeSettingsCard() {
                       <p
                         className={
                           servingIndicator.hasRemoteConsumers
-                            ? "text-2xs text-emerald-600 dark:text-emerald-400"
+                            ? "text-2xs text-success"
                             : "text-2xs text-muted-foreground"
                         }
                         data-testid="mesh-serving-usage"
@@ -461,8 +461,8 @@ const FIT_LABEL: Record<MeshCatalogEntry["fit"], string> = {
 };
 
 const FIT_CLASS: Record<MeshCatalogEntry["fit"], string> = {
-  comfortable: "text-green-600 dark:text-green-400",
-  tight: "text-amber-600 dark:text-amber-400",
+  comfortable: "text-success",
+  tight: "text-attention",
   tradeoff: "text-orange-600 dark:text-orange-400",
   too_large: "text-destructive",
 };
@@ -670,7 +670,7 @@ function StatusLine({
     }
     if (health.status === "degraded") {
       return (
-        <p className="text-sm text-amber-600 dark:text-amber-400">
+        <p className="text-sm text-attention">
           Active{modelLabel ? ` — ${modelLabel}` : ""}. {health.reason}
         </p>
       );

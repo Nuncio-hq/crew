@@ -331,7 +331,7 @@ export function ProjectThreadWorkspacePanel({
         <div
           className={cn(
             "flex min-w-0 flex-1 items-center gap-1.5 text-xs",
-            stuck ? "text-amber-400" : "text-muted-foreground",
+            stuck ? "text-attention" : "text-muted-foreground",
           )}
           data-testid="project-thread-status-summary"
         >
@@ -341,8 +341,8 @@ export function ProjectThreadWorkspacePanel({
               "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
               counts.working > 0
                 ? stuck
-                  ? "bg-amber-400"
-                  : "animate-pulse bg-emerald-400 motion-reduce:animate-none"
+                  ? "bg-attention"
+                  : "animate-pulse bg-success motion-reduce:animate-none"
                 : "bg-muted-foreground/40",
             )}
           />
@@ -421,7 +421,7 @@ export function ProjectThreadWorkspacePanel({
 
         {stuck && conversationId ? (
           <button
-            className="shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-amber-400 transition-colors hover:bg-accent hover:text-amber-300"
+            className="shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-attention transition-colors hover:bg-accent hover:text-attention"
             data-testid="project-thread-status-wait"
             onClick={() => snoozeAgentAttention(conversationId)}
             type="button"
@@ -434,7 +434,7 @@ export function ProjectThreadWorkspacePanel({
           <button
             className={cn(
               "shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-              stuck && "text-amber-400 hover:text-amber-300",
+              stuck && "text-attention hover:text-attention",
             )}
             data-testid="project-thread-status-stop"
             disabled={stopping}

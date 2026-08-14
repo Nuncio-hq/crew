@@ -14,11 +14,11 @@ export const FORGE_TAB_TRIGGER_CLASS =
 export function forgeStateChipClass(state: ForgePullRequestState): string {
   switch (state) {
     case "open":
-      return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400";
+      return "bg-success/15 text-success";
     case "draft":
       return "bg-muted text-muted-foreground";
     case "merged":
-      return "bg-purple-500/15 text-purple-700 dark:text-purple-400";
+      return "bg-merged/15 text-merged";
     case "closed":
       return "bg-destructive/15 text-destructive";
     default: {

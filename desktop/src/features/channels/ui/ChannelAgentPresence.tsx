@@ -31,7 +31,7 @@ const STATE_META: Record<
 > = {
   "needs-you": {
     label: "needs you",
-    dotClass: "bg-amber-500",
+    dotClass: "bg-attention",
     animationClass: "motion-safe:animate-pulse",
   },
   working: {
@@ -41,7 +41,7 @@ const STATE_META: Record<
   },
   "done-recent": {
     label: "finished",
-    dotClass: "bg-emerald-500",
+    dotClass: "bg-success",
     animationClass: "",
   },
   idle: {

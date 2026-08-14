@@ -32,9 +32,9 @@ function formatRelativeTime(unixSeconds: number): string {
 function StatusDot({ status }: { status: "online" | "away" | "offline" }) {
   const color =
     status === "online"
-      ? "bg-emerald-500"
+      ? "bg-success"
       : status === "away"
-        ? "bg-amber-500"
+        ? "bg-attention"
         : "bg-zinc-400";
   return <span className={`inline-block h-2 w-2 rounded-full ${color}`} />;
 }

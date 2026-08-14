@@ -283,8 +283,8 @@ function fileIconVisual(entry: RepositoryFileEntry): FileIconVisual {
   if (name.includes("lock") || extension === "pem" || extension === "key") {
     return {
       Icon: FileLock2,
-      className: "fill-amber-500/20 text-amber-500",
-      containerClassName: "bg-amber-500/15",
+      className: "fill-attention/20 text-attention",
+      containerClassName: "bg-attention/15",
     };
   }
 
@@ -349,8 +349,8 @@ function fileIconVisual(entry: RepositoryFileEntry): FileIconVisual {
   if (AUDIO_EXTENSIONS.has(extension)) {
     return {
       Icon: FileAudio,
-      className: "fill-purple-500/20 text-purple-500",
-      containerClassName: "bg-purple-500/15",
+      className: "fill-merged/20 text-merged",
+      containerClassName: "bg-merged/15",
     };
   }
 
@@ -365,8 +365,8 @@ function fileIconVisual(entry: RepositoryFileEntry): FileIconVisual {
   if (SPREADSHEET_EXTENSIONS.has(extension)) {
     return {
       Icon: FileSpreadsheet,
-      className: "fill-emerald-500/20 text-emerald-500",
-      containerClassName: "bg-emerald-500/15",
+      className: "fill-success/20 text-success",
+      containerClassName: "bg-success/15",
     };
   }
 

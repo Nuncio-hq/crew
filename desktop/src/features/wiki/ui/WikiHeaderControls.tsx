@@ -38,7 +38,7 @@ export function WikiHeaderControls({
   return (
     <div className="flex items-center gap-2 text-2xs text-muted-foreground">
       <span
-        className={freshness === "stale" ? "text-amber-700" : undefined}
+        className={freshness === "stale" ? "text-attention" : undefined}
         data-testid="wiki-freshness"
       >
         {freshness === "stale"

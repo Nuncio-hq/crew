@@ -22,7 +22,7 @@ export function WorkflowApprovalCard({ approval }: WorkflowApprovalCardProps) {
 
   return (
     <div
-      className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+      className="rounded-lg border border-attention/30 bg-attention/5 p-3"
       data-testid="workflow-approval-card"
     >
       <p className="mb-2 text-sm font-medium">Approval Required</p>
@@ -43,7 +43,7 @@ export function WorkflowApprovalCard({ approval }: WorkflowApprovalCardProps) {
 
       <div className="flex gap-2">
         <Button
-          className="flex-1 bg-green-600 text-white hover:bg-green-700"
+          className="flex-1 bg-success text-success-foreground hover:bg-success/90"
           disabled={approvalMutation.isPending}
           onClick={() =>
             approvalMutation.mutate({

@@ -187,7 +187,7 @@ function formatTimestamp(iso: string): string {
 
 const SEVERITY_BADGE: Record<SeverityTier, string> = {
   critical: "bg-destructive/15 text-destructive",
-  high: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  high: "bg-attention/15 text-attention",
   normal: "bg-muted text-muted-foreground",
 };
 
@@ -347,7 +347,7 @@ function QueueGroupCard({
       </div>
 
       {group.priorActions.length > 0 ? (
-        <div className="flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+        <div className="flex items-start gap-1.5 rounded-md bg-attention/10 px-2.5 py-1.5 text-xs text-attention">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
             {group.priorActions.length} prior action

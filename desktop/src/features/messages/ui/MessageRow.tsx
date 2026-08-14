@@ -513,7 +513,7 @@ export const MessageRow = React.memo(
             {message.respondTo === "anyone" ? (
               <AlertTriangle
                 aria-hidden="true"
-                className="h-2.5 w-2.5 fill-background text-amber-500"
+                className="h-2.5 w-2.5 fill-background text-attention"
               />
             ) : (
               <span className="h-2 w-2 rounded-full bg-blue-500" />

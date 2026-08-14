@@ -2,10 +2,8 @@ import type { EvidenceCrossCheckResult } from "@/features/messages/lib/evidenceC
 import { cn } from "@/shared/lib/cn";
 
 const CHIP: Record<EvidenceCrossCheckResult["state"], string> = {
-  matches:
-    "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  diverges:
-    "border-amber-500/40 bg-amber-500/15 text-amber-800 dark:text-amber-200",
+  matches: "border-success/30 bg-success/10 text-success",
+  diverges: "border-attention/40 bg-attention/15 text-attention",
   "ci-running": "border-border/70 bg-muted/40 text-muted-foreground",
   "not-comparable": "border-border/50 bg-muted/20 text-muted-foreground/80",
 };
@@ -52,7 +50,7 @@ export function EvidenceCrossCheckDetail({
   if (result.state !== "diverges" || !result.detail) return null;
   return (
     <p
-      className="mb-3 text-2xs leading-snug text-amber-800 dark:text-amber-200"
+      className="mb-3 text-2xs leading-snug text-attention"
       data-testid="evidence-cross-check-detail"
     >
       {result.detail}

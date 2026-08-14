@@ -11,11 +11,11 @@ export function ProjectThreadPhaseDot({
       aria-hidden
       className={cn(
         "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-        phase === "complete" && "bg-emerald-500",
+        phase === "complete" && "bg-success",
         phase === "active" &&
           "animate-pulse bg-blue-500 motion-reduce:animate-none",
         phase === "failed" && "bg-destructive",
-        phase === "waiting-on-user" && "bg-amber-400",
+        phase === "waiting-on-user" && "bg-attention",
         phase === "pending" && "bg-muted-foreground/40",
       )}
       data-phase={phase}

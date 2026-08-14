@@ -29,11 +29,11 @@ function ageLabel(ageMs: number) {
 
 function SectionIcon({ state }: { state: MissionInboxRow["state"] }) {
   if (state === "needsYou")
-    return <Zap className="h-3.5 w-3.5 text-amber-500" />;
+    return <Zap className="h-3.5 w-3.5 text-attention" />;
   if (state === "readyToReview")
-    return <PackageCheck className="h-3.5 w-3.5 text-emerald-500" />;
+    return <PackageCheck className="h-3.5 w-3.5 text-success" />;
   if (state === "possiblyStalled")
-    return <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />;
+    return <AlertTriangle className="h-3.5 w-3.5 text-attention" />;
   if (state === "failed" || state === "lostContact")
     return <AlertTriangle className="h-3.5 w-3.5 text-destructive" />;
   if (state === "telemetryUnavailable")
@@ -111,7 +111,7 @@ function MissionRow({
         <div className="ml-5 mt-1 flex items-center gap-1.5">
           {row.state === "possiblyStalled" ? (
             <button
-              className="rounded-md border border-amber-500/40 px-2 py-0.5 text-2xs font-medium text-amber-500 transition-colors hover:bg-amber-500/10"
+              className="rounded-md border border-attention/40 px-2 py-0.5 text-2xs font-medium text-attention transition-colors hover:bg-attention/10"
               data-testid={`mission-inbox-wait-${row.conversationId}`}
               onClick={() => snoozeAgentAttention(row.conversationId)}
               type="button"

@@ -334,7 +334,7 @@ export function WelcomeComposerBanner({
           className={cn(
             "relative z-[1] mx-5 mb-0 flex items-center gap-2 rounded-t-2xl border border-b-0 px-4 pb-5 pt-2.5 text-sm leading-5 transition-colors",
             state !== "prompt"
-              ? "border-emerald-500/30 bg-emerald-500/15 text-foreground"
+              ? "border-success/30 bg-success/15 text-foreground"
               : "border-border/60 bg-muted/55 text-muted-foreground",
           )}
           data-state={state}

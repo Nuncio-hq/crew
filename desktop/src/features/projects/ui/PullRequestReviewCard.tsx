@@ -195,7 +195,7 @@ export function PullRequestReviewCard({
         >
           {canApprove ? (
             <Button
-              className="h-8 gap-1.5 bg-green-600 px-3.5 text-white shadow-sm hover:bg-green-700"
+              className="h-8 gap-1.5 bg-success px-3.5 text-success-foreground shadow-sm hover:bg-success/90"
               disabled={reviewDecisionPending}
               onClick={() => setApproveDialogOpen(true)}
               size="xs"
@@ -315,7 +315,7 @@ export function PullRequestReviewCard({
               Cancel
             </Button>
             <Button
-              className="bg-green-600 text-white hover:bg-green-700"
+              className="bg-success text-success-foreground hover:bg-success/90"
               disabled={isApproving}
               onClick={() => {
                 void handleApprove();

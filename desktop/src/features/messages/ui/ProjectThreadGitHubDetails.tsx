@@ -39,7 +39,7 @@ export type ProjectThreadGitHubDrawer = "issue" | "pr" | "ci";
 function checkTone(check: ThreadPullRequestCheck) {
   const state = check.state.toUpperCase();
   if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(state)) {
-    return "text-emerald-600 dark:text-emerald-400";
+    return "text-success";
   }
   if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"].includes(state)) {
     return "text-destructive";

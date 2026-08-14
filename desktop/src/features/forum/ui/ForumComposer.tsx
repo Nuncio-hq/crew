@@ -529,7 +529,7 @@ export function ForumComposer({
                           <Button
                             className={cn(
                               submitMode === "secondary" &&
-                                "border-amber-500/40 text-amber-700 hover:bg-amber-500/10 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300",
+                                "border-attention/40 text-attention hover:bg-attention/10 hover:text-attention dark:text-attention dark:hover:text-attention",
                             )}
                             disabled={disabled || isSending}
                             size="sm"

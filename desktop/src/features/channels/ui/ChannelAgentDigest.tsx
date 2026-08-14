@@ -66,7 +66,7 @@ const BUCKET_META: Record<
     glyph: "⚠",
     word: "needs you",
     pillClass:
-      "border-amber-500/35 bg-amber-500/10 text-amber-600 hover:bg-amber-500/15 dark:text-amber-400",
+      "border-attention/35 bg-attention/10 text-attention hover:bg-attention/15 dark:text-attention",
     testId: "channel-agent-digest-pill-needs-you",
   },
   running: {
@@ -87,7 +87,7 @@ const BUCKET_META: Record<
     glyph: "✓",
     word: "done",
     pillClass:
-      "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/15 dark:text-emerald-400",
+      "border-success/25 bg-success/10 text-success hover:bg-success/15 dark:text-success",
     testId: "channel-agent-digest-pill-done",
   },
 };

@@ -1,5 +1,10 @@
 import { normalizeRelayUrl } from "@/features/profile/lib/selfProfileStorage";
 import { ACCENT_COLORS } from "./ThemeProvider";
+import { CHROME_THEMES, type ChromeThemeName } from "./chrome-theme";
+import {
+  DEFAULT_SYNTAX_THEME,
+  isShikiPaletteName,
+} from "./theme-preference-migration";
 import { SYNTAX_THEMES, type SyntaxThemeName } from "./theme-loader";
 
 const STORAGE_KEY_PREFIX = "buzz-community-theme.v1";
@@ -8,19 +13,21 @@ const MIGRATION_KEY_PREFIX = "buzz-community-theme-migrated.v1";
 
 export type CommunityThemePreference = {
   version: 1;
-  theme: SyntaxThemeName;
+  theme: ChromeThemeName | SyntaxThemeName;
+  syntax?: SyntaxThemeName;
   accent: string;
   followSystem: boolean;
 };
 
 export const DEFAULT_COMMUNITY_THEME: CommunityThemePreference = Object.freeze({
   version: 1,
-  theme: "buzz",
+  theme: "crew-dark",
+  syntax: DEFAULT_SYNTAX_THEME,
   accent: "#3b82f6",
-  followSystem: true,
+  followSystem: false,
 });
 
-const THEME_NAMES = new Set<string>(SYNTAX_THEMES);
+const THEME_NAMES = new Set<string>([...SYNTAX_THEMES, ...CHROME_THEMES]);
 const ACCENTS = new Set<string>(ACCENT_COLORS.map(({ value }) => value));
 
 export function communityThemeStorageKey(
@@ -56,7 +63,11 @@ export function parseCommunityThemePreference(
   }
   return {
     version: 1,
-    theme: candidate.theme as SyntaxThemeName,
+    theme: candidate.theme as CommunityThemePreference["theme"],
+    ...(typeof candidate.syntax === "string" &&
+    isShikiPaletteName(candidate.syntax)
+      ? { syntax: candidate.syntax }
+      : {}),
     accent: candidate.accent,
     followSystem: candidate.followSystem,
   };
@@ -179,7 +190,9 @@ export function sameCommunityThemePreference(
   return (
     left.theme === right.theme &&
     left.accent === right.accent &&
-    left.followSystem === right.followSystem
+    left.followSystem === right.followSystem &&
+    (left.syntax ?? DEFAULT_SYNTAX_THEME) ===
+      (right.syntax ?? DEFAULT_SYNTAX_THEME)
   );
 }
 

@@ -27,7 +27,7 @@ function StatusGlyph({ status }: { status: WorkThreadStatus }) {
       );
     case "needs-you":
     case "working": {
-      const tone = status === "needs-you" ? "bg-amber-400" : "bg-emerald-500";
+      const tone = status === "needs-you" ? "bg-attention" : "bg-success";
       return (
         <span
           className={cn("inline-flex h-2 w-2 shrink-0 rounded-full", tone)}
@@ -63,13 +63,13 @@ function ciGlyphLabel(glyph: WorkThreadRowModel["ciGlyph"]): string {
 function prToneClass(tone: WorkThreadRowModel["prTone"]): string {
   switch (tone) {
     case "merged":
-      return "text-purple-600 dark:text-purple-400";
+      return "text-merged";
     case "closed":
       return "text-destructive";
     case "draft":
       return "text-muted-foreground";
     case "open":
-      return "text-emerald-600 dark:text-emerald-400";
+      return "text-success";
     case null:
       return "text-muted-foreground";
     default: {

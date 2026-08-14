@@ -2072,22 +2072,14 @@ test("opens settings with the keyboard shortcut and updates theme", async ({
   ).toBeVisible();
   await page.getByTestId("settings-nav-appearance").click();
 
-  // Default is Buzz in System mode; Playwright's default color scheme is
-  // light, so the app boots with the light Buzz theme.
+  // Default chrome is Crew Dark (follow-system off).
   await expect
     .poll(() =>
-      page.evaluate(() => document.documentElement.classList.contains("light")),
+      page.evaluate(() => document.documentElement.classList.contains("dark")),
     )
     .toBe(true);
 
-  // Switch to Light mode tab to reveal light themes. Target the testid — in
-  // the default System mode the "Light" paired-theme tile shares the same
-  // accessible name as the mode button.
-  await page.getByTestId("appearance-mode-light").click();
-
-  // Switch to a light theme — verifies dark→light transition
-  await page.getByTestId("theme-style-trigger").click();
-  await page.getByTestId("theme-option-github-light").click();
+  await page.getByTestId("appearance-chrome-crew-light").click();
 
   await expect
     .poll(() =>
@@ -2101,7 +2093,6 @@ test("opens settings with the keyboard shortcut and updates theme", async ({
     )
     .toBe(false);
 
-  // CSS variables are set on the root element (the real theming mechanism)
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -2110,16 +2101,11 @@ test("opens settings with the keyboard shortcut and updates theme", async ({
     )
     .toBeTruthy();
 
-  // Theme name persists in localStorage
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("buzz-theme")))
-    .toBe("github-light");
+    .toBe("crew-light");
 
-  // Switch to Dark mode tab to reveal dark themes
-  await page.getByTestId("appearance-mode-dark").click();
-
-  // Switch back to a dark theme — verifies light→dark transition
-  await page.getByTestId("theme-option-dracula").click();
+  await page.getByTestId("appearance-chrome-crew-dark").click();
 
   await expect
     .poll(() =>
@@ -2129,7 +2115,7 @@ test("opens settings with the keyboard shortcut and updates theme", async ({
 
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("buzz-theme")))
-    .toBe("dracula");
+    .toBe("crew-dark");
 
   // Close settings with keyboard shortcut
   await page.keyboard.press(
