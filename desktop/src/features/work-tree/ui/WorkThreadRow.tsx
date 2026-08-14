@@ -122,7 +122,7 @@ export function WorkThreadRow({
         ) : null}
       </span>
       {row.hasWorkspaceBinding ? (
-        <span className="flex min-w-0 items-center gap-1 font-mono text-2xs text-muted-foreground">
+        <span className="flex min-w-0 items-center gap-1 font-mono text-2xs text-muted-foreground [@container(max-width:13.75rem)]:hidden">
           <span className="min-w-0 truncate">{row.branch ?? "—"}</span>
           {row.prNumber ? (
             <span className={cn("shrink-0", prToneClass(row.prTone))}>

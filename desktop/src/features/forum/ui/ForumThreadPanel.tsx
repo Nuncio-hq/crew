@@ -182,7 +182,7 @@ export function ForumThreadPanel({
             Back to posts
           </Button>
         </div>
-        <div className="flex-1 space-y-4 p-4">
+        <div className="min-w-0 flex-1 space-y-4 p-4">
           <Skeleton className="h-8 w-3/4" />
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-16 w-full" />

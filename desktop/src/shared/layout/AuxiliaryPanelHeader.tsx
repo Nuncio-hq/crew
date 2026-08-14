@@ -136,8 +136,8 @@ export function AuxiliaryPanelHeader({
             "flex cursor-default select-none items-center",
             isSinglePanel
               ? cn(
-                  "relative z-41 -mb-13 min-h-13 shrink-0 gap-2.5 px-4 py-2 sm:pr-3",
-                  inset === "wide" && "sm:pl-6",
+                  "relative z-41 -mb-13 min-h-13 min-w-0 shrink-0 gap-2.5 px-4 py-2 [@container(min-width:40rem)]:pr-3",
+                  inset === "wide" && "[@container(min-width:40rem)]:pl-6",
                   resizeBorder && AUXILIARY_PANEL_RESIZE_BORDER_CLASS,
                   getAuxiliaryPanelSurfaceClass(effectiveSurface),
                 )
@@ -151,12 +151,13 @@ export function AuxiliaryPanelHeader({
                     density === "compact"
                       ? "min-h-11 px-3 py-1.5 text-left shadow-none"
                       : "min-h-13 px-5 py-2",
-                    inset === "wide" && "sm:pl-6",
+                    inset === "wide" && "[@container(min-width:40rem)]:pl-6",
                     bordered && "border-b border-border/35",
                     getAuxiliaryPanelSurfaceClass(effectiveSurface),
                   ),
           )}
           data-tauri-drag-region
+          data-testid="auxiliary-panel-header"
           {...props}
         >
           {renderAuxiliaryPanelHeaderContent(children)}
@@ -177,8 +178,9 @@ export function AuxiliaryPanelHeader({
       {...props}
     >
       <div
-        className="pointer-events-auto relative z-40 shrink-0 cursor-default select-none py-2 pl-5 pr-3"
+        className="pointer-events-auto relative z-40 min-w-0 shrink-0 cursor-default select-none py-2 pl-5 pr-3"
         data-tauri-drag-region
+        data-testid="auxiliary-panel-header"
       >
         <div className="flex h-9 min-w-0 items-center gap-2.5">
           {renderAuxiliaryPanelHeaderContent(children)}

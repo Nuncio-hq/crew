@@ -364,7 +364,7 @@ export function NewMessageScreen() {
                   aria-label="To"
                   autoComplete="off"
                   autoCorrect="off"
-                  className="h-7 min-w-32 flex-1 bg-transparent text-base outline-hidden placeholder:text-muted-foreground"
+                  className="h-7 min-w-0 flex-1 bg-transparent text-base outline-hidden placeholder:text-muted-foreground"
                   data-testid="new-dm-search"
                   disabled={isPending}
                   id="new-dm-search"
@@ -566,7 +566,7 @@ export function NewMessageScreen() {
       </header>
 
       <div
-        className="min-h-0 flex-1 bg-background"
+        className="min-h-0 min-w-0 flex-1 bg-background"
         data-testid="new-message-body"
       />
 

@@ -121,7 +121,7 @@ function PolicyTable({
               data-testid={`policy-row-${row.key}`}
               key={row.key}
             >
-              <span className="flex-1">{row.label}</span>
+              <span className="min-w-0 flex-1 truncate">{row.label}</span>
               {isDefault ? (
                 <span className="text-2xs text-muted-foreground">default</span>
               ) : null}

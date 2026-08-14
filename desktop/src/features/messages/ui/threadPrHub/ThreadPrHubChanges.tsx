@@ -13,6 +13,10 @@ import type { ProjectRepoDiff } from "@/shared/api/projectGitTypes";
 import { DiffViewer } from "@/features/messages/ui/DiffViewer";
 import { cn } from "@/shared/lib/cn";
 
+/**
+ * PR hub file list + diff (#205). Contract min ~520px (`PR_HUB_SPLIT_MIN_PX`):
+ * below that the tree **collapses** to a dropdown over the diff. Never squeeze.
+ */
 export function ThreadPrHubChanges({
   diff,
   files,
@@ -66,8 +70,26 @@ export function ThreadPrHubChanges({
     : null;
 
   return (
-    <div className="flex min-h-0 flex-1" data-testid="thread-pr-hub-changes">
-      <div className="w-48 shrink-0 overflow-y-auto border-r border-border/60">
+    <div
+      className="@container flex min-h-0 min-w-0 flex-1 flex-col [@container(min-width:32.5rem)]:flex-row"
+      data-testid="thread-pr-hub-changes"
+    >
+      <label className="flex min-w-0 items-center gap-2 border-b border-border/60 px-2 py-1 [@container(min-width:32.5rem)]:hidden">
+        <span className="sr-only">Changed files</span>
+        <select
+          className="min-w-0 flex-1 truncate rounded-md border border-border bg-background px-2 py-1 font-mono text-2xs"
+          data-testid="thread-pr-hub-file-select"
+          onChange={(event) => setSelected(event.target.value)}
+          value={selected ?? files[0]?.path ?? ""}
+        >
+          {files.map((file) => (
+            <option key={file.path} value={file.path}>
+              {file.path}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="hidden w-48 shrink-0 overflow-y-auto border-r border-border/60 [@container(min-width:32.5rem)]:block">
         {files.map((file) => (
           <button
             className={cn(

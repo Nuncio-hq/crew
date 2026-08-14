@@ -3,6 +3,10 @@ import * as PopoverPrimitive from "@radix-ui/react-popover";
 
 import { cn } from "@/shared/lib/cn";
 import {
+  OVERLAY_COLLISION_PADDING_PX,
+  OVERLAY_VIEWPORT_MAX_CLASS,
+} from "@/shared/ui/overlayCollision";
+import {
   type CardTextureSize,
   type CardTextureTone,
   texturedSurfaceClasses,
@@ -49,9 +53,11 @@ const PopoverContent = React.forwardRef<
       <PopoverPrimitive.Content
         ref={ref}
         align={align}
+        collisionPadding={OVERLAY_COLLISION_PADDING_PX}
         sideOffset={sideOffset ?? (surface === "textured" ? 24 : 4)}
         className={cn(
           "z-50 w-72 origin-(--radix-popover-content-transform-origin) outline-hidden",
+          OVERLAY_VIEWPORT_MAX_CLASS,
           POPOVER_RADIX_MOTION_CLASS,
           POPOVER_RADIX_SIDE_MOTION_CLASS,
           surface === "default" && cn("rounded-xl p-4", POPOVER_SURFACE_CLASS),

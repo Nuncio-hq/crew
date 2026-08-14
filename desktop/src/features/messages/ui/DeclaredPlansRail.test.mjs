@@ -60,6 +60,7 @@ test("rail renders one card per agent and never merges checklists", () => {
   );
 
   assert.match(html, /data-testid="declared-plans-rail"/);
+  assert.match(html, /data-layout="side"/);
   assert.match(html, new RegExp(`data-testid="declared-plan-card-${DEV}"`));
   assert.match(html, new RegExp(`data-testid="declared-plan-card-${SCOUT}"`));
   assert.match(html, new RegExp(`data-testid="declared-plan-card-${CLAUDE}"`));
@@ -124,4 +125,28 @@ test("status line names working, sleeping, and disconnected honestly", () => {
     ),
     "disconnected · plan unknown",
   );
+});
+
+test("stacked layout is full width under the header, never a squeezed side column", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(DeclaredPlansRail, {
+      layout: "stacked",
+      plans: [
+        {
+          agentPubkey: DEV,
+          agentName: "Hermes Dev",
+          conversationId: "conv",
+          entries: [{ content: "Stay readable", status: "in_progress" }],
+          updatedAt: "2026-08-13T10:16:00.000Z",
+          source: "acp-plan",
+          liveness: "working",
+          unknown: false,
+          sessionId: "sess-dev",
+        },
+      ],
+    }),
+  );
+  assert.match(html, /data-layout="stacked"/);
+  assert.match(html, /max-h-48/);
+  assert.doesNotMatch(html, /border-l /);
 });

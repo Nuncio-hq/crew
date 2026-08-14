@@ -1,4 +1,10 @@
-import { SquareArrowOutUpRight, X } from "lucide-react";
+import {
+  Globe,
+  Smartphone,
+  GitPullRequest,
+  SquareArrowOutUpRight,
+  X,
+} from "lucide-react";
 import * as React from "react";
 
 import type { ThreadForgeHubSubject } from "@/features/messages/lib/threadForgeHubSubjectStore";
@@ -17,6 +23,10 @@ import {
 } from "./toolPaneStore";
 import type { CanvasTooling, ToolPaneTab } from "./types";
 
+/**
+ * Channel Tool Pane (#196 / #205). Contract min 300px (`TOOL_PANE_MIN_WIDTH_PX`):
+ * tabs **collapse** to icon-only below 360px; control bars wrap. Never squeeze.
+ */
 export function ChannelToolPane({
   channelId,
   channelName,
@@ -49,7 +59,7 @@ export function ChannelToolPane({
 
   return (
     <div
-      className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
+      className="@container flex min-h-0 min-w-0 flex-1 flex-col bg-background"
       data-channel-id={channelId}
       data-mode={mode}
       data-popped-out={pane.poppedOut ? "true" : "false"}
@@ -62,6 +72,7 @@ export function ChannelToolPane({
         {tabs.map((tab) => (
           <TabChip
             active={active === tab}
+            icon={tabIcon(tab)}
             key={tab}
             label={tabLabel(tab)}
             onClick={() => setToolPaneTab(tab)}
@@ -96,7 +107,7 @@ export function ChannelToolPane({
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {active === "pr" && forgeSubject ? (
           <div
             className="min-h-0 flex-1 overflow-auto"
@@ -130,11 +141,13 @@ export function ChannelToolPane({
 
 function TabChip({
   active,
+  icon,
   label,
   onClick,
   testId,
 }: {
   active: boolean;
+  icon: React.ReactNode;
   label: string;
   onClick: () => void;
   testId: string;
@@ -142,18 +155,35 @@ function TabChip({
   return (
     <button
       className={cn(
-        "rounded-md px-2 py-0.5 text-sm",
+        "inline-flex min-w-0 items-center gap-1 rounded-md px-2 py-0.5 text-sm",
         active
           ? "bg-muted font-semibold text-foreground"
           : "text-muted-foreground hover:text-foreground",
       )}
       data-testid={testId}
       onClick={onClick}
+      title={label}
       type="button"
     >
-      {label}
+      {icon}
+      <span className="[@container(max-width:22.5rem)]:sr-only">{label}</span>
     </button>
   );
+}
+
+function tabIcon(tab: ToolPaneTab): React.ReactNode {
+  switch (tab) {
+    case "pr":
+      return <GitPullRequest className="h-3.5 w-3.5 shrink-0" />;
+    case "browser":
+      return <Globe className="h-3.5 w-3.5 shrink-0" />;
+    case "sim":
+      return <Smartphone className="h-3.5 w-3.5 shrink-0" />;
+    default: {
+      const exhaustive: never = tab;
+      return exhaustive;
+    }
+  }
 }
 
 function tabLabel(tab: ToolPaneTab): string {

@@ -17,9 +17,9 @@
       "recordedAt": "2026-08-12"
     },
     "src/features/messages/ui/MessageThreadPanel.tsx": {
-      "lines": 1004,
-      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (Send to channel on replies). Tightened after #190 extracted declared-plans rail into Crew-owned files.",
-      "recordedAt": "2026-08-13"
+      "lines": 998,
+      "reason": "Tightened after #205 extracted ThreadPanelEmptyState (P6) out of the upstream-heavy panel.",
+      "recordedAt": "2026-08-14"
     },
     "src/shared/api/relayClientSession.ts": {
       "lines": 1067,

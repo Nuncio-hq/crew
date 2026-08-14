@@ -38,7 +38,7 @@ export function GovernorStrip() {
 
   return (
     <div
-      className="flex shrink-0 items-center gap-2 border-t border-border/60 px-3 py-1.5 text-2xs text-muted-foreground"
+      className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-t border-border/60 px-3 py-1.5 text-2xs text-muted-foreground"
       data-testid="governor-strip"
     >
       <span data-testid="governor-strip-sims">{status.bootedCount} sims</span>

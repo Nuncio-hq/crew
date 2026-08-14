@@ -4,6 +4,10 @@ import { Check, ChevronRight, Circle } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
 import {
+  OVERLAY_COLLISION_PADDING_PX,
+  OVERLAY_VIEWPORT_MAX_CLASS,
+} from "@/shared/ui/overlayCollision";
+import {
   POPOVER_RADIX_MOTION_CLASS,
   POPOVER_RADIX_SIDE_MOTION_CLASS,
   POPOVER_SHADOW_STYLE,
@@ -49,8 +53,10 @@ const ContextMenuSubContent = React.forwardRef<
 >(({ className, style, ...props }, ref) => (
   <ContextMenuPrimitive.SubContent
     ref={ref}
+    collisionPadding={OVERLAY_COLLISION_PADDING_PX}
     className={cn(
       "z-50 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-xl p-1",
+      OVERLAY_VIEWPORT_MAX_CLASS,
       POPOVER_RADIX_MOTION_CLASS,
       POPOVER_RADIX_SIDE_MOTION_CLASS,
       POPOVER_SURFACE_CLASS,
@@ -70,9 +76,11 @@ const ContextMenuContent = React.forwardRef<
   <ContextMenuPrimitive.Portal>
     <ContextMenuPrimitive.Content
       ref={ref}
+      collisionPadding={OVERLAY_COLLISION_PADDING_PX}
       className={cn(
         "z-50 max-h-[var(--radix-context-menu-content-available-height)] overflow-y-auto overflow-x-hidden rounded-xl p-1",
         "origin-(--radix-context-menu-content-transform-origin)",
+        OVERLAY_VIEWPORT_MAX_CLASS,
         POPOVER_RADIX_MOTION_CLASS,
         POPOVER_RADIX_SIDE_MOTION_CLASS,
         POPOVER_SURFACE_CLASS,

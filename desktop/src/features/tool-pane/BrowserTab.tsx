@@ -270,7 +270,7 @@ function BrowserToolbar({
         <option value="custom">Custom URL…</option>
       </select>
       <Input
-        className="h-7 flex-1 text-2xs"
+        className="h-7 min-w-0 flex-1 truncate text-2xs"
         data-testid="browser-url"
         onChange={(event) => onCustomUrl(event.target.value)}
         value={customUrl}

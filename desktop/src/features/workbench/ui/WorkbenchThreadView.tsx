@@ -43,7 +43,7 @@ export function WorkbenchThreadView({
   if (!data.threadHead) {
     return (
       <div
-        className="flex flex-1 items-center justify-center text-sm text-muted-foreground"
+        className="flex min-w-0 flex-1 items-center justify-center text-sm text-muted-foreground"
         data-testid="workbench-thread-loading"
       >
         Loading thread…

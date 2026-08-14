@@ -100,7 +100,7 @@ function LensButton({
   return (
     <button
       className={cn(
-        "flex-1 rounded-md px-2 py-1 text-xs font-medium",
+        "min-w-0 flex-1 truncate rounded-md px-2 py-1 text-xs font-medium",
         active
           ? "bg-muted text-foreground"
           : "text-muted-foreground hover:bg-muted/50",

@@ -482,7 +482,7 @@ function InboxMessageDetailPane({
 
   return (
     <section
-      className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-background/60"
+      className="@container flex min-h-0 min-w-0 flex-col overflow-hidden bg-background/60"
       data-testid="home-inbox-detail"
       ref={detailPaneRef}
     >
@@ -714,7 +714,7 @@ function InboxMessageDetailPane({
               channelId={item.item.channelId}
               channelName={item.channelLabel ?? "channel"}
               channelType={composerChannelType}
-              containerClassName="px-4 pb-4 sm:px-4"
+              containerClassName="px-4 pb-4 [@container(min-width:40rem)]:px-4"
               disabled={!canReply && !composerEditTarget}
               draftKey={
                 isDirectMessage

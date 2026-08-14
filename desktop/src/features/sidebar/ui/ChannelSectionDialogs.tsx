@@ -145,7 +145,7 @@ function SectionNameDialog({
               autoCapitalize="none"
               autoComplete="off"
               autoCorrect="off"
-              className="flex-1"
+              className="min-w-0 flex-1"
               onChange={(event) => setName(event.target.value)}
               placeholder="Section name"
               ref={inputRef}

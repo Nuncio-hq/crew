@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #205 — Narrow-pane resilience (truncate / collapse / stack)
+
+Desktop panes declare a width contract and adapt with container queries,
+not viewport `sm:`/`md:`. Below min: truncate, collapse, or stack —
+never squeeze, never overlap chrome. Declared-plans rail (#190) is the
+reference case (stacks under the header when a `w-72` side column would
+letter-soup the transcript). Guardrails: `assertPaneResponsive`, E2E
+matrix, `check-pane-responsive.mjs`. Spikes 0049–0051. D-064.
+Last updated: 2026-08-14
+
 ## Issue #204 — Crew Dark theme (color is information)
 
 Crew Dark (Cursor-flavored) is the default chrome; Crew Light is the

@@ -5,6 +5,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
+import { DIALOG_VIEWPORT_MAX_CLASS } from "@/shared/ui/overlayCollision";
 import { useTheme } from "@/shared/theme/ThemeProvider";
 import "./card-texture.css";
 import { MODAL_BACKDROP_BLUR_CLASS } from "@/shared/ui/modalBackdrop";
@@ -101,6 +102,7 @@ const DialogContent = React.forwardRef<
         <DialogPrimitive.Content
           className={cn(
             "pointer-events-auto relative grid w-[calc(100vw-2rem)] max-w-2xl gap-4 outline-hidden",
+            DIALOG_VIEWPORT_MAX_CLASS,
             surface === "default" && "rounded-2xl bg-background p-6 shadow-2xl",
             surface === "none" && "bg-transparent p-0 shadow-none",
             surface === "textured" &&

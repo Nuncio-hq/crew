@@ -38,7 +38,7 @@ export const ChannelAutocomplete = React.memo(function ChannelAutocomplete({
   return (
     <div
       className={cn(
-        "absolute left-0 right-0 z-50 px-3 sm:px-4",
+        "absolute left-0 right-0 z-50 px-3 [@container(min-width:40rem)]:px-4",
         position === "below" ? "top-full mt-1" : "bottom-full mb-1",
       )}
     >

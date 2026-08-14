@@ -1,8 +1,8 @@
 import * as React from "react";
 
-import {
-  type ProfilePanelTab,
-  type ProfilePanelView,
+import type {
+  ProfilePanelTab,
+  ProfilePanelView,
 } from "@/features/profile/ui/UserProfilePanel";
 
 type ApplyInboxSearchPatch = (

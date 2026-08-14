@@ -48,9 +48,9 @@ const SECTION_LABEL_CHEVRON_CLASS =
 const SECTION_LABEL_CHEVRON_ICON_CLASS =
   "absolute left-1/2 top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2";
 const SIDEBAR_ROW_ACTION_VISIBILITY_CLASS =
-  "group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 md:opacity-0";
+  "group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 [@media(hover:hover)]:opacity-0";
 const SIDEBAR_ROW_ACTION_REPLACED_BADGE_CLASS =
-  "max-md:opacity-0 md:group-focus-within/menu-item:opacity-0 md:group-hover/menu-item:opacity-0";
+  "[@media(hover:none)]:opacity-0 [@media(hover:hover)]:group-focus-within/menu-item:opacity-0 [@media(hover:hover)]:group-hover/menu-item:opacity-0";
 const SIDEBAR_ROW_ICON_ACTION_CLASS =
   "flex size-6 items-center justify-center p-1 text-sidebar-foreground/45 transition-colors hover:text-sidebar-foreground focus-visible:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring peer-data-[active=true]/menu-button:text-sidebar-active-foreground/75 peer-data-[active=true]/menu-button:hover:text-sidebar-active-foreground [&>svg]:size-4 [&>svg]:shrink-0";
 const DM_AVATAR_SIZE = 24;
@@ -164,7 +164,7 @@ function ChannelWorkingBadge({
     <span
       className={cn(
         "max-w-32 shrink-0 truncate rounded-full px-1.5 py-0.5 text-2xs font-medium leading-none tabular-nums motion-safe:animate-pulse group-data-[collapsible=icon]:hidden",
-        "hidden sm:inline-flex",
+        "inline-flex",
         isActive
           ? "bg-sidebar-active-foreground/20 text-sidebar-active-foreground"
           : "bg-primary/10 text-primary",
@@ -544,7 +544,7 @@ export function SidebarSection({
                       <button
                         aria-label="Close direct message"
                         className={cn(
-                          "absolute right-1 top-1/2 z-10 -translate-y-1/2 after:absolute after:-inset-2 after:md:hidden group-data-[collapsible=icon]:hidden",
+                          "absolute right-1 top-1/2 z-10 -translate-y-1/2 after:absolute after:-inset-2 [@media(hover:hover)]:after:hidden group-data-[collapsible=icon]:hidden",
                           SIDEBAR_ROW_ICON_ACTION_CLASS,
                           SIDEBAR_ROW_ACTION_VISIBILITY_CLASS,
                         )}

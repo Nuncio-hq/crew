@@ -71,11 +71,11 @@ function ChipButton({
     <button
       className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
       onClick={onClick}
-      title={title}
+      title={title ?? label}
       type="button"
     >
       {phase ? <ProjectThreadPhaseDot phase={phase} /> : null}
-      {label}
+      <span className="[@container(max-width:21.25rem)]:sr-only">{label}</span>
     </button>
   );
 }
@@ -93,6 +93,9 @@ function githubDegradedTitle(
  * (between header and message list). Collapsed by default; expand reveals the
  * Task/Workspace/Handoff grid (stacked in the side panel, 3-col in focus).
  * Owns the agent working signal for project threads.
+ *
+ * #205: at auxiliary ≤340px, chip labels collapse to icons (`sr-only`);
+ * the row stays visible. Never a viewport `sm:` hide.
  */
 export function ProjectThreadWorkspacePanel({
   channelId,
@@ -323,7 +326,7 @@ export function ProjectThreadWorkspacePanel({
 
   return (
     <section
-      className="shrink-0 border-b border-border/50 bg-background px-3 py-1.5"
+      className="@container shrink-0 border-b border-border/50 bg-background px-3 py-1.5"
       data-expanded={showExpanded ? "true" : "false"}
       data-testid="project-thread-workspace-panel"
     >
@@ -354,7 +357,7 @@ export function ProjectThreadWorkspacePanel({
           ) : null}
         </div>
 
-        <div className="hidden min-w-0 items-center gap-0.5 sm:flex">
+        <div className="flex min-w-0 items-center gap-0.5">
           <ChipButton
             label="Task"
             onClick={() => toggle("task")}
