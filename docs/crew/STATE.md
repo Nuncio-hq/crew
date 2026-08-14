@@ -1,5 +1,16 @@
 # Crew State
 
+## Issue #203 — Work-tree sidebar (folder = channel, thread = session)
+
+Sidebar Projects section: exclusive project channels are folders;
+work-thread rows are sessions. Eligibility is workspace ∨ recent
+session ∨ needs-you (selector only). Folder click = timeline; thread
+click = workbench. Needs-you smart section hidden at 0. No cockpit.
+Shared `WorkThreadRow` with #186. Spikes 0043–0045. D-062.
+Mock-bridge e2e seeds a unique 30617 (`d=glowmax`) bound to
+`#engineering` so `#general` stays a Slack row.
+Last updated: 2026-08-14
+
 ## Issue #200 — Crew Wiki (relay-native repo + company wiki)
 
 Separable `crew-wiki` engine with MCP + argv0 faces. Repo pages are

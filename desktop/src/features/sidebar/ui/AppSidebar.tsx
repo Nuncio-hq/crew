@@ -50,6 +50,8 @@ import type {
 } from "@/features/sidebar/ui/AppSidebar.types";
 import type { AppSidebarProps } from "@/features/sidebar/ui/AppSidebarProps";
 import { SidebarRelayConnectionCard } from "@/features/sidebar/ui/SidebarRelayConnectionCard";
+import { WorkTreeSidebarBlock } from "@/features/work-tree/ui/WorkTreeSidebarBlock";
+import { useProjectFolderChannelIds } from "@/features/work-tree/hooks/useWorkTreeProjection";
 import {
   SidebarLoadingContent,
   useSidebarLoadingShape,
@@ -136,6 +138,7 @@ export function AppSidebar({
   starredChannelIds,
   onStarChannel,
   onUnstarChannel,
+  onSelectThread,
 }: AppSidebarProps) {
   const activeWorkingByChannelId = useActiveWorkingChannelsById();
   const { status: updateStatus } = useUpdaterContext();
@@ -289,13 +292,18 @@ export function AppSidebar({
     () => channels.filter((channel) => channel.channelType === "stream"),
     [channels],
   );
+  const projectFolderIds = useProjectFolderChannelIds();
+  const sidebarStreamChannels = React.useMemo(
+    () => streamChannels.filter((channel) => !projectFolderIds.has(channel.id)),
+    [projectFolderIds, streamChannels],
+  );
 
   const sectionBuckets = React.useMemo(() => {
     const bySection: Record<string, Channel[]> = {};
     const unassigned: Channel[] = [];
     const sectionIds = new Set(channelSections.map((s) => s.id));
 
-    for (const channel of streamChannels) {
+    for (const channel of sidebarStreamChannels) {
       if (starredChannelIds?.has(channel.id)) continue;
       const sectionId = channelAssignments[channel.id];
       if (sectionId && sectionIds.has(sectionId)) {
@@ -320,7 +328,7 @@ export function AppSidebar({
       unassigned: sortChannelsForSidebar(unassigned, sortModeFor("channels")),
     };
   }, [
-    streamChannels,
+    sidebarStreamChannels,
     channelSections,
     channelAssignments,
     starredChannelIds,
@@ -330,10 +338,12 @@ export function AppSidebar({
   const starredChannels = React.useMemo(() => {
     if (!starredChannelIds || starredChannelIds.size === 0) return [];
     return sortChannelsForSidebar(
-      streamChannels.filter((channel) => starredChannelIds.has(channel.id)),
+      sidebarStreamChannels.filter((channel) =>
+        starredChannelIds.has(channel.id),
+      ),
       sortModeFor("starred"),
     );
-  }, [streamChannels, starredChannelIds, sortModeFor]);
+  }, [sidebarStreamChannels, starredChannelIds, sortModeFor]);
 
   const handleCreateSectionForChannel = React.useCallback(
     (channelId: string) => {
@@ -525,6 +535,13 @@ export function AppSidebar({
 
               {!isLoading ? (
                 <>
+                  <WorkTreeSidebarBlock
+                    onSelectFolder={onSelectChannel}
+                    onSelectThread={onSelectThread}
+                    selectedChannelId={selectedChannelId}
+                    selectedView={selectedView}
+                    unreadChannelIds={unreadChannelIds}
+                  />
                   {starredChannels.length > 0 ? (
                     <ChannelGroupSection
                       hasUnread={starredChannels.some((c) =>

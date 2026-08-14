@@ -95,3 +95,6 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0040-wiki-incremental-regen.md`](0040-wiki-incremental-regen.md)
 - [`0041-wiki-mermaid-pipeline.md`](0041-wiki-mermaid-pipeline.md)
 - [`0042-wiki-generator-model-plumbing.md`](0042-wiki-generator-model-plumbing.md)
+- [`0043-work-tree-eligibility-selector.md`](0043-work-tree-eligibility-selector.md)
+- [`0044-work-tree-disclosure-live-arrival.md`](0044-work-tree-disclosure-live-arrival.md)
+- [`0045-needs-you-aggregation-dedupe.md`](0045-needs-you-aggregation-dedupe.md)

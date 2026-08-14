@@ -53,6 +53,7 @@ import { clearMarkdownNodeCache } from "@/shared/ui/markdown/nodeCache";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
 import { resetOrgRosterProjection } from "@/features/org/lib/orgProjectionStore";
 import { resetWikiStore } from "@/features/wiki/lib/wikiStore";
+import { resetWorkTreeDisclosureStore } from "@/features/work-tree/lib/workTreeDisclosure";
 import { resetGovernorStatusForTests } from "@/features/tool-pane/governorStore";
 import { resetToolPaneForTests } from "@/features/tool-pane/toolPaneStore";
 import { resetAgentControlForTests } from "@/features/tool-pane/agentControlStore";
@@ -113,6 +114,7 @@ function resetCommunityState({
   resetGovernorStatusForTests();
   resetOrgRosterProjection();
   resetWikiStore();
+  resetWorkTreeDisclosureStore();
   resetToolPaneForTests();
   resetAgentControlForTests();
 }
