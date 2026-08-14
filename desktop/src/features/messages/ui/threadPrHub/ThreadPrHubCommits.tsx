@@ -36,7 +36,10 @@ export function ThreadPrHubCommits({
   const mapped = commit ? toRepoCommit(commit) : null;
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1" data-testid="thread-pr-hub-commits">
+    <div
+      className="flex min-h-0 min-w-0 flex-1"
+      data-testid="thread-pr-hub-commits"
+    >
       <div className="w-56 shrink-0 overflow-y-auto border-r border-border/60">
         {commits.length === 0 ? (
           <p className="p-3 text-sm text-muted-foreground">No commits.</p>

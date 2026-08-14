@@ -929,7 +929,9 @@ export const SystemMessageRow = React.memo(function SystemMessageRow({
       <div
         className={cn(
           "absolute right-2 z-10",
-          isMembershipActivity ? "top-2" : "top-1 [@container(min-width:40rem)]:top-0 [@container(min-width:40rem)]:-translate-y-1/2",
+          isMembershipActivity
+            ? "top-2"
+            : "top-1 [@container(min-width:40rem)]:top-0 [@container(min-width:40rem)]:-translate-y-1/2",
         )}
       >
         {reactionPicker}

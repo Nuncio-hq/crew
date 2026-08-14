@@ -5,7 +5,10 @@ import type { ProjectThreadWorkspaceModel } from "@/features/messages/ui/useProj
 import { setThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
-import { useElementWidth, useIsThreadPanelOverlay } from "@/shared/hooks/use-mobile";
+import {
+  useElementWidth,
+  useIsThreadPanelOverlay,
+} from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
 import {
   getAuxiliaryPanelBodyClass,

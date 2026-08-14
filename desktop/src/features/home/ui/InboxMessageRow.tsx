@@ -123,7 +123,8 @@ export function InboxMessageRow({
           <div
             className={cn(
               "absolute right-2 top-1 z-10",
-              !isFirst && "[@container(min-width:40rem)]:top-0 [@container(min-width:40rem)]:-translate-y-1/2",
+              !isFirst &&
+                "[@container(min-width:40rem)]:top-0 [@container(min-width:40rem)]:-translate-y-1/2",
             )}
           >
             <MessageActionBar

@@ -162,7 +162,12 @@ export function ForumView({
   }
 
   return (
-    <div className={cn("@container flex h-full min-w-0 flex-col", channelChrome.contentPadding)}>
+    <div
+      className={cn(
+        "@container flex h-full min-w-0 flex-col",
+        channelChrome.contentPadding,
+      )}
+    >
       <div className="border-b border-border/60 p-4">
         {isComposerOpen ? (
           <ForumComposer
