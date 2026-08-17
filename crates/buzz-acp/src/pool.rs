@@ -2208,6 +2208,31 @@ pub async fn run_prompt_task(
                     );
                     return;
                 }
+                Ok(ChannelWorkspace::Missing {
+                    message,
+                    root_event_id,
+                    path,
+                }) => {
+                    tracing::warn!(
+                        channel = %batch.routing_channel_id(),
+                        root = %root_event_id,
+                        path = %path.display(),
+                        "{message}"
+                    );
+                    agent.acp.observe(
+                        "thread_workspace_error",
+                        thread_workspace_missing_payload(&root_event_id),
+                    );
+                    send_prompt_result(
+                        &result_tx,
+                        &turn_id,
+                        agent,
+                        source,
+                        PromptOutcome::Ok(StopReason::Refusal),
+                        None,
+                    );
+                    return;
+                }
                 Ok(ChannelWorkspace::NotProject) => ctx.cwd.clone(),
                 Err(error) => {
                     let protocol_error = if let Some(workspace_error) =
@@ -4049,6 +4074,8 @@ async fn fetch_conversation_context(
 }
 
 const THREAD_WORKSPACE_ERROR_MESSAGE: &str = "Could not prepare the isolated Project workspace.";
+const MISSING_FOLDER_RECOVER_MESSAGE: &str =
+    crate::thread_workspace::ThreadWorkspaceMissing::RECOVER_MESSAGE;
 
 #[derive(Debug)]
 struct ThreadWorkspaceProvisionError {
@@ -4061,6 +4088,12 @@ impl ThreadWorkspaceProvisionError {
         if let Some(error) =
             self.source
                 .downcast_ref::<crate::thread_workspace::ThreadWorkspaceRootVerificationError>()
+        {
+            return format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {error}");
+        }
+        if let Some(error) = self
+            .source
+            .downcast_ref::<crate::thread_workspace::ThreadWorkspaceMissing>()
         {
             return format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {error}");
         }
@@ -4167,6 +4200,14 @@ fn thread_workspace_error_payload(root_event_id: &str) -> serde_json::Value {
     })
 }
 
+fn thread_workspace_missing_payload(root_event_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "rootEventId": root_event_id,
+        "message": MISSING_FOLDER_RECOVER_MESSAGE,
+        "reason": "missing-folder",
+    })
+}
+
 fn thread_workspace_provision_error(
     root_event_id: &str,
     source: anyhow::Error,
@@ -4264,6 +4305,13 @@ enum ChannelWorkspace {
         message: String,
         root_event_id: String,
     },
+    /// Configured Project folder is gone. Recover: pick a workspace again.
+    /// Must not be treated as a protocol/transport crash.
+    Missing {
+        message: String,
+        root_event_id: String,
+        path: PathBuf,
+    },
 }
 
 /// RAII guards covering path-exclusive turn serialization and optional
@@ -4312,8 +4360,26 @@ async fn resolve_and_bind_channel_workspace(
     ctx: &PromptContext,
     state: &mut SessionState,
 ) -> anyhow::Result<ChannelWorkspace> {
-    let Some(plan) = resolve_thread_workspace_plan(batch, ctx).await? else {
-        return Ok(ChannelWorkspace::NotProject);
+    let plan = match resolve_thread_workspace_plan(batch, ctx).await {
+        Ok(Some(plan)) => plan,
+        Ok(None) => return Ok(ChannelWorkspace::NotProject),
+        Err(error) => match error.downcast::<ThreadWorkspaceProvisionError>() {
+            Ok(provision) => {
+                if let Some(missing) = provision
+                    .source
+                    .downcast_ref::<crate::thread_workspace::ThreadWorkspaceMissing>(
+                ) {
+                    return Ok(ChannelWorkspace::Missing {
+                        message: crate::thread_workspace::ThreadWorkspaceMissing::RECOVER_MESSAGE
+                            .to_string(),
+                        root_event_id: provision.root_event_id,
+                        path: missing.path.clone(),
+                    });
+                }
+                return Err(provision.into());
+            }
+            Err(other) => return Err(other),
+        },
     };
     let root_event_id = plan.root_event_id.clone();
     let wrap = |source: anyhow::Error| thread_workspace_provision_error(&root_event_id, source);
@@ -4596,8 +4662,9 @@ mod thread_session_cwd_tests {
 
     use super::{
         select_trusted_workspace_content, thread_workspace_error_payload,
-        thread_workspace_ready_payload, trusted_fetched_root_content, verify_thread_root_context,
-        ParsedThreadContext, VerifiedThreadRoot, THREAD_WORKSPACE_ERROR_MESSAGE,
+        thread_workspace_missing_payload, thread_workspace_ready_payload,
+        trusted_fetched_root_content, verify_thread_root_context, ParsedThreadContext,
+        VerifiedThreadRoot, MISSING_FOLDER_RECOVER_MESSAGE, THREAD_WORKSPACE_ERROR_MESSAGE,
     };
     use crate::queue::{ContextMessage, ConversationContext};
     use crate::thread_workspace::ThreadWorkspace;
@@ -4767,6 +4834,15 @@ mod thread_session_cwd_tests {
         assert!(
             !error.to_string().contains("/private/project"),
             "error observer payload must not leak the workspace path"
+        );
+
+        let missing = thread_workspace_missing_payload(&workspace.root_event_id);
+        assert_eq!(missing["rootEventId"], workspace.root_event_id);
+        assert_eq!(missing["message"], MISSING_FOLDER_RECOVER_MESSAGE);
+        assert_eq!(missing["reason"], "missing-folder");
+        assert!(
+            !missing.to_string().contains("/private/project"),
+            "missing-folder observer payload must not leak the workspace path"
         );
     }
 }
@@ -9884,6 +9960,18 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         assert_eq!(error.protocol_message(), THREAD_WORKSPACE_ERROR_MESSAGE);
     }
 
+    #[test]
+    fn thread_workspace_provision_error_surfaces_missing_folder_recover_copy() {
+        let missing = crate::thread_workspace::ThreadWorkspaceMissing {
+            path: PathBuf::from("/definitely-missing-nuncio-217/crew"),
+        };
+        let message =
+            thread_workspace_provision_error(&"a".repeat(64), missing.into()).protocol_message();
+        assert!(message.contains(THREAD_WORKSPACE_ERROR_MESSAGE));
+        assert!(message.contains("Project workspace does not exist"));
+        assert!(message.contains("Pick a workspace again"));
+    }
+
     // ── ControlSignal::SwitchModel (Phase 3a, Option ii) ─────────────────────
 
     #[test]
@@ -11775,6 +11863,63 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         );
 
         std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
+    }
+
+    #[tokio::test]
+    async fn missing_project_folder_is_a_named_recover_outcome_not_a_provision_error() {
+        let missing = PathBuf::from("/definitely-missing-nuncio-217/crew");
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch(Uuid::new_v4(), &owner_keys, &missing);
+        let mut state = SessionState::default();
+
+        let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("a deleted Project folder must recover, not fail the turn as a protocol error");
+        let ChannelWorkspace::Missing {
+            message,
+            root_event_id,
+            path,
+        } = outcome
+        else {
+            panic!("expected a named Missing recover outcome, got {outcome:?}");
+        };
+        assert_eq!(path, missing);
+        assert_eq!(root_event_id, batch.events[0].event.id.to_hex());
+        assert!(
+            message.contains("Pick a workspace again"),
+            "recover copy must tell the owner they can pick a folder again: {message}"
+        );
+        assert!(
+            state.workspace_bindings.is_empty(),
+            "a gone folder must not record a workspace binding"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_cowork_folder_is_a_named_recover_outcome_not_a_provision_error() {
+        let missing = PathBuf::from("/definitely-missing-nuncio-217/docs");
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch_with(
+            Uuid::new_v4(),
+            &owner_keys,
+            &missing,
+            &[("mode", "folder")],
+        );
+        let mut state = SessionState::default();
+
+        let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("a deleted Cowork folder must recover, not fail the turn as a protocol error");
+        assert!(
+            matches!(outcome, ChannelWorkspace::Missing { .. }),
+            "expected a named Missing recover outcome, got {outcome:?}"
+        );
     }
 
     #[tokio::test]

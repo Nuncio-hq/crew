@@ -2,9 +2,10 @@ import { LoaderCircle, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { ProjectThreadWorkspaceSnapshot } from "@/features/agents/projectThreadWorkspaceStore";
-import type {
-  ProjectThreadAgentStep,
-  ProjectThreadContext,
+import {
+  isMissingFolderWorkspaceError,
+  type ProjectThreadAgentStep,
+  type ProjectThreadContext,
 } from "@/features/messages/lib/projectThreadWorkspace";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { ThreadPullRequest } from "@/shared/api/thread-workspace-types";
@@ -37,6 +38,7 @@ export function ProjectThreadIntegrationDrawer({
   context,
   onClose,
   onGitHubRefresh,
+  onPickFolder,
   profiles,
   pullRequest,
   steps,
@@ -47,6 +49,7 @@ export function ProjectThreadIntegrationDrawer({
   context: ProjectThreadContext;
   onClose: () => void;
   onGitHubRefresh: () => Promise<void>;
+  onPickFolder?: () => void;
   profiles?: UserProfileLookup;
   pullRequest: ThreadPullRequest | null;
   steps: readonly ProjectThreadAgentStep[];
@@ -81,9 +84,31 @@ export function ProjectThreadIntegrationDrawer({
           <p>Restored from disk</p>
         </div>
       ) : workspace.status === "error" ? (
-        <p className="flex items-center gap-2 text-xs text-destructive">
-          <TriangleAlert className="h-4 w-4" /> {workspace.message}
-        </p>
+        <div className="space-y-2">
+          <p className="flex items-center gap-2 text-xs text-destructive">
+            <TriangleAlert className="h-4 w-4" /> {workspace.message}
+          </p>
+          {isMissingFolderWorkspaceError(workspace) ? (
+            <>
+              <p
+                className="truncate font-machine text-xs text-muted-foreground"
+                title={context.localPath}
+              >
+                {context.localPath}
+              </p>
+              {onPickFolder ? (
+                <Button
+                  onClick={onPickFolder}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Pick folder
+                </Button>
+              ) : null}
+            </>
+          ) : null}
+        </div>
       ) : (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <LoaderCircle className="h-4 w-4 animate-spin" />

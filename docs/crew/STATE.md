@@ -1,5 +1,17 @@
 # Crew State
 
+## Issue #217 — Missing Project folder recovers instead of circuit-open
+
+If the configured Project workspace path is gone, the harness names a
+`Missing` outcome (like Busy), surfaces "The Project folder is gone.
+Pick a workspace again.", and returns the agent to the pool. It does
+not wrap that failure as a transport `Protocol` error, so the slot
+does not circuit-open. The thread workspace drawer shows the gone
+path and a Pick folder button that relinks via the existing folder
+picker. New messages after relink use the new path; frozen thread
+roots stay frozen (V1). Worktree-add flake is follow-up.
+Last updated: 2026-08-17
+
 ## Issue #205 — Narrow-pane resilience (truncate / collapse / stack)
 
 Desktop panes declare a width contract and adapt with container queries,

@@ -4333,6 +4333,24 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
     message.contains("Re-authenticate") || message.contains("API Error: 401")
 }
 
+/// Transport-class errors mean the stdio pipe may be corrupted, so the agent
+/// must be respawned. A gone Project folder is wrapped as `Protocol` today
+/// only as a leftover of the provision-error path — it is not a pipe failure
+/// and must not circuit-open the slot.
+fn is_transport_class_error(error: &acp::AcpError) -> bool {
+    match error {
+        acp::AcpError::Io(_) | acp::AcpError::WriteTimeout(_) | acp::AcpError::Timeout(_) => true,
+        acp::AcpError::Protocol(message) => !is_recoverable_workspace_protocol_error(message),
+        _ => false,
+    }
+}
+
+fn is_recoverable_workspace_protocol_error(message: &str) -> bool {
+    message.contains("Could not prepare the isolated Project workspace.")
+        || message.contains("Project workspace does not exist")
+        || message.contains("The Project folder is gone")
+}
+
 /// Spawn a task that posts a user-visible failure notice to the relay.
 ///
 /// Shared by the hard-cap immediate dead-letter path and the retries-exhausted
@@ -4752,13 +4770,7 @@ fn handle_prompt_result(
             pool.return_agent(result.agent);
         }
         PromptOutcome::Error(ref e) => {
-            let is_transport_error = matches!(
-                e,
-                acp::AcpError::Io(_)
-                    | acp::AcpError::WriteTimeout(_)
-                    | acp::AcpError::Timeout(_)
-                    | acp::AcpError::Protocol(_)
-            );
+            let is_transport_error = is_transport_class_error(e);
             let error_code = match &e {
                 acp::AcpError::AgentError { code, .. } => Some(*code),
                 _ => None,
@@ -9100,6 +9112,31 @@ mod error_outcome_emission_tests {
         );
     }
 
+    #[test]
+    fn missing_project_folder_protocol_error_is_not_transport_class() {
+        let missing = acp::AcpError::Protocol(
+            "Could not prepare the isolated Project workspace. \
+             Project workspace does not exist: /definitely-missing-nuncio-217/crew. \
+             The Project folder is gone. Pick a workspace again."
+                .into(),
+        );
+        assert!(
+            !is_transport_class_error(&missing),
+            "a gone Project folder must not count as a transport crash"
+        );
+        let generic =
+            acp::AcpError::Protocol("Could not prepare the isolated Project workspace.".into());
+        assert!(
+            !is_transport_class_error(&generic),
+            "the isolated-workspace protocol wrapper is not a pipe failure"
+        );
+        let pipe = acp::AcpError::Protocol("failed to open agent stdin".into());
+        assert!(
+            is_transport_class_error(&pipe),
+            "real protocol/pipe failures must still respawn"
+        );
+    }
+
     // ── auth error dead-letter behavior ────────────────────────────────────
 
     /// An auth-class `PromptOutcome::Error` must dead-letter immediately
@@ -9276,6 +9313,99 @@ mod error_outcome_emission_tests {
             queue.queued_event_count(&channel_id),
             1,
             "non-auth application error must preserve the event for retry"
+        );
+    }
+
+    /// A gone Project folder used to be wrapped as `AcpError::Protocol`, which
+    /// counted as a transport crash and circuit-opened the in-app agent.
+    /// That class of error must return the agent to the pool instead.
+    #[tokio::test]
+    async fn missing_project_folder_protocol_error_returns_agent_without_respawn() {
+        let keys = nostr::Keys::generate();
+        let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "test")
+            .sign_with_keys(&keys)
+            .unwrap();
+        let channel_id = uuid::Uuid::new_v4();
+        let batch = FlushBatch {
+            channel_id,
+            events: vec![BatchEvent {
+                event,
+                prompt_tag: "test".into(),
+                received_at: std::time::Instant::now(),
+                edited_content: None,
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+
+        let missing = acp::AcpError::Protocol(
+            "Could not prepare the isolated Project workspace. \
+             Project workspace does not exist: /definitely-missing-nuncio-217/crew. \
+             The Project folder is gone. Pick a workspace again."
+                .into(),
+        );
+
+        let agent = dummy_agent(0).await;
+        let mut pool = AgentPool::from_slots(vec![None]);
+        let task_id = pool.join_set.spawn(async {}).id();
+        pool.task_map_mut().insert(
+            task_id,
+            crate::pool::TaskMeta {
+                agent_index: 0,
+                channel_id: None,
+                routing_channel_id: None,
+                turn_id: "test-turn-id".to_string(),
+                recoverable_batch: None,
+                control_tx: None,
+                steer_tx: None,
+                successful_steer_deliveries: HashSet::new(),
+            },
+        );
+        let mut queue = EventQueue::new(config::DedupMode::Queue);
+        let config = test_config();
+        let mut heartbeat_in_flight = false;
+        let removed_channels = std::collections::HashSet::new();
+        let mut crash_history = vec![SlotCircuit {
+            crash_times: Vec::new(),
+            open_until: None,
+            respawn_in_flight: false,
+        }];
+        let (respawn_tx, _respawn_rx) = mpsc::channel(8);
+        let mut respawn_tasks = tokio::task::JoinSet::new();
+        let result = PromptResult {
+            agent,
+            source: PromptSource::Channel(channel_id),
+            turn_id: "test-turn-id".to_string(),
+            outcome: PromptOutcome::Error(missing),
+            batch: Some(batch),
+        };
+        handle_prompt_result(
+            &mut pool,
+            &mut queue,
+            &config,
+            result,
+            &mut heartbeat_in_flight,
+            &removed_channels,
+            &mut crash_history,
+            &respawn_tx,
+            &mut respawn_tasks,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            pool.live_count(),
+            1,
+            "a gone Project folder must return the agent to the pool"
+        );
+        assert_eq!(
+            respawn_tasks.len(),
+            0,
+            "a gone Project folder must not respawn or circuit-open the agent"
+        );
+        assert!(
+            crash_history[0].open_until.is_none(),
+            "a gone Project folder must not open the crash circuit"
         );
     }
 }

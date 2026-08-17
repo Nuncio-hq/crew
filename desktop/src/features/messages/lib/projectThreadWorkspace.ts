@@ -55,6 +55,21 @@ export function projectThreadStickyBarOwnsAgentSignal(
   );
 }
 
+export function isMissingFolderWorkspaceError(workspace: {
+  status: string;
+  reason?: string;
+}): boolean {
+  return workspace.status === "error" && workspace.reason === "missing-folder";
+}
+
+export function parseCrewRepoAddress(
+  address: string,
+): { owner: string; dtag: string } | null {
+  const match = /^30617:([0-9a-fA-F]{64}):(.+)$/.exec(address.trim());
+  if (!match) return null;
+  return { owner: match[1], dtag: match[2] };
+}
+
 export function parseProjectThreadContext(
   content: string | null | undefined,
 ): ProjectThreadContext | null {

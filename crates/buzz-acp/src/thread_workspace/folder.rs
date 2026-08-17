@@ -3,8 +3,6 @@
 //! Agent cwd is the folder itself. Shadow-git lives in app data and is the
 //! path-lease `common_git`. No branches, no LifecycleRecord.
 
-use std::fs;
-
 use anyhow::{bail, Context, Result};
 
 use super::base::{BaseSource, WorkspaceBase};
@@ -18,12 +16,7 @@ pub(crate) fn plan_folder_workspace(
     root_event_id: &str,
 ) -> Result<ThreadWorkspacePlan> {
     validate_root_event_id(root_event_id)?;
-    let folder = fs::canonicalize(&workspace.local_path).with_context(|| {
-        format!(
-            "Project workspace does not exist: {}",
-            workspace.local_path.display()
-        )
-    })?;
+    let folder = super::canonicalize_project_workspace(&workspace.local_path)?;
     if !folder.is_dir() {
         bail!("Project workspace is not a folder: {}", folder.display());
     }
