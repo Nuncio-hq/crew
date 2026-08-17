@@ -12,7 +12,7 @@ const ISSUE_COMMENTS = [
 
 async function openBuzzProject(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByTestId("projects-section-projects").click();
   const projectEntry = page
     .locator(

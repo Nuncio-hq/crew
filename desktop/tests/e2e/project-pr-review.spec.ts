@@ -22,7 +22,7 @@ async function enableProjectsFeature(page: import("@playwright/test").Page) {
 
 async function openBuzzProject(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByTestId("projects-section-projects").click();
   const projectEntry = page
     .locator(
@@ -780,7 +780,7 @@ test("project pull requests preserve partial results from batched queries", asyn
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page
     .getByRole("button", { name: "Pull Requests", exact: true })
     .click();
@@ -835,7 +835,7 @@ test("project pull request author rollover stays identity-only", async ({
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page
     .getByRole("button", { name: "Pull Requests", exact: true })
     .click();
@@ -868,7 +868,7 @@ test("project issue author rollover matches pull requests", async ({
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByRole("button", { name: "Issues", exact: true }).click();
   await page.getByRole("button", { name: "List layout" }).click();
 
@@ -902,7 +902,7 @@ test("project pull requests report aggregate root query failures", async ({
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page
     .getByRole("button", { name: "Pull Requests", exact: true })
     .click();
@@ -930,7 +930,7 @@ test("project issues preserve partial results from aggregate queries", async ({
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByRole("button", { name: "Issues", exact: true }).click();
 
   await expect(
@@ -960,7 +960,7 @@ test("project overview reports aggregate work-item failures", async ({
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
 
   await expect(
     page.getByText("Could not load project activity."),
@@ -982,7 +982,7 @@ test("project overview does not paint a background behind its cards", async ({
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
 
   const landing = page.getByTestId("projects-outcome-landing");
   await expect(landing).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
@@ -1004,7 +1004,7 @@ test("repository rows identify their git host", async ({ page }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByRole("button", { name: "Repositories", exact: true }).click();
   await page.getByRole("button", { name: "List layout" }).click();
 
@@ -1033,7 +1033,7 @@ test("project subsections do not paint backgrounds behind list or grid items", a
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
 
   for (const section of ["Repositories", "Pull Requests", "Issues"] as const) {
     await page.getByRole("button", { name: section, exact: true }).click();

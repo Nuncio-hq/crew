@@ -106,7 +106,7 @@ test("project outcomes stay page-local while opening an in-place thread panel", 
       pubkey: TEST_IDENTITIES.alice.pubkey,
     },
   );
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await expect(page.getByTestId("projects-outcome-landing")).toBeVisible();
 
   const landing = page.getByTestId("projects-outcome-landing");

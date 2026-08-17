@@ -84,9 +84,9 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src/app/routeTree.gen.ts` | TanStack generated tree for the workbench redirect routes (#186/#219) | regenerate on desktop build; do not hand-edit on sync unless the generator is skipped |
 | `desktop/src/app/AppShell.helpers.ts` | `/workbench` maps to Inbox or the channel session (#219) | do not restore `selectedView: "workbench"` |
 | `desktop/src/app/navigation/useAppNavigation.ts` | `goWorkbench` opens the channel session or Inbox (#219) | keep next to `goProjects`; never navigate to a picker place |
-| `desktop/src/app/AppShell.tsx` | work-tree thread click opens the channel session (#219) | no sidebar Workbench destination |
-| `desktop/src/features/sidebar/ui/AppSidebar.tsx` | no `onSelectWorkbench` (#219) | keep the union compact (D-022); menu markup lives in `AppSidebarPinnedHeader` |
-| `desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx` | no Workbench nav item (#219) | do not restyle neighboring entries |
+| `desktop/src/app/AppShell.tsx` | no `onSelectProjects` (#223); work-tree thread click opens the channel session (#219) | no sidebar Projects or Workbench destination |
+| `desktop/src/features/sidebar/ui/AppSidebar.tsx` | no `onSelectWorkbench` (#219); no `onSelectProjects` / project-folder filter (#223) | keep the union compact (D-022); stream list uses `sidebarRailContract` |
+| `desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx` | no Workbench nav (#219); no Projects nav (#223) | do not restyle neighboring entries |
 | `desktop/src/features/messages/ui/message-thread-panel-head.tsx` | live-job desk mount (#219) | desk lives in Crew-owned `LiveJobDesk`; no "Open workbench" |
 | `desktop/src/features/messages/ui/UnreadDivider.tsx` | optional `label` for workbench catch-up copy (#186) | default remains `"New"`; leftover workbench helpers may still pass `"NEW since you were here"` |
 | `desktop/src/features/home/ui/HomeView.tsx` | Mission Inbox opens the channel session (#219) | do not navigate on unverified `row.channelId` |

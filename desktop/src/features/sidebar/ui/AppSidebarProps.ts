@@ -68,7 +68,6 @@ export type AppSidebarProps = {
   onRemoveCommunity: (id: string) => Promise<LeaveCommunityResult | undefined>;
   onCreateAgent: () => void;
   onSelectAgents: () => void;
-  onSelectProjects: () => void;
   onSelectOrg: () => void;
   onSelectWiki: () => void;
   onSelectPulse: () => void;

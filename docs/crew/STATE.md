@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #223 — Sidebar is channels only; drop the Projects rail
+
+Sidebar = Inbox + channels + DMs. The work-tree Projects section is gone,
+so an exclusive repo binding (e.g. NuncioCrew) stays a channel row, not a
+project folder above an empty Channels list. Top-nav Projects is gone —
+it only reopened that list. Workbench stays off the rail (#220). Project
+as a repo-group (wiki, forge, NIP-MP 30621) is unchanged; it is not a
+sidebar peer. See D-066.
+Last updated: 2026-08-17
+
 ## Issue #219 — Kill Workbench as a place; desk only when a job is live
 
 Inbox picks. Channel holds the session. The Thread Workbench picker
@@ -44,14 +54,12 @@ Last updated: 2026-08-14
 
 ## Issue #203 — Work-tree sidebar (folder = channel, thread = session)
 
-Sidebar Projects section: exclusive project channels are folders;
-work-thread rows are sessions. Eligibility is workspace ∨ recent
-session ∨ needs-you (selector only). Folder click = timeline; thread
-click = the channel session (#219). Needs-you smart section hidden at 0. No cockpit.
-Shared `WorkThreadRow` with #186. Spikes 0043–0045. D-062.
-Mock-bridge e2e seeds a unique 30617 (`d=glowmax`) bound to
-`#engineering` so `#general` stays a Slack row.
-Last updated: 2026-08-14
+Superseded in the rail by #223 / D-066: exclusive project channels stay
+in Channels; the Projects folder tree is not mounted. Needs-you remains
+a smart section (hidden at 0). Eligibility helpers and `WorkThreadRow`
+stay for other surfaces. Spikes 0043–0045. D-062 (rail items 2–3
+superseded).
+Last updated: 2026-08-17
 
 ## Issue #200 — Crew Wiki (relay-native repo + company wiki)
 

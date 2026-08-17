@@ -1390,7 +1390,7 @@ See spikes 0039–0042.
 
 ## D-062 — Work-tree sidebar: tree shows work, hierarchy is the mode switch, no cockpit
 
-- **Status:** Accepted
+- **Status:** Accepted (rail items 2–3 superseded by D-066 / #223)
 - **Date:** 2026-08-14
 - **Issue:** #203
 
@@ -1501,4 +1501,27 @@ Steer / Stop for the live agent. It does not list Mentions or threads.
 
 `goWorkbench` is a compatibility alias: it opens the channel session or
 Inbox, never a picker place.
+
+## D-066 — Sidebar is Inbox + channels + DMs; Project is not a rail peer
+
+- **Status:** Accepted
+- **Date:** 2026-08-17
+- **Issue:** #223
+- **Supersedes:** D-062 items 2–3 (exclusive binding as a sidebar folder;
+  hierarchy as the mode switch). D-062 eligibility and Needs-you (items
+  1, 4) still stand off the Projects rail.
+
+The desktop sidebar is Inbox + channels + DMs. It is not a second tree
+of Projects.
+
+1. **No Projects rail.** Exclusive repo/project bindings do not leave
+   Channels. NuncioCrew is entered as its office channel.
+2. **No top-nav Projects** when that item only reopened the project
+   list. The Project object (wiki, forge, NIP-MP 30621) remains; it is
+   not a sidebar peer.
+3. **No Workbench nav.** #220 already removed the place; the rail must
+   not grow a hammer or Workbench row back.
+4. **Do not invent new IA** to replace the dropped items.
+
+See issue #223.
 
