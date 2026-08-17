@@ -21,6 +21,7 @@ import { useChannelSortPreference } from "@/features/sidebar/lib/useChannelSortP
 import { useSidebarScrollLock } from "@/features/sidebar/lib/useSidebarScrollLock";
 import { isSidebarBackgroundTarget } from "@/features/sidebar/lib/sidebarBackgroundTarget";
 import { useSidebarActivityOverflow } from "@/features/sidebar/lib/useSidebarActivityOverflow";
+import { streamChannelsForSidebar } from "@/features/sidebar/lib/sidebarRailContract";
 import {
   CreateSectionDialog,
   DeleteSectionAlertDialog,
@@ -51,7 +52,6 @@ import type {
 import type { AppSidebarProps } from "@/features/sidebar/ui/AppSidebarProps";
 import { SidebarRelayConnectionCard } from "@/features/sidebar/ui/SidebarRelayConnectionCard";
 import { WorkTreeSidebarBlock } from "@/features/work-tree/ui/WorkTreeSidebarBlock";
-import { useProjectFolderChannelIds } from "@/features/work-tree/hooks/useWorkTreeProjection";
 import {
   SidebarLoadingContent,
   useSidebarLoadingShape,
@@ -109,7 +109,6 @@ export function AppSidebar({
   onRemoveCommunity,
   onCreateAgent,
   onSelectAgents,
-  onSelectProjects,
   onSelectOrg,
   onSelectWiki,
   onSelectPulse,
@@ -287,14 +286,9 @@ export function AppSidebar({
       if (channel.id === selectedChannelId) onSelectHome();
     });
 
-  const streamChannels = React.useMemo(
-    () => channels.filter((channel) => channel.channelType === "stream"),
-    [channels],
-  );
-  const projectFolderIds = useProjectFolderChannelIds();
   const sidebarStreamChannels = React.useMemo(
-    () => streamChannels.filter((channel) => !projectFolderIds.has(channel.id)),
-    [projectFolderIds, streamChannels],
+    () => streamChannelsForSidebar(channels),
+    [channels],
   );
 
   const sectionBuckets = React.useMemo(() => {
@@ -407,7 +401,7 @@ export function AppSidebar({
     directMessages,
     dmChannelLabels,
     isLoading,
-    streamChannels,
+    streamChannels: sidebarStreamChannels,
   });
   const resolvedDisplayName =
     profile?.displayName?.trim() ||
@@ -519,7 +513,6 @@ export function AppSidebar({
                 homeBadgeCount={homeBadgeCount}
                 onSelectAgents={onSelectAgents}
                 onSelectHome={onSelectHome}
-                onSelectProjects={onSelectProjects}
                 onSelectOrg={onSelectOrg}
                 onSelectWiki={onSelectWiki}
                 onSelectPulse={onSelectPulse}
@@ -533,13 +526,7 @@ export function AppSidebar({
 
               {!isLoading ? (
                 <>
-                  <WorkTreeSidebarBlock
-                    onSelectFolder={onSelectChannel}
-                    onSelectThread={onSelectThread}
-                    selectedChannelId={selectedChannelId}
-                    selectedView={selectedView}
-                    unreadChannelIds={unreadChannelIds}
-                  />
+                  <WorkTreeSidebarBlock onSelectThread={onSelectThread} />
                   {starredChannels.length > 0 ? (
                     <ChannelGroupSection
                       hasUnread={starredChannels.some((c) =>

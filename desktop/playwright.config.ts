@@ -170,6 +170,7 @@ export default defineConfig({
         "**/workbench.spec.ts",
         "**/live-job-desk.spec.ts",
         "**/work-tree-sidebar.spec.ts",
+        "**/channels-only-sidebar.spec.ts",
         "**/org-hierarchy.spec.ts",
         "**/crew-wiki.spec.ts",
         "**/thread-pr-hub.spec.ts",

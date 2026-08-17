@@ -143,7 +143,6 @@ export function AppShell() {
     goNewMessage,
     goOrg,
     goWiki,
-    goProjects,
     goPulse,
     goSettings,
     goWorkflows,
@@ -862,7 +861,6 @@ export function AppShell() {
                           scopeSearchFocusRequest,
                         ]}
                         onSelectHome={() => void goHome()}
-                        onSelectProjects={() => void goProjects()}
                         onSelectOrg={() => void goOrg()}
                         onSelectWiki={() => void goWiki()}
                         onSelectPulse={() => void goPulse()}

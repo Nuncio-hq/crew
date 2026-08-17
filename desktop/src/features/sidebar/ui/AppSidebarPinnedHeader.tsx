@@ -1,12 +1,4 @@
-import {
-  Activity,
-  BookOpen,
-  Bot,
-  FolderGit2,
-  Inbox,
-  Network,
-  Zap,
-} from "lucide-react";
+import { Activity, BookOpen, Bot, Inbox, Network, Zap } from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { FeatureGate } from "@/shared/features";
@@ -51,7 +43,6 @@ type AppSidebarPrimaryMenuProps = {
   homeBadgeCount: number;
   onSelectAgents: () => void;
   onSelectHome: () => void;
-  onSelectProjects: () => void;
   onSelectOrg: () => void;
   onSelectWiki: () => void;
   onSelectPulse: () => void;
@@ -102,7 +93,6 @@ export function AppSidebarPrimaryMenu({
   homeBadgeCount,
   onSelectAgents,
   onSelectHome,
-  onSelectProjects,
   onSelectOrg,
   onSelectWiki,
   onSelectPulse,
@@ -155,20 +145,6 @@ export function AppSidebarPrimaryMenu({
             >
               <Activity className="h-4 w-4" />
               <SidebarMenuLabel>Pulse</SidebarMenuLabel>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </FeatureGate>
-        <FeatureGate feature="projects">
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              data-testid="open-projects-view"
-              isActive={selectedView === "projects"}
-              onClick={onSelectProjects}
-              tooltip="Projects"
-              type="button"
-            >
-              <FolderGit2 className="h-4 w-4" />
-              <SidebarMenuLabel>Projects</SidebarMenuLabel>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </FeatureGate>

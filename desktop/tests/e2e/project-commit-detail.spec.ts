@@ -35,7 +35,7 @@ test("top-level project lists align dates and overflow actions", async ({
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await expect(
     page.getByRole("heading", { level: 1, name: "Projects" }),
   ).toBeVisible();
@@ -224,7 +224,7 @@ test("creating a project publishes its initial repository grouping", async ({
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByTestId("projects-create-menu").hover();
   await page.getByRole("menuitem", { name: "Project" }).click();
   await page.getByTestId("create-project-name").fill("multi-repo-demo");
@@ -295,7 +295,7 @@ test("unsupported relays keep the initial repository accessible", async ({
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByTestId("projects-create-menu").hover();
   await page.getByRole("menuitem", { name: "Project" }).click();
   await page.getByTestId("create-project-name").fill("legacy-fallback");
@@ -344,7 +344,7 @@ test("project creation can retry after its repository publication fails", async 
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByTestId("projects-create-menu").hover();
   await page.getByRole("menuitem", { name: "Project" }).click();
   await page.getByTestId("create-project-name").fill("retry-project");
@@ -374,7 +374,7 @@ test("project creation is idempotent after a lost publish acknowledgement", asyn
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByTestId("projects-create-menu").hover();
   await page.getByRole("menuitem", { name: "Project" }).click();
   await page.getByTestId("create-project-name").fill("lost-ack-project");
@@ -414,7 +414,7 @@ test("multi-repository projects switch the active repository", async ({
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByTestId("projects-section-projects").click();
   await page
     .locator(
@@ -498,7 +498,7 @@ test("commit detail opens from the commits feed with a diff", async ({
   // The preview server is a static file server without SPA fallback, so
   // enter at "/" and navigate via the sidebar.
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
 
   // The overview no longer lists repository cards — switch to the
   // Projects filter reveals the complete project cards/rows list.
@@ -608,7 +608,7 @@ test("pull request and issue feeds share the commit row structure", async ({
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
 
   // The overview no longer lists repository cards — switch to the
   // Projects filter reveals the complete project cards/rows list.
@@ -672,7 +672,7 @@ test("adding a repository retries and reports an error when the 30617 publicatio
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByTestId("projects-section-projects").click();
   await page
     .locator(
@@ -737,7 +737,7 @@ test("adding a repository treats a lost 30617 acknowledgement as success", async
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByTestId("projects-section-projects").click();
   await page
     .locator(
@@ -808,7 +808,7 @@ test("adding a repository blocks when a standalone 30617 already exists at that 
   await page.waitForFunction(
     () => window.__BUZZ_E2E_GET_RELAY_CONNECTION_STATE__?.() === "connected",
   );
-  await page.getByTestId("open-projects-view").click();
+  await page.goto("/projects");
   await page.getByTestId("projects-section-projects").click();
   await page
     .locator(

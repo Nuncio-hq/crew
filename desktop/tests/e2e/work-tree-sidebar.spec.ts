@@ -11,7 +11,6 @@ const SHOTS = "test-results/work-tree-sidebar";
 const ENGINEERING_ID = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
 const ROOT_A = "1".repeat(64);
 const REQUEST_ID = "4".repeat(64);
-const LIVE_REPLY_ID = "7".repeat(64);
 const OWNER = "deadbeef".repeat(8);
 const HERMES = TEST_IDENTITIES.alice.pubkey;
 const CODEX = TEST_IDENTITIES.bob.pubkey;
@@ -163,8 +162,8 @@ async function injectWorkspace(page: Page) {
   );
 }
 
-test.describe("work-tree sidebar (#203)", () => {
-  test("folder is office, thread is the channel session, needs-you deep-links", async ({
+test.describe("work-tree sidebar (#203 / #223)", () => {
+  test("office channel stays in Channels; needs-you deep-links", async ({
     page,
   }) => {
     await seedGlowmaxProject(page);
@@ -185,9 +184,10 @@ test.describe("work-tree sidebar (#203)", () => {
       ],
     });
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(
-      page.getByTestId("work-tree-folder-engineering"),
-    ).toBeVisible();
+    await expect(page.getByTestId("work-tree-projects")).toHaveCount(0);
+    await expect(page.getByTestId("work-tree-folder-engineering")).toHaveCount(
+      0,
+    );
     await expect(
       page.getByTestId("stream-list").getByTestId("channel-general"),
     ).toBeVisible();
@@ -196,12 +196,9 @@ test.describe("work-tree sidebar (#203)", () => {
     ).toBeVisible();
     await expect(
       page.getByTestId("stream-list").getByTestId("channel-engineering"),
-    ).toHaveCount(0);
+    ).toBeVisible();
     await expect(page.getByTestId("dm-list")).toBeVisible();
     await expect(page.getByTestId("needs-you-section")).toHaveCount(0);
-    await expect(page.getByTestId("work-tree-folder-badge-live")).toHaveCount(
-      0,
-    );
     await waitForAnimations(page);
     await page.screenshot({
       path: `${SHOTS}/01-all-quiet.png`,
@@ -232,55 +229,12 @@ test.describe("work-tree sidebar (#203)", () => {
     await seedWorkThread(page, Math.floor(Date.now() / 1000) - 60);
     await injectWorkspace(page);
 
-    const threadRow = page.getByTestId(`work-thread-row-${ROOT_A}`);
-    await expect(threadRow).toBeVisible();
+    await expect(page.getByTestId("work-tree-projects")).toHaveCount(0);
+    await expect(page.getByTestId(`work-thread-row-${ROOT_A}`)).toHaveCount(0);
     await expect(page.getByTestId("needs-you-section")).toBeVisible();
-    await expect(
-      page.getByTestId("work-tree-folder-badge-needs-you"),
-    ).toBeVisible();
     await waitForAnimations(page);
     await page.screenshot({
-      path: `${SHOTS}/02-expanded-folder.png`,
-      clip: SIDEBAR_CLIP,
-    });
-
-    await page.getByTestId("work-tree-disclosure-engineering").click();
-    await expect(threadRow).toHaveCount(0);
-    await expect(
-      page.getByTestId("work-tree-disclosure-engineering"),
-    ).toHaveAttribute("aria-expanded", "false");
-    await expect(
-      page.getByTestId("work-tree-folder-badge-needs-you"),
-    ).toBeVisible();
-
-    await page.evaluate(
-      ({ content, id, parentEventId, pubkey }) => {
-        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
-          channelName: "engineering",
-          content,
-          createdAt: Math.floor(Date.now() / 1000) + 2,
-          id,
-          parentEventId,
-          pubkey,
-        });
-      },
-      {
-        content: "Live bump on the paywall thread",
-        id: LIVE_REPLY_ID,
-        parentEventId: ROOT_A,
-        pubkey: HERMES,
-      },
-    );
-    await expect(
-      page.getByTestId("work-tree-disclosure-engineering"),
-    ).toHaveAttribute("aria-expanded", "false");
-    await expect(threadRow).toHaveCount(0);
-    await expect(
-      page.getByTestId("work-tree-folder-badge-needs-you"),
-    ).toBeVisible();
-    await waitForAnimations(page);
-    await page.screenshot({
-      path: `${SHOTS}/03-collapsed-live.png`,
+      path: `${SHOTS}/02-needs-you.png`,
       clip: SIDEBAR_CLIP,
     });
 
@@ -291,7 +245,7 @@ test.describe("work-tree sidebar (#203)", () => {
     ).toBeVisible();
     await waitForAnimations(page);
     await page.screenshot({
-      path: `${SHOTS}/04-needs-you-panel.png`,
+      path: `${SHOTS}/03-needs-you-panel.png`,
       clip: SIDEBAR_CLIP,
     });
 
@@ -299,28 +253,6 @@ test.describe("work-tree sidebar (#203)", () => {
     await expect(page.getByTestId("message-thread-panel")).toBeVisible();
     await expect(page).toHaveURL(new RegExp(`/channels/${ENGINEERING_ID}`));
     await expect(page.getByTestId("workbench-screen")).toHaveCount(0);
-
-    await page.getByTestId("work-tree-disclosure-engineering").click();
-    await expect(threadRow).toBeVisible();
-    await threadRow.click();
-    await expect(page.getByTestId("message-thread-panel")).toBeVisible();
-    await expect(page).toHaveURL(new RegExp(`/channels/${ENGINEERING_ID}`));
-    await expect(page.getByTestId("workbench-screen")).toHaveCount(0);
-
-    await page.getByTestId("work-tree-disclosure-engineering").focus();
-    await page.keyboard.press("ArrowDown");
-    await page.keyboard.press("Enter");
-    await expect(page).toHaveURL(new RegExp(`/channels/${ENGINEERING_ID}`));
-    await page.getByTestId("work-tree-disclosure-engineering").focus();
-    await page.keyboard.press("ArrowLeft");
-    await expect(
-      page.getByTestId("work-tree-disclosure-engineering"),
-    ).toHaveAttribute("aria-expanded", "false");
-    await page.keyboard.press("ArrowRight");
-    await expect(
-      page.getByTestId("work-tree-disclosure-engineering"),
-    ).toHaveAttribute("aria-expanded", "true");
-    await expect(threadRow).toBeVisible();
 
     const files = (await readdir(SHOTS)).filter((name) =>
       name.endsWith(".png"),
