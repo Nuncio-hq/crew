@@ -13,7 +13,10 @@ const [
   editBindingSource,
   comboboxSource,
 ] = await Promise.all([
-  readFile(new URL("./HermesProfileBindingFields.tsx", import.meta.url), "utf8"),
+  readFile(
+    new URL("./HermesProfileBindingFields.tsx", import.meta.url),
+    "utf8",
+  ),
   readFile(new URL("./createHermesBindingFields.tsx", import.meta.url), "utf8"),
   readFile(new URL("./editHermesBinding.ts", import.meta.url), "utf8"),
   readFile(new URL("./HermesProfileCombobox.tsx", import.meta.url), "utf8"),

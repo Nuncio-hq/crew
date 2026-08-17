@@ -118,7 +118,10 @@ export function HermesProfileCombobox({
         >
           <Input
             autoCorrect="off"
-            className={cn("h-8 px-0 py-0 leading-6", PERSONA_FIELD_CONTROL_CLASS)}
+            className={cn(
+              "h-8 px-0 py-0 leading-6",
+              PERSONA_FIELD_CONTROL_CLASS,
+            )}
             disabled={disabled}
             id={id}
             onChange={(event) => {
