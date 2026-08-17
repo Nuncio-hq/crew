@@ -80,18 +80,18 @@ The local upstream push URL is deliberately disabled. Never push to
 | `desktop/src-tauri/src/commands/project_worktree_registry_parse.rs` | classify managed by `.buzz-worktrees` parent, not `buzz/<12hex>` only (#187) | primary stays Main / never GC; shared `ws=branch:` worktrees are Managed |
 | `desktop/src-tauri/src/commands/worktree_storage_aggregate.rs` | shared idle = max lastUsedAt across path (#187) | keep #174 suggest-and-confirm; do not GC the canonical checkout |
 | `desktop/src-tauri/src/commands/project_worktree_reclaim.rs` | path-lease busy probe (#187) | Busy remains a refusal, not an error |
-| `desktop/src/app/routes.ts` | register `/workbench` + `/workbench/$channelId/$threadRootId` (#186) | keep the two `route()` lines next to projects; screens live in Crew-owned files |
-| `desktop/src/app/routeTree.gen.ts` | TanStack generated tree for the workbench routes (#186) | regenerate on desktop build; do not hand-edit on sync unless the generator is skipped |
-| `desktop/src/app/AppShell.helpers.ts` | `AppView` + `deriveShellRoute` include `"workbench"` (#186) | one union member + one pathname arm |
-| `desktop/src/app/navigation/useAppNavigation.ts` | `goWorkbench` (#186) | keep next to `goProjects`; search is lens/office/messageId only |
-| `desktop/src/app/AppShell.tsx` | sidebar `onSelectWorkbench` (#186) | one callback pass-through |
-| `desktop/src/features/sidebar/ui/AppSidebar.tsx` | `selectedView` + `onSelectWorkbench` prop (#186) | keep the union compact (D-022); menu markup lives in `AppSidebarPinnedHeader` |
-| `desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx` | Workbench nav item after Projects (#186) | one `SidebarMenuItem`; do not restyle neighboring entries |
-| `desktop/src/features/messages/ui/message-thread-panel-head.tsx` | "Open workbench" entry (#186) | keep the button in the Crew-owned `ThreadWorkbenchEntryButton` |
-| `desktop/src/features/messages/ui/UnreadDivider.tsx` | optional `label` for workbench catch-up copy (#186) | default remains `"New"`; workbench passes `"NEW since you were here"` |
-| `desktop/src/features/home/ui/HomeView.tsx` | Mission Inbox workbench deep-link via `getMissionInboxEventTarget` (#186) | do not navigate on unverified `row.channelId` |
-| `desktop/src/features/home/ui/InboxListPane.tsx` | `onOpenMissionWorkbench` pass-through (#186) | one prop; hammer lives in `MissionInboxSections` |
-| `desktop/src/features/home/ui/MissionInboxSections.tsx` | workbench hammer distinct from channel door (#186) | `getMissionInboxEventTarget` then `goWorkbench` — do not reuse `openMissionRow` |
+| `desktop/src/app/routes.ts` | keep `/workbench` + `/workbench/$channelId/$threadRootId` (#186/#219) | routes redirect; do not restore a picker screen |
+| `desktop/src/app/routeTree.gen.ts` | TanStack generated tree for the workbench redirect routes (#186/#219) | regenerate on desktop build; do not hand-edit on sync unless the generator is skipped |
+| `desktop/src/app/AppShell.helpers.ts` | `/workbench` maps to Inbox or the channel session (#219) | do not restore `selectedView: "workbench"` |
+| `desktop/src/app/navigation/useAppNavigation.ts` | `goWorkbench` opens the channel session or Inbox (#219) | keep next to `goProjects`; never navigate to a picker place |
+| `desktop/src/app/AppShell.tsx` | work-tree thread click opens the channel session (#219) | no sidebar Workbench destination |
+| `desktop/src/features/sidebar/ui/AppSidebar.tsx` | no `onSelectWorkbench` (#219) | keep the union compact (D-022); menu markup lives in `AppSidebarPinnedHeader` |
+| `desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx` | no Workbench nav item (#219) | do not restyle neighboring entries |
+| `desktop/src/features/messages/ui/message-thread-panel-head.tsx` | live-job desk mount (#219) | desk lives in Crew-owned `LiveJobDesk`; no "Open workbench" |
+| `desktop/src/features/messages/ui/UnreadDivider.tsx` | optional `label` for workbench catch-up copy (#186) | default remains `"New"`; leftover workbench helpers may still pass `"NEW since you were here"` |
+| `desktop/src/features/home/ui/HomeView.tsx` | Mission Inbox opens the channel session (#219) | do not navigate on unverified `row.channelId` |
+| `desktop/src/features/home/ui/InboxListPane.tsx` | no workbench hammer pass-through (#219) | Inbox still picks via existing row / channel door |
+| `desktop/src/features/home/ui/MissionInboxSections.tsx` | no workbench hammer (#219) | channel door remains |
 | `desktop/src-tauri/src/lib.rs` | #196 Tool Pane: `start_background` + `invoke::desktop_invoke_handler!()` (command table extracted so this file stays ≤1000; macro expands at crate root for Tauri `__cmd__*` macros); restore `tauri::Listener` for macOS `.once` | keep `manage(ResourceGovernorHandle)` + `start_background`; do not move `generate_handler!` into a submodule |
 | `desktop/src-tauri/src/invoke.rs` | #196 command table extracted from `lib.rs` | names only; expand the macro from crate root |
 | `desktop/src-tauri/src/egress_guard_tests.rs` | #196 invoke table moved to `invoke.rs` | keep `invoke.rs` on the ncryptsec filename allowlist next to `lib.rs` |

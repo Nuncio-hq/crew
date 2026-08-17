@@ -1,39 +1,21 @@
-import * as React from "react";
-import { createFileRoute } from "@tanstack/react-router";
-
-import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
-import { parseWorkbenchLens } from "@/features/workbench/lib/workbenchRoutes";
-
-const WorkbenchScreen = React.lazy(async () => {
-  const module = await import("@/features/workbench/ui/WorkbenchScreen");
-  return { default: module.WorkbenchScreen };
-});
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/workbench/$channelId/$threadRootId")({
-  component: WorkbenchThreadRouteComponent,
-  validateSearch: (search: Record<string, unknown>) => ({
-    lens: parseWorkbenchLens(search.lens),
-    office:
-      search.office === "1" ||
-      search.office === true ||
-      search.office === "true",
-    messageId:
-      typeof search.messageId === "string" ? search.messageId : undefined,
-  }),
+  beforeLoad: ({ params, search }) => {
+    const messageId =
+      search &&
+      typeof search === "object" &&
+      "messageId" in search &&
+      typeof search.messageId === "string"
+        ? search.messageId
+        : undefined;
+    throw redirect({
+      to: "/channels/$channelId",
+      params: { channelId: params.channelId },
+      search: {
+        thread: params.threadRootId,
+        ...(messageId ? { messageId, threadRootId: params.threadRootId } : {}),
+      },
+    });
+  },
 });
-
-function WorkbenchThreadRouteComponent() {
-  const { channelId, threadRootId } = Route.useParams();
-  const { lens, office, messageId } = Route.useSearch();
-  return (
-    <React.Suspense fallback={<ViewLoadingFallback kind="projects" />}>
-      <WorkbenchScreen
-        channelId={channelId}
-        lens={lens}
-        messageId={messageId}
-        office={office}
-        threadRootId={threadRootId}
-      />
-    </React.Suspense>
-  );
-}

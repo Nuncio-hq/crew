@@ -168,6 +168,7 @@ export default defineConfig({
         "**/hermes-profile-lifecycle.spec.ts",
         "**/mission-inbox.spec.ts",
         "**/workbench.spec.ts",
+        "**/live-job-desk.spec.ts",
         "**/work-tree-sidebar.spec.ts",
         "**/org-hierarchy.spec.ts",
         "**/crew-wiki.spec.ts",

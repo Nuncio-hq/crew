@@ -33,7 +33,7 @@ export function WorkTreeSection({
           <WorkTreeFolder
             folder={folder}
             isActive={
-              (selectedView === "channel" || selectedView === "workbench") &&
+              selectedView === "channel" &&
               selectedChannelId === folder.channelId
             }
             key={folder.channelId}

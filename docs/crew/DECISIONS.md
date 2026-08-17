@@ -1480,7 +1480,25 @@ adds a row.
 
 See spikes 0049–0051.
 
+## D-065 — No Workbench place; desk only when a job is live
 
+- **Status:** Accepted
+- **Date:** 2026-08-17
+- **Issue:** #219
+- **Supersedes:** D-055 items 1–2 (two doors + rail as a destination).
+  D-055 component-reuse (item 5) still stands for leftover helpers.
 
+Inbox is the queue (pick). Channel is the talk and holds the session.
+Workbench is not a third room. The #186 full-screen Thread Workbench
+(rail picker, sidebar destination, "Open workbench", inbox hammer) is
+removed. `/workbench` redirects to Inbox; `/workbench/:channel/:thread`
+redirects to the same channel thread.
 
+If a work surface exists, it is a **desk** on that channel thread. It
+appears only when an agent job is live (`working` or `needs-you`, an
+active turn, or pending user-input). No job → no desk. The desk is
+Steer / Stop for the live agent. It does not list Mentions or threads.
+
+`goWorkbench` is a compatibility alias: it opens the channel session or
+Inbox, never a picker place.
 

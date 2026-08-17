@@ -1,11 +1,10 @@
-import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { HuddleTranscriptIntro } from "@/features/huddle/components/HuddleTranscriptIntro";
 import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import { THREAD_PANEL_MESSAGE_GUTTER_CLASS } from "@/features/messages/lib/messageThreadPanelLayout";
 import type { VideoReviewPresentation } from "@/features/messages/lib/videoReviewContext";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
-import { ThreadWorkbenchEntryButton } from "@/features/workbench/ui/ThreadWorkbenchEntryButton";
+import { LiveJobDesk } from "@/features/workbench/ui/LiveJobDesk";
 import { cn } from "@/shared/lib/cn";
 import { MessageRow } from "./MessageRow";
 import { SessionAgingBannerSlot } from "./SessionAgingBannerSlot";
@@ -53,7 +52,6 @@ export function MessageThreadPanelHead({
   threadHead: TimelineMessage;
   videoReviewPresentation?: VideoReviewPresentation;
 }) {
-  const { goWorkbench } = useAppNavigation();
   const videoReviewContext = videoReviewPresentation?.contextsByMessageId.get(
     threadHead.id,
   );
@@ -126,13 +124,7 @@ export function MessageThreadPanelHead({
         rootEventId={threadHead.id}
       />
       {channelId && !isHuddleTranscript ? (
-        <div className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-2")}>
-          <ThreadWorkbenchEntryButton
-            onOpen={() => {
-              void goWorkbench(channelId, threadHead.id);
-            }}
-          />
-        </div>
+        <LiveJobDesk channelId={channelId} threadRootId={threadHead.id} />
       ) : null}
     </>
   );

@@ -26,7 +26,6 @@ import { useHomeInboxAutoSelection } from "@/features/home/useHomeInboxAutoSelec
 import { useHomeInboxContextMessages } from "@/features/home/useHomeInboxContextMessages";
 import { useHomePersonalInbox } from "@/features/home/useHomePersonalInbox";
 import { useVerifiedMissionSelection } from "@/features/home/useVerifiedMissionSelection";
-import { getMissionInboxEventTarget } from "@/features/home/lib/missionInbox";
 import { useMissionInboxSections } from "@/features/home/useMissionInboxSections";
 import { useHomeInboxSendReply } from "@/features/home/useHomeInboxSendReply";
 import { useHomeMissionInboxListActions } from "@/features/home/useHomeMissionInboxListActions";
@@ -166,17 +165,7 @@ export function HomeView({
     applyInboxSearchPatch,
     onOpenContext,
   );
-  const { goChannel, goWorkbench } = useAppNavigation();
-  const openMissionWorkbench = React.useCallback(
-    async (row: Parameters<typeof getMissionInboxEventTarget>[0]) => {
-      const target = await getMissionInboxEventTarget(row);
-      if (!target) return;
-      void goWorkbench(target.channelId, target.threadRootId, {
-        messageId: target.messageId,
-      });
-    },
-    [goWorkbench],
-  );
+  const { goChannel } = useAppNavigation();
   const openDmMutation = useOpenDmMutation();
   const openDm = openDmMutation.mutateAsync;
   const handleUserSelectItem = React.useCallback(
@@ -725,9 +714,6 @@ export function HomeView({
               missionSections={missionSections}
               missionSelectedConversationId={selectedConversationId}
               onOpenMissionChannel={openMissionRow}
-              onOpenMissionWorkbench={(row) => {
-                void openMissionWorkbench(row);
-              }}
               onSelectMission={handleSelectMission}
               onUnreadOnlyChange={handleUnreadOnlyChange}
               reminderPubkey={currentPubkey}

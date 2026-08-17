@@ -138,23 +138,23 @@ export function useAppNavigation() {
       channelId && threadRootId
         ? commitNavigation(
             {
-              to: "/workbench/$channelId/$threadRootId",
-              params: { channelId, threadRootId },
+              to: "/channels/$channelId",
+              params: { channelId },
               search: {
-                ...(options?.lens === "agent" ? { lens: "agent" } : {}),
-                ...(options?.office ? { office: "1" } : {}),
-                ...(options?.messageId ? { messageId: options.messageId } : {}),
+                thread: threadRootId,
+                ...(options?.messageId
+                  ? {
+                      messageId: options.messageId,
+                      threadRootId,
+                    }
+                  : {}),
               },
             },
             { replace: options?.replace },
           )
         : commitNavigation(
             {
-              to: "/workbench",
-              search: {
-                ...(options?.lens === "agent" ? { lens: "agent" } : {}),
-                ...(options?.office ? { office: "1" } : {}),
-              },
+              to: "/",
             },
             { replace: options?.replace },
           ),

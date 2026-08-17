@@ -15,16 +15,10 @@ export function workbenchHref(
   threadRootId?: string | null,
   search: WorkbenchSearch = {},
 ): string {
-  const params = new URLSearchParams();
-  if (search.lens === "agent") params.set("lens", "agent");
-  if (search.office) params.set("office", "1");
-  if (search.messageId) params.set("messageId", search.messageId);
-  const query = params.toString();
-  const suffix = query ? `?${query}` : "";
   if (!channelId || !threadRootId) {
-    return `/workbench${suffix}`;
+    return "/";
   }
-  return `/workbench/${encodeURIComponent(channelId)}/${encodeURIComponent(threadRootId)}${suffix}`;
+  return channelHrefFromWorkbench(channelId, threadRootId, search.messageId);
 }
 
 export function channelHrefFromWorkbench(
