@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -189,6 +189,43 @@ impl std::fmt::Display for ThreadWorkspaceRootVerificationError {
 
 impl std::error::Error for ThreadWorkspaceRootVerificationError {}
 
+/// Configured Project workspace path is gone. Recover: pick a folder again.
+/// This is not a transport/protocol crash and must not circuit-open the agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ThreadWorkspaceMissing {
+    pub(crate) path: PathBuf,
+}
+
+impl ThreadWorkspaceMissing {
+    pub(crate) const RECOVER_MESSAGE: &'static str =
+        "The Project folder is gone. Pick a workspace again.";
+}
+
+impl std::fmt::Display for ThreadWorkspaceMissing {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Project workspace does not exist: {}. {}",
+            self.path.display(),
+            Self::RECOVER_MESSAGE
+        )
+    }
+}
+
+impl std::error::Error for ThreadWorkspaceMissing {}
+
+fn canonicalize_project_workspace(path: &Path) -> Result<PathBuf> {
+    match fs::canonicalize(path) {
+        Ok(canonical) => Ok(canonical),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(ThreadWorkspaceMissing {
+            path: path.to_path_buf(),
+        }
+        .into()),
+        Err(error) => Err(error)
+            .with_context(|| format!("Project workspace does not exist: {}", path.display())),
+    }
+}
+
 impl ThreadWorkspaceBranchConflict {
     fn new(worktree_path: &Path, current_branch: String, expected_branch: &str) -> Self {
         Self {
@@ -326,12 +363,7 @@ pub async fn plan_thread_worktree(
     if workspace.mode == WorkspaceMode::Folder {
         return folder::plan_folder_workspace(workspace, root_event_id);
     }
-    let selected_path = fs::canonicalize(&workspace.local_path).with_context(|| {
-        format!(
-            "Project workspace does not exist: {}",
-            workspace.local_path.display()
-        )
-    })?;
+    let selected_path = canonicalize_project_workspace(&workspace.local_path)?;
     let repo_root = git_output(&selected_path, ["rev-parse", "--show-toplevel"]).await?;
     let repo_root =
         fs::canonicalize(repo_root.trim()).context("could not canonicalize git repository root")?;

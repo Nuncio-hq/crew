@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   buildProjectThreadAgentSteps,
   collectProjectThreadAgentMentions,
+  isMissingFolderWorkspaceError,
+  parseCrewRepoAddress,
   parseProjectThreadContext,
   projectThreadRootAudiencePubkeys,
   projectThreadStickyBarOwnsAgentSignal,
@@ -159,6 +161,44 @@ test("an agent introduced only in a reply is retained", () => {
     }),
     [{ pubkey: "agent-c", source: "reply" }],
   );
+});
+
+test("Crew repo addresses parse owner and dtag for relink", () => {
+  assert.deepEqual(
+    parseCrewRepoAddress(
+      "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:crew",
+    ),
+    {
+      owner: "a".repeat(64),
+      dtag: "crew",
+    },
+  );
+  assert.equal(parseCrewRepoAddress("Nuncio-hq/crew"), null);
+});
+
+test("missing-folder workspace errors are the recover path, not a generic setup failure", () => {
+  assert.equal(
+    isMissingFolderWorkspaceError({
+      status: "error",
+      agentPubkey: "agent-a",
+      conversationId: "conversation-a",
+      message: "The Project folder is gone. Pick a workspace again.",
+      reason: "missing-folder",
+      rootEventId: "a".repeat(64),
+    }),
+    true,
+  );
+  assert.equal(
+    isMissingFolderWorkspaceError({
+      status: "error",
+      agentPubkey: "agent-a",
+      conversationId: "conversation-a",
+      message: "branch already checked out",
+      rootEventId: "a".repeat(64),
+    }),
+    false,
+  );
+  assert.equal(isMissingFolderWorkspaceError({ status: "pending" }), false);
 });
 
 test("composer audience remains limited to agents mentioned at the root", () => {

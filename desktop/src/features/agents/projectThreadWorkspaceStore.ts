@@ -31,6 +31,7 @@ export type ProjectThreadWorkspaceSnapshot =
       agentPubkey: string;
       conversationId: string | null;
       message: string;
+      reason?: "missing-folder";
       rootEventId: string;
     };
 
@@ -124,12 +125,15 @@ export function ingestProjectThreadWorkspaceEvent(
   if (event.kind === "thread_workspace_error") {
     const message = nonEmpty(payload.message);
     if (!message) return;
+    const reason =
+      payload.reason === "missing-folder" ? "missing-folder" : undefined;
     setWorkspaceEntry(rootEventId, {
       snapshot: {
         status: "error",
         agentPubkey,
         conversationId: event.conversationId ?? null,
         message,
+        ...(reason ? { reason } : {}),
         rootEventId,
       },
       watermark,

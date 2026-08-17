@@ -104,6 +104,55 @@ fn rejects_relative_workspace_path() {
 }
 
 #[tokio::test]
+async fn missing_git_workspace_folder_is_a_typed_recover_error() {
+    let missing = PathBuf::from("/definitely-missing-nuncio-217/crew");
+    let workspace = ProjectWorkspace {
+        repo_address: "30617:ab:crew".into(),
+        local_path: missing.clone(),
+        binding: Default::default(),
+        mode: crate::thread_workspace::WorkspaceMode::Git,
+    };
+    let error = plan_thread_worktree(&workspace, &"a".repeat(64))
+        .await
+        .expect_err("a deleted Project folder must fail planning");
+    let missing_folder = error
+        .downcast_ref::<crate::thread_workspace::ThreadWorkspaceMissing>()
+        .expect("missing folder must be a typed recover error, not opaque anyhow");
+    assert_eq!(missing_folder.path, missing);
+    let message = error.to_string();
+    assert!(
+        message.contains("Project workspace does not exist"),
+        "log copy must keep the existing missing-folder prefix: {message}"
+    );
+    assert!(
+        message.contains("Pick a workspace again"),
+        "recover copy must tell the owner they can pick a folder again: {message}"
+    );
+}
+
+#[tokio::test]
+async fn missing_folder_workspace_is_a_typed_recover_error() {
+    let missing = PathBuf::from("/definitely-missing-nuncio-217/docs");
+    let workspace = ProjectWorkspace {
+        repo_address: "30617:ab:docs".into(),
+        local_path: missing.clone(),
+        binding: Default::default(),
+        mode: crate::thread_workspace::WorkspaceMode::Folder,
+    };
+    let error = plan_thread_worktree(&workspace, &"b".repeat(64))
+        .await
+        .expect_err("a deleted Cowork folder must fail planning");
+    let missing_folder = error
+        .downcast_ref::<crate::thread_workspace::ThreadWorkspaceMissing>()
+        .expect("missing folder must be a typed recover error, not opaque anyhow");
+    assert_eq!(missing_folder.path, missing);
+    assert!(
+        error.to_string().contains("Pick a workspace again"),
+        "recover copy must tell the owner they can pick a folder again: {error}"
+    );
+}
+
+#[tokio::test]
 async fn plan_folder_workspace_skips_git_and_uses_shadow_history() {
     let fixture = std::env::temp_dir().join(format!("buzz-cowork-plan-{}", Uuid::new_v4()));
     let folder = fixture.join("docs");

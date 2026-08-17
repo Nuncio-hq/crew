@@ -1,5 +1,7 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, GitBranch, Route, Users } from "lucide-react";
 import * as React from "react";
+import { toast } from "sonner";
 
 import {
   getActiveTurnActivityBounds,
@@ -32,6 +34,13 @@ import {
   parseForgePullRequestUrl,
   parseRepoAddress,
 } from "@/features/messages/lib/parseForgePullRequestUrl";
+import {
+  isMissingFolderWorkspaceError,
+  parseCrewRepoAddress,
+} from "@/features/messages/lib/projectThreadWorkspace";
+import { linkCurrentProjectWorkspace } from "@/features/projects/lib/project-local-workspace-runtime";
+import { useIdentityQuery } from "@/shared/api/hooks";
+import { chooseProjectWorkspaceFolder } from "@/shared/api/tauri-project-folder-dialog";
 import {
   getThreadForgeHubSubject,
   setThreadForgeHubSubject,
@@ -235,6 +244,36 @@ export function ProjectThreadWorkspacePanel({
     conversationId,
   );
   const connectionState = useAgentObserverConnectionState(workingPubkeys);
+  const identityQuery = useIdentityQuery();
+  const queryClient = useQueryClient();
+  const pickFolder = React.useCallback(async () => {
+    if (!channelId || !model) return;
+    const parsed = parseCrewRepoAddress(model.context.repoAddress);
+    const currentPubkey = identityQuery.data?.pubkey;
+    if (!parsed || !currentPubkey) {
+      toast.error("Relink this Project from Local workspace.");
+      return;
+    }
+    try {
+      const path = await chooseProjectWorkspaceFolder();
+      if (!path) return;
+      await linkCurrentProjectWorkspace({
+        owner: parsed.owner,
+        currentPubkey,
+        dtag: parsed.dtag,
+        channelId,
+        localPath: path,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["crew-project-announcement"],
+      });
+      toast.success("Project workspace linked. Send a new message to use it.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not link workspace.",
+      );
+    }
+  }, [channelId, identityQuery.data?.pubkey, model, queryClient]);
   React.useSyncExternalStore(
     subscribeAgentAttentionSnoozes,
     getAgentAttentionSnoozeGeneration,
@@ -549,6 +588,9 @@ export function ProjectThreadWorkspacePanel({
             context={context}
             onClose={closeDrawer}
             onGitHubRefresh={model.refreshGitHub}
+            onPickFolder={
+              isMissingFolderWorkspaceError(workspace) ? pickFolder : undefined
+            }
             profiles={profiles}
             pullRequest={pullRequest}
             steps={steps}

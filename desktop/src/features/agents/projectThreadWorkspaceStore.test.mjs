@@ -111,6 +111,26 @@ test("error projection is scoped to its exact root", () => {
   });
 });
 
+test("missing-folder error preserves recover reason without leaking a path", () => {
+  ingestProjectThreadWorkspaceEvent(
+    "agent-a",
+    event("thread_workspace_error", {
+      rootEventId: root,
+      message: "The Project folder is gone. Pick a workspace again.",
+      reason: "missing-folder",
+    }),
+  );
+
+  assert.deepEqual(getProjectThreadWorkspaceSnapshot(root), {
+    status: "error",
+    agentPubkey: "agent-a",
+    conversationId: "conversation-a",
+    message: "The Project folder is gone. Pick a workspace again.",
+    reason: "missing-folder",
+    rootEventId: root,
+  });
+});
+
 test("newer ready projection rejects a stale error frame", () => {
   ingestProjectThreadWorkspaceEvent(
     "agent-a",
