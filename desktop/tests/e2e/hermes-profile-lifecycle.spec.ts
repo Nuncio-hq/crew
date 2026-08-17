@@ -33,6 +33,19 @@ async function openAgents(page: import("@playwright/test").Page) {
   });
 }
 
+async function openAgentDeleteDialog(
+  page: import("@playwright/test").Page,
+  agentName: string,
+) {
+  await page
+    .getByRole("button", { name: `${agentName} agent profile` })
+    .click();
+  const deleteRow = page.getByTestId("user-profile-delete-agent-row");
+  await expect(deleteRow).toBeVisible({ timeout: 10_000 });
+  await deleteRow.click();
+  return page.getByTestId("agent-delete-confirm-dialog");
+}
+
 test.describe("Hermes profile lifecycle acceptance", () => {
   test("readiness card renders every named state", async ({
     page,
@@ -114,13 +127,7 @@ test.describe("Hermes profile lifecycle acceptance", () => {
       ],
     });
     await openAgents(page);
-    await page
-      .getByRole("button", { name: "Running Hermes agent profile" })
-      .click();
-    await page.getByTestId("user-profile-settings-menu-trigger").click();
-    await page.getByRole("menuitem", { name: /Delete agent/i }).click();
-
-    const dialog = page.getByTestId("agent-delete-confirm-dialog");
+    const dialog = await openAgentDeleteDialog(page, "Running Hermes");
     await expect(dialog).toBeVisible();
     await expect(
       page.getByTestId("hermes-profile-offboard-keep"),
@@ -148,12 +155,7 @@ test.describe("Hermes profile lifecycle acceptance", () => {
       ],
     });
     await openAgents(page);
-    await page
-      .getByRole("button", { name: "Stopped Hermes agent profile" })
-      .click();
-    await page.getByTestId("user-profile-settings-menu-trigger").click();
-    await page.getByRole("menuitem", { name: /Delete agent/i }).click();
-    const dialog = page.getByTestId("agent-delete-confirm-dialog");
+    const dialog = await openAgentDeleteDialog(page, "Stopped Hermes");
     await dialog.getByTestId("hermes-profile-offboard-archive").check();
     await expect(
       page.getByTestId("hermes-profile-archive-estimate"),

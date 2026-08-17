@@ -1,13 +1,22 @@
 /**
  * Autocomplete combobox for Hermes profile names (feature 0001 Phase 04).
  * Keeps a real text input (id stable for E2E fill) and a popover list of disk profiles.
+ *
+ * The input is the search/value field, not the Radix trigger. Anchor the
+ * popover to the full field and ignore outside-dismiss from that field so
+ * focusing or clicking the input cannot close a sliver dropdown.
  */
 import { Check, ChevronsUpDown } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "@/shared/lib/cn";
 import { Input } from "@/shared/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/shared/ui/popover";
 import {
   filterHermesProfileOptions,
   hermesProfileOccupancyLabel,
@@ -39,6 +48,9 @@ export function HermesProfileCombobox({
 }) {
   const [open, setOpen] = React.useState(false);
   const [highlightedIndex, setHighlightedIndex] = React.useState(0);
+  const fieldRef = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const skipOpenOnFocusRef = React.useRef(false);
 
   const filtered = React.useMemo(
     () => filterHermesProfileOptions(profiles, value),
@@ -48,6 +60,20 @@ export function HermesProfileCombobox({
   function selectProfile(name: string) {
     onChange(name);
     setOpen(false);
+    // onCloseAutoFocus is prevented so the unmounting option cannot steal
+    // focus; put it back on the combobox input after a mouse pick without
+    // reopening the list through onFocus.
+    skipOpenOnFocusRef.current = true;
+    inputRef.current?.focus();
+  }
+
+  function preventDismissFromField(
+    event: CustomEvent<{ originalEvent: Event }>,
+  ) {
+    const target = event.detail.originalEvent.target;
+    if (target instanceof Node && fieldRef.current?.contains(target)) {
+      event.preventDefault();
+    }
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -89,48 +115,65 @@ export function HermesProfileCombobox({
 
   return (
     <Popover onOpenChange={setOpen} open={open}>
-      <div
-        className={cn(
-          "flex min-h-11 items-center gap-1 px-3",
-          PERSONA_FIELD_SHELL_CLASS,
-        )}
-      >
-        <Input
-          autoCorrect="off"
-          className={cn("h-8 px-0 py-0 leading-6", PERSONA_FIELD_CONTROL_CLASS)}
-          disabled={disabled}
-          id={id}
-          onChange={(event) => {
-            onChange(event.target.value);
-            setHighlightedIndex(0);
-            if (!open) setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={handleKeyDown}
-          placeholder="scout"
-          role="combobox"
-          spellCheck={false}
-          value={value}
-          aria-autocomplete="list"
-          aria-expanded={open}
-          aria-controls={open ? `${id}-listbox` : undefined}
-        />
-        <PopoverTrigger asChild>
-          <button
-            aria-label="Show Hermes profiles"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
-            data-testid="hermes-profile-combobox-trigger"
+      <PopoverAnchor asChild>
+        <div
+          className={cn(
+            "flex min-h-11 items-center gap-1 px-3",
+            PERSONA_FIELD_SHELL_CLASS,
+          )}
+          ref={fieldRef}
+        >
+          <Input
+            autoCorrect="off"
+            className={cn(
+              "h-8 px-0 py-0 leading-6",
+              PERSONA_FIELD_CONTROL_CLASS,
+            )}
             disabled={disabled}
-            type="button"
-          >
-            <ChevronsUpDown className="h-4 w-4" />
-          </button>
-        </PopoverTrigger>
-      </div>
+            id={id}
+            ref={inputRef}
+            onChange={(event) => {
+              onChange(event.target.value);
+              setHighlightedIndex(0);
+              if (!open) setOpen(true);
+            }}
+            onFocus={() => {
+              if (skipOpenOnFocusRef.current) {
+                skipOpenOnFocusRef.current = false;
+                return;
+              }
+              setOpen(true);
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="Search or type a profile name"
+            role="combobox"
+            spellCheck={false}
+            value={value}
+            aria-autocomplete="list"
+            aria-expanded={open}
+            aria-controls={open ? `${id}-listbox` : undefined}
+          />
+          <PopoverTrigger asChild>
+            <button
+              aria-label="Show Hermes profiles"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+              data-testid="hermes-profile-combobox-trigger"
+              disabled={disabled}
+              type="button"
+            >
+              <ChevronsUpDown className="h-4 w-4" />
+            </button>
+          </PopoverTrigger>
+        </div>
+      </PopoverAnchor>
       <PopoverContent
         align="start"
         className="w-(--radix-popover-trigger-width) p-0"
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        onFocusOutside={preventDismissFromField}
+        onInteractOutside={preventDismissFromField}
         onOpenAutoFocus={(event) => event.preventDefault()}
+        sideOffset={6}
       >
         <div
           className="max-h-60 overflow-y-auto p-1"

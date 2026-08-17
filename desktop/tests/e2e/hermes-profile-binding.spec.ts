@@ -45,9 +45,12 @@ async function openCreateCustomize(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-agents-view").click();
   await page.getByTestId("new-agent-card").click();
-  await page.getByRole("menuitem", { name: "Create agent" }).click();
   const dialog = page.getByTestId("persona-dialog");
   await expect(dialog).toBeVisible({ timeout: 10_000 });
+  const createChoice = page.getByTestId("agent-catalog-create");
+  if (await createChoice.isVisible()) {
+    await createChoice.click();
+  }
   await dialog.getByRole("tab", { name: "Customize for this agent" }).click();
   return dialog;
 }
@@ -166,17 +169,13 @@ test.describe("hermes profile binding", () => {
     await expect(page.getByTestId("hermes-profile-error")).toContainText(
       /lowercase/i,
     );
-    await expect(
-      dialog.getByRole("button", { name: /Create|Save|Start/i }).first(),
-    ).toBeDisabled();
+    await expect(createSubmit(dialog)).toBeDisabled();
 
     await profileInput.fill("default");
     await expect(page.getByTestId("hermes-profile-error")).toContainText(
       /default/i,
     );
-    await expect(
-      dialog.getByRole("button", { name: /Create|Save|Start/i }).first(),
-    ).toBeDisabled();
+    await expect(createSubmit(dialog)).toBeDisabled();
 
     await profileInput.fill("scout");
     await expect(page.getByTestId("hermes-profile-error")).toHaveCount(0);
@@ -217,6 +216,41 @@ test.describe("hermes profile binding", () => {
     await expect(page.getByTestId("hermes-profile-create-button")).toHaveCount(
       0,
     );
+  });
+
+  test("create: focusing the profile input keeps the list open so pick binds", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      hermesProfiles: ["scout", "builder", "default"],
+    });
+    const dialog = await openCreateCustomize(page);
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await waitForAnimations(page);
+
+    const profileInput = dialog.locator("#persona-hermes-profile");
+    await profileInput.click();
+    await waitForAnimations(page);
+
+    const list = page.getByTestId("hermes-profile-combobox-list");
+    await expect(list).toBeVisible();
+    await expect(list.getByTestId("hermes-profile-option")).toContainText([
+      "builder",
+      "scout",
+    ]);
+
+    await list
+      .getByTestId("hermes-profile-option")
+      .filter({ hasText: "scout" })
+      .click();
+    await expect(profileInput).toHaveValue("scout");
+    await expect(profileInput).toBeFocused();
+    await expect(list).toBeHidden();
+    await expect(page.getByTestId("hermes-effective-boundary")).toContainText(
+      "scout",
+    );
+    await expect(page.getByTestId("hermes-profile-error")).toHaveCount(0);
+    await expect(page.getByTestId("hermes-profile-model-field")).toBeVisible();
   });
 
   test("create: create-in-place button appears for a new valid profile name", async ({
@@ -291,9 +325,7 @@ test.describe("hermes profile binding", () => {
     await expect(page.getByTestId("hermes-profile-error")).toContainText(
       /already bound/i,
     );
-    await expect(
-      dialog.getByRole("button", { name: /Create|Save|Start/i }).first(),
-    ).toBeDisabled();
+    await expect(createSubmit(dialog)).toBeDisabled();
   });
 
   test("create: trusted owner-only local full-autonomy boundary is explicit", async ({
@@ -711,8 +743,9 @@ test.describe("hermes profile binding", () => {
       timeout: 10_000,
     });
 
-    await page.getByTestId("user-profile-settings-menu-trigger").click();
-    await page.getByRole("menuitem", { name: /Delete agent/i }).click();
+    const deleteRow = page.getByTestId("user-profile-delete-agent-row");
+    await expect(deleteRow).toBeVisible({ timeout: 10_000 });
+    await deleteRow.click();
     await waitForAnimations(page);
 
     const dialog = page.getByTestId("agent-delete-confirm-dialog");
