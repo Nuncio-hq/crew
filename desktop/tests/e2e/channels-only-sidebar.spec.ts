@@ -70,8 +70,11 @@ test.describe("channels-only sidebar (#223)", () => {
 
     const sidebar = page.getByTestId("app-sidebar");
     await expect(sidebar).toBeVisible();
-    await expect(page.getByTestId("sidebar-primary-menu")).toBeVisible();
-    await expect(sidebar.getByText("Inbox", { exact: true })).toBeVisible();
+    const primaryMenu = page.getByTestId("sidebar-primary-menu");
+    await expect(primaryMenu).toBeVisible();
+    await expect(
+      primaryMenu.getByRole("button", { name: "Inbox" }),
+    ).toBeVisible();
 
     await expect(page.getByTestId("work-tree-projects")).toHaveCount(0);
     await expect(page.getByTestId("work-tree-folder-engineering")).toHaveCount(
@@ -79,10 +82,12 @@ test.describe("channels-only sidebar (#223)", () => {
     );
     await expect(page.getByTestId("open-projects-view")).toHaveCount(0);
     await expect(page.getByTestId("open-workbench-view")).toHaveCount(0);
-    await expect(sidebar.getByText("Workbench", { exact: true })).toHaveCount(
-      0,
-    );
-    await expect(sidebar.getByText("Projects", { exact: true })).toHaveCount(0);
+    await expect(
+      primaryMenu.getByRole("button", { name: "Workbench" }),
+    ).toHaveCount(0);
+    await expect(
+      primaryMenu.getByRole("button", { name: "Projects" }),
+    ).toHaveCount(0);
 
     const channels = page.getByTestId("stream-list");
     await expect(channels.getByTestId("channel-general")).toBeVisible();
