@@ -743,8 +743,9 @@ test.describe("hermes profile binding", () => {
       timeout: 10_000,
     });
 
-    await page.getByTestId("user-profile-settings-menu-trigger").click();
-    await page.getByRole("menuitem", { name: /Delete agent/i }).click();
+    const deleteRow = page.getByTestId("user-profile-delete-agent-row");
+    await expect(deleteRow).toBeVisible({ timeout: 10_000 });
+    await deleteRow.click();
     await waitForAnimations(page);
 
     const dialog = page.getByTestId("agent-delete-confirm-dialog");
