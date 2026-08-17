@@ -11,8 +11,7 @@ export type AppView =
   | "pulse"
   | "projects"
   | "org"
-  | "wiki"
-  | "workbench";
+  | "wiki";
 
 const WINDOW_DRAG_HANDLE_HEIGHT = 44;
 const TAURI_DRAG_REGION_ATTR = "data-tauri-drag-region";
@@ -206,9 +205,10 @@ export function deriveShellRoute(pathname: string): {
   }
 
   if (pathname === "/workbench" || pathname.startsWith("/workbench/")) {
+    const [, , rawChannelId] = pathname.split("/");
     return {
-      selectedChannelId: null,
-      selectedView: "workbench",
+      selectedChannelId: rawChannelId ? decodeURIComponent(rawChannelId) : null,
+      selectedView: rawChannelId ? "channel" : "home",
     };
   }
 

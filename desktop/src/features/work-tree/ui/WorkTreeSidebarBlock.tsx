@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useLocation } from "@tanstack/react-router";
 
+import { selectedSessionFromLocation } from "@/features/workbench/lib/liveJobDesk";
 import {
   useNeedsYouItems,
   useWorkTreeProjection,
@@ -24,15 +25,7 @@ export function WorkTreeSidebarBlock({
   unreadChannelIds: ReadonlySet<string>;
 }) {
   const location = useLocation();
-  const workbenchMatch = location.pathname.match(
-    /^\/workbench\/([^/]+)\/([^/]+)/,
-  );
-  const workbenchChannelId = workbenchMatch
-    ? decodeURIComponent(workbenchMatch[1] ?? "")
-    : null;
-  const selectedThreadRootId = workbenchMatch
-    ? decodeURIComponent(workbenchMatch[2] ?? "")
-    : null;
+  const session = selectedSessionFromLocation(location);
   const { folders } = useWorkTreeProjection(unreadChannelIds);
   const needsYou = useNeedsYouItems();
   const [needsYouOpen, setNeedsYouOpen] = React.useState(false);
@@ -66,8 +59,8 @@ export function WorkTreeSidebarBlock({
         folders={folders}
         onSelectFolder={onSelectFolder}
         onSelectThread={handleSelectThread}
-        selectedChannelId={workbenchChannelId ?? selectedChannelId}
-        selectedThreadRootId={selectedThreadRootId}
+        selectedChannelId={session.channelId ?? selectedChannelId}
+        selectedThreadRootId={session.threadRootId}
         selectedView={selectedView}
       />
     </div>

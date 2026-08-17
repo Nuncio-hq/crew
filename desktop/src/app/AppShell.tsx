@@ -145,7 +145,6 @@ export function AppShell() {
     goWiki,
     goProjects,
     goPulse,
-    goWorkbench,
     goSettings,
     goWorkflows,
     closeSettings,
@@ -854,7 +853,7 @@ export function AppShell() {
                         onSelectAgents={() => void goAgents()}
                         onSelectChannel={handleSidebarChannelSelect}
                         onSelectThread={(channelId, threadRootId) => {
-                          void goWorkbench(channelId, threadRootId);
+                          void goChannel(channelId, { thread: threadRootId });
                         }}
                         onOpenSearchResult={handleOpenSearchResult}
                         searchChannels={channels}
@@ -866,7 +865,6 @@ export function AppShell() {
                         onSelectProjects={() => void goProjects()}
                         onSelectOrg={() => void goOrg()}
                         onSelectWiki={() => void goWiki()}
-                        onSelectWorkbench={() => void goWorkbench()}
                         onSelectPulse={() => void goPulse()}
                         onSelectSettings={handleOpenSettings}
                         onSelectWorkflows={() => void goWorkflows()}

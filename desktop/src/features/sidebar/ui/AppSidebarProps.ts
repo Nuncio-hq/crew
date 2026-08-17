@@ -71,7 +71,6 @@ export type AppSidebarProps = {
   onSelectProjects: () => void;
   onSelectOrg: () => void;
   onSelectWiki: () => void;
-  onSelectWorkbench: () => void;
   onSelectPulse: () => void;
   onSelectWorkflows: () => void;
   onSelectHome: () => void;

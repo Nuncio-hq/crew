@@ -164,7 +164,7 @@ async function injectWorkspace(page: Page) {
 }
 
 test.describe("work-tree sidebar (#203)", () => {
-  test("folder is office, thread is workbench, needs-you deep-links", async ({
+  test("folder is office, thread is the channel session, needs-you deep-links", async ({
     page,
   }) => {
     await seedGlowmaxProject(page);
@@ -296,20 +296,16 @@ test.describe("work-tree sidebar (#203)", () => {
     });
 
     await page.getByTestId(`needs-you-item-${REQUEST_ID}`).click();
-    await expect(page.getByTestId("workbench-screen")).toBeVisible();
-    await expect(page).toHaveURL(
-      new RegExp(`/workbench/${ENGINEERING_ID}/${ROOT_A}`),
-    );
-
-    await page.getByTestId("workbench-open-channel").click();
+    await expect(page.getByTestId("message-thread-panel")).toBeVisible();
     await expect(page).toHaveURL(new RegExp(`/channels/${ENGINEERING_ID}`));
+    await expect(page.getByTestId("workbench-screen")).toHaveCount(0);
+
     await page.getByTestId("work-tree-disclosure-engineering").click();
     await expect(threadRow).toBeVisible();
     await threadRow.click();
-    await expect(page.getByTestId("workbench-screen")).toBeVisible();
-    await expect(page).toHaveURL(
-      new RegExp(`/workbench/${ENGINEERING_ID}/${ROOT_A}`),
-    );
+    await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/channels/${ENGINEERING_ID}`));
+    await expect(page.getByTestId("workbench-screen")).toHaveCount(0);
 
     await page.getByTestId("work-tree-disclosure-engineering").focus();
     await page.keyboard.press("ArrowDown");

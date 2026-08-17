@@ -197,7 +197,6 @@ type InboxListPaneProps = {
   missionSections?: MissionInboxSections;
   onSelectMission?: (row: MissionInboxRow) => void;
   onOpenMissionChannel?: (row: MissionInboxRow) => void;
-  onOpenMissionWorkbench?: (row: MissionInboxRow) => void;
   missionSelectedConversationId?: string | null;
   onUnreadOnlyChange: (checked: boolean) => void;
   selectedConversationId: string | null;
@@ -239,7 +238,6 @@ export function InboxListPane({
   missionSections,
   onSelectMission,
   onOpenMissionChannel,
-  onOpenMissionWorkbench,
   missionSelectedConversationId,
 }: InboxListPaneProps) {
   const isReminders = filter === "reminders";
@@ -627,7 +625,6 @@ export function InboxListPane({
           {filter === "all" && missionSections ? (
             <MissionInboxSectionsView
               onOpenChannel={onOpenMissionChannel ?? (() => undefined)}
-              onOpenWorkbench={onOpenMissionWorkbench}
               onSelect={onSelectMission ?? (() => undefined)}
               sections={missionSections}
               selectedConversationId={missionSelectedConversationId}

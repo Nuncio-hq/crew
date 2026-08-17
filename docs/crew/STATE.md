@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #219 — Kill Workbench as a place; desk only when a job is live
+
+Inbox picks. Channel holds the session. The Thread Workbench picker
+(`/workbench` rail, sidebar destination, "Open workbench", inbox hammer)
+is gone. Old `/workbench` URLs redirect to Inbox or the same channel
+thread. A slim desk (Steer / Stop) appears on that thread only when an
+agent job is live (`working` / `needs-you`, active turn, or pending
+user-input). No job → no desk. No Mention list on the desk. See D-065.
+Last updated: 2026-08-17
+
 ## Issue #217 — Missing Project folder recovers instead of circuit-open
 
 If the configured Project workspace path is gone, the harness names a
@@ -37,7 +47,7 @@ Last updated: 2026-08-14
 Sidebar Projects section: exclusive project channels are folders;
 work-thread rows are sessions. Eligibility is workspace ∨ recent
 session ∨ needs-you (selector only). Folder click = timeline; thread
-click = workbench. Needs-you smart section hidden at 0. No cockpit.
+click = the channel session (#219). Needs-you smart section hidden at 0. No cockpit.
 Shared `WorkThreadRow` with #186. Spikes 0043–0045. D-062.
 Mock-bridge e2e seeds a unique 30617 (`d=glowmax`) bound to
 `#engineering` so `#general` stays a Slack row.
@@ -127,15 +137,11 @@ Last updated: 2026-08-13
 
 ## Issue #186 — Thread Workbench (one thread, two doors)
 
-Full-screen session view of a thread. Rail: By thread (primary,
-channel-grouped) / By agent (same destination). Composer uses a target
-chip (last-interacting default, Tab cycles, `@` overrides; Stop/Steer
-follow the chip; wire = ordinary mentions). Office view is a per-thread
-presentation filter, not a second app. Transcript reuses channel
-components (messages, evidence+#175 badge, 46040/46041, observer tools,
-#169 sleep/wake, #173 aging, catch-up `UnreadDivider`). No new
-authoritative state. See D-055.
-Last updated: 2026-08-13
+Superseded by #219 / D-065: the full-screen workbench place and rail
+are gone. Channel holds the session; a live-job desk is the only
+remaining work surface. D-055's component-reuse contract still applies
+to leftover workbench helpers.
+Last updated: 2026-08-17
 
 ## Issue #188 — Cowork Projects (non-git folders + shadow-git)
 

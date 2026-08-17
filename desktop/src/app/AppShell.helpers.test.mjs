@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  deriveShellRoute,
   markAllReadSources,
   shouldBounceForChannelNotification,
 } from "./AppShell.helpers.ts";
+
+const CHANNEL = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
+const ROOT = "1".repeat(64);
 
 test("shouldBounceForChannelNotification_allowsTopLevelChannelMessages", () => {
   assert.equal(shouldBounceForChannelNotification([["h", "channel"]]), true);
@@ -54,6 +58,17 @@ test("markAllReadSources clears Inbox overrides and active thread activity", () 
     "channels",
     "active:active-channel:300",
   ]);
+});
+
+test("deriveShellRoute does not treat /workbench as a picker place (#219)", () => {
+  assert.deepEqual(deriveShellRoute("/workbench"), {
+    selectedChannelId: null,
+    selectedView: "home",
+  });
+  assert.deepEqual(deriveShellRoute(`/workbench/${CHANNEL}/${ROOT}`), {
+    selectedChannelId: CHANNEL,
+    selectedView: "channel",
+  });
 });
 
 test("markAllReadSources skips the active marker without projected activity", () => {

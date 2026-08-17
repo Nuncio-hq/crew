@@ -112,7 +112,6 @@ export function AppSidebar({
   onSelectProjects,
   onSelectOrg,
   onSelectWiki,
-  onSelectWorkbench,
   onSelectPulse,
   onSelectWorkflows,
   onSelectHome,
@@ -523,7 +522,6 @@ export function AppSidebar({
                 onSelectProjects={onSelectProjects}
                 onSelectOrg={onSelectOrg}
                 onSelectWiki={onSelectWiki}
-                onSelectWorkbench={onSelectWorkbench}
                 onSelectPulse={onSelectPulse}
                 onSelectWorkflows={onSelectWorkflows}
                 selectedView={selectedView}

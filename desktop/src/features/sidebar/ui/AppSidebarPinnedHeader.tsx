@@ -3,7 +3,6 @@ import {
   BookOpen,
   Bot,
   FolderGit2,
-  Hammer,
   Inbox,
   Network,
   Zap,
@@ -30,8 +29,7 @@ export type SidebarSelectedView =
   | "pulse"
   | "projects"
   | "org"
-  | "wiki"
-  | "workbench";
+  | "wiki";
 
 type AppSidebarPinnedHeaderProps = {
   channelLabels: Record<string, string>;
@@ -56,7 +54,6 @@ type AppSidebarPrimaryMenuProps = {
   onSelectProjects: () => void;
   onSelectOrg: () => void;
   onSelectWiki: () => void;
-  onSelectWorkbench: () => void;
   onSelectPulse: () => void;
   onSelectWorkflows: () => void;
   selectedView: SidebarSelectedView;
@@ -108,7 +105,6 @@ export function AppSidebarPrimaryMenu({
   onSelectProjects,
   onSelectOrg,
   onSelectWiki,
-  onSelectWorkbench,
   onSelectPulse,
   onSelectWorkflows,
   selectedView,
@@ -198,18 +194,6 @@ export function AppSidebarPrimaryMenu({
           >
             <BookOpen className="h-4 w-4" />
             <SidebarMenuLabel>Wiki</SidebarMenuLabel>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            data-testid="open-workbench-view"
-            isActive={selectedView === "workbench"}
-            onClick={onSelectWorkbench}
-            tooltip="Workbench"
-            type="button"
-          >
-            <Hammer className="h-4 w-4" />
-            <SidebarMenuLabel>Workbench</SidebarMenuLabel>
           </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem>

@@ -15,10 +15,10 @@ describe("workbenchRoutes", () => {
     assert.equal(parseWorkbenchLens("agent"), "agent");
     assert.equal(parseWorkbenchLens("thread"), "thread");
     assert.equal(parseWorkbenchLens("nope"), "thread");
-    assert.equal(workbenchHref(), "/workbench");
+    assert.equal(workbenchHref(), "/");
     assert.equal(
       workbenchHref(CHANNEL, ROOT, { lens: "agent", office: true }),
-      `/workbench/${CHANNEL}/${ROOT}?lens=agent&office=1`,
+      `/channels/${CHANNEL}?thread=${ROOT}`,
     );
   });
 
