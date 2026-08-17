@@ -45,9 +45,12 @@ async function openCreateCustomize(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-agents-view").click();
   await page.getByTestId("new-agent-card").click();
-  await page.getByRole("menuitem", { name: "Create agent" }).click();
   const dialog = page.getByTestId("persona-dialog");
   await expect(dialog).toBeVisible({ timeout: 10_000 });
+  const createChoice = page.getByTestId("agent-catalog-create");
+  if (await createChoice.isVisible()) {
+    await createChoice.click();
+  }
   await dialog.getByRole("tab", { name: "Customize for this agent" }).click();
   return dialog;
 }
