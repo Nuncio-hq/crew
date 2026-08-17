@@ -219,6 +219,39 @@ test.describe("hermes profile binding", () => {
     );
   });
 
+  test("create: focusing the profile input keeps the list open so pick binds", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      hermesProfiles: ["scout", "builder", "default"],
+    });
+    const dialog = await openCreateCustomize(page);
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await waitForAnimations(page);
+
+    const profileInput = dialog.locator("#persona-hermes-profile");
+    await profileInput.click();
+    await waitForAnimations(page);
+
+    const list = page.getByTestId("hermes-profile-combobox-list");
+    await expect(list).toBeVisible();
+    await expect(list.getByTestId("hermes-profile-option")).toContainText([
+      "builder",
+      "scout",
+    ]);
+
+    await list
+      .getByTestId("hermes-profile-option")
+      .filter({ hasText: "scout" })
+      .click();
+    await expect(profileInput).toHaveValue("scout");
+    await expect(page.getByTestId("hermes-effective-boundary")).toContainText(
+      "scout",
+    );
+    await expect(page.getByTestId("hermes-profile-error")).toHaveCount(0);
+    await expect(page.getByTestId("hermes-profile-model-field")).toBeVisible();
+  });
+
   test("create: create-in-place button appears for a new valid profile name", async ({
     page,
   }) => {

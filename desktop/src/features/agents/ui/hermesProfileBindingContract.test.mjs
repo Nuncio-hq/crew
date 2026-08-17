@@ -7,18 +7,17 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-const [bindingFieldsSource, createBindingSource, editBindingSource] =
-  await Promise.all([
-    readFile(
-      new URL("./HermesProfileBindingFields.tsx", import.meta.url),
-      "utf8",
-    ),
-    readFile(
-      new URL("./createHermesBindingFields.tsx", import.meta.url),
-      "utf8",
-    ),
-    readFile(new URL("./editHermesBinding.ts", import.meta.url), "utf8"),
-  ]);
+const [
+  bindingFieldsSource,
+  createBindingSource,
+  editBindingSource,
+  comboboxSource,
+] = await Promise.all([
+  readFile(new URL("./HermesProfileBindingFields.tsx", import.meta.url), "utf8"),
+  readFile(new URL("./createHermesBindingFields.tsx", import.meta.url), "utf8"),
+  readFile(new URL("./editHermesBinding.ts", import.meta.url), "utf8"),
+  readFile(new URL("./HermesProfileCombobox.tsx", import.meta.url), "utf8"),
+]);
 
 import * as hermesProfileBinding from "../lib/hermesProfileBinding.ts";
 import {
@@ -186,6 +185,14 @@ test("profile field derives and renders the boundary from capability data", () =
   assert.match(bindingFieldsSource, /<ProfileBoundAgentBoundaryCard/);
   assert.match(bindingFieldsSource, /currentAgentName/);
   assert.doesNotMatch(bindingFieldsSource, /runtime\.id/);
+});
+
+test("profile combobox anchors to the field and ignores input dismiss", () => {
+  assert.match(comboboxSource, /PopoverAnchor/);
+  assert.match(comboboxSource, /onInteractOutside=\{preventDismissFromField\}/);
+  assert.match(comboboxSource, /onFocusOutside=\{preventDismissFromField\}/);
+  assert.match(comboboxSource, /Search or type a profile name/);
+  assert.doesNotMatch(comboboxSource, /placeholder="scout"/);
 });
 
 test("profile-bound access and backend violations have actionable copy", () => {
