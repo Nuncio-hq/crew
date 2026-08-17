@@ -49,6 +49,8 @@ export function HermesProfileCombobox({
   const [open, setOpen] = React.useState(false);
   const [highlightedIndex, setHighlightedIndex] = React.useState(0);
   const fieldRef = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const skipOpenOnFocusRef = React.useRef(false);
 
   const filtered = React.useMemo(
     () => filterHermesProfileOptions(profiles, value),
@@ -58,6 +60,11 @@ export function HermesProfileCombobox({
   function selectProfile(name: string) {
     onChange(name);
     setOpen(false);
+    // onCloseAutoFocus is prevented so the unmounting option cannot steal
+    // focus; put it back on the combobox input after a mouse pick without
+    // reopening the list through onFocus.
+    skipOpenOnFocusRef.current = true;
+    inputRef.current?.focus();
   }
 
   function preventDismissFromField(
@@ -124,12 +131,19 @@ export function HermesProfileCombobox({
             )}
             disabled={disabled}
             id={id}
+            ref={inputRef}
             onChange={(event) => {
               onChange(event.target.value);
               setHighlightedIndex(0);
               if (!open) setOpen(true);
             }}
-            onFocus={() => setOpen(true)}
+            onFocus={() => {
+              if (skipOpenOnFocusRef.current) {
+                skipOpenOnFocusRef.current = false;
+                return;
+              }
+              setOpen(true);
+            }}
             onKeyDown={handleKeyDown}
             placeholder="Search or type a profile name"
             role="combobox"

@@ -194,6 +194,8 @@ test("profile combobox anchors to the field and ignores input dismiss", () => {
   assert.match(comboboxSource, /PopoverAnchor/);
   assert.match(comboboxSource, /onInteractOutside=\{preventDismissFromField\}/);
   assert.match(comboboxSource, /onFocusOutside=\{preventDismissFromField\}/);
+  assert.match(comboboxSource, /inputRef\.current\?\.focus\(\)/);
+  assert.match(comboboxSource, /skipOpenOnFocusRef/);
   assert.match(comboboxSource, /Search or type a profile name/);
   assert.doesNotMatch(comboboxSource, /placeholder="scout"/);
 });

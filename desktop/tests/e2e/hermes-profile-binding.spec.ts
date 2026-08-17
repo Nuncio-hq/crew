@@ -169,17 +169,13 @@ test.describe("hermes profile binding", () => {
     await expect(page.getByTestId("hermes-profile-error")).toContainText(
       /lowercase/i,
     );
-    await expect(
-      dialog.getByRole("button", { name: /Create|Save|Start/i }).first(),
-    ).toBeDisabled();
+    await expect(createSubmit(dialog)).toBeDisabled();
 
     await profileInput.fill("default");
     await expect(page.getByTestId("hermes-profile-error")).toContainText(
       /default/i,
     );
-    await expect(
-      dialog.getByRole("button", { name: /Create|Save|Start/i }).first(),
-    ).toBeDisabled();
+    await expect(createSubmit(dialog)).toBeDisabled();
 
     await profileInput.fill("scout");
     await expect(page.getByTestId("hermes-profile-error")).toHaveCount(0);
@@ -248,6 +244,8 @@ test.describe("hermes profile binding", () => {
       .filter({ hasText: "scout" })
       .click();
     await expect(profileInput).toHaveValue("scout");
+    await expect(profileInput).toBeFocused();
+    await expect(list).toBeHidden();
     await expect(page.getByTestId("hermes-effective-boundary")).toContainText(
       "scout",
     );
@@ -327,9 +325,7 @@ test.describe("hermes profile binding", () => {
     await expect(page.getByTestId("hermes-profile-error")).toContainText(
       /already bound/i,
     );
-    await expect(
-      dialog.getByRole("button", { name: /Create|Save|Start/i }).first(),
-    ).toBeDisabled();
+    await expect(createSubmit(dialog)).toBeDisabled();
   });
 
   test("create: trusted owner-only local full-autonomy boundary is explicit", async ({
