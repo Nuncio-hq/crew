@@ -14,6 +14,8 @@ async function openWiki(page: import("@playwright/test").Page) {
   await page.getByTestId("open-wiki-view").click();
   await expect(page).toHaveURL(/#\/wiki$/);
   await expect(page.getByTestId("wiki-library")).toBeVisible();
+  await expect(page.getByText("Create company page")).toHaveCount(0);
+  await expect(page.getByTestId("wiki-home-search")).toBeVisible();
 }
 
 test.describe("Crew Wiki (#200)", () => {

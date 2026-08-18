@@ -16,11 +16,15 @@ import {
   type WikiToc,
 } from "@/features/wiki/lib/wikiEvents";
 import { getWikiJobs, subscribeWikiJobs } from "@/features/wiki/lib/wikiStore";
-import { WikiAskBox } from "@/features/wiki/ui/WikiAskBox";
-import { WikiCompanyEditor } from "@/features/wiki/ui/WikiCompanyEditor";
 import { WikiPageView } from "@/features/wiki/ui/WikiPageView";
 import { WikiRepoCard } from "@/features/wiki/ui/WikiRepoCard";
+import {
+  OFFICE_FIELD_BOX_CLASS,
+  OFFICE_FIELD_CONTROL_CLASS,
+  OFFICE_SURFACE,
+} from "@/shared/layout/officeChrome";
 import { TopChromeInsetHeader } from "@/shared/layout/TopChromeInsetHeader";
+import { cn } from "@/shared/lib/cn";
 
 export function WikiLibraryScreen() {
   const eventsQuery = useWikiEventsQuery();
@@ -124,45 +128,64 @@ export function WikiLibraryScreen() {
     );
   }
 
+  const showCompanyCard =
+    !query.trim() || "company wiki".includes(query.trim().toLowerCase());
+
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="wiki-library">
-      <TopChromeInsetHeader>
+      <TopChromeInsetHeader
+        className="border-b border-border"
+        data-office-surface={OFFICE_SURFACE.headerBar}
+        data-testid="wiki-header-bar"
+      >
         <div className="flex items-center gap-3 px-4 py-2">
           <BookOpen className="h-4 w-4 text-muted-foreground" />
           <h1 className="text-sm font-semibold">Wiki</h1>
-          <input
-            aria-label="Search repositories"
-            className="ml-auto h-8 w-56 rounded-md border border-border bg-background px-2 text-sm"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search repositories…"
-            value={query}
-          />
         </div>
       </TopChromeInsetHeader>
-      <div className="min-h-0 flex-1 overflow-auto p-6">
-        <button
-          className="mb-6 flex w-full items-center justify-between rounded-xl border border-border bg-muted/30 px-4 py-3 text-left"
-          data-testid="wiki-company-card"
-          onClick={() => setSelected({ kind: "company" })}
-          type="button"
-        >
-          <span className="flex items-center gap-2 text-sm font-medium">
-            <span className="text-primary">▍</span>
-            Company Wiki
-          </span>
-          <span className="text-2xs text-muted-foreground">
-            {publishedCompany.length} pages · curated
-          </span>
-        </button>
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">
-          Repositories
-        </h2>
-        {filteredRepos.length === 0 ? (
+      <div className="min-h-0 flex-1 overflow-auto px-6 py-8">
+        <div className="mx-auto flex w-full max-w-4xl flex-col items-center">
+          <h2 className="mb-4 text-center text-xl font-semibold">
+            Which repo would you like to understand?
+          </h2>
+          <div
+            className={cn(OFFICE_FIELD_BOX_CLASS, "mb-8 flex w-full max-w-xl")}
+            data-office-surface={OFFICE_SURFACE.fieldBox}
+            data-testid="wiki-home-search"
+          >
+            <input
+              aria-label="Search repositories"
+              className={cn(
+                OFFICE_FIELD_CONTROL_CLASS,
+                "h-10 w-full px-3 text-sm",
+              )}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search for repositories"
+              value={query}
+            />
+          </div>
+        </div>
+        {filteredRepos.length === 0 && !showCompanyCard ? (
           <p className="text-sm text-muted-foreground">
             No repositories yet. Add a Project to generate a wiki.
           </p>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mx-auto grid max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {showCompanyCard ? (
+              <button
+                className="rounded-xl border border-border bg-card p-4 text-left"
+                data-testid="wiki-company-card"
+                onClick={() => setSelected({ kind: "company" })}
+                type="button"
+              >
+                <div className="text-sm font-medium">Company Wiki</div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {publishedCompany.length > 0
+                    ? `${publishedCompany.length} generated pages`
+                    : "Generated company pages, when agents propose them."}
+                </p>
+              </button>
+            ) : null}
             {filteredRepos.map((repo) => {
               const toc = tocs.find((item) => item.repoD === repo.dtag) ?? null;
               const key = repoKey(repo.owner, repo.dtag);
@@ -181,6 +204,7 @@ export function WikiLibraryScreen() {
               return (
                 <WikiRepoCard
                   key={repo.id}
+                  description={repo.description}
                   emptyRepo={job?.error === "empty-repo"}
                   freshness={
                     job?.status === "generating" ? "generating" : freshness
@@ -203,13 +227,6 @@ export function WikiLibraryScreen() {
             })}
           </div>
         )}
-        <WikiCompanyEditor className="mt-8" proposals={proposals} />
-        <div className="mt-10">
-          <WikiAskBox
-            door="library"
-            scopeLabel={`Asking across ${tocs.length} wikis + company`}
-          />
-        </div>
       </div>
     </div>
   );

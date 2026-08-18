@@ -14,6 +14,8 @@ import { WikiMarkdown } from "@/features/wiki/ui/WikiMarkdown";
 import { WikiSourceFiles } from "@/features/wiki/ui/WikiSourceFiles";
 import { WikiTocMenu } from "@/features/wiki/ui/WikiTocMenu";
 import { WikiTocRail } from "@/features/wiki/ui/WikiTocRail";
+import { OFFICE_SURFACE } from "@/shared/layout/officeChrome";
+import { TopChromeInsetHeader } from "@/shared/layout/TopChromeInsetHeader";
 
 /**
  * Wiki page + TOC (#200 / #205). TOC rail min 200px; below 520px container the
@@ -74,50 +76,55 @@ export function WikiPageView({
         toc={toc}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex min-w-0 items-center gap-2 border-b border-border px-4 py-2">
-          {onBack ? (
-            <button
-              aria-label="Back to wiki library"
-              className="rounded-md p-1 text-muted-foreground hover:text-foreground"
-              onClick={onBack}
-              type="button"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-          ) : null}
-          <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
-            {shown?.title ?? repoName}
-          </h1>
-          <WikiTocMenu
-            activeSlug={shown?.slug ?? ""}
-            onSelect={setActiveSlug}
-            toc={toc}
-          />
-          <WikiHeaderControls
-            onOpenProject={admin ? onOpenProject : undefined}
-            onSearchChange={setSearch}
-            owner={owner}
-            repoD={repoD}
-            repoPath={repoPath}
-            repoState={repoState}
-            search={search}
-            showCadence={admin && Boolean(repoD)}
-            toc={toc}
-          />
-        </div>
+        <TopChromeInsetHeader
+          className="border-b border-border"
+          data-office-surface={OFFICE_SURFACE.headerBar}
+          data-testid="wiki-header-bar"
+        >
+          <div className="flex min-w-0 items-center gap-2 px-4 py-2">
+            {onBack ? (
+              <button
+                aria-label="Back to wiki library"
+                className="rounded-md p-1 text-muted-foreground hover:text-foreground"
+                onClick={onBack}
+                type="button"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+            ) : null}
+            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+              {shown?.title ?? repoName}
+            </h1>
+            <WikiTocMenu
+              activeSlug={shown?.slug ?? ""}
+              onSelect={setActiveSlug}
+              toc={toc}
+            />
+            <WikiHeaderControls
+              onOpenProject={admin ? onOpenProject : undefined}
+              onSearchChange={setSearch}
+              owner={owner}
+              repoD={repoD}
+              repoPath={repoPath}
+              repoState={repoState}
+              search={search}
+              showCadence={admin && Boolean(repoD)}
+              toc={toc}
+            />
+          </div>
+        </TopChromeInsetHeader>
         <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
           {emptyCompany ? (
             <div data-testid="wiki-company-empty">
               <p className="text-sm text-muted-foreground">
-                Company wiki is empty. Create the first page, or let an agent
-                propose one.
+                Company wiki is empty. An agent can propose a page.
               </p>
               <WikiCompanyEditor proposals={proposals ?? []} />
             </div>
           ) : null}
           {!shown && !emptyCompany ? (
             <p className="text-sm text-muted-foreground">
-              This repository has no wiki yet. Generate it from the library.
+              This repository has no wiki yet. Generate it from the header.
             </p>
           ) : null}
           {shown ? (
