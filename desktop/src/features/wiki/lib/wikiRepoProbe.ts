@@ -21,11 +21,26 @@ export type WikiRepoProbe = {
   showGenerate: boolean;
 };
 
+function isUnbound(input: {
+  localWorkspacePath?: string | null;
+  localWorkspaceStatus?: "invalid" | "linked" | "unlinked";
+}): boolean {
+  return !input.localWorkspacePath || input.localWorkspaceStatus === "unlinked";
+}
+
+function remoteHasDefaultBranch(input: {
+  remoteBranch?: string | null;
+  remoteCommit?: string | null;
+}): boolean {
+  return Boolean(input.remoteCommit) || Boolean(input.remoteBranch);
+}
+
 /**
  * Card notice for wiki generate outcomes.
  *
- * Pre-#222 stub: any `empty-repo` job is treated as an empty GitHub tree.
- * Tests in wikiRepoProbe.test.mjs must fail this until the probe is split.
+ * `empty-repo` from the worker is only an empty local git tree. A missing
+ * or gone checkout must not use the empty-GitHub sentence when the remote
+ * already has a default branch.
  */
 export function classifyWikiRepoProbe(input: {
   jobError?: string | null;
@@ -34,16 +49,33 @@ export function classifyWikiRepoProbe(input: {
   remoteBranch?: string | null;
   remoteCommit?: string | null;
 }): WikiRepoProbe {
-  void input.localWorkspacePath;
-  void input.localWorkspaceStatus;
-  void input.remoteBranch;
-  void input.remoteCommit;
-  if (input.jobError === "empty-repo") {
+  const unbound = isUnbound(input);
+  const remoteLive = remoteHasDefaultBranch(input);
+  const emptyJob = input.jobError === "empty-repo";
+  const missingJob = input.jobError === "missing-local-path";
+
+  if (missingJob || (emptyJob && (unbound || remoteLive))) {
+    if (unbound) {
+      return {
+        kind: "missing-local",
+        copy: WIKI_NO_LOCAL_CHECKOUT_COPY,
+        showGenerate: true,
+      };
+    }
+    return {
+      kind: "missing-local-gone",
+      copy: WIKI_GONE_FOLDER_COPY,
+      showGenerate: true,
+    };
+  }
+
+  if (emptyJob) {
     return {
       kind: "empty-tree",
       copy: WIKI_EMPTY_REPO_COPY,
       showGenerate: false,
     };
   }
+
   return { kind: "ok", copy: null, showGenerate: true };
 }

@@ -8,11 +8,14 @@
 use crew_wiki::cadence::GenerateLock;
 use crew_wiki::cluster::plan_pages;
 use crew_wiki::generate::{generate_page, HeuristicGenerator};
+use crew_wiki::generate_root::{
+    classify_from_git_failure, resolve_wiki_generate_root, WikiGenerateRoot, WikiLocalSnapshotError,
+};
 use crew_wiki::git_snapshot::RepoSnapshot;
 use crew_wiki::publish::{page_event_tags, toc_content, toc_event_tags, PageDraft, TocManifest};
 use crew_wiki::steering::load_steering;
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::OnceLock;
 
 fn generate_lock() -> &'static GenerateLock {
@@ -60,8 +63,10 @@ pub struct WikiGenerateOutcome {
     pub toc_tags: Vec<Vec<String>>,
     /// Pages to sign (empty when the tree has no source files).
     pub drafts: Vec<WikiDraftDto>,
-    /// True when the path is not a git repo or has no files.
+    /// True when a bound local git tree has no files / no HEAD.
     pub empty_repo: bool,
+    /// True when `repo_path` is unset, gone, or not a git worktree.
+    pub missing_local_path: bool,
     /// Cost note shown in the library (no silent generation).
     pub cost_note: String,
 }
@@ -78,26 +83,35 @@ pub async fn wiki_generate(
         .acquire(&key)
         .map_err(|err| err.to_string())?;
 
-    let root = repo_path
-        .map(PathBuf::from)
-        .filter(|p| p.is_dir())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
     let cost_note = if std::env::var("CREW_WIKI_API_KEY").is_ok() {
         "OpenAI-compatible generator (CREW_WIKI_API_KEY)".to_string()
     } else {
         "Heuristic generator · no API key billed".to_string()
     };
 
+    let root = match resolve_wiki_generate_root(repo_path.as_deref()) {
+        WikiGenerateRoot::MissingLocalPath => {
+            return Ok(missing_local_outcome(&owner, &repo_d, cost_note));
+        }
+        WikiGenerateRoot::Ready(root) => root,
+    };
+
     let snapshot = match RepoSnapshot::from_git(&root) {
-        Ok(snapshot) => hydrate_contents(snapshot, &root),
-        Err(_) => {
+        Ok(snapshot) if snapshot.files.is_empty() => {
             return Ok(empty_outcome(&owner, &repo_d, cost_note));
         }
+        Ok(snapshot) => hydrate_contents(snapshot, &root),
+        Err(err) => {
+            return Ok(
+                match classify_from_git_failure(&root, &err.to_string(), true) {
+                    WikiLocalSnapshotError::MissingLocalPath => {
+                        missing_local_outcome(&owner, &repo_d, cost_note)
+                    }
+                    WikiLocalSnapshotError::EmptyTree => empty_outcome(&owner, &repo_d, cost_note),
+                },
+            );
+        }
     };
-    if snapshot.files.is_empty() {
-        return Ok(empty_outcome(&owner, &repo_d, cost_note));
-    }
 
     let steering = load_steering(&root);
     let plan = plan_pages(&snapshot, steering.as_ref()).map_err(|err| err.to_string())?;
@@ -128,6 +142,7 @@ pub async fn wiki_generate(
         toc_tags,
         drafts,
         empty_repo: false,
+        missing_local_path: false,
         cost_note,
     })
 }
@@ -174,6 +189,14 @@ fn empty_outcome(owner: &str, repo_d: &str, cost_note: String) -> WikiGenerateOu
         toc_tags,
         drafts: Vec::new(),
         empty_repo: true,
+        missing_local_path: false,
         cost_note,
     }
+}
+
+fn missing_local_outcome(owner: &str, repo_d: &str, cost_note: String) -> WikiGenerateOutcome {
+    let mut outcome = empty_outcome(owner, repo_d, cost_note);
+    outcome.empty_repo = false;
+    outcome.missing_local_path = true;
+    outcome
 }

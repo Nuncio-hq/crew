@@ -15,12 +15,10 @@ pub enum WikiGenerateRoot {
 
 /// Resolve the generate root. Never substitutes the process cwd.
 pub fn resolve_wiki_generate_root(repo_path: Option<&str>) -> WikiGenerateRoot {
-    // Pre-#222 stub: missing path falls back to cwd, then `from_git` → empty-repo.
-    let root = repo_path
-        .map(PathBuf::from)
-        .filter(|path| path.is_dir())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    WikiGenerateRoot::Ready(root)
+    match repo_path {
+        Some(path) if Path::new(path).is_dir() => WikiGenerateRoot::Ready(PathBuf::from(path)),
+        _ => WikiGenerateRoot::MissingLocalPath,
+    }
 }
 
 /// `from_git` failed or listed no files.
@@ -38,7 +36,18 @@ pub fn classify_from_git_failure(
     git_error: &str,
     files_empty: bool,
 ) -> WikiLocalSnapshotError {
-    let _ = (root, git_error, files_empty);
+    let err = git_error.to_ascii_lowercase();
+    if err.contains("not a git repository") || !root.join(".git").exists() {
+        return WikiLocalSnapshotError::MissingLocalPath;
+    }
+    if files_empty
+        || err.contains("ambiguous argument")
+        || err.contains("unknown revision")
+        || err.contains("bad revision")
+        || err.contains("needed a single revision")
+    {
+        return WikiLocalSnapshotError::EmptyTree;
+    }
     WikiLocalSnapshotError::EmptyTree
 }
 

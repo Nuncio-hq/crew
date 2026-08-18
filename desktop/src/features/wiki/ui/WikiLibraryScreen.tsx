@@ -8,6 +8,7 @@ import { useWikiEventsQuery } from "@/features/wiki/hooks/useWikiEventsQuery";
 import { useWikiGenerate } from "@/features/wiki/hooks/useWikiGenerate";
 import { useWikiRefresh } from "@/features/wiki/hooks/useWikiRefresh";
 import {
+  defaultBranchCommit,
   jobForRepo,
   repoKey,
   wikiFreshness,
@@ -15,6 +16,7 @@ import {
   type WikiPage,
   type WikiToc,
 } from "@/features/wiki/lib/wikiEvents";
+import { classifyWikiRepoProbe } from "@/features/wiki/lib/wikiRepoProbe";
 import { getWikiJobs, subscribeWikiJobs } from "@/features/wiki/lib/wikiStore";
 import { WikiPageView } from "@/features/wiki/ui/WikiPageView";
 import { WikiRepoCard } from "@/features/wiki/ui/WikiRepoCard";
@@ -201,14 +203,22 @@ export function WikiLibraryScreen() {
                   : job?.status === "failed"
                     ? "failed"
                     : wikiFreshness(toc, state);
+              const tip = defaultBranchCommit(state);
+              const probe = classifyWikiRepoProbe({
+                jobError: job?.error,
+                localWorkspacePath: repo.localWorkspacePath,
+                localWorkspaceStatus: repo.localWorkspaceStatus,
+                remoteBranch: tip?.branch,
+                remoteCommit: tip?.commit,
+              });
               return (
                 <WikiRepoCard
                   key={repo.id}
                   description={repo.description}
-                  emptyRepo={job?.error === "empty-repo"}
                   freshness={
                     job?.status === "generating" ? "generating" : freshness
                   }
+                  probe={probe}
                   generating={job}
                   name={repo.name}
                   onGenerate={() => {

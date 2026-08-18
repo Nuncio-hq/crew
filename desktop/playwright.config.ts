@@ -174,6 +174,7 @@ export default defineConfig({
         "**/org-hierarchy.spec.ts",
         "**/crew-wiki.spec.ts",
         "**/wiki-org-office-chrome.spec.ts",
+        "**/wiki-empty-repo-probe.spec.ts",
         "**/thread-pr-hub.spec.ts",
         "**/tool-pane.spec.ts",
         "**/agent-desktop-tools.spec.ts",

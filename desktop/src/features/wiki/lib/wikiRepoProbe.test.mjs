@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   WIKI_EMPTY_REPO_COPY,
@@ -8,7 +11,10 @@ import {
   classifyWikiRepoProbe,
 } from "./wikiRepoProbe.ts";
 
-const EMPTY_COPY = "Empty repo / no default branch. Push to main, then Generate.";
+const here = dirname(fileURLToPath(import.meta.url));
+
+const EMPTY_COPY =
+  "Empty repo / no default branch. Push to main, then Generate.";
 
 test("missing local path + live GitHub default branch is not the empty-repo copy", () => {
   const probe = classifyWikiRepoProbe({
@@ -84,6 +90,15 @@ test("actually empty local git tree still uses the empty-repo copy", () => {
   assert.equal(probe.copy, WIKI_EMPTY_REPO_COPY);
   assert.equal(probe.copy, EMPTY_COPY);
   assert.equal(probe.showGenerate, false);
+});
+
+test("library cards use classifyWikiRepoProbe instead of raw empty-repo", () => {
+  const library = readFileSync(
+    join(here, "../ui/WikiLibraryScreen.tsx"),
+    "utf8",
+  );
+  assert.match(library, /classifyWikiRepoProbe/);
+  assert.doesNotMatch(library, /job\?\.error === ["']empty-repo["']/);
 });
 
 test("idle job with a bound path is not an empty-repo notice", () => {

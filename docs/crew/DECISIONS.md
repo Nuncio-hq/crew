@@ -1542,5 +1542,22 @@ Wiki copies Devin / DeepWiki IA. It is not a page CMS.
    with the label outside the input, ask/composer as a distinct
    surface. Do not invent a third look.
 
-#222 (false empty-repo copy) is a separate bug.
+#222 (false empty-repo copy) is a separate bug; see D-068.
+
+## D-068 — Wiki empty-repo copy is only an empty local git tree
+
+- **Status:** Accepted
+- **Date:** 2026-08-18
+- **Issue:** #222
+
+`wiki_generate` snapshots a **local** checkout. A missing, unbound, or gone
+`localWorkspacePath` is not an empty GitHub repository.
+
+1. Do not fall back to the desktop cwd when the bound path is missing.
+2. `empty-repo` / "Empty repo / no default branch. Push to main, then
+   Generate." is only for a bound local git tree with no files / no HEAD.
+3. Missing checkout uses the existing Projects sentence ("No local checkout
+   found."). A bound path that is gone uses the existing #217 sentence
+   ("The Project folder is gone. Pick a workspace again.").
+4. Generate stays available. Do not invent a new product sentence.
 
