@@ -27,6 +27,7 @@ type WikiGenerateOutcome = {
   tocTags?: string[][];
   drafts?: WikiDraft[];
   emptyRepo?: boolean;
+  missingLocalPath?: boolean;
   costNote?: string;
 };
 
@@ -54,6 +55,17 @@ export function useWikiGenerate() {
           repoD: input.repoD,
           repoPath: input.repoPath ?? null,
         });
+        if (outcome.missingLocalPath) {
+          setWikiJob({
+            repoKey: input.repoKey,
+            status: "idle",
+            done: 0,
+            total: 0,
+            error: "missing-local-path",
+            costNote: outcome.costNote ?? costNote,
+          });
+          return;
+        }
         if (outcome.emptyRepo) {
           setWikiJob({
             repoKey: input.repoKey,

@@ -1,6 +1,10 @@
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { setTerminalPanelMode } from "@/features/terminal/terminalPanelStore";
 import type { WikiJobState } from "@/features/wiki/lib/wikiEvents";
+import {
+  WIKI_EMPTY_REPO_COPY,
+  type WikiRepoProbe,
+} from "@/features/wiki/lib/wikiRepoProbe";
 
 export function WikiRepoCard({
   name,
@@ -9,7 +13,7 @@ export function WikiRepoCard({
   freshness,
   generating,
   updatedAt,
-  emptyRepo,
+  probe,
   onOpen,
   onGenerate,
 }: {
@@ -19,10 +23,15 @@ export function WikiRepoCard({
   freshness: "never" | "fresh" | "stale" | "generating" | "failed";
   generating?: WikiJobState;
   updatedAt: number | null;
-  emptyRepo?: boolean;
+  probe?: WikiRepoProbe;
   onOpen: () => void;
   onGenerate: () => void;
 }) {
+  const emptyRepo = probe?.kind === "empty-tree";
+  const missingLocalCopy =
+    probe?.kind === "missing-local" || probe?.kind === "missing-local-gone"
+      ? probe.copy
+      : null;
   return (
     <div
       className="rounded-xl border border-border bg-card p-4"
@@ -46,7 +55,15 @@ export function WikiRepoCard({
             className="text-2xs text-muted-foreground"
             data-testid="wiki-empty-repo"
           >
-            Empty repo / no default branch. Push to main, then Generate.
+            {WIKI_EMPTY_REPO_COPY}
+          </p>
+        ) : null}
+        {missingLocalCopy ? (
+          <p
+            className="text-2xs text-muted-foreground"
+            data-testid="wiki-missing-local"
+          >
+            {missingLocalCopy}
           </p>
         ) : null}
         {!emptyRepo && freshness === "never" ? (
