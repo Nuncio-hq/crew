@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #221 — Wiki + Org office chrome; Wiki IA lock
+
+Wiki and Org reuse office header-bar / field-box / composer-surface
+tokens. Wiki home is DeepWiki IA: search + repo wiki cards; no
+"Create company page" CMS form. Repo wiki is generated pages + ask;
+Generate stays in the header; the ask bar is a distinct composer
+surface. Org roster editor labels sit above field boxes. #222
+(false empty-repo / no-default-branch) is untouched. See D-067.
+Last updated: 2026-08-18
+
 ## Issue #223 — Sidebar is channels only; drop the Projects rail
 
 Sidebar = Inbox + channels + DMs. The work-tree Projects section is gone,

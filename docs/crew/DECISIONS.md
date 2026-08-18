@@ -1525,3 +1525,22 @@ of Projects.
 
 See issue #223.
 
+## D-067 — Wiki is not a CMS; Wiki + Org use office chrome
+
+- **Status:** Accepted
+- **Date:** 2026-08-18
+- **Issue:** #221
+
+Wiki copies Devin / DeepWiki IA. It is not a page CMS.
+
+1. **Home** is search + a list of repo wikis (company wiki is a card
+   in that list when you want the door). No "Create company page"
+   form on the index.
+2. **Repo wiki** is generated pages you read + ask. Generate is a
+   header action. The ask bar is the question layer.
+3. **Chrome** reuses office tokens: header as a bar, fields as boxes
+   with the label outside the input, ask/composer as a distinct
+   surface. Do not invent a third look.
+
+#222 (false empty-repo copy) is a separate bug.
+

@@ -16,6 +16,7 @@ import { usePresenceQuery } from "@/features/presence/hooks";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { useProjectsQuery } from "@/features/projects/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { OFFICE_SURFACE } from "@/shared/layout/officeChrome";
 import { TopChromeInsetHeader } from "@/shared/layout/TopChromeInsetHeader";
 import { Button } from "@/shared/ui/button";
 
@@ -100,7 +101,10 @@ export function OrgScreen() {
       className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       data-testid="org-view"
     >
-      <TopChromeInsetHeader>
+      <TopChromeInsetHeader
+        data-office-surface={OFFICE_SURFACE.headerBar}
+        data-testid="org-header-bar"
+      >
         <header className="flex h-9 items-center gap-2 px-5">
           <Network className="h-4 w-4" />
           <h1 className="text-base font-semibold">Org</h1>

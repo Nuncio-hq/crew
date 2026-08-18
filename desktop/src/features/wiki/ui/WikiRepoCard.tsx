@@ -5,6 +5,7 @@ import type { WikiJobState } from "@/features/wiki/lib/wikiEvents";
 export function WikiRepoCard({
   name,
   owner,
+  description,
   freshness,
   generating,
   updatedAt,
@@ -14,6 +15,7 @@ export function WikiRepoCard({
 }: {
   name: string;
   owner: string;
+  description?: string;
   freshness: "never" | "fresh" | "stale" | "generating" | "failed";
   generating?: WikiJobState;
   updatedAt: number | null;
@@ -28,9 +30,15 @@ export function WikiRepoCard({
     >
       <button className="w-full text-left" onClick={onOpen} type="button">
         <div className="text-sm font-medium">{name}</div>
-        <div className="text-2xs text-muted-foreground">
-          {truncatePubkey(owner)}
-        </div>
+        {description ? (
+          <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">
+            {description}
+          </p>
+        ) : (
+          <div className="text-2xs text-muted-foreground">
+            {truncatePubkey(owner)}
+          </div>
+        )}
       </button>
       <div className="mt-3">
         {emptyRepo ? (

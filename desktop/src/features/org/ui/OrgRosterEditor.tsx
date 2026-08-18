@@ -6,6 +6,8 @@ import {
   type OrgNode,
   type OrgRoster,
 } from "@/features/org/lib/orgRoster";
+import { OFFICE_FIELD_CONTROL_CLASS } from "@/shared/layout/officeChrome";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import {
   Dialog,
@@ -15,8 +17,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
-import { Input } from "@/shared/ui/input";
-import { truncatePubkey } from "@/shared/lib/pubkey";
+import { OfficeField } from "@/shared/ui/OfficeField";
+import { cn } from "@/shared/lib/cn";
 
 type DraftNode = {
   rowKey: string;
@@ -54,6 +56,11 @@ function emptyDraft(founder: string): DraftNode {
     openWorkCap: "1",
   };
 }
+
+const controlClass = cn(
+  OFFICE_FIELD_CONTROL_CLASS,
+  "h-9 w-full px-3 py-1 text-sm",
+);
 
 export function OrgRosterEditor({
   open,
@@ -93,6 +100,14 @@ export function OrgRosterEditor({
     ]);
     return [...keys].filter((key) => key.length === 64);
   }, [drafts, founderPubkey]);
+
+  const patchDraft = (index: number, patch: Partial<DraftNode>) => {
+    setDrafts((current) =>
+      current.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, ...patch } : row,
+      ),
+    );
+  };
 
   const buildRoster = React.useCallback((): OrgRoster | null => {
     const nodes: Record<string, OrgNode> = {};
@@ -145,27 +160,16 @@ export function OrgRosterEditor({
         <div className="flex flex-col gap-4">
           {drafts.map((draft, index) => (
             <div
-              className="rounded-lg border border-border/60 p-3"
+              className="rounded-lg border border-border bg-card p-3"
               key={draft.rowKey}
             >
-              <label
-                className="block text-2xs uppercase text-muted-foreground"
-                htmlFor={`org-agent-${draft.rowKey}`}
-              >
-                Agent
+              <OfficeField htmlFor={`org-agent-${draft.rowKey}`} label="Agent">
                 <select
-                  className="mt-1 w-full rounded-md border border-input/40 bg-background px-2 py-1 text-sm"
+                  className={controlClass}
                   id={`org-agent-${draft.rowKey}`}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setDrafts((current) =>
-                      current.map((row, rowIndex) =>
-                        rowIndex === index
-                          ? { ...row, agentPubkey: value }
-                          : row,
-                      ),
-                    );
-                  }}
+                  onChange={(event) =>
+                    patchDraft(index, { agentPubkey: event.target.value })
+                  }
                   value={draft.agentPubkey}
                 >
                   <option value="">Select agent</option>
@@ -177,23 +181,18 @@ export function OrgRosterEditor({
                       </option>
                     ))}
                 </select>
-              </label>
-              <label
-                className="mt-2 block text-2xs uppercase text-muted-foreground"
+              </OfficeField>
+              <OfficeField
+                className="mt-3"
                 htmlFor={`org-manager-${draft.rowKey}`}
+                label="Reports to"
               >
-                Reports to
                 <select
-                  className="mt-1 w-full rounded-md border border-input/40 bg-background px-2 py-1 text-sm"
+                  className={controlClass}
                   id={`org-manager-${draft.rowKey}`}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setDrafts((current) =>
-                      current.map((row, rowIndex) =>
-                        rowIndex === index ? { ...row, manager: value } : row,
-                      ),
-                    );
-                  }}
+                  onChange={(event) =>
+                    patchDraft(index, { manager: event.target.value })
+                  }
                   value={draft.manager}
                 >
                   {managerOptions.map((pubkey) => (
@@ -204,108 +203,79 @@ export function OrgRosterEditor({
                     </option>
                   ))}
                 </select>
-              </label>
-              <label
-                className="mt-2 block text-2xs uppercase text-muted-foreground"
+              </OfficeField>
+              <OfficeField
+                className="mt-3"
                 htmlFor={`org-domain-${draft.rowKey}`}
+                label="Domain"
               >
-                Domain
-                <Input
-                  className="mt-1"
+                <input
+                  className={controlClass}
                   id={`org-domain-${draft.rowKey}`}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setDrafts((current) =>
-                      current.map((row, rowIndex) =>
-                        rowIndex === index ? { ...row, domain: value } : row,
-                      ),
-                    );
-                  }}
+                  onChange={(event) =>
+                    patchDraft(index, { domain: event.target.value })
+                  }
                   value={draft.domain}
                 />
-              </label>
-              <label
-                className="mt-2 block text-2xs uppercase text-muted-foreground"
+              </OfficeField>
+              <OfficeField
+                className="mt-3"
                 htmlFor={`org-duties-${draft.rowKey}`}
+                label="Duties"
               >
-                Duties
                 <textarea
-                  className="mt-1 w-full rounded-lg border border-input/40 bg-background px-3 py-1 text-sm"
+                  className={cn(
+                    OFFICE_FIELD_CONTROL_CLASS,
+                    "min-h-16 w-full px-3 py-2 text-sm",
+                  )}
                   id={`org-duties-${draft.rowKey}`}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setDrafts((current) =>
-                      current.map((row, rowIndex) =>
-                        rowIndex === index ? { ...row, duties: value } : row,
-                      ),
-                    );
-                  }}
+                  onChange={(event) =>
+                    patchDraft(index, { duties: event.target.value })
+                  }
                   rows={2}
                   value={draft.duties}
                 />
-              </label>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                <label
-                  className="text-2xs uppercase text-muted-foreground"
+              </OfficeField>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <OfficeField
                   htmlFor={`org-cadence-${draft.rowKey}`}
+                  label="Cadence"
                 >
-                  Cadence
-                  <Input
-                    className="mt-1"
+                  <input
+                    className={controlClass}
                     id={`org-cadence-${draft.rowKey}`}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setDrafts((current) =>
-                        current.map((row, rowIndex) =>
-                          rowIndex === index ? { ...row, cadence: value } : row,
-                        ),
-                      );
-                    }}
+                    onChange={(event) =>
+                      patchDraft(index, { cadence: event.target.value })
+                    }
                     value={draft.cadence}
                   />
-                </label>
-                <label
-                  className="text-2xs uppercase text-muted-foreground"
+                </OfficeField>
+                <OfficeField
                   htmlFor={`org-tokens-${draft.rowKey}`}
+                  label="Tokens/day"
                 >
-                  Tokens/day
-                  <Input
-                    className="mt-1"
+                  <input
+                    className={controlClass}
                     id={`org-tokens-${draft.rowKey}`}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setDrafts((current) =>
-                        current.map((row, rowIndex) =>
-                          rowIndex === index
-                            ? { ...row, tokensPerDay: value }
-                            : row,
-                        ),
-                      );
-                    }}
+                    onChange={(event) =>
+                      patchDraft(index, { tokensPerDay: event.target.value })
+                    }
                     value={draft.tokensPerDay}
                   />
-                </label>
-                <label
-                  className="text-2xs uppercase text-muted-foreground"
+                </OfficeField>
+                <OfficeField
                   htmlFor={`org-cap-${draft.rowKey}`}
+                  label="Open cap"
                 >
-                  Open cap
-                  <Input
-                    className="mt-1"
+                  <input
+                    className={controlClass}
                     id={`org-cap-${draft.rowKey}`}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setDrafts((current) =>
-                        current.map((row, rowIndex) =>
-                          rowIndex === index
-                            ? { ...row, openWorkCap: value }
-                            : row,
-                        ),
-                      );
-                    }}
+                    onChange={(event) =>
+                      patchDraft(index, { openWorkCap: event.target.value })
+                    }
                     value={draft.openWorkCap}
                   />
-                </label>
+                </OfficeField>
               </div>
               <Button
                 className="mt-2"
