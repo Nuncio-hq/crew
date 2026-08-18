@@ -134,6 +134,7 @@ export function WikiLibraryScreen() {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="wiki-library">
       <TopChromeInsetHeader
+        className="border-b border-border"
         data-office-surface={OFFICE_SURFACE.headerBar}
         data-testid="wiki-header-bar"
       >

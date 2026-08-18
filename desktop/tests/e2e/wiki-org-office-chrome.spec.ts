@@ -163,5 +163,13 @@ test.describe("Wiki + Org office chrome and Wiki IA (#221)", () => {
     await page
       .getByTestId("wiki-page")
       .screenshot({ path: `${SHOTS}/03-repo-wiki.png` });
+
+    await page.getByTestId("channel-engineering").click();
+    await expect(page.getByTestId("message-composer")).toBeVisible();
+    await waitForAnimations(page);
+    await page.screenshot({
+      path: `${SHOTS}/04-office-header-composer.png`,
+      clip: { x: 256, y: 0, width: 1024, height: 720 },
+    });
   });
 });

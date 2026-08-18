@@ -14,15 +14,15 @@ export const OFFICE_SURFACE = {
 export type OfficeSurface =
   (typeof OFFICE_SURFACE)[keyof typeof OFFICE_SURFACE];
 
-/** Glass header strip — same backdrop as `TopChromeInsetHeader`. */
-export const OFFICE_HEADER_BAR_CLASS = topChromeInset.headerBase;
+/** Glass header strip — same backdrop as `TopChromeInsetHeader`, plus a bar edge. */
+export const OFFICE_HEADER_BAR_CLASS = `${topChromeInset.headerBase} border-b border-border`;
 
 /**
- * Visible field shell. Full `border-input` (not `/40`) so the box reads
- * against dark chrome; label stays outside this surface.
+ * Visible field box. Full `border-input` (not `/40`) and `bg-card` so the
+ * box lifts off the dialog/page; label stays outside this surface.
  */
 export const OFFICE_FIELD_BOX_CLASS =
-  "rounded-xl border border-input bg-muted/40 transition-colors duration-150 ease-out hover:border-muted-foreground/40 focus-within:border-muted-foreground/50";
+  "rounded-xl border border-input bg-card transition-colors duration-150 ease-out hover:border-muted-foreground/40 focus-within:border-muted-foreground/50";
 
 /** Control inside a field box — no second border sitting on the label. */
 export const OFFICE_FIELD_CONTROL_CLASS =
@@ -31,6 +31,6 @@ export const OFFICE_FIELD_CONTROL_CLASS =
 export const OFFICE_FIELD_LABEL_CLASS =
   "text-2xs font-medium uppercase tracking-wide text-muted-foreground";
 
-/** Ask / composer dock — same rounded surface as the channel composer. */
+/** Ask / composer dock — rounded raised surface, not a flush page wash. */
 export const OFFICE_COMPOSER_SURFACE_CLASS =
-  "relative isolate rounded-2xl border border-border/50 bg-background/80 px-3 pb-2 pt-3 shadow-none supports-[backdrop-filter]:bg-background/70 dark:bg-background/70 dark:supports-[backdrop-filter]:bg-background/55";
+  "relative isolate rounded-2xl border border-input bg-card px-3 pb-2 pt-3 shadow-none";

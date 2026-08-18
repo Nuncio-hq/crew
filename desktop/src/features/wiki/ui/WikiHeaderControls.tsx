@@ -80,7 +80,7 @@ export function WikiHeaderControls({
       ) : null}
       {owner && repoD ? (
         <button
-          className="rounded-md border border-input bg-muted/40 px-2 py-0.5 text-foreground"
+          className="rounded-md border border-input bg-card px-2 py-0.5 text-foreground"
           data-testid="wiki-generate-mirror"
           onClick={() =>
             generate.mutate({

@@ -102,6 +102,7 @@ export function OrgScreen() {
       data-testid="org-view"
     >
       <TopChromeInsetHeader
+        className="border-b border-border"
         data-office-surface={OFFICE_SURFACE.headerBar}
         data-testid="org-header-bar"
       >

@@ -160,7 +160,7 @@ export function OrgRosterEditor({
         <div className="flex flex-col gap-4">
           {drafts.map((draft, index) => (
             <div
-              className="rounded-lg border border-border bg-card p-3"
+              className="rounded-lg border border-border p-3"
               key={draft.rowKey}
             >
               <OfficeField htmlFor={`org-agent-${draft.rowKey}`} label="Agent">

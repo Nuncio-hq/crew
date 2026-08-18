@@ -77,6 +77,7 @@ export function WikiPageView({
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopChromeInsetHeader
+          className="border-b border-border"
           data-office-surface={OFFICE_SURFACE.headerBar}
           data-testid="wiki-header-bar"
         >
