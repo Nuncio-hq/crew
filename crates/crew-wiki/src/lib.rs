@@ -12,6 +12,7 @@ pub mod cadence;
 pub mod cluster;
 pub mod error;
 pub mod generate;
+pub mod generate_root;
 pub mod git_snapshot;
 pub mod incremental;
 pub mod publish;
@@ -23,6 +24,9 @@ pub use cadence::{debounce_due, next_cadence_due, CadenceClock, ON_PUSH_DEBOUNCE
 pub use cluster::plan_pages;
 pub use error::WikiError;
 pub use generate::{generate_page, generator_from_env, Generator, HeuristicGenerator};
+pub use generate_root::{
+    classify_from_git_failure, resolve_wiki_generate_root, WikiGenerateRoot, WikiLocalSnapshotError,
+};
 pub use git_snapshot::{list_source_files, FileChange, FileChangeKind, RepoSnapshot};
 pub use incremental::{material_file_set_change, regen_plan, RegenPlan};
 pub use publish::{
