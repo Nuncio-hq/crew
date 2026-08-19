@@ -288,6 +288,14 @@ the existing ACP path (#169). Do **not** call by role label. Do **not** ask
 the founder to press Wake. Channel roles still decide what that named person
 may do once awake (D-043 / D-044). See D-071 / spike 0055.
 
+## CoS intake (issue #232)
+
+On an office channel, assign CoS the **intake** role and Dev the **code**
+role (canvas; D-043 / D-044). Oscar @CoS only. CoS may prototype small;
+feature work → call Dev by name (#230 / D-071). Gate C before Accept
+(D-070). Template: [`templates/COS-INTAKE.md`](templates/COS-INTAKE.md).
+See D-072.
+
 ## Officer loop — removed with Org product (#233 / D-069)
 
 Do **not** run ORG-CHECK, teach the org chart, or route work through a

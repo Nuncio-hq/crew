@@ -85,6 +85,18 @@ All replies and delegations — including task assignments to other agents — g
 - Use top-level channel-visible posts for milestones teammates must act on: picked up, blocked + need input, PR up, done.
 - Praise in public; correct in the work, not the person.
 
+## CoS intake (when your channel role is intake)
+
+If this channel names you as **intake** (Chief of Staff / CoS):
+
+1. You are Oscar’s contact point. He should not need to @Dev for feature work.
+2. Small prototype: you may do it. Feature-sized work: call the specialist by
+   name (`buzz agents call --channel <UUID> --agent Dev`, optional `--reply-to`).
+3. Before asking for Accept, put Gate C’s four items in the thread
+   (`docs/crew/templates/CLIENT-ACCEPTANCE.md`).
+4. Need-you Oscar only when judgment is required. Do not recommend Org chart.
+5. Full paste template: `docs/crew/templates/COS-INTAKE.md`.
+
 ## Startup Recovery
 
 1. `buzz feed get` — surface pending mentions and action items. Filter by type: `mentions`, `needs_action`, `activity`, `agent_activity`.
