@@ -1618,3 +1618,24 @@ correctness (unit / e2e / `just ci`) is necessary and not sufficient.
 
 This sits on top of D-008 / `TESTING.md` (technical bar). DoD for #230,
 #232, #233 points here.
+
+## D-071 — Call specialists by name via mention wake
+
+- **Status:** Accepted
+- **Date:** 2026-08-19
+- **Issue:** #230
+
+CoS (or any agent) wakes a specialist **by name**, not by role label.
+Founder does not press Wake as the primary recovery UX.
+
+1. **Mechanism:** existing Buzz `p`-tag mention → ACP lazy-pool wake (#169).
+   No new Nostr kind.
+2. **CLI:** `buzz agents call --channel … --agent <Name>|--pubkey …` posts a
+   room-visible call message and attaches the mention (optional `--reply-to`
+   aims the thread). Fail-closed for unknown names and non-members.
+3. **Permission** stays on channel roles (D-043 / D-044). Calling is identity;
+   writing code still requires the role wall.
+4. **Non-goals:** founder Inbox Wake button, call-by-role API, Mission machine,
+   deleting 30680.
+
+Spike 0055 PASS. Gate C DoD still applies (D-070).

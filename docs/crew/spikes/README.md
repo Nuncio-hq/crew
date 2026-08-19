@@ -105,3 +105,4 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0050-letter-soup-heuristic.md`](0050-letter-soup-heuristic.md)
 - [`0051-p1-grep-precision.md`](0051-p1-grep-precision.md)
 - [`0054-org-product-removal-entry-points.md`](0054-org-product-removal-entry-points.md)
+- [`0055-call-by-name-mention-wake.md`](0055-call-by-name-mention-wake.md)
