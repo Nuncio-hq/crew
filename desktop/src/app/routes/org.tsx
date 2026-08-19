@@ -1,21 +1,7 @@
-import * as React from "react";
-import { createFileRoute } from "@tanstack/react-router";
-
-import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
-
-const OrgScreen = React.lazy(async () => {
-  const module = await import("@/features/org/ui/OrgScreen");
-  return { default: module.OrgScreen };
-});
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/org")({
-  component: OrgRouteComponent,
+  beforeLoad: () => {
+    throw redirect({ to: "/" });
+  },
 });
-
-function OrgRouteComponent() {
-  return (
-    <React.Suspense fallback={<ViewLoadingFallback kind="projects" />}>
-      <OrgScreen />
-    </React.Suspense>
-  );
-}

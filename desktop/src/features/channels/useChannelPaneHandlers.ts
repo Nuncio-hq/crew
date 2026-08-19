@@ -9,7 +9,6 @@ import type {
 import { resolveThreadReplyTarget } from "@/features/messages/hooks";
 import { getSendToChannelSemantics } from "@/features/messages/lib/sendToChannelSemantics";
 import { summarizeThreadRoot } from "@/features/messages/lib/sentFromThread";
-import { consumePendingHandoffTags } from "@/features/org/lib/goalDigest";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 
@@ -290,15 +289,11 @@ export function useChannelPaneHandlers({
       mediaTags?: string[][],
       channelId?: string | null,
     ) => {
-      const handoff = await consumePendingHandoffTags(content, false);
       await sendMutateRef.current({
         content,
-        mentionPubkeys: handoff
-          ? [...mentionPubkeys, handoff.executor]
-          : mentionPubkeys,
+        mentionPubkeys,
         mediaTags,
         channelId: channelId ?? undefined,
-        extraTags: handoff?.extraTags,
       });
     },
     [],
@@ -362,15 +357,11 @@ export function useChannelPaneHandlers({
         });
       }
 
-      const handoff = await consumePendingHandoffTags(content, true);
       const sentMessage = await sendMutateRef.current({
         content,
-        mentionPubkeys: handoff
-          ? [...mentionPubkeys, handoff.executor]
-          : mentionPubkeys,
+        mentionPubkeys,
         parentEventId,
         mediaTags,
-        extraTags: handoff?.extraTags,
         channelId: channelId ?? undefined,
       });
 

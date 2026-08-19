@@ -31,8 +31,6 @@ import { buildInboxItems } from "@/features/home/lib/inbox";
 import { filterInboxItems } from "@/features/home/lib/inboxViewHelpers";
 import { useMissionInboxActiveTurns } from "@/features/home/lib/missionInbox";
 import { getThreadReference } from "@/features/messages/lib/threading";
-import { useOrgRosterQuery } from "@/features/org/hooks/useOrgRosterQuery";
-import { escalationHopLabel } from "@/features/org/lib/escalationHop";
 import { useProjectsQuery } from "@/features/projects/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { normalizePubkey } from "@/shared/lib/pubkey";
@@ -389,22 +387,18 @@ export function useNeedsYouItems(): {
   const now = useNow(30_000);
   const getSnapshot = React.useCallback(() => sourceGeneration(), []);
   const generation = useSyncGeneration(getSnapshot);
-  const orgRosterQuery = useOrgRosterQuery();
 
   return React.useMemo(() => {
     void generation;
     const requests = getNeedsYouForAll(now);
     const receipts = getAgentReceipts().filter((receipt) => !receipt.reviewed);
     const items: NeedsYouItem[] = [
-      ...requests.map((request) =>
-        needsYouItemFromRequest(request, orgRosterQuery.data ?? null),
-      ),
+      ...requests.map((request) => needsYouItemFromRequest(request)),
       ...receipts.flatMap((receipt) => {
         if (!receipt.rootEventId) return [];
         return [
           {
             channelId: receipt.channelId,
-            hop: null,
             id: receipt.id,
             kind: "evidence" as const,
             threadRootId: receipt.rootEventId,
@@ -414,32 +408,16 @@ export function useNeedsYouItems(): {
       }),
     ];
     return aggregateNeedsYou(items);
-  }, [generation, now, orgRosterQuery.data]);
+  }, [generation, now]);
 }
 
-function needsYouItemFromRequest(
-  request: NeedsYouRequest,
-  roster: Parameters<typeof escalationHopLabel>[0],
-): NeedsYouItem {
-  const hop = roster
-    ? escalationHopLabel(roster, request.agentPubkey, {})
-    : null;
-  const kind = hop
-    ? "escalation"
-    : request.ownerPubkey
-      ? "question"
-      : "approval";
+function needsYouItemFromRequest(request: NeedsYouRequest): NeedsYouItem {
+  const kind = request.ownerPubkey ? "question" : "approval";
   return {
     channelId: request.channelId,
-    hop,
     id: request.id,
     kind,
     threadRootId: request.rootEventId,
-    title:
-      kind === "approval"
-        ? "Approval needed"
-        : kind === "escalation"
-          ? (hop ?? "Escalation")
-          : "Question",
+    title: kind === "approval" ? "Approval needed" : "Question",
   };
 }

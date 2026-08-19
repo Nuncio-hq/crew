@@ -569,7 +569,6 @@ reconnects preserve pending avatar verification work):
 - `clearSearchHitEventCache()` — search result event cache
 - `clearMarkdownNodeCache()` — markdown parse-node cache
 - `resetLinkPreviewTitleCache()` — link preview title cache (Buzz entity titles come from relay events)
-- `resetOrgRosterProjection()` — founder-signed org roster cache
 - `resetWikiStore()` — Crew Wiki generate-job map
 - `resetWorkTreeDisclosureStore()` — work-tree folder expand/pin localStorage
 

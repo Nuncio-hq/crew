@@ -686,32 +686,11 @@ pub async fn cmd_send_message(
     } else {
         builder
     };
-    let builder = if let Some(executor) = p.handoff.as_deref() {
-        let executor = buzz_core::org_roster::canonical_pubkey(executor)
-            .map_err(|error| CliError::Usage(error.to_string()))?;
-        if p.reply_to.is_none() {
-            let author = client.keys().public_key().to_hex();
-            if let Some((roster, _)) = super::org::fetch_roster(client).await? {
-                buzz_core::org_roster::require_parent_link_for_sub_kickoff(
-                    &author,
-                    &roster.founder_pubkey,
-                    false,
-                )
-                .map_err(|error| CliError::Usage(error.to_string()))?;
-            }
-        }
-        let goal = p.goal.as_deref().unwrap_or(p.content.as_str());
-        let digest = buzz_core::org_roster::goal_digest(goal);
-        let tag = nostr::Tag::parse([
-            buzz_core::org_roster::CREW_HANDOFF_TAG,
-            executor.as_str(),
-            digest.as_str(),
-        ])
-        .map_err(|error| CliError::Other(format!("handoff tag: {error}")))?;
-        builder.tag(tag)
-    } else {
-        builder
-    };
+    if p.handoff.is_some() || p.goal.is_some() {
+        return Err(CliError::Usage(
+            "--handoff / --goal removed with Org product (#233). Mention the agent by name instead.".into(),
+        ));
+    }
     let event = client.sign_event(builder)?;
     let emitted_mentions = event_mention_pubkeys(&event);
     let resp = client.submit_event(event).await?;
@@ -1115,7 +1094,7 @@ mod tests {
     }
 
     #[test]
-    fn handoff_flag_parses_with_goal_and_reply() {
+    fn handoff_flag_still_parses_but_is_hidden() {
         let parsed = crate::Cli::try_parse_from(send_args(&[
             "--handoff",
             PK_VALID_A,
@@ -1126,7 +1105,7 @@ mod tests {
         ]));
         assert!(
             parsed.is_ok(),
-            "--handoff should parse: {}",
+            "hidden --handoff should still parse for clear Usage at send: {}",
             parsed
                 .err()
                 .map_or_else(String::new, |error| error.to_string())

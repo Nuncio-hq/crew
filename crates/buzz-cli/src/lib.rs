@@ -243,16 +243,16 @@ enum Cmd {
     /// List and answer pending agent user-input questions
     #[command(subcommand)]
     UserInput(UserInputCmd),
-    /// Founder-signed org roster (Crew)
-    #[command(subcommand)]
-    Org(OrgCmd),
+    /// Founder-signed org roster helpers (Crew). Chart Show/Tree/Publish removed (#233).
+#[command(subcommand)]
+Org(OrgCmd),
 }
 
 #[derive(Subcommand)]
 pub enum OrgCmd {
-    /// Show the founder-signed org roster JSON
+    /// Removed (#233) — errors with a migration hint
     Show,
-    /// Print the reporting tree
+    /// Removed (#233) — errors with a migration hint
     Tree,
     /// List repositories/projects that name an agent as maintainer or steward
     Portfolio {
@@ -260,7 +260,7 @@ pub enum OrgCmd {
         #[arg(long)]
         pubkey: String,
     },
-    /// Publish a roster JSON file (founder-signed)
+    /// Removed (#233) — errors with a migration hint
     Publish {
         /// Path to roster JSON
         #[arg(long)]
@@ -452,11 +452,11 @@ pub enum MessagesCmd {
         /// Pubkey to mention (hex or npub; repeatable). Supplying any explicit identity permits unresolved or ambiguous @Name text as presentation-only; uniquely resolved member names still notify.
         #[arg(long = "mention")]
         mentions: Vec<String>,
-        /// Assign work to this executor (`crew-handoff`). Auto-creates work only if you are in their manager chain or are the founder.
-        #[arg(long)]
+        /// Removed with Org product (#233). Kept so old scripts get a clear Usage error.
+        #[arg(long, hide = true)]
         handoff: Option<String>,
-        /// Goal text hashed into the handoff tag (defaults to message content)
-        #[arg(long)]
+        /// Removed with Org product (#233). Kept so old scripts get a clear Usage error.
+        #[arg(long, hide = true)]
         goal: Option<String>,
     },
     /// Send a code diff / patch to a channel

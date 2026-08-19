@@ -1,9 +1,8 @@
 import { topChromeInset } from "@/shared/layout/chromeLayout";
 
 /**
- * Office chrome tokens (#221). Wiki and Org reuse the same header bar,
- * field box, and composer surface the channel office already uses — not a
- * new look.
+ * Office chrome tokens (#221). Wiki reuses the same header bar, field box,
+ * and composer surface the channel office already uses — not a new look.
  */
 export const OFFICE_SURFACE = {
   headerBar: "header-bar",

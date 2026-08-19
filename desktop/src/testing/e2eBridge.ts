@@ -31,12 +31,6 @@ import {
   setE2eGovernorStatus,
 } from "./e2eToolPane.ts";
 import {
-  acceptPublishedOrgRoster,
-  filterE2eOrgRosterEvents,
-  resetE2eOrgRoster,
-  setE2eOrgRoster,
-} from "./e2eOrgRoster.ts";
-import {
   acceptPublishedWikiEvent,
   applyE2eWikiJob,
   filterE2eWikiEvents,
@@ -95,7 +89,6 @@ import {
   KIND_MEMBER_ADDED_NOTIFICATION,
   KIND_MEMBER_REMOVED_NOTIFICATION,
   KIND_PERSONA,
-  KIND_ORG_ROSTER,
   KIND_PROJECT_ANNOUNCEMENT,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
@@ -1433,11 +1426,6 @@ declare global {
       can_pull: boolean;
       pull_block_reason: string | null;
     };
-    __BUZZ_E2E_SET_ORG_ROSTER__?: (input: {
-      content: string;
-      /** Founder pubkey that signed the roster. Defaults to the mock owner. */
-      pubkey?: string;
-    }) => void;
     __BUZZ_E2E_SET_WIKI_EVENTS__?: (events: RelayEvent[]) => void;
     __BUZZ_E2E_SEED_WIKI__?: (input: {
       owner: string;
@@ -10839,14 +10827,6 @@ function sendToMockSocket(args: {
       return;
     }
 
-    if (filter.kinds?.includes(KIND_ORG_ROSTER)) {
-      for (const event of filterE2eOrgRosterEvents(filter)) {
-        sendWsText(socket.handler, ["EVENT", subId, event]);
-      }
-      sendWsText(socket.handler, ["EOSE", subId]);
-      return;
-    }
-
     if (filter.kinds?.some((kind) => isWikiKind(kind))) {
       for (const event of filterE2eWikiEvents(filter)) {
         sendWsText(socket.handler, ["EVENT", subId, event]);
@@ -10991,13 +10971,6 @@ function sendToMockSocket(args: {
         if (idx >= 0) mockReminderEvents.splice(idx, 1);
       }
       mockReminderEvents.push(event);
-      sendWsText(socket.handler, ["OK", event.id, true, ""]);
-      return;
-    }
-
-    if (event.kind === KIND_ORG_ROSTER) {
-      acceptPublishedOrgRoster(event);
-      emitMockGlobalEvent(event);
       sendWsText(socket.handler, ["OK", event.id, true, ""]);
       return;
     }
@@ -11225,16 +11198,7 @@ export function maybeInstallE2eTauriMocks() {
   window.__BUZZ_E2E_SET_FORGE_PR_DETAIL__ = (patch) =>
     setE2eForgeSnapshot(patch);
   resetE2eGovernor();
-  resetE2eOrgRoster();
   resetE2eWiki();
-  window.__BUZZ_E2E_SET_ORG_ROSTER__ = ({ content, pubkey }) => {
-    // Sign as the mock owner (`deadbeef…`), not tyler (`e5ebc6cd…`). parseOrgRoster
-    // treats a manager that is neither the signer nor a node as an orphan.
-    setE2eOrgRoster({
-      content,
-      pubkey: pubkey ?? DEFAULT_MOCK_IDENTITY.pubkey,
-    });
-  };
   window.__BUZZ_E2E_SET_WIKI_EVENTS__ = (events) => {
     setE2eWikiEvents(events);
   };

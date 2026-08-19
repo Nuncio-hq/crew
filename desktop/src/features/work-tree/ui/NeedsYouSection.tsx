@@ -54,11 +54,6 @@ export function NeedsYouSection({
                     type="button"
                   >
                     <span className="truncate text-sm">{item.title}</span>
-                    {item.hop ? (
-                      <span className="truncate font-mono text-2xs text-muted-foreground">
-                        {item.hop}
-                      </span>
-                    ) : null}
                   </button>
                 ))}
               </div>

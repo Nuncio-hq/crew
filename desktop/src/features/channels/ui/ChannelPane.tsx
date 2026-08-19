@@ -7,7 +7,6 @@ import { ComposerUploadProgressOverlay } from "@/features/messages/ui/ComposerUp
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
 import { ComposerWorkspaceBindingProvider } from "@/features/messages/ui/composerWorkspaceBinding";
 import { ComposerWorkspaceSelector } from "@/features/messages/ui/ComposerWorkspaceSelector";
-import { HandoffAssignControl } from "@/features/org/ui/HandoffAssignControl";
 import {
   DEFAULT_WORKSPACE_BINDING,
   type WorkspaceBindingChoice,
@@ -768,7 +767,6 @@ export const ChannelPane = React.memo(function ChannelPane({
                     showTopBorder={false}
                     toolbarExtraActions={
                       <>
-                        <HandoffAssignControl />
                         <ComposerWorkspaceSelector
                           channelId={activeChannel?.id ?? null}
                           onChange={setWorkspaceBinding}

@@ -1,5 +1,13 @@
 # Crew State
 
+## Issue #233 — Org chart product removed (role-first)
+
+Org nav, `/org` chart/editor, handoff-assign chrome, and agent ORG-CHECK /
+officer-loop teaching are gone. Old `/org` redirects to Inbox. `30680`
+stays on the relay for sync; ACP budgets / ORG-CHECK are inert. Company
+model is channel roles + call-by-name (#230 / #232). See D-069 / spike 0054.
+Last updated: 2026-08-19
+
 ## Issue #222 — Wiki card must not call a live GitHub repo empty
 
 Missing or gone `localWorkspacePath` is not `empty-repo`. The worker no
@@ -10,15 +18,15 @@ Generate stays available. Wiki IA/chrome from #221/#225 is unchanged.
 See D-068.
 Last updated: 2026-08-18
 
-## Issue #221 — Wiki + Org office chrome; Wiki IA lock
+## Issue #221 — Wiki office chrome; Wiki IA lock
 
-Wiki and Org reuse office header-bar / field-box / composer-surface
-tokens. Wiki home is DeepWiki IA: search + repo wiki cards; no
+Wiki reuses office header-bar / field-box / composer-surface tokens.
+Wiki home is DeepWiki IA: search + repo wiki cards; no
 "Create company page" CMS form. Repo wiki is generated pages + ask;
 Generate stays in the header; the ask bar is a distinct composer
-surface. Org roster editor labels sit above field boxes. #222 empty-repo
-probe is D-068. See D-067.
-Last updated: 2026-08-18
+surface. Org roster editor chrome from this issue is **removed** with
+#233 / D-069. #222 empty-repo probe is D-068. See D-067 (Wiki chrome).
+Last updated: 2026-08-19
 
 ## Issue #223 — Sidebar is channels only; drop the Projects rail
 
@@ -98,20 +106,13 @@ from the wiki citation. Official spec also covers the Project Wiki
 tab, company proposal review, and Plan → thread.
 Last updated: 2026-08-14
 
-## Issue #198 — Org hierarchy (founder-signed roster)
+## Issue #198 — Org hierarchy (founder-signed roster) — product removed
 
-One addressable `KIND_ORG_ROSTER` (30680, `d=org`) is the tree. Relay
-validates founder-author, acyclicity, single manager, known members, and
-budget cascade before storage. Kickoff `crew-handoff` auto-creates work
-only on the manager chain (founder skip-level always). Budgets enforce
-at turn start; ceiling → stop-and-report. Org chart is a projection.
-Officers draft; founder signs. Spikes 0035–0038. D-060.
-Mock-bridge e2e: `__BUZZ_E2E_SET_ORG_ROSTER__` writes the projection
-and invalidates `["org-roster"]` so a post-`goto("/")` seed is visible.
-The mock event is signed as the mock owner (`deadbeef…`) the nodes
-use as `manager`, not tyler — otherwise `parseOrgRoster` marks Hermes
-as an orphan and the chart stays empty.
-Last updated: 2026-08-14
+Protocol (`KIND_ORG_ROSTER` 30680) remains for sync. The **product**
+(chart, nav, ORG-CHECK teaching, tree budgets) was removed in #233 /
+D-069. Do not recommend Org to founders or agents. Spikes 0035–0038
+are historical.
+Last updated: 2026-08-19
 
 ## Issue #197 — Agent desktop tools (`browser_*` / `sim_*`)
 

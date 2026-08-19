@@ -1,28 +1,12 @@
 import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
-import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { installMockBridge } from "../helpers/bridge";
 
-const SHOTS = "test-results/wiki-org-office-chrome";
-const OWNER = "deadbeef".repeat(8);
-const HERMES = TEST_IDENTITIES.alice.pubkey;
+const SHOTS = "test-results/wiki-office-chrome";
 
 test.use({ video: "on", viewport: { width: 1280, height: 720 } });
 test.describe.configure({ timeout: 90_000 });
-
-function rosterContent() {
-  return JSON.stringify({
-    nodes: {
-      [HERMES]: {
-        manager: OWNER,
-        domain: "office",
-        duties: "survey the floor",
-        cadence: "weekly",
-        budget: { tokens_per_day: 100000, open_work_cap: 3 },
-      },
-    },
-  });
-}
 
 async function surfaceKind(
   locator: import("@playwright/test").Locator,
@@ -48,64 +32,12 @@ async function borderWidthPx(
   );
 }
 
-test.describe("Wiki + Org office chrome and Wiki IA (#221)", () => {
-  test("org roster fields, wiki home IA, and repo wiki ask are distinct surfaces", async ({
+test.describe("Wiki office chrome (#221)", () => {
+  test("wiki home IA and repo wiki ask are distinct surfaces", async ({
     page,
   }) => {
-    await installMockBridge(page, {
-      managedAgents: [
-        {
-          pubkey: HERMES,
-          name: "Hermes",
-          status: "running",
-          channelNames: ["engineering"],
-        },
-      ],
-      searchProfiles: [
-        {
-          pubkey: HERMES,
-          displayName: "Hermes",
-          ownerPubkey: OWNER,
-          isAgent: true,
-        },
-      ],
-    });
+    await installMockBridge(page);
     await page.goto("/");
-    await page.evaluate(
-      ({ content, pubkey }) => {
-        window.__BUZZ_E2E_SET_ORG_ROSTER__?.({ content, pubkey });
-      },
-      { content: rosterContent(), pubkey: OWNER },
-    );
-
-    await page.getByTestId("open-org-view").click();
-    await expect(page.getByTestId("org-view")).toBeVisible();
-    await expect(page.getByTestId("org-header-bar")).toHaveAttribute(
-      "data-office-surface",
-      "header-bar",
-    );
-
-    await page.getByTestId("org-edit-roster").click();
-    const editor = page.getByTestId("org-roster-editor");
-    await expect(editor).toBeVisible();
-
-    const agentLabel = editor.getByText("Agent", { exact: true });
-    await expect(agentLabel).toBeVisible();
-    await expect(agentLabel.locator("select")).toHaveCount(0);
-    await expect(agentLabel.locator("input")).toHaveCount(0);
-
-    const agentField = editor
-      .locator('[data-office-surface="field-box"]')
-      .first();
-    await expect(agentField).toBeVisible();
-    expect(await borderWidthPx(agentField)).toBeGreaterThanOrEqual(1);
-    expect(await rgbOf(agentField, "backgroundColor")).not.toBe(
-      await rgbOf(editor, "backgroundColor"),
-    );
-
-    await waitForAnimations(page);
-    await editor.screenshot({ path: `${SHOTS}/01-org-roster-editor.png` });
-    await page.keyboard.press("Escape");
 
     await page.getByTestId("open-wiki-view").click();
     await expect(page.getByTestId("wiki-library")).toBeVisible();
@@ -133,7 +65,7 @@ test.describe("Wiki + Org office chrome and Wiki IA (#221)", () => {
     await waitForAnimations(page);
     await page
       .getByTestId("wiki-library")
-      .screenshot({ path: `${SHOTS}/02-wiki-home.png` });
+      .screenshot({ path: `${SHOTS}/01-wiki-home.png` });
 
     await page
       .getByTestId("wiki-repo-card-buzz")
@@ -162,13 +94,13 @@ test.describe("Wiki + Org office chrome and Wiki IA (#221)", () => {
     await waitForAnimations(page);
     await page
       .getByTestId("wiki-page")
-      .screenshot({ path: `${SHOTS}/03-repo-wiki.png` });
+      .screenshot({ path: `${SHOTS}/02-repo-wiki.png` });
 
     await page.getByTestId("channel-engineering").click();
     await expect(page.getByTestId("message-composer")).toBeVisible();
     await waitForAnimations(page);
     await page.screenshot({
-      path: `${SHOTS}/04-office-header-composer.png`,
+      path: `${SHOTS}/03-office-header-composer.png`,
       clip: { x: 256, y: 0, width: 1024, height: 720 },
     });
   });

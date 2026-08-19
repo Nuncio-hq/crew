@@ -102,17 +102,6 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
-  const goOrg = React.useCallback(
-    (behavior?: NavigationBehavior) =>
-      commitNavigation(
-        {
-          to: "/org",
-        },
-        behavior,
-      ),
-    [commitNavigation],
-  );
-
   const goWiki = React.useCallback(
     (behavior?: NavigationBehavior) =>
       commitNavigation(
@@ -379,7 +368,6 @@ export function useAppNavigation() {
     goHome,
     goNewMessage,
     goProject,
-    goOrg,
     goWiki,
     goProjects,
     goPulse,

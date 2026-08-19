@@ -63,23 +63,12 @@ test("wiki home is search + repo list, not a CMS create form", () => {
   assert.match(library, /WikiRepoCard/, "Wiki home must list repo wikis");
 });
 
-test("org roster editor labels sit above field boxes, not on inputs", () => {
-  const roster = readSrc("features/org/ui/OrgRosterEditor.tsx");
+test("OfficeField marks the office field-box surface", () => {
   const field = readSrc("shared/ui/OfficeField.tsx");
-  assert.match(
-    roster,
-    /OfficeField/,
-    "roster must use a labeled field that keeps the label off the input",
-  );
   assert.match(
     field,
     /OFFICE_SURFACE\.fieldBox|data-office-surface=["']field-box["']/,
     "OfficeField must mark the office field-box surface",
-  );
-  assert.doesNotMatch(
-    roster,
-    /<label[\s\S]{0,200}<(select|Input|textarea)/,
-    "labels must not wrap the control (that is the fail fixture: label sits on input)",
   );
 });
 

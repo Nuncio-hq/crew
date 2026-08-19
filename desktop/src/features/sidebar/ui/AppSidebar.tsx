@@ -109,7 +109,6 @@ export function AppSidebar({
   onRemoveCommunity,
   onCreateAgent,
   onSelectAgents,
-  onSelectOrg,
   onSelectWiki,
   onSelectPulse,
   onSelectWorkflows,
@@ -513,7 +512,6 @@ export function AppSidebar({
                 homeBadgeCount={homeBadgeCount}
                 onSelectAgents={onSelectAgents}
                 onSelectHome={onSelectHome}
-                onSelectOrg={onSelectOrg}
                 onSelectWiki={onSelectWiki}
                 onSelectPulse={onSelectPulse}
                 onSelectWorkflows={onSelectWorkflows}
