@@ -5,6 +5,12 @@
 Tests are design instruments. They should reveal incorrect assumptions and
 edge cases before implementation commits the architecture.
 
+**Client acceptance is a separate bar.** Technical green (`just ci`, e2e)
+proves agent trust. Founder Accept requires Gate C (story + try script +
+evidence + honest limit in the thread) — see issue #234 / D-070 and
+[`templates/CLIENT-ACCEPTANCE.md`](templates/CLIENT-ACCEPTANCE.md). Do not
+treat this file’s technical checklist as founder Accept.
+
 ## TDD loop
 
 For each observable contract:

@@ -77,12 +77,16 @@ Before a multi-step plan, confirm:
 - [ ] Thin-fork: prefer new Crew files; minimal upstream edits?
 - [ ] Explanations will stay plain; uncertainties labeled?
 - [ ] Acceptance written as **observable founder outcomes** (not only “tests pass”)
+- [ ] Before asking for Accept: four items in the thread (story, try script,
+  evidence, honest limit) — Gate C / #234 / D-070; template
+  [`templates/CLIENT-ACCEPTANCE.md`](templates/CLIENT-ACCEPTANCE.md)
 
 ## Implementation checklist (agent)
 
 - [ ] No parallel database for room truth (relay events win)
 - [ ] Agent-facing success = signed/published room updates where relevant
 - [ ] Wrong-role or out-of-scope work fails loudly or asks — not silent “done”
+- [ ] CI green ≠ Accept — founder Gate C after the four thread items (D-070)
 - [ ] Docs updated only if user-visible behavior or durable rules change
 - [ ] Shipped state changed (release published, slice merged, gate changed)
   → update [`STATE.md`](STATE.md) in the same PR

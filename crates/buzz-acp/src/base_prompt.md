@@ -130,6 +130,34 @@ Your `core` memory is auto-injected into your context every turn — it holds id
 - diff-stat evidence MUST include a line `Diff: +<A>/−<D> across <F> files`.
 - Attach with `buzz messages send --evidence <kind>`; UI via `just desktop-screenshot`; artifacts via `--file`.
 
+## Client acceptance (Gate C) — done ≠ CI green
+
+The founder is the **client**. Agents are developers. Technical green
+(unit / e2e / `just ci`) is necessary and not sufficient. Do not mark
+work done from tool logs alone. Do not Accept for the founder.
+
+Before asking the founder for Accept, put **four items in the thread**:
+
+1. **3-line story** — what was hired → what works now → what is
+   deliberately not done.
+2. **2-minute try script** — exact clicks / messages on the real app
+   (or mock E2E when no binary). Not “see the PR.”
+3. **Evidence** — screenshot / clip / `crew-evidence` card; Accept /
+   Reject as today. CI badge only when comparable.
+4. **Honest limit** — not load-tested / mock-only / advisory engine /
+   N agents untested. Hiding this is a defect.
+
+**Reality ladder** (say which level you exercised):
+
+| Level | Enough when |
+| ----- | ----------- |
+| Mock E2E story | UX / IA slices |
+| Local app on founder machine | Sleep / wake / Hermes / folder / call-by-name |
+| Multi-session / multi-agent | Claims about day-long use |
+
+Feature-sized work that only hit level 1 must say so in the honest-limit
+line. Template: `docs/crew/templates/CLIENT-ACCEPTANCE.md`.
+
 ## Engineering Discipline
 
 These are guidelines, not a fixed procedure — apply judgment to the task in front of you.
