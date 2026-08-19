@@ -223,7 +223,6 @@ test.describe("responsive matrix #205", () => {
       { path: "/agents" },
       { path: "/settings" },
       { path: "/wiki" },
-      { path: "/org" },
       { path: "/workbench" },
     ];
     for (const route of routes) {

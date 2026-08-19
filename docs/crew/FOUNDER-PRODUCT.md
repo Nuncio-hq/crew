@@ -55,7 +55,7 @@ See D-001 (thin fork) and D-025 (build on Buzz contracts).
 | Layer | Meaning | Stance |
 | ----- | ------- | ------ |
 | **L0 Sovereignty** | Not locked to one vendor forever | **Anti-lock-in is enough.** Multi-engine via ACP. **No local-AI investment** (no Ollama-first path). |
-| **L1 Org** | Agents as colleagues; handoff with roles | Hermes-first; roles must constrain assignment (see below). |
+| **L1 Org** | Agents as colleagues; roles constrain work | Role-first: channel roles + call-by-name (#230–#233). No Org chart product (D-069). |
 | **L2 Business** | Non-code work, questions, drafts | Same channels; no separate “Office” entity required day-one. |
 | **L3 Build** | Normal app/mobile development | Agents + Project/worktree help ship real apps. |
 | **L4 Evidence** | Before/after, verify work | Desired; ship on the **thread log** when prioritized — not a new platform. |
@@ -95,15 +95,16 @@ Buzz contracts (already exist)
 
 ### Roles and assignment (intent)
 
-Org chart / roles are valuable **only if** they change behavior:
+Channel roles are valuable **only if** they change behavior (D-043 / D-044).
+Do **not** draw or recommend an Org chart (D-069 / #233).
 
-- **Good:** work of type X goes to an agent allowed to do X; wrong-role
-  handoff is refused or escalated to the founder.
-- **Bad:** decorative titles while CTO assigns API work to “marketing,” or
-  backend agents silently ship unrelated UI.
+- **Good:** work of type X goes to a named agent allowed to do X in this
+  room; wrong-role work is refused or escalated.
+- **Bad:** decorative titles, or agents recommending a dormant company tree.
 
 Day-one enforcement may be soft (profile prompts + honest refusal). Hard
 harness policy can come later. Mis-assignment must never look like success.
+CoS calls specialists **by name** (#230 / #232).
 
 ## Desktop and mobile (one product story)
 

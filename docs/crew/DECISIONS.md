@@ -1525,9 +1525,9 @@ of Projects.
 
 See issue #223.
 
-## D-067 — Wiki is not a CMS; Wiki + Org use office chrome
+## D-067 — Wiki is not a CMS; Wiki uses office chrome
 
-- **Status:** Accepted
+- **Status:** Accepted (Org chrome half superseded by D-069 / #233)
 - **Date:** 2026-08-18
 - **Issue:** #221
 
@@ -1540,7 +1540,8 @@ Wiki copies Devin / DeepWiki IA. It is not a page CMS.
    header action. The ask bar is the question layer.
 3. **Chrome** reuses office tokens: header as a bar, fields as boxes
    with the label outside the input, ask/composer as a distinct
-   surface. Do not invent a third look.
+   surface. Do not invent a third look. (Org roster editor chrome
+   removed with #233.)
 
 #222 (false empty-repo copy) is a separate bug; see D-068.
 
@@ -1560,4 +1561,33 @@ Wiki copies Devin / DeepWiki IA. It is not a page CMS.
    found."). A bound path that is gone uses the existing #217 sentence
    ("The Project folder is gone. Pick a workspace again.").
 4. Generate stays available. Do not invent a new product sentence.
+
+## D-069 — Org chart is not Crew product; role-first + call-by-name
+
+- **Status:** Accepted
+- **Date:** 2026-08-19
+- **Issue:** #233 (supersedes #231 discussion; product unwind of #198 / D-060)
+
+The founder-signed org roster and chart shipped in #198 / D-060 are **not**
+how Crew companies run. Channel roles (D-043 / D-044) plus call-by-name
+(#230 / #232) are the model. Unused Org taught agents the wrong north star.
+
+1. **Remove product surface.** No Org nav, `/org` screen, roster editor,
+   handoff-assign chrome, or agent docs/prompts that prescribe ORG-CHECK /
+   org chart / officer-loop-on-tree. Old `/org` URLs redirect to Inbox.
+2. **Protocol inert, not deleted.** `KIND_ORG_ROSTER` (30680) and relay
+   ingest stay for thin-fork sync safety. ACP does not inject ORG-CHECK,
+   does not enforce tree budgets, and does not skip heartbeats on officer
+   grounds. Escalate to a later P3 relay drop only if agents still
+   rediscover leftovers.
+3. **CLI.** `buzz org show|tree|publish` and `messages --handoff` error with
+   a migration hint. Portfolio/Steward on 30617 remain (repo stewardship,
+   not the company chart).
+4. **D-060.** Remains as historical protocol record. This decision
+   supersedes its *product* commitment (chart as how companies run). Sync
+   tables must not revive the Org screen.
+5. **Non-goals here.** Channel budgets, founder Inbox Wake, implementing
+   #230/#232 inside the Org-removal PR.
+
+See spike 0054.
 

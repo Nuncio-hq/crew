@@ -279,21 +279,10 @@ Hermes-side ask lands.
   memory/skills/credentials/model, not the capability boundary (D-024,
   D-029, D-044).
 
-## Officer loop (issue #198)
+## Officer loop — removed with Org product (#233 / D-069)
 
-When the founder-signed org roster names a Hermes agent as an officer
-(someone with direct reports):
-
-1. **ORG-CHECK** on a fresh session (same idea as ROLE-CHECK): confirm
-   domain, duties, and cadence from the roster. Do not invent a title.
-2. **Heartbeat** may survey reports when there is a delta (new receipt,
-   stalled thread, budget stop). Do not poll the floor on every beat.
-3. **Handoff** to a report uses `crew-handoff` and must link the parent
-   thread so the executor can read the founder’s original words.
-4. **Rollups** are ordinary messages in the officer’s office thread
-   (`crew-office`). Cadence is a convention, not a protocol timer.
-5. **Budget ceiling** → stop-and-report in the office thread. Never
-   continue self-initiated work silently. Founder-assigned work is not
-   blocked by the self-initiated cap.
-6. Peer chat stays flat. The tree constrains assignment and budget, not
-   who may mention whom.
+Do **not** run ORG-CHECK, teach the org chart, or route work through a
+manager tree. Channel roles (D-043 / D-044) say what a named person may
+do in the room. CoS calls specialists **by name** (#230 / #232). Peer
+chat stays flat. `KIND_ORG_ROSTER` may still exist on the relay for sync;
+it is not how Crew companies run.

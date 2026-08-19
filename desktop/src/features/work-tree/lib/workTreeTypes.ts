@@ -57,14 +57,12 @@ export const NEEDS_YOU_KIND_ORDER = [
   "question",
   "approval",
   "evidence",
-  "escalation",
 ] as const;
 
 export type NeedsYouKind = (typeof NEEDS_YOU_KIND_ORDER)[number];
 
 export type NeedsYouItem = {
   channelId: string;
-  hop: string | null;
   id: string;
   kind: NeedsYouKind;
   title: string;

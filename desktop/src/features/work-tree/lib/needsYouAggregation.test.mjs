@@ -15,7 +15,6 @@ describe("aggregateNeedsYou", () => {
     const result = aggregateNeedsYou([
       {
         channelId: CHANNEL,
-        hop: null,
         id: "req-1",
         kind: "question",
         threadRootId: ROOT,
@@ -23,15 +22,13 @@ describe("aggregateNeedsYou", () => {
       },
       {
         channelId: CHANNEL,
-        hop: "Cody → Hermes",
         id: "req-1",
-        kind: "escalation",
+        kind: "approval",
         threadRootId: ROOT,
         title: "Merge?",
       },
       {
         channelId: CHANNEL,
-        hop: null,
         id: "req-2",
         kind: "approval",
         threadRootId: ROOT,
@@ -39,17 +36,15 @@ describe("aggregateNeedsYou", () => {
       },
     ]);
     assert.equal(result.count, 2);
-    assert.equal(result.grouped.escalation.length, 1);
-    assert.equal(result.grouped.question.length, 0);
+    assert.equal(result.grouped.question.length, 1);
     assert.equal(result.grouped.approval.length, 1);
-    assert.equal(result.grouped.escalation[0].hop, "Cody → Hermes");
+    assert.equal(result.grouped.question[0].title, "Merge?");
   });
 
   it("keeps distinct ids in their own groups", () => {
     const result = aggregateNeedsYou([
       {
         channelId: CHANNEL,
-        hop: null,
         id: "q",
         kind: "question",
         threadRootId: ROOT,
@@ -57,7 +52,6 @@ describe("aggregateNeedsYou", () => {
       },
       {
         channelId: CHANNEL,
-        hop: null,
         id: "e",
         kind: "evidence",
         threadRootId: ROOT,

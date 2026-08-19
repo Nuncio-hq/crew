@@ -1,4 +1,4 @@
-import { Activity, BookOpen, Bot, Inbox, Network, Zap } from "lucide-react";
+import { Activity, BookOpen, Bot, Inbox, Zap } from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { FeatureGate } from "@/shared/features";
@@ -20,7 +20,6 @@ export type SidebarSelectedView =
   | "workflows"
   | "pulse"
   | "projects"
-  | "org"
   | "wiki";
 
 type AppSidebarPinnedHeaderProps = {
@@ -43,7 +42,6 @@ type AppSidebarPrimaryMenuProps = {
   homeBadgeCount: number;
   onSelectAgents: () => void;
   onSelectHome: () => void;
-  onSelectOrg: () => void;
   onSelectWiki: () => void;
   onSelectPulse: () => void;
   onSelectWorkflows: () => void;
@@ -93,7 +91,6 @@ export function AppSidebarPrimaryMenu({
   homeBadgeCount,
   onSelectAgents,
   onSelectHome,
-  onSelectOrg,
   onSelectWiki,
   onSelectPulse,
   onSelectWorkflows,
@@ -148,18 +145,6 @@ export function AppSidebarPrimaryMenu({
             </SidebarMenuButton>
           </SidebarMenuItem>
         </FeatureGate>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            data-testid="open-org-view"
-            isActive={selectedView === "org"}
-            onClick={onSelectOrg}
-            tooltip="Org"
-            type="button"
-          >
-            <Network className="h-4 w-4" />
-            <SidebarMenuLabel>Org</SidebarMenuLabel>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
             data-testid="open-wiki-view"

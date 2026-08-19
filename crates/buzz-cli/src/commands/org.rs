@@ -1,107 +1,15 @@
-//! Founder-signed org roster commands (Crew).
+//! Repo stewardship helpers (Crew). Org chart Show/Tree/Publish removed (#233).
 
-use buzz_core::kind::{KIND_GIT_REPO_ANNOUNCEMENT, KIND_ORG_ROSTER, KIND_PROJECT};
+use buzz_core::kind::{KIND_GIT_REPO_ANNOUNCEMENT, KIND_PROJECT};
 use buzz_core::org_roster::{
-    canonical_pubkey, direct_reports, parse_org_roster_event, portfolio_for_agent,
-    serialize_org_roster, stewardship_pubkeys, OrgRoster, MAINTAINERS_TAG, ORG_ROSTER_D_TAG,
-    STEWARD_TAG,
+    canonical_pubkey, portfolio_for_agent, stewardship_pubkeys, MAINTAINERS_TAG, STEWARD_TAG,
 };
-use nostr::{EventBuilder, Kind, Tag};
+use nostr::Tag;
 
 use crate::client::BuzzClient;
 use crate::commands::parse_write_response;
 use crate::error::CliError;
 use crate::validate::validate_hex64;
-
-pub(crate) async fn fetch_roster(
-    client: &BuzzClient,
-) -> Result<Option<(OrgRoster, String)>, CliError> {
-    let filter = serde_json::json!({
-        "kinds": [KIND_ORG_ROSTER],
-        "#d": [ORG_ROSTER_D_TAG],
-        "limit": 5
-    });
-    let raw = client.query(&filter).await?;
-    let events: Vec<serde_json::Value> = serde_json::from_str(&raw)
-        .map_err(|error| CliError::Other(format!("org roster query is not JSON: {error}")))?;
-    let mut best: Option<(u64, String, serde_json::Value)> = None;
-    for event in events {
-        let created = event
-            .get("created_at")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0);
-        let id = event
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let replace = match &best {
-            None => true,
-            Some((ts, eid, _)) => created > *ts || (created == *ts && id > *eid),
-        };
-        if replace {
-            best = Some((created, id, event));
-        }
-    }
-    let Some((_, _, event)) = best else {
-        return Ok(None);
-    };
-    let author = event
-        .get("pubkey")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| CliError::Other("org roster missing pubkey".into()))?;
-    let content = event
-        .get("content")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("{}");
-    let tags: Vec<Vec<String>> = event
-        .get("tags")
-        .and_then(serde_json::Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| {
-                    row.as_array().map(|cells| {
-                        cells
-                            .iter()
-                            .filter_map(|cell| cell.as_str().map(str::to_string))
-                            .collect()
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let roster = parse_org_roster_event(content, author, &tags)
-        .map_err(|error| CliError::Other(error.to_string()))?;
-    Ok(Some((
-        roster,
-        serde_json::to_string_pretty(&event).unwrap_or_default(),
-    )))
-}
-
-fn print_tree(roster: &OrgRoster) {
-    println!("founder {}", roster.founder_pubkey);
-    print_reports(roster, &roster.founder_pubkey, "");
-}
-
-fn print_reports(roster: &OrgRoster, manager: &str, prefix: &str) {
-    let Ok(reports) = direct_reports(roster, manager) else {
-        return;
-    };
-    let last_index = reports.len().saturating_sub(1);
-    for (index, node) in reports.into_iter().enumerate() {
-        let branch = if index == last_index {
-            "└─"
-        } else {
-            "├─"
-        };
-        println!(
-            "{prefix}{branch} {}  {}  budget {}/{}",
-            node.agent_pubkey, node.domain, node.budget.tokens_per_day, node.budget.open_work_cap
-        );
-        let next = format!("{prefix}{}", if index == last_index { "  " } else { "│ " });
-        print_reports(roster, &node.agent_pubkey, &next);
-    }
-}
 
 async fn fetch_repo_events(
     client: &BuzzClient,
@@ -166,29 +74,12 @@ pub async fn dispatch(
     client: &BuzzClient,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
+    let _format = format;
     match cmd {
-        crate::OrgCmd::Show => {
-            let Some((roster, raw)) = fetch_roster(client).await? else {
-                println!("{{}}");
-                return Ok(());
-            };
-            match format {
-                crate::OutputFormat::Json => println!("{raw}"),
-                crate::OutputFormat::Compact => {
-                    let json = serialize_org_roster(&roster)
-                        .map_err(|error| CliError::Other(error.to_string()))?;
-                    println!("{json}");
-                }
-            }
-            Ok(())
-        }
-        crate::OrgCmd::Tree => {
-            let Some((roster, _)) = fetch_roster(client).await? else {
-                println!("(empty org roster)");
-                return Ok(());
-            };
-            print_tree(&roster);
-            Ok(())
+        crate::OrgCmd::Show | crate::OrgCmd::Tree | crate::OrgCmd::Publish { .. } => {
+            Err(CliError::Usage(
+                "Org chart/roster CLI is removed (#233). Company model is channel roles + call-by-name; 30680 stays on the relay for sync only.".into(),
+            ))
         }
         crate::OrgCmd::Portfolio { pubkey } => {
             validate_hex64(&pubkey)?;
@@ -200,28 +91,6 @@ pub async fn dispatch(
             println!(
                 "{}",
                 serde_json::to_string(&names).unwrap_or_else(|_| "[]".into())
-            );
-            Ok(())
-        }
-        crate::OrgCmd::Publish { file } => {
-            let content = std::fs::read_to_string(&file)
-                .map_err(|error| CliError::Other(format!("read {file}: {error}")))?;
-            let author = client.keys().public_key().to_hex();
-            parse_org_roster_event(
-                &content,
-                &author,
-                &[vec!["d".into(), ORG_ROSTER_D_TAG.into()]],
-            )
-            .map_err(|error| CliError::Usage(error.to_string()))?;
-            let d_tag = Tag::parse(["d", ORG_ROSTER_D_TAG])
-                .map_err(|error| CliError::Other(format!("d tag: {error}")))?;
-            let builder =
-                EventBuilder::new(Kind::Custom(KIND_ORG_ROSTER as u16), content).tag(d_tag);
-            let event = client.sign_event(builder)?;
-            let resp = client.submit_event(event).await?;
-            println!(
-                "{}",
-                parse_write_response(&resp, "org roster was dominated by a newer event")?
             );
             Ok(())
         }
@@ -275,12 +144,11 @@ pub async fn dispatch(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use buzz_core::org_roster::parse_org_roster;
+    use buzz_core::org_roster::{direct_reports, parse_org_roster};
     use nostr::Keys;
 
     #[test]
-    fn tree_lists_direct_reports() {
+    fn parser_still_lists_direct_reports_for_protocol() {
         let founder = Keys::generate().public_key().to_hex();
         let officer = Keys::generate().public_key().to_hex();
         let json = format!(

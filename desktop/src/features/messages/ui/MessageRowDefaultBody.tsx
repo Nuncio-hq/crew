@@ -18,7 +18,6 @@ import { EvidenceCard } from "./EvidenceCard";
 import { HandoverNoteCard } from "./HandoverNoteCard";
 import { parseEvidenceKind } from "@/features/messages/lib/evidenceTag";
 import { parseHandoverModel } from "@/features/messages/lib/handoverTag";
-import { MessageOrgDecorations } from "@/features/org/ui/MessageOrgDecorations";
 
 export function MessageRowDefaultBody({
   message,
@@ -152,26 +151,20 @@ export function MessageRowDefaultBody({
   }
 
   if (!reviewRootEventId || !reviewTimecode || !openVideoReviewAt) {
-    return (
-      <MessageOrgDecorations message={message}>
-        {markdown}
-      </MessageOrgDecorations>
-    );
+    return markdown;
   }
 
   return (
-    <MessageOrgDecorations message={message}>
-      <div className="flex min-w-0 items-start gap-1.5">
-        <VideoReviewTimecodeButton
-          surface="message"
-          timecode={reviewTimecode.timecode}
-          onClick={(event) => {
-            event.stopPropagation();
-            openVideoReviewAt(reviewRootEventId, reviewTimecode.seconds);
-          }}
-        />
-        <div className="min-w-0 flex-1">{markdown}</div>
-      </div>
-    </MessageOrgDecorations>
+    <div className="flex min-w-0 items-start gap-1.5">
+      <VideoReviewTimecodeButton
+        surface="message"
+        timecode={reviewTimecode.timecode}
+        onClick={(event) => {
+          event.stopPropagation();
+          openVideoReviewAt(reviewRootEventId, reviewTimecode.seconds);
+        }}
+      />
+      <div className="min-w-0 flex-1">{markdown}</div>
+    </div>
   );
 }

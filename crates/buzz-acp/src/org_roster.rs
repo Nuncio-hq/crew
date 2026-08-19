@@ -1,13 +1,13 @@
-//! Org roster fetch/cache, kickoff gate, and turn-start budget (Crew).
+//! Org roster fetch/cache and kickoff gate (Crew).
 //!
-//! Ordinary wakes must not fetch the roster. Fetch happens on:
-//! - `crew-handoff` targeting this agent
-//! - fresh session ORG-CHECK
-//! - inbound `KIND_ORG_ROSTER` (cache refresh)
+//! #233 / D-069: Org chart / tree budgets / ORG-CHECK are **not** Crew product.
+//! `KIND_ORG_ROSTER` may still land on the relay for sync; this module keeps
+//! parse/cache helpers but does not teach the tree or enforce budgets.
 //!
-//! Budget is enforced at **turn start** only (spike 0037). Mid-turn abort of
-//! an in-flight LLM call is not the contract. Founder-assigned work is never
-//! blocked by self-initiated budgets.
+//! Ordinary wakes must not fetch the roster. Fetch may still happen on
+//! `crew-handoff` targeting this agent or inbound `KIND_ORG_ROSTER` (cache
+//! refresh) so protocol leftovers stay consistent — agents are not prompted
+//! about them.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use buzz_core::kind::KIND_ORG_ROSTER;
 use buzz_core::org_roster::{
-    compose_org_section, handoff_creates_work, is_officer, parse_handoff_tag,
-    parse_org_roster_event, OrgRoster, CREW_BUDGET_STOP, CREW_BUDGET_TAG, ORG_ROSTER_D_TAG,
+    handoff_creates_work, parse_handoff_tag, parse_org_roster_event, OrgRoster, CREW_BUDGET_STOP,
+    CREW_BUDGET_TAG, ORG_ROSTER_D_TAG,
 };
 use nostr::{Event, EventBuilder, Filter, Kind, Tag};
 use serde_json::Value;
@@ -304,6 +304,7 @@ fn canonical_eq(left: &str, right: &str) -> bool {
 
 /// Budget decision at turn start.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // StopAndReport kept for protocol shape / possible P3
 pub enum BudgetDecision {
     /// Run the turn.
     Allow,
@@ -319,6 +320,8 @@ pub enum BudgetDecision {
 }
 
 /// Evaluate self-initiated budget. Assigned work always `Allow`.
+///
+/// #233 / D-069: tree budgets are out of product — always allow.
 pub fn evaluate_budget(
     tracker: &OrgBudgetTracker,
     roster: Option<&OrgRoster>,
@@ -326,28 +329,7 @@ pub fn evaluate_budget(
     assigned_work: bool,
     now: u64,
 ) -> BudgetDecision {
-    if assigned_work {
-        return BudgetDecision::Allow;
-    }
-    let Some(roster) = roster else {
-        return BudgetDecision::Allow;
-    };
-    let Ok(me) = buzz_core::org_roster::canonical_pubkey(me) else {
-        return BudgetDecision::Allow;
-    };
-    let Some(node) = roster.nodes.get(&me) else {
-        return BudgetDecision::Allow;
-    };
-    tracker.roll_day(now);
-    let tokens = tracker.tokens_today.load(Ordering::Relaxed);
-    let open = tracker.open_self_initiated.load(Ordering::Relaxed);
-    if tokens >= node.budget.tokens_per_day || open >= node.budget.open_work_cap {
-        return BudgetDecision::StopAndReport {
-            tokens_today: tokens,
-            open_work: open,
-            office_channel: node.office_channel.clone(),
-        };
-    }
+    let _ = (tracker, roster, me, assigned_work, now);
     BudgetDecision::Allow
 }
 
@@ -371,20 +353,15 @@ impl Drop for SelfInitiatedTurnGuard {
 }
 
 /// Officers skip heartbeat when nothing new arrived since the last one.
+///
+/// #233 / D-069: officer loop is not product — never skip on roster grounds.
 pub fn officer_should_skip_heartbeat(
     roster: Option<&OrgRoster>,
     me: &str,
     tracker: &OrgBudgetTracker,
 ) -> bool {
-    let Some(roster) = roster else {
-        return false;
-    };
-    if !is_officer(roster, me) {
-        return false;
-    }
-    let last_inbound = tracker.last_inbound_at.load(Ordering::Relaxed);
-    let last_heartbeat = tracker.last_heartbeat_activity.load(Ordering::Relaxed);
-    last_inbound <= last_heartbeat
+    let _ = (roster, me, tracker);
+    false
 }
 
 /// Mark a heartbeat as fired (delta gate baseline).
@@ -395,8 +372,12 @@ pub fn mark_heartbeat_fired(tracker: &OrgBudgetTracker, now: u64) {
 }
 
 /// ORG-CHECK prompt section for a fresh session.
+///
+/// #233 / D-069: Org is not Crew product. Keep the roster parser for sync, but
+/// never inject ORG-CHECK / tree teaching into agent prompts.
 pub fn org_check_section(roster: Option<&OrgRoster>, me: &str) -> Option<String> {
-    compose_org_section(roster?, me)
+    let _ = (roster, me);
+    None
 }
 
 /// Publish stop-and-report into the officer office channel (kind:9).
@@ -487,21 +468,21 @@ mod tests {
     }
 
     #[test]
-    fn self_initiated_hits_ceiling() {
+    fn self_initiated_budget_inert_always_allows() {
         let (_founder, hermes, _cody, _peer, roster) = fixture();
         let tracker = OrgBudgetTracker::default();
         tracker.tokens_today.store(80, Ordering::Relaxed);
         let decision = evaluate_budget(&tracker, Some(&roster), &hermes, false, 0);
-        assert!(matches!(decision, BudgetDecision::StopAndReport { .. }));
+        assert_eq!(decision, BudgetDecision::Allow);
     }
 
     #[test]
-    fn open_work_cap_blocks_self_initiated() {
+    fn open_work_cap_inert_always_allows() {
         let (_founder, _hermes, cody, _peer, roster) = fixture();
         let tracker = OrgBudgetTracker::default();
         tracker.open_self_initiated.store(1, Ordering::Relaxed);
         let decision = evaluate_budget(&tracker, Some(&roster), &cody, false, 0);
-        assert!(matches!(decision, BudgetDecision::StopAndReport { .. }));
+        assert_eq!(decision, BudgetDecision::Allow);
     }
 
     #[test]
@@ -525,12 +506,12 @@ mod tests {
     }
 
     #[test]
-    fn officer_heartbeat_delta_gate() {
+    fn officer_heartbeat_delta_gate_inert() {
         let (_founder, hermes, cody, _peer, roster) = fixture();
         let tracker = OrgBudgetTracker::default();
         tracker.last_heartbeat_activity.store(50, Ordering::Relaxed);
         tracker.last_inbound_at.store(40, Ordering::Relaxed);
-        assert!(officer_should_skip_heartbeat(
+        assert!(!officer_should_skip_heartbeat(
             Some(&roster),
             &hermes,
             &tracker
@@ -538,12 +519,6 @@ mod tests {
         assert!(!officer_should_skip_heartbeat(
             Some(&roster),
             &cody,
-            &tracker
-        ));
-        tracker.last_inbound_at.store(60, Ordering::Relaxed);
-        assert!(!officer_should_skip_heartbeat(
-            Some(&roster),
-            &hermes,
             &tracker
         ));
     }

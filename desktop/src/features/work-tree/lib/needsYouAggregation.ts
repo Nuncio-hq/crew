@@ -5,7 +5,6 @@ import {
 } from "./workTreeTypes";
 
 const KIND_RANK: Record<NeedsYouKind, number> = {
-  escalation: 4,
   question: 3,
   approval: 2,
   evidence: 1,
@@ -17,8 +16,7 @@ function preferredKind(left: NeedsYouKind, right: NeedsYouKind): NeedsYouKind {
 
 /**
  * Deduplicate by id. An item that matches several kinds is counted once
- * and kept on the highest-rank kind (escalation > question > approval >
- * evidence).
+ * and kept on the highest-rank kind (question > approval > evidence).
  */
 export function aggregateNeedsYou(items: readonly NeedsYouItem[]): {
   count: number;
@@ -35,7 +33,6 @@ export function aggregateNeedsYou(items: readonly NeedsYouItem[]): {
     const kind = preferredKind(existing.kind, item.kind);
     byId.set(item.id, {
       ...existing,
-      hop: item.hop ?? existing.hop,
       kind,
       title: existing.title || item.title,
     });
@@ -48,7 +45,6 @@ export function aggregateNeedsYou(items: readonly NeedsYouItem[]): {
   });
   const grouped: Record<NeedsYouKind, NeedsYouItem[]> = {
     approval: [],
-    escalation: [],
     evidence: [],
     question: [],
   };
@@ -70,8 +66,6 @@ export function needsYouKindHeading(kind: NeedsYouKind): string {
       return "PR approvals";
     case "evidence":
       return "Evidence";
-    case "escalation":
-      return "Escalations";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
