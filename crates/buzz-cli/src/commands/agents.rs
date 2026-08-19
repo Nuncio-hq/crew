@@ -164,6 +164,82 @@ pub async fn dispatch(command: AgentsCmd, client: &BuzzClient) -> Result<(), Cli
         }
 
         AgentsCmd::Archived => cmd_archived(client).await,
+
+        AgentsCmd::Call {
+            channel,
+            agent,
+            pubkey,
+            message,
+            reply_to,
+        } => cmd_call(client, channel, agent, pubkey, message, reply_to).await,
+    }
+}
+
+/// Room-visible call-by-name (#230). Reuses `messages send` mention → ACP wake.
+async fn cmd_call(
+    client: &BuzzClient,
+    channel: String,
+    agent: Option<String>,
+    pubkey: Option<String>,
+    message: Option<String>,
+    reply_to: Option<String>,
+) -> Result<(), CliError> {
+    let (target, used_agent_name) = resolve_call_target(agent.as_deref(), pubkey.as_deref())?;
+    let body = match message.as_deref() {
+        Some(raw) => read_or_stdin(raw)?,
+        None => "Calling you — please pick this up.".to_string(),
+    };
+    let content = format_call_content(used_agent_name, &target, &body)?;
+    let mentions = vec![target];
+    crate::commands::messages::cmd_send_message(
+        client,
+        crate::commands::messages::SendMessageParams {
+            channel_id: channel,
+            content,
+            kind: None,
+            evidence: None,
+            reply_to,
+            broadcast: false,
+            files: Vec::new(),
+            mentions,
+            handoff: None,
+            goal: None,
+        },
+    )
+    .await
+}
+
+/// Exactly one of `--agent` / `--pubkey`. Returns (mention token, used_agent_name).
+fn resolve_call_target(
+    agent: Option<&str>,
+    pubkey: Option<&str>,
+) -> Result<(String, bool), CliError> {
+    match (agent.map(str::trim), pubkey.map(str::trim)) {
+        (Some(name), None) if !name.is_empty() => Ok((name.to_string(), true)),
+        (None, Some(pk)) if !pk.is_empty() => Ok((pk.to_string(), false)),
+        (Some(_), Some(_)) => Err(CliError::Usage(
+            "pass exactly one of --agent or --pubkey".into(),
+        )),
+        _ => Err(CliError::Usage(
+            "pass --agent <name> or --pubkey <hex-or-npub>".into(),
+        )),
+    }
+}
+
+fn format_call_content(used_agent_name: bool, target: &str, body: &str) -> Result<String, CliError> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Err(CliError::Usage("call message is empty".into()));
+    }
+    if used_agent_name {
+        let at = format!("@{target}");
+        if body.contains(&at) {
+            Ok(body.to_string())
+        } else {
+            Ok(format!("{at} {body}"))
+        }
+    } else {
+        Ok(body.to_string())
     }
 }
 
@@ -1078,6 +1154,55 @@ mod tests {
             }
             _ => panic!("unexpected command variant"),
         }
+    }
+
+    #[test]
+    fn call_parses_agent_and_reply_to() {
+        use crate::Cli;
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "buzz",
+            "agents",
+            "call",
+            "--channel",
+            "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9",
+            "--agent",
+            "Dev",
+            "--message",
+            "ship the UI slice",
+            "--reply-to",
+            &hex64('e'),
+        ])
+        .expect("agents call must parse");
+        match cli.command {
+            crate::Cmd::Agents(crate::AgentsCmd::Call {
+                channel,
+                agent,
+                pubkey,
+                message,
+                reply_to,
+            }) => {
+                assert_eq!(channel, "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9");
+                assert_eq!(agent.as_deref(), Some("Dev"));
+                assert!(pubkey.is_none());
+                assert_eq!(message.as_deref(), Some("ship the UI slice"));
+                assert_eq!(reply_to.as_deref(), Some(hex64('e').as_str()));
+            }
+            _ => panic!("unexpected command variant"),
+        }
+    }
+
+    #[test]
+    fn call_target_xor_and_content_helpers() {
+        assert!(resolve_call_target(Some("Dev"), Some(&hex64('a'))).is_err());
+        assert!(resolve_call_target(None, None).is_err());
+        let (name, used_name) = resolve_call_target(Some("Dev"), None).unwrap();
+        assert_eq!(name, "Dev");
+        assert!(used_name);
+        let content = format_call_content(true, "Dev", "please take this").unwrap();
+        assert_eq!(content, "@Dev please take this");
+        let already = format_call_content(true, "Dev", "@Dev already").unwrap();
+        assert_eq!(already, "@Dev already");
     }
 
     // --- (d) NIP-11 self normalization: normalize_relay_self_hex ---

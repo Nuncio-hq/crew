@@ -419,6 +419,33 @@ Examples:\n  \
 buzz agents archived"
     )]
     Archived,
+    /// Call a specialist by name (room-visible mention → ACP wake). Issue #230.
+    #[command(
+        after_help = "Posts a channel message that @mentions the target so a sleeping \
+same-owner sibling wakes on that thread (existing mention → ACP path).\n\
+Exactly one of --agent or --pubkey is required. Fail-closed for unknown \
+names and non-members.\n\n\
+Examples:\n  \
+buzz agents call --channel <UUID> --agent Dev --message \"please take the UI slice\"\n  \
+buzz agents call --channel <UUID> --pubkey <HEX> --reply-to <EVENT_ID>"
+    )]
+    Call {
+        /// Channel UUID
+        #[arg(long)]
+        channel: String,
+        /// Agent display name (resolved via channel membership / profile search)
+        #[arg(long)]
+        agent: Option<String>,
+        /// Agent pubkey (hex or npub)
+        #[arg(long)]
+        pubkey: Option<String>,
+        /// Call body (default: short “calling you” line). Use '-' for stdin.
+        #[arg(long)]
+        message: Option<String>,
+        /// Thread root / reply target so the wake aims this conversation
+        #[arg(long)]
+        reply_to: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

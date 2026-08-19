@@ -1,5 +1,12 @@
 # Crew State
 
+## Issue #230 — Call by name (`buzz agents call`)
+
+CoS wakes specialists with `buzz agents call` (room-visible mention → ACP
+wake). No new kind. Channel roles still gate what the named agent may do.
+See D-071 / spike 0055. Gate C: D-070.
+Last updated: 2026-08-19
+
 ## Issue #234 — Client acceptance (Gate C)
 
 Done ≠ CI green. Before Accept, the thread must carry a 3-line story,
