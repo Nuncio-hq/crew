@@ -2,13 +2,17 @@
 
 - **Status:** PROPOSED
 - **Date:** 2026-08-19
-- **Issues:** #230 (call by name), #231 (role-first discussion), #232 (CoS intake)
+- **Issues:** #230 (call by name), #232 (CoS intake), #233 (remove Org product);
+  #231 discussion superseded by #233
 - **Founder locks (2026-08-19 brainstorm):**
-  - Role-first: channel roles are the work wall; hide/demote Org chart UI;
-    keep `KIND_ORG_ROSTER` / budget dormant until needed
+  - Role-first: channel roles are the work wall
+  - **Remove unused Org** (UI + agent-facing docs/prompts). Do not leave a
+    dormant chart for agents to “finish later” (#233). Protocol spike
+    chooses P2 (supersede D-060 product) unless leftovers still confuse agents
   - CoS calls specialists **by name** (not by role label) — real-company native
   - Founder does **not** Wake agents; CoS does
   - CoS may prototype small; feature work → named specialist (e.g. Dev)
+  - No tree budgets for now; no happy-path `crew-handoff` requirement
   - Factory-as-code stays discussion
   - Mobile later; Flutter first (RN not default)
   - This session: planning + issues only — no production implementation
