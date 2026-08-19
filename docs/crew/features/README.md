@@ -9,3 +9,4 @@ spike → RED contracts → approved plan → smallest implementation.
 | # | Feature | Status |
 | - | ------- | ------ |
 | 0001 | [Hermes as a first-class Crew runtime (profile-per-agent)](0001-hermes-first-class-runtime.md) | PROPOSED |
+| 0002 | [Attention (Continue) + CoS contact point](0002-attention-and-cos.md) | PROPOSED |
