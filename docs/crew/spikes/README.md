@@ -104,3 +104,5 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0049-container-query-support.md`](0049-container-query-support.md)
 - [`0050-letter-soup-heuristic.md`](0050-letter-soup-heuristic.md)
 - [`0051-p1-grep-precision.md`](0051-p1-grep-precision.md)
+- [`0052-inbox-sleeping-continue-without-new-kind.md`](0052-inbox-sleeping-continue-without-new-kind.md)
+- [`0053-cos-handoff-reuses-crew-handoff.md`](0053-cos-handoff-reuses-crew-handoff.md)
