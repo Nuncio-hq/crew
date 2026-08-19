@@ -9,9 +9,7 @@ const OUT = path.join("test-results", "org-removed-233");
 test.use({ video: "on", viewport: { width: 1280, height: 720 } });
 
 test.describe("Org product removed (#233)", () => {
-  test("sidebar has no Org entry and /org redirects home", async ({
-    page,
-  }) => {
+  test("sidebar has no Org entry and /org redirects home", async ({ page }) => {
     await installMockBridge(page);
     await page.goto("/");
     await expect(page.getByTestId("app-sidebar")).toBeVisible();
