@@ -1591,3 +1591,30 @@ how Crew companies run. Channel roles (D-043 / D-044) plus call-by-name
 
 See spike 0054.
 
+## D-070 — Client acceptance (Gate C); CI green ≠ Accept
+
+- **Status:** Accepted
+- **Date:** 2026-08-19
+- **Issue:** #234
+
+Oscar is the **client**; agents (CoS / Dev) are developers. Technical
+correctness (unit / e2e / `just ci`) is necessary and not sufficient.
+
+1. **Four items in the thread before “done”:** 3-line story, 2-minute try
+   script, evidence (screenshot / clip / `crew-evidence`), honest limit.
+2. **Gate C (~5 minutes):** founder runs the try script → Accept on match,
+   Reject + one sentence on mismatch / fog. Mid-flight Need you → answer;
+   do not debug for the agent.
+3. **Roles:** CoS owns the four items and may call `@Dev` by name (#230);
+   Dev implements + proof; neither may Accept for the founder.
+4. **Reality ladder** must be named (Mock E2E / local app / multi-session).
+   Feature work that only hit Mock E2E must say so in the honest-limit line.
+5. **No new event kind** for this ritual. Layer-2 office prompt
+   (`crates/buzz-acp/src/base_prompt.md`) + paste template
+   (`docs/crew/templates/CLIENT-ACCEPTANCE.md`). Soft “Ready for client try”
+   banner is optional later only if prompts fail.
+6. **Non-goals:** QA dashboard, founder-as-tech-lead diffs, agent self-Accept,
+   new evidence kinds, Not-comparable metrics as a fake gate.
+
+This sits on top of D-008 / `TESTING.md` (technical bar). DoD for #230,
+#232, #233 points here.

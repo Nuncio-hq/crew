@@ -1,5 +1,13 @@
 # Crew State
 
+## Issue #234 — Client acceptance (Gate C)
+
+Done ≠ CI green. Before Accept, the thread must carry a 3-line story,
+2-minute try script, evidence, and an honest limit. CoS owns those four
+items; Dev may not Accept for the founder. Layer-2 prompt + template
+`docs/crew/templates/CLIENT-ACCEPTANCE.md`. See D-070.
+Last updated: 2026-08-19
+
 ## Issue #233 — Org chart product removed (role-first)
 
 Org nav, `/org` chart/editor, handoff-assign chrome, and agent ORG-CHECK /
