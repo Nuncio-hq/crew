@@ -2,8 +2,8 @@
 
 - **Status:** PROPOSED
 - **Date:** 2026-08-19
-- **Issues:** #230 (call by name), #232 (CoS intake), #233 (remove Org product);
-  #231 discussion superseded by #233
+- **Issues:** #230 (call by name), #232 (CoS intake), #233 (remove Org product),
+  #234 (client acceptance); #231 discussion superseded by #233
 - **Founder locks (2026-08-19 brainstorm):**
   - Role-first: channel roles are the work wall
   - **Remove unused Org** (UI + agent-facing docs/prompts). Do not leave a
@@ -13,6 +13,8 @@
   - Founder does **not** Wake agents; CoS does
   - CoS may prototype small; feature work → named specialist (e.g. Dev)
   - No tree budgets for now; no happy-path `crew-handoff` requirement
+  - **Client acceptance** (#234): four items in the thread + Gate C try
+    script; CI green ≠ Accept
   - Factory-as-code stays discussion
   - Mobile later; Flutter first (RN not default)
   - This session: planning + issues only — no production implementation
@@ -42,10 +44,10 @@
 
 ## Slices (draft — not approved to implement)
 
-1. **Agent call-by-name tool** (#230) — CoS → named agent → wake on that
+1. **Remove Org product** (#233) — spike entry points → RED no-Org nav →
+   strip UI/docs/prompts → decision superseding D-060 *product*.
+2. **Agent call-by-name tool** (#230) — CoS → named agent → wake on that
    thread. Spike: is mention enough, or MCP/`buzz` wrapper?
-2. **Role-first decision** (#231) — hide Org UI vs keep protocol; where
-   budgets live; rewrite or drop officer-loop-on-tree.
 3. **CoS intake on one channel** (#232) — roles assigned; prompt rules;
    Oscar never @Dev for feature-sized work.
 
