@@ -279,6 +279,15 @@ Hermes-side ask lands.
   memory/skills/credentials/model, not the capability boundary (D-024,
   D-029, D-044).
 
+## Call by name (issue #230)
+
+When another agent is needed, **call them by name** — e.g.
+`buzz agents call --channel <UUID> --agent Dev` (optional `--reply-to`).
+That posts a room-visible mention so a sleeping same-owner sibling wakes on
+the existing ACP path (#169). Do **not** call by role label. Do **not** ask
+the founder to press Wake. Channel roles still decide what that named person
+may do once awake (D-043 / D-044). See D-071 / spike 0055.
+
 ## Officer loop — removed with Org product (#233 / D-069)
 
 Do **not** run ORG-CHECK, teach the org chart, or route work through a

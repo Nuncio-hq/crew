@@ -1562,6 +1562,60 @@ Wiki copies Devin / DeepWiki IA. It is not a page CMS.
    ("The Project folder is gone. Pick a workspace again.").
 4. Generate stays available. Do not invent a new product sentence.
 
+## D-069 — Org chart is not Crew product; role-first + call-by-name
+
+- **Status:** Accepted
+- **Date:** 2026-08-19
+- **Issue:** #233 (supersedes #231 discussion; product unwind of #198 / D-060)
+
+The founder-signed org roster and chart shipped in #198 / D-060 are **not**
+how Crew companies run. Channel roles (D-043 / D-044) plus call-by-name
+(#230 / #232) are the model. Unused Org taught agents the wrong north star.
+
+1. **Remove product surface.** No Org nav, `/org` screen, roster editor,
+   handoff-assign chrome, or agent docs/prompts that prescribe ORG-CHECK /
+   org chart / officer-loop-on-tree. Old `/org` URLs redirect to Inbox.
+2. **Protocol inert, not deleted.** `KIND_ORG_ROSTER` (30680) and relay
+   ingest stay for thin-fork sync safety. ACP does not inject ORG-CHECK,
+   does not enforce tree budgets, and does not skip heartbeats on officer
+   grounds. Escalate to a later P3 relay drop only if agents still
+   rediscover leftovers.
+3. **CLI.** `buzz org show|tree|publish` and `messages --handoff` error with
+   a migration hint. Portfolio/Steward on 30617 remain (repo stewardship,
+   not the company chart).
+4. **D-060.** Remains as historical protocol record. This decision
+   supersedes its *product* commitment (chart as how companies run). Sync
+   tables must not revive the Org screen.
+5. **Non-goals here.** Channel budgets, founder Inbox Wake, implementing
+   #230/#232 inside the Org-removal PR.
+
+See spike 0054.
+
+## D-070 — Client acceptance (Gate C); CI green ≠ Accept
+
+- **Status:** Accepted
+- **Date:** 2026-08-19
+- **Issue:** #234
+
+Oscar is the **client**; agents (CoS / Dev) are developers. Technical
+correctness (unit / e2e / `just ci`) is necessary and not sufficient.
+
+1. **Four items in the thread before “done”:** 3-line story, 2-minute try
+   script, evidence (screenshot / clip / `crew-evidence`), honest limit.
+2. **Gate C (~5 minutes):** founder runs the try script → Accept on match,
+   Reject + one sentence on mismatch / fog. Mid-flight Need you → answer;
+   do not debug for the agent.
+3. **Roles:** CoS owns the four items and may call `@Dev` by name (#230);
+   Dev implements + proof; neither may Accept for the founder.
+4. **Reality ladder** must be named (Mock E2E / local app / multi-session).
+   Feature work that only hit Mock E2E must say so in the honest-limit line.
+5. **No new event kind** for this ritual. Layer-2 office prompt
+   (`crates/buzz-acp/src/base_prompt.md`) + paste template
+   (`docs/crew/templates/CLIENT-ACCEPTANCE.md`). Soft “Ready for client try”
+   banner is optional later only if prompts fail.
+6. **Non-goals:** QA dashboard, founder-as-tech-lead diffs, agent self-Accept,
+   new evidence kinds, Not-comparable metrics as a fake gate.
+
 This sits on top of D-008 / `TESTING.md` (technical bar). DoD for #230,
 #232, #233 points here.
 
