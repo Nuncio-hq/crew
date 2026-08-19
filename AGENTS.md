@@ -709,3 +709,98 @@ owner or a verified same-owner sibling may answer.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system design and component relationships
 - [RELEASING.md](RELEASING.md) — release process: `release-desktop`, `release-relay`, `scripts/mobile-release.sh`, candidate tags, internal builds
 - [README.md](README.md) — project overview and quick start
+
+---
+
+## Cursor Cloud specific instructions
+
+Durable, non-obvious notes for Cloud Agents. The startup update script only
+refreshes dependencies (`./bin/pnpm install` + `./bin/cargo fetch`); everything
+below (Docker daemon, dev services, migrations) is per-session and NOT
+automated — start it yourself when you need the relay/desktop/web.
+
+### Toolchain (Hermit)
+
+Rust, Node, pnpm, `just`, Flutter, biome, etc. are Hermit-pinned in `bin/`.
+Either run `. ./bin/activate-hermit` once per shell, or call the shims directly
+(`./bin/just`, `./bin/pnpm`, `./bin/cargo`) — the shims self-provision without
+activation. The global `nvm`/`/usr/local/cargo` toolchains are NOT the pinned
+versions; prefer Hermit. `just` is only on `PATH` after activation, so use
+`./bin/just` in non-activated shells.
+
+### Docker is required and pre-installed, but the daemon is not auto-started
+
+Postgres, Redis, MinIO, Keycloak, Adminer and Prometheus run via
+`docker compose` (see `docker-compose.yml`). Docker Engine is installed at the
+system level (captured in the VM snapshot) but the daemon does not start on
+boot. This is Docker-in-Docker on a Firecracker VM, so it needs the
+fuse-overlayfs storage driver and legacy iptables. To bring it up:
+
+```bash
+sudo dockerd >/tmp/dockerd.log 2>&1 &   # /etc/docker/daemon.json already pins fuse-overlayfs + disables containerd-snapshotter
+sleep 6
+sudo chmod 666 /var/run/docker.sock     # so the Justfile's bare `docker` calls work without sudo
+```
+
+Then `./scripts/dev-setup.sh` (or `./bin/just setup`) starts the containers,
+runs migrations, seeds the local dev community, and installs JS deps. The
+Postgres/MinIO data volumes and pulled images live under `/var/lib/docker`, so
+they survive in the snapshot — migrations are idempotent, re-run them freely.
+
+### Running the stack
+
+The relay is server-side (no GTK). Standard commands in the `Justfile`:
+
+- `./bin/just relay` — relay on `ws://localhost:3000` (health probe `:8080`,
+  metrics `:9102`). Requires the Docker services + migrations above.
+- `./bin/just dev` — relay + native Tauri desktop app. The native window needs
+  a display; in a headless VM prefer the mock-bridge screenshot path below for
+  UI verification.
+- `./bin/just web` — web repo-browser dev server (Vite, worktree-derived port),
+  talks to the running relay.
+
+The dev relay runs with `BUZZ_REQUIRE_AUTH_TOKEN=false` and logs a hardcoded dev
+keypair; that is expected locally.
+
+### buzz-cli smoke test (agent hello-world)
+
+`crates/buzz-cli/TESTING.md` references `buzz-admin mint-token`, which no longer
+exists — use `./bin/cargo run -p buzz-admin -- generate-key` to get a keypair,
+then:
+
+```bash
+export BUZZ_RELAY_URL="http://localhost:3000"
+export BUZZ_PRIVATE_KEY="<secret hex from generate-key>"
+./target/debug/buzz channels create --name hello --type stream --visibility open
+./target/debug/buzz messages send --channel <uuid> --content "hi"
+./target/debug/buzz messages get --channel <uuid> --limit 5
+```
+
+`jq` is available. `--format compact` is a global flag (goes before the
+subcommand).
+
+### Desktop / web UI verification (headless)
+
+`./bin/just desktop-screenshot --name home` builds the frontend with the E2E
+mock bridge and captures a PNG via Playwright — no relay, GTK, or display
+needed. Playwright's Chromium is installed under `~/.cache/ms-playwright`; if
+missing, `pnpm -C desktop exec playwright install chromium`. The Tauri system
+libraries (GTK3, WebKitGTK 4.1, libayatana-appindicator, etc.) are installed so
+`just ci` / `desktop-tauri-check` compile.
+
+### buzz-voice link fix
+
+`buzz-voice` links the sherpa-onnx C++ prebuilt via `rust-lld`, which does not
+search gcc's internal lib dir, so `-lstdc++` fails. Fixed system-wide (captured
+in the snapshot) with:
+`/usr/lib/x86_64-linux-gnu/libstdc++.so -> libstdc++.so.6`. If a full-workspace
+build ever fails with `unable to find library -lstdc++`, recreate that symlink
+(or export `LIBRARY_PATH=/usr/lib/gcc/x86_64-linux-gnu/13`).
+
+### Pre-existing unit-test drift (not environment issues)
+
+Two `just test-unit` assertions fail on a clean checkout because their expected
+counts lag the code — do not chase them as env breakage:
+`buzz-cli` `command_inventory_is_stable` (expects 23 command groups, code has
+24) and `buzz-db` `embedded_migrator_contains_consolidated_initial_schema`
+(expects 30 statements, code has 31). Everything else passes.
