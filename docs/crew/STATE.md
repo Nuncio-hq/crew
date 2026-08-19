@@ -1,5 +1,11 @@
 # Crew State
 
+## Issue #232 — CoS is channel intake
+
+One contact: CoS. Channel roles wall work; CoS calls Dev by name (#230).
+Template `docs/crew/templates/COS-INTAKE.md`. D-072. Gate C: D-070.
+Last updated: 2026-08-19
+
 ## Issue #230 — Call by name (`buzz agents call`)
 
 CoS wakes specialists with `buzz agents call` (room-visible mention → ACP

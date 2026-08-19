@@ -1639,3 +1639,22 @@ Founder does not press Wake as the primary recovery UX.
    deleting 30680.
 
 Spike 0055 PASS. Gate C DoD still applies (D-070).
+
+## D-072 — CoS is channel intake; specialists called by name
+
+- **Status:** Accepted
+- **Date:** 2026-08-19
+- **Issue:** #232
+
+Oscar’s one contact is **CoS**. Channel roles (D-043 / D-044) say what each
+named person may do. CoS may prototype small; feature work goes to a named
+specialist (e.g. Dev) via call-by-name (D-071 / #230).
+
+1. **Happy path needs no Org roster.** Founder assigns `intake` / `code` (or
+   equivalent) on one office channel canvas.
+2. **CoS prompt rules:** intake; prototype ok; feature → `buzz agents call`;
+   Gate C before done (D-070); Need-you Oscar only for judgment.
+3. **Oscar should not need to @Dev** for feature-sized work once CoS is live.
+4. **Non-goals:** Org chart first, call-by-role, Mission #102 / #151.
+
+Template: `docs/crew/templates/COS-INTAKE.md`.
