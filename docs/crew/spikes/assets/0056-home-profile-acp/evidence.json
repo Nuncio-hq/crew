@@ -1,0 +1,390 @@
+{
+  "preflight": {
+    "which_hermes": "/Users/a1241968/.local/bin/hermes",
+    "hermes_version": "Hermes Agent v0.20.4 (2026.8.18) \u00b7 upstream aebab05f\nInstall directory: /Users/a1241968/.hermes/hermes-agent\nInstall method: git\nPython: 3.11.15\nOpenAI SDK: 2.24.0\nUpdate available: 241 commits behind \u2014 run 'hermes update'",
+    "acp_version": "0.20.4",
+    "parent_HERMES_HOME": "/Users/a1241968/.hermes",
+    "parent_HERMES_PROFILE": null,
+    "live_snapshot_before_any_acp": {
+      "ts": 1787194494.794362,
+      "profiles_dir_exists": true,
+      "profiles_listing": [],
+      "default_dir_exists": false,
+      "default_dir_is_dir": false,
+      "home_state_db_exists": true,
+      "home_state_db_mtime": 1787194491.6271524,
+      "home_state_db_wal_mtime": 1787194493.7970695
+    },
+    "acp_check_exit": 0,
+    "acp_check_stdout": "Hermes ACP check OK",
+    "acp_check_stderr": ""
+  },
+  "cases": [
+    {
+      "label": "no_p",
+      "argv": [
+        "hermes",
+        "acp"
+      ],
+      "stopped_for_default_dir": false,
+      "ok_initialize": true,
+      "ok_session_new": true,
+      "against_home_profile": true,
+      "created_profiles_default": false,
+      "before": {
+        "ts": 1787194495.3730218,
+        "profiles_dir_exists": true,
+        "profiles_listing": [],
+        "default_dir_exists": false,
+        "default_dir_is_dir": false,
+        "home_state_db_exists": true,
+        "home_state_db_mtime": 1787194491.6271524,
+        "home_state_db_wal_mtime": 1787194493.7970695
+      },
+      "pid": 24130,
+      "initialize": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "agentCapabilities": {
+            "loadSession": true,
+            "promptCapabilities": {
+              "image": true
+            },
+            "sessionCapabilities": {
+              "fork": {},
+              "list": {},
+              "resume": {}
+            }
+          },
+          "agentInfo": {
+            "name": "hermes-agent",
+            "version": "0.20.4"
+          },
+          "authMethods": [
+            {
+              "description": "Authenticate Hermes using the currently configured xai-oauth runtime credentials.",
+              "id": "xai-oauth",
+              "name": "xai-oauth runtime credentials"
+            },
+            {
+              "args": [
+                "--setup"
+              ],
+              "description": "Open Hermes' interactive model/provider setup in a terminal. Use this when Hermes has not been configured on this machine yet.",
+              "id": "hermes-setup",
+              "name": "Configure Hermes provider",
+              "type": "terminal"
+            }
+          ],
+          "protocolVersion": 1
+        }
+      },
+      "agentInfo": {
+        "name": "hermes-agent",
+        "version": "0.20.4"
+      },
+      "session_new": {
+        "truncated": true,
+        "chars": 11233,
+        "head": "{\"jsonrpc\": \"2.0\", \"id\": 2, \"result\": {\"_meta\": {\"hermes\": {\"sessionProvenance\": {\"acpSessionId\": \"b70ef320-5058-4377-b410-7de3b78d189b\", \"currentHermesSessionId\": \"b70ef320-5058-4377-b410-7de3b78d189b\", \"rootHermesSessionId\": \"b70ef320-5058-4377-b410-7de3b78d189b\", \"parentHermesSessionId\": null, \"sessionKind\": \"root\", \"compressionDepth\": 0}}}, \"models\": {\"availableModels\": [{\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:anthropic/claude-fable-5\", \"name\": \"Nous Portal \\u00b7 anthropic/claude-fable-5\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:anthropic/claude-opus-5\", \"name\": \"Nous Portal \\u00b7 anthropic/claude-opus-5\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:anthropic/claude-opus-4.8\", \"name\": \"Nous Portal \\u00b7 anthropic/claude-opus-4.8\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:anthropic/claude-sonnet-5\", \"name\": \"Nous Portal \\u00b7 anthropic/claude-sonnet-5\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:anthropic/claude-haiku-4.5\", \"name\": \"Nous Portal \\u00b7 anthropic/claude-haiku-4.5\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-sol\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-sol\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-sol-pro\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-sol-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-terra\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-terra\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-terra-pro\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-terra-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-luna\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-luna\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-luna-pro\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-luna-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.5\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.5\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.5-pro\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.5-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.4-mini\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.4-mini\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:google/gemini-3.1-pro-preview\", \"name\": \"Nous Portal \\u00b7 google/gemini-3.1-pro-preview\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:google/gemini-3.7-flash\", \"name\": \"Nous Portal \\u00b7 google/gemini-3.7-flash\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:x-ai/grok-4.6\", \"name\": \"Nous Portal \\u00b7 x-ai/grok-4.6\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:deepseek/deepseek-v4-pro\", \"name\": \"Nous Portal \\u00b7 deepseek/deepseek-v4-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:deepseek/deepseek-v4-pro-0813\", \"name\": \"Nous Portal \\u00b7 deepseek/deepseek-v4-pro-0813\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:deepseek/deepseek-v4-flash\", \"name\": \"Nous Portal \\u00b7 deepseek/deepseek-v4-flash\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:deepseek/deepseek-v4-flash-0731\", \"name\": \"Nous Portal \\u00b7 deepseek/deepseek-v4-flash-0731\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:qwen/qwen3.8-max\", \"name\": \"Nous Portal \\u00b7 qwen/qwen3.8-max\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:moonshotai/kimi-k3\", \"name\": \"Nous Portal \\u00b7 moonshotai/kimi-k3\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:minimax/minimax-m3\", \"name\": \"Nous Portal \\u00b7 minimax/minimax-m3\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:z-ai/glm-5.2\", \"name\": \"Nous Portal \\u00b7 z-ai/glm-5.2\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:z-ai/glm-5.1\", \"name\": \"Nous Portal \\u00b7 z-ai/glm-5.1\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:xiaomi/mimo-v2.5-pro\", \"name\": \"Nous Portal \\u00b7 xiaomi/mimo-v2.5-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:tencent/hy3\", \"name\": \"Nous Portal \\u00b7 tencent/hy3\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:stepfun/step-3.7-flash\", \"name\": \"Nous Portal \\u00b7 stepfun/step-3.7-flash\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:nvidia/nemotron-3-super-120b-a12b\", \"name\": \"Nous Portal \\u00b7 nvidia/nemotron-3-super-120b-a12b\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:sakana/fugu-ultra\", \"name\": \"Nous Portal \\u00b7 sakana/fugu-ultra\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:upstage/solar-pro4:free\", \"name\": \"Nous Portal \\u00b7 upstage/solar-pro4:free\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:meituan/longcat-2.0:free\", \"name\": \"Nous Portal \\u00b7 meituan/longcat-2.0:free\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:tencent/hy3:free\", \"name\": \"Nous Portal \\u00b7 tencent/hy3:free\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:poolside/laguna-s-2.1:free\", \"name\": \"Nous Portal \\u00b7 poolside/laguna-s-2.1:free\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:stepfun/step-3.7-flash:free\", \"name\": \"Nous Portal \\u00b7 stepfun/step-3.7-flash:free\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:poolside/laguna-xs-2.1:free\", \"name\": \"Nous Portal \\u00b7 poolside/laguna-xs-2.1:free\"}, {\"description\": \"Provider: Mixture of Agents\", \"modelId\": \"moa:default\", \"name\": \"Mixture of Agents \\u00b7 default\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-fable-5\", \"name\": \"Anthropic \\u00b7 claude-fable-5\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-sonnet-5\", \"name\": \"Anthropic \\u00b7 claude-sonnet-5\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-opus-4-8\", \"name\": \"Anthropic \\u00b7 claude-opus-4-8\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-opus-4-7\", \"name\": \"Anthropic \\u00b7 claude-opus-4-7\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-opus-4-6\", \"name\": \"Anthropic \\u00b7 claude-opus-4-6\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-sonnet-4-6\", \"name\": \"Anthropic \\u00b7 claude-sonnet-4-6\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-opus-4-5-20251101\", \"name\": \"Anthropic \\u00b7 claude-opus-4-5-20251101\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-sonnet-4-5-20250929\", \"name\": \"Anthropic \\u00b7 claude-sonnet-4-5-20250929\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-opus-4-20250514\", \"name\": \"Anthropic \\u00b7 claude-opus-4-20250514\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-sonnet-4-20250514\", \"name\": \"Anthropic \\u00b7 claude-sonnet-4-20250514\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-haiku-4-5-20251001\", \"name\": \"Anthropic \\u00b7 claude-haiku-4-5-20251001\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-5.6-sol\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-5.6-sol\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-5.6-terra\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-5.6-terra\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-5.6-luna\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-5.6-luna\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-daybreak-blue-latest\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-daybreak-blue-latest\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-5.5\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-5.5\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-5.4\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-5.4\"}, {\"description\": \"Provider: ChatGPT or Cod"
+      },
+      "child_env": {
+        "pid": 24130,
+        "ps_eww_hermes_keys": {
+          "HERMES_SESSION_CHAT_ID": "",
+          "HERMES_GATEWAY_SESSION": "1",
+          "HERMES_SESSION_MESSAGE_ID": "",
+          "HERMES_SESSION_USER_NAME": "",
+          "HERMES_PARENT_START_MARKER": "ps:Wed",
+          "HERMES_KANBAN_BOARD": "default",
+          "HERMES_TURN_LEASE_TIMEOUT": "1800",
+          "HERMES_MAX_ITERATIONS": "500",
+          "HERMES_SESSION_SOURCE": "desktop",
+          "HERMES_UI_SESSION_ID": "03cfa5f7",
+          "HERMES_QUIET": "1",
+          "HERMES_SESSION_SCOPE_ID": "",
+          "HERMES_SESSION_THREAD_ID": "",
+          "HERMES_SESSION_KEY": "20260820_100629_a8ffb4",
+          "HERMES_PARENT_NONCE": "56ba7a994ebf2533230ab3f8bf1e762c",
+          "HERMES_CODEX_TTFB_MAX_SECONDS": "600",
+          "HERMES_TIMEZONE": "Australia/Adelaide",
+          "HERMES_SERVE_HEADLESS": "1",
+          "HERMES_REDACT_SECRETS": "false",
+          "HERMES_AGENT": "true",
+          "HERMES_DESKTOP_CWD": "/Users/a1241968",
+          "HERMES_SESSION_CHAT_NAME": "",
+          "HERMES_CODEX_TTFB_TIMEOUT_SECONDS": "300",
+          "HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS": "900",
+          "HERMES_PARENT_PID": "91825",
+          "HERMES_CRON_SESSION": "",
+          "HERMES_SESSION_USER_ID": "",
+          "HERMES_SESSION_PLATFORM": "",
+          "HERMES_INTERACTIVE": "1",
+          "HERMES_IGNORE_RULES": "1",
+          "HERMES_SESSION_PROFILE": "",
+          "HERMES_SINGLE_QUERY_SESSION": "1",
+          "HERMES_ACP_SKIP_CONFIGURED_MCP": "1",
+          "HERMES_WEB_DIST": "/Users/a1241968/.hermes/hermes-agent/apps/desktop/dist",
+          "HERMES_SESSION_USER_ID_ALT": "",
+          "HERMES_SESSION_ID": "20260820_122035_b4248a",
+          "HERMES_DESKTOP": "1",
+          "HERMES_EXEC_ASK": "1",
+          "HERMES_YOLO_MODE": "1",
+          "HERMES_REAL_HOME": "/Users/a1241968",
+          "HERMES_SESSION_CHAT_TYPE": ""
+        },
+        "lsof_state_db": [
+          "python3.1 24130 a1241968  txt       REG               1,15     32768           104341784 /Users/a1241968/.hermes/state.db-shm",
+          "python3.1 24130 a1241968    8u      REG               1,15 810827776            61833993 /Users/a1241968/.hermes/state.db",
+          "python3.1 24130 a1241968    9u      REG               1,15   3254832           104341783 /Users/a1241968/.hermes/state.db-wal",
+          "python3.1 24130 a1241968   10u      REG               1,15     32768           104341784 /Users/a1241968/.hermes/state.db-shm",
+          "python3.1 24130 a1241968   11r      REG               1,15 810827776            61833993 /Users/a1241968/.hermes/state.db",
+          "python3.1 24130 a1241968   12u      REG               1,15   3254832           104341783 /Users/a1241968/.hermes/state.db-wal"
+        ]
+      },
+      "sessionId": "b70ef320-5058-4377-b410-7de3b78d189b",
+      "session_meta": {
+        "_meta": {
+          "hermes": {
+            "sessionProvenance": {
+              "acpSessionId": "b70ef320-5058-4377-b410-7de3b78d189b",
+              "currentHermesSessionId": "b70ef320-5058-4377-b410-7de3b78d189b",
+              "rootHermesSessionId": "b70ef320-5058-4377-b410-7de3b78d189b",
+              "parentHermesSessionId": null,
+              "sessionKind": "root",
+              "compressionDepth": 0
+            }
+          }
+        }
+      },
+      "notification_count": 2,
+      "hermes_home_from_ps": null,
+      "opened_home_state_db": true,
+      "opened_profiles_default": false,
+      "exit": -15,
+      "after": {
+        "ts": 1787194497.8518422,
+        "profiles_dir_exists": true,
+        "profiles_listing": [],
+        "default_dir_exists": false,
+        "default_dir_is_dir": false,
+        "home_state_db_exists": true,
+        "home_state_db_mtime": 1787194496.6744065,
+        "home_state_db_wal_mtime": 1787194496.4686515
+      },
+      "elapsed_s": 2.48,
+      "stderr_tail": [
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'deepinfra' registered video_gen provider: deepinfra",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'fal' registered video_gen provider: fal",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'xai' registered video_gen provider: xai",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'web-brave-free' registered web provider: brave-free",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'web-ddgs' registered web provider: ddgs",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'web-exa' registered web provider: exa",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'web-firecrawl' registered web provider: firecrawl",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'web-parallel' registered web provider: parallel",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'web-searxng' registered web provider: searxng",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'web-tavily' registered web provider: tavily",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin 'web-xai' registered web provider: xai",
+        "2026-08-20 12:24:55 [INFO] hermes_cli.plugins: Plugin discovery complete: 55 found, 48 enabled",
+        "2026-08-20 12:24:56 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=MainThread:8485510528 provider=xai-oauth base_url=https://api.x.ai/v1 model=grok-4.6",
+        "2026-08-20 12:24:56 [WARNING] tools.registry: check_fn check_browser_requirements returned False; dependent tools will be unavailable this turn",
+        "2026-08-20 12:24:56 [WARNING] tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn",
+        "2026-08-20 12:24:56 [WARNING] tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn",
+        "2026-08-20 12:24:56 [WARNING] tools.registry: check_fn check_browser_vision_requirements returned False; dependent tools will be unavailable this turn",
+        "2026-08-20 12:24:56 [INFO] agent.auxiliary_client: Vision auto-detect: using main provider xai-oauth (grok-4.6)",
+        "2026-08-20 12:24:56 [INFO] acp_adapter.session: Created ACP session b70ef320-5058-4377-b410-7de3b78d189b (cwd=/tmp/issue243-spike-cwd)",
+        "2026-08-20 12:24:56 [INFO] acp_adapter.server: New session b70ef320-5058-4377-b410-7de3b78d189b (cwd=/tmp/issue243-spike-cwd)"
+      ]
+    },
+    {
+      "label": "p_default",
+      "argv": [
+        "hermes",
+        "-p",
+        "default",
+        "acp"
+      ],
+      "stopped_for_default_dir": false,
+      "ok_initialize": true,
+      "ok_session_new": true,
+      "against_home_profile": true,
+      "created_profiles_default": false,
+      "before": {
+        "ts": 1787194497.8521621,
+        "profiles_dir_exists": true,
+        "profiles_listing": [],
+        "default_dir_exists": false,
+        "default_dir_is_dir": false,
+        "home_state_db_exists": true,
+        "home_state_db_mtime": 1787194496.6744065,
+        "home_state_db_wal_mtime": 1787194496.4686515
+      },
+      "pid": 24315,
+      "initialize": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "agentCapabilities": {
+            "loadSession": true,
+            "promptCapabilities": {
+              "image": true
+            },
+            "sessionCapabilities": {
+              "fork": {},
+              "list": {},
+              "resume": {}
+            }
+          },
+          "agentInfo": {
+            "name": "hermes-agent",
+            "version": "0.20.4"
+          },
+          "authMethods": [
+            {
+              "description": "Authenticate Hermes using the currently configured xai-oauth runtime credentials.",
+              "id": "xai-oauth",
+              "name": "xai-oauth runtime credentials"
+            },
+            {
+              "args": [
+                "--setup"
+              ],
+              "description": "Open Hermes' interactive model/provider setup in a terminal. Use this when Hermes has not been configured on this machine yet.",
+              "id": "hermes-setup",
+              "name": "Configure Hermes provider",
+              "type": "terminal"
+            }
+          ],
+          "protocolVersion": 1
+        }
+      },
+      "agentInfo": {
+        "name": "hermes-agent",
+        "version": "0.20.4"
+      },
+      "session_new": {
+        "truncated": true,
+        "chars": 11233,
+        "head": "{\"jsonrpc\": \"2.0\", \"id\": 2, \"result\": {\"_meta\": {\"hermes\": {\"sessionProvenance\": {\"acpSessionId\": \"18c8e311-73a7-4947-96ce-2de066aca3b3\", \"currentHermesSessionId\": \"18c8e311-73a7-4947-96ce-2de066aca3b3\", \"rootHermesSessionId\": \"18c8e311-73a7-4947-96ce-2de066aca3b3\", \"parentHermesSessionId\": null, \"sessionKind\": \"root\", \"compressionDepth\": 0}}}, \"models\": {\"availableModels\": [{\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:anthropic/claude-fable-5\", \"name\": \"Nous Portal \\u00b7 anthropic/claude-fable-5\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:anthropic/claude-opus-5\", \"name\": \"Nous Portal \\u00b7 anthropic/claude-opus-5\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:anthropic/claude-opus-4.8\", \"name\": \"Nous Portal \\u00b7 anthropic/claude-opus-4.8\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:anthropic/claude-sonnet-5\", \"name\": \"Nous Portal \\u00b7 anthropic/claude-sonnet-5\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:anthropic/claude-haiku-4.5\", \"name\": \"Nous Portal \\u00b7 anthropic/claude-haiku-4.5\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-sol\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-sol\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-sol-pro\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-sol-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-terra\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-terra\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-terra-pro\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-terra-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-luna\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-luna\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.6-luna-pro\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.6-luna-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.5\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.5\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.5-pro\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.5-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:openai/gpt-5.4-mini\", \"name\": \"Nous Portal \\u00b7 openai/gpt-5.4-mini\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:google/gemini-3.1-pro-preview\", \"name\": \"Nous Portal \\u00b7 google/gemini-3.1-pro-preview\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:google/gemini-3.7-flash\", \"name\": \"Nous Portal \\u00b7 google/gemini-3.7-flash\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:x-ai/grok-4.6\", \"name\": \"Nous Portal \\u00b7 x-ai/grok-4.6\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:deepseek/deepseek-v4-pro\", \"name\": \"Nous Portal \\u00b7 deepseek/deepseek-v4-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:deepseek/deepseek-v4-pro-0813\", \"name\": \"Nous Portal \\u00b7 deepseek/deepseek-v4-pro-0813\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:deepseek/deepseek-v4-flash\", \"name\": \"Nous Portal \\u00b7 deepseek/deepseek-v4-flash\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:deepseek/deepseek-v4-flash-0731\", \"name\": \"Nous Portal \\u00b7 deepseek/deepseek-v4-flash-0731\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:qwen/qwen3.8-max\", \"name\": \"Nous Portal \\u00b7 qwen/qwen3.8-max\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:moonshotai/kimi-k3\", \"name\": \"Nous Portal \\u00b7 moonshotai/kimi-k3\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:minimax/minimax-m3\", \"name\": \"Nous Portal \\u00b7 minimax/minimax-m3\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:z-ai/glm-5.2\", \"name\": \"Nous Portal \\u00b7 z-ai/glm-5.2\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:z-ai/glm-5.1\", \"name\": \"Nous Portal \\u00b7 z-ai/glm-5.1\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:xiaomi/mimo-v2.5-pro\", \"name\": \"Nous Portal \\u00b7 xiaomi/mimo-v2.5-pro\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:tencent/hy3\", \"name\": \"Nous Portal \\u00b7 tencent/hy3\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:stepfun/step-3.7-flash\", \"name\": \"Nous Portal \\u00b7 stepfun/step-3.7-flash\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:nvidia/nemotron-3-super-120b-a12b\", \"name\": \"Nous Portal \\u00b7 nvidia/nemotron-3-super-120b-a12b\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:sakana/fugu-ultra\", \"name\": \"Nous Portal \\u00b7 sakana/fugu-ultra\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:upstage/solar-pro4:free\", \"name\": \"Nous Portal \\u00b7 upstage/solar-pro4:free\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:meituan/longcat-2.0:free\", \"name\": \"Nous Portal \\u00b7 meituan/longcat-2.0:free\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:tencent/hy3:free\", \"name\": \"Nous Portal \\u00b7 tencent/hy3:free\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:poolside/laguna-s-2.1:free\", \"name\": \"Nous Portal \\u00b7 poolside/laguna-s-2.1:free\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:stepfun/step-3.7-flash:free\", \"name\": \"Nous Portal \\u00b7 stepfun/step-3.7-flash:free\"}, {\"description\": \"Provider: Nous Portal\", \"modelId\": \"nous:poolside/laguna-xs-2.1:free\", \"name\": \"Nous Portal \\u00b7 poolside/laguna-xs-2.1:free\"}, {\"description\": \"Provider: Mixture of Agents\", \"modelId\": \"moa:default\", \"name\": \"Mixture of Agents \\u00b7 default\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-fable-5\", \"name\": \"Anthropic \\u00b7 claude-fable-5\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-sonnet-5\", \"name\": \"Anthropic \\u00b7 claude-sonnet-5\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-opus-4-8\", \"name\": \"Anthropic \\u00b7 claude-opus-4-8\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-opus-4-7\", \"name\": \"Anthropic \\u00b7 claude-opus-4-7\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-opus-4-6\", \"name\": \"Anthropic \\u00b7 claude-opus-4-6\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-sonnet-4-6\", \"name\": \"Anthropic \\u00b7 claude-sonnet-4-6\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-opus-4-5-20251101\", \"name\": \"Anthropic \\u00b7 claude-opus-4-5-20251101\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-sonnet-4-5-20250929\", \"name\": \"Anthropic \\u00b7 claude-sonnet-4-5-20250929\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-opus-4-20250514\", \"name\": \"Anthropic \\u00b7 claude-opus-4-20250514\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-sonnet-4-20250514\", \"name\": \"Anthropic \\u00b7 claude-sonnet-4-20250514\"}, {\"description\": \"Provider: Anthropic\", \"modelId\": \"anthropic:claude-haiku-4-5-20251001\", \"name\": \"Anthropic \\u00b7 claude-haiku-4-5-20251001\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-5.6-sol\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-5.6-sol\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-5.6-terra\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-5.6-terra\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-5.6-luna\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-5.6-luna\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-daybreak-blue-latest\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-daybreak-blue-latest\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-5.5\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-5.5\"}, {\"description\": \"Provider: ChatGPT or Codex Subscription\", \"modelId\": \"openai-codex:gpt-5.4\", \"name\": \"ChatGPT or Codex Subscription \\u00b7 gpt-5.4\"}, {\"description\": \"Provider: ChatGPT or Cod"
+      },
+      "child_env": {
+        "pid": 24315,
+        "ps_eww_hermes_keys": {
+          "HERMES_SESSION_CHAT_ID": "",
+          "HERMES_GATEWAY_SESSION": "1",
+          "HERMES_SESSION_MESSAGE_ID": "",
+          "HERMES_SESSION_USER_NAME": "",
+          "HERMES_PARENT_START_MARKER": "ps:Wed",
+          "HERMES_KANBAN_BOARD": "default",
+          "HERMES_TURN_LEASE_TIMEOUT": "1800",
+          "HERMES_MAX_ITERATIONS": "500",
+          "HERMES_SESSION_SOURCE": "desktop",
+          "HERMES_UI_SESSION_ID": "03cfa5f7",
+          "HERMES_QUIET": "1",
+          "HERMES_SESSION_SCOPE_ID": "",
+          "HERMES_SESSION_THREAD_ID": "",
+          "HERMES_SESSION_KEY": "20260820_100629_a8ffb4",
+          "HERMES_PARENT_NONCE": "56ba7a994ebf2533230ab3f8bf1e762c",
+          "HERMES_CODEX_TTFB_MAX_SECONDS": "600",
+          "HERMES_TIMEZONE": "Australia/Adelaide",
+          "HERMES_SERVE_HEADLESS": "1",
+          "HERMES_REDACT_SECRETS": "false",
+          "HERMES_AGENT": "true",
+          "HERMES_DESKTOP_CWD": "/Users/a1241968",
+          "HERMES_SESSION_CHAT_NAME": "",
+          "HERMES_CODEX_TTFB_TIMEOUT_SECONDS": "300",
+          "HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS": "900",
+          "HERMES_PARENT_PID": "91825",
+          "HERMES_CRON_SESSION": "",
+          "HERMES_SESSION_USER_ID": "",
+          "HERMES_SESSION_PLATFORM": "",
+          "HERMES_INTERACTIVE": "1",
+          "HERMES_IGNORE_RULES": "1",
+          "HERMES_SESSION_PROFILE": "",
+          "HERMES_SINGLE_QUERY_SESSION": "1",
+          "HERMES_ACP_SKIP_CONFIGURED_MCP": "1",
+          "HERMES_WEB_DIST": "/Users/a1241968/.hermes/hermes-agent/apps/desktop/dist",
+          "HERMES_SESSION_USER_ID_ALT": "",
+          "HERMES_SESSION_ID": "20260820_122035_b4248a",
+          "HERMES_DESKTOP": "1",
+          "HERMES_EXEC_ASK": "1",
+          "HERMES_YOLO_MODE": "1",
+          "HERMES_REAL_HOME": "/Users/a1241968",
+          "HERMES_SESSION_CHAT_TYPE": ""
+        },
+        "lsof_state_db": [
+          "python3.1 24315 a1241968  txt       REG               1,15     32768           104341784 /Users/a1241968/.hermes/state.db-shm",
+          "python3.1 24315 a1241968    8u      REG               1,15 810827776            61833993 /Users/a1241968/.hermes/state.db",
+          "python3.1 24315 a1241968    9u      REG               1,15   3254832           104341783 /Users/a1241968/.hermes/state.db-wal",
+          "python3.1 24315 a1241968   10u      REG               1,15     32768           104341784 /Users/a1241968/.hermes/state.db-shm",
+          "python3.1 24315 a1241968   11r      REG               1,15 810827776            61833993 /Users/a1241968/.hermes/state.db",
+          "python3.1 24315 a1241968   12u      REG               1,15   3254832           104341783 /Users/a1241968/.hermes/state.db-wal"
+        ]
+      },
+      "sessionId": "18c8e311-73a7-4947-96ce-2de066aca3b3",
+      "session_meta": {
+        "_meta": {
+          "hermes": {
+            "sessionProvenance": {
+              "acpSessionId": "18c8e311-73a7-4947-96ce-2de066aca3b3",
+              "currentHermesSessionId": "18c8e311-73a7-4947-96ce-2de066aca3b3",
+              "rootHermesSessionId": "18c8e311-73a7-4947-96ce-2de066aca3b3",
+              "parentHermesSessionId": null,
+              "sessionKind": "root",
+              "compressionDepth": 0
+            }
+          }
+        }
+      },
+      "notification_count": 2,
+      "hermes_home_from_ps": null,
+      "opened_home_state_db": true,
+      "opened_profiles_default": false,
+      "exit": -15,
+      "after": {
+        "ts": 1787194499.938829,
+        "profiles_dir_exists": true,
+        "profiles_listing": [],
+        "default_dir_exists": false,
+        "default_dir_is_dir": false,
+        "home_state_db_exists": true,
+        "home_state_db_mtime": 1787194496.6744065,
+        "home_state_db_wal_mtime": 1787194499.0745802
+      },
+      "elapsed_s": 2.09,
+      "stderr_tail": [
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'deepinfra' registered video_gen provider: deepinfra",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'fal' registered video_gen provider: fal",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'xai' registered video_gen provider: xai",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'web-brave-free' registered web provider: brave-free",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'web-ddgs' registered web provider: ddgs",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'web-exa' registered web provider: exa",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'web-firecrawl' registered web provider: firecrawl",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'web-parallel' registered web provider: parallel",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'web-searxng' registered web provider: searxng",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'web-tavily' registered web provider: tavily",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin 'web-xai' registered web provider: xai",
+        "2026-08-20 12:24:58 [INFO] hermes_cli.plugins: Plugin discovery complete: 55 found, 48 enabled",
+        "2026-08-20 12:24:58 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=MainThread:8485510528 provider=xai-oauth base_url=https://api.x.ai/v1 model=grok-4.6",
+        "2026-08-20 12:24:58 [WARNING] tools.registry: check_fn check_browser_requirements returned False; dependent tools will be unavailable this turn",
+        "2026-08-20 12:24:58 [WARNING] tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn",
+        "2026-08-20 12:24:58 [WARNING] tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn",
+        "2026-08-20 12:24:59 [WARNING] tools.registry: check_fn check_browser_vision_requirements returned False; dependent tools will be unavailable this turn",
+        "2026-08-20 12:24:59 [INFO] agent.auxiliary_client: Vision auto-detect: using main provider xai-oauth (grok-4.6)",
+        "2026-08-20 12:24:59 [INFO] acp_adapter.session: Created ACP session 18c8e311-73a7-4947-96ce-2de066aca3b3 (cwd=/tmp/issue243-spike-cwd)",
+        "2026-08-20 12:24:59 [INFO] acp_adapter.server: New session 18c8e311-73a7-4947-96ce-2de066aca3b3 (cwd=/tmp/issue243-spike-cwd)"
+      ]
+    }
+  ],
+  "final_snapshot": {
+    "ts": 1787194499.9394329,
+    "profiles_dir_exists": true,
+    "profiles_listing": [],
+    "default_dir_exists": false,
+    "default_dir_is_dir": false,
+    "home_state_db_exists": true,
+    "home_state_db_mtime": 1787194496.6744065,
+    "home_state_db_wal_mtime": 1787194499.0745802
+  }
+}
