@@ -211,10 +211,12 @@ test.describe("hermes profile binding", () => {
       "default",
     );
     await expect(page.getByTestId("hermes-profile-error")).toHaveCount(0);
-    await expect(page.getByTestId("hermes-home-profile-readonly")).toBeVisible();
-    await expect(page.getByTestId("hermes-home-profile-readonly")).toContainText(
-      /edit this profile in Hermes/i,
-    );
+    await expect(
+      page.getByTestId("hermes-home-profile-readonly"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("hermes-home-profile-readonly"),
+    ).toContainText(/edit this profile in Hermes/i);
     await expect(page.getByTestId("hermes-profile-model-loading")).toHaveCount(
       0,
     );
