@@ -126,7 +126,10 @@ test("links and relinks a Project through a real Buzz relay", {
       firstLinked.tags.some((tag) => tag[0] === "auth"),
       false,
     );
-    assert.equal(firstLinked.created_at, initial.created_at + 1);
+    assert.ok(firstLinked.created_at >= initial.created_at + 1);
+    assert.ok(
+      Math.abs(firstLinked.created_at - Math.floor(Date.now() / 1_000)) <= 5,
+    );
 
     relay.close();
     relay = await connectRelay(LIVE_RELAY_URL, secretKey);
@@ -152,7 +155,10 @@ test("links and relinks a Project through a real Buzz relay", {
       },
       relayDependencies(relay, secretKey),
     );
-    assert.equal(relinked.created_at, firstLinked.created_at + 1);
+    assert.ok(relinked.created_at >= firstLinked.created_at + 1);
+    assert.ok(
+      Math.abs(relinked.created_at - Math.floor(Date.now() / 1_000)) <= 5,
+    );
     assert.deepEqual(
       relinked.tags.filter(
         (tag) => tag[0] === "buzz-location" && tag[1] === "local",

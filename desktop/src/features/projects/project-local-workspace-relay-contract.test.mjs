@@ -175,8 +175,12 @@ test("link reads the latest Buzz event and adds its canonical channel", async ()
     },
   );
 
+  const after = Math.floor(Date.now() / 1_000);
   assert.deepEqual(signedInput.tags, saved.tags);
   assert.equal(signedInput.content, current.content);
+  assert.ok(signedInput.createdAt >= current.created_at + 1);
+  assert.ok(signedInput.createdAt >= after - 1);
+  assert.ok(signedInput.createdAt <= after);
   assert.equal(
     signedInput.tags.filter(
       (tag) => tag[0] === "buzz-location" && tag[1] === "local",

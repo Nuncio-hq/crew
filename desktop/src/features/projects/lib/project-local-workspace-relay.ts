@@ -5,6 +5,16 @@ import {
 
 const PROJECT_KIND = 30_617;
 
+/** NIP-33 replacement must beat the live head, but stay inside the relay
+ * ±15m ingest window (`MAX_TIMESTAMP_DRIFT_SECS`). `head + 1` alone rejects
+ * any announcement older than 15 minutes. */
+export function nextProjectAnnouncementCreatedAt(
+  currentCreatedAt: number,
+  now: number = Math.floor(Date.now() / 1_000),
+): number {
+  return Math.max(now, currentCreatedAt + 1);
+}
+
 export type ProjectRelayEvent = {
   id: string;
   pubkey: string;
@@ -171,7 +181,7 @@ export async function linkProjectLocalWorkspace(
       event: {
         kind: PROJECT_KIND,
         content: current.content,
-        createdAt: current.created_at + 1,
+        createdAt: nextProjectAnnouncementCreatedAt(current.created_at),
         tags,
       },
       owner: input.owner,
