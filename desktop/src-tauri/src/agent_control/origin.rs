@@ -86,6 +86,19 @@ impl OriginPolicy {
     }
 }
 
+/// `about:` targets (`about:blank` above all) carry no network origin and
+/// cannot fetch or exfiltrate third-party content through the subject page,
+/// so they bypass the allow/elicitation gate entirely. Without this,
+/// `about:blank` parses to the opaque origin `"null"`, never matches the
+/// subject or allowlist, and forces every navigate-to-blank through
+/// `wait_origin_decision` — a real hang when no owner is present to answer
+/// the elicitation card (#247).
+pub fn is_inert_navigation_target(url: &str) -> bool {
+    url::Url::parse(url)
+        .map(|parsed| parsed.scheme() == "about")
+        .unwrap_or(false)
+}
+
 pub fn origin_of_url(url: &str) -> Result<String, ControlError> {
     let parsed = url::Url::parse(url).map_err(|e| {
         ControlError::origin_blocked(url)
@@ -122,6 +135,15 @@ mod tests {
         let policy = OriginPolicy::default();
         assert!(policy.is_allowed("ch", "http://127.0.0.1:5173", "http://127.0.0.1:5173/app"));
         assert!(!policy.is_allowed("ch", "http://127.0.0.1:5173", "https://api.stripe.com"));
+    }
+
+    #[test]
+    fn about_blank_is_an_inert_navigation_target() {
+        assert!(is_inert_navigation_target("about:blank"));
+        assert!(is_inert_navigation_target("about:srcdoc"));
+        assert!(!is_inert_navigation_target("https://example.com"));
+        assert!(!is_inert_navigation_target("http://127.0.0.1:5173"));
+        assert!(!is_inert_navigation_target("not a url"));
     }
 
     #[test]

@@ -21,6 +21,13 @@ use super::origin::origin_of_url;
 use super::protocol::{ControlError, SnapshotFilter};
 use super::snapshot::{build_snapshot, find_node, require_digest, Snapshot, SnapshotNode};
 
+/// Overall deadline for a bridge round-trip (inject + invoke + reply).
+const CALL_JS_DEADLINE: Duration = Duration::from_secs(8);
+/// Per-attempt wait before retrying injection within the deadline.
+const CALL_JS_ATTEMPT_WAIT: Duration = Duration::from_millis(400);
+/// Gap between retry attempts so we don't spin-eval the same script.
+const CALL_JS_RETRY_INTERVAL: Duration = Duration::from_millis(150);
+
 #[derive(Clone)]
 pub struct LiveHost {
     pub app: tauri::AppHandle,
@@ -93,33 +100,57 @@ impl LiveHost {
         }
     }
 
+    /// Injects the bridge and invokes it, retrying within `CALL_JS_DEADLINE`
+    /// instead of a single eval-then-wait shot (#247). `inject_bridge` +
+    /// `eval_js` are fire-and-forget: on a fresh webview or right after
+    /// `browser_navigate`, the injected script can race the page's own load
+    /// (or get wiped by a navigation landing a moment later) and silently
+    /// never run, so the first attempt's reply never arrives. Retrying with a
+    /// short per-attempt wait lets a page that becomes ready partway through
+    /// the deadline still answer, instead of surfacing a hard
+    /// "browser bridge did not reply" every time injection loses the race.
     async fn call_js(
         &self,
         channel_id: &str,
         invoke: &str,
     ) -> Result<serde_json::Value, ControlError> {
-        self.inject_bridge(channel_id)?;
-        let id = super::token::generate_token();
-        let (tx, rx) = oneshot::channel();
-        self.waiters.lock().await.insert(id.clone(), tx);
-        let js = format!("window.__CREW_AGENT_BRIDGE__.{invoke};");
-        let js = js.replace(
-            "__ID__",
-            &serde_json::to_string(&id).unwrap_or_else(|_| "\"\"".into()),
-        );
-        if let Err(error) = self.eval_js(channel_id, &js) {
-            self.waiters.lock().await.remove(&id);
-            return Err(error);
-        }
-        match tokio::time::timeout(Duration::from_secs(8), rx).await {
-            Ok(Ok(value)) => Ok(value),
-            Ok(Err(_)) => Err(ControlError::instrument_unreachable(
-                "browser bridge reply channel closed",
-            )),
-            Err(_) => {
-                self.waiters.lock().await.remove(&id);
-                Err(ControlError::timeout("browser bridge did not reply"))
+        let deadline = tokio::time::Instant::now() + CALL_JS_DEADLINE;
+        let mut last_error = ControlError::timeout("browser bridge did not reply");
+        loop {
+            if let Err(error) = self.inject_bridge(channel_id) {
+                last_error = error;
+            } else {
+                let id = super::token::generate_token();
+                let (tx, rx) = oneshot::channel();
+                self.waiters.lock().await.insert(id.clone(), tx);
+                let js = format!("window.__CREW_AGENT_BRIDGE__.{invoke};");
+                let js = js.replace(
+                    "__ID__",
+                    &serde_json::to_string(&id).unwrap_or_else(|_| "\"\"".into()),
+                );
+                if let Err(error) = self.eval_js(channel_id, &js) {
+                    self.waiters.lock().await.remove(&id);
+                    last_error = error;
+                } else {
+                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    let attempt_wait = remaining.min(CALL_JS_ATTEMPT_WAIT);
+                    match tokio::time::timeout(attempt_wait, rx).await {
+                        Ok(Ok(value)) => return Ok(value),
+                        Ok(Err(_)) => {
+                            last_error = ControlError::instrument_unreachable(
+                                "browser bridge reply channel closed",
+                            );
+                        }
+                        Err(_) => {
+                            self.waiters.lock().await.remove(&id);
+                        }
+                    }
+                }
             }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(last_error);
+            }
+            tokio::time::sleep(CALL_JS_RETRY_INTERVAL).await;
         }
     }
 
@@ -399,13 +430,20 @@ impl LiveHost {
             .await
     }
 
-    pub fn browser_navigate(&self, channel_id: &str, url: &str) -> Result<(), ControlError> {
+    pub async fn browser_navigate(&self, channel_id: &str, url: &str) -> Result<(), ControlError> {
         let escaped = serde_json::to_string(url).unwrap_or_else(|_| "\"about:blank\"".into());
         if self
             .eval_js(channel_id, &format!("location.href = {escaped};"))
             .is_ok()
         {
-            std::thread::sleep(Duration::from_millis(50));
+            // The navigation triggered above is async from Rust's viewpoint:
+            // `location.href` tears down the current document and the new one
+            // has not necessarily painted by the time this call returns. Give
+            // it a short, non-blocking beat (yields the runtime instead of
+            // `std::thread::sleep`'s hard stall) before the first re-inject —
+            // `call_js`'s own retry loop is the real safety net for any
+            // subsequent snapshot/click that races this navigation (#247).
+            tokio::time::sleep(Duration::from_millis(50)).await;
             let _ = self.inject_bridge(channel_id);
             return Ok(());
         }

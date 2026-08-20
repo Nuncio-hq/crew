@@ -124,6 +124,18 @@ export async function browserDevtools(channelId: string): Promise<void> {
   await invokeGovernor("browser_devtools", { channelId });
 }
 
+export async function browserBack(channelId: string): Promise<void> {
+  await invokeGovernor("browser_back", { channelId });
+}
+
+export async function browserForward(channelId: string): Promise<void> {
+  await invokeGovernor("browser_forward", { channelId });
+}
+
+export async function browserReload(channelId: string): Promise<void> {
+  await invokeGovernor("browser_reload", { channelId });
+}
+
 export async function openToolPaneWindow(channelId: string): Promise<void> {
   await invokeGovernor("open_tool_pane_window", { channelId });
 }
