@@ -401,6 +401,54 @@ async fn bridge_reply_accepts_page_origin_with_nonce() {
 }
 
 #[tokio::test]
+async fn navigate_to_about_blank_never_needs_origin_approval() {
+    // #247: `about:blank` parses to the opaque origin `null`, which never
+    // matches the subject or an allowlist, and used to fall into
+    // `wait_origin_decision` (up to 300s) with no elicitation answer set —
+    // exactly the reported A2 hang. It must resolve immediately.
+    let rt = ControlRuntime::new();
+    let resp = rt
+        .handle(req(
+            "browser_navigate",
+            serde_json::json!({ "url": "about:blank" }),
+        ))
+        .await;
+    assert!(resp.error.is_none(), "{resp:?}");
+}
+
+#[tokio::test]
+async fn desktop_status_surfaces_pending_origin_wait() {
+    // #247: a stuck `browser_navigate` waiting on owner elicitation must be
+    // observable via `desktop_status` instead of looking identical to a
+    // genuine ensure/bridge hang (spike 0057 noted `desktop_status` "still
+    // answered" with no way to tell the two apart).
+    let rt = std::sync::Arc::new(ControlRuntime::new());
+    let idle = rt
+        .handle(req("desktop_status", serde_json::json!({})))
+        .await;
+    assert_eq!(
+        idle.result.as_ref().unwrap()["pending_origin"],
+        serde_json::Value::Null
+    );
+
+    // No live host is attached in this contract test, so a blocked-origin
+    // navigate resolves immediately without an elicitation card; assert the
+    // pending-origin bookkeeping the live path relies on directly instead.
+    *rt.pending_origin.lock().await = Some(serde_json::json!({
+        "channelId": "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50",
+        "origin": "https://example.com",
+        "agentName": "Hermes",
+    }));
+    let waiting = rt
+        .handle(req("desktop_status", serde_json::json!({})))
+        .await;
+    assert_eq!(
+        waiting.result.as_ref().unwrap()["pending_origin"]["origin"],
+        "https://example.com"
+    );
+}
+
+#[tokio::test]
 async fn foreign_origin_deny_is_origin_blocked() {
     let rt = ControlRuntime::new();
     rt.set_elicitation(OriginDecision::Deny).await;
