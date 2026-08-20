@@ -429,6 +429,19 @@ async fn allow_domain_writes_canvas() {
 }
 
 #[tokio::test]
+async fn browser_navigate_succeeds_without_canvas_dev_server_tooling() {
+    // #236: the browser instrument exists purely off the Resource Governor /
+    // fake browser subject. `ControlRuntime` has no `tooling.devServer`
+    // concept at all, so a bare `browser_navigate` (no url override) must
+    // still succeed — agent parity with the UI's setup-wall removal.
+    let rt = ControlRuntime::new();
+    let resp = rt
+        .handle(req("browser_navigate", serde_json::json!({})))
+        .await;
+    assert!(resp.error.is_none(), "{resp:?}");
+}
+
+#[tokio::test]
 async fn post_evidence_records_tag() {
     let rt = ControlRuntime::new();
     let resp = rt
