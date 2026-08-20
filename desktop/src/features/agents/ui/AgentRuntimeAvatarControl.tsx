@@ -9,7 +9,7 @@ import {
 import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import { cn } from "@/shared/lib/cn";
 import { Spinner } from "@/shared/ui/spinner";
-import { IdentityInitialsAvatar } from "./IdentityInitialsAvatar";
+import { AgentRuntimeDefaultAvatar } from "./AgentRuntimeDefaultAvatar";
 
 type AgentRuntimeAvatarControlProps = {
   activeTestId: string;
@@ -21,6 +21,8 @@ type AgentRuntimeAvatarControlProps = {
   isStarting: boolean;
   label: string;
   requiresRestart?: boolean;
+  /** Catalog runtime id for SVG default face when avatarUrl is empty. */
+  runtimeId?: string | null;
   startTestId: string;
   onOpenError?: () => void;
   onStart: () => void;
@@ -135,6 +137,7 @@ export function AgentRuntimeAvatarControl({
   isStarting,
   label,
   requiresRestart = false,
+  runtimeId = null,
   startTestId,
   onOpenError,
   onStart,
@@ -243,9 +246,10 @@ export function AgentRuntimeAvatarControl({
           label={label}
         />
       ) : (
-        <IdentityInitialsAvatar
+        <AgentRuntimeDefaultAvatar
           className="border-0 shadow-none"
           label={label}
+          runtimeId={runtimeId}
           size={AGENT_AVATAR_SIZE}
         />
       )}

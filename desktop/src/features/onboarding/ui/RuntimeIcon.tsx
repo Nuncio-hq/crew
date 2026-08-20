@@ -12,6 +12,7 @@ import { RUNTIME_MARKS } from "./HarnessMarks";
 // `currentColor`, so they adapt to dark/light without bitmap filters.
 // Hermes keeps its public-path PNG (same asset as when it was a preset).
 export const RUNTIME_LOGOS: Record<string, string> = {
+  // Claude prefers RUNTIME_MARKS; keep the PNG as img fallback if needed.
   claude: claudeLogoUrl,
   hermes: "/harness-logos/hermes.png",
 };
@@ -28,18 +29,23 @@ export const PRESET_LOGOS: Record<string, string> = {
   openclaw: "/harness-logos/openclaw.svg",
 };
 
-function isBuzzRuntime(runtime: AcpRuntimeCatalogEntry): boolean {
+/** Icon lookup only needs the catalog id. */
+export type RuntimeIconSource = Pick<AcpRuntimeCatalogEntry, "id">;
+
+function isBuzzRuntime(runtime: RuntimeIconSource): boolean {
   return runtime.id.trim().toLowerCase() === "buzz-agent";
 }
 
 export function getRuntimeDisplayLabel(
-  runtime: AcpRuntimeCatalogEntry,
+  runtime: Pick<AcpRuntimeCatalogEntry, "id" | "label">,
 ): string {
   return isBuzzRuntime(runtime) ? "Buzz" : runtime.label;
 }
 
-function getRuntimeLogoUrl(runtime: AcpRuntimeCatalogEntry): string | null {
+function getRuntimeLogoUrl(runtime: RuntimeIconSource): string | null {
   const id = runtime.id.trim().toLowerCase();
+  // Prefer inline SVG marks over bitmap logos when both exist.
+  if (RUNTIME_MARKS[id]) return null;
   return RUNTIME_LOGOS[id] ?? PRESET_LOGOS[id] ?? null;
 }
 
@@ -48,7 +54,7 @@ export function RuntimeIcon({
   runtime,
 }: {
   className?: string;
-  runtime: AcpRuntimeCatalogEntry;
+  runtime: RuntimeIconSource;
 }) {
   const [imageFailed, setImageFailed] = React.useState(false);
   // Only use bundled logo maps — never render user-supplied avatar URLs for

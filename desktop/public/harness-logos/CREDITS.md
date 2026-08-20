@@ -24,8 +24,9 @@ Monochrome marks inlined as `currentColor` paths in
 
 | Mark | Upstream | Version/Commit | License | Source path | Modifications |
 |---|---|---|---|---|---|
-| Goose | [block/goose](https://github.com/block/goose) | `305849b71709b95b86ed9f11bd3bc939899c0aab` | Apache-2.0 © Block, Inc. | `documentation/static/img/goose.svg` | `fill="#101010"` → `currentColor`; dropped the redundant clipPath wrapper |
+| Claude | [simple-icons](https://github.com/simple-icons/simple-icons) | `16.27.1` (slug `anthropic`) | CC0-1.0 (path data); nominative use of the Anthropic mark to identify Claude's harness | `icons/anthropic.svg` | `fill` → `currentColor`; dropped `<title>` |
 | Cursor | [simple-icons](https://github.com/simple-icons/simple-icons) | `16.27.1` (slug `cursor`) | CC0-1.0 (path data); nominative use of the Cursor mark to identify Cursor's harness | `icons/cursor.svg` | `fill` → `currentColor` |
+| Goose | [block/goose](https://github.com/block/goose) | `305849b71709b95b86ed9f11bd3bc939899c0aab` | Apache-2.0 © Block, Inc. | `documentation/static/img/goose.svg` | `fill="#101010"` → `currentColor`; dropped the redundant clipPath wrapper |
 
 Codex deliberately has **no** bundled mark: the OpenAI blossom was removed
 from simple-icons in v16 at the vendor's request, so we do not ship it —
