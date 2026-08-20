@@ -26,6 +26,7 @@ const rules = [
 const overrides = new Set([
   "src/features/settings/ui/ProfileSettingsCard.tsx:text-[6rem]",
   "src/features/onboarding/ui/AvatarStep.tsx:text-[6rem]",
+  "src/features/agents/ui/AgentAvatarFace.tsx:text-[4rem]",
   "src/features/agents/ui/AgentCreationPreview.tsx:text-[4rem]",
   "src/features/agents/ui/AgentCreationPreview.tsx:text-[6rem]",
 ]);
