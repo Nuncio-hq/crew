@@ -11,6 +11,7 @@ import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import { AgentCreationPreview } from "./AgentCreationPreview";
 import type { EnvVarsValue } from "./EnvVarsEditor";
+import { RequiredFieldLabel } from "./agentConfigControls";
 import { PersonaAdvancedFields } from "./PersonaAdvancedFields";
 import { runtimeAvailabilityWarning } from "./runtimeAvailabilityWarning";
 import {
@@ -94,6 +95,7 @@ import {
   runtimeDropdownAction,
   usePendingHarnessSelection,
 } from "./addCustomHarness";
+import { shouldShowStandaloneRuntimeUnavailableWarning } from "./personaSubmitFeedback";
 
 type AgentDefinitionDialogProps = {
   open: boolean;
@@ -635,6 +637,16 @@ export function AgentDefinitionDialog({
       {runtimeWarningText} Visit Settings &gt; Agents to set it up.
     </p>
   ) : null;
+  // Harness picker (and its inline warning) only render in Customize mode.
+  // Profile-owned runtimes (Hermes) hide AI-configuration tabs entirely when
+  // preferred, so create stays on defaults with no harness field — still show
+  // the unavailable-runtime blocker so Add agent is not silently disabled.
+  const showStandaloneRuntimeWarning =
+    shouldShowStandaloneRuntimeUnavailableWarning({
+      isCreateMode,
+      hasRuntimeWarning: Boolean(runtimeWarningText),
+      aiConfigurationMode,
+    });
   const advancedFieldsTransition = shouldReduceMotion
     ? { duration: 0 }
     : ADVANCED_FIELDS_MOTION_TRANSITION;
@@ -769,12 +781,13 @@ export function AgentDefinitionDialog({
       />
       <div className="space-y-5">
         <div className="space-y-1.5">
-          <label
-            className="text-sm font-medium text-foreground"
+          <RequiredFieldLabel
+            className="text-foreground"
             htmlFor="persona-display-name"
+            isRequired={isCreateMode}
           >
             Agent name
-          </label>
+          </RequiredFieldLabel>
           <div
             className={cn(
               "flex min-h-11 items-center px-3",
@@ -795,6 +808,16 @@ export function AgentDefinitionDialog({
             />
           </div>
         </div>
+
+        {showStandaloneRuntimeWarning ? (
+          <p
+            className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning"
+            data-testid="persona-runtime-unavailable"
+          >
+            {runtimeWarningText} Visit Settings &gt; Agents to set it up. Add
+            agent stays disabled until this harness is available.
+          </p>
+        ) : null}
 
         <div className="space-y-1.5">
           <label

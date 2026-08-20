@@ -68,8 +68,11 @@ import {
   buildInstanceInputForDefinition,
   type BackendIntent,
 } from "../lib/instanceInputForDefinition";
-
-type PersonaFeedbackSurface = "catalog" | "library";
+import {
+  PERSONA_CREATE_RUNTIME_UNAVAILABLE_MESSAGE,
+  personaSubmitFeedbackSurface,
+  type PersonaFeedbackSurface,
+} from "./personaSubmitFeedback";
 
 export function usePersonaActions() {
   const queryClient = useQueryClient();
@@ -191,7 +194,9 @@ export function usePersonaActions() {
       return false;
     }
 
-    clearFeedback("library");
+    // Catalog create keeps the modal open on failure — feedback must toast on
+    // the catalog surface or the user never sees why Add agent did nothing.
+    clearFeedback(personaSubmitFeedbackSurface(isCatalogDialogOpen));
     setIsPersonaSubmitPending(true);
     try {
       if ("id" in input) {
@@ -218,9 +223,7 @@ export function usePersonaActions() {
           (candidate) => candidate.id === input.runtime,
         );
         if (!runtime) {
-          setPersonaErrorMessage(
-            "Choose an available provider for this agent.",
-          );
+          setPersonaErrorMessage(PERSONA_CREATE_RUNTIME_UNAVAILABLE_MESSAGE);
           return false;
         }
 
@@ -485,6 +488,9 @@ export function usePersonaActions() {
 
   function openCatalog() {
     clearFeedback("catalog");
+    // Create-agent lives inside the catalog modal; load harnesses even when
+    // callers forget prepareCreate (belt-and-suspenders with openUnifiedCatalog).
+    setShouldLoadAcpRuntimes(true);
     void catalogQuery.refetch();
     setIsCatalogDialogOpen(true);
   }
