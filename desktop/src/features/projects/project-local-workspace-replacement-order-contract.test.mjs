@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { linkProjectLocalWorkspace } from "./lib/project-local-workspace-relay.ts";
+import {
+  linkProjectLocalWorkspace,
+  nextProjectAnnouncementCreatedAt,
+} from "./lib/project-local-workspace-relay.ts";
 
 const OWNER = "a".repeat(64);
 const CHANNEL_ID = "018f30b4-57c0-7f10-a3f8-9f7d8e6c5b4a";
@@ -60,5 +63,20 @@ test("same-second replacement reads the lexically lowest NIP-01 event id", async
     signedInput.tags.find((tag) => tag[0] === "name"),
     ["name", "Relay-retained name"],
   );
-  assert.equal(signedInput.createdAt, retained.created_at + 1);
+  const after = Math.floor(Date.now() / 1_000);
+  assert.ok(signedInput.createdAt >= retained.created_at + 1);
+  assert.ok(signedInput.createdAt >= after - 1);
+  assert.ok(signedInput.createdAt <= after);
+});
+
+test("stale announcement uses wall clock, not head + 1", () => {
+  const staleHead = 1_753_000_000;
+  const now = 1_787_221_939;
+  assert.equal(nextProjectAnnouncementCreatedAt(staleHead, now), now);
+  assert.ok(now - (staleHead + 1) > 900);
+});
+
+test("same-second replacement still advances created_at by one", () => {
+  const head = 1_787_221_939;
+  assert.equal(nextProjectAnnouncementCreatedAt(head, head), head + 1);
 });
