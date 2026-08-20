@@ -14,6 +14,7 @@ mod assignment_publish;
 mod agents;
 mod canvas;
 mod canvas_tooling;
+mod channel_reconnect_repair;
 mod channel_templates;
 mod channel_window;
 mod channels;
@@ -107,6 +108,7 @@ pub(crate) use assignment_publish::{
 pub use agents::*;
 pub use canvas::*;
 pub use canvas_tooling::*;
+pub use channel_reconnect_repair::*;
 pub use channel_templates::*;
 pub use channel_window::*;
 pub use channels::*;

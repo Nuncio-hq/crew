@@ -33,6 +33,7 @@ import { establishLiveSubscription } from "@/shared/api/liveSubscriptionSetup";
 import * as reconnectReplay from "@/shared/api/relayReconnectReplay";
 import { handleSessionRelayClosed } from "@/shared/api/relayClientClosedRecovery";
 import * as liveBuffer from "@/shared/api/relayLiveEventBuffer";
+import { getChannelReconnectRepairEvents } from "@/shared/api/channelReconnectRepair";
 import {
   activateRateLimit,
   parseRateLimitHint,
@@ -766,7 +767,7 @@ export class RelayClient {
     if (type === "EVENT" && typeof rest[0] === "string" && rest[1]) {
       if (!eventVerification.isVerifiedRelayEvent(rest[1] as RelayEvent))
         return;
-      this.handleEvent(rest[0], rest[1] as RelayEvent);
+      this.handleEvent(rest[0], rest[1] as RelayEvent, generation);
       return;
     }
     if (
@@ -783,7 +784,7 @@ export class RelayClient {
     }
 
     if (type === "EOSE" && typeof rest[0] === "string") {
-      this.handleEose(rest[0]);
+      this.handleEose(rest[0], generation);
       return;
     }
 
@@ -832,7 +833,7 @@ export class RelayClient {
     await this.sendRaw(["AUTH", event]);
   }
 
-  private handleEvent(subId: string, event: RelayEvent) {
+  private handleEvent(subId: string, event: RelayEvent, generation: number) {
     const subscription = this.subscriptions.get(subId);
     if (!subscription) return;
     if (
@@ -846,7 +847,7 @@ export class RelayClient {
     }
     if (!closedRecovery.prepareSubscriptionEvent(subscription, event)) return;
     this.eventBuffer.push(
-      liveBuffer.toBufferedLiveEvent(subId, event, subscription),
+      liveBuffer.toBufferedLiveEvent(subId, event, subscription, generation),
     );
     this.flushTimeout ??= window.setTimeout(
       () => this.flushEventBuffer(),
@@ -856,16 +857,22 @@ export class RelayClient {
 
   private flushEventBuffer() {
     this.flushTimeout = null;
-    liveBuffer.dispatchBufferedLiveEvents(this.eventBuffer, this.subscriptions);
+    const buffer = this.eventBuffer;
     this.eventBuffer = [];
+    liveBuffer.dispatchBufferedLiveEvents(
+      buffer,
+      this.subscriptions,
+      this.connectionGeneration,
+    );
   }
 
-  private handleEose(subId: string) {
+  private handleEose(subId: string, generation: number) {
     this.flushEventBuffer(); // Deliver preceding EVENT frames before EOSE.
     closedRecovery.handleSubscriptionEose({
       subscriptions: this.subscriptions,
       subId,
       closeSubscription: (id) => this.closeSubscription(id),
+      generation,
     });
   }
 
@@ -914,6 +921,8 @@ export class RelayClient {
         subscriptions: this.subscriptions,
         sendRaw: (payload) => this.sendRaw(payload),
         requestHistory: (filter) => this.requestHistory(filter),
+        requestRepair: getChannelReconnectRepairEvents,
+        generation,
         visibleChannelId: this.visibleChannelId,
         isActive: () => this.connectionGeneration === generation,
       });
