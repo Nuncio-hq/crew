@@ -16,9 +16,12 @@ import { Input } from "@/shared/ui/input";
 import { cn } from "@/shared/lib/cn";
 
 import {
+  browserBack,
   browserClose,
   browserDevtools,
+  browserForward,
   browserOpen,
+  browserReload,
   formatCountdown,
   getCanvasTooling,
   setBrowserBounds,
@@ -140,10 +143,13 @@ export function BrowserTab({
       />
       <BrowserToolbar
         customUrl={customUrl}
+        onBack={() => void browserBack(channelId).catch(() => undefined)}
         onCommitUrl={setCustomUrl}
         onDevtools={() =>
           void browserDevtools(channelId).catch(() => undefined)
         }
+        onForward={() => void browserForward(channelId).catch(() => undefined)}
+        onReload={() => void browserReload(channelId).catch(() => undefined)}
         onShot={() => {
           void (async () => {
             const png = await captureSimPng("browser");
@@ -248,8 +254,11 @@ export function BrowserTab({
 function BrowserToolbar({
   checkoutPath,
   customUrl,
+  onBack,
   onCommitUrl,
   onDevtools,
+  onForward,
+  onReload,
   onShot,
   onSubject,
   onViewport,
@@ -259,8 +268,11 @@ function BrowserToolbar({
 }: {
   checkoutPath?: string | null;
   customUrl: string;
+  onBack: () => void;
   onCommitUrl: (value: string) => void;
   onDevtools: () => void;
+  onForward: () => void;
+  onReload: () => void;
   onShot: () => void;
   onSubject: (kind: SubjectKind) => void;
   onViewport: (id: (typeof VIEWPORT_PRESETS)[number]["id"]) => void;
@@ -279,13 +291,13 @@ function BrowserToolbar({
       className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2 py-1.5"
       data-testid="browser-toolbar"
     >
-      <ToolbarIcon label="Back" testId="browser-back">
+      <ToolbarIcon label="Back" onClick={onBack} testId="browser-back">
         <ChevronLeft className="h-3.5 w-3.5" />
       </ToolbarIcon>
-      <ToolbarIcon label="Forward" testId="browser-forward">
+      <ToolbarIcon label="Forward" onClick={onForward} testId="browser-forward">
         <ChevronRight className="h-3.5 w-3.5" />
       </ToolbarIcon>
-      <ToolbarIcon label="Reload" testId="browser-reload">
+      <ToolbarIcon label="Reload" onClick={onReload} testId="browser-reload">
         <RotateCw className="h-3.5 w-3.5" />
       </ToolbarIcon>
       <select
