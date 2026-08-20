@@ -1658,3 +1658,26 @@ specialist (e.g. Dev) via call-by-name (D-071 / #230).
 4. **Non-goals:** Org chart first, call-by-role, Mission #102 / #151.
 
 Template: `docs/crew/templates/COS-INTAKE.md`.
+
+## D-073 — Bind Hermes `default` after confirmation; never mutate `~/.hermes`
+
+- **Status:** Accepted
+- **Date:** 2026-08-20
+- **Issue:** #243
+- **Supersedes:** the hard-ban *implementation* of D-019 item 7 / HERMES.md
+  rule 1, and D-024's "named-profile requirement" only where that was read
+  as a never-bind ban. D-019 item 7 already required confirmation. D-024
+  owner-only + local still stands. D-035 still forbids archive/delete of
+  `default`.
+
+The founder may bind the personal Hermes home profile (`default` /
+`~/.hermes`) to one local Crew agent after confirming the shared surfaces
+(Desktop chat, SOUL.md, memory, skills, credentials, cron, gateways).
+Cancel creates no record. Occupancy stays one local record per profile,
+including `default`.
+
+Crew must not write-through SOUL.md or `config.yaml` on `default`, and
+must not create, archive, or delete that home profile. Named-profile
+create-in-place remains the happy path. Spike 0056 PASS: spawn uses
+`hermes -p default acp`. Bare `hermes acp` also initializes ACP here but
+follows a later sticky `active_profile`, so Crew injects `-p default`.

@@ -5,6 +5,10 @@ import {
   readHermesProfileSoul,
   writeHermesProfileSoul,
 } from "@/shared/api/hermesProfiles";
+import {
+  crewMayMutateHermesProfile,
+  hermesHomeProfileEditInHermesCopy,
+} from "../lib/hermesProfileBinding";
 import { Button } from "@/shared/ui/button";
 import { Textarea } from "@/shared/ui/textarea";
 
@@ -25,7 +29,8 @@ export function HermesSoulEditor({
   const query = useQuery({
     queryKey,
     queryFn: () => readHermesProfileSoul(profileName),
-    enabled: profileName.trim().length > 0,
+    enabled:
+      profileName.trim().length > 0 && crewMayMutateHermesProfile(profileName),
     refetchOnMount: "always",
   });
   const [content, setContent] = React.useState<string | null>(null);
@@ -64,6 +69,18 @@ export function HermesSoulEditor({
       );
     },
   });
+
+  if (!crewMayMutateHermesProfile(profileName)) {
+    return (
+      <div className="space-y-1.5" data-testid="hermes-home-profile-readonly">
+        <p className="text-sm font-medium text-foreground">Profile persona</p>
+        <p className="text-sm text-muted-foreground">
+          The personal default profile&apos;s SOUL.md is owned by Hermes.{" "}
+          {hermesHomeProfileEditInHermesCopy()}
+        </p>
+      </div>
+    );
+  }
 
   if (query.isLoading || content === null) {
     if (

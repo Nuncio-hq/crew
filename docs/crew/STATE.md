@@ -1,5 +1,12 @@
 # Crew State
 
+## Issue #243 — Bind Hermes `default` after confirmation
+
+The personal home profile (`~/.hermes` / `default`) can be bound after an
+explicit confirm. Crew still does not edit, archive, or delete that
+profile. Spawn uses `hermes -p default acp` (spike 0056 PASS). D-073.
+Last updated: 2026-08-20
+
 ## Issue #242 — Office channel Relink folder
 
 Exclusive-repo office channels show the bound local path and a Relink /

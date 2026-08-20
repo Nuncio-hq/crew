@@ -9241,11 +9241,6 @@ async function handleCreateManagedAgent(
   const avatarUrl = args.input.avatarUrl?.trim() || personaAvatarUrl;
   const name = args.input.name.trim();
   const hermesProfile = args.input.hermesProfile?.trim() || null;
-  if (hermesProfile === "default") {
-    throw new Error(
-      "hermes profile 'default' cannot be bound to a Crew agent (manager personal profile)",
-    );
-  }
   if (
     hermesProfile &&
     mockManagedAgents.some((other) => other.hermes_profile === hermesProfile)
@@ -9585,11 +9580,6 @@ async function handleUpdateManagedAgent(args: {
   }
   if (args.input.hermesProfile !== undefined) {
     const profile = args.input.hermesProfile?.trim() || null;
-    if (profile === "default") {
-      throw new Error(
-        "hermes profile 'default' cannot be bound to a Crew agent (manager personal profile)",
-      );
-    }
     if (
       profile &&
       mockManagedAgents.some(

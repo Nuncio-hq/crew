@@ -25,10 +25,17 @@ const [
 import * as hermesProfileBinding from "../lib/hermesProfileBinding.ts";
 import {
   buildHermesProfileOccupancy,
+  crewMayMutateHermesProfile,
+  ensureHermesHomeProfileOption,
   filterHermesProfileOptions,
+  hermesHomeProfileConfirmSurfaces,
+  hermesHomeProfileDisplayLabel,
+  hermesHomeProfileEditInHermesCopy,
+  hermesHomeProfileUnconfirmedError,
   hermesProfileBindingError,
   hermesProfileOccupancyError,
   hermesProfileOccupancyLabel,
+  isHermesHomeProfile,
   normalizeHermesProfileList,
   profileOwnedModelLabel,
   resolveHermesProfileForCreate,
@@ -45,17 +52,52 @@ import {
   deriveAgentConfigFieldModel,
 } from "../lib/agentConfigCore.ts";
 
-test("validateHermesProfileName rejects default and bad shapes", () => {
-  assert.match(validateHermesProfileName("default") ?? "", /default/);
+test("validateHermesProfileName accepts default as a bind name", () => {
+  assert.equal(validateHermesProfileName("default"), null);
+  assert.equal(validateHermesProfileName("  default  "), null);
   assert.match(validateHermesProfileName("Bad Name") ?? "", /lowercase/);
   assert.equal(validateHermesProfileName("scout"), null);
   assert.equal(validateHermesProfileName(""), null);
 });
 
+test("home profile is bindable but not mutable by Crew", () => {
+  assert.equal(isHermesHomeProfile("default"), true);
+  assert.equal(isHermesHomeProfile("  default  "), true);
+  assert.equal(isHermesHomeProfile("scout"), false);
+  assert.equal(crewMayMutateHermesProfile("default"), false);
+  assert.equal(crewMayMutateHermesProfile("scout"), true);
+  assert.equal(shouldShowHermesProfileCreate("default", []), false);
+  assert.equal(hermesHomeProfileDisplayLabel("default"), "Personal (default)");
+  assert.equal(hermesHomeProfileDisplayLabel("scout"), "scout");
+  assert.match(
+    hermesHomeProfileEditInHermesCopy(),
+    /edit this profile in Hermes/i,
+  );
+  assert.deepEqual(hermesHomeProfileConfirmSurfaces(), [
+    "Desktop chat",
+    "SOUL.md",
+    "memory",
+    "skills",
+    "credentials",
+    "cron",
+    "gateways",
+  ]);
+});
+
+test("binding default without confirmation is a confirm gate, not a hard block", () => {
+  assert.equal(hermesProfileBindingError("default", true), null);
+  assert.match(
+    hermesHomeProfileUnconfirmedError("default", false) ?? "",
+    /confirm/i,
+  );
+  assert.equal(hermesHomeProfileUnconfirmedError("default", true), null);
+  assert.equal(hermesHomeProfileUnconfirmedError("scout", false), null);
+});
+
 test("hermesProfileBindingError requires a name when required", () => {
   assert.match(hermesProfileBindingError("", true) ?? "", /Bind a Hermes/);
   assert.equal(hermesProfileBindingError("", false), null);
-  assert.match(hermesProfileBindingError("default", true) ?? "", /default/);
+  assert.equal(hermesProfileBindingError("default", true), null);
 });
 
 test("runtimeOwnsModelViaProfile needs profileArg + providerLocked + no modelEnvVar", () => {
@@ -197,7 +239,20 @@ test("profile combobox anchors to the field and ignores input dismiss", () => {
   assert.match(comboboxSource, /inputRef\.current\?\.focus\(\)/);
   assert.match(comboboxSource, /skipOpenOnFocusRef/);
   assert.match(comboboxSource, /Search or type a profile name/);
+  assert.match(comboboxSource, /hermesHomeProfileDisplayLabel/);
   assert.doesNotMatch(comboboxSource, /placeholder="scout"/);
+});
+
+test("home profile confirm dialog lists shared surfaces", async () => {
+  const dialogSource = await readFile(
+    new URL("./HermesHomeProfileConfirmDialog.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(bindingFieldsSource, /HermesHomeProfileConfirmDialog/);
+  assert.match(bindingFieldsSource, /requestProfileChange/);
+  assert.match(dialogSource, /hermes-home-profile-confirm/);
+  assert.match(dialogSource, /hermesHomeProfileConfirmSurfaces/);
+  assert.match(dialogSource, /Crew will not edit that profile/);
 });
 
 test("profile-bound access and backend violations have actionable copy", () => {
@@ -247,7 +302,7 @@ test("profileOwnedModelLabel formats C-04 copy", () => {
   assert.equal(profileOwnedModelLabel(null, null), "Model: decided by profile");
 });
 
-test("normalizeHermesProfileList drops default/invalid and sorts", () => {
+test("normalizeHermesProfileList keeps a home row and drops invalid names", () => {
   assert.deepEqual(
     normalizeHermesProfileList([
       "builder",
@@ -257,8 +312,21 @@ test("normalizeHermesProfileList drops default/invalid and sorts", () => {
       "scout",
       "",
     ]),
-    ["builder", "scout"],
+    ["builder", "default", "scout"],
   );
+});
+
+test("ensureHermesHomeProfileOption always offers the distinguished home row", () => {
+  assert.deepEqual(ensureHermesHomeProfileOption([]), ["default"]);
+  assert.deepEqual(ensureHermesHomeProfileOption(["scout", "default"]), [
+    "default",
+    "scout",
+  ]);
+  assert.deepEqual(ensureHermesHomeProfileOption(["builder", "scout"]), [
+    "default",
+    "builder",
+    "scout",
+  ]);
 });
 
 test("filterHermesProfileOptions typeahead is case-insensitive", () => {
@@ -316,6 +384,29 @@ test("buildHermesProfileOccupancy is global and preserves edit-self", () => {
     agentName: "Other Agent",
     agentPubkey: "ccc",
   });
+});
+
+test("occupancy tracks the home profile like any other bind name", () => {
+  const map = buildHermesProfileOccupancy({
+    profiles: ensureHermesHomeProfileOption([]),
+    agents: [
+      {
+        pubkey: "ddd",
+        name: "Personal Hermes",
+        hermesProfile: "default",
+        relayUrl: "wss://a",
+      },
+    ],
+  });
+  assert.deepEqual(map.get("default"), {
+    status: "bound",
+    agentName: "Personal Hermes",
+    agentPubkey: "ddd",
+  });
+  assert.match(
+    hermesProfileOccupancyError("default", map) ?? "",
+    /already bound to agent 'Personal Hermes'/,
+  );
 });
 
 test("profile usage follows configured communities, not obsolete record pins", () => {

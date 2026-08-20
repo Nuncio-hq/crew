@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tar::{Archive, Builder, EntryType, Header};
 
 use super::{
-    hermes_profile::{validate_hermes_profile_name, HERMES_FORBIDDEN_PROFILE_NAME},
+    hermes_profile::{crew_may_mutate_hermes_profile, validate_hermes_profile_name},
     hermes_profile_lifecycle::{hermes_profile_dir, hermes_profiles_dir},
     nest::nest_dir,
     process_is_running, ManagedAgentPairRuntime, ManagedAgentRecord, ManagedAgentRuntimeKey,
@@ -157,7 +157,7 @@ fn validate_name(name: &str) -> Result<String, HermesProfileArchiveResult> {
             message,
         }
     })?;
-    if profile == HERMES_FORBIDDEN_PROFILE_NAME {
+    if !crew_may_mutate_hermes_profile(&profile) {
         return Err(HermesProfileArchiveResult::InvalidName {
             profile,
             message: "the default Hermes profile is never managed by Crew".to_string(),

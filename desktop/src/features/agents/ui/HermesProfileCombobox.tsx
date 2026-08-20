@@ -18,7 +18,9 @@ import {
   PopoverTrigger,
 } from "@/shared/ui/popover";
 import {
+  ensureHermesHomeProfileOption,
   filterHermesProfileOptions,
+  hermesHomeProfileDisplayLabel,
   hermesProfileOccupancyLabel,
   type HermesProfileOccupancy,
 } from "../lib/hermesProfileBinding";
@@ -53,7 +55,11 @@ export function HermesProfileCombobox({
   const skipOpenOnFocusRef = React.useRef(false);
 
   const filtered = React.useMemo(
-    () => filterHermesProfileOptions(profiles, value),
+    () =>
+      filterHermesProfileOptions(
+        ensureHermesHomeProfileOption(profiles),
+        value,
+      ),
     [profiles, value],
   );
 
@@ -226,7 +232,7 @@ export function HermesProfileCombobox({
                     )}
                   />
                   <span className="min-w-0 flex-1 truncate font-medium">
-                    {name}
+                    {hermesHomeProfileDisplayLabel(name)}
                   </span>
                   <span
                     className={cn(
