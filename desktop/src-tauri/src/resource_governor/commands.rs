@@ -450,6 +450,39 @@ pub fn browser_devtools(channel_id: String, app: AppHandle) -> Result<(), String
     }
 }
 
+/// Injects history/reload JS into the browser webview for `channel_id`.
+///
+/// Tauri's `WebviewWindow`/`Webview` have no native back/forward/reload API,
+/// so toolbar history chrome drives the loaded page's own `history`/`location`
+/// the same way `eval` is already used for the agent-control bridge
+/// (`agent_control/live.rs`).
+fn eval_browser_js(channel_id: &str, app: &AppHandle, js: &str) -> Result<(), String> {
+    let label = window_label(channel_id);
+    if let Some(window) = app.get_webview_window(&label) {
+        return window.eval(js).map_err(|e| e.to_string());
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(view) = app.get_webview(&label) {
+        return view.eval(js).map_err(|e| e.to_string());
+    }
+    Err("browser window is not open".into())
+}
+
+#[tauri::command]
+pub fn browser_back(channel_id: String, app: AppHandle) -> Result<(), String> {
+    eval_browser_js(&channel_id, &app, "history.back()")
+}
+
+#[tauri::command]
+pub fn browser_forward(channel_id: String, app: AppHandle) -> Result<(), String> {
+    eval_browser_js(&channel_id, &app, "history.forward()")
+}
+
+#[tauri::command]
+pub fn browser_reload(channel_id: String, app: AppHandle) -> Result<(), String> {
+    eval_browser_js(&channel_id, &app, "location.reload()")
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartDevServerInput {
