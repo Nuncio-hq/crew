@@ -52,7 +52,7 @@ pub(super) fn hermes_requirements(effective: &EffectiveAgentEnv) -> Vec<Requirem
 }
 
 /// Instance args win; else definition args; then inject `-p <profile>` when set.
-pub(super) fn resolve_agent_args_with_profile(
+pub(crate) fn resolve_agent_args_with_profile(
     effective_command: &str,
     record: &ManagedAgentRecord,
     harness_def: Option<&HarnessDefinition>,

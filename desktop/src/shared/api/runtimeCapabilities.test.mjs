@@ -49,6 +49,7 @@ test("capabilities derive Hermes profile ownership from catalog facts", () => {
       modelSource: "profileWriteThrough",
       personaDoc: "soulMd",
       layer3: "append",
+      selectableAutoModel: false,
     },
   );
 });
@@ -98,8 +99,16 @@ test("runtimes without profile-owned model facts use adapter settings", () => {
       modelSource: "adapterSetting",
       personaDoc: "none",
       layer3: "append",
+      selectableAutoModel: false,
     });
   }
+});
+
+test("Cursor runtime exposes selectable Auto model capability", () => {
+  assert.equal(
+    deriveRuntimeCapabilities(entry({ id: "cursor" })).selectableAutoModel,
+    true,
+  );
 });
 
 test("persona filename is data, not a render-time runtime branch", () => {

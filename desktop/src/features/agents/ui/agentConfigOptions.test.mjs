@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  automaticModelOptionLabel,
+  automaticModelPersistValue,
   getDefaultPersonaRuntime,
   getPersonaModelOptions,
   getPersonaProviderOptions,
   getProviderApiKeyLabel,
+  isAutomaticModelSelection,
   resetConfigForHarnessChange,
   runtimeSupportsLlmProviderSelection,
+  shouldOfferAutomaticModelOption,
 } from "./agentConfigOptions.tsx";
 import { formatModelDiscoveryErrorStatus } from "./personaModelDiscoveryStatus.ts";
 
@@ -23,6 +27,116 @@ function makeRuntime(id, availability = "available") {
     availability,
   };
 }
+
+// ── Automatic / Auto model option ────────────────────────────────────────────
+
+test("shouldOfferAutomaticModelOption is true for shared compute and Cursor", () => {
+  assert.equal(
+    shouldOfferAutomaticModelOption({
+      isRelayMesh: true,
+      selectableAutoModel: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOfferAutomaticModelOption({
+      isRelayMesh: false,
+      selectableAutoModel: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOfferAutomaticModelOption({
+      isRelayMesh: false,
+      selectableAutoModel: false,
+    }),
+    false,
+  );
+});
+
+test("automaticModelPersistValue stores auto for shared compute and Cursor", () => {
+  assert.equal(
+    automaticModelPersistValue({
+      isRelayMesh: true,
+      selectableAutoModel: false,
+    }),
+    "auto",
+  );
+  assert.equal(
+    automaticModelPersistValue({
+      isRelayMesh: false,
+      selectableAutoModel: true,
+    }),
+    "auto",
+  );
+  assert.equal(
+    automaticModelPersistValue({
+      isRelayMesh: false,
+      selectableAutoModel: false,
+    }),
+    "",
+  );
+});
+
+test("automaticModelOptionLabel names Cursor Auto distinctly from shared compute", () => {
+  assert.equal(
+    automaticModelOptionLabel({
+      isRelayMesh: true,
+      selectableAutoModel: false,
+    }),
+    "Automatic",
+  );
+  assert.equal(
+    automaticModelOptionLabel({
+      isRelayMesh: false,
+      selectableAutoModel: true,
+    }),
+    "Auto",
+  );
+});
+
+test("isAutomaticModelSelection maps Cursor auto and shared-compute blank/auto", () => {
+  assert.equal(
+    isAutomaticModelSelection({
+      isRelayMesh: true,
+      model: "",
+      selectableAutoModel: false,
+    }),
+    true,
+  );
+  assert.equal(
+    isAutomaticModelSelection({
+      isRelayMesh: true,
+      model: "auto",
+      selectableAutoModel: false,
+    }),
+    true,
+  );
+  assert.equal(
+    isAutomaticModelSelection({
+      isRelayMesh: false,
+      model: "auto",
+      selectableAutoModel: true,
+    }),
+    true,
+  );
+  assert.equal(
+    isAutomaticModelSelection({
+      isRelayMesh: false,
+      model: "",
+      selectableAutoModel: true,
+    }),
+    false,
+  );
+  assert.equal(
+    isAutomaticModelSelection({
+      isRelayMesh: false,
+      model: "composer-2",
+      selectableAutoModel: true,
+    }),
+    false,
+  );
+});
 
 // ── getPersonaProviderOptions — hideProviderIds ───────────────────────────────
 

@@ -44,8 +44,14 @@ import {
   type PersonaDropdownOption,
   PERSONA_FIELD_CONTROL_CLASS,
   PERSONA_FIELD_SHELL_CLASS,
-  shouldClearKnownModelForSelectionScope,
 } from "./agentConfigOptions";
+import {
+  decorateAutomaticModelOptions,
+  modelAfterAutomaticDropdownChange,
+  resolveAutomaticModelUiState,
+} from "./automaticModelUi";
+import { buildProviderDropdownOptions } from "./agentDialogDropdowns";
+import { useClearKnownModelOnScopeChange } from "./useClearKnownModelOnScopeChange";
 import {
   modelDropdownOptions as buildModelDropdownOptions,
   relayMeshModelPickerState,
@@ -562,6 +568,13 @@ export function AgentDefinitionDialog({
     modelFieldVisible,
     provider: effectiveProvider,
   });
+  const { offerAutomaticModel, resolvedModelSelectValue, selectableAutoModel } =
+    resolveAutomaticModelUiState({
+      isRelayMesh,
+      model,
+      modelSelectValue,
+      runtime: selectedRuntime ?? { id: runtime, modelEnvVar: null },
+    });
   // On internal Block builds, BUZZ_AGENT_PROVIDER is baked in and a boot
   // migration rewrites any persisted Databricks v1 values → v2. Hide the v1
   // option there so it is not offered for new selections. OSS builds have no
@@ -599,31 +612,19 @@ export function AgentDefinitionDialog({
   const runtimeSummaryLabel = selectedRuntime
     ? formatRuntimeOptionLabel(selectedRuntime)
     : runtime.trim() || "Not configured";
-  const providerDropdownOptions: PersonaDropdownOption[] = [
-    ...providerOptions
-      .filter((option) => option.id.trim().length > 0)
-      .map((option) => ({
-        label: option.label,
-        value: option.id,
-      })),
-    { label: "Custom provider...", value: CUSTOM_PROVIDER_DROPDOWN_VALUE },
-  ];
+  const providerDropdownOptions: PersonaDropdownOption[] =
+    buildProviderDropdownOptions(providerOptions);
   const modelDropdownOptions: PersonaDropdownOption[] =
-    buildModelDropdownOptions({
-      allowCustom: !isRelayMesh,
-      globalModel: undefined,
-      loading: modelDiscoveryLoading && discoveredModelOptions === null,
-      loadingValue: MODEL_DISCOVERY_LOADING_VALUE,
-      options: modelOptions,
-    })
-      .filter(
-        (option) => isRelayMesh || option.value !== AUTO_MODEL_DROPDOWN_VALUE,
-      )
-      .map((option) =>
-        isRelayMesh && option.value === AUTO_MODEL_DROPDOWN_VALUE
-          ? { ...option, label: "Automatic" }
-          : option,
-      );
+    decorateAutomaticModelOptions(
+      buildModelDropdownOptions({
+        allowCustom: !isRelayMesh,
+        globalModel: undefined,
+        loading: modelDiscoveryLoading && discoveredModelOptions === null,
+        loadingValue: MODEL_DISCOVERY_LOADING_VALUE,
+        options: modelOptions,
+      }),
+      { isRelayMesh, offerAutomaticModel, selectableAutoModel },
+    );
   const previewLabel = displayName.trim() || "Agent name";
   const previewAvatarUrl = avatarUrl.trim() || null;
   const runtimeWarningText = selectedRuntime
@@ -637,29 +638,16 @@ export function AgentDefinitionDialog({
   const advancedFieldsTransition = shouldReduceMotion
     ? { duration: 0 }
     : ADVANCED_FIELDS_MOTION_TRANSITION;
-  React.useEffect(() => {
-    if (
-      !open ||
-      !modelFieldVisible ||
-      isCustomModelEditing ||
-      !shouldClearKnownModelForSelectionScope({
-        model,
-        provider: effectiveProvider,
-        runtime,
-      })
-    ) {
-      return;
-    }
-    setModel("");
-    setIsCustomModelEditing(false);
-  }, [
+  useClearKnownModelOnScopeChange({
+    open,
+    modelFieldVisible,
     isCustomModelEditing,
     model,
-    modelFieldVisible,
-    open,
-    effectiveProvider,
+    provider: effectiveProvider,
     runtime,
-  ]);
+    setModel,
+    setIsCustomModelEditing,
+  });
 
   const selection: RuntimeModelProviderSelection = {
     provider,
@@ -729,13 +717,20 @@ export function AgentDefinitionDialog({
 
   function handleModelDropdownChange(nextValue: string) {
     setHasUserChanges(true);
-    applySelection(
-      selectionOnModelDropdownChange(selection, {
+    const nextSelection = selectionOnModelDropdownChange(selection, {
+      nextValue,
+      clearKnownModelOnCustomEntry: true,
+      isModelCustom,
+    });
+    applySelection({
+      ...nextSelection,
+      model: modelAfterAutomaticDropdownChange({
+        isRelayMesh,
+        nextSelectionModel: nextSelection.model,
         nextValue,
-        clearKnownModelOnCustomEntry: true,
-        isModelCustom,
+        selectableAutoModel,
       }),
-    );
+    });
   }
 
   const footer = (
@@ -868,7 +863,7 @@ export function AgentDefinitionDialog({
             modelOwnedByProfile={modelOwnedByProfile}
             modelWriteThrough={modelWriteThrough}
             hasPersona={selectedRuntime?.capabilities?.personaDoc === "soulMd"}
-            modelSelectValue={modelSelectValue}
+            modelSelectValue={resolvedModelSelectValue}
             onCustomModelChange={setModel}
             onHermesProfileChange={(next) => {
               setHasUserChanges(true);

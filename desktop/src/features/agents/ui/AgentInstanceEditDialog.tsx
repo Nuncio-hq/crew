@@ -19,7 +19,6 @@ import type {
 } from "@/shared/api/types";
 import type { EditAgentFocusTarget } from "@/features/agents/openEditAgentEvent";
 import { cn } from "@/shared/lib/cn";
-import { Button } from "@/shared/ui/button";
 import { ChooserDialogContent } from "@/shared/ui/chooser-dialog-content";
 import { Dialog } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
@@ -47,10 +46,18 @@ import {
   PERSONA_FIELD_SHELL_CLASS,
   PERSONA_LABEL_OPTIONAL_CLASS,
   runtimeSupportsLlmProviderSelection,
-  shouldClearKnownModelForSelectionScope,
   sortPersonaRuntimes,
   type PersonaDropdownOption,
 } from "./agentConfigOptions";
+import {
+  decorateAutomaticModelOptions,
+  modelAfterAutomaticDropdownChange,
+  resolveAutomaticModelUiState,
+} from "./automaticModelUi";
+import { buildEditAgentProviderDropdownOptions } from "./agentDialogDropdowns";
+import { AgentInstanceEditAvatarColumn } from "./AgentInstanceEditAvatarColumn";
+import { AgentInstanceEditDialogFooter } from "./AgentInstanceEditDialogFooter";
+import { useClearKnownModelOnScopeChange } from "./useClearKnownModelOnScopeChange";
 import {
   modelDropdownOptions as buildModelDropdownOptions,
   relayMeshModelPickerState,
@@ -69,7 +76,6 @@ import {
   selectionOnRuntimeChange,
   type RuntimeModelProviderSelection,
 } from "./runtimeModelProviderSelection";
-import { AgentCreationPreview } from "./AgentCreationPreview";
 import { OwnerOnlyAccessField } from "./OwnerOnlyAccessField";
 import type { EnvVarsValue } from "./EnvVarsEditor";
 import { useRequiredCredentialState } from "./useRequiredCredentialState";
@@ -479,29 +485,15 @@ export function AgentInstanceEditDialog({
     value: apiKeyValue,
   } = apiKeyFieldState;
   // Clear model when provider scope changes and current model is no longer valid.
-  React.useEffect(() => {
-    if (
-      !open ||
-      isCustomModelEditing ||
-      !shouldClearKnownModelForSelectionScope({
-        model,
-        provider: providerForDiscovery,
-        runtime: selectedRuntime?.id ?? selectedRuntimeId,
-      })
-    ) {
-      return;
-    }
-
-    setModel("");
-    setIsCustomModelEditing(false);
-  }, [
+  useClearKnownModelOnScopeChange({
+    open,
     isCustomModelEditing,
     model,
-    open,
-    providerForDiscovery,
-    selectedRuntime,
-    selectedRuntimeId,
-  ]);
+    provider: providerForDiscovery,
+    runtime: selectedRuntime?.id ?? selectedRuntimeId,
+    setModel,
+    setIsCustomModelEditing,
+  });
 
   const selection: RuntimeModelProviderSelection = {
     provider,
@@ -601,13 +593,20 @@ export function AgentInstanceEditDialog({
   }
 
   function handleModelDropdownChange(nextValue: string) {
-    applySelection(
-      selectionOnModelDropdownChange(selection, {
+    const nextSelection = selectionOnModelDropdownChange(selection, {
+      nextValue,
+      clearKnownModelOnCustomEntry: false,
+      isModelCustom: false,
+    });
+    applySelection({
+      ...nextSelection,
+      model: modelAfterAutomaticDropdownChange({
+        isRelayMesh,
+        nextSelectionModel: nextSelection.model,
         nextValue,
-        clearKnownModelOnCustomEntry: false,
-        isModelCustom: false,
+        selectableAutoModel,
       }),
-    );
+    });
   }
 
   function handleOpenChange(next: boolean) {
@@ -811,14 +810,27 @@ export function AgentInstanceEditDialog({
     model,
     provider: providerForDiscovery,
   });
-  const modelDropdownOptions = buildModelDropdownOptions({
-    allowCustom: !isRelayMesh,
-    globalModel: isRelayMesh ? undefined : inheritedModelDefault.value,
-    globalModelLabel: isRelayMesh ? undefined : inheritedModelLabel,
-    loading: modelDiscoveryLoading && discoveredModelOptions === null,
-    loadingValue: MODEL_DISCOVERY_LOADING_VALUE,
-    options: effectiveModelOptions,
-  });
+  const { offerAutomaticModel, resolvedModelSelectValue, selectableAutoModel } =
+    resolveAutomaticModelUiState({
+      isRelayMesh,
+      model,
+      modelSelectValue,
+      runtime: selectedRuntime ?? {
+        id: selectedRuntimeId,
+        modelEnvVar: null,
+      },
+    });
+  const modelDropdownOptions = decorateAutomaticModelOptions(
+    buildModelDropdownOptions({
+      allowCustom: !isRelayMesh,
+      globalModel: isRelayMesh ? undefined : inheritedModelDefault.value,
+      globalModelLabel: isRelayMesh ? undefined : inheritedModelLabel,
+      loading: modelDiscoveryLoading && discoveredModelOptions === null,
+      loadingValue: MODEL_DISCOVERY_LOADING_VALUE,
+      options: effectiveModelOptions,
+    }),
+    { isRelayMesh, offerAutomaticModel, selectableAutoModel },
+  );
   const modelStatusMessage = resolveModelFieldStatusMessage({
     discoveredModelOptions,
     loading: modelDiscoveryLoading,
@@ -845,19 +857,15 @@ export function AgentInstanceEditDialog({
   const providerSelectValue = isCustomProviderEditing
     ? CUSTOM_PROVIDER_DROPDOWN_VALUE
     : trimmedProvider || AUTO_PROVIDER_DROPDOWN_VALUE;
-  const providerDropdownOptions: PersonaDropdownOption[] = [
-    ...providerOptions.map((option) => ({
-      label:
-        option.id === "" && inheritedProviderDefault.source === "build"
-          ? getBakedProviderInheritLabel(
-              inheritedProviderDefault.value,
-              providerOptions,
-            )
-          : option.label,
-      value: option.id || AUTO_PROVIDER_DROPDOWN_VALUE,
-    })),
-    { label: "Custom provider...", value: CUSTOM_PROVIDER_DROPDOWN_VALUE },
-  ];
+  const providerDropdownOptions: PersonaDropdownOption[] =
+    buildEditAgentProviderDropdownOptions(providerOptions, {
+      inheritedFromBuild: inheritedProviderDefault.source === "build",
+      mapBlankBuildLabel: () =>
+        getBakedProviderInheritLabel(
+          inheritedProviderDefault.value,
+          providerOptions,
+        ),
+    });
 
   const previewLabel = name.trim() || "Agent name";
   const previewAvatarUrl = avatarUrl.trim() || null;
@@ -875,57 +883,25 @@ export function AgentInstanceEditDialog({
         headerClassName="pb-2"
         title={`Edit ${agent.name}`}
         footer={
-          <div className="flex w-full items-center justify-end gap-2">
-            <Button
-              disabled={updateMutation.isPending || isAvatarUploadPending}
-              onClick={() => handleOpenChange(false)}
-              type="button"
-              variant="outline"
-            >
-              Cancel
-            </Button>
-            <Button
-              data-testid="edit-agent-dialog-submit"
-              disabled={!canSubmit}
-              onClick={() => void handleSubmit()}
-              type="button"
-            >
-              {updateMutation.isPending ? "Saving..." : "Save changes"}
-            </Button>
-          </div>
+          <AgentInstanceEditDialogFooter
+            canSubmit={canSubmit}
+            isAvatarUploadPending={isAvatarUploadPending}
+            isPending={updateMutation.isPending}
+            onCancel={() => handleOpenChange(false)}
+            onSubmit={() => void handleSubmit()}
+          />
         }
       >
         <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-          {/* Avatar is definition-level identity. hideEditControl suppresses
-              the internal pencil badge; the CTA below is the only edit path. */}
-          <div className="flex flex-col items-center gap-2">
-            <AgentCreationPreview
-              avatarUrl={previewAvatarUrl}
-              hideEditControl
-              label={previewLabel}
-              onClearAvatar={() => setAvatarUrl("")}
-              onUploadPendingChange={setIsAvatarUploadPending}
-              onSelectAvatar={setAvatarUrl}
-            />
-            {onEditLinkedPersona ? (
-              <Button
-                className="w-full"
-                onClick={() => {
-                  handleOpenChange(false);
-                  onEditLinkedPersona();
-                }}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                Edit avatar
-              </Button>
-            ) : (
-              <p className="text-center text-xs text-muted-foreground">
-                Avatar is shared identity
-              </p>
-            )}
-          </div>
+          <AgentInstanceEditAvatarColumn
+            avatarUrl={previewAvatarUrl}
+            label={previewLabel}
+            onClearAvatar={() => setAvatarUrl("")}
+            onClose={() => handleOpenChange(false)}
+            onEditLinkedPersona={onEditLinkedPersona}
+            onSelectAvatar={setAvatarUrl}
+            onUploadPendingChange={setIsAvatarUploadPending}
+          />
           <div className="space-y-5">
             <div className="space-y-1.5">
               <label
@@ -1106,7 +1082,7 @@ export function AgentInstanceEditDialog({
               modelWriteThrough={modelWriteThrough}
               personaDoc={selectedRuntime?.capabilities?.personaDoc ?? "none"}
               modelRequired={modelRequired}
-              modelSelectValue={modelSelectValue}
+              modelSelectValue={resolvedModelSelectValue}
               modelStatusMessage={modelStatusMessage}
               onCustomModelChange={setModel}
               onHermesProfileChange={setHermesProfile}
