@@ -11,7 +11,7 @@ use super::flight::{CachedOutcome, FlightTable};
 use super::instruments::{FakeBrowser, FakeGovernor, FakeSim};
 use super::lease::{LeaseMap, LeaseView};
 use super::live::LiveHost;
-use super::origin::{origin_of_url, OriginDecision, OriginPolicy};
+use super::origin::{is_inert_navigation_target, origin_of_url, OriginDecision, OriginPolicy};
 use super::overlay::{OverlayFrame, OverlayLog};
 use super::protocol::{
     method_instrument, method_is_input, method_is_mutating, ControlError, ControlRequest,
@@ -247,6 +247,15 @@ impl ControlRuntime {
                         serde_json::to_value(self.lease_views().await)
                             .unwrap_or(serde_json::json!([])),
                     );
+                    // #247: `browser_navigate` can block up to 300s inside
+                    // `wait_origin_decision` waiting on an owner elicitation
+                    // answer. Surface that wait here so a stuck navigate is
+                    // diagnosable ("waiting on human") instead of indistinguishable
+                    // from a genuine ensure/bridge hang.
+                    obj.insert(
+                        "pending_origin".into(),
+                        self.pending_origin.lock().await.clone().unwrap_or_default(),
+                    );
                 }
                 Ok(status)
             }
@@ -441,7 +450,7 @@ impl ControlRuntime {
         let url = param_opt_str(&req.params, "url").unwrap_or_else(|| subject.clone());
         self.enforce_origin(req, &subject, &url).await?;
         if let Some(live) = self.live_host() {
-            live.browser_navigate(&req.channel_id, &url)?;
+            live.browser_navigate(&req.channel_id, &url).await?;
             return Ok(serde_json::json!({
                 "url": url,
                 "title": "",
@@ -599,6 +608,13 @@ impl ControlRuntime {
         subject: &str,
         url: &str,
     ) -> Result<(), ControlError> {
+        // #247: `about:blank` (and other `about:` targets) have no network
+        // origin to protect and cannot exfiltrate subject data, so they must
+        // never enter `wait_origin_decision` — that wait blocks this call for
+        // up to 300s when no owner answers the elicitation card.
+        if is_inert_navigation_target(url) {
+            return Ok(());
+        }
         let target = origin_of_url(url)?;
         if self
             .origin

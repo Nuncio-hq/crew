@@ -358,6 +358,37 @@ test.describe("channel Tool Pane (#196)", () => {
       .toBe("https://example.com/docs");
   });
 
+  test("back/forward/reload toolbar buttons invoke governor browser commands", async ({
+    page,
+  }) => {
+    await installMockBridge(page);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByTestId("channel-general").click();
+    await openTools(page, "browser");
+    // No setup wall (#236): the preview is already navigable without
+    // configuring or starting a Crew-owned dev server first.
+    await expect(page.getByTestId("browser-preview")).toBeVisible();
+
+    await page.getByTestId("browser-back").click();
+    await page.getByTestId("browser-forward").click();
+    await page.getByTestId("browser-reload").click();
+
+    const payloads = await page.evaluate(
+      () => window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [],
+    );
+    for (const command of [
+      "browser_back",
+      "browser_forward",
+      "browser_reload",
+    ]) {
+      const entry = payloads.find((item) => item.command === command);
+      expect(entry, `expected a ${command} invocation`).toBeTruthy();
+      expect((entry?.payload as { channelId?: string } | null)?.channelId).toBe(
+        GENERAL,
+      );
+    }
+  });
+
   test("shot posts before-after-visual evidence with Undo", async ({
     page,
   }) => {
