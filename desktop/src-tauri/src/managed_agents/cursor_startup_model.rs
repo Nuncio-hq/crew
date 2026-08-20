@@ -70,7 +70,7 @@ pub(crate) fn resolve_effective_agent_args(
     effective_command: &str,
     record: &ManagedAgentRecord,
     harness_def: Option<&HarnessDefinition>,
-    runtime_meta: Option<&KnownAcpRuntime>,
+    runtime_meta: Option<&'static KnownAcpRuntime>,
     personas: &[AgentDefinition],
     global: &GlobalAgentConfig,
 ) -> Vec<String> {

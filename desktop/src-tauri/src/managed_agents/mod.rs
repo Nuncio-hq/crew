@@ -15,8 +15,7 @@ mod cursor_startup_model;
 mod discovery;
 pub(crate) mod effective_config;
 pub(crate) use cursor_startup_model::{
-    inject_cursor_startup_model_arg, is_cursor_agent_command, resolve_buzz_acp_model_env,
-    resolve_effective_agent_args, skip_buzz_acp_model_env,
+    resolve_buzz_acp_model_env, resolve_effective_agent_args,
 };
 mod env_vars;
 pub(crate) mod git_bash;
