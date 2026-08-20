@@ -51,7 +51,7 @@ use crate::managed_agents::{
 
 mod cli_login;
 pub(crate) mod cli_probe;
-mod hermes;
+pub(crate) mod hermes;
 
 // ── EffectiveAgentEnv ─────────────────────────────────────────────────────────
 
@@ -141,29 +141,9 @@ pub(crate) fn resolve_effective_harness_descriptor(
         crate::managed_agents::custom_harnesses::lookup_loaded_harness_by_id(runtime_id)
     };
 
-    // Args: instance args win when non-empty; else definition; then Hermes `-p`.
-    let args = hermes::resolve_agent_args_with_profile(
-        &effective_command,
-        record,
-        harness_def.as_deref(),
-        runtime_meta,
-    );
-    // Cursor: pin `--model` at startup (ACP catalogs are often empty).
-    let effective_model =
-        match crate::managed_agents::effective_config::resolve_effective_config(
-            record, personas, global,
-        ) {
-            crate::managed_agents::effective_config::EffectiveConfigResult::Resolved(cfg) => {
-                cfg.model.value
-            }
-            crate::managed_agents::effective_config::EffectiveConfigResult::OrphanedInstance {
-                ..
-            } => None,
-        };
-    let args = crate::managed_agents::inject_cursor_startup_model_arg(
-        &effective_command,
-        args,
-        effective_model.as_deref(),
+    // Args + Cursor `--model` pin when applicable.
+    let args = crate::managed_agents::resolve_effective_agent_args(
+        &effective_command, record, harness_def.as_deref(), runtime_meta, personas, global,
     );
 
     // Env: full layered resolution (same as resolve_effective_agent_env).

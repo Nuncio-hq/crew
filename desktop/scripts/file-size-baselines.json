@@ -27,9 +27,9 @@
       "recordedAt": "2026-08-13"
     },
     "src-tauri/src/managed_agents/readiness.rs": {
-      "lines": 1733,
-      "reason": "Upstream-owned Hermes readiness at desktop-v0.5.11 pin; tightened after sync shrink.",
-      "recordedAt": "2026-08-13"
+      "lines": 1730,
+      "reason": "Upstream-owned Hermes readiness; tightened after Cursor Auto model extract (D-022).",
+      "recordedAt": "2026-08-20"
     }
   }
 }

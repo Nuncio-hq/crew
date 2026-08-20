@@ -29,8 +29,6 @@ import {
   ADVANCED_FIELDS_MOTION_TRANSITION,
   AUTO_MODEL_DROPDOWN_VALUE,
   AUTO_PROVIDER_DROPDOWN_VALUE,
-  automaticModelOptionLabel,
-  automaticModelPersistValue,
   BLOCK_BUILD_HIDDEN_PROVIDER_IDS,
   buildPersonaRuntimeDropdownOptions,
   CUSTOM_PROVIDER_DROPDOWN_VALUE,
@@ -41,16 +39,19 @@ import {
   getPersonaProviderOptions,
   getProviderApiKeyLabel,
   getRuntimePersonaModelOptions,
-  isAutomaticModelSelection,
   NO_RUNTIME_DROPDOWN_VALUE,
   runtimeSupportsLlmProviderSelection,
-  shouldOfferAutomaticModelOption,
   type PersonaDropdownOption,
   PERSONA_FIELD_CONTROL_CLASS,
   PERSONA_FIELD_SHELL_CLASS,
-  shouldClearKnownModelForSelectionScope,
 } from "./agentConfigOptions";
-import { deriveRuntimeCapabilities } from "@/shared/api/runtimeCapabilities";
+import {
+  decorateAutomaticModelOptions,
+  modelAfterAutomaticDropdownChange,
+  resolveAutomaticModelUiState,
+} from "./automaticModelUi";
+import { buildProviderDropdownOptions } from "./agentDialogDropdowns";
+import { useClearKnownModelOnScopeChange } from "./useClearKnownModelOnScopeChange";
 import {
   modelDropdownOptions as buildModelDropdownOptions,
   relayMeshModelPickerState,
@@ -567,20 +568,13 @@ export function AgentDefinitionDialog({
     modelFieldVisible,
     provider: effectiveProvider,
   });
-  const selectableAutoModel = deriveRuntimeCapabilities(
-    selectedRuntime ?? { id: runtime, modelEnvVar: null },
-  ).selectableAutoModel;
-  const offerAutomaticModel = shouldOfferAutomaticModelOption({
-    isRelayMesh,
-    selectableAutoModel,
-  });
-  const resolvedModelSelectValue = isAutomaticModelSelection({
-    isRelayMesh,
-    model,
-    selectableAutoModel,
-  })
-    ? AUTO_MODEL_DROPDOWN_VALUE
-    : modelSelectValue;
+  const { offerAutomaticModel, resolvedModelSelectValue, selectableAutoModel } =
+    resolveAutomaticModelUiState({
+      isRelayMesh,
+      model,
+      modelSelectValue,
+      runtime: selectedRuntime ?? { id: runtime, modelEnvVar: null },
+    });
   // On internal Block builds, BUZZ_AGENT_PROVIDER is baked in and a boot
   // migration rewrites any persisted Databricks v1 values → v2. Hide the v1
   // option there so it is not offered for new selections. OSS builds have no
@@ -618,38 +612,19 @@ export function AgentDefinitionDialog({
   const runtimeSummaryLabel = selectedRuntime
     ? formatRuntimeOptionLabel(selectedRuntime)
     : runtime.trim() || "Not configured";
-  const providerDropdownOptions: PersonaDropdownOption[] = [
-    ...providerOptions
-      .filter((option) => option.id.trim().length > 0)
-      .map((option) => ({
-        label: option.label,
-        value: option.id,
-      })),
-    { label: "Custom provider...", value: CUSTOM_PROVIDER_DROPDOWN_VALUE },
-  ];
+  const providerDropdownOptions: PersonaDropdownOption[] =
+    buildProviderDropdownOptions(providerOptions);
   const modelDropdownOptions: PersonaDropdownOption[] =
-    buildModelDropdownOptions({
-      allowCustom: !isRelayMesh,
-      globalModel: undefined,
-      loading: modelDiscoveryLoading && discoveredModelOptions === null,
-      loadingValue: MODEL_DISCOVERY_LOADING_VALUE,
-      options: modelOptions,
-    })
-      .filter(
-        (option) =>
-          offerAutomaticModel || option.value !== AUTO_MODEL_DROPDOWN_VALUE,
-      )
-      .map((option) =>
-        option.value === AUTO_MODEL_DROPDOWN_VALUE
-          ? {
-              ...option,
-              label: automaticModelOptionLabel({
-                isRelayMesh,
-                selectableAutoModel,
-              }),
-            }
-          : option,
-      );
+    decorateAutomaticModelOptions(
+      buildModelDropdownOptions({
+        allowCustom: !isRelayMesh,
+        globalModel: undefined,
+        loading: modelDiscoveryLoading && discoveredModelOptions === null,
+        loadingValue: MODEL_DISCOVERY_LOADING_VALUE,
+        options: modelOptions,
+      }),
+      { isRelayMesh, offerAutomaticModel, selectableAutoModel },
+    );
   const previewLabel = displayName.trim() || "Agent name";
   const previewAvatarUrl = avatarUrl.trim() || null;
   const runtimeWarningText = selectedRuntime
@@ -663,29 +638,16 @@ export function AgentDefinitionDialog({
   const advancedFieldsTransition = shouldReduceMotion
     ? { duration: 0 }
     : ADVANCED_FIELDS_MOTION_TRANSITION;
-  React.useEffect(() => {
-    if (
-      !open ||
-      !modelFieldVisible ||
-      isCustomModelEditing ||
-      !shouldClearKnownModelForSelectionScope({
-        model,
-        provider: effectiveProvider,
-        runtime,
-      })
-    ) {
-      return;
-    }
-    setModel("");
-    setIsCustomModelEditing(false);
-  }, [
+  useClearKnownModelOnScopeChange({
+    open,
+    modelFieldVisible,
     isCustomModelEditing,
     model,
-    modelFieldVisible,
-    open,
-    effectiveProvider,
+    provider: effectiveProvider,
     runtime,
-  ]);
+    setModel,
+    setIsCustomModelEditing,
+  });
 
   const selection: RuntimeModelProviderSelection = {
     provider,
@@ -762,13 +724,12 @@ export function AgentDefinitionDialog({
     });
     applySelection({
       ...nextSelection,
-      model:
-        nextValue === AUTO_MODEL_DROPDOWN_VALUE
-          ? automaticModelPersistValue({
-              isRelayMesh,
-              selectableAutoModel,
-            })
-          : nextSelection.model,
+      model: modelAfterAutomaticDropdownChange({
+        isRelayMesh,
+        nextSelectionModel: nextSelection.model,
+        nextValue,
+        selectableAutoModel,
+      }),
     });
   }
 

@@ -11,8 +11,13 @@ pub(crate) use agent_env::{
 mod backend;
 pub(crate) mod config_bridge;
 pub(crate) mod custom_harnesses;
+mod cursor_startup_model;
 mod discovery;
 pub(crate) mod effective_config;
+pub(crate) use cursor_startup_model::{
+    inject_cursor_startup_model_arg, is_cursor_agent_command, resolve_buzz_acp_model_env,
+    resolve_effective_agent_args, skip_buzz_acp_model_env,
+};
 mod env_vars;
 pub(crate) mod git_bash;
 pub(crate) mod global_config;
