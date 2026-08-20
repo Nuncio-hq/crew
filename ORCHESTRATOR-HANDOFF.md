@@ -1,86 +1,86 @@
-# ORCHESTRATOR-HANDOFF — Issue #116 Slice 0 spikes
+# Orchestrator handoff — issue #242
 
-Branch: `feat/issue-116-agent-roles` (not pushed). Worktree-only commits with sign-off.
+Builder phase: implementation only. No push, no PR, no merge.
 
-## Commits
+Worktree: `/Users/a1241968/Desktop/Oscar/crew/.worktrees/issue-242-office-channel-relink`
+Branch: `feat/issue-242-office-channel-relink` (local, ahead of `origin/main` by the commits below)
 
-1. `9bd534945` — docs(crew): spike 0015 role record projection PASS
-2. `aa14c85f3` — docs(crew): spike 0016 role prompt adherence matrix PASS
-3. `2540c2ac5` — docs(crew): spike 0017 capability spawn grant/deny PASS
+## Files touched
 
-Plan (untracked unless you add it): `plans/20260810-agent-roles-routing-capability/plan.md`
+| Path | Kind |
+| --- | --- |
+| `desktop/src/features/channels/lib/channelLocalWorkspace.ts` | New Crew file |
+| `desktop/src/features/channels/lib/channelLocalWorkspace.test.mjs` | New Crew test |
+| `desktop/src/features/channels/ui/ChannelLocalWorkspaceChip.tsx` | New Crew file |
+| `desktop/src/features/channels/ui/ChannelLocalWorkspaceChip.test.mjs` | New Crew test |
+| `desktop/src/features/channels/ui/ChannelPane.tsx` | **Upstream-owned / shared.** Thin hook only: import + one `toolbarExtraActions` sibling. Already listed in UPSTREAM-SYNC (#187). Now 992 / 1000 lines. |
+| `docs/crew/STATE.md` | Crew doc |
+| `docs/crew/UPSTREAM-SYNC.md` | Crew doc (one #187 row note) |
+| `plans/20260820-office-channel-relink/plan.md` | Plan of record |
+| `ORCHESTRATOR-HANDOFF.md` | This file |
 
-## Spike A — role record shape and projection — **PASS**
+Not touched: `CrewProjectWorkspacePanel` (still unmounted), `ProjectThreadWorkspacePanel` Pick folder (#217 recover stays), sidebar rail, wiki Pick button, DECISIONS.md.
 
-Record: `docs/crew/spikes/0015-role-record-projection.md`
+## What shipped
 
-Owner-signed kind `30179` carries role via namespaced
-`extensions["crew:role"]="code"` (not a top-level field — `deny_unknown_fields`).
-Public kind `10100` tag `["crew-role","code"]` survives isolated relay publish +
-cold query. Stock `handle_agent_profile` still applies `channel_add_policy`
-with the unknown tag present (SQL confirmed). Outer `30179` tags stay
-`d/g/state` only. Decision-changing: live ingest currently **accepts** `30179`
-even though NIP-PMA draft text says reject-until-CAS — day-one product surface
-should still treat **public `10100` projection** as the safe client-visible
-role; do not treat accepted `30179` as full private-aggregate authority yet.
+Exclusive-repo office channel shows a truncated bound path next to the composer workspace selector. Owner gets `Relink folder`. Click runs `chooseProjectWorkspaceFolder` then `linkCurrentProjectWorkspace` (existing owner-signed 30617 `buzz-location` publisher). Cancel picker is inert. Success toast: `Project workspace linked. Send a new message to use it.`
 
-## Spike B — role prompt adherence engine matrix — **PASS**
+Non-owner sees the path, no button. `#general` / no exclusive binding / duplicate bindings / unlinked / missing path: chip hidden. Folder-mode cowork bindings are included. A still-tagged gone path still returns a binding (status stays `linked`).
 
-Record: `docs/crew/spikes/0016-role-prompt-adherence-matrix.md`
+No new Tauri command, event kind, or CLI. Frozen thread roots were not changed (V1 / #217).
 
-Engines: Hermes `spike116-code`, Hermes `spike116-content`, Claude Code ACP.
-Method: direct ACP 10-case matrix with injected role section (live-relay full
-30-mention publish path was flaky for replies; adherence boundary is model
-behavior under the role section).
+## TDD
 
-| Engine | n | ROLE-CHECK | off-role mutations | silent off-role risk |
-|--------|---|------------|--------------------|----------------------|
-| hermes-code | 10 | 8/10 | 0 | 0 |
-| hermes-content | 10 | 9/10 | 0 | 0 |
-| claude-code | 10 | 10/10 | 0 | 0 |
+1. Helper test first → RED `ERR_MODULE_NOT_FOUND` for `channelLocalWorkspace.ts` → implement → 7/7 GREEN → commit `301c80816`.
+2. Chip test first → RED `ERR_MODULE_NOT_FOUND` for `ChannelLocalWorkspaceChip.tsx` → implement view + chip → 6/7 GREEN, ChannelPane mount RED → wire one JSX sibling → 7/7 GREEN.
+3. Strengthened source contract to `/<ChannelLocalWorkspaceChip/` so an unused import cannot fake the mount.
+4. Sabotage: comment out the JSX mount → that test RED (`expected: /<ChannelLocalWorkspaceChip/`) → restore → GREEN.
 
-All three engines viable for soft role enforcement day one. Hermes sometimes
-drops the mandatory first-line declaration on short accepts — strengthen
-few-shot in Slice 1, not a FAIL. Refusals named the correct role in samples.
+## Tests
 
-## Spike C — capability grant/deny + native half — **PASS**
+From worktree after `. ./bin/activate-hermit`. Desktop `node_modules` was missing; `just desktop-install` was required first (honest: first test attempt failed on missing `typescript`, not on the helper).
 
-Record: `docs/crew/spikes/0017-capability-spawn-grant-deny.md`
+Required slice (plan Task 5):
 
-Per-agent `BUZZ_ACP_MCP_COMMAND` works: granted Hermes registered
-`buzz-dev-mcp` and wrote the probe file; denied Hermes had empty `mcp_cmd`, no
-MCP registration, no probe file; turn loops stayed healthy.
+```bash
+cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test \
+  src/features/channels/lib/channelLocalWorkspace.test.mjs \
+  src/features/channels/ui/ChannelLocalWorkspaceChip.test.mjs \
+  src/features/sidebar/lib/channelsOnlySidebar.test.mjs \
+  src/features/projects/project-add-local-workspace-ui-contract.test.mjs
+```
 
-**Decision-changing for Slice 3 honesty:**
+Result: **21 pass, 0 fail** (exit 0).
 
-- Hermes is **not** MCP-only for FS: native terminal/write_file remain when MCP
-  is withheld. Deny-MCP removes Buzz dev MCP (+ credentialed reply path) but is
-  not a universal FS floor.
-- Claude with empty MCP still wrote via native tools (harness used
-  `bypassPermissions`).
-- Native floors **are** spawn-settable and reproducible:
-  - Codex: `-s read-only` blocks write; `-s workspace-write` allows (STATE.md
-    earlier “blocked” note = config, not luck).
-  - Claude: `--permission-mode plan` blocks; `acceptEdits` allows.
+Repo command `cd desktop && pnpm test`:
 
-## Gate for Slice 1
+Result: **5486 pass, 0 fail, 1 skipped** (exit 0, ~95s). The skip is pre-existing, not from this change.
 
-All three spikes **PASS**. Orchestrator may approve Slice 1 RED contracts +
-implementation planning. No production code was changed in this phase.
+Fmt: `pnpm exec biome check --write` on the touched TS/TSX/MJS paths. Clean.
 
-## Cleanup performed / remaining
+Not run: `just ci`, desktop typecheck, Tauri tests, Gate C live Relink on the official app.
 
-- Throwaway Hermes profiles: delete with
-  `hermes profile delete spike116-code -y` and
-  `hermes profile delete spike116-content -y` (verify dir absence).
-- Teardown isolated stack when finished reviewing:
-  `tmux kill-session -t spike116-relay` (and any `spike116-*` harness sessions);
-  `docker compose -p buzz-spike116 -f docker-compose.harness.yml down -v`
-- Disposable tree: `/tmp/spike116/` (safe to rm -rf).
-- Plan file still untracked under `plans/20260810-agent-roles-routing-capability/`
-  — commit separately if the orchestrator wants it on the branch.
+## Commits (local only)
 
-## Non-goals honored
+| SHA | Subject |
+| --- | --- |
+| `301c808169bf696f7343c1ab3e0d75dd7ea32e33` | `test(desktop): exclusive channel local-workspace helper (#242)` |
+| `962e806b4badad5d4a95d9a7e3d00eeb9ce1af66` | `feat(desktop): office-channel Relink folder chip (#242)` |
+| `010b08fb58b1e8302060f8a3470acec7b0a03b1a` | `docs(crew): #242 office-channel relink note + sync row` |
+| (this commit) | plan + this handoff |
 
-No crates/desktop production edits, no RED tests yet, no DECISIONS/STATE edits,
-no push, no PR.
+DCO signed (`git commit -s`). Not pushed.
+
+## Leftover risks
+
+1. **No honest live gone-folder probe.** `probe_project_git_workspace` `is_git: false` is not gone (cowork folders). No existing cheap snapshot/probe was reused. The chip therefore always shows `Relink folder` and does **not** render the #217 sentence in the live UI. The view helper still accepts `pathMissing` if a later honest signal appears.
+2. **Click path is a source contract**, not a mounted React click. Publish reuse is proven by calling the existing functions, not by a second publisher.
+3. **ChannelPane is 992 / 1000 lines.** Next sibling in this file may trip D-022.
+4. **Gate C** (open NuncioCrew office channel → Relink → pick `~/Desktop/Oscar/crew` → new ping works) is post-merge / founder try script. Not run here.
+5. Did **not** extract a shared `relinkProjectWorkspaceFolder` helper. `#217` drawer still has its own pickFolder. Duplication is small; extracting would have been a refactor tour.
+
+## Blockers
+
+None for this phase. Ready for orchestrator review, then push/PR if accepted.
+
+Issue DoD items that are **not** this phase: PR to `Nuncio-hq/crew`, NuncioCrew Gate green, Gate C items in the PR/thread.
