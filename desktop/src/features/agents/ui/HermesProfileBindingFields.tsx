@@ -20,18 +20,21 @@ import {
   buildHermesProfileOccupancy,
   deriveHermesProfileUsage,
   deriveProfileBoundAgentBoundary,
+  ensureHermesHomeProfileOption,
   hermesProfileBindingError,
   hermesProfileOccupancyError,
-  normalizeHermesProfileList,
+  isHermesHomeProfile,
   profileBoundAccessError,
   profileBoundBackendError,
   profileOwnedModelLabel,
   shouldShowHermesProfileCreate,
   type HermesProfileOtherUse,
   type ProfileBoundAgentBoundary,
+  HERMES_HOME_PROFILE_NAME,
 } from "../lib/hermesProfileBinding";
 import { RequiredFieldLabel } from "./agentConfigControls";
 import { useAgentRunLocation } from "./AgentRunLocationContext";
+import { HermesHomeProfileConfirmDialog } from "./HermesHomeProfileConfirmDialog";
 import { HermesProfileCombobox } from "./HermesProfileCombobox";
 import {
   HermesProfileCreateAffordance,
@@ -150,7 +153,7 @@ export function useHermesProfileBindingState({
   const queryClient = useQueryClient();
 
   const profiles = React.useMemo(
-    () => normalizeHermesProfileList(profilesQuery.data ?? []),
+    () => ensureHermesHomeProfileOption(profilesQuery.data ?? []),
     [profilesQuery.data],
   );
 
@@ -270,6 +273,15 @@ export function HermesProfileField({
   const [personaStepProfile, setPersonaStepProfile] = React.useState<
     string | null
   >(null);
+  const [homeConfirmOpen, setHomeConfirmOpen] = React.useState(false);
+
+  function requestProfileChange(next: string) {
+    if (isHermesHomeProfile(next)) {
+      setHomeConfirmOpen(true);
+      return;
+    }
+    onChange(next);
+  }
 
   return (
     <div className="space-y-1.5" data-testid="hermes-profile-field">
@@ -282,16 +294,16 @@ export function HermesProfileField({
         listFailed={listFailed}
         listLoading={listLoading}
         occupancy={occupancy}
-        onChange={onChange}
+        onChange={requestProfileChange}
         profiles={profiles}
         value={value}
       />
       <p className="text-xs text-muted-foreground">
-        Pick an existing Hermes profile or type a new name and create it (
+        Pick an existing Hermes profile, the personal home profile, or type a
+        new name and create it (
         <code className="font-mono text-2xs">hermes -p &lt;name&gt;</code>
-        ). The manager&apos;s personal{" "}
-        <code className="font-mono text-2xs">default</code> profile cannot be
-        bound — see docs/crew/HERMES.md.
+        ). Binding <code className="font-mono text-2xs">default</code> requires
+        confirmation — Crew will not edit that profile.
       </p>
       {boundary ? (
         <ProfileBoundAgentBoundaryCard
@@ -357,6 +369,19 @@ export function HermesProfileField({
           {trustedBoundaryError}
         </p>
       ) : null}
+      <HermesHomeProfileConfirmDialog
+        onConfirm={() => {
+          setHomeConfirmOpen(false);
+          onChange(HERMES_HOME_PROFILE_NAME);
+        }}
+        onOpenChange={(open) => {
+          setHomeConfirmOpen(open);
+          if (!open && isHermesHomeProfile(value) === false) {
+            return;
+          }
+        }}
+        open={homeConfirmOpen}
+      />
     </div>
   );
 }

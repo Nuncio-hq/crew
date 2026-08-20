@@ -11,11 +11,60 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 import type { AgentRunLocation } from "./agentAccessWarning";
 import { deriveRuntimeCapabilities } from "@/shared/api/runtimeCapabilities";
 
-/** Reserved manager-personal profile — never bindable to a Crew agent (P-7). */
-export const HERMES_FORBIDDEN_PROFILE_NAME = "default";
+/** Manager personal home profile (`~/.hermes`). Bindable after confirmation. */
+export const HERMES_HOME_PROFILE_NAME = "default";
+
+/** @deprecated Use {@link HERMES_HOME_PROFILE_NAME} / {@link isHermesHomeProfile}. */
+export const HERMES_FORBIDDEN_PROFILE_NAME = HERMES_HOME_PROFILE_NAME;
 
 /** Spike 0011 / Hermes CLI: `^[a-z0-9][a-z0-9_-]{0,63}$`. */
 const HERMES_PROFILE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+export function isHermesHomeProfile(name: string): boolean {
+  return name.trim() === HERMES_HOME_PROFILE_NAME;
+}
+
+/** False for the home profile — Crew never writes `~/.hermes`. */
+export function crewMayMutateHermesProfile(name: string): boolean {
+  return !isHermesHomeProfile(name);
+}
+
+export function hermesHomeProfileDisplayLabel(name: string): string {
+  return isHermesHomeProfile(name) ? "Personal (default)" : name.trim();
+}
+
+export function hermesHomeProfileEditInHermesCopy(): string {
+  return "Edit this profile in Hermes, not Crew.";
+}
+
+export function hermesHomeProfileConfirmSurfaces(): string[] {
+  return [
+    "Desktop chat",
+    "SOUL.md",
+    "memory",
+    "skills",
+    "credentials",
+    "cron",
+    "gateways",
+  ];
+}
+
+export function hermesHomeProfileUnconfirmedError(
+  name: string,
+  confirmed: boolean,
+): string | null {
+  if (!isHermesHomeProfile(name) || confirmed) return null;
+  return "Confirm binding your personal default profile before continuing.";
+}
+
+export function ensureHermesHomeProfileOption(
+  profiles: readonly string[],
+): string[] {
+  const normalized = normalizeHermesProfileList(profiles).filter(
+    (name) => !isHermesHomeProfile(name),
+  );
+  return [HERMES_HOME_PROFILE_NAME, ...normalized];
+}
 
 /**
  * True when the runtime catalog projects a profile-owned model: the harness
@@ -141,9 +190,6 @@ export function profileBoundBackendError(
 export function validateHermesProfileName(raw: string): string | null {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
-  if (trimmed === HERMES_FORBIDDEN_PROFILE_NAME) {
-    return 'The manager\'s personal "default" profile cannot be bound to a Crew agent. Create a named profile instead (see docs/crew/HERMES.md).';
-  }
   if (!HERMES_PROFILE_NAME_RE.test(trimmed)) {
     return "Profile names must be lowercase letters, digits, underscores, or hyphens (1–64 characters), starting with a letter or digit.";
   }
@@ -192,7 +238,7 @@ export function normalizeHermesProfileList(
   const out: string[] = [];
   for (const raw of profiles) {
     const name = raw.trim();
-    if (!name || name === HERMES_FORBIDDEN_PROFILE_NAME) continue;
+    if (!name) continue;
     if (validateHermesProfileName(name) != null) continue;
     if (seen.has(name)) continue;
     seen.add(name);
@@ -210,7 +256,11 @@ export function filterHermesProfileOptions(
   const normalized = normalizeHermesProfileList(profiles);
   const q = query.trim().toLowerCase();
   if (!q) return normalized;
-  return normalized.filter((name) => name.toLowerCase().includes(q));
+  return normalized.filter(
+    (name) =>
+      name.toLowerCase().includes(q) ||
+      hermesHomeProfileDisplayLabel(name).toLowerCase().includes(q),
+  );
 }
 
 /**
@@ -223,6 +273,7 @@ export function shouldShowHermesProfileCreate(
 ): boolean {
   const trimmed = name.trim();
   if (!trimmed || validateHermesProfileName(trimmed) != null) return false;
+  if (isHermesHomeProfile(trimmed)) return false;
   const existing = new Set(
     normalizeHermesProfileList(profiles).map((p) => p.toLowerCase()),
   );
@@ -303,8 +354,7 @@ export function buildHermesProfileOccupancy(args: {
 
   for (const agent of args.agents) {
     const profile = agent.hermesProfile?.trim() || "";
-    if (!profile || profile === HERMES_FORBIDDEN_PROFILE_NAME) continue;
-    if (validateHermesProfileName(profile) != null) continue;
+    if (!profile || validateHermesProfileName(profile) != null) continue;
     if (editing && agent.pubkey === editing) {
       map.set(profile, { status: "self" });
       continue;
