@@ -259,27 +259,103 @@ test.describe("channel Tool Pane (#196)", () => {
     expect(stillMirroring).toBe(true);
   });
 
-  test("browser setup card is owner-only and writes tooling", async ({
+  test("browser opens to Custom URL by default with no setup wall (#236)", async ({
     page,
   }) => {
     await installMockBridge(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.getByTestId("channel-general").click();
     await openTools(page, "browser");
-    await expect(page.getByTestId("browser-setup-card")).toBeVisible();
-    await expect(page.getByTestId("browser-setup-save")).toBeVisible();
-    await page.getByTestId("browser-setup-save").click();
+    // Default open: toolbar + navigable surface, no blocking setup card.
+    await expect(page.getByTestId("browser-toolbar")).toBeVisible();
+    await expect(page.getByTestId("browser-setup-card")).not.toBeVisible();
+    await expect(page.getByTestId("browser-subject")).toHaveValue("custom");
     await expect(page.getByTestId("browser-preview")).toBeVisible();
+  });
+
+  test("browser dev-server Configure affordance is optional and non-blocking (#236)", async ({
+    page,
+  }) => {
+    await installMockBridge(page);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByTestId("channel-general").click();
+    await openTools(page, "browser");
+
+    // Plain channel view has no worktree/checkout path — those subject
+    // options stay present (per D-058: "remain when paths exist") but
+    // disabled, so Custom URL is the only reachable subject.
+    await expect(
+      page.locator('[data-testid="browser-subject"] option[value="worktree"]'),
+    ).toBeDisabled();
+    await expect(
+      page.locator('[data-testid="browser-subject"] option[value="checkout"]'),
+    ).toBeDisabled();
+
+    // The dev-server Configure affordance is a footer strip, not a wall
+    // over the webview: the preview stays visible underneath it, and the
+    // setup card only appears once the user opts in.
+    await expect(page.getByTestId("browser-preview")).toBeVisible();
+    await expect(
+      page.getByTestId("browser-devserver-configure-strip"),
+    ).toBeVisible();
+    await expect(page.getByTestId("browser-setup-card")).not.toBeVisible();
+
+    await page.getByTestId("browser-devserver-configure").click();
+    await expect(page.getByTestId("browser-setup-card")).toBeVisible();
+    await page.getByTestId("browser-setup-save").click();
+    await expect(page.getByTestId("browser-server-strip")).toBeVisible();
     await page.getByTestId("browser-start-server").click();
     await expect(page.getByTestId("browser-server-strip")).toHaveAttribute(
       "data-server-face",
       "running",
     );
-    await page.getByTestId("browser-subject").selectOption("custom");
+
     await page.getByTestId("browser-url").fill("https://example.com");
     await expect(page.getByTestId("browser-url")).toHaveValue(
       "https://example.com",
     );
+  });
+
+  test("browser-nav-without-devserver-config: Browser is navigable with no tooling.devServer set (#236)", async ({
+    page,
+  }) => {
+    await installMockBridge(page);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByTestId("channel-general").click();
+    await openTools(page, "browser");
+
+    // No canvas tooling exists for this channel at all — confirm the
+    // precondition before asserting the Browser still navigates.
+    const tooling = await page.evaluate((channelId) => {
+      return window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("get_canvas_tooling", {
+        channelId,
+      });
+    }, GENERAL);
+    expect(tooling).toBeNull();
+
+    // No setup wall: toolbar + a navigable surface, immediately.
+    await expect(page.getByTestId("browser-toolbar")).toBeVisible();
+    await expect(page.getByTestId("browser-setup-card")).not.toBeVisible();
+    await expect(page.getByTestId("browser-preview")).toBeVisible();
+
+    const url = page.getByTestId("browser-url");
+    await url.fill("https://example.com/docs");
+    await url.press("Enter");
+
+    await expect(page.getByTestId("browser-preview-url")).toHaveText(
+      "https://example.com/docs",
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (channelId) =>
+            window
+              .__BUZZ_E2E_GOVERNOR_STATUS__?.()
+              .webviews.find((view) => view.channelId === channelId)?.url,
+          GENERAL,
+        ),
+      )
+      .toBe("https://example.com/docs");
   });
 
   test("back/forward/reload toolbar buttons invoke governor browser commands", async ({
@@ -289,7 +365,8 @@ test.describe("channel Tool Pane (#196)", () => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.getByTestId("channel-general").click();
     await openTools(page, "browser");
-    await page.getByTestId("browser-setup-save").click();
+    // No setup wall (#236): the preview is already navigable without
+    // configuring or starting a Crew-owned dev server first.
     await expect(page.getByTestId("browser-preview")).toBeVisible();
 
     await page.getByTestId("browser-back").click();

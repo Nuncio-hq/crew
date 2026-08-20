@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Monitor,
   RotateCw,
+  X,
 } from "lucide-react";
 import * as React from "react";
 
@@ -66,12 +67,15 @@ export function BrowserTab({
   const role = membership.data?.role;
   const isOwner = role === "owner" || role == null;
   const [tooling, setTooling] = React.useState<CanvasTooling | null>(null);
-  const [subject, setSubject] = React.useState<SubjectKind>(() =>
-    worktreePath ? "worktree" : "checkout",
-  );
+  // Founder-locked UX (issue #236): Browser opens to a navigable Custom URL
+  // by default. Worktree/checkout dev-server subjects stay selectable when
+  // their paths exist, but a Crew-owned dev server is optional convenience,
+  // never a gate on first open.
+  const [subject, setSubject] = React.useState<SubjectKind>("custom");
   const [customUrl, setCustomUrl] = React.useState("http://127.0.0.1:5173");
   const [viewport, setViewport] =
     React.useState<(typeof VIEWPORT_PRESETS)[number]["id"]>("desktop");
+  const [configuringDevServer, setConfiguringDevServer] = React.useState(false);
   const frameRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -90,12 +94,15 @@ export function BrowserTab({
   });
 
   React.useEffect(() => {
-    if (!url || !tooling?.devServer) return;
+    // No setup wall (#236): the webview opens for any resolved URL, whether
+    // it came from a Custom URL or a running Crew-owned dev server. Canvas
+    // `tooling.devServer` is never a precondition for navigating.
+    if (!url) return;
     void browserOpen(channelId, url).catch(() => undefined);
     return () => {
       void browserClose(channelId).catch(() => undefined);
     };
-  }, [channelId, url, tooling?.devServer]);
+  }, [channelId, url]);
 
   React.useEffect(() => {
     const node = frameRef.current;
@@ -109,8 +116,6 @@ export function BrowserTab({
     sync();
     return () => observer.disconnect();
   }, [channelId]);
-
-  const showSetup = !tooling?.devServer && subject !== "custom";
 
   return (
     <div
@@ -139,7 +144,7 @@ export function BrowserTab({
       <BrowserToolbar
         customUrl={customUrl}
         onBack={() => void browserBack(channelId).catch(() => undefined)}
-        onCustomUrl={setCustomUrl}
+        onCommitUrl={setCustomUrl}
         onDevtools={() =>
           void browserDevtools(channelId).catch(() => undefined)
         }
@@ -168,22 +173,14 @@ export function BrowserTab({
         className="flex min-h-0 flex-1 flex-col items-center justify-center p-3"
         ref={frameRef}
       >
-        {showSetup ? (
-          <DevServerSetupCard
-            channelId={channelId}
-            isOwner={isOwner}
-            onSaved={setTooling}
-          />
-        ) : (
-          <BrowserPreview
-            backend={status.childWebviewAvailable ? "child" : "window"}
-            url={url}
-            width={
-              VIEWPORT_PRESETS.find((preset) => preset.id === viewport)
-                ?.width ?? 1280
-            }
-          />
-        )}
+        <BrowserPreview
+          backend={status.childWebviewAvailable ? "child" : "window"}
+          url={url}
+          width={
+            VIEWPORT_PRESETS.find((preset) => preset.id === viewport)?.width ??
+            1280
+          }
+        />
       </div>
       {server ? (
         <ServerStrip
@@ -191,7 +188,7 @@ export function BrowserTab({
           nowMs={status.nowMs}
           server={server}
         />
-      ) : tooling?.devServer && !showSetup ? (
+      ) : tooling?.devServer ? (
         <div
           className="flex shrink-0 items-center gap-2 border-t border-border/60 px-3 py-1.5 text-2xs"
           data-testid="browser-server-strip"
@@ -219,7 +216,37 @@ export function BrowserTab({
             Start
           </Button>
         </div>
-      ) : null}
+      ) : configuringDevServer ? (
+        <DevServerSetupCard
+          channelId={channelId}
+          isOwner={isOwner}
+          onCancel={() => setConfiguringDevServer(false)}
+          onSaved={(next) => {
+            setTooling(next);
+            setConfiguringDevServer(false);
+          }}
+        />
+      ) : (
+        // Optional, non-blocking affordance (#236): a Crew-owned dev server
+        // is a convenience, never a gate — surfaced here regardless of the
+        // selected subject, not as a wall over the preview above.
+        <div
+          className="flex shrink-0 items-center gap-2 border-t border-border/60 px-3 py-1.5 text-2xs text-muted-foreground"
+          data-testid="browser-devserver-configure-strip"
+        >
+          <span>No dev server configured for this channel.</span>
+          <Button
+            className="ml-auto h-6"
+            data-testid="browser-devserver-configure"
+            onClick={() => setConfiguringDevServer(true)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Configure
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -228,7 +255,7 @@ function BrowserToolbar({
   checkoutPath,
   customUrl,
   onBack,
-  onCustomUrl,
+  onCommitUrl,
   onDevtools,
   onForward,
   onReload,
@@ -242,7 +269,7 @@ function BrowserToolbar({
   checkoutPath?: string | null;
   customUrl: string;
   onBack: () => void;
-  onCustomUrl: (value: string) => void;
+  onCommitUrl: (value: string) => void;
   onDevtools: () => void;
   onForward: () => void;
   onReload: () => void;
@@ -253,6 +280,12 @@ function BrowserToolbar({
   viewport: (typeof VIEWPORT_PRESETS)[number]["id"];
   worktreePath?: string | null;
 }) {
+  // URL bar commits on Enter/blur (#236), not on every keystroke — the
+  // webview shouldn't re-navigate mid-typing.
+  const [urlDraft, setUrlDraft] = React.useState(customUrl);
+  React.useEffect(() => {
+    setUrlDraft(customUrl);
+  }, [customUrl]);
   return (
     <div
       className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2 py-1.5"
@@ -284,8 +317,12 @@ function BrowserToolbar({
       <Input
         className="h-7 min-w-0 flex-1 truncate text-2xs"
         data-testid="browser-url"
-        onChange={(event) => onCustomUrl(event.target.value)}
-        value={customUrl}
+        onBlur={() => onCommitUrl(urlDraft)}
+        onChange={(event) => setUrlDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") onCommitUrl(urlDraft);
+        }}
+        value={urlDraft}
       />
       <select
         className="h-7 rounded-md border border-border bg-background px-1.5 text-2xs"
@@ -320,10 +357,12 @@ function BrowserToolbar({
 function DevServerSetupCard({
   channelId,
   isOwner,
+  onCancel,
   onSaved,
 }: {
   channelId: string;
   isOwner: boolean;
+  onCancel: () => void;
   onSaved: (tooling: CanvasTooling) => void;
 }) {
   const [command, setCommand] = React.useState("pnpm dev --port $PORT");
@@ -331,15 +370,27 @@ function DevServerSetupCard({
   const [error, setError] = React.useState<string | null>(null);
   return (
     <div
-      className="max-w-sm rounded-xl border border-border/60 bg-muted/30 p-4"
+      className="shrink-0 border-t border-border/60 bg-muted/30 p-3"
       data-testid="browser-setup-card"
     >
-      <p className="text-sm font-medium text-foreground">
-        Set up a Crew-owned dev server
-      </p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-sm font-medium text-foreground">
+          Set up a Crew-owned dev server
+        </p>
+        <button
+          aria-label="Cancel"
+          className="text-muted-foreground hover:text-foreground"
+          data-testid="browser-setup-cancel"
+          onClick={onCancel}
+          type="button"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
       <p className="mt-1 text-2xs text-muted-foreground">
         Command runs as a labeled Buzz Term session. `$PORT` is allocated by the
-        Resource Governor. Intent is signed onto the channel canvas.
+        Resource Governor. Intent is signed onto the channel canvas. This is an
+        optional convenience — the Browser navigates without it.
       </p>
       {isOwner ? (
         <>
@@ -403,20 +454,23 @@ function BrowserPreview({
     <div
       className="flex h-full w-full flex-col items-center justify-center rounded-md border border-dashed border-border/80 bg-muted/20"
       data-browser-backend={backend}
+      data-browser-empty={url ? "false" : "true"}
       data-testid="browser-preview"
       style={{ maxWidth: width }}
     >
       <Monitor className="h-6 w-6 text-muted-foreground" />
       <p className="mt-2 text-2xs text-muted-foreground">
-        {backend === "child"
-          ? "Child webview"
-          : "Companion window (huddle precedent)"}
+        {url
+          ? backend === "child"
+            ? "Child webview"
+            : "Companion window (huddle precedent)"
+          : "Enter a URL"}
       </p>
       <p
         className="mt-1 max-w-full truncate px-3 font-mono text-2xs"
         data-testid="browser-preview-url"
       >
-        {url ?? "No URL"}
+        {url ?? "No URL yet — type a URL above and press Enter"}
       </p>
     </div>
   );
