@@ -3,7 +3,10 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
-use super::bridge::discover_sim_bridge;
+use super::bridge::{
+    bridge_key_args, bridge_press_args, bridge_swipe_args, bridge_tap_args, bridge_type_args,
+    discover_sim_bridge, BridgeAvailability, ScreenSize,
+};
 use super::browser::{backend, window_label, BrowserBackend};
 use super::device::crew_device_name;
 use super::mjpeg::FrameStore;
@@ -231,40 +234,67 @@ pub fn sim_mjpeg_url(udid: String, app: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 pub fn sim_tap(udid: String, point: HidPoint) -> Result<(), String> {
-    dispatch_hid(&udid, "tap", Some(point), None, None)
+    run_bridge_command(&udid, |binary, id| {
+        bridge_tap_args(binary, id, point.x, point.y, ScreenSize::DEFAULT)
+    })
 }
 
 #[tauri::command]
 pub fn sim_swipe(udid: String, from: HidPoint, to: HidPoint) -> Result<(), String> {
-    dispatch_hid(&udid, "swipe", Some(from), Some(to), None)
+    run_bridge_command(&udid, |binary, id| {
+        bridge_swipe_args(
+            binary,
+            id,
+            (from.x, from.y),
+            (to.x, to.y),
+            ScreenSize::DEFAULT,
+        )
+    })
 }
 
+/// `baguette` has no scroll primitive; a vertical swipe across the Sim tab's
+/// default bezel (`ScreenSize::DEFAULT`, matching the 390×844 space
+/// `SimTab.tsx` normalizes pointer events into) is the closest equivalent.
 #[tauri::command]
 pub fn sim_scroll(udid: String, delta_y: f64) -> Result<(), String> {
-    dispatch_hid(&udid, "scroll", None, None, Some(delta_y))
+    let (from, to) = scroll_delta_to_swipe(delta_y, ScreenSize::DEFAULT);
+    run_bridge_command(&udid, |binary, id| {
+        bridge_swipe_args(binary, id, from, to, ScreenSize::DEFAULT)
+    })
+}
+
+/// Maps a wheel/trackpad `delta_y` onto a vertical swipe centered on the
+/// screen, clamped so both endpoints stay on-screen even for very large
+/// deltas.
+fn scroll_delta_to_swipe(delta_y: f64, screen: ScreenSize) -> ((f64, f64), (f64, f64)) {
+    let mid_x = screen.width / 2.0;
+    let mid_y = screen.height / 2.0;
+    let from = (mid_x, mid_y);
+    let to = (mid_x, (mid_y - delta_y).clamp(0.0, screen.height));
+    (from, to)
 }
 
 #[tauri::command]
 pub fn sim_key(udid: String, key: String) -> Result<(), String> {
-    dispatch_hid(&udid, "key", None, None, None).map(|_| ())?;
-    let _ = (udid, key);
-    Ok(())
+    run_bridge_command(&udid, |binary, id| bridge_key_args(binary, id, &key))
 }
 
 #[tauri::command]
 pub fn sim_text(udid: String, text: String) -> Result<(), String> {
-    let _ = (udid, text);
-    dispatch_hid("", "text", None, None, None)
+    run_bridge_command(&udid, |binary, id| bridge_type_args(binary, id, &text))
 }
 
 #[tauri::command]
 pub fn sim_home(udid: String) -> Result<(), String> {
-    dispatch_hid(&udid, "home", None, None, None)
+    run_bridge_command(&udid, |binary, id| bridge_press_args(binary, id, "home"))
 }
 
+/// `baguette` has no headless device-rotation command — return an explicit
+/// error instead of issuing a subcommand that does not exist.
 #[tauri::command]
 pub fn sim_rotate(udid: String) -> Result<(), String> {
-    dispatch_hid(&udid, "rotate", None, None, None)
+    let _ = udid;
+    Err("sim_rotate is not supported: the sim bridge has no device-rotation command".into())
 }
 
 #[tauri::command]
@@ -273,41 +303,22 @@ pub fn sim_screenshot_png(udid: String) -> Result<Vec<u8>, String> {
     Ok(super::mjpeg::placeholder_jpeg().to_vec())
 }
 
-fn dispatch_hid(
+fn run_bridge_command(
     udid: &str,
-    action: &str,
-    from: Option<HidPoint>,
-    to: Option<HidPoint>,
-    delta: Option<f64>,
+    args: impl FnOnce(&str, &str) -> Vec<String>,
 ) -> Result<(), String> {
     let availability = discover_sim_bridge();
-    let super::bridge::BridgeAvailability::Available { binary, path } = availability else {
+    let BridgeAvailability::Available { binary, path } = availability else {
         return Err("sim bridge is not installed".into());
     };
-    let mut cmd = std::process::Command::new(&path);
-    cmd.arg(action).arg("--udid").arg(udid);
-    if let Some(p) = from {
-        cmd.arg("--x")
-            .arg(p.x.to_string())
-            .arg("--y")
-            .arg(p.y.to_string());
-    }
-    if let Some(p) = to {
-        cmd.arg("--x2")
-            .arg(p.x.to_string())
-            .arg("--y2")
-            .arg(p.y.to_string());
-    }
-    if let Some(d) = delta {
-        cmd.arg("--delta").arg(d.to_string());
-    }
-    let _ = binary;
-    let output = cmd
+    let argv = args(&binary, udid);
+    let output = std::process::Command::new(&path)
+        .args(&argv)
         .output()
-        .map_err(|e| format!("sim bridge {action}: {e}"))?;
+        .map_err(|e| format!("sim bridge: {e}"))?;
     if !output.status.success() {
         return Err(format!(
-            "sim bridge {action} failed: {}",
+            "sim bridge failed: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
@@ -609,4 +620,37 @@ pub fn spawn_governor_loop(app: AppHandle) {
             let _ = app.emit(EVENT, &status);
         }
     });
+}
+
+#[cfg(test)]
+mod sim_hid_tests {
+    use super::*;
+
+    #[test]
+    fn scroll_down_swipes_upward_from_center() {
+        let (from, to) = scroll_delta_to_swipe(100.0, ScreenSize::DEFAULT);
+        assert_eq!(from, (195.0, 422.0));
+        assert_eq!(to, (195.0, 322.0));
+    }
+
+    #[test]
+    fn scroll_up_swipes_downward_from_center() {
+        let (from, to) = scroll_delta_to_swipe(-50.0, ScreenSize::DEFAULT);
+        assert_eq!(from, (195.0, 422.0));
+        assert_eq!(to, (195.0, 472.0));
+    }
+
+    #[test]
+    fn scroll_clamps_extreme_delta_to_stay_on_screen() {
+        let (_, to) = scroll_delta_to_swipe(10_000.0, ScreenSize::DEFAULT);
+        assert_eq!(to.1, 0.0);
+        let (_, to) = scroll_delta_to_swipe(-10_000.0, ScreenSize::DEFAULT);
+        assert_eq!(to.1, ScreenSize::DEFAULT.height);
+    }
+
+    #[test]
+    fn sim_rotate_is_an_explicit_unsupported_error() {
+        let err = sim_rotate("UDID-1".into()).unwrap_err();
+        assert!(err.contains("not supported"));
+    }
 }
