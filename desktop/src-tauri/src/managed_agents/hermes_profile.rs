@@ -8,24 +8,37 @@
 use crate::managed_agents::discovery::KnownAcpRuntime;
 use crate::managed_agents::types::{BackendKind, ManagedAgentRecord, RespondTo};
 
-/// Hermes rejects the reserved name `default` for Crew bindings (D-019 P-7):
-/// the manager's personal `~/.hermes` profile must never be bound.
-pub const HERMES_FORBIDDEN_PROFILE_NAME: &str = "default";
+/// Manager personal home profile (`~/.hermes`). Bindable after confirmation;
+/// Crew still must not mutate it.
+pub const HERMES_HOME_PROFILE_NAME: &str = "default";
+
+/// True when `name` is the Hermes home profile (`default` / `~/.hermes`).
+pub fn is_hermes_home_profile(name: &str) -> bool {
+    name.trim() == HERMES_HOME_PROFILE_NAME
+}
+
+/// True when Crew may read/write/create/archive/delete this profile.
+/// Always false for the home profile.
+pub fn crew_may_mutate_hermes_profile(name: &str) -> bool {
+    !is_hermes_home_profile(name)
+}
+
+/// Whether spawn should prepend `[profile_arg, name]`. Named-profile
+/// bindings inject `-p <name>`. The home profile omits the flag (bare
+/// `hermes acp`) until spike 0056 says otherwise.
+pub fn should_inject_profile_binding_flag(name: &str) -> bool {
+    !is_hermes_home_profile(name)
+}
 
 /// Validate a Hermes profile name for Crew binding.
 ///
 /// Rule (spike 0011 / Hermes CLI): `^[a-z0-9][a-z0-9_-]{0,63}$`.
-/// The reserved name [`HERMES_FORBIDDEN_PROFILE_NAME`] is always rejected.
+/// The home profile [`HERMES_HOME_PROFILE_NAME`] is a valid **bind** name;
+/// mutate paths still refuse it via [`crew_may_mutate_hermes_profile`].
 pub fn validate_hermes_profile_name(name: &str) -> Result<(), String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return Err("hermes profile name must not be empty".to_string());
-    }
-    if trimmed == HERMES_FORBIDDEN_PROFILE_NAME {
-        return Err(
-            "hermes profile 'default' cannot be bound to a Crew agent (manager personal profile)"
-                .to_string(),
-        );
     }
     let valid = trimmed.len() <= 64
         && trimmed
@@ -111,6 +124,9 @@ pub fn inject_profile_binding_args(
     let Some(name) = hermes_profile.map(str::trim).filter(|n| !n.is_empty()) else {
         return args;
     };
+    if !should_inject_profile_binding_flag(name) {
+        return args;
+    }
     if args.iter().any(|a| a == flag) {
         return args;
     }
@@ -245,9 +261,20 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_default_profile() {
-        let err = validate_hermes_profile_name("default").unwrap_err();
-        assert!(err.contains("default"), "{err}");
+    fn validate_accepts_default_as_bind_name() {
+        validate_hermes_profile_name("default")
+            .expect("home profile is a valid bind name after explicit confirmation");
+        validate_hermes_profile_name("  default  ")
+            .expect("trimmed home profile name is also a valid bind name");
+    }
+
+    #[test]
+    fn home_profile_is_not_mutable_by_crew() {
+        assert!(is_hermes_home_profile("default"));
+        assert!(is_hermes_home_profile("  default  "));
+        assert!(!is_hermes_home_profile("scout"));
+        assert!(!crew_may_mutate_hermes_profile("default"));
+        assert!(crew_may_mutate_hermes_profile("scout"));
     }
 
     #[test]
@@ -267,6 +294,15 @@ mod tests {
                 "expected {name:?} invalid"
             );
         }
+    }
+
+    #[test]
+    fn inject_omits_flag_for_default() {
+        let rt = known_acp_runtime("hermes").expect("hermes runtime");
+        let args = inject_profile_binding_args(Some(rt), Some("default"), vec!["acp".into()]);
+        assert_eq!(args, vec!["acp".to_string()]);
+        let padded = inject_profile_binding_args(Some(rt), Some("  default  "), vec!["acp".into()]);
+        assert_eq!(padded, vec!["acp".to_string()]);
     }
 
     #[test]
