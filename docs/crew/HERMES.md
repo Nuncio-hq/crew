@@ -20,21 +20,25 @@ a second backend.
 
 ## Rules (D-019 + D-024 summary)
 
-1. One local Crew managed-agent record ↔ one named Hermes profile. That record
+1. One local Crew managed-agent record ↔ one Hermes profile. That record
    owns runtime pairs in every configured community, intentionally sharing
    memory, skills, and profile-owned state across them. A second local record
-   cannot bind the same profile. Never bind the manager's default profile
-   (`~/.hermes`).
+   cannot bind the same profile. Binding the manager's default profile
+   (`~/.hermes`) requires explicit confirmation; Crew still does not edit,
+   archive, or delete that home profile.
 2. Model and provider remain profile-owned, but Crew is their write-through
-   editor. The create/edit UI reads `config.yaml` and saves changed values
-   only through `hermes -p <name> config set model.provider …` and
-   `model.default …`; Crew never stores a competing copy. The same UI edits
-   the profile's `SOUL.md`, shared everywhere that profile runs. Both changes
-   apply on the next fresh ACP session; `!rotate` forces one. Crew strips
-   `BUZZ_ACP_MODEL` at spawn for profile-locked runtimes.
-3. Spawn shape is `hermes` with args `-p <profile> acp`. The desktop
-   injects `-p <bound name>` from `ManagedAgentRecord.hermes_profile`
-   when the catalog entry has `profile_arg`. Never use a renamed
+   editor for **named** profiles. The create/edit UI reads `config.yaml` and
+   saves changed values only through `hermes -p <name> config set
+   model.provider …` and `model.default …`; Crew never stores a competing
+   copy. The same UI edits the profile's `SOUL.md`, shared everywhere that
+   profile runs. Both changes apply on the next fresh ACP session; `!rotate`
+   forces one. Crew strips `BUZZ_ACP_MODEL` at spawn for profile-locked
+   runtimes. Bound `default` is read-only in Crew: edit that profile in
+   Hermes.
+3. Spawn shape is `hermes` with args `-p <profile> acp`, including the home
+   profile (`hermes -p default acp` — spike 0056). The desktop injects
+   `-p <bound name>` from `ManagedAgentRecord.hermes_profile` when the
+   catalog entry has `profile_arg`. Never use a renamed
    wrapper binary — `buzz-acp` keys per-runtime defaults (e.g.
    `HERMES_ACP_SKIP_CONFIGURED_MCP=1`) off the command basename.
 4. `parallelism` stays `1` for Hermes agents (spike 0012).
@@ -84,7 +88,10 @@ Select the profile from the list or keep the name you just created
 step for the new profile's `SOUL.md`; skipping preserves Hermes' generated
 default. The model/provider editor reads the profile and writes through the
 Hermes CLI, with a note that changes affect every agent using the profile.
-Binding `default` is rejected (client and server). Binding a profile already used by another local managed-agent record
+Binding `default` is offered as **Personal (default)** and requires an
+explicit confirmation that names the shared surfaces. Cancel leaves the
+field unbound. Crew still will not write SOUL.md or `config.yaml` under
+`~/.hermes`. Binding a profile already used by another local managed-agent record
 shows an occupancy error and disables save; the server still rejects duplicates
 (C-10) if forced. One managed-agent record owns runtime pairs for all
 configured communities, and the Phase 01 UI says that memory, skills, and
