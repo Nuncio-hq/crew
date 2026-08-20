@@ -1,5 +1,13 @@
 # Crew State
 
+## Issue #237 — Tool Pane live Mac stability gate
+
+Bar A **FAIL** on founder Mac (spike 0057). C1/C4/C5 token path and B4
+foreign-sim isolation PASS; A1 blocked on #236; A2/C2 browser bridge
+hang; B1–B3/C3 `bridge_missing` (no baguette/idb); A5 back/forward/reload
+unwired. Child issues filed from FAIL rows. Gate C: D-070 / #234.
+Last updated: 2026-08-20
+
 ## Issue #243 — Bind Hermes `default` after confirmation
 
 The personal home profile (`~/.hermes` / `default`) can be bound after an
