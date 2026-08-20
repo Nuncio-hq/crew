@@ -1,0 +1,29 @@
+{
+  "frame": {
+    "height": 874,
+    "width": 402,
+    "x": 0,
+    "y": 0
+  },
+  "role": "AXApplication",
+  "children_count": 19,
+  "first_child": {
+    "children": [],
+    "enabled": true,
+    "focused": false,
+    "frame": {
+      "height": 191.00000000000006,
+      "width": 168.33333333333334,
+      "x": 24.333333333333314,
+      "y": 88.00000000000001
+    },
+    "help": null,
+    "hidden": false,
+    "identifier": "Maps",
+    "label": "Maps",
+    "role": "AXButton",
+    "subrole": null,
+    "title": null,
+    "value": "Widget"
+  }
+}

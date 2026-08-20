@@ -169,6 +169,10 @@ A1 remains on [#236](https://github.com/Nuncio-hq/crew/issues/236) (not duplicat
 Re-run this checklist after #236 lands and after bridge install; require
 RED→GREEN only where product code changes.
 
+Spike 0058 fixes and CLI-verifies the sim-bridge HID contract for #246 (B1
+`bridge_missing` + the `--width`/`--height`/subcommand bugs B2 would have
+hit next); the through-app re-run of B1–B3/C3 is still open.
+
 ## Cleanup
 
 - Foreign iPhone 17 Pro left **Shutdown** after B4.
