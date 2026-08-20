@@ -44,6 +44,9 @@ const TOOL_PANE_COMMANDS = new Set([
   "set_browser_bounds",
   "browser_close",
   "browser_devtools",
+  "browser_back",
+  "browser_forward",
+  "browser_reload",
   "open_tool_pane_window",
   "crew_device_name_for",
   "probe_browser_backend",
@@ -388,6 +391,9 @@ export function handleToolPaneCommand(
       return publish();
     }
     case "browser_devtools":
+    case "browser_back":
+    case "browser_forward":
+    case "browser_reload":
     case "open_tool_pane_window":
       return null;
     case "crew_device_name_for":
