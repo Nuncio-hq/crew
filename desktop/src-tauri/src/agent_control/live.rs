@@ -668,6 +668,25 @@ fn ax_node(value: serde_json::Value) -> Option<SnapshotNode> {
     })
 }
 
+pub fn click_point_from_snapshot(
+    snap: &Snapshot,
+    r#ref: Option<&str>,
+    point: Option<(f64, f64)>,
+    digest: Option<&str>,
+) -> Result<(f64, f64), ControlError> {
+    require_digest(&snap.snapshot_digest, digest)?;
+    if let Some(r) = r#ref {
+        let node = find_node(&snap.nodes, r).ok_or_else(|| ControlError::not_actionable(r))?;
+        let bounds = node
+            .bounds
+            .as_ref()
+            .ok_or_else(|| ControlError::not_actionable(r))?;
+        Ok((bounds.x + bounds.w / 2.0, bounds.y + bounds.h / 2.0))
+    } else {
+        point.ok_or_else(|| ControlError::not_actionable("x,y"))
+    }
+}
+
 #[cfg(test)]
 mod bridge_parsing_tests {
     use super::*;
@@ -731,24 +750,5 @@ mod bridge_parsing_tests {
     fn root_frame_size_missing_frame_is_none() {
         let value: serde_json::Value = serde_json::from_str(r#"{"children": []}"#).unwrap();
         assert_eq!(root_frame_size(&value), None);
-    }
-}
-
-pub fn click_point_from_snapshot(
-    snap: &Snapshot,
-    r#ref: Option<&str>,
-    point: Option<(f64, f64)>,
-    digest: Option<&str>,
-) -> Result<(f64, f64), ControlError> {
-    require_digest(&snap.snapshot_digest, digest)?;
-    if let Some(r) = r#ref {
-        let node = find_node(&snap.nodes, r).ok_or_else(|| ControlError::not_actionable(r))?;
-        let bounds = node
-            .bounds
-            .as_ref()
-            .ok_or_else(|| ControlError::not_actionable(r))?;
-        Ok((bounds.x + bounds.w / 2.0, bounds.y + bounds.h / 2.0))
-    } else {
-        point.ok_or_else(|| ControlError::not_actionable("x,y"))
     }
 }
