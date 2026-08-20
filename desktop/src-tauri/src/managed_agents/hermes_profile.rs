@@ -23,11 +23,11 @@ pub fn crew_may_mutate_hermes_profile(name: &str) -> bool {
     !is_hermes_home_profile(name)
 }
 
-/// Whether spawn should prepend `[profile_arg, name]`. Named-profile
-/// bindings inject `-p <name>`. The home profile omits the flag (bare
-/// `hermes acp`) until spike 0056 says otherwise.
-pub fn should_inject_profile_binding_flag(name: &str) -> bool {
-    !is_hermes_home_profile(name)
+/// Whether spawn should prepend `[profile_arg, name]`. Spike 0056 PASS:
+/// `hermes -p default acp` is the recommended argv for the home profile.
+/// Bare `hermes acp` also works but follows a later sticky `active_profile`.
+pub fn should_inject_profile_binding_flag(_name: &str) -> bool {
+    true
 }
 
 /// Validate a Hermes profile name for Crew binding.
@@ -297,12 +297,18 @@ mod tests {
     }
 
     #[test]
-    fn inject_omits_flag_for_default() {
+    fn inject_includes_flag_for_default() {
         let rt = known_acp_runtime("hermes").expect("hermes runtime");
         let args = inject_profile_binding_args(Some(rt), Some("default"), vec!["acp".into()]);
-        assert_eq!(args, vec!["acp".to_string()]);
+        assert_eq!(
+            args,
+            vec!["-p".to_string(), "default".to_string(), "acp".to_string()]
+        );
         let padded = inject_profile_binding_args(Some(rt), Some("  default  "), vec!["acp".into()]);
-        assert_eq!(padded, vec!["acp".to_string()]);
+        assert_eq!(
+            padded,
+            vec!["-p".to_string(), "default".to_string(), "acp".to_string()]
+        );
     }
 
     #[test]
