@@ -42,6 +42,78 @@ export const AUTO_PROVIDER_DROPDOWN_VALUE = "__auto_provider__";
 export const CUSTOM_PROVIDER_DROPDOWN_VALUE = "__custom_provider__";
 export const NO_RUNTIME_DROPDOWN_VALUE = "__no_runtime__";
 
+/**
+ * Wire id for Cursor's automatic model router (and Buzz shared compute).
+ * Prefer {@link CURSOR_AUTO_MODEL_ID} from runtimeCapabilities when the call
+ * site is Cursor-specific; this alias keeps dialog code readable.
+ */
+export { CURSOR_AUTO_MODEL_ID } from "@/shared/api/runtimeCapabilities";
+
+/**
+ * Whether the model dropdown should keep the Automatic/Auto zero-value row.
+ *
+ * Buzz shared compute always owns that row. Cursor also exposes it because its
+ * CLI Auto router is selected by persisting model id `"auto"` (applied at
+ * spawn via `--model auto`), not by leaving the field blank.
+ */
+export function shouldOfferAutomaticModelOption({
+  isRelayMesh,
+  selectableAutoModel,
+}: {
+  isRelayMesh: boolean;
+  selectableAutoModel: boolean;
+}): boolean {
+  return isRelayMesh || selectableAutoModel;
+}
+
+/** Label for the Automatic/Auto dropdown row. */
+export function automaticModelOptionLabel({
+  isRelayMesh,
+  selectableAutoModel,
+}: {
+  isRelayMesh: boolean;
+  selectableAutoModel: boolean;
+}): string {
+  if (isRelayMesh) return "Automatic";
+  if (selectableAutoModel) return "Auto";
+  return "Default model";
+}
+
+/**
+ * Value persisted when the user picks the Automatic/Auto row.
+ * Shared compute and Cursor both store `"auto"`; other runtimes leave blank
+ * so the harness default applies.
+ */
+export function automaticModelPersistValue({
+  isRelayMesh,
+  selectableAutoModel,
+}: {
+  isRelayMesh: boolean;
+  selectableAutoModel: boolean;
+}): string {
+  return isRelayMesh || selectableAutoModel ? "auto" : "";
+}
+
+/** True when a stored model should render as the Automatic/Auto dropdown row. */
+export function isAutomaticModelSelection({
+  isRelayMesh,
+  model,
+  selectableAutoModel,
+}: {
+  isRelayMesh: boolean;
+  model: string;
+  selectableAutoModel: boolean;
+}): boolean {
+  const trimmed = model.trim();
+  if (isRelayMesh) {
+    return trimmed === "" || trimmed === "auto";
+  }
+  if (selectableAutoModel) {
+    return trimmed === "auto";
+  }
+  return false;
+}
+
 const KNOWN_LLM_PROVIDER_IDS = [
   "anthropic",
   "databricks",

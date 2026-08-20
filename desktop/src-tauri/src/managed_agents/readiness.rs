@@ -148,6 +148,23 @@ pub(crate) fn resolve_effective_harness_descriptor(
         harness_def.as_deref(),
         runtime_meta,
     );
+    // Cursor: pin `--model` at startup (ACP catalogs are often empty).
+    let effective_model =
+        match crate::managed_agents::effective_config::resolve_effective_config(
+            record, personas, global,
+        ) {
+            crate::managed_agents::effective_config::EffectiveConfigResult::Resolved(cfg) => {
+                cfg.model.value
+            }
+            crate::managed_agents::effective_config::EffectiveConfigResult::OrphanedInstance {
+                ..
+            } => None,
+        };
+    let args = crate::managed_agents::inject_cursor_startup_model_arg(
+        &effective_command,
+        args,
+        effective_model.as_deref(),
+    );
 
     // Env: full layered resolution (same as resolve_effective_agent_env).
     // Pass harness_def directly to avoid a second lookup.

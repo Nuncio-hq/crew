@@ -693,13 +693,28 @@ pub fn spawn_agent_child(
     // told the same thing: `BUZZ_ACP_MODEL=auto` would name a model the mesh
     // never advertises, leaving buzz-acp to warn and fall back on every new
     // session while `BUZZ_AGENT_MODEL` said `mesh`.
+    //
+    // Cursor is the opposite problem: ACP model catalogs are often empty, so
+    // we pin `--model` on the agent argv (see `inject_cursor_startup_model_arg`)
+    // and must NOT also set `BUZZ_ACP_MODEL` — that would make buzz-acp try
+    // `session/set_model` against an empty catalog and emit unsupported_model.
     #[cfg(feature = "mesh-llm")]
-    let acp_model = match (&mesh_model_id, effective_model.as_deref()) {
-        (Some(mesh_model_id), _) => Some(super::relay_mesh_wire_model(mesh_model_id).to_string()),
-        (None, model) => model.map(str::to_owned),
+    let acp_model = if super::is_cursor_agent_command(effective_command) {
+        None
+    } else {
+        match (&mesh_model_id, effective_model.as_deref()) {
+            (Some(mesh_model_id), _) => {
+                Some(super::relay_mesh_wire_model(mesh_model_id).to_string())
+            }
+            (None, model) => model.map(str::to_owned),
+        }
     };
     #[cfg(not(feature = "mesh-llm"))]
-    let acp_model = effective_model.as_deref().map(str::to_owned);
+    let acp_model = if super::is_cursor_agent_command(effective_command) {
+        None
+    } else {
+        effective_model.as_deref().map(str::to_owned)
+    };
     if let Some(model) = acp_model.as_deref() {
         command.env("BUZZ_ACP_MODEL", model);
     } else {

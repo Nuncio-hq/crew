@@ -29,6 +29,8 @@ import {
   ADVANCED_FIELDS_MOTION_TRANSITION,
   AUTO_MODEL_DROPDOWN_VALUE,
   AUTO_PROVIDER_DROPDOWN_VALUE,
+  automaticModelOptionLabel,
+  automaticModelPersistValue,
   BLOCK_BUILD_HIDDEN_PROVIDER_IDS,
   buildPersonaRuntimeDropdownOptions,
   CUSTOM_PROVIDER_DROPDOWN_VALUE,
@@ -39,13 +41,16 @@ import {
   getPersonaProviderOptions,
   getProviderApiKeyLabel,
   getRuntimePersonaModelOptions,
+  isAutomaticModelSelection,
   NO_RUNTIME_DROPDOWN_VALUE,
   runtimeSupportsLlmProviderSelection,
+  shouldOfferAutomaticModelOption,
   type PersonaDropdownOption,
   PERSONA_FIELD_CONTROL_CLASS,
   PERSONA_FIELD_SHELL_CLASS,
   shouldClearKnownModelForSelectionScope,
 } from "./agentConfigOptions";
+import { deriveRuntimeCapabilities } from "@/shared/api/runtimeCapabilities";
 import {
   modelDropdownOptions as buildModelDropdownOptions,
   relayMeshModelPickerState,
@@ -562,6 +567,20 @@ export function AgentDefinitionDialog({
     modelFieldVisible,
     provider: effectiveProvider,
   });
+  const selectableAutoModel = deriveRuntimeCapabilities(
+    selectedRuntime ?? { id: runtime, modelEnvVar: null },
+  ).selectableAutoModel;
+  const offerAutomaticModel = shouldOfferAutomaticModelOption({
+    isRelayMesh,
+    selectableAutoModel,
+  });
+  const resolvedModelSelectValue = isAutomaticModelSelection({
+    isRelayMesh,
+    model,
+    selectableAutoModel,
+  })
+    ? AUTO_MODEL_DROPDOWN_VALUE
+    : modelSelectValue;
   // On internal Block builds, BUZZ_AGENT_PROVIDER is baked in and a boot
   // migration rewrites any persisted Databricks v1 values → v2. Hide the v1
   // option there so it is not offered for new selections. OSS builds have no
@@ -617,11 +636,18 @@ export function AgentDefinitionDialog({
       options: modelOptions,
     })
       .filter(
-        (option) => isRelayMesh || option.value !== AUTO_MODEL_DROPDOWN_VALUE,
+        (option) =>
+          offerAutomaticModel || option.value !== AUTO_MODEL_DROPDOWN_VALUE,
       )
       .map((option) =>
-        isRelayMesh && option.value === AUTO_MODEL_DROPDOWN_VALUE
-          ? { ...option, label: "Automatic" }
+        option.value === AUTO_MODEL_DROPDOWN_VALUE
+          ? {
+              ...option,
+              label: automaticModelOptionLabel({
+                isRelayMesh,
+                selectableAutoModel,
+              }),
+            }
           : option,
       );
   const previewLabel = displayName.trim() || "Agent name";
@@ -729,13 +755,21 @@ export function AgentDefinitionDialog({
 
   function handleModelDropdownChange(nextValue: string) {
     setHasUserChanges(true);
-    applySelection(
-      selectionOnModelDropdownChange(selection, {
-        nextValue,
-        clearKnownModelOnCustomEntry: true,
-        isModelCustom,
-      }),
-    );
+    const nextSelection = selectionOnModelDropdownChange(selection, {
+      nextValue,
+      clearKnownModelOnCustomEntry: true,
+      isModelCustom,
+    });
+    applySelection({
+      ...nextSelection,
+      model:
+        nextValue === AUTO_MODEL_DROPDOWN_VALUE
+          ? automaticModelPersistValue({
+              isRelayMesh,
+              selectableAutoModel,
+            })
+          : nextSelection.model,
+    });
   }
 
   const footer = (
@@ -868,7 +902,7 @@ export function AgentDefinitionDialog({
             modelOwnedByProfile={modelOwnedByProfile}
             modelWriteThrough={modelWriteThrough}
             hasPersona={selectedRuntime?.capabilities?.personaDoc === "soulMd"}
-            modelSelectValue={modelSelectValue}
+            modelSelectValue={resolvedModelSelectValue}
             onCustomModelChange={setModel}
             onHermesProfileChange={(next) => {
               setHasUserChanges(true);

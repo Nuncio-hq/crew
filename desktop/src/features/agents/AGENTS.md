@@ -19,6 +19,14 @@ never maintains a rival copy of this table. Setup guidance follows the same
 rule: `requires_external_cli` is derived from `KnownAcpRuntime` and projected
 to the UI rather than inferred from a runtime ID in a component.
 
+**Preset-only capabilities** that have no `KnownAcpRuntime` row (Cursor, and
+other PATH-probed presets) are derived in
+`shared/api/runtimeCapabilities.ts` (`deriveRuntimeCapabilities`) from the
+catalog entry id — same place Hermes' `personaDoc` already lives. Today that
+covers `selectableAutoModel` for Cursor (persists model id `"auto"`, spawn
+injects `cursor-agent --model auto`). Do not add `runtime.id === "…"` checks
+in dialog render code; extend `deriveRuntimeCapabilities` instead.
+
 **Second metadata source: command-keyed execution policy.**
 `harness_max_parallelism` (`managed_agents/parallelism.rs`) maps the harness's
 static command string to a spawn-time cap (`OPENCLAW_MAX_PARALLELISM = 5` for
@@ -33,8 +41,9 @@ separate constant.
 
 If you need a new capability fact (a new env key, a native option, a "supports
 X" flag): add it to `KnownAcpRuntime` first, expose it on
-`AcpRuntimeCatalogEntry`, then project it through the core. Do not shortcut
-with a TypeScript lookup table or an id comparison in a component.
+`AcpRuntimeCatalogEntry`, then project it through the core. Preset-only facts
+go through `deriveRuntimeCapabilities`. Do not shortcut with a TypeScript
+lookup table or an id comparison in a component.
 
 ## Rules
 

@@ -41,6 +41,23 @@ test("merges the harness's own 'default' catalog entry into the canonical defaul
   assert.equal(options[0].label, "Default model");
 });
 
+test("merges Cursor's 'auto' catalog entry into the canonical default row", () => {
+  const options = getDiscoveredPersonaModelOptions(
+    response({
+      models: [
+        { id: "auto", name: "Auto", description: null },
+        { id: "composer-2", name: "Composer 2", description: null },
+      ],
+    }),
+    "",
+  );
+
+  assert.deepEqual(
+    options.map((option) => option.id),
+    ["", "composer-2"],
+  );
+});
+
 test("default row shows the harness-reported current model when available", () => {
   const options = getDiscoveredPersonaModelOptions(
     response({

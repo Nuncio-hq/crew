@@ -34,13 +34,17 @@ import { useEditHermesBinding } from "./editHermesBinding";
 import { EMPTY_GLOBAL_CONFIG } from "./AgentConfigFields";
 import {
   ADVANCED_FIELDS_MOTION_TRANSITION,
+  AUTO_MODEL_DROPDOWN_VALUE,
   AUTO_PROVIDER_DROPDOWN_VALUE,
+  automaticModelOptionLabel,
+  automaticModelPersistValue,
   BLOCK_BUILD_HIDDEN_PROVIDER_IDS,
   CUSTOM_PROVIDER_DROPDOWN_VALUE,
   formatRuntimeOptionLabel,
   getDefaultLlmModelLabel,
   getDefaultPersonaRuntime,
   getPersonaProviderOptions,
+  isAutomaticModelSelection,
   isMissingRequiredDropdownField,
   NO_RUNTIME_DROPDOWN_VALUE,
   PERSONA_FIELD_CONTROL_CLASS,
@@ -48,9 +52,11 @@ import {
   PERSONA_LABEL_OPTIONAL_CLASS,
   runtimeSupportsLlmProviderSelection,
   shouldClearKnownModelForSelectionScope,
+  shouldOfferAutomaticModelOption,
   sortPersonaRuntimes,
   type PersonaDropdownOption,
 } from "./agentConfigOptions";
+import { deriveRuntimeCapabilities } from "@/shared/api/runtimeCapabilities";
 import {
   modelDropdownOptions as buildModelDropdownOptions,
   relayMeshModelPickerState,
@@ -601,13 +607,21 @@ export function AgentInstanceEditDialog({
   }
 
   function handleModelDropdownChange(nextValue: string) {
-    applySelection(
-      selectionOnModelDropdownChange(selection, {
-        nextValue,
-        clearKnownModelOnCustomEntry: false,
-        isModelCustom: false,
-      }),
-    );
+    const nextSelection = selectionOnModelDropdownChange(selection, {
+      nextValue,
+      clearKnownModelOnCustomEntry: false,
+      isModelCustom: false,
+    });
+    applySelection({
+      ...nextSelection,
+      model:
+        nextValue === AUTO_MODEL_DROPDOWN_VALUE
+          ? automaticModelPersistValue({
+              isRelayMesh,
+              selectableAutoModel,
+            })
+          : nextSelection.model,
+    });
   }
 
   function handleOpenChange(next: boolean) {
@@ -811,6 +825,23 @@ export function AgentInstanceEditDialog({
     model,
     provider: providerForDiscovery,
   });
+  const selectableAutoModel = deriveRuntimeCapabilities(
+    selectedRuntime ?? {
+      id: selectedRuntimeId,
+      modelEnvVar: null,
+    },
+  ).selectableAutoModel;
+  const offerAutomaticModel = shouldOfferAutomaticModelOption({
+    isRelayMesh,
+    selectableAutoModel,
+  });
+  const resolvedModelSelectValue = isAutomaticModelSelection({
+    isRelayMesh,
+    model,
+    selectableAutoModel,
+  })
+    ? AUTO_MODEL_DROPDOWN_VALUE
+    : modelSelectValue;
   const modelDropdownOptions = buildModelDropdownOptions({
     allowCustom: !isRelayMesh,
     globalModel: isRelayMesh ? undefined : inheritedModelDefault.value,
@@ -818,7 +849,22 @@ export function AgentInstanceEditDialog({
     loading: modelDiscoveryLoading && discoveredModelOptions === null,
     loadingValue: MODEL_DISCOVERY_LOADING_VALUE,
     options: effectiveModelOptions,
-  });
+  })
+    .filter(
+      (option) =>
+        offerAutomaticModel || option.value !== AUTO_MODEL_DROPDOWN_VALUE,
+    )
+    .map((option) =>
+      option.value === AUTO_MODEL_DROPDOWN_VALUE
+        ? {
+            ...option,
+            label: automaticModelOptionLabel({
+              isRelayMesh,
+              selectableAutoModel,
+            }),
+          }
+        : option,
+    );
   const modelStatusMessage = resolveModelFieldStatusMessage({
     discoveredModelOptions,
     loading: modelDiscoveryLoading,
@@ -1106,7 +1152,7 @@ export function AgentInstanceEditDialog({
               modelWriteThrough={modelWriteThrough}
               personaDoc={selectedRuntime?.capabilities?.personaDoc ?? "none"}
               modelRequired={modelRequired}
-              modelSelectValue={modelSelectValue}
+              modelSelectValue={resolvedModelSelectValue}
               modelStatusMessage={modelStatusMessage}
               onCustomModelChange={setModel}
               onHermesProfileChange={setHermesProfile}

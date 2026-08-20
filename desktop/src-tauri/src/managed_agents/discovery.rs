@@ -338,6 +338,38 @@ pub fn normalize_agent_args(command: &str, agent_args: Vec<String>) -> Vec<Strin
     normalized
 }
 
+/// Whether this command is the Cursor ACP CLI (`cursor-agent`).
+pub(crate) fn is_cursor_agent_command(command: &str) -> bool {
+    normalize_command_identity(command) == "cursor-agent"
+}
+
+/// Prepend `cursor-agent --model <id> …` when a model is configured.
+///
+/// Cursor's ACP session metadata often returns an empty model catalog, so
+/// runtime `session/set_model` cannot apply the owner's choice reliably.
+/// Pinning `--model` at process start is the documented Cursor CLI path.
+/// Existing `--model` flags are left untouched.
+pub(crate) fn inject_cursor_startup_model_arg(
+    command: &str,
+    args: Vec<String>,
+    model: Option<&str>,
+) -> Vec<String> {
+    if !is_cursor_agent_command(command) {
+        return args;
+    }
+    let Some(model) = model.map(str::trim).filter(|value| !value.is_empty()) else {
+        return args;
+    };
+    if args.windows(2).any(|window| window[0] == "--model") {
+        return args;
+    }
+    let mut injected = Vec::with_capacity(args.len() + 2);
+    injected.push("--model".to_string());
+    injected.push(model.to_string());
+    injected.extend(args);
+    injected
+}
+
 fn profile_target_dirs(root: &Path) -> [PathBuf; 2] {
     if cfg!(debug_assertions) {
         // `just dev` builds fresh debug sidecars; never prefer stale release output.

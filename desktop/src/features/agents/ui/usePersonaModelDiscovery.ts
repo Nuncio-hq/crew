@@ -27,13 +27,13 @@ function stableModelDiscoveryEnvKey(envVars: EnvVarsValue): string {
 
 /**
  * True when a harness catalog entry is the harness's own "use my default"
- * row (e.g. Claude Code ships a literal `default` model id). Such entries
- * mean the same thing as leaving the model unset, so the UI merges them
- * into the single canonical default row instead of showing two rows for
- * one idea.
+ * row (e.g. Claude Code ships a literal `default` model id, Cursor ships
+ * `auto`). Such entries mean the same thing as the canonical Automatic/Auto
+ * row, so the UI merges them instead of showing two rows for one idea.
  */
 function isHarnessDefaultModelEntry(model: { id: string }) {
-  return model.id.trim().toLowerCase() === "default";
+  const id = model.id.trim().toLowerCase();
+  return id === "default" || id === "auto";
 }
 
 export function getDiscoveredPersonaModelOptions(
