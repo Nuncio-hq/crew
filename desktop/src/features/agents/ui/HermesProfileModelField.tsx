@@ -8,6 +8,10 @@ import {
 } from "@/shared/api/hermesProfiles";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import {
+  crewMayMutateHermesProfile,
+  hermesHomeProfileEditInHermesCopy,
+} from "../lib/hermesProfileBinding";
 import { ProfileOwnedModelRow } from "./HermesProfileBindingFields";
 
 const profileModelQueryKey = (name: string) =>
@@ -34,7 +38,8 @@ export function HermesProfileModelField({
   const query = useQuery({
     queryKey,
     queryFn: () => readHermesProfileModel(profileName),
-    enabled: profileName.trim().length > 0,
+    enabled:
+      profileName.trim().length > 0 && crewMayMutateHermesProfile(profileName),
     refetchOnMount: "always",
   });
   const [provider, setProvider] = React.useState("");
@@ -73,6 +78,18 @@ export function HermesProfileModelField({
       setError(cause instanceof Error ? cause.message : "Unable to save model");
     },
   });
+
+  if (!crewMayMutateHermesProfile(profileName)) {
+    return (
+      <div className="space-y-1.5" data-testid="hermes-home-profile-readonly">
+        <p className="text-sm font-medium text-foreground">Profile model</p>
+        <p className="text-sm text-muted-foreground">
+          Model and provider for the personal default profile are owned by
+          Hermes. {hermesHomeProfileEditInHermesCopy()}
+        </p>
+      </div>
+    );
+  }
 
   if (
     query.data?.status === "binary_missing" ||

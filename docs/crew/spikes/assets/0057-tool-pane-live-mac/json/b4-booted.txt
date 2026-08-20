@@ -1,0 +1,3 @@
+== Devices ==
+-- iOS 26.5 --
+    iPhone 17 Pro (05DA0D1B-4E34-4678-80C4-D888624313DA) (Booted) 

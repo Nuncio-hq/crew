@@ -1,0 +1,18 @@
+[
+  {
+    "id": "b70ef320-5058-4377-b410-7de3b78d189b",
+    "source": "acp",
+    "model": "grok-4.6",
+    "profile_name": null,
+    "model_config": "{\"cwd\": \"/tmp/issue243-spike-cwd\"}",
+    "started_at": 1787194496.4641979
+  },
+  {
+    "id": "18c8e311-73a7-4947-96ce-2de066aca3b3",
+    "source": "acp",
+    "model": "grok-4.6",
+    "profile_name": null,
+    "model_config": "{\"cwd\": \"/tmp/issue243-spike-cwd\"}",
+    "started_at": 1787194499.070663
+  }
+]

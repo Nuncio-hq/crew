@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "id": 1,
+  "error": {
+    "code": "bridge_missing",
+    "message": "Simulator bridge is not installed",
+    "data": {
+      "footnote": "The agent is waiting on this too.",
+      "install_hint": "brew install baguette\nbrew tap facebook/fb && brew install idb-companion"
+    }
+  }
+}

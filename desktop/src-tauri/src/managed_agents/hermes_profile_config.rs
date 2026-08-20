@@ -8,7 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    hermes_profile::{validate_hermes_profile_name, HERMES_FORBIDDEN_PROFILE_NAME},
+    hermes_profile::{crew_may_mutate_hermes_profile, validate_hermes_profile_name},
     hermes_profile_lifecycle::{first_error_line, hermes_profile_dir, run_hermes},
     hermes_profile_readiness::read_profile_yaml,
 };
@@ -50,7 +50,7 @@ fn profile_dir(name: &str) -> Result<(String, PathBuf), HermesProfileConfigResul
             message,
         });
     }
-    if trimmed == HERMES_FORBIDDEN_PROFILE_NAME {
+    if !crew_may_mutate_hermes_profile(trimmed) {
         return Err(HermesProfileConfigResult::InvalidName {
             name: trimmed.to_string(),
             message: "hermes profile 'default' cannot be edited by Crew".to_string(),

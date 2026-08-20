@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 use serde::{Deserialize, Serialize};
 
 use crate::managed_agents::hermes_profile::{
-    validate_hermes_profile_name, HERMES_FORBIDDEN_PROFILE_NAME,
+    crew_may_mutate_hermes_profile, is_hermes_home_profile, validate_hermes_profile_name,
 };
 use crate::managed_agents::resolve_command;
 use crate::util::configure_no_window;
@@ -125,6 +125,9 @@ pub fn list_profiles() -> Result<Vec<String>, String> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
+        if is_hermes_home_profile(&name) {
+            continue;
+        }
         if validate_hermes_profile_name(&name).is_ok() {
             names.push(name);
         }
@@ -152,10 +155,10 @@ pub(crate) fn create_profile_with(
             message,
         };
     }
-    if trimmed == HERMES_FORBIDDEN_PROFILE_NAME {
+    if !crew_may_mutate_hermes_profile(trimmed) {
         return HermesProfileLifecycleResult::InvalidName {
             name: trimmed.to_string(),
-            message: "hermes profile 'default' cannot be created or bound by Crew".to_string(),
+            message: "hermes profile 'default' cannot be created by Crew".to_string(),
         };
     }
 
@@ -261,7 +264,7 @@ pub(crate) fn delete_profile_with(
     binary: Option<PathBuf>,
 ) -> HermesProfileLifecycleResult {
     let trimmed = name.trim();
-    if trimmed == HERMES_FORBIDDEN_PROFILE_NAME || trimmed.is_empty() {
+    if !crew_may_mutate_hermes_profile(trimmed) || trimmed.is_empty() {
         return HermesProfileLifecycleResult::InvalidName {
             name: trimmed.to_string(),
             message: "Crew never deletes the manager's 'default' Hermes profile".to_string(),
@@ -656,6 +659,19 @@ exit 2
         fs::write(env.hermes_home.join("profiles/not-a-dir"), b"x").expect("file");
         let names = list_profiles().expect("list");
         assert_eq!(names, vec!["builder-1".to_string(), "scout".to_string()]);
+    }
+
+    #[test]
+    fn list_profiles_hides_accidental_home_profile_dir() {
+        let env = setup("normal");
+        fs::create_dir_all(env.hermes_home.join("profiles/scout")).expect("scout");
+        fs::create_dir_all(env.hermes_home.join("profiles/default")).expect("default");
+        let names = list_profiles().expect("list");
+        assert_eq!(names, vec!["scout".to_string()]);
+        assert!(
+            !names.iter().any(|name| name == "default"),
+            "home profile is a distinguished bind row, not a disk name: {names:?}"
+        );
     }
 
     #[test]

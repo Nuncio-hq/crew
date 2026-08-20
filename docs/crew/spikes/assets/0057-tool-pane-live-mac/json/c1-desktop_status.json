@@ -1,0 +1,23 @@
+{
+  "elapsed_s": 0.01,
+  "v": 1,
+  "id": 1,
+  "result": {
+    "browser_url": null,
+    "channel_id": "9fcd2dc3-5f3e-4f7e-9cb3-3409f33ba7fa",
+    "dev_server_port": null,
+    "governor": {
+      "booted": "0/2"
+    },
+    "lease": [
+      {
+        "agentName": "spike-237",
+        "channelId": "9fcd2dc3-5f3e-4f7e-9cb3-3409f33ba7fa",
+        "humanHeldUntilMs": null,
+        "instrument": "browser",
+        "state": "agentHeld"
+      }
+    ],
+    "sim_state": null
+  }
+}

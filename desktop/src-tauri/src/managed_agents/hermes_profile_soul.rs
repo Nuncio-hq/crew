@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
 use super::{
-    hermes_profile::{validate_hermes_profile_name, HERMES_FORBIDDEN_PROFILE_NAME},
+    hermes_profile::{crew_may_mutate_hermes_profile, validate_hermes_profile_name},
     hermes_profile_lifecycle::hermes_profile_dir,
 };
 
@@ -31,7 +31,7 @@ fn profile_dir(name: &str) -> Result<(String, PathBuf), HermesProfileSoulResult>
             message,
         });
     }
-    if trimmed == HERMES_FORBIDDEN_PROFILE_NAME {
+    if !crew_may_mutate_hermes_profile(trimmed) {
         return Err(HermesProfileSoulResult::InvalidName {
             name: trimmed.to_string(),
             message: "hermes profile 'default' cannot be edited by Crew".to_string(),

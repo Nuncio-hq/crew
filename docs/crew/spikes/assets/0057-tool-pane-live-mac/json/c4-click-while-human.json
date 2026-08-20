@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "id": 1,
+  "error": {
+    "code": "lease_held",
+    "message": "Input lease is held by human",
+    "data": {
+      "holder": "human"
+    }
+  }
+}

@@ -2,8 +2,9 @@
  * Hermes profile binding UI (Phase 02B / Phase 04 picker / feature 0001).
  *
  * Pins capability-driven visibility: profileArg runtimes show the binding
- * field + profile-owned model row; goose does not. Invalid names and
- * "default" are blocked client-side. Model is never an editable control.
+ * field + profile-owned model row; goose does not. Invalid names stay blocked.
+ * The personal `default` home profile is offered and binds after confirm.
+ * Model is never an editable control for `default`.
  * Phase 04: disk profiles appear in a combobox; occupancy blocks save.
  */
 import { expect, test } from "@playwright/test";
@@ -154,7 +155,7 @@ test.describe("hermes profile binding", () => {
     await expect(dialog.locator("#persona-hermes-profile")).toHaveValue("");
   });
 
-  test("create: invalid profile name and default are blocked", async ({
+  test("create: invalid profile name is blocked; default needs confirm", async ({
     page,
   }) => {
     await installMockBridge(page, { hermesProfiles: ["scout"] });
@@ -171,15 +172,55 @@ test.describe("hermes profile binding", () => {
     );
     await expect(createSubmit(dialog)).toBeDisabled();
 
-    await profileInput.fill("default");
-    await expect(page.getByTestId("hermes-profile-error")).toContainText(
-      /default/i,
-    );
-    await expect(createSubmit(dialog)).toBeDisabled();
-
     await profileInput.fill("scout");
     await expect(page.getByTestId("hermes-profile-error")).toHaveCount(0);
     await expect(page.getByTestId("hermes-profile-model-field")).toBeVisible();
+  });
+
+  test("create: personal default is offered and binds only after confirm", async ({
+    page,
+  }) => {
+    await installMockBridge(page, { hermesProfiles: [] });
+    const dialog = await openCreateCustomize(page);
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await waitForAnimations(page);
+    await dialog.locator("#persona-display-name").fill("Personal Hermes");
+
+    await dialog.getByTestId("hermes-profile-combobox-trigger").click();
+    await waitForAnimations(page);
+    const list = page.getByTestId("hermes-profile-combobox-list");
+    await expect(list.getByTestId("hermes-profile-option")).toHaveCount(1);
+    await expect(list.getByText("Personal (default)")).toBeVisible();
+    await expect(list.getByText("default", { exact: true })).toHaveCount(0);
+
+    await list.getByText("Personal (default)").click();
+    const confirm = page.getByTestId("hermes-home-profile-confirm");
+    await expect(confirm).toBeVisible();
+    await expect(confirm).toContainText(/Desktop chat/);
+    await expect(confirm).toContainText(/SOUL.md/);
+    await expect(confirm).toContainText(/gateways/);
+    await page.getByTestId("hermes-home-profile-confirm-cancel").click();
+    await expect(dialog.locator("#persona-hermes-profile")).toHaveValue("");
+    await expect(createSubmit(dialog)).toBeDisabled();
+
+    await dialog.getByTestId("hermes-profile-combobox-trigger").click();
+    await waitForAnimations(page);
+    await page.getByText("Personal (default)").click();
+    await page.getByTestId("hermes-home-profile-confirm-accept").click();
+    await expect(dialog.locator("#persona-hermes-profile")).toHaveValue(
+      "default",
+    );
+    await expect(page.getByTestId("hermes-profile-error")).toHaveCount(0);
+    await expect(
+      page.getByTestId("hermes-home-profile-readonly"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("hermes-home-profile-readonly"),
+    ).toContainText(/edit this profile in Hermes/i);
+    await expect(page.getByTestId("hermes-profile-model-loading")).toHaveCount(
+      0,
+    );
+    await expect(page.getByText("Reading profile settings…")).toHaveCount(0);
   });
 
   test("create: lists existing disk profiles and pick binds", async ({
@@ -197,8 +238,9 @@ test.describe("hermes profile binding", () => {
 
     const list = page.getByTestId("hermes-profile-combobox-list");
     await expect(list).toBeVisible();
-    await expect(list.getByTestId("hermes-profile-option")).toHaveCount(2);
+    await expect(list.getByTestId("hermes-profile-option")).toHaveCount(3);
     await expect(list.getByTestId("hermes-profile-option")).toContainText([
+      "Personal (default)",
       "builder",
       "scout",
     ]);
@@ -235,6 +277,7 @@ test.describe("hermes profile binding", () => {
     const list = page.getByTestId("hermes-profile-combobox-list");
     await expect(list).toBeVisible();
     await expect(list.getByTestId("hermes-profile-option")).toContainText([
+      "Personal (default)",
       "builder",
       "scout",
     ]);
