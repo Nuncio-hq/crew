@@ -1265,7 +1265,14 @@ The channel Tool Pane is one surface (`PR · Browser · Sim` in thread focus,
    a `WebviewWindow` fallback (huddle precedent) behind the same TS API
    (spike 0027 INCONCLUSIVE on this Linux VM). Crew owns the dev server
    as a labeled Buzz Term PTY; subject is thread worktree, else channel
-   checkout (`buzz-location`), else a manual URL.
+   checkout (`buzz-location`), else a manual URL. **Amended by #236:** the
+   Browser tab is navigable-first — it defaults to the manual/Custom URL
+   subject and never gates the webview on `tooling.devServer` existing.
+   Worktree/checkout dev-server subjects stay selectable when their paths
+   exist; the dev-server setup card is an optional, non-blocking affordance
+   surfaced under the toolbar, not a wall over the preview. `browser_navigate`
+   agent parity holds unchanged: the instrument's existence never depended on
+   canvas `tooling.devServer`.
 5. **Non-goals stay out.** Android, physical devices, mobile-app surface,
    new Nostr kinds, multi-machine handoff, Workbench (#186), #197.
 
