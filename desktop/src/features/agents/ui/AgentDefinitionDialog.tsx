@@ -765,8 +765,8 @@ export function AgentDefinitionDialog({
           setHasUserChanges(true);
           setAvatarUrl(nextAvatarUrl);
         }}
+        runtimeId={runtime.trim() || null}
       />
-
       <div className="space-y-5">
         <div className="space-y-1.5">
           <label

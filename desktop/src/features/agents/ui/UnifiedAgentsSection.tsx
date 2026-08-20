@@ -27,6 +27,7 @@ import { Badge } from "@/shared/ui/badge";
 import { IdentityCardSkeleton } from "@/shared/ui/identity-card-skeleton";
 import { AgentIdentityCard } from "./AgentIdentityCard";
 import { AgentRuntimeAvatarControl } from "./AgentRuntimeAvatarControl";
+import { resolveAgentDefaultRuntimeId } from "./AgentRuntimeDefaultAvatar";
 import { CreateIdentityCard } from "./CreateIdentityCard";
 import { HermesProfileReadinessIndicator } from "./HermesProfileReadinessIndicator";
 import { PersonaActionsMenu } from "./PersonaActionsMenu";
@@ -308,6 +309,10 @@ function AgentPersonaCard({
     isActive,
   );
   const hasStatusBadge = showSleepingBadge || Boolean(agent?.personaOrphaned);
+  const defaultRuntimeId = resolveAgentDefaultRuntimeId({
+    agentRuntime: agent?.runtime,
+    personaRuntime: persona.runtime,
+  });
 
   return (
     <AgentIdentityCard
@@ -328,6 +333,7 @@ function AgentPersonaCard({
             isStarting={startingAgentPubkey === agent.pubkey}
             label={title}
             requiresRestart={agent.needsRestart}
+            runtimeId={defaultRuntimeId}
             startTestId={`agent-runtime-start-${agent.pubkey}`}
             onOpenError={() => {
               onOpenAgentProfile(agent.pubkey, { tab: "runtime" });
@@ -345,6 +351,7 @@ function AgentPersonaCard({
             isActive={false}
             isStarting={startingPersonaIds.has(persona.id)}
             label={title}
+            runtimeId={defaultRuntimeId}
             startTestId={`persona-runtime-start-${persona.id}`}
             onStart={() => onStartPersona(persona)}
           />
@@ -442,6 +449,9 @@ function StandaloneAgentCard({
           isStarting={startingAgentPubkey === agent.pubkey}
           label={title}
           requiresRestart={agent.needsRestart}
+          runtimeId={resolveAgentDefaultRuntimeId({
+            agentRuntime: agent.runtime,
+          })}
           startTestId={`agent-runtime-start-${agent.pubkey}`}
           onOpenError={() => {
             onOpenAgentProfile(agent.pubkey, { tab: "runtime" });

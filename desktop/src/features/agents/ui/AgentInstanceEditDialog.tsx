@@ -872,7 +872,6 @@ export function AgentInstanceEditDialog({
   const advancedFieldsTransition = shouldReduceMotion
     ? { duration: 0 }
     : ADVANCED_FIELDS_MOTION_TRANSITION;
-
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
       <ChooserDialogContent
@@ -901,6 +900,7 @@ export function AgentInstanceEditDialog({
             onEditLinkedPersona={onEditLinkedPersona}
             onSelectAvatar={setAvatarUrl}
             onUploadPendingChange={setIsAvatarUploadPending}
+            runtimeId={selectedRuntimeId}
           />
           <div className="space-y-5">
             <div className="space-y-1.5">

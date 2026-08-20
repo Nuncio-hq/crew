@@ -9,6 +9,7 @@ type AgentInstanceEditAvatarColumnProps = {
   onUploadPendingChange: (pending: boolean) => void;
   onEditLinkedPersona?: () => void;
   onClose: () => void;
+  runtimeId?: string | null;
 };
 
 export function AgentInstanceEditAvatarColumn({
@@ -19,6 +20,7 @@ export function AgentInstanceEditAvatarColumn({
   onEditLinkedPersona,
   onSelectAvatar,
   onUploadPendingChange,
+  runtimeId = null,
 }: AgentInstanceEditAvatarColumnProps) {
   return (
     <div className="flex flex-col items-center gap-2">
@@ -31,6 +33,7 @@ export function AgentInstanceEditAvatarColumn({
         onClearAvatar={onClearAvatar}
         onUploadPendingChange={onUploadPendingChange}
         onSelectAvatar={onSelectAvatar}
+        runtimeId={runtimeId}
       />
       {onEditLinkedPersona ? (
         <Button

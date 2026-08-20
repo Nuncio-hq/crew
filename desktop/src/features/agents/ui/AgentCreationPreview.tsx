@@ -5,7 +5,6 @@ import { Link2, Pencil, Plus, UploadCloud } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import { MaskedAvatarBadgeFrame } from "@/features/profile/ui/MaskedAvatarBadgeFrame";
-import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import {
   AVATAR_COLORS,
   AVATAR_COLOR_SWATCHES,
@@ -44,6 +43,7 @@ import {
   type EmojiMartEmoji,
   isAvatarFileDrag,
 } from "./AgentCreationPreview.utils";
+import { AgentAvatarFace } from "./AgentAvatarFace";
 
 export function AgentCreationPreview({
   assetLabel = "avatar",
@@ -56,6 +56,7 @@ export function AgentCreationPreview({
   onUploadPendingChange,
   onSelectAvatar,
   processImage,
+  runtimeId = null,
   shape = "circle",
   testIdPrefix = "agent-avatar",
   variant = "default",
@@ -73,6 +74,8 @@ export function AgentCreationPreview({
   onUploadPendingChange?: (isPending: boolean) => void;
   onSelectAvatar: (avatarUrl: string) => void;
   processImage?: (file: File) => Promise<string>;
+  /** When no custom avatar is set, show this runtime's SVG/PNG mark. */
+  runtimeId?: string | null;
   shape?: "circle" | "rounded-square";
   testIdPrefix?: string;
   variant?: "compact" | "default";
@@ -719,48 +722,16 @@ export function AgentCreationPreview({
           <div
             className={cn("relative", isCompact ? "h-16 w-16" : "h-36 w-36")}
           >
-            {emojiAvatarPreview ? (
-              <div
-                aria-label={`${label} ${assetLabel}`}
-                className={cn(
-                  "relative flex h-full w-full shrink-0 items-center justify-center overflow-hidden shadow-xs transition-[background-color] duration-200 ease-out",
-                  isRoundedSquare
-                    ? isCompact
-                      ? "rounded-2xl"
-                      : "rounded-[2rem]"
-                    : "rounded-full",
-                )}
-                role="img"
-                style={{ backgroundColor: emojiAvatarPreview.color }}
-              >
-                <span
-                  className={cn(
-                    "flex h-full w-full items-center justify-center leading-none",
-                    isCompact ? "text-2xl" : "text-[4rem]",
-                  )}
-                >
-                  {emojiAvatarPreview.emoji}
-                </span>
-              </div>
-            ) : isRoundedSquare && avatarUrl ? (
-              <img
-                alt={`${label} ${assetLabel}`}
-                className={cn(
-                  "h-full w-full object-cover shadow-xs",
-                  isCompact ? "rounded-2xl" : "rounded-[2rem]",
-                )}
-                src={avatarUrl}
-              />
-            ) : (
-              <ProfileAvatar
-                avatarUrl={avatarUrl}
-                className={cn(
-                  "h-full w-full",
-                  isCompact ? "text-base" : "text-4xl",
-                )}
-                label={label}
-              />
-            )}
+            <AgentAvatarFace
+              assetLabel={assetLabel}
+              avatarUrl={avatarUrl}
+              emojiPreview={emojiAvatarPreview}
+              isCompact={isCompact}
+              isRoundedSquare={isRoundedSquare}
+              label={label}
+              runtimeId={runtimeId}
+              size={isCompact ? 64 : 144}
+            />
           </div>
         </div>
       </div>
@@ -962,16 +933,19 @@ export function AgentCreationPreview({
                       </span>
                     </div>
                   ) : (
-                    <ProfileAvatar
+                    <AgentAvatarFace
+                      assetLabel={assetLabel}
                       avatarUrl={avatarUrl}
                       className={cn(
-                        "h-full w-full transition-shadow duration-150",
-                        isCompact ? "text-base" : "text-4xl",
+                        "transition-shadow duration-150",
                         isDragOverAvatar &&
                           !isAvatarMenuOpen &&
                           "ring-2 ring-primary/30",
                       )}
+                      isCompact={isCompact}
                       label={label}
+                      runtimeId={runtimeId}
+                      size={isCompact ? 64 : 144}
                     />
                   )}
                 </MaskedAvatarBadgeFrame>
