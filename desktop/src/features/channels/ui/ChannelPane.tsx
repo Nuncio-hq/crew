@@ -7,6 +7,7 @@ import { ComposerUploadProgressOverlay } from "@/features/messages/ui/ComposerUp
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
 import { ComposerWorkspaceBindingProvider } from "@/features/messages/ui/composerWorkspaceBinding";
 import { ComposerWorkspaceSelector } from "@/features/messages/ui/ComposerWorkspaceSelector";
+import { ChannelLocalWorkspaceChip } from "@/features/channels/ui/ChannelLocalWorkspaceChip";
 import {
   DEFAULT_WORKSPACE_BINDING,
   type WorkspaceBindingChoice,
@@ -771,6 +772,9 @@ export const ChannelPane = React.memo(function ChannelPane({
                           channelId={activeChannel?.id ?? null}
                           onChange={setWorkspaceBinding}
                           value={workspaceBinding}
+                        />
+                        <ChannelLocalWorkspaceChip
+                          channelId={activeChannel?.id ?? null}
                         />
                       </>
                     }

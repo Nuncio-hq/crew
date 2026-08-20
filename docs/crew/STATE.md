@@ -1,5 +1,14 @@
 # Crew State
 
+## Issue #242 — Office channel Relink folder
+
+Exclusive-repo office channels show the bound local path and a Relink /
+Pick folder control next to the composer workspace selector. Relink
+reuses `linkCurrentProjectWorkspace` (owner-signed 30617 `buzz-location`).
+No Projects rail, no remount of `CrewProjectWorkspacePanel`. Frozen
+thread roots stay frozen (V1 / #217). Gate C: D-070.
+Last updated: 2026-08-20
+
 ## Issue #232 — CoS is channel intake
 
 One contact: CoS. Channel roles wall work; CoS calls Dev by name (#230).
