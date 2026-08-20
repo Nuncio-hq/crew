@@ -19,8 +19,8 @@ mod snapshot;
 mod types;
 
 pub use bridge::{
-    bridge_describe_ui_args, bridge_tap_args, discover_sim_bridge, BridgeAvailability,
-    SIM_BRIDGE_INSTALL_HINT,
+    bridge_describe_ui_args, bridge_press_args, bridge_swipe_args, bridge_tap_args,
+    bridge_type_args, discover_sim_bridge, BridgeAvailability, ScreenSize, SIM_BRIDGE_INSTALL_HINT,
 };
 pub use browser::{backend, window_label, BrowserBackend};
 pub use commands::*;

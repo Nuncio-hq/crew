@@ -11,9 +11,9 @@ use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::{oneshot, Mutex};
 
 use crate::resource_governor::{
-    backend, bridge_describe_ui_args, bridge_tap_args, discover_sim_bridge, window_label,
-    BridgeAvailability, BrowserBackend, DeviceLifecycle, ResourceGovernorHandle,
-    SIM_BRIDGE_INSTALL_HINT,
+    backend, bridge_describe_ui_args, bridge_press_args, bridge_swipe_args, bridge_tap_args,
+    bridge_type_args, discover_sim_bridge, window_label, BridgeAvailability, BrowserBackend,
+    DeviceLifecycle, ResourceGovernorHandle, ScreenSize, SIM_BRIDGE_INSTALL_HINT,
 };
 
 use super::bridge_js::BROWSER_BRIDGE_JS;
@@ -27,6 +27,12 @@ pub struct LiveHost {
     nonce: String,
     waiters: Arc<Mutex<HashMap<String, oneshot::Sender<serde_json::Value>>>>,
     port: Arc<AtomicU16>,
+    /// Last known simulator screen size (device points) per UDID, learned
+    /// from the root frame of the most recent `sim_snapshot`. `sim_tap` /
+    /// `sim_swipe` need this so the coordinate space they tell the bridge
+    /// matches the space the agent read element bounds in — using the wrong
+    /// size doesn't error, it just taps the wrong point.
+    screen_sizes: Arc<std::sync::Mutex<HashMap<String, ScreenSize>>>,
 }
 
 impl LiveHost {
@@ -41,7 +47,22 @@ impl LiveHost {
             nonce,
             waiters,
             port,
+            screen_sizes: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    fn cache_screen_size(&self, udid: &str, screen: ScreenSize) {
+        if let Ok(mut guard) = self.screen_sizes.lock() {
+            guard.insert(udid.to_string(), screen);
+        }
+    }
+
+    fn cached_screen_size(&self, udid: &str) -> ScreenSize {
+        self.screen_sizes
+            .lock()
+            .ok()
+            .and_then(|guard| guard.get(udid).copied())
+            .unwrap_or(ScreenSize::DEFAULT)
     }
 
     pub fn emit_ui(&self, payload: serde_json::Value) {
@@ -401,12 +422,20 @@ impl LiveHost {
 
     pub fn sim_snapshot(&self, udid: &str) -> Result<Snapshot, ControlError> {
         let json = run_bridge(udid, bridge_describe_ui_args)?;
-        let nodes = parse_ax_tree(&json);
+        let (nodes, screen) = parse_ax_tree(&json);
+        if let Some(screen) = screen {
+            self.cache_screen_size(udid, screen);
+        }
         Ok(build_snapshot("simulator://channel", nodes))
     }
 
+    /// `x`/`y` are expected in the same device-point space `sim_snapshot`
+    /// most recently reported for `udid` — that is what gets sent to the
+    /// bridge as `--width`/`--height` so its scaling matches the space the
+    /// caller read bounds in.
     pub fn sim_tap(&self, udid: &str, x: f64, y: f64) -> Result<(), ControlError> {
-        let _ = run_bridge(udid, |binary, id| bridge_tap_args(binary, id, x, y))?;
+        let screen = self.cached_screen_size(udid);
+        let _ = run_bridge(udid, |binary, id| bridge_tap_args(binary, id, x, y, screen))?;
         Ok(())
     }
 
@@ -416,15 +445,21 @@ impl LiveHost {
         from: (f64, f64),
         to: (f64, f64),
     ) -> Result<(), ControlError> {
-        run_hid(udid, "swipe", Some(from), Some(to), None, None)
+        let screen = self.cached_screen_size(udid);
+        let _ = run_bridge(udid, |binary, id| {
+            bridge_swipe_args(binary, id, from, to, screen)
+        })?;
+        Ok(())
     }
 
     pub fn sim_type(&self, udid: &str, text: &str) -> Result<(), ControlError> {
-        run_hid(udid, "text", None, None, None, Some(text))
+        let _ = run_bridge(udid, |binary, id| bridge_type_args(binary, id, text))?;
+        Ok(())
     }
 
     pub fn sim_press(&self, udid: &str, button: &str) -> Result<(), ControlError> {
-        run_hid(udid, button, None, None, None, None)
+        let _ = run_bridge(udid, |binary, id| bridge_press_args(binary, id, button))?;
+        Ok(())
     }
 
     pub fn sim_launch(
@@ -527,56 +562,6 @@ const PNG_1X1: &[u8] = &[
     1, 0, 24, 221, 141, 176, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
 
-fn run_hid(
-    udid: &str,
-    action: &str,
-    from: Option<(f64, f64)>,
-    to: Option<(f64, f64)>,
-    delta: Option<f64>,
-    text: Option<&str>,
-) -> Result<(), ControlError> {
-    match discover_sim_bridge() {
-        BridgeAvailability::Available { path, .. } => {
-            let mut cmd = Command::new(&path);
-            cmd.arg(action).arg("--udid").arg(udid);
-            if let Some((x, y)) = from {
-                cmd.arg("--x")
-                    .arg(x.to_string())
-                    .arg("--y")
-                    .arg(y.to_string());
-            }
-            if let Some((x, y)) = to {
-                cmd.arg("--x2")
-                    .arg(x.to_string())
-                    .arg("--y2")
-                    .arg(y.to_string());
-            }
-            if let Some(d) = delta {
-                cmd.arg("--delta").arg(d.to_string());
-            }
-            if let Some(t) = text {
-                cmd.arg("--text").arg(t);
-            }
-            let output = cmd
-                .output()
-                .map_err(|e| ControlError::instrument_unreachable(format!("sim {action}: {e}")))?;
-            if !output.status.success() {
-                return Err(ControlError::instrument_unreachable(format!(
-                    "sim {action} failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                )));
-            }
-            Ok(())
-        }
-        BridgeAvailability::Missing { install_hint } => {
-            Err(ControlError::bridge_missing(install_hint))
-        }
-        BridgeAvailability::Failed { message } => Err(ControlError::bridge_missing(format!(
-            "{SIM_BRIDGE_INSTALL_HINT}\n{message}"
-        ))),
-    }
-}
-
 fn run_bridge(
     udid: &str,
     args: impl FnOnce(&str, &str) -> Vec<String>,
@@ -605,10 +590,20 @@ fn run_bridge(
     }
 }
 
-fn parse_ax_tree(raw: &str) -> Vec<SnapshotNode> {
+/// Parses a `describe-ui` JSON payload into snapshot nodes plus, when
+/// present, the root object's own `frame` as the simulator's screen size.
+///
+/// `baguette describe-ui`'s root is the full accessibility tree wrapper, and
+/// its `frame` is the whole screen in device points (verified live 2026-08-20
+/// against a booted iPhone 17 Pro: `{"width":402,"height":874,"x":0,"y":0}`,
+/// issue #246) — that is exactly the coordinate space element `frame`s below
+/// it are reported in, so it doubles as the size `sim_tap`/`sim_swipe` must
+/// declare to the bridge for those bounds to map onto the right point.
+fn parse_ax_tree(raw: &str) -> (Vec<SnapshotNode>, Option<ScreenSize>) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
+    let screen = root_frame_size(&value);
     let nodes = if let Some(arr) = value.as_array() {
         arr.clone()
     } else if let Some(arr) = value.get("nodes").and_then(|v| v.as_array()) {
@@ -618,7 +613,14 @@ fn parse_ax_tree(raw: &str) -> Vec<SnapshotNode> {
     } else {
         vec![value]
     };
-    nodes.into_iter().filter_map(ax_node).collect()
+    (nodes.into_iter().filter_map(ax_node).collect(), screen)
+}
+
+fn root_frame_size(value: &serde_json::Value) -> Option<ScreenSize> {
+    let frame = value.get("frame")?;
+    let width = frame.get("width")?.as_f64()?;
+    let height = frame.get("height")?.as_f64()?;
+    (width > 0.0 && height > 0.0).then_some(ScreenSize { width, height })
 }
 
 fn ax_node(value: serde_json::Value) -> Option<SnapshotNode> {
@@ -664,6 +666,72 @@ fn ax_node(value: serde_json::Value) -> Option<SnapshotNode> {
         bounds,
         children,
     })
+}
+
+#[cfg(test)]
+mod bridge_parsing_tests {
+    use super::*;
+
+    /// Live-captured shape from `baguette describe-ui` against a booted
+    /// iPhone 17 Pro (2026-08-20, issue #246): the root object's `frame` is
+    /// the whole screen, and `children` holds the accessibility tree.
+    const LIVE_DESCRIBE_UI_FIXTURE: &str = r#"{
+        "frame": {"x": 0.0, "y": 0.0, "width": 402.0, "height": 874.0},
+        "children": [
+            {
+                "role": "Button",
+                "name": "Settings",
+                "frame": {"x": 10.0, "y": 20.0, "width": 100.0, "height": 40.0},
+                "children": []
+            }
+        ]
+    }"#;
+
+    #[test]
+    fn parse_ax_tree_extracts_root_frame_as_screen_size() {
+        let (nodes, screen) = parse_ax_tree(LIVE_DESCRIBE_UI_FIXTURE);
+        assert_eq!(
+            screen,
+            Some(ScreenSize {
+                width: 402.0,
+                height: 874.0
+            })
+        );
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "Settings");
+    }
+
+    #[test]
+    fn parse_ax_tree_returns_none_screen_for_bare_array_payload() {
+        // Some bridge shapes (e.g. idb_companion's `ui describe-all`) return
+        // a bare array with no wrapping root frame — screen size stays
+        // unknown and callers fall back to `ScreenSize::DEFAULT`.
+        let (nodes, screen) = parse_ax_tree(r#"[{"role":"Button","name":"OK"}]"#);
+        assert_eq!(screen, None);
+        assert_eq!(nodes.len(), 1);
+    }
+
+    #[test]
+    fn parse_ax_tree_handles_invalid_json_without_panicking() {
+        let (nodes, screen) = parse_ax_tree("not json");
+        assert!(nodes.is_empty());
+        assert_eq!(screen, None);
+    }
+
+    #[test]
+    fn root_frame_size_rejects_zero_dimensions() {
+        // A frame present but zeroed (e.g. simulator still settling right
+        // after boot) must not poison the cache with a 0x0 screen.
+        let value: serde_json::Value =
+            serde_json::from_str(r#"{"frame": {"width": 0.0, "height": 0.0}}"#).unwrap();
+        assert_eq!(root_frame_size(&value), None);
+    }
+
+    #[test]
+    fn root_frame_size_missing_frame_is_none() {
+        let value: serde_json::Value = serde_json::from_str(r#"{"children": []}"#).unwrap();
+        assert_eq!(root_frame_size(&value), None);
+    }
 }
 
 pub fn click_point_from_snapshot(

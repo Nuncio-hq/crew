@@ -1,0 +1,32 @@
+{
+  "udid": "05DA0D1B-4E34-4678-80C4-D888624313DA",
+  "baguette_version": "0.1.92",
+  "commands": [
+    {
+      "action": "tap",
+      "argv": ["tap", "--udid", "<udid>", "--x", "200.0", "--y", "400.0", "--width", "402.0", "--height", "874.0"],
+      "result": { "ok": true, "action": "tap" }
+    },
+    {
+      "action": "swipe",
+      "argv": ["swipe", "--udid", "<udid>", "--start-x", "200.0", "--start-y", "600.0", "--end-x", "200.0", "--end-y", "300.0", "--width", "402.0", "--height", "874.0"],
+      "result": { "ok": true, "action": "swipe" }
+    },
+    {
+      "action": "press",
+      "argv": ["press", "--udid", "<udid>", "--button", "home"],
+      "result": { "ok": true, "action": "press" }
+    },
+    {
+      "action": "type",
+      "argv": ["type", "--udid", "<udid>", "--text", "hello"],
+      "result": { "ok": true, "action": "type" }
+    },
+    {
+      "action": "key",
+      "argv": ["key", "--udid", "<udid>", "--code", "Enter"],
+      "result": { "ok": true, "action": "key" }
+    }
+  ],
+  "note": "argv shapes match resource_governor::bridge::{bridge_tap_args,bridge_swipe_args,bridge_press_args,bridge_type_args,bridge_key_args} exactly."
+}
