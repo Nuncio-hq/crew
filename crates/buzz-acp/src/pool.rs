@@ -3285,15 +3285,17 @@ pub async fn run_prompt_task(
                             )
                             .await
                             {
-                                send_prompt_result(
-                                    &result_tx,
-                                    &turn_id,
-                                    agent,
-                                    source,
-                                    PromptOutcome::Error(AcpError::Protocol(error)),
-                                    None,
+                                // Channel messages already landed. Failing the
+                                // turn as Protocol here respawns the agent pool
+                                // and makes successful replies look broken when
+                                // the hosted relay permanently rejects receipts
+                                // (e.g. HTTP 400 unknown/unsupported kind).
+                                tracing::error!(
+                                    %error,
+                                    session_id,
+                                    turn_id,
+                                    "agent receipt publication failed after successful turn; continuing without receipt"
                                 );
-                                return;
                             }
                         }
                         let usage = agent.acp.take_turn_usage();
@@ -3384,15 +3386,14 @@ pub async fn run_prompt_task(
                 )
                 .await
                 {
-                    send_prompt_result(
-                        &result_tx,
-                        &turn_id,
-                        agent,
-                        source,
-                        PromptOutcome::Error(AcpError::Protocol(error)),
-                        None,
+                    // See the control-signal path above: receipt failure must
+                    // not convert a completed turn into a Protocol respawn.
+                    tracing::error!(
+                        %error,
+                        session_id,
+                        turn_id,
+                        "agent receipt publication failed after successful turn; continuing without receipt"
                     );
-                    return;
                 }
             }
             let core_stop = acp_stop_to_core(&stop_reason);
