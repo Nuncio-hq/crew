@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 mod desktop_tools;
 mod paths;
+mod publish_message;
 mod read_file;
 mod rg;
 mod shell;
@@ -49,6 +50,17 @@ impl DevMcp {
         context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         shell::run(&self.state, p, context.ct).await
+    }
+
+    #[tool(
+        name = "publish_message",
+        description = "Publish a Buzz channel message without passing Markdown through a shell. Use this instead of `buzz messages send` for normal text and multiline replies: content is streamed byte-for-byte to the CLI, so newlines, backticks, quotes, and `$()` remain literal. Returns the signed event result including event_id and mention_pubkeys. Attachments and evidence cards still use the CLI stdin path."
+    )]
+    async fn publish_message(
+        &self,
+        Parameters(p): Parameters<publish_message::PublishMessageParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        publish_message::run(&self.state, p).await
     }
 
     #[tool(
