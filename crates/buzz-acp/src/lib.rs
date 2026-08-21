@@ -5065,6 +5065,7 @@ mod agent_draft_prompt_tests {
         let prompt = include_str!("base_prompt.md");
         assert!(prompt.contains("pass real newline bytes through stdin"));
         assert!(prompt.contains("single-quoted shell strings preserve `\\n` literally"));
+        assert!(prompt.contains("prefer the structured `publish_message` tool"));
         assert!(prompt.contains("buzz messages send ... --content -"));
         assert!(prompt.contains("Never run a bare `--content -` with no producer"));
     }
