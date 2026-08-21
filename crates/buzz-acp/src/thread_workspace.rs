@@ -214,6 +214,42 @@ impl std::fmt::Display for ThreadWorkspaceMissing {
 
 impl std::error::Error for ThreadWorkspaceMissing {}
 
+/// `git worktree add -b` failed and automatic recovery could not finish.
+/// Surface git's stderr once — do not wrap this as a retried Protocol error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ThreadWorkspacePrepareFailed {
+    pub(crate) branch: String,
+    pub(crate) worktree_path: PathBuf,
+    pub(crate) git_stderr: String,
+}
+
+impl std::fmt::Display for ThreadWorkspacePrepareFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Isolated worktree for branch '{}' could not be prepared at {}. Git reported: {}",
+            self.branch,
+            self.worktree_path.display(),
+            self.git_stderr
+        )
+    }
+}
+
+impl std::error::Error for ThreadWorkspacePrepareFailed {}
+
+fn leftover_buzz_branch_exists(stderr: &str) -> bool {
+    let compact = stderr.to_ascii_lowercase();
+    compact.contains("a branch named") && compact.contains("already exists")
+}
+
+fn planned_worktree_path_is_absent(path: &Path) -> bool {
+    !path.exists()
+}
+
+fn git_stderr_text(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr).trim().to_string()
+}
+
 fn canonicalize_project_workspace(path: &Path) -> Result<PathBuf> {
     match fs::canonicalize(path) {
         Ok(canonical) => Ok(canonical),
@@ -595,8 +631,14 @@ pub async fn ensure_planned_thread_worktree(
         }
         // The deterministic branch can outlive a manually removed worktree.
         // Reattach it instead of treating that recoverable state as a task
-        // failure. Git still rejects a branch checked out somewhere else.
-        if branch_matches {
+        // failure — including leftover `buzz/<short>` branches that never
+        // recorded a thread root (issue #260). Git still rejects a branch
+        // checked out somewhere else.
+        let create_stderr = git_stderr_text(&create.stderr);
+        let leftover_branch = leftover_buzz_branch_exists(&create_stderr);
+        let should_reattach =
+            branch_matches || (leftover_branch && planned_worktree_path_is_absent(worktree_path));
+        if should_reattach {
             let attach = Command::new("git")
                 .arg("-C")
                 .arg(repo_root)
@@ -612,8 +654,12 @@ pub async fn ensure_planned_thread_worktree(
                     conflict.record_git_error("reattach failed", &attach.stderr);
                     return Err(conflict.into());
                 }
-                let stderr = String::from_utf8_lossy(&attach.stderr);
-                bail!("git worktree add failed: {}", stderr.trim());
+                return Err(ThreadWorkspacePrepareFailed {
+                    branch: branch.to_string(),
+                    worktree_path: worktree_path.to_path_buf(),
+                    git_stderr: git_stderr_text(&attach.stderr),
+                }
+                .into());
             }
             if let Some(metadata) = verified_metadata(
                 repo_root,
@@ -630,8 +676,12 @@ pub async fn ensure_planned_thread_worktree(
                 return Ok((metadata, EnsureKind::Reattached));
             }
         }
-        let stderr = String::from_utf8_lossy(&create.stderr);
-        bail!("git worktree add failed: {}", stderr.trim());
+        return Err(ThreadWorkspacePrepareFailed {
+            branch: branch.to_string(),
+            worktree_path: worktree_path.to_path_buf(),
+            git_stderr: create_stderr,
+        }
+        .into());
     }
 
     let metadata = verified_metadata(
