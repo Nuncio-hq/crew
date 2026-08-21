@@ -2091,6 +2091,7 @@ pub async fn run_prompt_task(
             ctx.harness_name.clone(),
         );
     }
+    agent.acp.reset_plan_continue_gate();
     let triggering_event_ids = receipt_causal_contexts
         .iter()
         .map(|causal| causal.parent_event_id.to_hex())
@@ -3432,6 +3433,43 @@ pub async fn run_prompt_task(
                     "rotating session for {source:?} after {stop_reason:?}",
                 );
                 agent.state.invalidate(&source);
+            }
+
+            let mut stop_reason = stop_reason;
+            if matches!(stop_reason, StopReason::EndTurn)
+                && matches!(source, PromptSource::Channel(_))
+            {
+                match agent
+                    .acp
+                    .ask_founder_to_continue_after_plan(&session_id)
+                    .await
+                {
+                    crate::acp::PlanContinueDecision::Continue => {
+                        match agent
+                            .acp
+                            .session_prompt_blocks_with_idle_timeout(
+                                &session_id,
+                                &[crate::acp::PLAN_CONTINUE_PROMPT],
+                                ctx.idle_timeout,
+                                ctx.max_turn_duration,
+                            )
+                            .await
+                        {
+                            Ok(follow) => {
+                                log_stop_reason(&source, &follow);
+                                stop_reason = follow;
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    %error,
+                                    "plan-continue follow-up prompt failed; keeping original end_turn"
+                                );
+                            }
+                        }
+                    }
+                    crate::acp::PlanContinueDecision::Stop
+                    | crate::acp::PlanContinueDecision::Skip => {}
+                }
             }
 
             if should_publish_agent_receipt(&stop_reason) && batch.is_some() {

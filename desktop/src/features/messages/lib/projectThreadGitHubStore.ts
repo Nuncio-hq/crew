@@ -17,6 +17,7 @@ export type ProjectThreadGitHubSnapshot =
 
 const PENDING: ProjectThreadGitHubSnapshot = { status: "pending" };
 const CACHE_TTL_MS = 30_000;
+let retryDelayMs = CACHE_TTL_MS;
 const entries = new Map<
   string,
   {
@@ -38,12 +39,32 @@ export function setProjectThreadGitHubFetcherForTests(
   statusFetcher = fetcher ?? getThreadGitHubStatus;
 }
 
+/** Test-only seam for exercising expiry without a 30-second wait. */
+export function setProjectThreadGitHubRetryDelayForTests(
+  delayMs: number | null,
+): void {
+  retryDelayMs = delayMs ?? CACHE_TTL_MS;
+}
+
 function cacheKey(target: Target): string {
   return `${target.repositoryPath}\u0000${target.branch}`;
 }
 
 function notify(): void {
   for (const listener of listeners) listener();
+}
+
+function boundedGitHubDetail(detail: string): string {
+  const collapsed = detail
+    .replace(/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+\b/g, "[redacted]")
+    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!collapsed) return "GitHub status probe failed.";
+  const characters = Array.from(collapsed);
+  return characters.length > 240
+    ? `${characters.slice(0, 240).join("")}…`
+    : collapsed;
 }
 
 function subscribe(listener: () => void): () => void {
@@ -66,7 +87,7 @@ async function load(target: Target, force: boolean): Promise<void> {
       });
       notify();
     })
-    .catch(() => {
+    .catch((error: unknown) => {
       if (cacheEpoch !== epoch) return;
       // Invoke/IPC threw — not a gh binary miss. Treat as a failed probe so
       // the UI can show a degraded affordance instead of silently vanishing.
@@ -74,7 +95,14 @@ async function load(target: Target, force: boolean): Promise<void> {
         expiresAt: Date.now() + CACHE_TTL_MS,
         snapshot: {
           status: "ready",
-          value: { availability: "cli-failed", pullRequest: null },
+          value: {
+            availability: "cli-failed",
+            detail:
+              error instanceof Error
+                ? boundedGitHubDetail(error.message)
+                : "GitHub status probe failed.",
+            pullRequest: null,
+          },
         },
       });
       notify();
@@ -101,6 +129,20 @@ export function useProjectThreadGitHub(target: Target | null) {
   React.useEffect(() => {
     if (target) void load(target, generation > 0);
   }, [target, generation]);
+  React.useEffect(() => {
+    if (
+      !target ||
+      snapshot.status !== "ready" ||
+      snapshot.value.availability === "available"
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(
+      () => void load(target, true),
+      retryDelayMs,
+    );
+    return () => window.clearTimeout(timer);
+  }, [snapshot, target]);
   const refresh = React.useCallback(
     () => (target ? load(target, true) : Promise.resolve()),
     [target],
@@ -120,6 +162,7 @@ export function resetProjectThreadGitHubStore(): void {
   cacheEpoch += 1;
   entries.clear();
   reloadGeneration = 0;
+  retryDelayMs = CACHE_TTL_MS;
   statusFetcher = getThreadGitHubStatus;
   notify();
 }

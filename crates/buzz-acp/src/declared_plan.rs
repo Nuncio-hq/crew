@@ -29,6 +29,19 @@ pub struct DeclaredPlanSnapshot {
     pub session_id: Option<String>,
 }
 
+impl DeclaredPlanSnapshot {
+    /// True when any declared step is still pending or in progress.
+    ///
+    /// A finished plan (every entry `completed`) is not a wait-for-approval
+    /// gate. An unfinished plan is: the engine may have stopped after writing
+    /// the plan, and the channel still needs an answer or a Needs-you popup.
+    pub fn has_unfinished_entries(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| !matches!(entry.status, DeclaredPlanStatus::Completed))
+    }
+}
+
 /// Parse a `sessionUpdate: plan` object.
 ///
 /// Returns `Some` when `entries` is present (including `[]`). Returns `None`
@@ -198,5 +211,34 @@ mod tests {
             Some("sess-1"),
         );
         assert_eq!(current.as_ref().unwrap().entries[0].content, "Declared");
+    }
+
+    #[test]
+    fn unfinished_when_any_entry_is_pending_or_in_progress() {
+        let pending = parse_acp_plan_update(
+            &json!({"entries": [{"content": "Write the answer", "status": "pending"}]}),
+            None,
+        )
+        .expect("pending");
+        assert!(pending.has_unfinished_entries());
+
+        let mixed = parse_acp_plan_update(
+            &json!({
+                "entries": [
+                    {"content": "Done", "status": "completed"},
+                    {"content": "Doing", "status": "in_progress"}
+                ]
+            }),
+            None,
+        )
+        .expect("mixed");
+        assert!(mixed.has_unfinished_entries());
+
+        let done = parse_acp_plan_update(
+            &json!({"entries": [{"content": "Done", "status": "completed"}]}),
+            None,
+        )
+        .expect("done");
+        assert!(!done.has_unfinished_entries());
     }
 }

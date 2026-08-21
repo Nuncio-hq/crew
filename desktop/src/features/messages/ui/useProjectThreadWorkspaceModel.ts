@@ -26,6 +26,7 @@ export type ProjectThreadWorkspaceModel = {
   conversationId: string | null;
   counts: { done: number; queued: number; working: number };
   githubAvailability: ThreadGitHubAvailability | null;
+  githubDetail: string | null;
   pullRequest: ThreadPullRequest | null;
   refreshGitHub: () => Promise<void>;
   steps: ProjectThreadAgentStep[];
@@ -122,6 +123,10 @@ export function useProjectThreadWorkspaceModel({
     githubSnapshot.status === "ready"
       ? githubSnapshot.value.availability
       : null;
+  const githubDetail =
+    githubSnapshot.status === "ready"
+      ? (githubSnapshot.value.detail ?? null)
+      : null;
 
   // Fresh `{}` each render defeats every effect keyed on `model` (CLAUDE.md
   // gotcha #7). Memoize over the real inputs so drawer refresh effects stay
@@ -135,6 +140,7 @@ export function useProjectThreadWorkspaceModel({
       conversationId,
       counts,
       githubAvailability,
+      githubDetail,
       pullRequest,
       refreshGitHub,
       steps,
@@ -149,6 +155,7 @@ export function useProjectThreadWorkspaceModel({
     conversationId,
     counts,
     githubAvailability,
+    githubDetail,
     pullRequest,
     refreshGitHub,
     steps,
