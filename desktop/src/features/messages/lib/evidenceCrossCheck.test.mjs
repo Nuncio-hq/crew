@@ -114,8 +114,16 @@ describe("parseEvidenceClaim — diff-stat", () => {
     );
   });
 
+  it("parses Files: F | +A −D shorthand", () => {
+    assert.deepEqual(parseEvidenceClaim("diff-stat", "Files: 4 | +42 −17"), {
+      kind: "diff-stat",
+      additions: 42,
+      deletions: 17,
+      files: 4,
+    });
+  });
+
   it("rejects near-miss shapes and free-form diff prose", () => {
-    assert.equal(parseEvidenceClaim("diff-stat", "Files: 4 | +42 −17"), null);
     assert.equal(
       parseEvidenceClaim("diff-stat", "Diff: 120 additions, 30 deletions"),
       null,
@@ -180,8 +188,8 @@ describe("compareEvidenceToPullRequest — test-run matrix", () => {
       }),
     );
     assert.equal(result.state, "diverges");
-    assert.match(result.detail, /Claimed: 14 passed, 0 failed/);
-    assert.match(result.detail, /Desktop Fast — FAILURE/);
+    assert.match(result.detail, /Local 14✓ 0✗/);
+    assert.match(result.detail, /Desktop Fast/);
   });
 
   it("honestly-red claim + red CI → Matches (consistency)", () => {
@@ -268,8 +276,8 @@ describe("compareEvidenceToPullRequest — diff-stat matrix", () => {
       pr({ additions: 890, deletions: 4, changedFiles: 27 }),
     );
     assert.equal(result.state, "diverges");
-    assert.match(result.detail, /Claimed: \+120\/−30 across 5 files/);
-    assert.match(result.detail, /PR \+890\/−4 across 27 files/);
+    assert.match(result.detail, /Local \+120\/−30 · 5f/);
+    assert.match(result.detail, /PR \+890\/−4 · 27f/);
   });
 
   it("zero-file PR matches exact zero claim", () => {

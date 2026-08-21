@@ -209,6 +209,10 @@ test.describe("evidence–CI cross-check badge (#175)", () => {
       timeout: 10_000,
     });
     await expect(badge).toContainText("Matches CI");
+    await card.getByTestId("test-run-summary-toggle").click();
+    const details = card.getByTestId("test-run-summary-details");
+    await expect(details).toBeVisible();
+    await expect(details).toContainText("Crew CI");
     await waitForAnimations(page);
     await card.screenshot({
       path: "test-results/evidence-cross-check/01-matches.png",
@@ -230,10 +234,10 @@ test.describe("evidence–CI cross-check badge (#175)", () => {
       card.getByTestId("evidence-cross-check-badge"),
     ).toHaveAttribute("data-state", "diverges", { timeout: 10_000 });
     await expect(card.getByTestId("evidence-cross-check-detail")).toContainText(
-      "Claimed: 14 passed, 0 failed",
+      "Local 14✓ 0✗",
     );
     await expect(card.getByTestId("evidence-cross-check-detail")).toContainText(
-      "Desktop Fast — FAILURE",
+      "Desktop Fast",
     );
     await expect(card.getByTestId("evidence-accept")).toBeVisible();
     await expect(card.getByTestId("evidence-reject")).toBeVisible();

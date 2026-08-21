@@ -1,4 +1,11 @@
-import { ExternalLink, LoaderCircle } from "lucide-react";
+import {
+  Check,
+  Circle,
+  CircleMinus,
+  ExternalLink,
+  LoaderCircle,
+  X,
+} from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 
@@ -16,7 +23,17 @@ import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
 import { checkConclusionIsFailed } from "./forgeHubCopy";
+import {
+  CHECK_GROUP_LABEL,
+  type CheckGroupId,
+  displayForgeCheckName,
+  formatForgeCheckDuration,
+  groupForgeChecksByStatus,
+} from "./forgeCheckGroups";
 
+/**
+ * Cursor-style Checks list: status groups, circle icons, name + duration.
+ */
 export function ThreadPrHubChecks({
   checks,
   onRefresh,
@@ -26,10 +43,16 @@ export function ThreadPrHubChecks({
   onRefresh: () => void;
   refIdentity: Extract<ThreadForgeHubSubject, { kind: "pr" }>;
 }) {
-  const groups = React.useMemo(() => groupByWorkflow(checks), [checks]);
+  const groups = React.useMemo(
+    () => groupForgeChecksByStatus(checks),
+    [checks],
+  );
   const [expanded, setExpanded] = React.useState<string | null>(null);
   const [tails, setTails] = React.useState<ForgeCheckLogTail[] | null>(null);
   const [busyRun, setBusyRun] = React.useState<number | null>(null);
+  const [collapsed, setCollapsed] = React.useState<Set<CheckGroupId>>(
+    () => new Set(["skipped"]),
+  );
 
   const failed = checks.filter((check) =>
     checkConclusionIsFailed(check.conclusion),
@@ -79,14 +102,27 @@ export function ThreadPrHubChecks({
 
   const failedRunIds = uniqueRunIds(failed);
 
+  function toggleGroup(id: CheckGroupId) {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col overflow-hidden"
       data-testid="thread-pr-hub-checks"
     >
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5">
         <p className="text-2xs text-muted-foreground">
-          {failed.length} failed · grouped by workflow
+          {checks.length === 0
+            ? "No checks yet"
+            : failed.length > 0
+              ? `${failed.length} failed`
+              : `${checks.length} checks`}
         </p>
         {failedRunIds.length > 0 ? (
           <Button
@@ -105,116 +141,156 @@ export function ThreadPrHubChecks({
           </Button>
         ) : null}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {groups.map(([workflow, rows]) => (
-          <section className="mb-4" key={workflow}>
-            <h3 className="mb-1 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {workflow}
-            </h3>
-            {rows.map((check) => {
-              const key = checkKey(check);
-              const open = expanded === key;
-              const failedRow = checkConclusionIsFailed(check.conclusion);
-              return (
-                <div
-                  className="mb-1 rounded-md border border-border/60"
-                  key={key}
+      <div className="min-h-0 flex-1 overflow-y-auto py-1">
+        {groups.map(([groupId, rows]) => {
+          const isCollapsed = collapsed.has(groupId);
+          return (
+            <section key={groupId}>
+              <button
+                className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-2xs font-medium text-muted-foreground hover:text-foreground"
+                onClick={() => toggleGroup(groupId)}
+                type="button"
+              >
+                <span
+                  aria-hidden="true"
+                  className="w-2.5 text-muted-foreground/70"
                 >
-                  <div className="flex items-start gap-2 px-2 py-1.5">
-                    <button
-                      className="min-w-0 flex-1 text-left"
-                      data-testid={`thread-pr-hub-check-${check.name}`}
-                      onClick={() => void loadTail(check)}
-                      type="button"
-                    >
-                      <div className="flex items-center gap-2">
-                        <StatusDot conclusion={check.conclusion} />
-                        <span className="truncate text-sm">{check.name}</span>
-                      </div>
-                      <p className="font-mono text-2xs text-muted-foreground">
-                        {check.status}
-                        {check.conclusion !== "unknown"
-                          ? ` · ${check.conclusion}`
-                          : ""}
-                      </p>
-                    </button>
-                    {check.url ? (
-                      <a
-                        className="shrink-0 text-muted-foreground hover:text-foreground"
-                        href={check.url}
-                        rel="noreferrer"
-                        target="_blank"
-                        title="Open on the forge"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                    ) : null}
-                    {check.runId ? (
-                      <Button
-                        disabled={busyRun === check.runId}
-                        onClick={() => void rerun(check.runId as number, false)}
-                        size="xs"
-                        type="button"
-                        variant="ghost"
-                      >
-                        Re-run
-                      </Button>
-                    ) : null}
-                  </div>
-                  {open ? (
-                    <div
-                      className={cn(
-                        "border-t border-border/60 bg-muted/30 p-2 font-mono text-2xs",
-                        failedRow
-                          ? "text-destructive"
-                          : "text-muted-foreground",
-                      )}
-                      data-testid="thread-pr-hub-check-log"
-                    >
-                      {tails === null ? (
-                        <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                      ) : tails.length === 0 ? (
-                        <p>No failed-step log for this check.</p>
-                      ) : (
-                        tails.map((tail) => (
-                          <div
-                            className="mb-2"
-                            key={`${tail.job}:${tail.step}`}
+                  {isCollapsed ? "▸" : "▾"}
+                </span>
+                {CHECK_GROUP_LABEL[groupId]}
+                <span className="tabular-nums text-muted-foreground/60">
+                  ({rows.length})
+                </span>
+              </button>
+              {isCollapsed
+                ? null
+                : rows.map((check, index) => {
+                    const key = checkKey(check);
+                    const open = expanded === key;
+                    const failedRow = checkConclusionIsFailed(check.conclusion);
+                    const duration = formatForgeCheckDuration(check);
+                    return (
+                      <div key={key}>
+                        <div
+                          className={cn(
+                            "flex items-center gap-2 px-3 py-1.5 hover:bg-muted/30",
+                            index < rows.length - 1 &&
+                              !open &&
+                              "border-b border-border/40",
+                          )}
+                        >
+                          <button
+                            className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                            data-testid={`thread-pr-hub-check-${check.name}`}
+                            onClick={() => void loadTail(check)}
+                            type="button"
                           >
-                            <div className="font-semibold text-foreground">
-                              {tail.job} / {tail.step}
-                              {tail.truncated ? " (tail)" : ""}
-                            </div>
-                            <pre className="max-h-64 overflow-auto whitespace-pre-wrap">
-                              {tail.lines.join("\n")}
-                            </pre>
+                            <CheckCircleIcon group={groupId} />
+                            <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                              {displayForgeCheckName(check)}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-2xs text-muted-foreground">
+                              {duration ||
+                                (groupId === "pending" ? "Queued" : "")}
+                            </span>
+                          </button>
+                          {check.url ? (
+                            <a
+                              className="shrink-0 text-muted-foreground hover:text-foreground"
+                              href={check.url}
+                              rel="noreferrer"
+                              target="_blank"
+                              title="Open on GitHub"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          ) : null}
+                          {check.runId && failedRow ? (
+                            <Button
+                              disabled={busyRun === check.runId}
+                              onClick={() =>
+                                void rerun(check.runId as number, false)
+                              }
+                              size="xs"
+                              type="button"
+                              variant="ghost"
+                            >
+                              Re-run
+                            </Button>
+                          ) : null}
+                        </div>
+                        {open ? (
+                          <div
+                            className={cn(
+                              "border-b border-border/40 bg-muted/20 px-3 py-2 pl-10 font-mono text-2xs",
+                              failedRow
+                                ? "text-destructive"
+                                : "text-muted-foreground",
+                            )}
+                            data-testid="thread-pr-hub-check-log"
+                          >
+                            {tails === null ? (
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            ) : tails.length === 0 ? (
+                              <p>No log tail.</p>
+                            ) : (
+                              tails.map((tail) => (
+                                <div
+                                  className="mb-2"
+                                  key={`${tail.job}:${tail.step}`}
+                                >
+                                  <div className="font-semibold text-foreground">
+                                    {tail.job} / {tail.step}
+                                    {tail.truncated ? " (tail)" : ""}
+                                  </div>
+                                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap">
+                                    {tail.lines.join("\n")}
+                                  </pre>
+                                </div>
+                              ))
+                            )}
                           </div>
-                        ))
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </section>
-        ))}
+                        ) : null}
+                      </div>
+                    );
+                  })}
+            </section>
+          );
+        })}
         {checks.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No checks yet.</p>
+          <p className="px-3 py-2 text-sm text-muted-foreground">
+            No checks yet.
+          </p>
         ) : null}
       </div>
     </div>
   );
 }
 
-function groupByWorkflow(checks: ForgeCheck[]): Array<[string, ForgeCheck[]]> {
-  const map = new Map<string, ForgeCheck[]>();
-  for (const check of checks) {
-    const key = check.workflow?.trim() || "Other";
-    const list = map.get(key) ?? [];
-    list.push(check);
-    map.set(key, list);
+/** Cursor-style circular status glyph. */
+function CheckCircleIcon({ group }: { group: CheckGroupId }) {
+  switch (group) {
+    case "passed":
+      return (
+        <Check className="h-4 w-4 shrink-0 text-success" strokeWidth={2.5} />
+      );
+    case "failed":
+      return (
+        <X className="h-4 w-4 shrink-0 text-destructive" strokeWidth={2.5} />
+      );
+    case "skipped":
+      return <CircleMinus className="h-4 w-4 shrink-0 text-muted-foreground" />;
+    case "running":
+      return (
+        <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-attention" />
+      );
+    case "pending":
+      return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/70" />;
+    default: {
+      const _exhaustive: never = group;
+      return _exhaustive;
+    }
   }
-  return [...map.entries()];
 }
 
 function uniqueRunIds(checks: ForgeCheck[]): number[] {
@@ -229,22 +305,4 @@ function uniqueRunIds(checks: ForgeCheck[]): number[] {
 
 function checkKey(check: ForgeCheck): string {
   return `${check.workflow ?? ""}:${check.name}:${check.runId ?? 0}`;
-}
-
-function StatusDot({ conclusion }: { conclusion: ForgeCheck["conclusion"] }) {
-  const className = checkConclusionIsFailed(conclusion)
-    ? "bg-destructive"
-    : conclusion === "success"
-      ? "bg-success"
-      : conclusion === "pending"
-        ? "bg-attention"
-        : "bg-muted-foreground";
-  return (
-    <span
-      className={cn(
-        "mt-1 inline-block h-2 w-2 shrink-0 rounded-full",
-        className,
-      )}
-    />
-  );
 }

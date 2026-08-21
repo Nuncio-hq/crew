@@ -8,9 +8,19 @@ import type {
 } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { normalizePubkey } from "@/shared/lib/pubkey";
-import { resolvePrReferenceHref } from "./AgentReceiptCard";
+import { parseEntityLink } from "@/shared/lib/entityLink";
+import { useOpenEntityLink } from "@/shared/ui/markdown/entityLinks";
+import { parseEvidenceClaim } from "@/features/messages/lib/evidenceCrossCheck";
+import { splitEvidenceBody } from "@/features/messages/lib/evidenceBodyParts";
+import { parseEvidenceTestEntries } from "@/features/messages/lib/evidenceTestEntries";
 import type { EvidenceKind } from "@/features/messages/lib/evidenceTag";
 import { useEvidenceCrossCheck } from "@/features/messages/lib/useEvidenceCrossCheck";
+import { useEvidencePullRequestChecks } from "@/features/messages/lib/useEvidencePullRequestChecks";
+import {
+  DiffStatSummary,
+  TestRunSummary,
+  type TestRunDetailRow,
+} from "./ci/CiPresentation";
 import {
   EvidenceCrossCheckBadge,
   EvidenceCrossCheckDetail,
@@ -29,10 +39,6 @@ type EvidenceCardProps = {
   reactions: readonly TimelineReaction[];
 };
 
-function bodyMarkdown(message: TimelineMessage) {
-  return <Markdown content={message.body} className="text-sm" />;
-}
-
 function reactionIsCurrentUser(
   reactions: readonly TimelineReaction[],
   emoji: string,
@@ -43,6 +49,61 @@ function reactionIsCurrentUser(
   );
 }
 
+function EvidenceNarrative({ content }: { content: string }) {
+  if (!content.trim()) return null;
+  return <Markdown content={content} className="text-sm" />;
+}
+
+function EvidenceLinks({
+  links,
+}: {
+  links: ReturnType<typeof splitEvidenceBody>["links"];
+}) {
+  const openEntity = useOpenEntityLink();
+  if (links.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2" data-testid="evidence-links">
+      {links.map((link) => {
+        if (link.kind === "buzz-pr") {
+          const parsed = parseEntityLink(link.href);
+          return (
+            <button
+              className="rounded-md border border-border/70 bg-background/50 px-2.5 py-1 text-2xs font-medium text-foreground transition-colors hover:bg-muted"
+              data-testid="evidence-link-buzz-pr"
+              key={link.href}
+              onClick={() => {
+                if (parsed.ok) openEntity(parsed.value);
+              }}
+              title={link.href}
+              type="button"
+            >
+              {link.label}
+            </button>
+          );
+        }
+        return (
+          <a
+            className="rounded-md border border-border/70 bg-background/50 px-2.5 py-1 text-2xs font-medium text-foreground no-underline transition-colors hover:bg-muted"
+            data-testid={
+              link.kind === "github-pr"
+                ? "evidence-link-github-pr"
+                : "evidence-link-other"
+            }
+            href={link.href}
+            key={link.href}
+            rel="noreferrer"
+            target="_blank"
+            title={link.href}
+          >
+            {link.label}
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 function MetricsLayout({ message }: { message: TimelineMessage }) {
   const values = new Map<string, string>();
   for (const match of message.body.matchAll(
@@ -50,66 +111,162 @@ function MetricsLayout({ message }: { message: TimelineMessage }) {
   )) {
     values.set(match[1].toLowerCase(), match[2].trim());
   }
+  const parts = splitEvidenceBody(message.body);
+  const narrative =
+    values.size > 0
+      ? parts.narrative
+          .replace(/(?:^|\|\s*)(?:before|after|delta)\s*:\s*[^|\n]+/gi, "")
+          .replace(/^\s*\|\s*|\s*\|\s*$/g, "")
+          .trim()
+      : parts.narrative || message.body;
   return (
-    <div className="grid gap-2">
+    <div className="grid gap-3">
       {values.size > 0 ? (
-        <>
-          <div className="grid grid-cols-1 gap-2 text-xs text-muted-foreground [@container(min-width:21.25rem)]:grid-cols-3">
-            <span>before</span>
-            <span>after</span>
-            <span>delta</span>
-          </div>
-          <div className="grid grid-cols-1 gap-2 font-medium [@container(min-width:21.25rem)]:grid-cols-3">
-            <span>{values.get("before") ?? "—"}</span>
-            <span>{values.get("after") ?? "—"}</span>
-            <span>{values.get("delta") ?? "—"}</span>
-          </div>
-        </>
+        <div className="grid grid-cols-1 gap-2 rounded-md border border-border/60 bg-background/40 px-2.5 py-2 [@container(min-width:21.25rem)]:grid-cols-3">
+          {(["before", "after", "delta"] as const).map((key) => (
+            <div className="min-w-0" key={key}>
+              <p className="text-2xs text-muted-foreground">{key}</p>
+              <p className="truncate font-medium tabular-nums">
+                {values.get(key) ?? "—"}
+              </p>
+            </div>
+          ))}
+        </div>
       ) : null}
-      {bodyMarkdown(message)}
+      <EvidenceNarrative content={narrative} />
+      <EvidenceLinks links={parts.links} />
     </div>
   );
 }
 
 function TestRunLayout({ message }: { message: TimelineMessage }) {
-  const failed = message.body.match(/failed[^|,\n]*/i)?.[0];
-  const passed = message.body.match(/passed[^|,\n]*/i)?.[0];
+  const claim = parseEvidenceClaim("test-run", message.body);
+  const parts = splitEvidenceBody(message.body);
+  const named = parseEvidenceTestEntries(message.body);
+  const ciChecks = useEvidencePullRequestChecks(message);
+  const details = buildTestRunDetails(named, ciChecks);
+  // Named local rows leave the narrative; keep prose that is not a test list.
+  const narrative =
+    named.length > 0
+      ? stripNamedTestSections(parts.narrative)
+      : parts.narrative;
   return (
-    <div className="grid gap-2">
-      {failed ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2">
-          <p className="text-xs font-medium text-destructive">Failing</p>
-          <Markdown content={failed} className="text-sm" />
-        </div>
+    <div className="grid gap-3">
+      {claim && claim.kind === "test-run" ? (
+        <TestRunSummary
+          details={details}
+          failed={claim.failed}
+          passed={claim.passed}
+          skipped={claim.skipped}
+        />
       ) : null}
-      {passed ? (
-        <div className="rounded-md border border-success/40 bg-success/10 p-2">
-          <p className="text-xs font-medium text-success">Passing</p>
-          <Markdown content={passed} className="text-sm" />
-        </div>
+      <EvidenceNarrative content={narrative} />
+      <EvidenceLinks links={parts.links} />
+      {/* Fallback when the body has no Tests: line — show raw markdown once. */}
+      {!claim && parts.narrative.length === 0 ? (
+        <Markdown content={message.body} className="text-sm" />
       ) : null}
-      {bodyMarkdown(message)}
     </div>
   );
 }
 
+function buildTestRunDetails(
+  named: ReturnType<typeof parseEvidenceTestEntries>,
+  ciChecks: ReturnType<typeof useEvidencePullRequestChecks>,
+): TestRunDetailRow[] {
+  if (named.length > 0) {
+    return named.map((entry) => ({
+      name: entry.name,
+      status: entry.status,
+    }));
+  }
+  return ciChecks.map((check) => {
+    const name = check.name.trim();
+    const workflow = check.workflow?.trim();
+    const label =
+      workflow &&
+      !name.startsWith(`${workflow} / `) &&
+      !name.startsWith(`${workflow}/`) &&
+      !name.includes(" / ")
+        ? `${workflow} / ${name}`
+        : name;
+    return {
+      name: label,
+      status: mapCiCheckStatus(check.state),
+    };
+  });
+}
+
+function mapCiCheckStatus(state: string): TestRunDetailRow["status"] {
+  const upper = state.toUpperCase();
+  if (
+    upper === "FAILURE" ||
+    upper === "ERROR" ||
+    upper === "CANCELLED" ||
+    upper === "TIMED_OUT"
+  ) {
+    return "failed";
+  }
+  if (upper === "SUCCESS" || upper === "NEUTRAL") return "passed";
+  if (upper === "SKIPPED") return "skipped";
+  if (
+    upper === "IN_PROGRESS" ||
+    upper === "IN PROGRESS" ||
+    upper.includes("PROGRESS")
+  ) {
+    return "running";
+  }
+  return "pending";
+}
+
+/** Drop Failed/Passed section lines once they are shown in the expandable list. */
+function stripNamedTestSections(narrative: string): string {
+  const lines = narrative.split(/\r?\n/);
+  const kept: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (
+      /^(#{1,6}\s*)?(failed|failing|passed|passing)\s*:?\s*$/i.test(trimmed)
+    ) {
+      inSection = true;
+      continue;
+    }
+    if (inSection) {
+      if (trimmed.length === 0) {
+        inSection = false;
+        continue;
+      }
+      if (/^\s*(?:[-*]|\d+[.)])\s+/.test(trimmed)) continue;
+      if (/^\s*(?:✅|❌|✓|✗|✔|✘|PASS(?:ED)?|FAIL(?:ED)?)\s*/i.test(trimmed)) {
+        continue;
+      }
+      // Non-list prose ends the section.
+      inSection = false;
+    }
+    kept.push(line);
+  }
+  return kept.join("\n").trim();
+}
+
 function DiffStatLayout({ message }: { message: TimelineMessage }) {
-  const prReference = message.body.match(
-    /(?:https?:\/\/\S+|(?:[\w.-]+\/[\w.-]+)?#\d+)/,
-  )?.[0];
-  const href = prReference ? resolvePrReferenceHref(prReference) : null;
+  const claim = parseEvidenceClaim("diff-stat", message.body);
+  const parts = splitEvidenceBody(message.body);
   return (
-    <div className="grid gap-2">
-      <Markdown content={message.body} className="text-sm" />
-      {prReference && href ? (
-        <a
-          className="text-sm text-primary underline underline-offset-2"
-          href={href}
-          rel="noreferrer"
-          target="_blank"
-        >
-          {prReference}
-        </a>
+    <div className="grid gap-3">
+      {claim && claim.kind === "diff-stat" ? (
+        <div data-testid="evidence-diff-stat">
+          <DiffStatSummary
+            additions={claim.additions}
+            deletions={claim.deletions}
+            files={claim.files}
+          />
+        </div>
+      ) : null}
+      <EvidenceNarrative content={parts.narrative} />
+      <EvidenceLinks links={parts.links} />
+      {!claim && parts.narrative.length === 0 && parts.links.length === 0 ? (
+        <Markdown content={message.body} className="text-sm" />
       ) : null}
     </div>
   );
@@ -129,7 +286,9 @@ function VisualLayout({
   const entries = urls
     .map((url) => ({ url, entry: imetaByUrl?.get(url) }))
     .filter(({ entry }) => entry);
-  if (entries.length === 0) return bodyMarkdown(message);
+  if (entries.length === 0) {
+    return <Markdown content={message.body} className="text-sm" />;
+  }
 
   return (
     <div className="grid grid-cols-1 gap-2 [@container(min-width:21.25rem)]:grid-cols-2">
@@ -219,21 +378,32 @@ export function EvidenceCard({
         <div className="flex min-w-0 items-center gap-2">
           <EvidenceCrossCheckBadge result={crossCheck} />
           {rejected ? (
-            <span data-testid="evidence-reaction-rejected">❌ Rejected</span>
+            <span
+              className="text-2xs font-medium text-destructive"
+              data-testid="evidence-reaction-rejected"
+            >
+              Rejected
+            </span>
           ) : accepted ? (
-            <span data-testid="evidence-reaction-accepted">✅ Accepted</span>
+            <span
+              className="text-2xs font-medium text-success"
+              data-testid="evidence-reaction-accepted"
+            >
+              Accepted
+            </span>
           ) : null}
         </div>
       </div>
       <EvidenceCrossCheckDetail result={crossCheck} />
       {layout}
       {showControls ? (
-        <div className="mt-3 flex flex-wrap gap-2 border-t border-border/60 pt-3">
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
           <button
             className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50"
             data-testid="evidence-accept"
             disabled={reactionPending || accepted}
             onClick={() => void onToggleReaction("✅")}
+            title="Accept this evidence claim — does not merge the PR"
             type="button"
           >
             Accept
@@ -246,6 +416,7 @@ export function EvidenceCard({
               await onToggleReaction("❌");
               onReply?.(message);
             }}
+            title="Request changes and open a reply"
             type="button"
           >
             Reject

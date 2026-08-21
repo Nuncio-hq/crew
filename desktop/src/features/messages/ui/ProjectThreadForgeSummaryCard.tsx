@@ -4,6 +4,7 @@ import { setThreadForgeHubSubject } from "@/features/messages/lib/threadForgeHub
 import type { ThreadPullRequest } from "@/shared/api/thread-workspace-types";
 import { cn } from "@/shared/lib/cn";
 
+import { CiCheckSummary, DiffStatSummary } from "./ci/CiPresentation";
 import {
   forgeStateChipClass,
   forgeStateLabel,
@@ -72,6 +73,7 @@ export function ProjectThreadForgeSummaryCard({
       )}
       data-testid="thread-forge-summary-card"
       onClick={openHub}
+      title="Open PR in Crew — Changes, Checks, merge"
       type="button"
     >
       <div className="flex items-center gap-2">
@@ -84,23 +86,30 @@ export function ProjectThreadForgeSummaryCard({
           {forgeStateLabel(state)}
         </span>
         <span className="min-w-0 flex-1 truncate text-sm font-medium">
-          {pullRequest.title}
+          #{pullRequest.number} {pullRequest.title}
         </span>
       </div>
-      <div className="mt-1 font-mono text-2xs text-muted-foreground">
-        {pullRequest.headRefName} → {pullRequest.baseRefName}
-        <span className="ml-2">
-          +{pullRequest.additions} −{pullRequest.deletions} ·{" "}
-          {pullRequest.changedFiles} files
-        </span>
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-2 text-2xs text-muted-foreground">
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-2xs text-muted-foreground">
         <span>
-          ✓ {checks.passed}{" "}
-          <span className="text-destructive">✗ {checks.failed}</span>{" "}
-          <span className="text-attention">● {checks.running} running</span>
+          {pullRequest.headRefName} → {pullRequest.baseRefName}
         </span>
-        <span>{threadReviewDecisionLabel(pullRequest.reviewDecision)}</span>
+        <DiffStatSummary
+          additions={pullRequest.additions}
+          className="text-2xs"
+          deletions={pullRequest.deletions}
+          files={pullRequest.changedFiles}
+        />
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+        <CiCheckSummary
+          failed={checks.failed}
+          passed={checks.passed}
+          running={checks.running}
+          total={pullRequest.checks.length}
+        />
+        <span className="text-2xs text-muted-foreground">
+          {threadReviewDecisionLabel(pullRequest.reviewDecision)}
+        </span>
       </div>
     </button>
   );

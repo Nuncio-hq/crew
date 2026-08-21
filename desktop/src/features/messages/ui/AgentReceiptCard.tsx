@@ -1,4 +1,8 @@
 import type { AgentReceiptModel } from "@/features/messages/lib/agentReceipt.mjs";
+import {
+  CheckStatusDot,
+  CheckStatusLabel,
+} from "@/features/messages/ui/ci/CiPresentation";
 
 type AgentReceiptCardProps = {
   disabled?: boolean;
@@ -118,22 +122,20 @@ export function AgentReceiptCard({
               <div className="flex gap-2">
                 <dt className="font-medium">CI</dt>
                 <dd>
-                  <table className="border-collapse">
-                    <thead className="sr-only">
-                      <tr>
-                        <th scope="col">Lane</th>
-                        <th scope="col">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {engineering.ci.map((check) => (
-                        <tr key={`${check.label}-${check.status}`}>
-                          <td className="pr-3">{check.label}</td>
-                          <td>{check.status || "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <ul className="grid gap-1">
+                    {engineering.ci.map((check) => (
+                      <li
+                        className="flex items-center gap-2"
+                        key={`${check.label}-${check.status}`}
+                      >
+                        <CheckStatusDot state={check.status || "UNKNOWN"} />
+                        <span className="min-w-0 flex-1 truncate">
+                          {check.label}
+                        </span>
+                        <CheckStatusLabel state={check.status || "UNKNOWN"} />
+                      </li>
+                    ))}
+                  </ul>
                 </dd>
               </div>
             )}

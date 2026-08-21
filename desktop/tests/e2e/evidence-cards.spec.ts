@@ -60,7 +60,8 @@ async function emit(
 test("each evidence kind renders a legible card", async ({ page }) => {
   await openEvidenceChannel(page);
   await emit(page, {
-    content: "Tests: 1 failed → 1 passed",
+    content:
+      "Local suite finished.\nTests: 1 failed → 1 passed\n\nFailed:\n- login rejects bad password\n\nPassed:\n- login accepts owner\n\nhttps://github.com/Nuncio-hq/crew/pull/9",
     extraTags: EVIDENCE_TAG("test-run"),
   });
   await emit(page, {
@@ -79,25 +80,50 @@ test("each evidence kind renders a legible card", async ({ page }) => {
   for (const kind of [
     "test-run",
     "metrics",
-    "diff-stat",
     "before-after-visual",
+    "diff-stat",
   ]) {
     const card = page.getByTestId(`evidence-card-${kind}`);
     await expect(card).toBeVisible();
     await card.screenshot({ path: `test-results/evidence-cards/${kind}.png` });
   }
-  await expect(page.getByTestId("evidence-card-test-run")).toContainText(
-    "Tests: 1 failed → 1 passed",
+
+  const testRun = page.getByTestId("evidence-card-test-run");
+  await expect(testRun.getByTestId("test-run-summary")).toBeVisible();
+  await expect(testRun.getByTestId("test-run-summary")).toContainText(
+    "1 passed",
   );
-  await expect(page.getByTestId("evidence-card-test-run")).toContainText(
-    "Test run",
+  await expect(testRun.getByTestId("test-run-summary")).toContainText(
+    "1 failed",
+  );
+  await expect(testRun).toContainText("Local suite finished");
+  await expect(testRun.getByTestId("evidence-link-github-pr")).toContainText(
+    "Open PR on GitHub",
+  );
+  await expect(testRun).not.toContainText("Failing");
+  await expect(testRun).toContainText("Test run");
+
+  // Expand like Cursor Checks — show named rows, not just the count line.
+  await testRun.getByTestId("test-run-summary-toggle").click();
+  const details = testRun.getByTestId("test-run-summary-details");
+  await expect(details).toBeVisible();
+  await expect(details).toContainText("login rejects bad password");
+  await expect(details).toContainText("login accepts owner");
+  await testRun.screenshot({
+    path: "test-results/evidence-cards/test-run-expanded.png",
+  });
+
+  await expect(page.getByTestId("evidence-card-metrics")).toContainText(
+    "before",
   );
   await expect(page.getByTestId("evidence-card-metrics")).toContainText(
-    "before: 120ms | after: 80ms | delta: -40ms",
+    "120ms",
   );
-  await expect(page.getByTestId("evidence-card-diff-stat")).toContainText(
-    "Files: 4 | +42 −17",
-  );
+
+  const diff = page.getByTestId("evidence-card-diff-stat");
+  await expect(diff.getByTestId("diff-stat-summary")).toContainText("+42");
+  await expect(diff.getByTestId("diff-stat-summary")).toContainText("−17");
+  await expect(diff.getByTestId("diff-stat-summary")).toContainText("4 files");
 });
 
 test("ordinary and unrecognized evidence messages keep ordinary rendering", async ({

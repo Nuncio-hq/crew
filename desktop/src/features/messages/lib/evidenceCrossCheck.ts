@@ -40,9 +40,9 @@ export type EvidenceCrossCheckResult = {
 
 const LABEL: Record<EvidenceCrossCheckState, string> = {
   matches: "Matches CI",
-  diverges: "Diverges",
+  diverges: "Differs",
   "ci-running": "CI running",
-  "not-comparable": "Not comparable",
+  "not-comparable": "No CI",
 };
 
 const FAILED_CHECK_STATES = new Set([
@@ -122,13 +122,28 @@ function parseDiffStatClaim(body: string): ParsedDiffStatClaim | null {
   for (const rawLine of body.split(/\r?\n/)) {
     const line = rawLine.trim();
     // Diff: +120/−30 across 5 files  (ASCII or unicode minus)
-    const match = line.match(
+    const canonical = line.match(
       /^Diff:\s*\+(\d+)\s*\/\s*[−-](\d+)\s+across\s+(\d+)\s+files?\s*$/i,
     );
+    // Files: 4 | +42 −17  (agent / screenshot shorthand)
+    const shorthand = line.match(
+      /^Files:\s*(\d+)\s*\|\s*\+(\d+)\s+[−-](\d+)\s*$/i,
+    );
+    const match = canonical
+      ? {
+          additions: Number(canonical[1]),
+          deletions: Number(canonical[2]),
+          files: Number(canonical[3]),
+        }
+      : shorthand
+        ? {
+            additions: Number(shorthand[2]),
+            deletions: Number(shorthand[3]),
+            files: Number(shorthand[1]),
+          }
+        : null;
     if (!match) continue;
-    const additions = Number(match[1]);
-    const deletions = Number(match[2]);
-    const files = Number(match[3]);
+    const { additions, deletions, files } = match;
     if (
       ![additions, deletions, files].every((n) => Number.isFinite(n) && n >= 0)
     ) {
@@ -173,24 +188,22 @@ function classifyChecks(checks: readonly ThreadPullRequestCheck[]): {
 }
 
 function formatTestClaim(claim: ParsedTestRunClaim): string {
-  return `${claim.passed} passed, ${claim.failed} failed`;
+  return `${claim.passed}✓ ${claim.failed}✗`;
 }
 
 function formatFailedChecks(failed: readonly ThreadPullRequestCheck[]): string {
-  if (failed.length === 0) return "all checks green";
-  const names = failed
-    .slice(0, 3)
-    .map((check) => `${check.name} — ${check.state.toUpperCase()}`);
-  const extra = failed.length > 3 ? ` (+${failed.length - 3} more)` : "";
-  return names.join("; ") + extra;
+  if (failed.length === 0) return "green";
+  const names = failed.slice(0, 2).map((check) => check.name);
+  const extra = failed.length > 2 ? ` +${failed.length - 2}` : "";
+  return names.join(", ") + extra;
 }
 
 function formatDiffClaim(claim: ParsedDiffStatClaim): string {
-  return `+${claim.additions}/−${claim.deletions} across ${claim.files} files`;
+  return `+${claim.additions}/−${claim.deletions} · ${claim.files}f`;
 }
 
 function formatDiffPr(pr: ThreadPullRequest): string {
-  return `+${pr.additions}/−${pr.deletions} across ${pr.changedFiles} files`;
+  return `+${pr.additions}/−${pr.deletions} · ${pr.changedFiles}f`;
 }
 
 /**
@@ -230,7 +243,7 @@ function compareTestRun(
   if (claimAllPass === ciAllPass) return matches();
 
   return diverges(
-    `Claimed: ${formatTestClaim(claim)} · CI: ${formatFailedChecks(failed)}`,
+    `Local ${formatTestClaim(claim)} · CI ${formatFailedChecks(failed)}`,
   );
 }
 
@@ -248,6 +261,6 @@ function compareDiffStat(
   if (linesOk && filesOk) return matches();
 
   return diverges(
-    `Claimed: ${formatDiffClaim(claim)} · PR ${formatDiffPr(pullRequest)}`,
+    `Local ${formatDiffClaim(claim)} · PR ${formatDiffPr(pullRequest)}`,
   );
 }

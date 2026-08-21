@@ -8,15 +8,9 @@ const CHIP: Record<EvidenceCrossCheckResult["state"], string> = {
   "not-comparable": "border-border/50 bg-muted/20 text-muted-foreground/80",
 };
 
-const GLYPH: Record<EvidenceCrossCheckResult["state"], string> = {
-  matches: "✅",
-  diverges: "⚠️",
-  "ci-running": "⏳",
-  "not-comparable": "⚪",
-};
-
 /**
  * Header chip for evidence↔CI consistency. Informational only — never a gate.
+ * Cursor-style: short label, detail lives in the title tooltip / compact row.
  */
 export function EvidenceCrossCheckBadge({
   result,
@@ -24,10 +18,10 @@ export function EvidenceCrossCheckBadge({
   result: EvidenceCrossCheckResult;
 }) {
   return (
-    <div className="min-w-0 max-w-[14rem] text-right">
+    <div className="min-w-0 max-w-[10rem] text-right">
       <span
         className={cn(
-          "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-2xs font-medium",
+          "inline-flex items-center rounded-md border px-1.5 py-0.5 text-2xs font-medium",
           CHIP[result.state],
         )}
         data-testid="evidence-cross-check-badge"
@@ -35,13 +29,15 @@ export function EvidenceCrossCheckBadge({
         role="status"
         title={result.detail ?? result.label}
       >
-        <span aria-hidden="true">{GLYPH[result.state]}</span>
         {result.label}
       </span>
     </div>
   );
 }
 
+/**
+ * Compact diverge callout — one short line, no lecture.
+ */
 export function EvidenceCrossCheckDetail({
   result,
 }: {
@@ -50,14 +46,11 @@ export function EvidenceCrossCheckDetail({
   if (result.state !== "diverges" || !result.detail) return null;
   return (
     <p
-      className="mb-3 text-2xs leading-snug text-attention"
+      className="mb-2 truncate font-mono text-2xs text-attention"
       data-testid="evidence-cross-check-detail"
+      title={result.detail}
     >
       {result.detail}
-      <span className="text-muted-foreground">
-        {" "}
-        — CI shows a different result; worth a look before accepting
-      </span>
     </p>
   );
 }

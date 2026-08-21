@@ -1,4 +1,4 @@
-import { LoaderCircle, RefreshCw } from "lucide-react";
+import { Check, LoaderCircle, RefreshCw, X } from "lucide-react";
 import * as React from "react";
 
 import { parseCrewFinding } from "@/features/messages/lib/parseCrewFinding";
@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { cn } from "@/shared/lib/cn";
 
 import { FORGE_TAB_TRIGGER_CLASS, formatIsoRelative } from "./forgeHubCopy";
+import { summarizeChecksTab } from "./forgeCheckGroups";
 import { ThreadPrHubBugs } from "./ThreadPrHubBugs";
 import { ThreadPrHubChanges } from "./ThreadPrHubChanges";
 import { ThreadPrHubChecks } from "./ThreadPrHubChecks";
@@ -94,13 +95,8 @@ export function ThreadPrHub({ subject }: { subject: ThreadForgeHubSubject }) {
     );
   }
 
-  const failedChecks = pr.checks.filter(
-    (check) =>
-      check.conclusion === "failure" ||
-      check.conclusion === "cancelled" ||
-      check.conclusion === "timed-out",
-  ).length;
-  const commentCount =
+  const checksSummary = summarizeChecksTab(pr.checks);
+  const reviewCount =
     pr.comments.length +
     pr.reviews.length +
     pr.reviewThreads.reduce((sum, thread) => sum + thread.comments.length, 0);
@@ -122,13 +118,15 @@ export function ThreadPrHub({ subject }: { subject: ThreadForgeHubSubject }) {
         onValueChange={setTab}
         value={tab}
       >
-        <TabsList className="h-9 w-full justify-start gap-1 overflow-x-auto bg-transparent px-3 scrollbar-none">
+        <TabsList className="h-9 w-full justify-start gap-0 overflow-x-auto rounded-none border-b border-border/50 bg-transparent p-0 px-2 scrollbar-none">
           <HubTab label="Changes" value="changes" count={pr.files.length} />
-          <HubTab label="Bugs" value="bugs" count={findingCount} />
           <HubTab label="Description" value="description" count={null} />
-          <HubTab label="Discussion" value="discussion" count={commentCount} />
           <HubTab label="Commits" value="commits" count={pr.commits.length} />
-          <HubTab label="Checks" value="checks" count={failedChecks} />
+          <ChecksHubTab summary={checksSummary} />
+          <HubTab label="Reviews" value="discussion" count={reviewCount} />
+          {findingCount > 0 ? (
+            <HubTab label="Bugs" value="bugs" count={findingCount} />
+          ) : null}
         </TabsList>
         <TabsContent
           className="mt-0 min-h-0 flex-1 overflow-hidden"
@@ -210,13 +208,66 @@ function HubTab({
   return (
     <TabsTrigger className={cn(FORGE_TAB_TRIGGER_CLASS)} value={value}>
       {label}
-      {count === null ? (
-        <span className="text-2xs text-muted-foreground">—</span>
-      ) : (
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-2xs">
-          {count}
-        </span>
+      {count === null ? null : (
+        <span className="ml-1 tabular-nums text-muted-foreground">{count}</span>
       )}
     </TabsTrigger>
   );
+}
+
+/** Cursor: "Checks 8/14 Running" with circle status glyph. */
+function ChecksHubTab({
+  summary,
+}: {
+  summary: ReturnType<typeof summarizeChecksTab>;
+}) {
+  return (
+    <TabsTrigger
+      className={cn(FORGE_TAB_TRIGGER_CLASS)}
+      data-testid="thread-pr-hub-tab-checks"
+      value="checks"
+    >
+      <span className="inline-flex items-center gap-1.5">
+        <ChecksTabGlyph kind={summary.kind} />
+        <span>Checks</span>
+        <span
+          className={cn(
+            "tabular-nums",
+            summary.kind === "failed"
+              ? "text-destructive"
+              : summary.kind === "running"
+                ? "text-attention"
+                : summary.kind === "passed"
+                  ? "text-success"
+                  : "text-muted-foreground",
+          )}
+        >
+          {summary.label}
+        </span>
+      </span>
+    </TabsTrigger>
+  );
+}
+
+function ChecksTabGlyph({
+  kind,
+}: {
+  kind: ReturnType<typeof summarizeChecksTab>["kind"];
+}) {
+  switch (kind) {
+    case "running":
+      return (
+        <LoaderCircle className="h-3.5 w-3.5 animate-spin text-attention" />
+      );
+    case "failed":
+      return <X className="h-3.5 w-3.5 text-destructive" strokeWidth={2.5} />;
+    case "passed":
+      return <Check className="h-3.5 w-3.5 text-success" strokeWidth={2.5} />;
+    case "empty":
+      return null;
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
 }
