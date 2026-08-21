@@ -73,7 +73,7 @@ export function ProjectThreadForgeSummaryCard({
       )}
       data-testid="thread-forge-summary-card"
       onClick={openHub}
-      title="Open PR hub — checks, discussion, and changes"
+      title="Open PR in Crew — Changes, Checks, merge"
       type="button"
     >
       <div className="flex items-center gap-2">

@@ -1,4 +1,11 @@
-import { ExternalLink, LoaderCircle } from "lucide-react";
+import {
+  Check,
+  Circle,
+  CircleMinus,
+  ExternalLink,
+  LoaderCircle,
+  X,
+} from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 
@@ -10,35 +17,22 @@ import { invalidateThreadForgePullRequestStore } from "@/features/messages/lib/t
 import type { ThreadForgeHubSubject } from "@/features/messages/lib/threadForgeHubSubjectStore";
 import type {
   ForgeCheck,
-  ForgeCheckConclusion,
   ForgeCheckLogTail,
 } from "@/shared/api/threadForgeTypes";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
-import { CheckStatusDot } from "../ci/CiPresentation";
 import { checkConclusionIsFailed } from "./forgeHubCopy";
-
-type CheckGroupId = "failed" | "running" | "pending" | "passed" | "skipped";
-
-const GROUP_ORDER: CheckGroupId[] = [
-  "failed",
-  "running",
-  "pending",
-  "passed",
-  "skipped",
-];
-
-const GROUP_LABEL: Record<CheckGroupId, string> = {
-  failed: "Failed",
-  running: "Running",
-  pending: "Pending",
-  passed: "Passed",
-  skipped: "Skipped",
-};
+import {
+  CHECK_GROUP_LABEL,
+  type CheckGroupId,
+  displayForgeCheckName,
+  formatForgeCheckDuration,
+  groupForgeChecksByStatus,
+} from "./forgeCheckGroups";
 
 /**
- * Cursor-style Checks tab: group by status, compact rows (icon · name · time).
+ * Cursor-style Checks list: status groups, circle icons, name + duration.
  */
 export function ThreadPrHubChecks({
   checks,
@@ -49,7 +43,10 @@ export function ThreadPrHubChecks({
   onRefresh: () => void;
   refIdentity: Extract<ThreadForgeHubSubject, { kind: "pr" }>;
 }) {
-  const groups = React.useMemo(() => groupByStatus(checks), [checks]);
+  const groups = React.useMemo(
+    () => groupForgeChecksByStatus(checks),
+    [checks],
+  );
   const [expanded, setExpanded] = React.useState<string | null>(null);
   const [tails, setTails] = React.useState<ForgeCheckLogTail[] | null>(null);
   const [busyRun, setBusyRun] = React.useState<number | null>(null);
@@ -119,11 +116,13 @@ export function ThreadPrHubChecks({
       className="flex min-h-0 flex-1 flex-col overflow-hidden"
       data-testid="thread-pr-hub-checks"
     >
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 py-1.5">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5">
         <p className="text-2xs text-muted-foreground">
-          {failed.length > 0
-            ? `${failed.length} failed`
-            : `${checks.length} checks`}
+          {checks.length === 0
+            ? "No checks yet"
+            : failed.length > 0
+              ? `${failed.length} failed`
+              : `${checks.length} checks`}
         </p>
         {failedRunIds.length > 0 ? (
           <Button
@@ -142,49 +141,58 @@ export function ThreadPrHubChecks({
           </Button>
         ) : null}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+      <div className="min-h-0 flex-1 overflow-y-auto py-1">
         {groups.map(([groupId, rows]) => {
           const isCollapsed = collapsed.has(groupId);
           return (
-            <section className="mb-2" key={groupId}>
+            <section key={groupId}>
               <button
-                className="flex w-full items-center gap-1.5 px-1 py-1 text-left text-2xs font-medium text-muted-foreground hover:text-foreground"
+                className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-2xs font-medium text-muted-foreground hover:text-foreground"
                 onClick={() => toggleGroup(groupId)}
                 type="button"
               >
-                <span aria-hidden="true" className="w-3 tabular-nums">
+                <span
+                  aria-hidden="true"
+                  className="w-2.5 text-muted-foreground/70"
+                >
                   {isCollapsed ? "▸" : "▾"}
                 </span>
-                {GROUP_LABEL[groupId]}
-                <span className="tabular-nums text-muted-foreground/70">
+                {CHECK_GROUP_LABEL[groupId]}
+                <span className="tabular-nums text-muted-foreground/60">
                   ({rows.length})
                 </span>
               </button>
               {isCollapsed
                 ? null
-                : rows.map((check) => {
+                : rows.map((check, index) => {
                     const key = checkKey(check);
                     const open = expanded === key;
                     const failedRow = checkConclusionIsFailed(check.conclusion);
-                    const duration = formatCheckDuration(check);
+                    const duration = formatForgeCheckDuration(check);
                     return (
-                      <div className="mb-0.5" key={key}>
-                        <div className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-muted/40">
+                      <div key={key}>
+                        <div
+                          className={cn(
+                            "flex items-center gap-2 px-3 py-1.5 hover:bg-muted/30",
+                            index < rows.length - 1 &&
+                              !open &&
+                              "border-b border-border/40",
+                          )}
+                        >
                           <button
-                            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                            className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
                             data-testid={`thread-pr-hub-check-${check.name}`}
                             onClick={() => void loadTail(check)}
                             type="button"
                           >
-                            <CheckStatusDot state={check.conclusion} />
-                            <span className="min-w-0 flex-1 truncate text-sm">
-                              {displayCheckName(check)}
+                            <CheckCircleIcon group={groupId} />
+                            <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                              {displayForgeCheckName(check)}
                             </span>
-                            {duration ? (
-                              <span className="shrink-0 tabular-nums text-2xs text-muted-foreground">
-                                {duration}
-                              </span>
-                            ) : null}
+                            <span className="shrink-0 tabular-nums text-2xs text-muted-foreground">
+                              {duration ||
+                                (groupId === "pending" ? "Queued" : "")}
+                            </span>
                           </button>
                           {check.url ? (
                             <a
@@ -214,7 +222,7 @@ export function ThreadPrHubChecks({
                         {open ? (
                           <div
                             className={cn(
-                              "ml-4 border-l border-border/60 bg-muted/20 p-2 font-mono text-2xs",
+                              "border-b border-border/40 bg-muted/20 px-3 py-2 pl-10 font-mono text-2xs",
                               failedRow
                                 ? "text-destructive"
                                 : "text-muted-foreground",
@@ -250,72 +258,39 @@ export function ThreadPrHubChecks({
           );
         })}
         {checks.length === 0 ? (
-          <p className="px-1 text-sm text-muted-foreground">No checks yet.</p>
+          <p className="px-3 py-2 text-sm text-muted-foreground">
+            No checks yet.
+          </p>
         ) : null}
       </div>
     </div>
   );
 }
 
-function statusGroup(check: ForgeCheck): CheckGroupId {
-  const conclusion = check.conclusion;
-  if (checkConclusionIsFailed(conclusion)) return "failed";
-  if (conclusion === "skipped") return "skipped";
-  if (conclusion === "success" || conclusion === "neutral") return "passed";
-  if (isRunningConclusion(conclusion, check.status)) return "running";
-  return "pending";
-}
-
-function isRunningConclusion(
-  conclusion: ForgeCheckConclusion,
-  status: string,
-): boolean {
-  if (conclusion === "pending" || conclusion === "action-required") return true;
-  const upper = status.toUpperCase();
-  return (
-    upper === "IN_PROGRESS" ||
-    upper === "IN PROGRESS" ||
-    upper.includes("PROGRESS")
-  );
-}
-
-function groupByStatus(
-  checks: ForgeCheck[],
-): Array<[CheckGroupId, ForgeCheck[]]> {
-  const map = new Map<CheckGroupId, ForgeCheck[]>();
-  for (const id of GROUP_ORDER) map.set(id, []);
-  for (const check of checks) {
-    const id = statusGroup(check);
-    map.get(id)?.push(check);
+/** Cursor-style circular status glyph. */
+function CheckCircleIcon({ group }: { group: CheckGroupId }) {
+  switch (group) {
+    case "passed":
+      return (
+        <Check className="h-4 w-4 shrink-0 text-success" strokeWidth={2.5} />
+      );
+    case "failed":
+      return (
+        <X className="h-4 w-4 shrink-0 text-destructive" strokeWidth={2.5} />
+      );
+    case "skipped":
+      return <CircleMinus className="h-4 w-4 shrink-0 text-muted-foreground" />;
+    case "running":
+      return (
+        <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-attention" />
+      );
+    case "pending":
+      return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/70" />;
+    default: {
+      const _exhaustive: never = group;
+      return _exhaustive;
+    }
   }
-  return GROUP_ORDER.filter((id) => (map.get(id)?.length ?? 0) > 0).map(
-    (id) => [id, map.get(id) ?? []],
-  );
-}
-
-/** Prefer short name; drop redundant "Workflow / " when name already includes it. */
-function displayCheckName(check: ForgeCheck): string {
-  const name = check.name.trim();
-  const workflow = check.workflow?.trim();
-  if (!workflow) return name;
-  const prefix = `${workflow} / `;
-  if (name.startsWith(prefix)) return name.slice(prefix.length);
-  return name;
-}
-
-function formatCheckDuration(check: ForgeCheck): string {
-  if (!check.startedAt) return "";
-  const start = Date.parse(check.startedAt);
-  if (Number.isNaN(start)) return "";
-  const end = check.completedAt ? Date.parse(check.completedAt) : Date.now();
-  if (Number.isNaN(end) || end < start) return "";
-  const seconds = Math.floor((end - start) / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rem = seconds % 60;
-  if (minutes < 60) return rem === 0 ? `${minutes}m` : `${minutes}m ${rem}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
 }
 
 function uniqueRunIds(checks: ForgeCheck[]): number[] {
