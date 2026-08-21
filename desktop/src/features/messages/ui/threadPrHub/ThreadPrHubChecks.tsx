@@ -51,7 +51,7 @@ export function ThreadPrHubChecks({
   const [tails, setTails] = React.useState<ForgeCheckLogTail[] | null>(null);
   const [busyRun, setBusyRun] = React.useState<number | null>(null);
   const [collapsed, setCollapsed] = React.useState<Set<CheckGroupId>>(
-    () => new Set(["passed", "skipped"]),
+    () => new Set(["skipped"]),
   );
 
   const failed = checks.filter((check) =>

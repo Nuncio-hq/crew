@@ -61,7 +61,7 @@ test("each evidence kind renders a legible card", async ({ page }) => {
   await openEvidenceChannel(page);
   await emit(page, {
     content:
-      "Local suite finished.\nTests: 1 failed → 1 passed\nhttps://github.com/Nuncio-hq/crew/pull/9",
+      "Local suite finished.\nTests: 1 failed → 1 passed\n\nFailed:\n- login rejects bad password\n\nPassed:\n- login accepts owner\n\nhttps://github.com/Nuncio-hq/crew/pull/9",
     extraTags: EVIDENCE_TAG("test-run"),
   });
   await emit(page, {
@@ -102,6 +102,16 @@ test("each evidence kind renders a legible card", async ({ page }) => {
   );
   await expect(testRun).not.toContainText("Failing");
   await expect(testRun).toContainText("Test run");
+
+  // Expand like Cursor Checks — show named rows, not just the count line.
+  await testRun.getByTestId("test-run-summary-toggle").click();
+  const details = testRun.getByTestId("test-run-summary-details");
+  await expect(details).toBeVisible();
+  await expect(details).toContainText("login rejects bad password");
+  await expect(details).toContainText("login accepts owner");
+  await testRun.screenshot({
+    path: "test-results/evidence-cards/test-run-expanded.png",
+  });
 
   await expect(page.getByTestId("evidence-card-metrics")).toContainText(
     "before",

@@ -12,9 +12,17 @@ import { parseEntityLink } from "@/shared/lib/entityLink";
 import { useOpenEntityLink } from "@/shared/ui/markdown/entityLinks";
 import { parseEvidenceClaim } from "@/features/messages/lib/evidenceCrossCheck";
 import { splitEvidenceBody } from "@/features/messages/lib/evidenceBodyParts";
+import {
+  parseEvidenceTestEntries,
+} from "@/features/messages/lib/evidenceTestEntries";
 import type { EvidenceKind } from "@/features/messages/lib/evidenceTag";
 import { useEvidenceCrossCheck } from "@/features/messages/lib/useEvidenceCrossCheck";
-import { DiffStatSummary, TestRunSummary } from "./ci/CiPresentation";
+import { useEvidencePullRequestChecks } from "@/features/messages/lib/useEvidencePullRequestChecks";
+import {
+  DiffStatSummary,
+  TestRunSummary,
+  type TestRunDetailRow,
+} from "./ci/CiPresentation";
 import {
   EvidenceCrossCheckBadge,
   EvidenceCrossCheckDetail,
@@ -136,16 +144,25 @@ function MetricsLayout({ message }: { message: TimelineMessage }) {
 function TestRunLayout({ message }: { message: TimelineMessage }) {
   const claim = parseEvidenceClaim("test-run", message.body);
   const parts = splitEvidenceBody(message.body);
+  const named = parseEvidenceTestEntries(message.body);
+  const ciChecks = useEvidencePullRequestChecks(message);
+  const details = buildTestRunDetails(named, ciChecks);
+  // Named local rows leave the narrative; keep prose that is not a test list.
+  const narrative =
+    named.length > 0
+      ? stripNamedTestSections(parts.narrative)
+      : parts.narrative;
   return (
     <div className="grid gap-3">
       {claim && claim.kind === "test-run" ? (
         <TestRunSummary
+          details={details}
           failed={claim.failed}
           passed={claim.passed}
           skipped={claim.skipped}
         />
       ) : null}
-      <EvidenceNarrative content={parts.narrative} />
+      <EvidenceNarrative content={narrative} />
       <EvidenceLinks links={parts.links} />
       {/* Fallback when the body has no Tests: line — show raw markdown once. */}
       {!claim && parts.narrative.length === 0 ? (
@@ -153,6 +170,83 @@ function TestRunLayout({ message }: { message: TimelineMessage }) {
       ) : null}
     </div>
   );
+}
+
+function buildTestRunDetails(
+  named: ReturnType<typeof parseEvidenceTestEntries>,
+  ciChecks: ReturnType<typeof useEvidencePullRequestChecks>,
+): TestRunDetailRow[] {
+  if (named.length > 0) {
+    return named.map((entry) => ({
+      name: entry.name,
+      status: entry.status,
+    }));
+  }
+  return ciChecks.map((check) => {
+    const name = check.name.trim();
+    const workflow = check.workflow?.trim();
+    const label =
+      workflow &&
+      !name.startsWith(`${workflow} / `) &&
+      !name.startsWith(`${workflow}/`) &&
+      !name.includes(" / ")
+        ? `${workflow} / ${name}`
+        : name;
+    return {
+      name: label,
+      status: mapCiCheckStatus(check.state),
+    };
+  });
+}
+
+function mapCiCheckStatus(state: string): TestRunDetailRow["status"] {
+  const upper = state.toUpperCase();
+  if (
+    upper === "FAILURE" ||
+    upper === "ERROR" ||
+    upper === "CANCELLED" ||
+    upper === "TIMED_OUT"
+  ) {
+    return "failed";
+  }
+  if (upper === "SUCCESS" || upper === "NEUTRAL") return "passed";
+  if (upper === "SKIPPED") return "skipped";
+  if (
+    upper === "IN_PROGRESS" ||
+    upper === "IN PROGRESS" ||
+    upper.includes("PROGRESS")
+  ) {
+    return "running";
+  }
+  return "pending";
+}
+
+/** Drop Failed/Passed section lines once they are shown in the expandable list. */
+function stripNamedTestSections(narrative: string): string {
+  const lines = narrative.split(/\r?\n/);
+  const kept: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^(#{1,6}\s*)?(failed|failing|passed|passing)\s*:?\s*$/i.test(trimmed)) {
+      inSection = true;
+      continue;
+    }
+    if (inSection) {
+      if (trimmed.length === 0) {
+        inSection = false;
+        continue;
+      }
+      if (/^\s*(?:[-*]|\d+[.)])\s+/.test(trimmed)) continue;
+      if (/^\s*(?:✅|❌|✓|✗|✔|✘|PASS(?:ED)?|FAIL(?:ED)?)\s*/i.test(trimmed)) {
+        continue;
+      }
+      // Non-list prose ends the section.
+      inSection = false;
+    }
+    kept.push(line);
+  }
+  return kept.join("\n").trim();
 }
 
 function DiffStatLayout({ message }: { message: TimelineMessage }) {

@@ -118,7 +118,7 @@ export function ThreadPrHub({ subject }: { subject: ThreadForgeHubSubject }) {
         onValueChange={setTab}
         value={tab}
       >
-        <TabsList className="h-9 w-full justify-start gap-0.5 overflow-x-auto border-b border-border/50 bg-transparent px-2 scrollbar-none">
+        <TabsList className="h-9 w-full justify-start gap-0 overflow-x-auto rounded-none border-b border-border/50 bg-transparent p-0 px-2 scrollbar-none">
           <HubTab label="Changes" value="changes" count={pr.files.length} />
           <HubTab label="Description" value="description" count={null} />
           <HubTab label="Commits" value="commits" count={pr.commits.length} />

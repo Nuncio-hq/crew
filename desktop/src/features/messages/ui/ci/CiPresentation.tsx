@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { cn } from "@/shared/lib/cn";
 
 import {
@@ -111,66 +113,197 @@ export function DiffStatSummary({
   );
 }
 
-/** Agent-claimed local test counts — not GitHub CI. Cursor-compact: one row. */
+export type TestRunDetailRow = {
+  name: string;
+  status: "passed" | "failed" | "running" | "pending" | "skipped";
+};
+
+/** Agent-claimed local test counts; expands to named rows like Cursor Checks. */
 export function TestRunSummary({
   className,
+  details,
   failed,
   passed,
   skipped,
 }: {
   className?: string;
+  /** Named tests or CI checks shown when the summary is expanded. */
+  details?: readonly TestRunDetailRow[];
   failed: number;
   passed: number;
   skipped: number | null;
 }) {
+  const [open, setOpen] = useState(false);
   const tone = failed > 0 ? "destructive" : passed > 0 ? "success" : "muted";
+  const rows = details ?? [];
+  const canExpand = rows.length > 0;
 
   return (
     <div
-      className={cn(
-        "flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-border/50 px-2 py-1.5",
-        className,
-      )}
+      className={cn("rounded-md border border-border/50", className)}
       data-testid="test-run-summary"
     >
-      <span
-        aria-hidden="true"
+      <button
+        aria-expanded={canExpand ? open : undefined}
         className={cn(
-          "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-          tone === "success"
-            ? "bg-success"
-            : tone === "destructive"
-              ? "bg-destructive"
-              : "bg-muted-foreground",
+          "flex w-full items-center gap-2 px-2 py-1.5 text-left",
+          canExpand
+            ? "hover:bg-muted/40"
+            : "cursor-default",
         )}
-      />
-      <span
-        className="sr-only"
-        data-testid="test-run-summary-label"
-      >{`${passed} passed, ${failed} failed`}</span>
-      <span className="inline-flex flex-wrap items-center gap-x-1.5 text-sm tabular-nums">
-        <span className={passed > 0 ? "text-success" : "text-muted-foreground"}>
-          {passed} passed
-        </span>
-        <span aria-hidden="true" className="text-muted-foreground/40">
-          ·
+        data-testid="test-run-summary-toggle"
+        disabled={!canExpand}
+        onClick={() => {
+          if (canExpand) setOpen((current) => !current);
+        }}
+        type="button"
+      >
+        <span
+          aria-hidden="true"
+          className="w-2.5 shrink-0 text-2xs text-muted-foreground/70"
+        >
+          {canExpand ? (open ? "▾" : "▸") : ""}
         </span>
         <span
-          className={failed > 0 ? "text-destructive" : "text-muted-foreground"}
-        >
-          {failed} failed
+          aria-hidden="true"
+          className={cn(
+            "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+            tone === "success"
+              ? "bg-success"
+              : tone === "destructive"
+                ? "bg-destructive"
+                : "bg-muted-foreground",
+          )}
+        />
+        <span
+          className="sr-only"
+          data-testid="test-run-summary-label"
+        >{`${passed} passed, ${failed} failed`}</span>
+        <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 text-sm tabular-nums">
+          <span
+            className={passed > 0 ? "text-success" : "text-muted-foreground"}
+          >
+            {passed} passed
+          </span>
+          <span aria-hidden="true" className="text-muted-foreground/40">
+            ·
+          </span>
+          <span
+            className={failed > 0 ? "text-destructive" : "text-muted-foreground"}
+          >
+            {failed} failed
+          </span>
+          {skipped != null ? (
+            <>
+              <span aria-hidden="true" className="text-muted-foreground/40">
+                ·
+              </span>
+              <span className="text-muted-foreground">{skipped} skipped</span>
+            </>
+          ) : null}
         </span>
-        {skipped != null ? (
-          <>
-            <span aria-hidden="true" className="text-muted-foreground/40">
-              ·
-            </span>
-            <span className="text-muted-foreground">{skipped} skipped</span>
-          </>
-        ) : null}
-      </span>
+      </button>
+      {open && canExpand ? (
+        <div
+          className="border-t border-border/40 py-1"
+          data-testid="test-run-summary-details"
+        >
+          <TestRunDetailGroups rows={rows} />
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function TestRunDetailGroups({ rows }: { rows: readonly TestRunDetailRow[] }) {
+  const groups: Array<{
+    id: TestRunDetailRow["status"];
+    label: string;
+    items: TestRunDetailRow[];
+  }> = [
+    { id: "failed", label: "Failed", items: [] },
+    { id: "running", label: "Running", items: [] },
+    { id: "pending", label: "Pending", items: [] },
+    { id: "passed", label: "Passed", items: [] },
+    { id: "skipped", label: "Skipped", items: [] },
+  ];
+  for (const row of rows) {
+    const group = groups.find((entry) => entry.id === row.status);
+    group?.items.push(row);
+  }
+
+  return (
+    <>
+      {groups
+        .filter((group) => group.items.length > 0)
+        .map((group) => (
+          <div key={group.id}>
+            <p className="px-2 py-1 text-2xs font-medium text-muted-foreground">
+              {group.label}
+              <span className="ml-1 tabular-nums text-muted-foreground/60">
+                ({group.items.length})
+              </span>
+            </p>
+            <ul className="pb-1">
+              {group.items.map((item) => (
+                <li
+                  className="flex items-center gap-2 px-2 py-1 text-sm"
+                  key={`${item.status}:${item.name}`}
+                >
+                  <TestRunDetailGlyph status={item.status} />
+                  <span className="min-w-0 flex-1 truncate text-foreground">
+                    {item.name}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+    </>
+  );
+}
+
+function TestRunDetailGlyph({
+  status,
+}: {
+  status: TestRunDetailRow["status"];
+}) {
+  switch (status) {
+    case "passed":
+      return (
+        <span aria-hidden="true" className="text-success">
+          ✓
+        </span>
+      );
+    case "failed":
+      return (
+        <span aria-hidden="true" className="text-destructive">
+          ✗
+        </span>
+      );
+    case "running":
+      return (
+        <span aria-hidden="true" className="text-attention">
+          ●
+        </span>
+      );
+    case "pending":
+      return (
+        <span aria-hidden="true" className="text-muted-foreground">
+          ○
+        </span>
+      );
+    case "skipped":
+      return (
+        <span aria-hidden="true" className="text-muted-foreground">
+          –
+        </span>
+      );
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
 }
 
 export function CheckStatusDot({

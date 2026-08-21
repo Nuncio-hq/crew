@@ -209,6 +209,10 @@ test.describe("evidence–CI cross-check badge (#175)", () => {
       timeout: 10_000,
     });
     await expect(badge).toContainText("Matches CI");
+    await card.getByTestId("test-run-summary-toggle").click();
+    const details = card.getByTestId("test-run-summary-details");
+    await expect(details).toBeVisible();
+    await expect(details).toContainText("Crew CI");
     await waitForAnimations(page);
     await card.screenshot({
       path: "test-results/evidence-cross-check/01-matches.png",

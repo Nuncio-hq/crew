@@ -9,7 +9,7 @@ import { parseForgePullRequestUrl } from "@/features/messages/lib/parseForgePull
 export const FORGE_HUB_NARROW_PX = 1100;
 
 export const FORGE_TAB_TRIGGER_CLASS =
-  "relative h-full shrink-0 rounded-none px-2.5 text-sm leading-5 tracking-tight text-muted-foreground shadow-none after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:bg-current after:opacity-0 after:transition-opacity after:content-[''] hover:bg-transparent hover:text-foreground hover:after:opacity-100 data-[state=active]:bg-transparent data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-none data-[state=active]:after:opacity-100";
+  "relative h-full shrink-0 rounded-none bg-transparent px-2.5 text-sm font-normal leading-5 tracking-tight text-muted-foreground shadow-none ring-offset-0 after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:bg-current after:opacity-0 after:transition-opacity after:content-[''] hover:bg-transparent hover:text-foreground hover:after:opacity-40 focus-visible:ring-0 data-[state=active]:bg-transparent data-[state=active]:font-medium data-[state=active]:text-foreground data-[state=active]:shadow-none data-[state=active]:after:opacity-100";
 
 export function forgeStateChipClass(state: ForgePullRequestState): string {
   switch (state) {
