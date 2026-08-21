@@ -14,11 +14,15 @@ const SECTION_HEADER_RE =
   /^(#{1,6}\s*)?(failed|failing|passed|passing)\s*:?\s*$/i;
 const BULLET_RE = /^\s*(?:[-*]|\d+[.)])\s+(.+?)\s*$/;
 const STATUS_PREFIX_RE =
-  /^\s*(?:✅|❌|✓|✗|✔|✘|PASS(?:ED)?|FAIL(?:ED)?)\s*[:\-]?\s+(.+?)\s*$/i;
+  /^\s*(?:✅|❌|✓|✗|✔|✘|PASS(?:ED)?|FAIL(?:ED)?)\s*[:-]?\s+(.+?)\s*$/i;
 const CLAIM_LINE_RE = /^(Tests:|Diff:|Files:)/i;
 
 function sectionStatus(header: string): EvidenceTestStatus | null {
-  const key = header.replace(/^#+\s*/, "").replace(/:$/, "").trim().toLowerCase();
+  const key = header
+    .replace(/^#+\s*/, "")
+    .replace(/:$/, "")
+    .trim()
+    .toLowerCase();
   if (key === "failed" || key === "failing") return "failed";
   if (key === "passed" || key === "passing") return "passed";
   return null;
@@ -66,7 +70,9 @@ export function parseEvidenceTestEntries(body: string): EvidenceTestEntry[] {
 
     const prefixed = trimmed.match(STATUS_PREFIX_RE);
     if (prefixed?.[1]) {
-      const token = trimmed.match(/^(✅|❌|✓|✗|✔|✘|PASS(?:ED)?|FAIL(?:ED)?)/i)?.[1];
+      const token = trimmed.match(
+        /^(✅|❌|✓|✗|✔|✘|PASS(?:ED)?|FAIL(?:ED)?)/i,
+      )?.[1];
       const status: EvidenceTestStatus =
         token != null && /^(?:❌|✗|✘|FAIL)/i.test(token) ? "failed" : "passed";
       pushUnique(entries, seen, status, prefixed[1]);
@@ -88,7 +94,9 @@ export function parseEvidenceTestEntries(body: string): EvidenceTestEntry[] {
   return entries;
 }
 
-export function groupEvidenceTestEntries(entries: readonly EvidenceTestEntry[]): {
+export function groupEvidenceTestEntries(
+  entries: readonly EvidenceTestEntry[],
+): {
   failed: EvidenceTestEntry[];
   passed: EvidenceTestEntry[];
 } {

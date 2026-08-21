@@ -147,9 +147,7 @@ export function TestRunSummary({
         aria-expanded={canExpand ? open : undefined}
         className={cn(
           "flex w-full items-center gap-2 px-2 py-1.5 text-left",
-          canExpand
-            ? "hover:bg-muted/40"
-            : "cursor-default",
+          canExpand ? "hover:bg-muted/40" : "cursor-default",
         )}
         data-testid="test-run-summary-toggle"
         disabled={!canExpand}
@@ -189,7 +187,9 @@ export function TestRunSummary({
             ·
           </span>
           <span
-            className={failed > 0 ? "text-destructive" : "text-muted-foreground"}
+            className={
+              failed > 0 ? "text-destructive" : "text-muted-foreground"
+            }
           >
             {failed} failed
           </span>

@@ -45,14 +45,12 @@ Passed:
     // "✗ should stay failed" matches STATUS_PREFIX_RE first and is failed.
     assert.ok(
       entries.some(
-        (entry) =>
-          entry.status === "failed" && entry.name === "boom",
+        (entry) => entry.status === "failed" && entry.name === "boom",
       ),
     );
     assert.ok(
       entries.some(
-        (entry) =>
-          entry.status === "passed" && entry.name === "desktop smoke",
+        (entry) => entry.status === "passed" && entry.name === "desktop smoke",
       ),
     );
     assert.ok(

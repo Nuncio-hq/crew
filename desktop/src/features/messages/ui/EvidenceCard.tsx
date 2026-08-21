@@ -12,9 +12,7 @@ import { parseEntityLink } from "@/shared/lib/entityLink";
 import { useOpenEntityLink } from "@/shared/ui/markdown/entityLinks";
 import { parseEvidenceClaim } from "@/features/messages/lib/evidenceCrossCheck";
 import { splitEvidenceBody } from "@/features/messages/lib/evidenceBodyParts";
-import {
-  parseEvidenceTestEntries,
-} from "@/features/messages/lib/evidenceTestEntries";
+import { parseEvidenceTestEntries } from "@/features/messages/lib/evidenceTestEntries";
 import type { EvidenceKind } from "@/features/messages/lib/evidenceTag";
 import { useEvidenceCrossCheck } from "@/features/messages/lib/useEvidenceCrossCheck";
 import { useEvidencePullRequestChecks } from "@/features/messages/lib/useEvidencePullRequestChecks";
@@ -228,7 +226,9 @@ function stripNamedTestSections(narrative: string): string {
   let inSection = false;
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^(#{1,6}\s*)?(failed|failing|passed|passing)\s*:?\s*$/i.test(trimmed)) {
+    if (
+      /^(#{1,6}\s*)?(failed|failing|passed|passing)\s*:?\s*$/i.test(trimmed)
+    ) {
       inSection = true;
       continue;
     }
