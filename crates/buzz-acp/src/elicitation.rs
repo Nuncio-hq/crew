@@ -1617,6 +1617,60 @@ pub(crate) fn normalize_form(schema: &serde_json::Value) -> Option<NormalizedFor
     })
 }
 
+pub(crate) const PLAN_CONTINUE_VALUE: &str = "continue";
+pub(crate) const PLAN_STOP_VALUE: &str = "stop";
+
+/// Founder-facing Continue/Stop form after an engine stops on a plan.
+pub(crate) fn plan_continue_form() -> NormalizedForm {
+    NormalizedForm {
+        questions: vec![UserInputQuestion {
+            id: "q0".into(),
+            header: "Plan ready".into(),
+            question: "The agent wrote a plan and stopped. Continue so it posts the answer in this channel?"
+                .into(),
+            options: vec![
+                Option_ {
+                    value: PLAN_CONTINUE_VALUE.into(),
+                    label: "Continue".into(),
+                    description: "Keep working and reply in the channel.".into(),
+                },
+                Option_ {
+                    value: PLAN_STOP_VALUE.into(),
+                    label: "Stop".into(),
+                    description: "Leave the turn here.".into(),
+                },
+            ],
+            multi_select: false,
+            allow_custom_answer: false,
+            allow_notes: false,
+            required: true,
+        }],
+        mappings: vec![FieldMapping {
+            id: "q0".into(),
+            field_key: "question_0".into(),
+            custom_key: None,
+            multi_select: false,
+            required: true,
+        }],
+    }
+}
+
+pub(crate) fn plan_continue_was_approved(answers: &UserInputAnswers) -> bool {
+    match answers.get("q0") {
+        Some(Some(UserInputAnswer::Text(value))) => {
+            value.eq_ignore_ascii_case(PLAN_CONTINUE_VALUE)
+                || value.eq_ignore_ascii_case("continue")
+        }
+        Some(Some(UserInputAnswer::Structured { selected, .. })) => match selected {
+            UserInputSelection::One(value) => value.eq_ignore_ascii_case(PLAN_CONTINUE_VALUE),
+            UserInputSelection::Many(values) => values
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case(PLAN_CONTINUE_VALUE)),
+        },
+        _ => false,
+    }
+}
+
 /// Rebuild ACP content using native field keys.
 pub(crate) fn reconstruct_content(
     form: &NormalizedForm,
@@ -2719,6 +2773,27 @@ mod tests {
         assert_eq!(form.questions[0].options[0].value, "yes");
         assert_eq!(form.questions[0].options[0].label, "Yes");
         assert!(form.questions[1].options.is_empty());
+    }
+
+    #[test]
+    fn plan_continue_form_is_a_required_continue_or_stop() {
+        let form = plan_continue_form();
+        assert_eq!(form.questions.len(), 1);
+        assert!(form.questions[0].required);
+        assert_eq!(form.questions[0].options[0].value, PLAN_CONTINUE_VALUE);
+        assert_eq!(form.questions[0].options[1].value, PLAN_STOP_VALUE);
+        let mut approved = UserInputAnswers::new();
+        approved.insert(
+            "q0".into(),
+            Some(UserInputAnswer::Text(PLAN_CONTINUE_VALUE.into())),
+        );
+        assert!(plan_continue_was_approved(&approved));
+        let mut stopped = UserInputAnswers::new();
+        stopped.insert(
+            "q0".into(),
+            Some(UserInputAnswer::Text(PLAN_STOP_VALUE.into())),
+        );
+        assert!(!plan_continue_was_approved(&stopped));
     }
 
     #[test]
