@@ -99,9 +99,17 @@ pub fn hermes_profiles_dir() -> Option<PathBuf> {
     hermes_home().map(|home| home.join("profiles"))
 }
 
-/// Directory for a named profile. Returns `None` when home cannot be resolved.
+/// Directory for a bound profile name.
+///
+/// The home profile (`default`) is `~/.hermes` / `$HERMES_HOME` itself — not
+/// `profiles/default` (spike 0056 / D-073). Named profiles live under
+/// `profiles/<name>`. Returns `None` when home cannot be resolved.
 pub fn hermes_profile_dir(name: &str) -> Option<PathBuf> {
-    hermes_profiles_dir().map(|dir| dir.join(name.trim()))
+    let trimmed = name.trim();
+    if is_hermes_home_profile(trimmed) {
+        return hermes_home();
+    }
+    hermes_profiles_dir().map(|dir| dir.join(trimmed))
 }
 
 /// List named profiles under `profiles/` that pass Crew's name regex.
@@ -671,6 +679,20 @@ exit 2
         assert!(
             !names.iter().any(|name| name == "default"),
             "home profile is a distinguished bind row, not a disk name: {names:?}"
+        );
+    }
+
+    #[test]
+    fn hermes_profile_dir_maps_default_to_hermes_home() {
+        let env = setup("normal");
+        let home = hermes_profile_dir("default").expect("home");
+        let scout = hermes_profile_dir("scout").expect("scout");
+        assert_eq!(home, env.hermes_home);
+        assert_eq!(scout, env.hermes_home.join("profiles/scout"));
+        assert_ne!(
+            home,
+            env.hermes_home.join("profiles/default"),
+            "default must not resolve under profiles/"
         );
     }
 

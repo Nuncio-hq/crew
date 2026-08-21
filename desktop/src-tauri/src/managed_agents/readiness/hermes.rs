@@ -311,6 +311,69 @@ fn readiness_contract_names_all_states_and_keeps_auth_unknown_advisory() {
     }
 
     #[test]
+    fn home_profile_default_uses_hermes_home_not_profiles_default() {
+        let _path_guard = crate::managed_agents::lock_path_mutex();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = temp.path().join("hermes-home");
+        // Home profile lives at HERMES_HOME itself. No profiles/default dir.
+        std::fs::create_dir_all(&hermes_home).expect("hermes home");
+        std::fs::create_dir_all(hermes_home.join("profiles")).expect("profiles");
+        let binary = temp.path().join("hermes");
+        std::fs::write(&binary, "#!/bin/sh\nexit 0\n").expect("fake hermes");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+                .expect("executable");
+        }
+        let original_home = std::env::var("HERMES_HOME").ok();
+        let original_path = std::env::var("PATH").ok();
+        std::env::set_var("HERMES_HOME", &hermes_home);
+        std::env::set_var("PATH", temp.path());
+        crate::managed_agents::clear_resolve_cache();
+
+        let state = hermes_profile_readiness("hermes", Some("default"))
+            .expect("Hermes command should be evaluated");
+        assert!(
+            matches!(
+                state,
+                HermesProfileReadiness::AuthUnknown { ref profile } if profile == "default"
+            ),
+            "default must resolve to ~/.hermes, not Missing profiles/default; got {state:?}"
+        );
+        let env = EffectiveAgentEnv {
+            env: BTreeMap::new(),
+            config_file_path: None,
+            effective_command: "hermes".to_string(),
+            hermes_profile: Some("default".to_string()),
+        };
+        let readiness = agent_readiness(&env);
+        assert!(
+            readiness.is_ready(),
+            "bound default home profile must be ready; got {:?}",
+            readiness.requirements()
+        );
+        assert!(
+            !readiness
+                .requirements()
+                .iter()
+                .any(|r| matches!(r, Requirement::HermesProfileDirectoryMissing { .. })),
+            "must not treat missing profiles/default as orphan; got {:?}",
+            readiness.requirements()
+        );
+
+        match original_home {
+            Some(value) => std::env::set_var("HERMES_HOME", value),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
+        match original_path {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+        crate::managed_agents::clear_resolve_cache();
+    }
+
+    #[test]
     fn readiness_fixture_maps_missing_broken_and_binary_states() {
         let _path_guard = crate::managed_agents::lock_path_mutex();
         let temp = tempfile::tempdir().expect("tempdir");
