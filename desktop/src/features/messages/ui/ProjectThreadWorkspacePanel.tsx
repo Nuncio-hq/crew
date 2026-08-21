@@ -91,10 +91,13 @@ function ChipButton({
 
 function githubDegradedTitle(
   availability: "cli-missing" | "cli-failed",
+  detail: string | null,
 ): string {
-  return availability === "cli-missing"
-    ? "GitHub CLI (gh) not found"
-    : "GitHub CLI could not read this repo";
+  const summary =
+    availability === "cli-missing"
+      ? "GitHub CLI (gh) not found"
+      : "GitHub CLI could not read this repo";
+  return `${detail || summary}. Click to retry.`;
 }
 
 /**
@@ -287,6 +290,7 @@ export function ProjectThreadWorkspacePanel({
     context,
     counts,
     githubAvailability,
+    githubDetail,
     pullRequest,
     steps,
     target,
@@ -416,8 +420,8 @@ export function ProjectThreadWorkspacePanel({
           githubAvailability === "cli-failed" ? (
             <ChipButton
               label="GitHub"
-              onClick={() => undefined}
-              title={githubDegradedTitle(githubAvailability)}
+              onClick={() => void refreshGitHub?.()}
+              title={githubDegradedTitle(githubAvailability, githubDetail)}
             />
           ) : pullRequest ? (
             <>

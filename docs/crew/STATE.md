@@ -1,5 +1,13 @@
 # Crew State
 
+## Issue #262 — Project-thread GitHub status recovers
+
+Transient GitHub probe failures revalidate after the existing 30-second TTL.
+The degraded GitHub chip preserves a bounded diagnostic and retries on click;
+healthy branches with no PR no longer remain stuck behind stale failure state.
+No new GitHub authority or protocol was added.
+Last updated: 2026-08-21
+
 ## Issue #237 — Tool Pane live Mac stability gate
 
 Bar A **FAIL** on founder Mac (spike 0057). C1/C4/C5 token path and B4

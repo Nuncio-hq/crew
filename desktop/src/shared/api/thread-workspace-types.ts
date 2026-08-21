@@ -56,6 +56,7 @@ export type ThreadGitHubAvailability =
 
 export type ThreadGitHubStatus = {
   availability: ThreadGitHubAvailability;
+  detail?: string | null;
   pullRequest: ThreadPullRequest | null;
 };
 

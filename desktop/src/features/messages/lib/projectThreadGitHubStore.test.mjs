@@ -93,6 +93,7 @@ import { createRoot } from "react-dom/client";
 
 import {
   resetProjectThreadGitHubStore,
+  setProjectThreadGitHubRetryDelayForTests,
   setProjectThreadGitHubFetcherForTests,
   useProjectThreadGitHub,
 } from "./projectThreadGitHubStore.ts";
@@ -111,6 +112,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setProjectThreadGitHubRetryDelayForTests(null);
   setProjectThreadGitHubFetcherForTests(null);
   resetProjectThreadGitHubStore();
 });
@@ -155,6 +157,76 @@ function StableRefreshHarness({ activeDrawer, bump }) {
   }, [activeDrawer, refresh]);
   return null;
 }
+
+function SnapshotHarness({ onSnapshot }) {
+  const { snapshot } = useProjectThreadGitHub(target);
+  useEffect(() => {
+    onSnapshot(snapshot);
+  }, [onSnapshot, snapshot]);
+  return null;
+}
+
+test("transient degraded GitHub status revalidates and recovers", async () => {
+  let calls = 0;
+  setProjectThreadGitHubRetryDelayForTests(0);
+  setProjectThreadGitHubFetcherForTests(async () => {
+    calls += 1;
+    return calls === 1
+      ? { availability: "cli-failed", pullRequest: null }
+      : { availability: "available", pullRequest: null };
+  });
+  const snapshots = [];
+  const root = createRoot(new ElementShim());
+
+  await act(async () => {
+    root.render(
+      createElement(SnapshotHarness, {
+        onSnapshot: (snapshot) => {
+          snapshots.push(snapshot);
+        },
+      }),
+    );
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await flush();
+
+  assert.equal(calls, 2, "degraded status should schedule one revalidation");
+  assert.equal(
+    snapshots.at(-1)?.value?.availability,
+    "available",
+    "successful retry should replace the stale degraded snapshot",
+  );
+
+  await act(async () => root.unmount());
+});
+
+test("rejected probe details are bounded, flattened, and redact tokens", async () => {
+  const snapshots = [];
+  setProjectThreadGitHubRetryDelayForTests(60_000);
+  setProjectThreadGitHubFetcherForTests(async () => {
+    throw new Error(`line one\ngho_secretvalue ${"x".repeat(300)}`);
+  });
+  const root = createRoot(new ElementShim());
+
+  await act(async () => {
+    root.render(
+      createElement(SnapshotHarness, {
+        onSnapshot: (snapshot) => {
+          snapshots.push(snapshot);
+        },
+      }),
+    );
+  });
+  await flush();
+
+  const detail = snapshots.at(-1)?.value?.detail;
+  assert.ok(detail, "degraded snapshot should retain a safe diagnostic");
+  assert.equal(detail.includes("\n"), false);
+  assert.equal(detail.includes("secretvalue"), false);
+  assert.ok(Array.from(detail).length <= 241, "detail is capped plus ellipsis");
+
+  await act(async () => root.unmount());
+});
 
 test("stable refresh dependency does not re-invoke after parent re-render", async () => {
   const status = mockGitHubStatus();
