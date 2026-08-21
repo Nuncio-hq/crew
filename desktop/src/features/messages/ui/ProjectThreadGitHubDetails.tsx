@@ -1,12 +1,9 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
-  Check,
   CircleDot,
   ExternalLink,
   GitPullRequest,
-  LoaderCircle,
   MessageSquare,
-  X,
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
@@ -33,19 +30,15 @@ import {
   projectThreadStatusClassName,
   pullRequestStatus,
 } from "@/features/messages/lib/projectThreadGitHubStatus";
+import {
+  CheckStatusDot,
+  CheckStatusLabel,
+  CiCheckSummary,
+  DiffStatSummary,
+} from "./ci/CiPresentation";
+import { summarizeThreadChecks } from "./ci/checkPresentation";
 
 export type ProjectThreadGitHubDrawer = "issue" | "pr" | "ci";
-
-function checkTone(check: ThreadPullRequestCheck) {
-  const state = check.state.toUpperCase();
-  if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(state)) {
-    return "text-success";
-  }
-  if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"].includes(state)) {
-    return "text-destructive";
-  }
-  return "text-muted-foreground";
-}
 
 function IssueDetails({ pullRequest }: { pullRequest: ThreadPullRequest }) {
   const issues = pullRequest.closingIssuesReferences;
@@ -83,6 +76,7 @@ function IssueDetails({ pullRequest }: { pullRequest: ThreadPullRequest }) {
 
 function CiDetails({ checks }: { checks: ThreadPullRequestCheck[] }) {
   const status = ciStatus(checks);
+  const summary = summarizeThreadChecks(checks);
   if (checks.length === 0) {
     return (
       <div className="space-y-2">
@@ -97,32 +91,46 @@ function CiDetails({ checks }: { checks: ThreadPullRequestCheck[] }) {
     );
   }
   return (
-    <div className="space-y-1.5">
-      <Badge
-        className={projectThreadStatusClassName(status.tone)}
-        variant="secondary"
-      >
-        {status.label}
-      </Badge>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge
+          className={projectThreadStatusClassName(status.tone)}
+          variant="secondary"
+        >
+          {status.label}
+        </Badge>
+        <CiCheckSummary
+          failed={summary.failed}
+          passed={summary.passed}
+          running={summary.running}
+          total={checks.length}
+        />
+      </div>
+      <p className="text-2xs text-muted-foreground">
+        Each row is one GitHub check. Click a row to open its log on GitHub.
+      </p>
       {checks.map((check) => (
         <button
           className="flex w-full items-center gap-2 rounded-lg border border-border/60 px-2 py-1.5 text-left disabled:cursor-default"
           disabled={!check.url}
           key={`${check.workflow ?? "check"}:${check.name}:${check.url ?? check.state}`}
           onClick={() => check.url && void openUrl(check.url)}
+          title={check.url ? "Open check on GitHub" : undefined}
           type="button"
         >
-          {checkTone(check).includes("emerald") ? (
-            <Check className={`h-4 w-4 ${checkTone(check)}`} />
-          ) : checkTone(check) === "text-destructive" ? (
-            <X className="h-4 w-4 text-destructive" />
-          ) : (
-            <LoaderCircle className={`h-4 w-4 ${checkTone(check)}`} />
-          )}
+          <CheckStatusDot state={check.state} />
           <span className="min-w-0 flex-1 truncate text-xs font-medium">
             {check.name}
           </span>
-          <span className={`text-2xs ${checkTone(check)}`}>{check.state}</span>
+          {check.workflow ? (
+            <span className="hidden max-w-24 truncate text-2xs text-muted-foreground [@container(min-width:24rem)]:inline">
+              {check.workflow}
+            </span>
+          ) : null}
+          <CheckStatusLabel state={check.state} />
+          {check.url ? (
+            <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+          ) : null}
         </button>
       ))}
     </div>
@@ -176,10 +184,16 @@ export function ProjectThreadGitHubDetails({
               {status.label}
             </Badge>
           </div>
-          <p className="text-xs text-muted-foreground">
-            {pullRequest.headRefName} → {pullRequest.baseRefName} · +
-            {pullRequest.additions} −{pullRequest.deletions} ·{" "}
-            {pullRequest.changedFiles} files
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+            <span>
+              {pullRequest.headRefName} → {pullRequest.baseRefName}
+            </span>
+            <DiffStatSummary
+              additions={pullRequest.additions}
+              className="text-xs"
+              deletions={pullRequest.deletions}
+              files={pullRequest.changedFiles}
+            />
           </p>
         </div>
         <Button

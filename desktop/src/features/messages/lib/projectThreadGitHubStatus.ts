@@ -45,7 +45,10 @@ export function ciStatus(checks: readonly ThreadPullRequestCheck[]) {
       pending = true;
     }
   }
-  if (failed) return { label: "Failing", tone: "failure" as const };
-  if (pending) return { label: "Pending", tone: "pending" as const };
-  return { label: "Passing", tone: "success" as const };
+  if (checks.length === 0) {
+    return { label: "No checks", tone: "pending" as const };
+  }
+  if (failed) return { label: "Checks failing", tone: "failure" as const };
+  if (pending) return { label: "Checks running", tone: "pending" as const };
+  return { label: "Checks passing", tone: "success" as const };
 }

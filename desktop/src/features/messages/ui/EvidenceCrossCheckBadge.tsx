@@ -56,7 +56,7 @@ export function EvidenceCrossCheckDetail({
       {result.detail}
       <span className="text-muted-foreground">
         {" "}
-        — CI shows a different result; worth a look before accepting
+        — GitHub CI disagrees with this claim; look before accepting
       </span>
     </p>
   );

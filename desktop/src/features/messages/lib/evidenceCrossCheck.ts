@@ -39,10 +39,10 @@ export type EvidenceCrossCheckResult = {
 };
 
 const LABEL: Record<EvidenceCrossCheckState, string> = {
-  matches: "Matches CI",
-  diverges: "Diverges",
-  "ci-running": "CI running",
-  "not-comparable": "Not comparable",
+  matches: "Matches GitHub CI",
+  diverges: "Differs from CI",
+  "ci-running": "GitHub CI running",
+  "not-comparable": "Not compared to CI",
 };
 
 const FAILED_CHECK_STATES = new Set([
@@ -122,13 +122,28 @@ function parseDiffStatClaim(body: string): ParsedDiffStatClaim | null {
   for (const rawLine of body.split(/\r?\n/)) {
     const line = rawLine.trim();
     // Diff: +120/−30 across 5 files  (ASCII or unicode minus)
-    const match = line.match(
+    const canonical = line.match(
       /^Diff:\s*\+(\d+)\s*\/\s*[−-](\d+)\s+across\s+(\d+)\s+files?\s*$/i,
     );
+    // Files: 4 | +42 −17  (agent / screenshot shorthand)
+    const shorthand = line.match(
+      /^Files:\s*(\d+)\s*\|\s*\+(\d+)\s+[−-](\d+)\s*$/i,
+    );
+    const match = canonical
+      ? {
+          additions: Number(canonical[1]),
+          deletions: Number(canonical[2]),
+          files: Number(canonical[3]),
+        }
+      : shorthand
+        ? {
+            additions: Number(shorthand[2]),
+            deletions: Number(shorthand[3]),
+            files: Number(shorthand[1]),
+          }
+        : null;
     if (!match) continue;
-    const additions = Number(match[1]);
-    const deletions = Number(match[2]);
-    const files = Number(match[3]);
+    const { additions, deletions, files } = match;
     if (
       ![additions, deletions, files].every((n) => Number.isFinite(n) && n >= 0)
     ) {

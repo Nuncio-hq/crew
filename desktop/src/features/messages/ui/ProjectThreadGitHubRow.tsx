@@ -9,18 +9,7 @@ import {
   projectThreadStatusClassName,
   pullRequestStatus,
 } from "@/features/messages/lib/projectThreadGitHubStatus";
-
-function ciSummary(states: readonly string[]) {
-  let passed = 0;
-  let failed = 0;
-  for (const value of states) {
-    const state = value.toUpperCase();
-    if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(state)) passed += 1;
-    else if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"].includes(state))
-      failed += 1;
-  }
-  return { failed, passed, running: states.length - passed - failed };
-}
+import { summarizeThreadChecks } from "./ci/checkPresentation";
 
 export function ProjectThreadGitHubRow({
   activeDrawer,
@@ -34,9 +23,19 @@ export function ProjectThreadGitHubRow({
   pullRequest: ThreadPullRequest;
 }) {
   const issue = pullRequest.closingIssuesReferences[0];
-  const checks = ciSummary(pullRequest.checks.map((check) => check.state));
+  const checks = summarizeThreadChecks(pullRequest.checks);
   const pullRequestStatusValue = pullRequestStatus(pullRequest);
   const ciStatusValue = ciStatus(pullRequest.checks);
+  const ciDetail =
+    pullRequest.checks.length === 0
+      ? "No checks yet"
+      : [
+          checks.failed > 0 ? `${checks.failed} failed` : null,
+          checks.running > 0 ? `${checks.running} running` : null,
+          `${checks.passed} passed`,
+        ]
+          .filter(Boolean)
+          .join(" · ");
   return (
     <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-border/60 bg-muted/20 [&>*:not(:last-child)]:border-r">
       <ProjectThreadIntegrationCell
@@ -61,9 +60,9 @@ export function ProjectThreadGitHubRow({
       />
       <ProjectThreadIntegrationCell
         active={activeDrawer === "ci"}
-        detail={`${checks.passed}/${pullRequest.checks.length} passed · ${checks.running} running`}
+        detail={ciDetail}
         icon={<ListChecks className="h-3.5 w-3.5" />}
-        label="CI"
+        label="GitHub CI"
         onClick={() => onToggle("ci")}
         phase={phases.ci}
         statusClassName={projectThreadStatusClassName(ciStatusValue.tone)}

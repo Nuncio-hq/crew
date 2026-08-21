@@ -114,8 +114,16 @@ describe("parseEvidenceClaim — diff-stat", () => {
     );
   });
 
+  it("parses Files: F | +A −D shorthand", () => {
+    assert.deepEqual(parseEvidenceClaim("diff-stat", "Files: 4 | +42 −17"), {
+      kind: "diff-stat",
+      additions: 42,
+      deletions: 17,
+      files: 4,
+    });
+  });
+
   it("rejects near-miss shapes and free-form diff prose", () => {
-    assert.equal(parseEvidenceClaim("diff-stat", "Files: 4 | +42 −17"), null);
     assert.equal(
       parseEvidenceClaim("diff-stat", "Diff: 120 additions, 30 deletions"),
       null,
@@ -160,7 +168,7 @@ describe("compareEvidenceToPullRequest — test-run matrix", () => {
       pr(),
     );
     assert.equal(result.state, "matches");
-    assert.equal(result.label, "Matches CI");
+    assert.equal(result.label, "Matches GitHub CI");
     assert.equal(result.detail, null);
   });
 
@@ -223,7 +231,7 @@ describe("compareEvidenceToPullRequest — test-run matrix", () => {
       }),
     );
     assert.equal(result.state, "ci-running");
-    assert.equal(result.label, "CI running");
+    assert.equal(result.label, "GitHub CI running");
   });
 
   it("no PR / no checks / unparseable → Not comparable", () => {

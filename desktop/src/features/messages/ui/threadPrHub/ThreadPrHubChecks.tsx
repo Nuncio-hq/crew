@@ -15,6 +15,7 @@ import type {
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
+import { CheckStatusDot, CiCheckSummaryFromStates } from "../ci/CiPresentation";
 import { checkConclusionIsFailed } from "./forgeHubCopy";
 
 export function ThreadPrHubChecks({
@@ -85,9 +86,14 @@ export function ThreadPrHubChecks({
       data-testid="thread-pr-hub-checks"
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
-        <p className="text-2xs text-muted-foreground">
-          {failed.length} failed · grouped by workflow
-        </p>
+        <div className="min-w-0">
+          <p className="text-2xs font-medium text-muted-foreground">
+            GitHub checks
+          </p>
+          <CiCheckSummaryFromStates
+            states={checks.map((check) => check.conclusion)}
+          />
+        </div>
         {failedRunIds.length > 0 ? (
           <Button
             data-testid="thread-pr-hub-rerun-failed"
@@ -128,7 +134,7 @@ export function ThreadPrHubChecks({
                       type="button"
                     >
                       <div className="flex items-center gap-2">
-                        <StatusDot conclusion={check.conclusion} />
+                        <CheckStatusDot state={check.conclusion} />
                         <span className="truncate text-sm">{check.name}</span>
                       </div>
                       <p className="font-mono text-2xs text-muted-foreground">
@@ -229,22 +235,4 @@ function uniqueRunIds(checks: ForgeCheck[]): number[] {
 
 function checkKey(check: ForgeCheck): string {
   return `${check.workflow ?? ""}:${check.name}:${check.runId ?? 0}`;
-}
-
-function StatusDot({ conclusion }: { conclusion: ForgeCheck["conclusion"] }) {
-  const className = checkConclusionIsFailed(conclusion)
-    ? "bg-destructive"
-    : conclusion === "success"
-      ? "bg-success"
-      : conclusion === "pending"
-        ? "bg-attention"
-        : "bg-muted-foreground";
-  return (
-    <span
-      className={cn(
-        "mt-1 inline-block h-2 w-2 shrink-0 rounded-full",
-        className,
-      )}
-    />
-  );
 }

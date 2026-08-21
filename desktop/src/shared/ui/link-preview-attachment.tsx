@@ -89,7 +89,7 @@ export function LinkPreviewAttachment({
         onClick={openHub}
         type="button"
       >
-        Open PR hub
+        Open PR hub — checks & review
       </button>
     </div>
   );

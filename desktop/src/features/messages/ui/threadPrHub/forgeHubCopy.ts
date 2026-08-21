@@ -80,21 +80,7 @@ export function threadReviewDecisionLabel(value: string): string {
   return "Review: pending";
 }
 
-export function summarizeChecks(states: readonly string[]): {
-  passed: number;
-  failed: number;
-  running: number;
-} {
-  let passed = 0;
-  let failed = 0;
-  for (const value of states) {
-    const state = value.toUpperCase();
-    if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(state)) passed += 1;
-    else if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"].includes(state))
-      failed += 1;
-  }
-  return { failed, passed, running: states.length - passed - failed };
-}
+export { summarizeCheckStates as summarizeChecks } from "../ci/checkPresentation";
 
 export function checkConclusionIsFailed(
   conclusion: ForgeCheckConclusion,

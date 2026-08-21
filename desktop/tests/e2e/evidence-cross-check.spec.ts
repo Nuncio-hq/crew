@@ -208,7 +208,7 @@ test.describe("evidence–CI cross-check badge (#175)", () => {
     await expect(badge).toHaveAttribute("data-state", "matches", {
       timeout: 10_000,
     });
-    await expect(badge).toContainText("Matches CI");
+    await expect(badge).toContainText("Matches GitHub CI");
     await waitForAnimations(page);
     await card.screenshot({
       path: "test-results/evidence-cross-check/01-matches.png",

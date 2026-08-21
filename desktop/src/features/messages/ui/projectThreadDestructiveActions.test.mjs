@@ -56,8 +56,8 @@ test("GitHub status colors cover PR and CI states", async () => {
   assert.match(statusSource, /state === "CLOSED"/);
   assert.match(statusSource, /pullRequest\.isDraft/);
   assert.match(statusSource, /return \{ label: "Open"/);
-  assert.match(statusSource, /return \{ label: "Failing"/);
-  assert.match(statusSource, /return \{ label: "Pending"/);
-  assert.match(statusSource, /return \{ label: "Passing"/);
+  assert.match(statusSource, /return \{ label: "Checks failing"/);
+  assert.match(statusSource, /return \{ label: "Checks running"/);
+  assert.match(statusSource, /return \{ label: "Checks passing"/);
   assert.match(rowSource, /statusClassName={projectThreadStatusClassName/);
 });
