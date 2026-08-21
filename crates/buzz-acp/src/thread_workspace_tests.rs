@@ -726,6 +726,85 @@ async fn reattach_failure_reports_the_path_conflict_stderr() {
     fs::remove_dir_all(&fixture).expect("fixture cleanup");
 }
 
+#[tokio::test]
+async fn leftover_buzz_branch_without_root_records_reattaches() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "f".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    let branch = created.branch.clone();
+    let worktree_path = created.worktree_path.clone();
+
+    run_git(
+        &workspace.local_path,
+        &[
+            "worktree",
+            "remove",
+            worktree_path.to_str().expect("worktree UTF-8"),
+        ],
+    )
+    .await;
+    drop_branch_root_records(&workspace.local_path, &branch).await;
+    drop_root_claim(&workspace.local_path, &root).await;
+
+    let reattached = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("leftover buzz/ branch with empty records must reattach");
+    assert_eq!(reattached.worktree_path, worktree_path);
+    assert_eq!(reattached.branch, branch);
+    assert!(reattached.worktree_path.join("README.md").is_file());
+
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn leftover_buzz_branch_with_occupied_path_is_a_named_prepare_error() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "1".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    let branch = created.branch.clone();
+    let worktree_path = created.worktree_path.clone();
+
+    run_git(
+        &workspace.local_path,
+        &[
+            "worktree",
+            "remove",
+            worktree_path.to_str().expect("worktree UTF-8"),
+        ],
+    )
+    .await;
+    drop_branch_root_records(&workspace.local_path, &branch).await;
+    fs::create_dir_all(&worktree_path).expect("blocking directory");
+    fs::write(worktree_path.join("BLOCKER"), "occupied").expect("non-empty blocking directory");
+
+    let error = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect_err("occupied leftover branch must not Protocol-wrap");
+    let failed = error
+        .downcast_ref::<crate::thread_workspace::ThreadWorkspacePrepareFailed>()
+        .expect("leftover occupied path must be a typed prepare failure");
+    assert_eq!(failed.branch, branch);
+    assert_eq!(failed.worktree_path, worktree_path);
+    assert!(
+        failed
+            .git_stderr
+            .to_ascii_lowercase()
+            .contains("already exists"),
+        "typed error must keep git stderr: {}",
+        failed.git_stderr
+    );
+    assert!(
+        error.to_string().contains("already exists"),
+        "display must include git stderr: {error}"
+    );
+
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
 fn assert_branch_conflict_error(
     error: &anyhow::Error,
     worktree_path: &std::path::Path,
@@ -949,6 +1028,25 @@ async fn remove_root_identity(workspace: &ProjectWorkspace, root: &str, config_k
         .join("buzz-thread-workspace-roots")
         .join(format!("{}.root", &root[..12]));
     fs::remove_file(claim).expect("remove current-version claim to model a legacy worktree");
+}
+
+async fn drop_branch_root_records(repo_root: &std::path::Path, branch: &str) {
+    let key = format!("branch.{branch}.buzzThreadRoot");
+    run_git(repo_root, &["config", "--local", "--unset-all", &key]).await;
+}
+
+async fn drop_root_claim(repo_root: &std::path::Path, root: &str) {
+    let common_git = git_output(repo_root, &["rev-parse", "--git-common-dir"]).await;
+    let common_git = PathBuf::from(common_git);
+    let common_git = if common_git.is_absolute() {
+        common_git
+    } else {
+        repo_root.join(common_git)
+    };
+    let claim = common_git
+        .join("buzz-thread-workspace-roots")
+        .join(format!("{}.root", &root[..12]));
+    let _ = fs::remove_file(claim);
 }
 
 async fn git_fixture() -> (PathBuf, ProjectWorkspace, String) {
