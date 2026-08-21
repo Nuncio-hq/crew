@@ -91,6 +91,8 @@ export function deriveProjectThreadPhaseStates({
   };
 }
 
+export type ProjectThreadPeekToolStatus = "running" | "done" | "failed";
+
 export type ProjectThreadPeekFeedItem =
   | {
       id: string;
@@ -103,9 +105,12 @@ export type ProjectThreadPeekFeedItem =
       headline: string;
       result: string | null;
       failed: boolean;
+      status: ProjectThreadPeekToolStatus;
     };
 
 const PROJECT_THREAD_PEEK_ITEM_CAP = 50;
+/** Collapsed thinking / result preview before the founder expands. */
+export const PROJECT_THREAD_PEEK_PREVIEW_CHARS = 140;
 
 export function mapProjectThreadPeekFeedItems(
   transcript: readonly TranscriptItem[],
@@ -118,15 +123,76 @@ export function mapProjectThreadPeekFeedItems(
       continue;
     }
     if (item.type !== "tool" || item.renderClass === "suppressed") continue;
+    const failed = item.isError || item.status === "failed";
     feed.push({
       id: item.id,
       kind: "tool",
       headline: getActivityHeadline(item) ?? item.title,
       result: item.result.trim() || null,
-      failed: item.isError || item.status === "failed",
+      failed,
+      status: peekToolStatus(item.status, failed),
     });
   }
   return feed.slice(-PROJECT_THREAD_PEEK_ITEM_CAP);
+}
+
+function peekToolStatus(
+  status: "executing" | "completed" | "failed" | "pending",
+  failed: boolean,
+): ProjectThreadPeekToolStatus {
+  if (failed || status === "failed") return "failed";
+  if (status === "completed") return "done";
+  return "running";
+}
+
+/**
+ * Turn wire dumps into readable peek text: pretty-print JSON, then expand
+ * literal `\n` / `\t` when the blob is still a single escaped line.
+ */
+export function formatProjectThreadPeekText(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return raw;
+
+  let text = trimmed;
+  try {
+    text = JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch {
+    // keep trimmed
+  }
+
+  if (!text.includes("\n") && /\\[ntr]/.test(text)) {
+    text = text.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "");
+  }
+
+  return text;
+}
+
+/** First line / char-clamped preview for collapsed peek rows. */
+export function previewProjectThreadPeekText(
+  raw: string,
+  maxChars = PROJECT_THREAD_PEEK_PREVIEW_CHARS,
+): { preview: string; truncated: boolean } {
+  const formatted = formatProjectThreadPeekText(raw).trim();
+  if (!formatted) return { preview: "", truncated: false };
+
+  const firstLine =
+    formatted
+      .split("\n")
+      .find((line) => line.trim())
+      ?.trim() ?? "";
+  const hasMoreLines =
+    formatted.includes("\n") && formatted.trim() !== firstLine;
+
+  if (firstLine.length <= maxChars && !hasMoreLines) {
+    return { preview: firstLine, truncated: false };
+  }
+  if (firstLine.length <= maxChars) {
+    return { preview: firstLine, truncated: true };
+  }
+  return {
+    preview: `${firstLine.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`,
+    truncated: true,
+  };
 }
 
 export function createProjectThreadPeekFeedSelector() {
@@ -161,7 +227,8 @@ function projectThreadPeekFeedItemsEqual(
     return (
       left.headline === right.headline &&
       left.result === right.result &&
-      left.failed === right.failed
+      left.failed === right.failed &&
+      left.status === right.status
     );
   }
   return false;

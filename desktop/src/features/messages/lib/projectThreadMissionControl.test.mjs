@@ -4,8 +4,10 @@ import { describe, it } from "node:test";
 import {
   createProjectThreadPeekFeedSelector,
   deriveProjectThreadPhaseStates,
+  formatProjectThreadPeekText,
   mapProjectThreadPeekFeedItems,
   mergeProjectThreadPeekEvents,
+  previewProjectThreadPeekText,
   resolveProjectThreadPeekMode,
 } from "./projectThreadMissionControl.ts";
 
@@ -175,6 +177,35 @@ describe("project thread transcript peek", () => {
     assert.equal(feed[1].headline, "Run tests · pnpm test");
     assert.equal(feed[1].result, "127 tests passed");
     assert.equal(feed[1].failed, false);
+    assert.equal(feed[1].status, "done");
+  });
+
+  it("marks executing tools as running in the peek feed", () => {
+    const feed = mapProjectThreadPeekFeedItems([
+      {
+        ...tool,
+        id: "tool-running",
+        status: "executing",
+        result: "",
+        completedAt: null,
+      },
+    ]);
+
+    assert.equal(feed[0].kind, "tool");
+    assert.equal(feed[0].status, "running");
+    assert.equal(feed[0].result, null);
+  });
+
+  it("humanizes escaped one-line dumps for peek previews", () => {
+    const escaped =
+      "3-line story:\\n- assigned work\\n- current status\\n- what was omitted";
+    const formatted = formatProjectThreadPeekText(escaped);
+    assert.ok(formatted.includes("\n"));
+    assert.equal(formatted.includes("\\n"), false);
+
+    const preview = previewProjectThreadPeekText(escaped);
+    assert.equal(preview.truncated, true);
+    assert.equal(preview.preview, "3-line story:");
   });
 
   it("sources history mode from archived events scoped to the conversation", () => {
