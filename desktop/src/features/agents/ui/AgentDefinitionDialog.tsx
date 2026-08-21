@@ -7,8 +7,6 @@ import type {
   UpdatePersonaInput,
 } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
-import { Input } from "@/shared/ui/input";
-import { Textarea } from "@/shared/ui/textarea";
 import { AgentCreationPreview } from "./AgentCreationPreview";
 import type { EnvVarsValue } from "./EnvVarsEditor";
 import { PersonaAdvancedFields } from "./PersonaAdvancedFields";
@@ -42,8 +40,6 @@ import {
   NO_RUNTIME_DROPDOWN_VALUE,
   runtimeSupportsLlmProviderSelection,
   type PersonaDropdownOption,
-  PERSONA_FIELD_CONTROL_CLASS,
-  PERSONA_FIELD_SHELL_CLASS,
 } from "./agentConfigOptions";
 import {
   decorateAutomaticModelOptions,
@@ -85,6 +81,7 @@ import { useCreateHermesBinding } from "./createHermesBindingFields";
 import { resolveHermesProfileForCreate } from "../lib/hermesProfileBinding";
 import { deriveModelFieldVisibility } from "../lib/modelFieldVisibility";
 import { AgentDefinitionCustomAiFields } from "./AgentDefinitionCustomAiFields";
+import { AgentDefinitionIdentityFields } from "./AgentDefinitionIdentityFields";
 import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload";
 import { AgentDefinitionDialogFooter } from "./AgentDefinitionDialogFooter";
 import { AgentDefinitionDialogShell } from "./AgentDefinitionDialogShell";
@@ -94,6 +91,7 @@ import {
   runtimeDropdownAction,
   usePendingHarnessSelection,
 } from "./addCustomHarness";
+import { shouldShowStandaloneRuntimeUnavailableWarning } from "./personaSubmitFeedback";
 
 type AgentDefinitionDialogProps = {
   open: boolean;
@@ -116,6 +114,8 @@ type AgentDefinitionDialogProps = {
   createRunSection?: React.ReactNode;
   /** Extra create-mode submit gate (e.g. incomplete provider config). */
   createSubmitBlocked?: boolean;
+  /** Embedded create: notify the catalog shell about unsaved edits. */
+  onDirtyChange?: (dirty: boolean) => void;
 };
 
 export type AgentDefinitionSubmitOptions = {
@@ -140,6 +140,7 @@ export function AgentDefinitionDialog({
   publishCatalogUpdatesOnSave = false,
   createRunSection,
   createSubmitBlocked = false,
+  onDirtyChange,
 }: AgentDefinitionDialogProps) {
   const runtimesLoading = runtimeCatalogStatus === "loading";
   const [displayName, setDisplayName] = React.useState("");
@@ -179,6 +180,9 @@ export function AgentDefinitionDialog({
     React.useState(false);
   const [hasUserChanges, setHasUserChanges] = React.useState(false);
   const [isAddHarnessOpen, setIsAddHarnessOpen] = React.useState(false);
+  React.useEffect(() => {
+    onDirtyChange?.(hasUserChanges);
+  }, [hasUserChanges, onDirtyChange]);
   const {
     globalConfig,
     inheritedDefaults: {
@@ -304,7 +308,9 @@ export function AgentDefinitionDialog({
   }, [defaultRuntime, isCreateMode, open, runtime, runtimesLoading]);
 
   function handleOpenChange(next: boolean) {
-    if (!next) {
+    // Embedded create lives inside the catalog discard flow: Cancel must ask
+    // before wiping fields, so defer reset until the parent actually unmounts.
+    if (!next && !embedded) {
       setDisplayName("");
       setAvatarUrl("");
       setSystemPrompt("");
@@ -635,6 +641,16 @@ export function AgentDefinitionDialog({
       {runtimeWarningText} Visit Settings &gt; Agents to set it up.
     </p>
   ) : null;
+  // Harness picker (and its inline warning) only render in Customize mode.
+  // Profile-owned runtimes (Hermes) hide AI-configuration tabs entirely when
+  // preferred, so create stays on defaults with no harness field — still show
+  // the unavailable-runtime blocker so Add agent is not silently disabled.
+  const showStandaloneRuntimeWarning =
+    shouldShowStandaloneRuntimeUnavailableWarning({
+      isCreateMode,
+      hasRuntimeWarning: Boolean(runtimeWarningText),
+      aiConfigurationMode,
+    });
   const advancedFieldsTransition = shouldReduceMotion
     ? { duration: 0 }
     : ADVANCED_FIELDS_MOTION_TRANSITION;
@@ -768,55 +784,16 @@ export function AgentDefinitionDialog({
         runtimeId={runtime.trim() || null}
       />
       <div className="space-y-5">
-        <div className="space-y-1.5">
-          <label
-            className="text-sm font-medium text-foreground"
-            htmlFor="persona-display-name"
-          >
-            Agent name
-          </label>
-          <div
-            className={cn(
-              "flex min-h-11 items-center px-3",
-              PERSONA_FIELD_SHELL_CLASS,
-            )}
-          >
-            <Input
-              autoCorrect="off"
-              className={cn(
-                "h-8 px-0 py-0 leading-6",
-                PERSONA_FIELD_CONTROL_CLASS,
-              )}
-              disabled={isPending}
-              id="persona-display-name"
-              onChange={(event) => setDisplayName(event.target.value)}
-              placeholder="Fizz"
-              value={displayName}
-            />
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label
-            className="text-sm font-medium text-foreground"
-            htmlFor="persona-system-prompt"
-          >
-            Agent instructions (optional)
-          </label>
-          <div className={PERSONA_FIELD_SHELL_CLASS}>
-            <Textarea
-              className={cn(
-                "min-h-40 resize-y px-3 py-3 leading-5",
-                PERSONA_FIELD_CONTROL_CLASS,
-              )}
-              disabled={isPending}
-              id="persona-system-prompt"
-              onChange={(event) => setSystemPrompt(event.target.value)}
-              placeholder="Describe what this agent should do."
-              value={systemPrompt}
-            />
-          </div>
-        </div>
+        <AgentDefinitionIdentityFields
+          displayName={displayName}
+          isCreateMode={isCreateMode}
+          isPending={isPending}
+          onDisplayNameChange={setDisplayName}
+          onSystemPromptChange={setSystemPrompt}
+          runtimeWarningText={runtimeWarningText}
+          showStandaloneRuntimeWarning={showStandaloneRuntimeWarning}
+          systemPrompt={systemPrompt}
+        />
 
         {modelFieldVisible ? (
           <AgentAiConfigurationModeField

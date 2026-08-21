@@ -40,7 +40,9 @@ export function RequestedAgentCreateDialogs() {
           definitionError={
             personas.createPersonaMutation.error instanceof Error
               ? personas.createPersonaMutation.error
-              : null
+              : personas.personaErrorMessage
+                ? new Error(personas.personaErrorMessage)
+                : null
           }
           isDefinitionPending={personas.isPending}
           mode="definition"
