@@ -452,7 +452,7 @@ buzz agents call --channel <UUID> --pubkey <HEX> --reply-to <EVENT_ID>"
 pub enum MessagesCmd {
     /// Send a message to a channel
     #[command(
-        after_help = "Examples:\n  buzz messages send --channel <UUID> --content \"hello\"\n  buzz messages send --channel <UUID> --content \"@alice check this\"\n  echo \"hello from stdin\" | buzz messages send --channel <UUID> --content -"
+        after_help = "Examples:\n  buzz messages send --channel <UUID> --content \"hello\"\n  buzz messages send --channel <UUID> --content \"@alice check this\"\n  echo \"hello from stdin\" | buzz messages send --channel <UUID> --content -\n\nNote: a bare `--content -` with no pipe/producer reads EOF immediately and is rejected as empty content. Always pipe the body in the same command."
     )]
     Send {
         /// Channel UUID (from 'buzz channels list')
