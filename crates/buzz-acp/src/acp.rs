@@ -77,6 +77,26 @@ impl StopReason {
     }
 }
 
+/// Founder decision after a plan-mode stop, or a fallback when no popup
+/// could be shown (the turn must still run).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlanContinueDecision {
+    Continue,
+    Stop,
+    Skip,
+}
+
+pub(crate) const PLAN_CONTINUE_PROMPT: &str = "The founder approved the plan. Continue this turn and post the answer in the channel now. Do not wait for another approval.";
+
+fn is_plan_gate_tool(title: &str) -> bool {
+    let compact: String = title
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_lowercase())
+        .collect();
+    compact.contains("createplan")
+}
+
 /// Errors that can occur in the ACP client.
 #[derive(Debug, thiserror::Error)]
 pub enum AcpError {
@@ -235,6 +255,12 @@ pub struct AcpClient {
     /// Cleared on `session/new` and on `entries: []`. Unstructured plan
     /// updates (no `entries` array) do not clobber a previous snapshot.
     last_declared_plan: Option<crate::declared_plan::DeclaredPlanSnapshot>,
+    /// True when this turn observed a plan-gate tool such as `CreatePlan`.
+    plan_gate_seen: bool,
+    /// True when this turn received a structured `sessionUpdate: plan`.
+    plan_updated_this_turn: bool,
+    /// True after this turn already raised the plan-continue Needs-you popup.
+    plan_continue_asked: bool,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -596,6 +622,9 @@ impl AcpClient {
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
             last_declared_plan: None,
+            plan_gate_seen: false,
+            plan_updated_this_turn: false,
+            plan_continue_asked: false,
         })
     }
 
@@ -713,6 +742,9 @@ impl AcpClient {
             .to_owned();
         tracing::info!(target: "acp::session", "session created: {session_id}");
         self.last_declared_plan = None;
+        self.plan_gate_seen = false;
+        self.plan_updated_this_turn = false;
+        self.plan_continue_asked = false;
         self.note_rotation_from_value(&result);
         Ok(SessionNewResponse {
             session_id,
@@ -972,6 +1004,97 @@ impl AcpClient {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn last_declared_plan(&self) -> Option<&crate::declared_plan::DeclaredPlanSnapshot> {
         self.last_declared_plan.as_ref()
+    }
+
+    /// Reset per-turn plan-continue bookkeeping when a new prompt starts.
+    pub(crate) fn reset_plan_continue_gate(&mut self) {
+        self.plan_gate_seen = false;
+        self.plan_updated_this_turn = false;
+        self.plan_continue_asked = false;
+    }
+
+    /// True when this turn wrote an unfinished plan or called a plan-gate tool.
+    pub(crate) fn should_ask_plan_continue(&self) -> bool {
+        if self.plan_continue_asked {
+            return false;
+        }
+        if self.plan_gate_seen {
+            return true;
+        }
+        self.plan_updated_this_turn
+            && self
+                .last_declared_plan
+                .as_ref()
+                .is_some_and(crate::declared_plan::DeclaredPlanSnapshot::has_unfinished_entries)
+    }
+
+    /// Raise the existing user-input popup after Plan mode stops mid-turn.
+    ///
+    /// Plan mode itself stays allowed. If the founder cannot be asked, the
+    /// turn still continues so the channel is not left silent.
+    pub(crate) async fn ask_founder_to_continue_after_plan(
+        &mut self,
+        session_id: &str,
+    ) -> PlanContinueDecision {
+        if !self.should_ask_plan_continue() {
+            return PlanContinueDecision::Skip;
+        }
+        self.plan_continue_asked = true;
+        if !self.user_input_enabled {
+            return PlanContinueDecision::Continue;
+        }
+        let Some(runtime) = self.user_input_runtime.clone() else {
+            return PlanContinueDecision::Continue;
+        };
+        let Some((channel_id, thread_ref, turn_id)) = self.user_input_context.clone() else {
+            return PlanContinueDecision::Continue;
+        };
+        let engine = match self.user_input_harness.as_deref() {
+            Some(value) if value.contains("codex") => buzz_core::user_input::Engine::Codex,
+            Some(value) if value.contains("claude") => buzz_core::user_input::Engine::Claude,
+            Some(value) => buzz_core::user_input::Engine::Other(value.to_owned()),
+            None => buzz_core::user_input::Engine::Other("unknown".to_owned()),
+        };
+        let request_id = format!("plan-continue-{turn_id}");
+        let published = runtime
+            .publish(
+                channel_id,
+                &thread_ref,
+                session_id,
+                &turn_id,
+                engine,
+                crate::elicitation::plan_continue_form(),
+                &request_id,
+                Some("Plan is ready. Continue so the agent can post the answer in this channel?"),
+                None,
+            )
+            .await;
+        let (event_id, receiver) = match published {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::warn!(%error, "plan-continue popup failed to publish; continuing the turn");
+                return PlanContinueDecision::Continue;
+            }
+        };
+        self.pending_user_input_event_id = Some(event_id);
+        self.user_input_responded = false;
+        let decision = match receiver.await {
+            Ok(Ok(Some(answers))) if crate::elicitation::plan_continue_was_approved(&answers) => {
+                PlanContinueDecision::Continue
+            }
+            Ok(Ok(Some(_))) | Ok(Ok(None)) => PlanContinueDecision::Stop,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "plan-continue answer failed; continuing the turn");
+                PlanContinueDecision::Continue
+            }
+            Err(_) => {
+                tracing::warn!("plan-continue answer dropped; continuing the turn");
+                PlanContinueDecision::Continue
+            }
+        };
+        self.pending_user_input_event_id = None;
+        self.user_input_responded = true;
+        decision
     }
 
     /// Parse and retain an engine rotation signal from an ACP value, if any.
@@ -2174,6 +2297,9 @@ impl AcpClient {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
                 tracing::info!(target: "acp::tool", "tool_call: {title} ({kind})");
+                if is_plan_gate_tool(title) {
+                    self.plan_gate_seen = true;
+                }
                 self.note_post_compact_hook(update);
                 true
             }
@@ -2193,6 +2319,7 @@ impl AcpClient {
                     update,
                     msg["params"]["sessionId"].as_str(),
                 );
+                self.plan_updated_this_turn = true;
                 false
             }
             "agent_thought_chunk" => {
@@ -4374,6 +4501,74 @@ done
             client.last_declared_plan().is_none(),
             "failed session/load rebuild via session/new must drop the dead snapshot"
         );
+        assert!(
+            !client.should_ask_plan_continue(),
+            "session/new must clear the plan-continue gate"
+        );
+    }
+
+    fn tool_call_msg(title: &str) -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-dev",
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "title": title,
+                    "kind": "other",
+                },
+            }
+        })
+    }
+
+    #[test]
+    fn create_plan_title_is_a_plan_gate_tool() {
+        assert!(is_plan_gate_tool("CreatePlan"));
+        assert!(is_plan_gate_tool("create_plan"));
+        assert!(!is_plan_gate_tool("Read"));
+    }
+
+    #[tokio::test]
+    async fn unfinished_plan_asks_founder_to_continue() {
+        let mut client = spawn_inert_client().await;
+        client.reset_plan_continue_gate();
+        let _ = client.handle_session_update(&plan_update_msg(
+            "sess-dev",
+            serde_json::json!([{"content": "Reply in the channel", "status": "pending"}]),
+        ));
+        assert!(client.should_ask_plan_continue());
+    }
+
+    #[tokio::test]
+    async fn create_plan_tool_asks_founder_to_continue() {
+        let mut client = spawn_inert_client().await;
+        client.reset_plan_continue_gate();
+        let _ = client.handle_session_update(&tool_call_msg("CreatePlan"));
+        assert!(client.should_ask_plan_continue());
+    }
+
+    #[tokio::test]
+    async fn completed_plan_does_not_ask_without_a_plan_gate_tool() {
+        let mut client = spawn_inert_client().await;
+        client.reset_plan_continue_gate();
+        let _ = client.handle_session_update(&plan_update_msg(
+            "sess-dev",
+            serde_json::json!([{"content": "Done", "status": "completed"}]),
+        ));
+        assert!(!client.should_ask_plan_continue());
+    }
+
+    #[tokio::test]
+    async fn missing_user_input_runtime_still_continues_the_turn() {
+        let mut client = spawn_inert_client().await;
+        client.reset_plan_continue_gate();
+        let _ = client.handle_session_update(&tool_call_msg("CreatePlan"));
+        assert_eq!(
+            client.ask_founder_to_continue_after_plan("sess-dev").await,
+            PlanContinueDecision::Continue
+        );
+        assert!(!client.should_ask_plan_continue());
     }
 
     #[tokio::test]
