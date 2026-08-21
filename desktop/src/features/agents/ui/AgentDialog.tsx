@@ -164,6 +164,7 @@ function AgentCreateDialogRouter({
         error={definitionError}
         initialValues={initialValues}
         isPending={isDefinitionPending}
+        onDirtyChange={onDirtyChange}
         onOpenChange={onOpenChange}
         onSubmit={async (input, options) => {
           const submitted = await onSubmitDefinition(

@@ -114,6 +114,8 @@ type AgentDefinitionDialogProps = {
   createRunSection?: React.ReactNode;
   /** Extra create-mode submit gate (e.g. incomplete provider config). */
   createSubmitBlocked?: boolean;
+  /** Embedded create: notify the catalog shell about unsaved edits. */
+  onDirtyChange?: (dirty: boolean) => void;
 };
 
 export type AgentDefinitionSubmitOptions = {
@@ -138,6 +140,7 @@ export function AgentDefinitionDialog({
   publishCatalogUpdatesOnSave = false,
   createRunSection,
   createSubmitBlocked = false,
+  onDirtyChange,
 }: AgentDefinitionDialogProps) {
   const runtimesLoading = runtimeCatalogStatus === "loading";
   const [displayName, setDisplayName] = React.useState("");
@@ -177,6 +180,9 @@ export function AgentDefinitionDialog({
     React.useState(false);
   const [hasUserChanges, setHasUserChanges] = React.useState(false);
   const [isAddHarnessOpen, setIsAddHarnessOpen] = React.useState(false);
+  React.useEffect(() => {
+    onDirtyChange?.(hasUserChanges);
+  }, [hasUserChanges, onDirtyChange]);
   const {
     globalConfig,
     inheritedDefaults: {
@@ -302,7 +308,9 @@ export function AgentDefinitionDialog({
   }, [defaultRuntime, isCreateMode, open, runtime, runtimesLoading]);
 
   function handleOpenChange(next: boolean) {
-    if (!next) {
+    // Embedded create lives inside the catalog discard flow: Cancel must ask
+    // before wiping fields, so defer reset until the parent actually unmounts.
+    if (!next && !embedded) {
       setDisplayName("");
       setAvatarUrl("");
       setSystemPrompt("");
