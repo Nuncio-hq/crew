@@ -146,7 +146,7 @@ export function TestRunSummary({
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border/60 bg-background/40 px-2.5 py-2",
+        "grid gap-1.5 rounded-md border border-border/60 bg-background/40 px-2.5 py-2",
         className,
       )}
       data-testid="test-run-summary"
@@ -158,10 +158,24 @@ export function TestRunSummary({
         {label}
       </span>
       <span className="inline-flex flex-wrap items-center gap-x-2 text-sm tabular-nums">
-        <span className="text-success">{passed} passed</span>
-        <span className="text-destructive">{failed} failed</span>
+        <span className={passed > 0 ? "text-success" : "text-muted-foreground"}>
+          {passed} passed
+        </span>
+        <span aria-hidden="true" className="text-muted-foreground/40">
+          ·
+        </span>
+        <span
+          className={failed > 0 ? "text-destructive" : "text-muted-foreground"}
+        >
+          {failed} failed
+        </span>
         {skipped != null ? (
-          <span className="text-muted-foreground">{skipped} skipped</span>
+          <>
+            <span aria-hidden="true" className="text-muted-foreground/40">
+              ·
+            </span>
+            <span className="text-muted-foreground">{skipped} skipped</span>
+          </>
         ) : null}
       </span>
     </div>

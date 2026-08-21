@@ -7,12 +7,12 @@
 import { Route as rootRouteImport } from "./routes/root";
 import { Route as workflowsRouteImport } from "./routes/workflows";
 import { Route as workbenchRouteImport } from "./routes/workbench";
+import { Route as wikiRouteImport } from "./routes/wiki";
 import { Route as settingsRouteImport } from "./routes/settings";
 import { Route as remindersRouteImport } from "./routes/reminders";
 import { Route as pulseRouteImport } from "./routes/pulse";
 import { Route as projectsRouteImport } from "./routes/projects";
 import { Route as orgRouteImport } from "./routes/org";
-import { Route as wikiRouteImport } from "./routes/wiki";
 import { Route as agentsRouteImport } from "./routes/agents";
 import { Route as indexRouteImport } from "./routes/index";
 import { Route as workflowsDotworkflowIdRouteImport } from "./routes/workflows.$workflowId";
@@ -30,6 +30,11 @@ const workflowsRoute = workflowsRouteImport.update({
 const workbenchRoute = workbenchRouteImport.update({
   id: "/workbench",
   path: "/workbench",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const wikiRoute = wikiRouteImport.update({
+  id: "/wiki",
+  path: "/wiki",
   getParentRoute: () => rootRouteImport,
 } as any);
 const settingsRoute = settingsRouteImport.update({
@@ -55,11 +60,6 @@ const projectsRoute = projectsRouteImport.update({
 const orgRoute = orgRouteImport.update({
   id: "/org",
   path: "/org",
-  getParentRoute: () => rootRouteImport,
-} as any);
-const wikiRoute = wikiRouteImport.update({
-  id: "/wiki",
-  path: "/wiki",
   getParentRoute: () => rootRouteImport,
 } as any);
 const agentsRoute = agentsRouteImport.update({
@@ -108,12 +108,12 @@ const channelsDotchannelIdDotpostsDotpostIdRoute =
 export interface FileRoutesByFullPath {
   "/": typeof indexRoute;
   "/agents": typeof agentsRoute;
-  "/projects": typeof projectsRoute;
   "/org": typeof orgRoute;
-  "/wiki": typeof wikiRoute;
+  "/projects": typeof projectsRoute;
   "/pulse": typeof pulseRoute;
   "/reminders": typeof remindersRoute;
   "/settings": typeof settingsRoute;
+  "/wiki": typeof wikiRoute;
   "/workbench": typeof workbenchRoute;
   "/workflows": typeof workflowsRoute;
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
@@ -126,12 +126,12 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   "/": typeof indexRoute;
   "/agents": typeof agentsRoute;
-  "/projects": typeof projectsRoute;
   "/org": typeof orgRoute;
-  "/wiki": typeof wikiRoute;
+  "/projects": typeof projectsRoute;
   "/pulse": typeof pulseRoute;
   "/reminders": typeof remindersRoute;
   "/settings": typeof settingsRoute;
+  "/wiki": typeof wikiRoute;
   "/workbench": typeof workbenchRoute;
   "/workflows": typeof workflowsRoute;
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
@@ -145,12 +145,12 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof indexRoute;
   "/agents": typeof agentsRoute;
-  "/projects": typeof projectsRoute;
   "/org": typeof orgRoute;
-  "/wiki": typeof wikiRoute;
+  "/projects": typeof projectsRoute;
   "/pulse": typeof pulseRoute;
   "/reminders": typeof remindersRoute;
   "/settings": typeof settingsRoute;
+  "/wiki": typeof wikiRoute;
   "/workbench": typeof workbenchRoute;
   "/workflows": typeof workflowsRoute;
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
@@ -165,12 +165,12 @@ export interface FileRouteTypes {
   fullPaths:
     | "/"
     | "/agents"
-    | "/projects"
     | "/org"
-    | "/wiki"
+    | "/projects"
     | "/pulse"
     | "/reminders"
     | "/settings"
+    | "/wiki"
     | "/workbench"
     | "/workflows"
     | "/channels/$channelId"
@@ -183,12 +183,12 @@ export interface FileRouteTypes {
   to:
     | "/"
     | "/agents"
-    | "/projects"
     | "/org"
-    | "/wiki"
+    | "/projects"
     | "/pulse"
     | "/reminders"
     | "/settings"
+    | "/wiki"
     | "/workbench"
     | "/workflows"
     | "/channels/$channelId"
@@ -201,12 +201,12 @@ export interface FileRouteTypes {
     | "__root__"
     | "/"
     | "/agents"
-    | "/projects"
     | "/org"
-    | "/wiki"
+    | "/projects"
     | "/pulse"
     | "/reminders"
     | "/settings"
+    | "/wiki"
     | "/workbench"
     | "/workflows"
     | "/channels/$channelId"
@@ -221,11 +221,11 @@ export interface RootRouteChildren {
   indexRoute: typeof indexRoute;
   agentsRoute: typeof agentsRoute;
   orgRoute: typeof orgRoute;
-  wikiRoute: typeof wikiRoute;
   projectsRoute: typeof projectsRoute;
   pulseRoute: typeof pulseRoute;
   remindersRoute: typeof remindersRoute;
   settingsRoute: typeof settingsRoute;
+  wikiRoute: typeof wikiRoute;
   workbenchRoute: typeof workbenchRoute;
   workflowsRoute: typeof workflowsRoute;
   channelsDotchannelIdRoute: typeof channelsDotchannelIdRoute;
@@ -250,6 +250,13 @@ declare module "@tanstack/react-router" {
       path: "/workbench";
       fullPath: "/workbench";
       preLoaderRoute: typeof workbenchRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/wiki": {
+      id: "/wiki";
+      path: "/wiki";
+      fullPath: "/wiki";
+      preLoaderRoute: typeof wikiRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/settings": {
@@ -285,13 +292,6 @@ declare module "@tanstack/react-router" {
       path: "/org";
       fullPath: "/org";
       preLoaderRoute: typeof orgRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/wiki": {
-      id: "/wiki";
-      path: "/wiki";
-      fullPath: "/wiki";
-      preLoaderRoute: typeof wikiRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/agents": {
@@ -357,11 +357,11 @@ const rootRouteChildren: RootRouteChildren = {
   indexRoute: indexRoute,
   agentsRoute: agentsRoute,
   orgRoute: orgRoute,
-  wikiRoute: wikiRoute,
   projectsRoute: projectsRoute,
   pulseRoute: pulseRoute,
   remindersRoute: remindersRoute,
   settingsRoute: settingsRoute,
+  wikiRoute: wikiRoute,
   workbenchRoute: workbenchRoute,
   workflowsRoute: workflowsRoute,
   channelsDotchannelIdRoute: channelsDotchannelIdRoute,
