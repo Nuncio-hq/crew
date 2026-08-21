@@ -12,6 +12,10 @@ const statusUrl = new URL(
   "../lib/projectThreadGitHubStatus.ts",
   import.meta.url,
 );
+const workspacePanelUrl = new URL(
+  "./ProjectThreadWorkspacePanel.tsx",
+  import.meta.url,
+);
 
 test("workspace destructive actions use an in-app confirmation with a cancel path", async () => {
   const source = await readFile(workspaceUrl, "utf8");
@@ -60,4 +64,17 @@ test("GitHub status colors cover PR and CI states", async () => {
   assert.match(statusSource, /return \{ label: "Pending"/);
   assert.match(statusSource, /return \{ label: "Passing"/);
   assert.match(rowSource, /statusClassName={projectThreadStatusClassName/);
+});
+
+test("degraded GitHub chip retries instead of acting like a dead button", async () => {
+  const source = await readFile(workspacePanelUrl, "utf8");
+
+  assert.doesNotMatch(
+    source,
+    /label="GitHub"[\s\S]*?onClick=\{\(\) => undefined\}/,
+  );
+  assert.match(
+    source,
+    /label="GitHub"[\s\S]*?onClick=\{\(\) => void refreshGitHub\?\.\(\)\}/,
+  );
 });

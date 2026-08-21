@@ -8,6 +8,7 @@ use super::thread_workspace_git::{command_output, validate_target};
 #[serde(rename_all = "camelCase")]
 pub struct ThreadGitHubStatus {
     pub availability: ThreadGitHubAvailability,
+    pub detail: Option<String>,
     pub pull_request: Option<ThreadPullRequest>,
 }
 
@@ -74,10 +75,10 @@ pub struct ThreadPullRequest {
     status_check_rollup: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum GhLookupError {
     CliMissing,
-    CliFailed,
+    CliFailed(String),
 }
 
 impl From<GhUnavailable> for GhLookupError {
@@ -98,11 +99,12 @@ pub async fn get_thread_github_status(
         match find_pull_request_number(&target.repository_path, repo.as_deref(), &branch).await {
             Ok(number) => number,
             Err(GhLookupError::CliMissing) => return Ok(cli_missing()),
-            Err(GhLookupError::CliFailed) => return Ok(cli_failed()),
+            Err(GhLookupError::CliFailed(detail)) => return Ok(cli_failed(detail)),
         };
     if number == 0 {
         return Ok(ThreadGitHubStatus {
             availability: ThreadGitHubAvailability::Available,
+            detail: None,
             pull_request: None,
         });
     }
@@ -110,7 +112,7 @@ pub async fn get_thread_github_status(
         match read_pull_request(&target.repository_path, repo.as_deref(), number).await {
             Ok(pull_request) => pull_request,
             Err(GhLookupError::CliMissing) => return Ok(cli_missing()),
-            Err(GhLookupError::CliFailed) => return Ok(cli_failed()),
+            Err(GhLookupError::CliFailed(detail)) => return Ok(cli_failed(detail)),
         };
     pull_request.checks = pull_request
         .status_check_rollup
@@ -121,6 +123,7 @@ pub async fn get_thread_github_status(
     pull_request.comments.reverse();
     Ok(ThreadGitHubStatus {
         availability: ThreadGitHubAvailability::Available,
+        detail: None,
         pull_request: Some(pull_request),
     })
 }
@@ -140,9 +143,9 @@ async fn find_pull_request_number(
     }
     let output = command_output(&mut command)
         .await
-        .map_err(|_| GhLookupError::CliFailed)?;
-    let rows: Vec<serde_json::Value> =
-        serde_json::from_slice(&output.stdout).map_err(|_| GhLookupError::CliFailed)?;
+        .map_err(|error| GhLookupError::CliFailed(bounded_detail(&error)))?;
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)
+        .map_err(|_| GhLookupError::CliFailed("GitHub CLI returned invalid JSON.".to_string()))?;
     Ok(rows
         .first()
         .and_then(|row| row["number"].as_u64())
@@ -164,8 +167,9 @@ async fn read_pull_request(
     }
     let output = command_output(&mut command)
         .await
-        .map_err(|_| GhLookupError::CliFailed)?;
-    serde_json::from_slice(&output.stdout).map_err(|_| GhLookupError::CliFailed)
+        .map_err(|error| GhLookupError::CliFailed(bounded_detail(&error)))?;
+    serde_json::from_slice(&output.stdout)
+        .map_err(|_| GhLookupError::CliFailed("GitHub CLI returned invalid JSON.".to_string()))
 }
 
 pub(crate) fn parse_check(value: &serde_json::Value) -> Option<ThreadPullRequestCheck> {
@@ -191,14 +195,29 @@ pub(crate) fn parse_check(value: &serde_json::Value) -> Option<ThreadPullRequest
 fn cli_missing() -> ThreadGitHubStatus {
     ThreadGitHubStatus {
         availability: ThreadGitHubAvailability::CliMissing,
+        detail: Some("Install GitHub CLI and run gh auth login.".to_string()),
         pull_request: None,
     }
 }
 
-fn cli_failed() -> ThreadGitHubStatus {
+fn cli_failed(detail: String) -> ThreadGitHubStatus {
     ThreadGitHubStatus {
         availability: ThreadGitHubAvailability::CliFailed,
+        detail: Some(detail),
         pull_request: None,
+    }
+}
+
+fn bounded_detail(detail: &str) -> String {
+    let collapsed = detail.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = collapsed.chars();
+    let bounded: String = chars.by_ref().take(240).collect();
+    if chars.next().is_some() {
+        format!("{bounded}…")
+    } else if bounded.is_empty() {
+        "GitHub CLI command failed.".to_string()
+    } else {
+        bounded
     }
 }
 
@@ -253,11 +272,10 @@ mod tests {
             ThreadGitHubAvailability::CliMissing
         );
         assert!(cli_missing().pull_request.is_none());
-        assert_eq!(
-            cli_failed().availability,
-            ThreadGitHubAvailability::CliFailed
-        );
-        assert!(cli_failed().pull_request.is_none());
+        let failed = cli_failed("auth failed".to_string());
+        assert_eq!(failed.availability, ThreadGitHubAvailability::CliFailed);
+        assert_eq!(failed.detail.as_deref(), Some("auth failed"));
+        assert!(failed.pull_request.is_none());
     }
 
     #[test]
