@@ -2233,11 +2233,62 @@ pub async fn run_prompt_task(
                     );
                     return;
                 }
+                Ok(ChannelWorkspace::PrepareFailed {
+                    message,
+                    root_event_id,
+                }) => {
+                    tracing::warn!(
+                        channel = %batch.routing_channel_id(),
+                        root = %root_event_id,
+                        "{message}"
+                    );
+                    agent.acp.observe(
+                        "thread_workspace_error",
+                        thread_workspace_prepare_failed_payload(&root_event_id, &message),
+                    );
+                    send_prompt_result(
+                        &result_tx,
+                        &turn_id,
+                        agent,
+                        source,
+                        PromptOutcome::Ok(StopReason::Refusal),
+                        None,
+                    );
+                    return;
+                }
                 Ok(ChannelWorkspace::NotProject) => ctx.cwd.clone(),
                 Err(error) => {
-                    let protocol_error = if let Some(workspace_error) =
+                    if let Some(workspace_error) =
                         error.downcast_ref::<ThreadWorkspaceProvisionError>()
                     {
+                        if workspace_error
+                            .source
+                            .downcast_ref::<crate::thread_workspace::ThreadWorkspacePrepareFailed>()
+                            .is_some()
+                        {
+                            tracing::warn!(
+                                channel = %batch.routing_channel_id(),
+                                root = %workspace_error.root_event_id,
+                                error = %workspace_error.source,
+                                "isolated worktree prepare failed; refusing without retry"
+                            );
+                            agent.acp.observe(
+                                "thread_workspace_error",
+                                thread_workspace_prepare_failed_payload(
+                                    &workspace_error.root_event_id,
+                                    &workspace_error.protocol_message(),
+                                ),
+                            );
+                            send_prompt_result(
+                                &result_tx,
+                                &turn_id,
+                                agent,
+                                source,
+                                PromptOutcome::Ok(StopReason::Refusal),
+                                None,
+                            );
+                            return;
+                        }
                         tracing::warn!(
                             channel = %batch.routing_channel_id(),
                             root = %workspace_error.root_event_id,
@@ -2248,16 +2299,24 @@ pub async fn run_prompt_task(
                             "thread_workspace_error",
                             thread_workspace_error_payload(&workspace_error.root_event_id),
                         );
-                        workspace_error.protocol_message()
-                    } else {
-                        error.to_string()
-                    };
+                        send_prompt_result(
+                            &result_tx,
+                            &turn_id,
+                            agent,
+                            source,
+                            PromptOutcome::Error(AcpError::Protocol(
+                                workspace_error.protocol_message(),
+                            )),
+                            requeue_batch_if_queue(&ctx, Some(batch.clone())),
+                        );
+                        return;
+                    }
                     send_prompt_result(
                         &result_tx,
                         &turn_id,
                         agent,
                         source,
-                        PromptOutcome::Error(AcpError::Protocol(protocol_error)),
+                        PromptOutcome::Error(AcpError::Protocol(error.to_string())),
                         requeue_batch_if_queue(&ctx, Some(batch.clone())),
                     );
                     return;
@@ -4104,6 +4163,12 @@ impl ThreadWorkspaceProvisionError {
         {
             return format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {error}");
         }
+        if let Some(error) = self
+            .source
+            .downcast_ref::<crate::thread_workspace::ThreadWorkspacePrepareFailed>()
+        {
+            return format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {error}");
+        }
         if let Some(error) = self.source.downcast_ref::<buzz_worktree::LeaseError>() {
             return format!(
                 "{THREAD_WORKSPACE_ERROR_MESSAGE} {}",
@@ -4206,6 +4271,17 @@ fn thread_workspace_missing_payload(root_event_id: &str) -> serde_json::Value {
         "rootEventId": root_event_id,
         "message": MISSING_FOLDER_RECOVER_MESSAGE,
         "reason": "missing-folder",
+    })
+}
+
+fn thread_workspace_prepare_failed_payload(
+    root_event_id: &str,
+    message: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "rootEventId": root_event_id,
+        "message": message,
+        "reason": "prepare-failed",
     })
 }
 
@@ -4313,6 +4389,12 @@ enum ChannelWorkspace {
         root_event_id: String,
         path: PathBuf,
     },
+    /// Isolated worktree create/reattach failed after recovery. Named
+    /// refusal so the desk sees git's stderr once — not 10 Protocol retries.
+    PrepareFailed {
+        message: String,
+        root_event_id: String,
+    },
 }
 
 /// RAII guards covering path-exclusive turn serialization and optional
@@ -4377,6 +4459,15 @@ async fn resolve_and_bind_channel_workspace(
                         path: missing.path.clone(),
                     });
                 }
+                if let Some(failed) = provision
+                    .source
+                    .downcast_ref::<crate::thread_workspace::ThreadWorkspacePrepareFailed>(
+                ) {
+                    return Ok(ChannelWorkspace::PrepareFailed {
+                        message: format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {failed}"),
+                        root_event_id: provision.root_event_id,
+                    });
+                }
                 return Err(provision.into());
             }
             Err(other) => return Err(other),
@@ -4416,9 +4507,21 @@ async fn resolve_and_bind_channel_workspace(
         )
     };
 
-    let (workspace, ensure_kind) = crate::thread_workspace::ensure_planned_thread_worktree(&plan)
-        .await
-        .map_err(&wrap)?;
+    let (workspace, ensure_kind) =
+        match crate::thread_workspace::ensure_planned_thread_worktree(&plan).await {
+            Ok(value) => value,
+            Err(error) => {
+                match error.downcast::<crate::thread_workspace::ThreadWorkspacePrepareFailed>() {
+                    Ok(failed) => {
+                        return Ok(ChannelWorkspace::PrepareFailed {
+                            message: format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {failed}"),
+                            root_event_id,
+                        });
+                    }
+                    Err(other) => return Err(wrap(other).into()),
+                }
+            }
+        };
     tracing::info!(
         channel = %batch.routing_channel_id(),
         root = %root_event_id,
@@ -9973,6 +10076,20 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         assert!(message.contains("Pick a workspace again"));
     }
 
+    #[test]
+    fn thread_workspace_provision_error_surfaces_prepare_failed_git_stderr() {
+        let failed = crate::thread_workspace::ThreadWorkspacePrepareFailed {
+            branch: "buzz/961330b91025".into(),
+            worktree_path: PathBuf::from("/tmp/crew-961330b91025"),
+            git_stderr: "fatal: a branch named 'buzz/961330b91025' already exists".into(),
+        };
+        let message =
+            thread_workspace_provision_error(&"a".repeat(64), failed.into()).protocol_message();
+        assert!(message.contains(THREAD_WORKSPACE_ERROR_MESSAGE));
+        assert!(message.contains("buzz/961330b91025"));
+        assert!(message.contains("already exists"));
+    }
+
     // ── ControlSignal::SwitchModel (Phase 3a, Option ii) ─────────────────────
 
     #[test]
@@ -11921,6 +12038,80 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             matches!(outcome, ChannelWorkspace::Missing { .. }),
             "expected a named Missing recover outcome, got {outcome:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn leftover_buzz_branch_with_occupied_path_is_a_named_refusal() {
+        let (fixture, repo) = init_git_fixture();
+        let owner_keys = Keys::generate();
+        let agent_keys = Keys::generate();
+        let ctx = make_prompt_context_with_owner(&agent_keys, owner_keys.public_key());
+        let cid = Uuid::new_v4();
+        let batch = owner_project_workspace_batch(Uuid::new_v4(), &owner_keys, &repo);
+        let mut state = SessionState::default();
+
+        let first = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("initial isolated worktree is created");
+        let ChannelWorkspace::Bound {
+            workspace, leases, ..
+        } = first
+        else {
+            panic!("expected a bound workspace, got {first:?}");
+        };
+        let worktree_path = workspace.worktree_path.clone();
+        let branch = workspace.branch.clone();
+        drop(leases);
+
+        let run = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .status()
+                .expect("git starts");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        run(&[
+            "worktree",
+            "remove",
+            worktree_path.to_str().expect("worktree UTF-8"),
+        ]);
+        let _ = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args([
+                "config",
+                "--local",
+                "--unset-all",
+                &format!("branch.{branch}.buzzThreadRoot"),
+            ])
+            .status();
+        std::fs::create_dir_all(&worktree_path).expect("blocking directory");
+        std::fs::write(worktree_path.join("BLOCKER"), "occupied")
+            .expect("non-empty blocking directory");
+
+        let outcome = resolve_and_bind_channel_workspace(&cid, &batch, &ctx, &mut state)
+            .await
+            .expect("occupied leftover branch must be a named refusal, not a protocol error");
+        let ChannelWorkspace::PrepareFailed {
+            message,
+            root_event_id,
+        } = outcome
+        else {
+            panic!("expected PrepareFailed, got {outcome:?}");
+        };
+        assert_eq!(root_event_id, batch.events[0].event.id.to_hex());
+        assert!(
+            message.contains(THREAD_WORKSPACE_ERROR_MESSAGE),
+            "desk copy must keep the prepare prefix: {message}"
+        );
+        assert!(
+            message.to_ascii_lowercase().contains("already exists"),
+            "named refusal must include git stderr: {message}"
+        );
+
+        std::fs::remove_dir_all(&fixture).expect("fixture cleanup");
     }
 
     #[tokio::test]
