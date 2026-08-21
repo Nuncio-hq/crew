@@ -39,10 +39,10 @@ export type EvidenceCrossCheckResult = {
 };
 
 const LABEL: Record<EvidenceCrossCheckState, string> = {
-  matches: "Matches GitHub CI",
-  diverges: "Differs from CI",
-  "ci-running": "GitHub CI running",
-  "not-comparable": "Not compared to CI",
+  matches: "Matches CI",
+  diverges: "Differs",
+  "ci-running": "CI running",
+  "not-comparable": "No CI",
 };
 
 const FAILED_CHECK_STATES = new Set([
@@ -188,24 +188,22 @@ function classifyChecks(checks: readonly ThreadPullRequestCheck[]): {
 }
 
 function formatTestClaim(claim: ParsedTestRunClaim): string {
-  return `${claim.passed} passed, ${claim.failed} failed`;
+  return `${claim.passed}✓ ${claim.failed}✗`;
 }
 
 function formatFailedChecks(failed: readonly ThreadPullRequestCheck[]): string {
-  if (failed.length === 0) return "all checks green";
-  const names = failed
-    .slice(0, 3)
-    .map((check) => `${check.name} — ${check.state.toUpperCase()}`);
-  const extra = failed.length > 3 ? ` (+${failed.length - 3} more)` : "";
-  return names.join("; ") + extra;
+  if (failed.length === 0) return "green";
+  const names = failed.slice(0, 2).map((check) => check.name);
+  const extra = failed.length > 2 ? ` +${failed.length - 2}` : "";
+  return names.join(", ") + extra;
 }
 
 function formatDiffClaim(claim: ParsedDiffStatClaim): string {
-  return `+${claim.additions}/−${claim.deletions} across ${claim.files} files`;
+  return `+${claim.additions}/−${claim.deletions} · ${claim.files}f`;
 }
 
 function formatDiffPr(pr: ThreadPullRequest): string {
-  return `+${pr.additions}/−${pr.deletions} across ${pr.changedFiles} files`;
+  return `+${pr.additions}/−${pr.deletions} · ${pr.changedFiles}f`;
 }
 
 /**
@@ -245,7 +243,7 @@ function compareTestRun(
   if (claimAllPass === ciAllPass) return matches();
 
   return diverges(
-    `Claimed: ${formatTestClaim(claim)} · CI: ${formatFailedChecks(failed)}`,
+    `Local ${formatTestClaim(claim)} · CI ${formatFailedChecks(failed)}`,
   );
 }
 
@@ -263,6 +261,6 @@ function compareDiffStat(
   if (linesOk && filesOk) return matches();
 
   return diverges(
-    `Claimed: ${formatDiffClaim(claim)} · PR ${formatDiffPr(pullRequest)}`,
+    `Local ${formatDiffClaim(claim)} · PR ${formatDiffPr(pullRequest)}`,
   );
 }

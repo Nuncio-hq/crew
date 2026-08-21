@@ -7,19 +7,11 @@ import {
   checkStateLabel,
   checkTone,
   summarizeCheckStates,
-  type CheckTone,
 } from "./checkPresentation";
 
-const TONE_LABEL: Record<CheckTone, string> = {
-  success: "text-success",
-  destructive: "text-destructive",
-  attention: "text-attention",
-  muted: "text-muted-foreground",
-};
-
 /**
- * Compact CI check counts: "3 passed · 1 failed · 2 running".
- * Used in forge summary, GitHub row, evidence cross-check — same vocabulary.
+ * Compact CI counts — prefer short glyphs when space is tight.
+ * "3 ✓ · 1 ✗ · 2 ●" reads like Cursor; words stay in title.
  */
 export function CiCheckSummary({
   className,
@@ -41,7 +33,7 @@ export function CiCheckSummary({
         className={cn("text-2xs text-muted-foreground", className)}
         data-testid="ci-check-summary"
       >
-        No checks yet
+        No checks
       </span>
     );
   }
@@ -53,16 +45,13 @@ export function CiCheckSummary({
         className,
       )}
       data-testid="ci-check-summary"
+      title={`${passed} passed · ${failed} failed · ${running} running`}
     >
-      <span className={CHECK_TONE_TEXT.success}>{passed} passed</span>
-      <span aria-hidden="true" className="text-muted-foreground/40">
-        ·
-      </span>
-      <span className={CHECK_TONE_TEXT.destructive}>{failed} failed</span>
-      <span aria-hidden="true" className="text-muted-foreground/40">
-        ·
-      </span>
-      <span className={CHECK_TONE_TEXT.attention}>{running} running</span>
+      <span className={CHECK_TONE_TEXT.success}>{passed} ✓</span>
+      <span className={CHECK_TONE_TEXT.destructive}>{failed} ✗</span>
+      {running > 0 ? (
+        <span className={CHECK_TONE_TEXT.attention}>{running} ●</span>
+      ) : null}
     </span>
   );
 }
@@ -122,7 +111,7 @@ export function DiffStatSummary({
   );
 }
 
-/** Agent-claimed local test counts — not GitHub CI. */
+/** Agent-claimed local test counts — not GitHub CI. Cursor-compact: one row. */
 export function TestRunSummary({
   className,
   failed,
@@ -134,30 +123,32 @@ export function TestRunSummary({
   passed: number;
   skipped: number | null;
 }) {
-  const tone: CheckTone =
-    failed > 0 ? "destructive" : passed > 0 ? "success" : "muted";
-  const label =
-    failed > 0
-      ? "Local tests failed"
-      : passed > 0
-        ? "Local tests passed"
-        : "Local test claim";
+  const tone = failed > 0 ? "destructive" : passed > 0 ? "success" : "muted";
 
   return (
     <div
       className={cn(
-        "grid gap-1.5 rounded-md border border-border/60 bg-background/40 px-2.5 py-2",
+        "flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-border/50 px-2 py-1.5",
         className,
       )}
       data-testid="test-run-summary"
     >
       <span
-        className={cn("text-2xs font-medium", TONE_LABEL[tone])}
+        aria-hidden="true"
+        className={cn(
+          "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+          tone === "success"
+            ? "bg-success"
+            : tone === "destructive"
+              ? "bg-destructive"
+              : "bg-muted-foreground",
+        )}
+      />
+      <span
+        className="sr-only"
         data-testid="test-run-summary-label"
-      >
-        {label}
-      </span>
-      <span className="inline-flex flex-wrap items-center gap-x-2 text-sm tabular-nums">
+      >{`${passed} passed, ${failed} failed`}</span>
+      <span className="inline-flex flex-wrap items-center gap-x-1.5 text-sm tabular-nums">
         <span className={passed > 0 ? "text-success" : "text-muted-foreground"}>
           {passed} passed
         </span>

@@ -168,7 +168,7 @@ describe("compareEvidenceToPullRequest — test-run matrix", () => {
       pr(),
     );
     assert.equal(result.state, "matches");
-    assert.equal(result.label, "Matches GitHub CI");
+    assert.equal(result.label, "Matches CI");
     assert.equal(result.detail, null);
   });
 
@@ -188,8 +188,8 @@ describe("compareEvidenceToPullRequest — test-run matrix", () => {
       }),
     );
     assert.equal(result.state, "diverges");
-    assert.match(result.detail, /Claimed: 14 passed, 0 failed/);
-    assert.match(result.detail, /Desktop Fast — FAILURE/);
+    assert.match(result.detail, /Local 14✓ 0✗/);
+    assert.match(result.detail, /Desktop Fast/);
   });
 
   it("honestly-red claim + red CI → Matches (consistency)", () => {
@@ -231,7 +231,7 @@ describe("compareEvidenceToPullRequest — test-run matrix", () => {
       }),
     );
     assert.equal(result.state, "ci-running");
-    assert.equal(result.label, "GitHub CI running");
+    assert.equal(result.label, "CI running");
   });
 
   it("no PR / no checks / unparseable → Not comparable", () => {
@@ -276,8 +276,8 @@ describe("compareEvidenceToPullRequest — diff-stat matrix", () => {
       pr({ additions: 890, deletions: 4, changedFiles: 27 }),
     );
     assert.equal(result.state, "diverges");
-    assert.match(result.detail, /Claimed: \+120\/−30 across 5 files/);
-    assert.match(result.detail, /PR \+890\/−4 across 27 files/);
+    assert.match(result.detail, /Local \+120\/−30 · 5f/);
+    assert.match(result.detail, /PR \+890\/−4 · 27f/);
   });
 
   it("zero-file PR matches exact zero claim", () => {

@@ -101,24 +101,16 @@ export function ProjectThreadForgeSummaryCard({
         />
       </div>
       <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-2xs font-medium text-muted-foreground">
-            GitHub CI
-          </p>
-          <CiCheckSummary
-            failed={checks.failed}
-            passed={checks.passed}
-            running={checks.running}
-            total={pullRequest.checks.length}
-          />
-        </div>
+        <CiCheckSummary
+          failed={checks.failed}
+          passed={checks.passed}
+          running={checks.running}
+          total={pullRequest.checks.length}
+        />
         <span className="text-2xs text-muted-foreground">
           {threadReviewDecisionLabel(pullRequest.reviewDecision)}
         </span>
       </div>
-      <p className="mt-1.5 text-2xs text-muted-foreground/80">
-        Click to open PR hub
-      </p>
     </button>
   );
 }

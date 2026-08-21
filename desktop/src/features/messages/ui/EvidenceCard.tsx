@@ -14,7 +14,6 @@ import { parseEvidenceClaim } from "@/features/messages/lib/evidenceCrossCheck";
 import { splitEvidenceBody } from "@/features/messages/lib/evidenceBodyParts";
 import type { EvidenceKind } from "@/features/messages/lib/evidenceTag";
 import { useEvidenceCrossCheck } from "@/features/messages/lib/useEvidenceCrossCheck";
-import { cn } from "@/shared/lib/cn";
 import { DiffStatSummary, TestRunSummary } from "./ci/CiPresentation";
 import {
   EvidenceCrossCheckBadge,
@@ -162,13 +161,7 @@ function DiffStatLayout({ message }: { message: TimelineMessage }) {
   return (
     <div className="grid gap-3">
       {claim && claim.kind === "diff-stat" ? (
-        <div
-          className="rounded-md border border-border/60 bg-background/40 px-2.5 py-2"
-          data-testid="evidence-diff-stat"
-        >
-          <p className="mb-1 text-2xs font-medium text-muted-foreground">
-            Diff claimed
-          </p>
+        <div data-testid="evidence-diff-stat">
           <DiffStatSummary
             additions={claim.additions}
             deletions={claim.deletions}
@@ -295,14 +288,14 @@ export function EvidenceCard({
               className="text-2xs font-medium text-destructive"
               data-testid="evidence-reaction-rejected"
             >
-              Changes requested
+              Rejected
             </span>
           ) : accepted ? (
             <span
               className="text-2xs font-medium text-success"
               data-testid="evidence-reaction-accepted"
             >
-              Evidence accepted
+              Accepted
             </span>
           ) : null}
         </div>
@@ -310,35 +303,30 @@ export function EvidenceCard({
       <EvidenceCrossCheckDetail result={crossCheck} />
       {layout}
       {showControls ? (
-        <div className="mt-3 border-t border-border/60 pt-3">
-          <p className="mb-2 text-2xs text-muted-foreground">
-            Review this evidence claim — does not merge or approve the PR.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              className={cn(
-                "rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50",
-              )}
-              data-testid="evidence-accept"
-              disabled={reactionPending || accepted}
-              onClick={() => void onToggleReaction("✅")}
-              type="button"
-            >
-              Accept evidence
-            </button>
-            <button
-              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium disabled:opacity-50"
-              data-testid="evidence-reject"
-              disabled={reactionPending || rejected}
-              onClick={async () => {
-                await onToggleReaction("❌");
-                onReply?.(message);
-              }}
-              type="button"
-            >
-              Request changes
-            </button>
-          </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+          <button
+            className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            data-testid="evidence-accept"
+            disabled={reactionPending || accepted}
+            onClick={() => void onToggleReaction("✅")}
+            title="Accept this evidence claim — does not merge the PR"
+            type="button"
+          >
+            Accept
+          </button>
+          <button
+            className="rounded-md border border-border px-2.5 py-1 text-xs font-medium disabled:opacity-50"
+            data-testid="evidence-reject"
+            disabled={reactionPending || rejected}
+            onClick={async () => {
+              await onToggleReaction("❌");
+              onReply?.(message);
+            }}
+            title="Request changes and open a reply"
+            type="button"
+          >
+            Reject
+          </button>
         </div>
       ) : null}
     </section>
