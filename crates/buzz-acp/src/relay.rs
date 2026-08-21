@@ -364,10 +364,29 @@ impl RestClient {
                     )));
                 }
                 Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let body = match resp.text().await {
+                        Ok(text) => {
+                            let trimmed = text.trim();
+                            if trimmed.is_empty() {
+                                String::new()
+                            } else {
+                                const MAX: usize = 512;
+                                let clipped = if trimmed.len() > MAX {
+                                    format!("{}…", &trimmed[..MAX])
+                                } else {
+                                    trimmed.to_owned()
+                                };
+                                format!(": {clipped}")
+                            }
+                        }
+                        Err(_) => String::new(),
+                    };
                     return Err(RelayError::HttpStatus {
                         method: method.to_owned(),
                         path: path.to_owned(),
-                        status: resp.status().as_u16(),
+                        status,
+                        body,
                     });
                 }
                 Err(e) if e.is_timeout() || e.is_connect() => {
@@ -549,11 +568,13 @@ pub enum RelayError {
     #[error("HTTP error: {0}")]
     Http(String),
 
-    #[error("HTTP {status} from {method} {path}")]
+    #[error("HTTP {status} from {method} {path}{body}")]
     HttpStatus {
         method: String,
         path: String,
         status: u16,
+        /// Truncated relay response body (prefixed with `: ` when non-empty).
+        body: String,
     },
 
     #[error("Durable event admission rejected: {0}")]
@@ -4204,12 +4225,14 @@ mod tests {
             method: "POST".to_string(),
             path: "/events".to_string(),
             status: 500,
+            body: String::new(),
         }
         .is_retryable_durable_publication());
         assert!(!RelayError::HttpStatus {
             method: "POST".to_string(),
             path: "/events".to_string(),
             status: 401,
+            body: String::new(),
         }
         .is_retryable_durable_publication());
     }

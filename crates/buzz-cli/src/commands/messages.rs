@@ -574,6 +574,24 @@ pub struct SendMessageParams {
     pub goal: Option<String>,
 }
 
+
+/// Reject blank sends that have no attachments.
+///
+/// A bare `--content -` with no stdin producer (common when buzz-dev-mcp nulls
+/// outer stdin) yields empty content after `read_or_stdin`. File-only sends
+/// remain valid.
+fn reject_empty_send_content(content: &str, files: &[String]) -> Result<(), CliError> {
+    if content.trim().is_empty() && files.is_empty() {
+        return Err(CliError::Usage(
+            "content is empty — if using --content -, pipe the body in the same command \
+             (e.g. `printf 'hello\\n' | buzz messages send ... --content -`); a bare \
+             `--content -` with no producer reads EOF immediately"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn cmd_send_message(
     client: &BuzzClient,
     mut p: SendMessageParams,
@@ -583,6 +601,7 @@ pub async fn cmd_send_message(
     // quoting — the source of countless self-inflicted command-substitution
     // bugs for agent and human users alike.
     p.content = read_or_stdin(&p.content)?;
+    reject_empty_send_content(&p.content, &p.files)?;
     validate_content_size(&p.content)?;
     if let Some(ref r) = p.reply_to {
         validate_hex64(r)?;
@@ -1017,7 +1036,7 @@ mod tests {
     use super::{
         event_mention_pubkeys, find_root_from_tags, match_profiles_by_name, merge_message_mentions,
         missing_members, normalize_explicit_mentions, parse_member_pubkeys,
-        resolve_names_to_pubkeys,
+        reject_empty_send_content, resolve_names_to_pubkeys,
     };
     use buzz_sdk::mentions::{
         extract_at_mentions_with_known, extract_at_names, match_names_to_profiles, MentionProfile,
@@ -1033,6 +1052,23 @@ mod tests {
     const PK_VALID_A: &str = "35c18ae273fccfaf80d629e20e7f8721b90499379addff533054acc2504c12b4";
     const PK_VALID_B: &str = "c6237ef84fa537c78dcee78efd2d4e59f728859c7f194da42ac51ededfa0be05";
     const PK_VALID_C: &str = "f4a42a97e594b77bdbd8ee35191c8b28a94a4cb871d96f32921558275421fb68";
+
+
+    #[test]
+    fn reject_empty_send_content_blocks_blank_text_without_files() {
+        let err = reject_empty_send_content("", &[]).expect_err("blank content");
+        assert!(err.to_string().contains("content is empty"));
+        assert!(err.to_string().contains("--content -"));
+        let err = reject_empty_send_content("   \n\t  ", &[]).expect_err("whitespace-only");
+        assert!(err.to_string().contains("content is empty"));
+    }
+
+    #[test]
+    fn reject_empty_send_content_allows_text_or_file_only() {
+        reject_empty_send_content("hello", &[]).expect("non-empty text");
+        reject_empty_send_content("", &["shot.png".into()]).expect("file-only send");
+        reject_empty_send_content("  ", &["a.jpg".into()]).expect("whitespace + file");
+    }
 
     fn send_args(extra: &[&str]) -> Vec<String> {
         let mut args = vec![
