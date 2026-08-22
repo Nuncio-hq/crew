@@ -2,6 +2,7 @@ import * as React from "react";
 import { Bot, Users } from "lucide-react";
 import type { TeamMentionMember } from "@/features/messages/lib/mentionCandidates";
 
+import { OtherSetupAgentMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
 import { Badge } from "@/shared/ui/badge";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -22,6 +23,7 @@ export type MentionSuggestion = {
   displayName: string;
   avatarUrl?: string | null;
   isAgent?: boolean;
+  agentProvenance?: "managed-here" | "managed-elsewhere";
   notInChannel?: boolean;
   ownerLabel?: string | null;
   crewRoleLabel?: string | null;
@@ -35,6 +37,13 @@ type MentionAutocompleteProps = {
   onSelect: (suggestion: MentionSuggestion) => void;
   position?: "above" | "below";
 };
+
+export function showMentionAgentProvenanceMarker(
+  suggestion: MentionSuggestion,
+  hasNameCollision: boolean,
+): boolean {
+  return hasNameCollision && suggestion.agentProvenance === "managed-elsewhere";
+}
 
 export const MentionAutocomplete = React.memo(function MentionAutocomplete({
   suggestions,
@@ -104,6 +113,14 @@ export const MentionAutocomplete = React.memo(function MentionAutocomplete({
           const agentLabel = "agent";
           const hasNameCollision =
             (nameCounts.get(suggestion.displayName.toLowerCase()) ?? 0) > 1;
+          const showAgentProvenanceMarker = showMentionAgentProvenanceMarker(
+            suggestion,
+            hasNameCollision,
+          );
+          const ownerLabel =
+            hasNameCollision && suggestion.agentProvenance
+              ? null
+              : suggestion.ownerLabel;
           const collisionNpub =
             hasNameCollision && suggestion.pubkey
               ? safeNpub(suggestion.pubkey)
@@ -172,6 +189,9 @@ export const MentionAutocomplete = React.memo(function MentionAutocomplete({
                           data-testid="mention-agent-icon"
                         />
                         {agentLabel}
+                        {showAgentProvenanceMarker ? (
+                          <OtherSetupAgentMarker testId="mention-agent-other-setup" />
+                        ) : null}
                       </span>
                     ) : suggestion.role ? (
                       <Badge
@@ -189,21 +209,21 @@ export const MentionAutocomplete = React.memo(function MentionAutocomplete({
                         {suggestion.crewRoleLabel}
                       </Badge>
                     ) : null}
-                    {suggestion.ownerLabel || suggestion.notInChannel ? (
+                    {ownerLabel || suggestion.notInChannel ? (
                       <span
                         className="min-w-0 truncate"
                         title={
-                          suggestion.ownerLabel && suggestion.notInChannel
-                            ? `managed by ${suggestion.ownerLabel} · not in channel`
-                            : suggestion.ownerLabel
-                              ? `managed by ${suggestion.ownerLabel}`
+                          ownerLabel && suggestion.notInChannel
+                            ? `managed by ${ownerLabel} · not in channel`
+                            : ownerLabel
+                              ? `managed by ${ownerLabel}`
                               : "not in channel"
                         }
                       >
-                        {suggestion.ownerLabel && suggestion.notInChannel
-                          ? `managed by ${suggestion.ownerLabel} · not in channel`
-                          : suggestion.ownerLabel
-                            ? `managed by ${suggestion.ownerLabel}`
+                        {ownerLabel && suggestion.notInChannel
+                          ? `managed by ${ownerLabel} · not in channel`
+                          : ownerLabel
+                            ? `managed by ${ownerLabel}`
                             : "not in channel"}
                       </span>
                     ) : null}

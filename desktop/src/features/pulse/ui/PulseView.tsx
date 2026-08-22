@@ -102,7 +102,7 @@ export function PulseView({ currentPubkey }: PulseViewProps) {
       if (!agentsByPubkey.has(agent.pubkey)) {
         agentsByPubkey.set(agent.pubkey, {
           pubkey: agent.pubkey,
-          ownerPubkey: null,
+          ownerPubkey: currentPubkey ?? null,
           name: agent.name,
           agentType: agent.agentCommand,
           channels: [],
@@ -118,7 +118,7 @@ export function PulseView({ currentPubkey }: PulseViewProps) {
       }
     }
     return [...agentsByPubkey.values()];
-  }, [managedAgentsQuery.data, relayAgentsQuery.data]);
+  }, [currentPubkey, managedAgentsQuery.data, relayAgentsQuery.data]);
   const agentPubkeys = React.useMemo(
     () => relayAgents.map((a) => a.pubkey),
     [relayAgents],

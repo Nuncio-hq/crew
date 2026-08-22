@@ -7,6 +7,7 @@ use crate::{
         InstallRuntimeResult, ManagedAgentPrereqsInfo, RelayAgentInfo, DEFAULT_ACP_COMMAND,
     },
 };
+mod agent_discovery_ownership;
 mod git_bash_prerequisite;
 mod install_capture;
 mod install_exec;
@@ -15,10 +16,9 @@ mod install_runtime;
 mod managed_adapter_install;
 mod managed_node;
 mod post_install_verification;
-mod agent_discovery_ownership;
+use agent_discovery_ownership::list_relay_agents_inner;
 pub use git_bash_prerequisite::discover_git_bash_prerequisite;
 use install_runtime::install_acp_runtime_blocking;
-use agent_discovery_ownership::list_relay_agents_inner;
 
 #[tauri::command]
 pub async fn discover_acp_providers(

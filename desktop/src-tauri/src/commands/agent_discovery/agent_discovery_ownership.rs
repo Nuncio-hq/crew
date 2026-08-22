@@ -1,11 +1,10 @@
 use crate::{
-    app_state::AppState,
-    managed_agents::RelayAgentInfo,
-    nostr_convert,
-    relay::query_relay,
+    app_state::AppState, managed_agents::RelayAgentInfo, nostr_convert, relay::query_relay,
 };
+use std::sync::Arc;
 
 pub(crate) const PROFILE_QUERY_BATCH_SIZE: usize = 10;
+pub(crate) const PROFILE_QUERY_CONCURRENCY: usize = 8;
 
 pub(crate) fn profile_filters_for_agents(pubkeys: &[String]) -> Vec<serde_json::Value> {
     pubkeys
@@ -27,14 +26,30 @@ pub(crate) async fn apply_verified_agent_owner_fields(
     state: &AppState,
     agents: &mut [RelayAgentInfo],
 ) -> Result<(), String> {
+    if agents.is_empty() {
+        return Ok(());
+    }
     let pubkeys = agents
         .iter()
         .map(|agent| agent.pubkey.clone())
         .collect::<Vec<_>>();
-    let mut profile_events = Vec::new();
-    for batch in pubkeys.chunks(PROFILE_QUERY_BATCH_SIZE) {
-        profile_events.extend(query_relay(state, &profile_filters_for_agents(batch)).await?);
-    }
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(PROFILE_QUERY_CONCURRENCY));
+    let profile_queries = pubkeys.chunks(PROFILE_QUERY_BATCH_SIZE).map(|batch| {
+        let filters = profile_filters_for_agents(batch);
+        let semaphore = Arc::clone(&semaphore);
+        async move {
+            let _permit = semaphore
+                .acquire_owned()
+                .await
+                .map_err(|error| format!("profile query semaphore closed: {error}"))?;
+            query_relay(state, &filters).await
+        }
+    });
+    let profile_events = futures_util::future::try_join_all(profile_queries)
+        .await?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     let owners = nostr_convert::verified_agent_owners_from_profiles(&profile_events);
     for agent in agents {
         agent.owner_pubkey = owners.get(&agent.pubkey).cloned();
@@ -55,7 +70,10 @@ pub(crate) async fn list_relay_agents_inner(
     )
     .map_err(|e| format!("agent parse failed: {e}"))?;
     apply_verified_agent_owner_fields(state, &mut agents).await?;
-    retain_agents_allowed_by_build(&mut agents, crate::managed_agents::owner_only_access_build());
+    retain_agents_allowed_by_build(
+        &mut agents,
+        crate::managed_agents::owner_only_access_build(),
+    );
     Ok(agents)
 }
 
