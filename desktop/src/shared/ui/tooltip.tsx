@@ -7,7 +7,23 @@ import {
   OVERLAY_VIEWPORT_MAX_CLASS,
 } from "@/shared/ui/overlayCollision";
 
-const TooltipProvider = TooltipPrimitive.Provider;
+// Hover-only disclosure should require deliberate pointer dwell. Disabling Radix's
+// skip-delay grace prevents tooltips from cascading open while the pointer moves
+// across adjacent controls. Callers may override both values for a proven case.
+const DEFAULT_TOOLTIP_DELAY_MS = 500;
+const DEFAULT_TOOLTIP_SKIP_DELAY_MS = 0;
+
+const TooltipProvider = ({
+  delayDuration = DEFAULT_TOOLTIP_DELAY_MS,
+  skipDelayDuration = DEFAULT_TOOLTIP_SKIP_DELAY_MS,
+  ...props
+}: React.ComponentProps<typeof TooltipPrimitive.Provider>) => (
+  <TooltipPrimitive.Provider
+    delayDuration={delayDuration}
+    skipDelayDuration={skipDelayDuration}
+    {...props}
+  />
+);
 
 const Tooltip = TooltipPrimitive.Root;
 

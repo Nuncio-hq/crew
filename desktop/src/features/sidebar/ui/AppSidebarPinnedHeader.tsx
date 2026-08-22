@@ -102,7 +102,7 @@ export function AppSidebarPrimaryMenu({
       data-tauri-drag-region
       data-testid="sidebar-primary-menu"
     >
-      <SidebarMenu className="pb-2">
+      <SidebarMenu className="sidebar-primary-menu pb-2">
         <SidebarMenuItem>
           <SidebarMenuButton
             className="data-[active=true]:font-normal"
@@ -111,16 +111,8 @@ export function AppSidebarPrimaryMenu({
             tooltip="Inbox"
             type="button"
           >
-            <Inbox
-              className={
-                selectedView !== "home" ? "h-4 w-4 opacity-80" : "h-4 w-4"
-              }
-            />
-            <SidebarMenuLabel
-              className={selectedView !== "home" ? "opacity-80" : undefined}
-            >
-              Inbox
-            </SidebarMenuLabel>
+            <Inbox className="h-4 w-4" />
+            <SidebarMenuLabel>Inbox</SidebarMenuLabel>
           </SidebarMenuButton>
           {homeBadgeCount > 0 ? (
             <SidebarMenuBadge
@@ -166,16 +158,8 @@ export function AppSidebarPrimaryMenu({
             tooltip="Agents"
             type="button"
           >
-            <Bot
-              className={
-                selectedView !== "agents" ? "h-4 w-4 opacity-80" : "h-4 w-4"
-              }
-            />
-            <SidebarMenuLabel
-              className={selectedView !== "agents" ? "opacity-80" : undefined}
-            >
-              Agents
-            </SidebarMenuLabel>
+            <Bot className="h-4 w-4" />
+            <SidebarMenuLabel>Agents</SidebarMenuLabel>
           </SidebarMenuButton>
         </SidebarMenuItem>
         <FeatureGate feature="workflows">

@@ -88,7 +88,7 @@ function renderApp() {
             enabled={huddleWindowChannelId() === null}
           >
             <ThemeProvider defaultTheme="crew-dark">
-              <TooltipProvider delayDuration={300}>
+              <TooltipProvider>
                 <EmojiBurstProvider>
                   <PoofBurstProvider>
                     <UpdaterProvider>
