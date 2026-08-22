@@ -244,8 +244,8 @@ enum Cmd {
     #[command(subcommand)]
     UserInput(UserInputCmd),
     /// Founder-signed org roster helpers (Crew). Chart Show/Tree/Publish removed (#233).
-#[command(subcommand)]
-Org(OrgCmd),
+    #[command(subcommand)]
+    Org(OrgCmd),
 }
 
 #[derive(Subcommand)]
@@ -571,11 +571,15 @@ pub enum MessagesCmd {
         kinds: Option<String>,
     },
     /// Get a message thread (replies to a root message)
+    #[command(
+        after_help = "Examples:\n  buzz messages thread --channel <UUID> --event <EVENT_ID>\n  buzz messages thread --event 'buzz://message?channel=<UUID>&id=<EVENT_ID>'\n\nA `buzz://message` link (Desktop \"Copy link\") carries the channel, so \
+--channel may be omitted; when both are given they must agree."
+    )]
     Thread {
-        /// Channel UUID
+        /// Channel UUID (optional when --event is a buzz://message link)
         #[arg(long)]
-        channel: String,
-        /// Root message event ID (64-char hex)
+        channel: Option<String>,
+        /// Root message event ID (64-char hex) or a `buzz://message?…` link
         #[arg(long)]
         event: String,
         /// Maximum number of results to return

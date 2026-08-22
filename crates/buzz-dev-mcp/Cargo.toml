@@ -26,6 +26,8 @@ serde_json = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }
 similar = "3"
+# Home directory lookup for leading `~` expansion in file-tool paths.
+dirs = "6"
 tempfile = "3"
 ignore = "0.4.25"
 tracing = { workspace = true }

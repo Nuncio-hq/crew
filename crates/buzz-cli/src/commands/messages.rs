@@ -391,6 +391,36 @@ pub async fn cmd_get_messages(
     Ok(())
 }
 
+/// Resolve the `(channel_id, event_id)` pair a thread read targets.
+///
+/// `event` is either a 64-char hex event ID (then `--channel` is required) or a
+/// `buzz://message?channel=…&id=…` link, which carries the channel itself so
+/// agents can paste Desktop's "Copy link" output verbatim. A `--channel` given
+/// alongside a link must agree with it rather than being silently ignored.
+fn resolve_thread_target(channel: Option<&str>, event: &str) -> Result<(String, String), CliError> {
+    if crate::links::is_message_link(event) {
+        let link = crate::links::parse_message_link(event).ok_or_else(|| {
+            CliError::Usage(format!(
+                "invalid buzz://message link: {event} (expected buzz://message?channel=<UUID>&id=<EVENT_ID>)"
+            ))
+        })?;
+        if let Some(channel) = channel {
+            if channel != link.channel_id {
+                return Err(CliError::Usage(format!(
+                    "--channel {channel} does not match the link's channel {}",
+                    link.channel_id
+                )));
+            }
+        }
+        return Ok((link.channel_id, link.event_id));
+    }
+
+    let channel = channel.ok_or_else(|| {
+        CliError::Usage("--channel is required unless --event is a buzz://message link".to_string())
+    })?;
+    Ok((channel.to_string(), event.to_string()))
+}
+
 pub async fn cmd_get_thread(
     client: &BuzzClient,
     channel_id: &str,
@@ -573,7 +603,6 @@ pub struct SendMessageParams {
     pub handoff: Option<String>,
     pub goal: Option<String>,
 }
-
 
 /// Reject blank sends that have no attachments.
 ///
@@ -1006,7 +1035,10 @@ pub async fn dispatch(
             event,
             limit,
             depth_limit,
-        } => cmd_get_thread(client, &channel, &event, limit, depth_limit, format).await,
+        } => {
+            let (channel, event) = resolve_thread_target(channel.as_deref(), &event)?;
+            cmd_get_thread(client, &channel, &event, limit, depth_limit, format).await
+        }
         MessagesCmd::Search {
             query,
             author,
@@ -1036,7 +1068,7 @@ mod tests {
     use super::{
         event_mention_pubkeys, find_root_from_tags, match_profiles_by_name, merge_message_mentions,
         missing_members, normalize_explicit_mentions, parse_member_pubkeys,
-        reject_empty_send_content, resolve_names_to_pubkeys,
+        reject_empty_send_content, resolve_names_to_pubkeys, resolve_thread_target,
     };
     use buzz_sdk::mentions::{
         extract_at_mentions_with_known, extract_at_names, match_names_to_profiles, MentionProfile,
@@ -1053,6 +1085,80 @@ mod tests {
     const PK_VALID_B: &str = "c6237ef84fa537c78dcee78efd2d4e59f728859c7f194da42ac51ededfa0be05";
     const PK_VALID_C: &str = "f4a42a97e594b77bdbd8ee35191c8b28a94a4cb871d96f32921558275421fb68";
 
+    const CHANNEL_UUID: &str = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
+
+    fn thread_args(extra: &[&str]) -> Vec<String> {
+        let mut args = vec![
+            "buzz".to_string(),
+            "messages".to_string(),
+            "thread".to_string(),
+        ];
+        args.extend(extra.iter().map(|arg| (*arg).to_string()));
+        args
+    }
+
+    #[test]
+    fn thread_accepts_message_link_without_channel_flag() {
+        // Upstream #6359: pasting a `buzz://message` link is enough — the link
+        // carries the channel, so `--channel` becomes optional.
+        let link = format!("buzz://message?channel={CHANNEL_UUID}&id={ID_A}");
+        crate::Cli::try_parse_from(thread_args(&["--event", &link]))
+            .expect("thread with a link and no --channel should parse");
+        let (channel, event) = resolve_thread_target(None, &link).expect("link resolves");
+        assert_eq!(channel, CHANNEL_UUID);
+        assert_eq!(event, ID_A);
+    }
+
+    #[test]
+    fn thread_link_with_thread_param_resolves_to_linked_event() {
+        // The `thread` param (root event) is informational — `messages thread`
+        // resolves the whole thread from the linked event id alone.
+        let link = format!("buzz://message?channel={CHANNEL_UUID}&id={ID_A}&thread={ID_B}");
+        let (channel, event) = resolve_thread_target(None, &link).expect("link resolves");
+        assert_eq!(channel, CHANNEL_UUID);
+        assert_eq!(event, ID_A);
+    }
+
+    #[test]
+    fn thread_keeps_explicit_channel_and_event_flags() {
+        let (channel, event) =
+            resolve_thread_target(Some(CHANNEL_UUID), ID_A).expect("flags resolve");
+        assert_eq!(channel, CHANNEL_UUID);
+        assert_eq!(event, ID_A);
+    }
+
+    #[test]
+    fn thread_link_agreeing_with_channel_flag_is_accepted() {
+        let link = format!("buzz://message?channel={CHANNEL_UUID}&id={ID_A}");
+        let (channel, event) =
+            resolve_thread_target(Some(CHANNEL_UUID), &link).expect("agreeing link resolves");
+        assert_eq!(channel, CHANNEL_UUID);
+        assert_eq!(event, ID_A);
+    }
+
+    #[test]
+    fn thread_link_conflicting_with_channel_flag_is_input_error() {
+        let link = format!("buzz://message?channel={CHANNEL_UUID}&id={ID_A}");
+        let err = resolve_thread_target(Some("00000000-0000-0000-0000-000000000000"), &link)
+            .expect_err("conflicting channel must be rejected");
+        assert!(matches!(err, crate::error::CliError::Usage(_)));
+        assert!(err.to_string().contains("--channel"));
+    }
+
+    #[test]
+    fn thread_without_channel_or_link_is_input_error() {
+        let err = resolve_thread_target(None, ID_A).expect_err("bare event id needs --channel");
+        assert!(matches!(err, crate::error::CliError::Usage(_)));
+        assert!(err.to_string().contains("--channel"));
+    }
+
+    #[test]
+    fn thread_rejects_malformed_message_link() {
+        let err = resolve_thread_target(None, "buzz://message?channel=&id=")
+            .expect_err("malformed link must be rejected");
+        assert!(matches!(err, crate::error::CliError::Usage(_)));
+        assert!(err.to_string().contains("buzz://message"));
+    }
 
     #[test]
     fn reject_empty_send_content_blocks_blank_text_without_files() {

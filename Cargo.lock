@@ -1113,6 +1113,7 @@ dependencies = [
  "buzz-cli",
  "buzz-core",
  "crew-wiki",
+ "dirs",
  "git-credential-nostr",
  "git-sign-nostr",
  "ignore",
