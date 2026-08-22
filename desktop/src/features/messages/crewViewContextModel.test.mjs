@@ -1,23 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import {
-  channelViewContext,
-  threadViewContext,
-} from "./lib/crewViewContextModel.ts";
+import { threadViewContext } from "./lib/crewViewContextModel.ts";
 
 const CHANNEL_ID = "018f30b4-57c0-7f10-a3f8-9f7d8e6c5b4a";
 const ROOT_ID = "f".repeat(64);
-
-test("channel view context describes only the visible channel", () => {
-  assert.deepEqual(channelViewContext(CHANNEL_ID, "general"), {
-    scope: "channel",
-    view: "Channel #general",
-    selection: [{ id: CHANNEL_ID, kind: "channel", title: "#general" }],
-  });
-  assert.equal(channelViewContext(null, "general"), null);
-  assert.equal(channelViewContext(CHANNEL_ID, null), null);
-});
 
 test("thread view context carries the visible thread, repository and PR", () => {
   const context = threadViewContext({
@@ -48,18 +35,34 @@ test("thread view context carries the visible thread, repository and PR", () => 
 });
 
 test("thread view context omits workspace entries that are not visible yet", () => {
-  const context = threadViewContext({
+  const prOnly = threadViewContext({
     branch: null,
     channelId: CHANNEL_ID,
     channelName: "crew",
-    pullRequest: null,
+    pullRequest: { number: 9, title: "Ship it" },
     repositoryPath: null,
     threadRootId: ROOT_ID,
     threadTitle: "",
   });
-  assert.deepEqual(context.selection, [
+  assert.deepEqual(prOnly.selection, [
     { id: CHANNEL_ID, kind: "channel", title: "#crew" },
+    { id: "pr-9", kind: "review", title: "PR #9 Ship it" },
   ]);
+});
+
+test("no context when the visible page adds nothing beyond the conversation", () => {
+  assert.equal(
+    threadViewContext({
+      branch: null,
+      channelId: CHANNEL_ID,
+      channelName: "crew",
+      pullRequest: null,
+      repositoryPath: null,
+      threadRootId: ROOT_ID,
+      threadTitle: "Port the selection context",
+    }),
+    null,
+  );
   assert.equal(
     threadViewContext({
       branch: null,
