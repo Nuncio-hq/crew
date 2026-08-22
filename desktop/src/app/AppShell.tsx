@@ -898,6 +898,7 @@ export function AppShell() {
                       />
                     ) : null}
                     <AppShellChannelSurface
+                      hasCommunityRail={hasCommunityRail}
                       isHuddleRoom={isHuddleRoom}
                       isHuddleRoomStarting={isHuddleRoomStarting}
                       mainInsetRef={mainInsetRef}
