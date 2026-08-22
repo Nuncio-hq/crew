@@ -65,9 +65,7 @@ pub(crate) fn lock_path_mutex() -> std::sync::MutexGuard<'static, ()> {
 }
 
 pub use backend::*;
-pub(crate) use definition_validation::{
-    validate_agent_definition_text, validate_managed_agent_definition_text,
-};
+pub(crate) use definition_validation::validate_agent_definition_text;
 pub use discovery::*;
 pub use env_vars::*;
 #[cfg(windows)]

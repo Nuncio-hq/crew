@@ -47,6 +47,8 @@ pub(crate) fn validate_agent_definition_text(
 /// separately validated persona, so only their instance name is checked here.
 /// Definition-less agents carry their executable prompt directly and must
 /// validate both fields at every local, inbound, and publication boundary.
+// This is part of the verbatim upstream definition_validation module; its callers arrive with the #4220 validation-boundary port.
+#[allow(dead_code)]
 pub(crate) fn validate_managed_agent_definition_text(
     name: &str,
     persona_id: Option<&str>,
