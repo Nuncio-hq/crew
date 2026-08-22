@@ -70,6 +70,7 @@ export {
 };
 
 const MAX_OBSERVER_EVENTS = 3000;
+const OBSERVER_EVENTS_LOW_WATER = Math.floor(MAX_OBSERVER_EVENTS * 0.9);
 const MAX_PENDING_UNKNOWN_AGENT_FRAMES = 100;
 
 export type ObserverSnapshot = {
@@ -90,12 +91,35 @@ const IDLE_SNAPSHOT: ObserverSnapshot = {
 const EMPTY_EVENTS: ObserverEvent[] = [];
 const EMPTY_TRANSCRIPT: TranscriptItem[] = [];
 
-const listeners = new Set<() => void>();
+export type AgentObserverStoreUpdate = {
+  agentPubkey: string;
+  events: readonly ObserverEvent[];
+};
+
+type AgentObserverStoreListener = (update?: AgentObserverStoreUpdate) => void;
+
+const listeners = new Set<AgentObserverStoreListener>();
 const eventsByAgent = new Map<string, ObserverEvent[]>();
 const transcriptByAgent = new Map<string, TranscriptState>();
 const snapshotByAgent = new Map<string, ObserverSnapshot>();
 const connectionErrorByAgent = new Map<string, string>();
 const agentsWithCurrentLiveContact = new Set<string>();
+const evictionFloorByAgent = new Map<
+  string,
+  { timestamp: string; seq: number }
+>();
+
+function isAfterEvictionFloor(
+  event: ObserverEvent,
+  floor: { timestamp: string; seq: number },
+): boolean {
+  const eventTime = Date.parse(event.timestamp);
+  const floorTime = Date.parse(floor.timestamp);
+  if (Number.isFinite(eventTime) && Number.isFinite(floorTime)) {
+    if (eventTime !== floorTime) return eventTime > floorTime;
+  }
+  return event.seq > floor.seq;
+}
 
 // Channel-scoped archive event journal — holds paged history loaded from the local
 // SQLite archive without the MAX_OBSERVER_EVENTS live-relay cap. Keyed by
@@ -202,9 +226,9 @@ let generation = 0;
 let relayConnectionHealthy = false;
 let observerSubscriptionReady = false;
 
-function notifyListeners() {
+function notifyListeners(update?: AgentObserverStoreUpdate) {
   for (const listener of listeners) {
-    listener();
+    listener(update);
   }
 }
 
@@ -266,37 +290,73 @@ function observerTag(event: RelayEvent, tagName: string) {
 function appendAgentEvents(
   agentPubkey: string,
   events: readonly ObserverEvent[],
-): boolean {
-  if (events.length === 0) return false;
+): ObserverEvent[] | null {
+  if (events.length === 0) return null;
 
   const key = normalizePubkey(agentPubkey);
   const current = eventsByAgent.get(key) ?? [];
-  const seen = new Set(current.map((event) => observerEventIdentity(event)));
+
+  // Reject any arrival at or before the eviction floor: those frames were
+  // already discarded, so re-admitting them (they fit within the headroom
+  // below the cap) would let a later refill trim away legitimate retained
+  // events. Admit only frames strictly after the floor — the floor event
+  // itself was evicted, so an equal ordering key is rejected too.
+  const floor = evictionFloorByAgent.get(key);
+  const admissible = floor
+    ? events.filter((event) => isAfterEvictionFloor(event, floor))
+    : events;
+  if (admissible.length === 0) return null;
+
+  // Ordinary live path: the harness publishes frames in order once per
+  // second, so the whole batch lands strictly after the retained tail. In
+  // that case no admissible event can collide with a retained one (the
+  // journal is sorted), so dedup only needs to look inside the batch and the
+  // merged journal is a plain concat — no Set over the full journal and no
+  // whole-journal re-sort (whose comparator Date.parses per comparison).
+  // Out-of-order or replayed arrivals take the full dedup + re-sort path.
+  const currentLast = current.at(-1);
+  const allAtEnd =
+    !currentLast ||
+    admissible.every((event) => isObserverEventAfter(event, currentLast));
+
+  const seen = allAtEnd
+    ? new Set<string>()
+    : new Set(current.map((event) => observerEventIdentity(event)));
   const added: ObserverEvent[] = [];
-  for (const event of events) {
+  for (const event of admissible) {
     const identity = observerEventIdentity(event);
     if (seen.has(identity)) continue;
     seen.add(identity);
     added.push(event);
   }
-  if (added.length === 0) return false;
+  if (added.length === 0) return null;
 
   const sortedAdded = added.sort(compareObserverEvents);
-  const sorted = [...current, ...sortedAdded].sort(compareObserverEvents);
+  const sorted = allAtEnd
+    ? [...current, ...sortedAdded]
+    : [...current, ...sortedAdded].sort(compareObserverEvents);
   const trimmed = sorted.length > MAX_OBSERVER_EVENTS;
   const final = trimmed
-    ? sorted.slice(sorted.length - MAX_OBSERVER_EVENTS)
+    ? sorted.slice(sorted.length - OBSERVER_EVENTS_LOW_WATER)
     : sorted;
   eventsByAgent.set(key, final);
 
-  // The common live path appends a sorted batch after the retained window. Fold
+  // Record the newest event this trim discarded as the agent's eviction floor.
+  // It is the entry just below the retained window; the floor only advances,
+  // since the retained window is always the newest tail.
+  if (trimmed) {
+    const boundary = sorted[sorted.length - OBSERVER_EVENTS_LOW_WATER - 1];
+    evictionFloorByAgent.set(key, {
+      timestamp: boundary.timestamp,
+      seq: boundary.seq,
+    });
+  }
+
+  // The common live path appends a sorted batch after the retained window
+  // (the same `allAtEnd` that authorized the concat fast-path above). Fold
   // that batch through the transcript state once without rebuilding history.
   // Out-of-order arrivals and cap eviction rebuild from the final window so
   // stateful tool/permission relationships remain correct.
-  const currentLast = current.at(-1);
-  const allAtEnd =
-    !currentLast ||
-    sortedAdded.every((event) => compareObserverEvents(event, currentLast) > 0);
   if (allAtEnd && !trimmed) {
     let transcriptState =
       transcriptByAgent.get(key) ?? createEmptyTranscriptState();
@@ -312,12 +372,20 @@ function appendAgentEvents(
     prunePendingAgentRequests(collectTriggeringEventIds()),
   );
   invalidateSnapshot(key);
-  return true;
+  if (!trimmed) return sortedAdded;
+
+  const retainedKeys = new Set(
+    final.map((event) => observerEventIdentity(event)),
+  );
+  return sortedAdded.filter((event) =>
+    retainedKeys.has(observerEventIdentity(event)),
+  );
 }
 
 function appendAgentEvent(agentPubkey: string, event: ObserverEvent) {
-  if (appendAgentEvents(agentPubkey, [event])) {
-    notifyListeners();
+  const added = appendAgentEvents(agentPubkey, [event]);
+  if (added) {
+    notifyListeners({ agentPubkey, events: added });
   }
 }
 
@@ -484,7 +552,7 @@ function processLiveObserverEvents(
   // callbacks. Those callbacks historically observed their triggering frame
   // in the raw/transcript stores; batching must preserve that visibility while
   // deferring only the global external-store publication.
-  const observerChanged = appendAgentEvents(agentPubkey, acceptedEvents);
+  const addedEvents = appendAgentEvents(agentPubkey, acceptedEvents);
 
   for (const parsed of acceptedEvents) {
     const managementRequest = parseAgentManagementRequest(parsed.payload);
@@ -507,8 +575,10 @@ function processLiveObserverEvents(
     }
   }
 
-  if (observerChanged) {
-    notifyListeners();
+  // Preserve the harness's envelope backpressure: retained state was committed
+  // before specialized callbacks, but external-store subscribers publish once.
+  if (addedEvents) {
+    notifyListeners({ agentPubkey, events: addedEvents });
   }
   return true;
 }
@@ -688,7 +758,9 @@ export function ensureRelayObserverSubscription() {
   return startPromise;
 }
 
-export function subscribeAgentObserverStore(listener: () => void) {
+export function subscribeAgentObserverStore(
+  listener: AgentObserverStoreListener,
+) {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
@@ -891,8 +963,9 @@ export function syncAgentObserverEvents(
   agentPubkey: string,
   events: ObserverEvent[],
 ) {
-  if (appendAgentEvents(agentPubkey, events)) {
-    notifyListeners();
+  const added = appendAgentEvents(agentPubkey, events);
+  if (added) {
+    notifyListeners({ agentPubkey, events: added });
   }
 }
 
@@ -909,6 +982,7 @@ export function resetAgentObserverStore() {
   eventsByAgent.clear();
   transcriptByAgent.clear();
   snapshotByAgent.clear();
+  evictionFloorByAgent.clear();
   connectionErrorByAgent.clear();
   agentsWithCurrentLiveContact.clear();
   archiveEventsByChannel.clear();
@@ -945,6 +1019,7 @@ bindObserverRelayStoreE2E({
     eventsByAgent.clear();
     transcriptByAgent.clear();
     snapshotByAgent.clear();
+    evictionFloorByAgent.clear();
     connectionErrorByAgent.clear();
     agentsWithCurrentLiveContact.clear();
     notifyListeners();

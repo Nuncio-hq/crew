@@ -125,6 +125,10 @@ export function sortEvents(events: RelayEvent[]) {
   });
 }
 
+export function toRelayFrames(message: unknown): unknown[] {
+  return Array.isArray(message) ? message : [message];
+}
+
 export function getTextPayload(message: unknown) {
   if (typeof message === "string") {
     return message;

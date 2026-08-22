@@ -29,9 +29,13 @@ mod migration;
 #[cfg(test)]
 mod model_tests;
 mod models;
+mod native_relay_client;
 mod native_websocket;
+mod native_websocket_batch;
 mod nostr_bind;
 pub mod nostr_convert;
+mod observed_unread;
+mod persona_catalog;
 mod prevent_sleep;
 mod ptt_shortcut;
 mod relay;
@@ -43,6 +47,7 @@ mod secret_store;
 mod shutdown;
 mod templates;
 mod terminal_runtime;
+mod unread_catch_up;
 #[cfg_attr(not(test), allow(dead_code))]
 mod terminal_transport;
 #[cfg(target_os = "macos")]
@@ -313,6 +318,9 @@ pub fn run() {
             .manage(BuilderlabLogin::default())
             .manage(commands::pairing::PairingHandle::new())
             .manage(terminal_runtime::TerminalSessions::default())
+            .manage(archive::sync::ArchiveSyncState::default())
+            .manage(native_relay_client::NativeRelayClient::default())
+            .manage(observed_unread::ObservedUnreadStore::default())
             .manage(crate::resource_governor::ResourceGovernorHandle::new())
             .manage(crate::resource_governor::MjpegFrames(Default::default()))
             .manage(crate::agent_control::AgentControlHandle::new())

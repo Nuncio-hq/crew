@@ -11,6 +11,7 @@ pub(crate) use agent_env::{
 mod backend;
 pub(crate) mod config_bridge;
 pub(crate) mod custom_harnesses;
+mod definition_validation;
 mod cursor_startup_model;
 mod discovery;
 pub(crate) mod effective_config;
@@ -64,6 +65,7 @@ pub(crate) fn lock_path_mutex() -> std::sync::MutexGuard<'static, ()> {
 }
 
 pub use backend::*;
+pub(crate) use definition_validation::validate_agent_definition_text;
 pub use discovery::*;
 pub use env_vars::*;
 #[cfg(windows)]

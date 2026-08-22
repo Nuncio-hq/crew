@@ -2,9 +2,14 @@
   "$comment": "Recorded lines use wc -l semantics; keep the exact count printed by the file-size guard.",
   "files": {
     "src/features/agents/activeAgentTurnsStore.ts": {
-      "lines": 1018,
+      "lines": 1059,
       "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (focus-refetch / agent turn store); +4 for prune-on-subscribe no-notify guard.",
       "recordedAt": "2026-08-12"
+    },
+    "src/features/agents/observerRelayStore.ts": {
+      "lines": 1031,
+      "reason": "Upstream-owned observer retention and incremental-admission growth landed in Tier 1 performance sync.",
+      "recordedAt": "2026-08-22"
     },
     "src/features/messages/ui/MessageComposer.tsx": {
       "lines": 1040,
@@ -22,7 +27,7 @@
       "recordedAt": "2026-08-14"
     },
     "src/shared/api/relayClientSession.ts": {
-      "lines": 1067,
+      "lines": 1070,
       "reason": "Upstream-owned / Crew attention-recovery merge at desktop-v0.5.11 pin; hold exact wc -l.",
       "recordedAt": "2026-08-13"
     },
