@@ -7,6 +7,18 @@ use crate::models::{SearchUsersResponse, UserSearchResultInfo};
 
 use super::profile_valid_oa_owner_pubkey;
 
+/// Return verified NIP-OA owners keyed by agent profile author.
+pub fn verified_agent_owners_from_profiles(events: &[Event]) -> HashMap<String, String> {
+    events
+        .iter()
+        .filter(|event| event.kind.as_u16() == 0)
+        .filter_map(|event| {
+            profile_valid_oa_owner_pubkey(event)
+                .map(|owner| (event.pubkey.to_hex(), owner))
+        })
+        .collect()
+}
+
 /// Convert a single kind:0 event to a [`UserSearchResultInfo`].
 pub fn user_search_result_from_event(ev: &Event) -> UserSearchResultInfo {
     let v: Value = serde_json::from_str(&ev.content).unwrap_or(Value::Null);
@@ -226,6 +238,47 @@ mod tests {
             .tags(vec![auth_tag])
             .sign_with_keys(&agent_keys)
             .expect("sign")
+    }
+
+    #[test]
+    fn verified_agent_owners_from_profiles_extracts_valid_auth_tags() {
+        let profile = oa_profile_event(r#"{"display_name":"Mira"}"#);
+        let owner_pubkey = profile
+            .tags
+            .iter()
+            .find_map(|tag| tag.as_slice().get(1).cloned())
+            .expect("owner pubkey");
+        let owners = verified_agent_owners_from_profiles(std::slice::from_ref(&profile));
+        assert_eq!(
+            owners.get(&profile.pubkey.to_hex()).map(String::as_str),
+            Some(owner_pubkey.as_str())
+        );
+    }
+
+    #[test]
+    fn verified_agent_owners_from_profiles_rejects_missing_and_forged_auth_tags() {
+        let missing = ev(0, r#"{"display_name":"Missing"}"#, vec![]);
+        let forged_agent = nostr::Keys::generate();
+        let forged_owner = nostr::Keys::generate();
+        let other_owner = nostr::Keys::generate();
+        let forged_auth =
+            buzz_sdk_pkg::nip_oa::compute_auth_tag(&forged_owner, &forged_agent.public_key(), "")
+                .expect("compute forged auth tag");
+        let mut forged_values: Vec<String> =
+            serde_json::from_str(&forged_auth).expect("parse forged auth tag");
+        forged_values[1] = other_owner.public_key().to_hex();
+        let forged = EventBuilder::new(Kind::Metadata, r#"{"display_name":"Forged"}"#)
+            .tags(vec![Tag::parse(forged_values).expect("parse forged tag")])
+            .sign_with_keys(&forged_agent)
+            .expect("sign forged profile");
+        let missing_pubkey = missing.pubkey.to_hex();
+        let forged_pubkey = forged.pubkey.to_hex();
+        let note = ev(1, "not a profile", vec![]);
+        let note_pubkey = note.pubkey.to_hex();
+        let owners = verified_agent_owners_from_profiles(&[missing, forged, note]);
+        assert!(!owners.contains_key(&missing_pubkey));
+        assert!(!owners.contains_key(&forged_pubkey));
+        assert!(!owners.contains_key(&note_pubkey));
     }
 
     #[test]

@@ -200,6 +200,16 @@ lookup table or an id comparison in a component.
    locked to owner-only, including provider-backed agents. A provider backend
    does not prove remote execution and must never create a policy carve-out.
 
+12. **Owner-only builds discover only verified same-owner remote agents.**
+    The native `list_relay_agents` boundary authenticates ownership through the
+    agent's NIP-OA profile, then retains only agents with verified ownership
+    when the compiled owner-only capability is present. The frontend applies
+    the active-user policy so same-owner agents on another machine remain
+    mentionable while other-owned agents stay hidden. OSS builds retain the
+    complete policy-filtered relay directory. Local `agents-data-changed`
+    events refresh only local persona/team/managed-agent caches; they must
+    never invalidate the remote relay directory.
+
 ## The tests that enforce this
 
 - `lib/agentConfigCore.test.mjs` — field model per harness × scope, clearing

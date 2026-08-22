@@ -1063,6 +1063,64 @@ test("relay-only excluded agents stay hidden from channel mentions", async ({
   await expect(autocomplete(page)).toHaveCount(0);
 });
 
+test("owner-only builds hide other-owned relay agents", async ({ page }) => {
+  await installMockBridge(page, {
+    ownerOnlyAccessBuild: true,
+    searchProfiles: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        displayName: "quinn",
+        ownerPubkey: TEST_IDENTITIES.outsider.pubkey,
+        isAgent: true,
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        ownerPubkey: TEST_IDENTITIES.outsider.pubkey,
+        name: "quinn",
+        respondTo: "owner-only",
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.getByTestId("message-input").fill("@quinn");
+
+  await expect(autocomplete(page)).toHaveCount(0);
+});
+
+test("owner-only builds show verified same-owner relay agents", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    ownerOnlyAccessBuild: true,
+    searchProfiles: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        displayName: "quinn",
+        ownerPubkey: MOCK_VIEWER_PUBKEY,
+        isAgent: true,
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        ownerPubkey: MOCK_VIEWER_PUBKEY,
+        name: "quinn",
+        respondTo: "owner-only",
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.getByTestId("message-input").fill("@quinn");
+
+  await expect(autocomplete(page).getByText("quinn")).toBeVisible();
+});
+
 test("shared agents wait for initial directory authorization", async ({
   page,
 }) => {
