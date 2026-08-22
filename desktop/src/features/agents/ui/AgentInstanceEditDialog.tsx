@@ -23,6 +23,7 @@ import { ChooserDialogContent } from "@/shared/ui/chooser-dialog-content";
 import { Dialog } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { setManagedAgentAutoRestart } from "@/shared/api/tauriManagedAgents";
+import { EffortPickerField } from "./EffortPickerField";
 import { EditAgentAdvancedFields } from "./EditAgentAdvancedFields";
 import { EditAgentModelAndProfileSection } from "./EditAgentModelAndProfileSection";
 import {
@@ -275,10 +276,7 @@ export function AgentInstanceEditDialog({
     return runtimeSupportsLlmProviderSelection(matched?.id ?? "");
   }, [runtimes, originalAgentCommand]);
 
-  // The runtime id active after submit. Inheriting resolves from the LINKED PERSONA's runtime
-  // (that is what runs once the override is cleared, not the current override).
-  // Falls back to dual-match (command path, then id) when no persona or its runtime is unset.
-  // This single prospective id feeds BOTH the block-save gate and submit so they always agree.
+  // The prospective runtime id feeds both the save gate and submission.
   const prospectiveRuntimeId = React.useMemo(() => {
     if (!inheritHarness) {
       return selectedRuntime?.id ?? selectedRuntimeId;
@@ -459,8 +457,10 @@ export function AgentInstanceEditDialog({
     selectedRuntime,
   });
 
-  // D2/D3: top-level API key owns display; readiness gate keeps the full
-  // required-key list. Effective snapshot covers persona inherit transitions.
+  // D2/D3: the top-level API key owns display while the readiness gate keeps the
+  // complete required-key list; advancedRequiredEnvKeys drives EnvVarsEditor
+  // display only. The effective snapshot covers persona inheritance during an
+  // instance inherit transition.
   const providerApiKeyEnvVar = getProviderApiKeyEnvVar(effectiveProvider);
   const personaSatisfied =
     providerApiKeyEnvVar != null &&
@@ -1069,7 +1069,6 @@ export function AgentInstanceEditDialog({
                 value={apiKeyValue}
               />
             ) : null}
-            {/* Model / Hermes profile (field-model driven) */}
             <EditAgentModelAndProfileSection
               currentAgentName={name}
               disabled={updateMutation.isPending}
@@ -1091,6 +1090,7 @@ export function AgentInstanceEditDialog({
               showCustomModelInput={showCustomModelInput}
               showProfileField={showHermesProfileField}
             />
+            <EffortPickerField agent={agent} config={configSurfaceQuery.data} />
             <AgentAiDefaultsNotice
               hidden={modelWriteThrough}
               onEditDefaults={() => setAiDefaultsOpen(true)}
