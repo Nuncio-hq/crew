@@ -1952,6 +1952,7 @@ test("notification settings drive the Inbox badge and desktop alerts", async ({
   await expect(page.getByTestId("message-timeline")).toContainText(
     "Please review the rollout checklist.",
   );
+
   await openSettings(page, "notifications");
   await page.getByTestId("notifications-home-badge-toggle").click();
   await page.getByTestId("settings-back-to-app").click();
