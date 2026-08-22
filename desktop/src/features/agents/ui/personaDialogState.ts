@@ -86,24 +86,40 @@ export function duplicatePersonaDialogState(
  */
 function behaviorEntry(
   persona: AgentPersona,
+  linkedAccess?: LinkedInstanceAccess,
 ): { behavior: PersonaBehaviorInput } | Record<string, never> {
-  if (persona.respondTo == null && persona.parallelism == null) {
+  const respondTo = linkedAccess?.respondTo ?? persona.respondTo;
+  const respondToAllowlist =
+    linkedAccess?.respondTo != null
+      ? linkedAccess.respondToAllowlist
+      : persona.respondToAllowlist;
+  if (respondTo == null && persona.parallelism == null) {
     return {};
   }
   return {
     behavior: {
-      respondTo: persona.respondTo ?? undefined,
+      respondTo: respondTo ?? undefined,
       respondToAllowlist:
-        persona.respondTo === "allowlist"
-          ? persona.respondToAllowlist
-          : undefined,
+        respondTo === "allowlist" ? respondToAllowlist : undefined,
       parallelism: persona.parallelism ?? undefined,
     },
   };
 }
 
+/**
+ * The access policy actually in force on the instance the dialog will edit.
+ * A definition's stored policy can lag its linked instance (the instance can be
+ * edited directly), so the running policy wins the seed and the dialog never
+ * silently re-widens access the owner already narrowed.
+ */
+export type LinkedInstanceAccess = {
+  respondTo: AgentPersona["respondTo"];
+  respondToAllowlist: string[];
+};
+
 export function editPersonaDialogState(
   persona: AgentPersona,
+  linkedAccess?: LinkedInstanceAccess,
 ): PersonaDialogState {
   return {
     title: "Edit agent",
@@ -123,7 +139,7 @@ export function editPersonaDialogState(
       // the dialog must therefore round-trip the existing values.)
       namePool: persona.namePool ?? [],
       envVars: persona.envVars ?? {},
-      ...behaviorEntry(persona),
+      ...behaviorEntry(persona, linkedAccess),
     },
   };
 }

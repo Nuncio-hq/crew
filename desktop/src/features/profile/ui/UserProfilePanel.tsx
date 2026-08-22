@@ -74,6 +74,7 @@ import {
 } from "@/features/profile/ui/UserProfilePersonaDialogs";
 import {
   deriveProfileChannels,
+  linkedInstanceAccess,
   type ProfilePanelTab,
   type ProfilePanelView,
   resolveAgentInstruction,
@@ -404,13 +405,20 @@ export function UserProfilePanel({
     viewerIsOwner,
   });
 
+  const instanceAccess = React.useMemo(
+    () => linkedInstanceAccess(managedAgent),
+    [managedAgent],
+  );
+
   const handleEditAgent = React.useCallback(() => {
     if (resolvedPersona) {
-      setPersonaDialogState(editPersonaDialogState(resolvedPersona));
+      setPersonaDialogState(
+        editPersonaDialogState(resolvedPersona, instanceAccess),
+      );
       return;
     }
     setEditAgentOpen(true);
-  }, [resolvedPersona, setEditAgentOpen]);
+  }, [instanceAccess, resolvedPersona, setEditAgentOpen]);
 
   const { deleteManagedAgentRecord, deleteManagedAgentsForPersona } =
     useProfileAgentDeletion({
@@ -546,8 +554,10 @@ export function UserProfilePanel({
 
   const handleEditPersona = React.useCallback(() => {
     if (!resolvedPersona) return;
-    setPersonaDialogState(editPersonaDialogState(resolvedPersona));
-  }, [resolvedPersona]);
+    setPersonaDialogState(
+      editPersonaDialogState(resolvedPersona, instanceAccess),
+    );
+  }, [instanceAccess, resolvedPersona]);
 
   const handleDuplicatePersona = React.useCallback(() => {
     if (!resolvedPersona) return;
@@ -894,7 +904,9 @@ export function UserProfilePanel({
           ? () => {
               setEditAgentOpen(false);
               setEditAgentFocus(undefined);
-              setPersonaDialogState(editPersonaDialogState(resolvedPersona));
+              setPersonaDialogState(
+                editPersonaDialogState(resolvedPersona, instanceAccess),
+              );
             }
           : undefined
       }

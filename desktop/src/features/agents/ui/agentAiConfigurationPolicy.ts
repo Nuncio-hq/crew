@@ -62,3 +62,32 @@ export function agentAiConfigurationModeSatisfied(
   const modelOk = !needsModelSelection || pair.model.trim().length > 0;
   return providerOk && modelOk;
 }
+
+/**
+ * Why a Customize (explicit) AI pair cannot be submitted yet, or `null` when it
+ * can. Names the field the user still has to fill so a disabled Save explains
+ * itself instead of looking broken; only fields the dialog actually shows are
+ * ever named, mirroring {@link agentAiConfigurationModeSatisfied}.
+ */
+export function agentAiConfigurationSubmitBlockReason(
+  mode: AgentAiConfigurationMode,
+  pair: AgentAiConfigurationPair,
+  needsProviderSelection = true,
+  needsModelSelection = true,
+): string | null {
+  if (
+    agentAiConfigurationModeSatisfied(
+      mode,
+      pair,
+      needsProviderSelection,
+      needsModelSelection,
+    )
+  ) {
+    return null;
+  }
+
+  if (needsProviderSelection && pair.provider.trim().length === 0) {
+    return "Choose a provider to save custom AI configuration.";
+  }
+  return "Choose a model to save custom AI configuration.";
+}

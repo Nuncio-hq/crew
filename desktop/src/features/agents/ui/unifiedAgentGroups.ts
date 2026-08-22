@@ -3,9 +3,25 @@ import type { AgentPersona, ManagedAgent } from "@/shared/api/types";
 
 type PersonaGroup = { persona: AgentPersona; agents: ManagedAgent[] };
 
+/**
+ * Whether a managed agent's identity is archived.
+ *
+ * Callers pass `useIsArchivedPredicate()`, which fails open (nothing archived)
+ * until the archive snapshot hydrates, so a slow snapshot degrades to today's
+ * behavior instead of hiding live agents.
+ */
+type IsArchived = (pubkey: string) => boolean;
+
+/**
+ * Archived standalone and unknown-persona agents are dropped because nothing
+ * else would ever surface them again, while a matched persona group keeps its
+ * archived instances so the persona card itself survives; the card resolves a
+ * live target through {@link pickProfileAgent}.
+ */
 export function buildUnifiedGroups(
   personas: AgentPersona[],
   agents: ManagedAgent[],
+  isArchived: IsArchived,
 ) {
   const byPersonaId = new Map<string, ManagedAgent[]>();
   const ungrouped: ManagedAgent[] = [];
@@ -31,14 +47,28 @@ export function buildUnifiedGroups(
     if (!matched.has(id)) unknown.push(...list);
   }
 
-  return { groups, ungrouped, unknown };
+  return {
+    groups,
+    ungrouped: ungrouped.filter((agent) => !isArchived(agent.pubkey)),
+    unknown: unknown.filter((agent) => !isArchived(agent.pubkey)),
+  };
 }
 
-export function pickProfileAgent(agents: ManagedAgent[]) {
-  return [...agents].sort((left, right) => {
-    const activeDiff =
-      Number(isManagedAgentActive(right)) - Number(isManagedAgentActive(left));
-    if (activeDiff !== 0) return activeDiff;
-    return left.name.localeCompare(right.name);
-  })[0];
+/**
+ * The instance a persona-level surface acts on: the highest-ranked live
+ * instance, or `undefined` when every instance is archived.
+ */
+export function pickProfileAgent(
+  agents: readonly ManagedAgent[],
+  isArchived: IsArchived,
+) {
+  return agents
+    .filter((agent) => !isArchived(agent.pubkey))
+    .sort((left, right) => {
+      const activeDiff =
+        Number(isManagedAgentActive(right)) -
+        Number(isManagedAgentActive(left));
+      if (activeDiff !== 0) return activeDiff;
+      return left.name.localeCompare(right.name);
+    })[0];
 }
