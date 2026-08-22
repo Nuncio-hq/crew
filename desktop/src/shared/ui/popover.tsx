@@ -31,6 +31,7 @@ const PopoverAnchor = PopoverPrimitive.Anchor;
 type PopoverContentProps = React.ComponentPropsWithoutRef<
   typeof PopoverPrimitive.Content
 > & {
+  portalled?: boolean;
   surface?: "default" | "textured";
   textureSize?: CardTextureSize;
   textureTone?: CardTextureTone;
@@ -44,6 +45,7 @@ const PopoverContent = React.forwardRef<
     {
       className,
       align = "center",
+      portalled = true,
       sideOffset,
       style,
       surface = "default",
@@ -52,8 +54,8 @@ const PopoverContent = React.forwardRef<
       ...props
     },
     ref,
-  ) => (
-    <PopoverPrimitive.Portal>
+  ) => {
+    const content = (
       <PopoverPrimitive.Content
         ref={ref}
         align={align}
@@ -78,8 +80,14 @@ const PopoverContent = React.forwardRef<
         }}
         {...props}
       />
-    </PopoverPrimitive.Portal>
-  ),
+    );
+
+    return portalled ? (
+      <PopoverPrimitive.Portal>{content}</PopoverPrimitive.Portal>
+    ) : (
+      content
+    );
+  },
 );
 PopoverContent.displayName = PopoverPrimitive.Content.displayName;
 
