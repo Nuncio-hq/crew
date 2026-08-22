@@ -39,6 +39,7 @@ mod media_raw;
 mod media_snapshot_png;
 mod media_transcode;
 mod media_upload_progress;
+mod mention_authorization;
 #[cfg(feature = "mesh-llm")]
 pub(crate) mod mesh_llm;
 #[cfg(feature = "mesh-llm")]
@@ -130,6 +131,7 @@ pub use media_download::*;
 pub use media_raw::*;
 #[cfg(feature = "mesh-llm")]
 pub use mesh_llm::*;
+pub use mention_authorization::*;
 pub use messages::*;
 pub use notifications::*;
 pub use observer_archive::*;

@@ -227,11 +227,13 @@ test("edit save uses edit-target refs that resolve after edit-open", async () =>
 });
 
 test("edit save revalidates added mentions immediately before save", async () => {
-  const agent = "c".repeat(64);
+  const agent = "e".repeat(64);
   const calls = [];
   await submitMessageEdit({
-    ...baseOptions(async (_content, _tags, mentionPubkeys) => {
-      calls.push(["save", mentionPubkeys]);
+    ...baseOptions({
+      save: async (_content, _tags, mentionPubkeys) => {
+        calls.push(["save", mentionPubkeys]);
+      },
     }),
     content: "hello @Agent",
     originalContent: "hello",
@@ -254,8 +256,10 @@ test("edit upload pause revalidates revoked mentions only after upload completes
   const calls = [];
   let completeUpload;
   await submitMessageEdit({
-    ...baseOptions(async (_content, _tags, mentionPubkeys) => {
-      calls.push(["save", mentionPubkeys]);
+    ...baseOptions({
+      save: async (_content, _tags, mentionPubkeys) => {
+        calls.push(["save", mentionPubkeys]);
+      },
     }),
     content: "hello @Agent",
     originalContent: "hello",

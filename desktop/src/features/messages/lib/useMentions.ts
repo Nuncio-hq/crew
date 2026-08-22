@@ -5,7 +5,6 @@ import {
   useRelayAgentsQuery,
   useTeamsQuery,
 } from "@/features/agents/hooks";
-import { useAgentAccessOwnerOnlyQuery } from "@/features/agents/useAgentAccessOwnerOnly";
 import {
   useChannelMembersQuery,
   useChannelsQuery,
@@ -110,7 +109,6 @@ export function useMentions(
   const channelsQuery = useChannelsQuery();
   const personasQuery = usePersonasQuery();
   const teamsQuery = useTeamsQuery();
-  const agentAccessOwnerOnlyQuery = useAgentAccessOwnerOnlyQuery();
   const managedAgentDirectoryReady =
     managedAgentsQuery.data !== undefined &&
     managedAgentsQuery.error === null &&
@@ -119,12 +117,8 @@ export function useMentions(
     relayAgentsQuery.data !== undefined &&
     relayAgentsQuery.error === null &&
     !relayAgentsQuery.isFetching;
-  const ownerPolicyReady =
-    agentAccessOwnerOnlyQuery.data !== undefined &&
-    agentAccessOwnerOnlyQuery.error === null &&
-    !agentAccessOwnerOnlyQuery.isFetching;
   const agentDirectoriesReady =
-    managedAgentDirectoryReady && relayAgentDirectoryReady && ownerPolicyReady;
+    managedAgentDirectoryReady && relayAgentDirectoryReady;
   const agentProvenanceReady =
     managedAgentDirectoryReady && relayAgentDirectoryReady;
   const canSearchGlobalUsers = canSearchGlobalPeople && agentDirectoriesReady;
@@ -264,16 +258,12 @@ export function useMentions(
       if (
         shouldHideAgentFromMentions({
           isAgent: candidate.isAgent === true,
-          isManagedAgent: candidate.isManagedAgent === true,
           pubkey,
-          ownerPubkey: candidate.ownerPubkey,
-          currentPubkey,
           mentionableAgentPubkeys,
           directoryReady:
             candidate.isManagedAgent === true
               ? managedAgentDirectoryReady
               : relayAgentDirectoryReady,
-          ownerOnly: agentAccessOwnerOnlyQuery.data,
         })
       ) {
         return;
@@ -426,7 +416,6 @@ export function useMentions(
   }, [
     activePersonaById,
     activePersonas,
-    agentAccessOwnerOnlyQuery.data,
     userSearchResults,
     canSearchGlobalUsers,
     currentPubkey,
@@ -826,10 +815,7 @@ export function useMentions(
       ? { type: "channel", channelId: mentionChannelId }
       : { type: "managed-only" },
     sharedChannelIds,
-    ownerOnly: agentAccessOwnerOnlyQuery.data,
-    ownerPolicyError: agentAccessOwnerOnlyQuery.error,
     refetchManagedAgents: managedAgentsQuery.refetch,
-    refetchRelayAgents: relayAgentsQuery.refetch,
   });
 
   const extractMentionPersonas = React.useCallback(
