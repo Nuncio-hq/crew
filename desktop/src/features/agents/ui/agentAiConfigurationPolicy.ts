@@ -46,15 +46,19 @@ export function agentAiConfigurationPairForMode({
  * field-visibility capability (`runtimeCanChooseLlmProvider`), not the raw
  * runtime capability, so the gate never diverges from the visible picker. It
  * defaults to `true` so existing callers keep the provider+model requirement.
+ * `needsModelSelection` follows the same rule for the model field: profile-owned
+ * models are valid while hidden, while every visible model picker stays required.
  */
 export function agentAiConfigurationModeSatisfied(
   mode: AgentAiConfigurationMode,
   pair: AgentAiConfigurationPair,
   needsProviderSelection = true,
+  needsModelSelection = true,
 ) {
   if (mode === "defaults") {
     return true;
   }
   const providerOk = !needsProviderSelection || pair.provider.trim().length > 0;
-  return providerOk && pair.model.trim().length > 0;
+  const modelOk = !needsModelSelection || pair.model.trim().length > 0;
+  return providerOk && modelOk;
 }

@@ -308,6 +308,7 @@ export type HermesProfileUsage = {
   usedIn: string[];
   otherUses: HermesProfileOtherUse[];
   hasPresentationMismatch: boolean;
+  isBound: boolean;
 };
 
 /**
@@ -325,7 +326,24 @@ export function deriveHermesProfileUsage(args: {
 }): HermesProfileUsage {
   const profile = args.profile.trim();
   if (!profile || validateHermesProfileName(profile) != null) {
-    return { usedIn: [], otherUses: [], hasPresentationMismatch: false };
+    return {
+      usedIn: [],
+      otherUses: [],
+      hasPresentationMismatch: false,
+      isBound: false,
+    };
+  }
+
+  const isBound = args.agents.some(
+    (agent) => agent.hermesProfile?.trim() === profile,
+  );
+  if (!isBound) {
+    return {
+      usedIn: [],
+      otherUses: [],
+      hasPresentationMismatch: false,
+      isBound: false,
+    };
   }
 
   const usedIn = args.communities
@@ -333,7 +351,12 @@ export function deriveHermesProfileUsage(args: {
     .filter(
       (name, index, values) => Boolean(name) && values.indexOf(name) === index,
     );
-  return { usedIn, otherUses: [], hasPresentationMismatch: false };
+  return {
+    usedIn,
+    otherUses: [],
+    hasPresentationMismatch: false,
+    isBound: true,
+  };
 }
 
 /**

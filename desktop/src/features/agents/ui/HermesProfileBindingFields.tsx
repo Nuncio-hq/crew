@@ -69,10 +69,12 @@ export function ProfileBoundAgentBoundaryCard({
   boundary,
   otherUses,
   hasPresentationMismatch,
+  isBound = false,
 }: {
   boundary: ProfileBoundAgentBoundary;
   otherUses: readonly HermesProfileOtherUse[];
   hasPresentationMismatch: boolean;
+  isBound?: boolean;
 }) {
   const rows = [
     { label: "Access", value: boundary.access },
@@ -110,10 +112,18 @@ export function ProfileBoundAgentBoundaryCard({
         className="space-y-1 border-t border-border/60 pt-3 text-xs text-muted-foreground"
         data-testid="hermes-profile-shared-usage"
       >
+        {isBound ? (
+          <p>
+            One managed agent uses this profile across its configured
+            communities.
+          </p>
+        ) : (
+          <p>This profile is not bound to a managed agent yet.</p>
+        )}
         <p>
-          One managed agent uses this profile across its configured communities.
+          When bound, memory, skills, and profile state are shared across that
+          agent&apos;s configured communities.
         </p>
-        <p>Memory, skills, and profile state are shared.</p>
         {otherUses.length > 0 ? (
           <>
             <p>Also used by {otherUseText}.</p>
@@ -309,6 +319,7 @@ export function HermesProfileField({
         <ProfileBoundAgentBoundaryCard
           boundary={boundary}
           hasPresentationMismatch={usage.hasPresentationMismatch}
+          isBound={usage.isBound}
           otherUses={usage.otherUses}
         />
       ) : null}
