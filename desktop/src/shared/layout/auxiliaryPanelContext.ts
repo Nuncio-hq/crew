@@ -3,7 +3,15 @@ import * as React from "react";
 export type AuxiliaryPanelMode = "docked" | "panel" | "single-panel";
 export type AuxiliaryPanelLayout = "standalone" | "split";
 
+export type AuxiliaryPanelClose = {
+  /** Overrides the header close action's label when it does not dismiss. */
+  closeLabel?: string;
+  onClose: () => void;
+};
+
 export type AuxiliaryPanelContextValue = {
+  /** Overrides the header close action's label when it does not dismiss. */
+  closeLabel?: string;
   isFloatingOverlay: boolean;
   isOverlay: boolean;
   isSinglePanelView: boolean;
@@ -17,6 +25,16 @@ export type AuxiliaryPanelContextValue = {
 
 export const AuxiliaryPanelContext =
   React.createContext<AuxiliaryPanelContextValue | null>(null);
+
+/**
+ * Retargets the header close control of every `AuxiliaryPanel` below it.
+ *
+ * For surfaces that own how a panel is presented rather than whether it is
+ * open — the thread focus drawer minimizes into the split pane instead of
+ * dismissing, while the panel keeps its own dismiss for every other exit.
+ */
+export const AuxiliaryPanelCloseOverrideContext =
+  React.createContext<AuxiliaryPanelClose | null>(null);
 
 export function requireAuxiliaryPanelContext(
   context: AuxiliaryPanelContextValue | null,
