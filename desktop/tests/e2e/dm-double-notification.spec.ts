@@ -112,6 +112,8 @@ test("an incoming DM produces exactly one desktop notification", async ({
   ).toHaveLength(1);
 
   // The survivor must be the live WebSocket DM toast (titled with the
-  // sender name), not the home-feed mention duplicate ("… mentioned you in …").
-  expect(notifications[0].title).toBe("alice");
+  // sender's kind-0 name), not the home-feed mention duplicate
+  // ("… mentioned you in …") and not the old channel-name title.
+  // Live-relay kind-0 is "Alice Agent"; some local seeds still publish "alice".
+  expect(notifications[0].title).toMatch(/^Alice(?: Agent)?$/i);
 });
