@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import '../../../shared/profile/user_cache_provider.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/buzz_loading_indicator.dart';
-import '../../profile/user_cache_provider.dart';
 import '../channel_management_provider.dart';
 import '../date_formatters.dart';
 import '../small_avatar.dart';
