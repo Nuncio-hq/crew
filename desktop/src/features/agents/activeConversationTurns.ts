@@ -1,7 +1,5 @@
-import {
-  getActiveTurnsGeneration,
-  walkActiveAgentTurns,
-} from "@/features/agents/activeAgentTurnsStore";
+import { getActiveTurnsDataVersion } from "@/features/agents/activeAgentTurnsLiveness";
+import { walkActiveAgentTurns } from "@/features/agents/activeAgentTurnsStore";
 import type { AgentProgressKind } from "@/features/agents/agentAttention";
 
 /** One conversation/thread with active agent work, aggregated across agents. */
@@ -31,7 +29,10 @@ let cached: ActiveConversationTurnSummary[] = EMPTY;
 
 /** Active conversations sorted by id, with the oldest agent state projected. */
 export function getActiveTurnsByConversation(): ActiveConversationTurnSummary[] {
-  const generation = getActiveTurnsGeneration();
+  // Keyed on the data version (not the generation): summaries snapshot the
+  // in-place-mutated lastSeenAt/progress fields, so a read after a liveness
+  // frame must rebuild even though membership is unchanged.
+  const generation = getActiveTurnsDataVersion();
   if (generation === cachedGeneration) return cached;
 
   const summaries = new Map<

@@ -1,7 +1,10 @@
 import * as React from "react";
 
 import {
-  getActiveTurnsGeneration,
+  getActiveTurnsDataVersion,
+  subscribeAgentLiveness,
+} from "@/features/agents/activeAgentTurnsLiveness";
+import {
   subscribeActiveAgentTurns,
   walkActiveAgentTurns,
 } from "@/features/agents/activeAgentTurnsStore";
@@ -28,7 +31,10 @@ const cache = new Map<string, ActiveConversationAgentTurnSummary[]>();
 let cacheGeneration = -1;
 
 function ensureCacheGeneration() {
-  const generation = getActiveTurnsGeneration();
+  // Keyed on the data version (not the generation): summaries snapshot the
+  // in-place-mutated lastSeenAt/progress fields, so a read after a liveness
+  // frame must rebuild even though membership is unchanged.
+  const generation = getActiveTurnsDataVersion();
   if (generation === cacheGeneration) return;
   cache.clear();
   cacheGeneration = generation;
@@ -109,9 +115,27 @@ export function useActiveTurnSummariesForConversation(
     () => getActiveTurnSummariesForConversation(conversationId),
     [conversationId],
   );
-  return React.useSyncExternalStore(
-    subscribeActiveAgentTurns,
-    getSnapshot,
-    getSnapshot,
+  // Membership changes arrive on the global subscription; per-frame liveness
+  // for the conversation's agents arrives on their per-agent subscriptions,
+  // resubscribed whenever the agent set changes.
+  const agentKey = getSnapshot()
+    .map((summary) => summary.agentPubkey)
+    .join(",");
+  const subscribe = React.useCallback(
+    (onStoreChange: () => void) => {
+      const unsubscribers = [
+        subscribeActiveAgentTurns(onStoreChange),
+        ...(agentKey === ""
+          ? []
+          : agentKey
+              .split(",")
+              .map((pubkey) => subscribeAgentLiveness(pubkey, onStoreChange))),
+      ];
+      return () => {
+        for (const unsubscribe of unsubscribers) unsubscribe();
+      };
+    },
+    [agentKey],
   );
+  return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it, beforeEach, afterEach, mock } from "node:test";
 
+import { subscribeAgentLiveness } from "./activeAgentTurnsLiveness.ts";
 import {
   syncAgentTurnsFromEvents,
   syncActiveAgentTurnsFromObserver,
@@ -1244,6 +1245,10 @@ describe("activeAgentTurnsStore", () => {
       const stopStreaming = subscribeActiveAgentTurns(() => {
         streamingNotifications++;
       });
+      let livenessNotifications = 0;
+      const stopLiveness = subscribeAgentLiveness(AGENT, () => {
+        livenessNotifications++;
+      });
       syncAgentTurnsFromEvents(AGENT, [
         makeEvent({
           seq: 3,
@@ -1263,6 +1268,7 @@ describe("activeAgentTurnsStore", () => {
         }),
       ]);
       stopStreaming();
+      stopLiveness();
       const streaming = getActiveTurnActivityBounds({
         agentPubkeys: [AGENT],
         channelId: "c1",
@@ -1273,9 +1279,14 @@ describe("activeAgentTurnsStore", () => {
         "token stream must not reset the progress clock",
       );
       assert.ok(streaming.lastSeenAt > alive.lastSeenAt);
+      assert.equal(
+        streamingNotifications,
+        0,
+        "liveness-only ACP frames must not wake global subscribers",
+      );
       assert.ok(
-        streamingNotifications > 0,
-        "liveness-only ACP frames must invalidate external-store snapshots",
+        livenessNotifications > 0,
+        "liveness-only ACP frames must notify the agent's liveness listeners",
       );
 
       mock.timers.tick(1_000);

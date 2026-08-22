@@ -2,9 +2,9 @@
   "$comment": "Recorded lines use wc -l semantics; keep the exact count printed by the file-size guard.",
   "files": {
     "src/features/agents/activeAgentTurnsStore.ts": {
-      "lines": 1059,
-      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (focus-refetch / agent turn store); +4 for prune-on-subscribe no-notify guard.",
-      "recordedAt": "2026-08-12"
+      "lines": 1076,
+      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (focus-refetch / agent turn store); +4 for prune-on-subscribe no-notify guard; later ACP/perf growth on main to 1059; +17 for the liveness/membership notification split (issue #286) — bulk extracted to activeAgentTurnsLiveness.ts per D-022.",
+      "recordedAt": "2026-08-23"
     },
     "src/features/agents/observerRelayStore.ts": {
       "lines": 1054,
