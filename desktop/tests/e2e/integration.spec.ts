@@ -168,13 +168,6 @@ async function getLoggedNotificationCount(
   return (await getLoggedNotifications(page)).length;
 }
 
-async function expectLoggedNotifications(
-  page: import("@playwright/test").Page,
-  expected: Array<{ body: string | null; title: string }>,
-) {
-  await expect.poll(() => getLoggedNotifications(page)).toEqual(expected);
-}
-
 test.beforeAll(async () => {
   test.setTimeout(relaySeedHookTimeoutMs);
   await assertRelaySeeded();
@@ -296,12 +289,14 @@ test("live mentions refetch the home feed without waiting for polling", async ({
       message,
     );
 
-    await expectLoggedNotifications(targetPage, [
-      {
-        body: message,
-        title: "alice mentioned you in #general",
-      },
-    ]);
+    await expect.poll(() => getLoggedNotificationCount(targetPage)).toBe(1);
+    const channelMentionNotifications =
+      await getLoggedNotifications(targetPage);
+    expect(channelMentionNotifications[0]?.body).toBe(message);
+    // Live-relay kind-0 is "Alice Agent"; some local seeds still publish "alice".
+    expect(channelMentionNotifications[0]?.title).toMatch(
+      /^Alice(?: Agent)? mentioned you in #general$/i,
+    );
 
     // The Inbox feed should have been refetched live (the original purpose
     // of this test). The home badge stays at 0 while the user is actively
@@ -357,12 +352,13 @@ test("live forum mentions refetch the home feed without waiting for polling", as
 
     await expect(targetPage.getByTestId("sidebar-home-count")).toHaveText("1");
 
-    await expectLoggedNotifications(targetPage, [
-      {
-        body: message,
-        title: "alice mentioned you in #watercooler",
-      },
-    ]);
+    await expect.poll(() => getLoggedNotificationCount(targetPage)).toBe(1);
+    const forumMentionNotifications = await getLoggedNotifications(targetPage);
+    expect(forumMentionNotifications[0]?.body).toBe(message);
+    // Live-relay kind-0 is "Alice Agent"; some local seeds still publish "alice".
+    expect(forumMentionNotifications[0]?.title).toMatch(
+      /^Alice(?: Agent)? mentioned you in #watercooler$/i,
+    );
 
     await targetPage
       .getByTestId("app-sidebar")
