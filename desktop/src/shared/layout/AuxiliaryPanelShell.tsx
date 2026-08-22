@@ -4,6 +4,7 @@ import { useIsAuxiliaryPanelOverlay } from "@/shared/hooks/use-mobile";
 import { AUXILIARY_PANEL_MIN_WIDTH_PX } from "@/shared/layout/auxiliaryPanelLayout";
 import {
   AuxiliaryPanelContext,
+  AuxiliaryPanelCloseOverrideContext,
   type AuxiliaryPanelLayout,
 } from "@/shared/layout/auxiliaryPanelContext";
 import { getAuxiliaryPanelMode } from "@/shared/layout/AuxiliaryPanelHeader";
@@ -19,7 +20,11 @@ export type {
   AuxiliaryPanelContextValue,
   AuxiliaryPanelLayout,
 } from "@/shared/layout/auxiliaryPanelContext";
-export { useAuxiliaryPanel } from "@/shared/layout/auxiliaryPanelContext";
+export {
+  AuxiliaryPanelCloseOverrideContext,
+  type AuxiliaryPanelClose,
+  useAuxiliaryPanel,
+} from "@/shared/layout/auxiliaryPanelContext";
 
 type AuxiliaryPanelProps = {
   canResetWidth?: boolean;
@@ -74,20 +79,25 @@ export function AuxiliaryPanel({
   const isFloatingOverlay = isOverlay && !isSinglePanelView;
   const isSplitLayout = layout === "split";
   const mode = getAuxiliaryPanelMode(isSplitLayout, isFloatingOverlay);
+  // A surface that owns this panel's presentation (the thread focus drawer)
+  // can retarget the header close control without owning the panel itself.
+  const closeOverride = React.useContext(AuxiliaryPanelCloseOverrideContext);
 
   const contextValue = React.useMemo(
     () => ({
+      closeLabel: closeOverride?.closeLabel,
       isFloatingOverlay,
       isOverlay,
       isSinglePanelView,
       isSplitLayout,
       layout,
       mode,
-      onClose,
+      onClose: closeOverride?.onClose ?? onClose,
       transparentChrome,
       widthPx,
     }),
     [
+      closeOverride,
       isFloatingOverlay,
       isOverlay,
       isSinglePanelView,

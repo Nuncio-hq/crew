@@ -7,6 +7,10 @@ import {
 } from "@/features/channels/lib/threadFocusLayout";
 import { getThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 import { ThreadFocusForgeSplit } from "@/features/messages/ui/threadPrHub/ThreadFocusForgeSplit";
+import {
+  type AuxiliaryPanelClose,
+  AuxiliaryPanelCloseOverrideContext,
+} from "@/shared/layout/auxiliaryPanelContext";
 import { cn } from "@/shared/lib/cn";
 
 type FocusThreadDrawerProps = {
@@ -14,6 +18,14 @@ type FocusThreadDrawerProps = {
   channelName: string;
   children: React.ReactNode;
   onClose: () => void;
+  /**
+   * What the thread panel's own close control does while the drawer is open.
+   *
+   * Separate from `onClose`, which stays the way out of the thread for the
+   * scrim and Escape: the header control minimizes into the split pane, so
+   * the thread and its viewing anchor survive.
+   */
+  panelClose?: AuxiliaryPanelClose;
   threadRootId?: string | null;
 };
 
@@ -142,6 +154,7 @@ export function FocusThreadDrawer({
   channelName,
   children,
   onClose,
+  panelClose,
   threadRootId,
 }: FocusThreadDrawerProps) {
   const prefersReducedMotion = useReducedMotion();
@@ -247,7 +260,11 @@ export function FocusThreadDrawer({
             channelName={channelName}
             threadRootId={threadRootId ?? null}
           >
-            {children}
+            <AuxiliaryPanelCloseOverrideContext.Provider
+              value={panelClose ?? null}
+            >
+              {children}
+            </AuxiliaryPanelCloseOverrideContext.Provider>
           </ThreadFocusForgeSplit>
         </div>
       </motion.div>

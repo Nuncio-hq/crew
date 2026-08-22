@@ -285,6 +285,66 @@ test("focus and split preserve reading context and interaction ownership", async
   await expect(channel).not.toHaveAttribute("inert", "");
 });
 
+test("focus drawer close minimizes the thread into the split pane", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz.channels.threadViewMode", "focus");
+  });
+  await installMockBridge(page);
+  await page.goto("/");
+  const rootId = await seedLongThread(page);
+
+  await page.getByTestId("channel-general").click();
+  const summary = page.locator(
+    `[data-testid="message-thread-summary"][data-thread-head-id="${rootId}"]`,
+  );
+  await expect(summary).toBeVisible();
+  await summary.click();
+
+  const channel = page.getByTestId("channel-drop-zone");
+  const drawer = page.getByTestId("focus-thread-drawer");
+  const body = page.getByTestId("message-thread-body");
+  await expect(drawer).toBeVisible();
+  const anchorId = await scrollToMiddleVisibleMessage(body, rootId);
+
+  // The focus drawer's X is a presentation switch, labelled as one, and lands
+  // on exactly the state the layout toggle would.
+  const minimize = drawer.getByTestId("auxiliary-panel-close");
+  await expect(minimize).toHaveAttribute("aria-label", "Minimize thread");
+  await minimize.click();
+
+  await expect(drawer).toHaveCount(0);
+  await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+  await expect(channel).not.toHaveAttribute("inert", "");
+  await expect(
+    page
+      .getByTestId("message-thread-summary")
+      .filter({ hasText: "Viewing thread" }),
+  ).toBeVisible();
+  await expect(page.locator('[data-thread-anchor="true"]')).toHaveCount(1);
+  await expect(page.getByTestId("thread-view-mode-toggle")).toHaveAttribute(
+    "aria-label",
+    "Expand thread",
+  );
+  await waitForAnimations(page);
+  await expect(
+    page
+      .getByTestId("message-thread-body")
+      .locator(`[data-message-id="${anchorId}"]`),
+  ).toBeInViewport();
+
+  // Split mode keeps the full dismiss: the same control now closes the thread.
+  const close = page
+    .getByTestId("message-thread-panel")
+    .getByTestId("auxiliary-panel-close");
+  await expect(close).toHaveAttribute("aria-label", "Close panel");
+  await close.click();
+  await expect(page.getByTestId("message-thread-panel")).not.toBeVisible();
+  await expect(page.locator('[data-thread-anchor="true"]')).toHaveCount(0);
+});
+
 test("narrow threads do not offer an unavailable layout switch", async ({
   page,
 }) => {
