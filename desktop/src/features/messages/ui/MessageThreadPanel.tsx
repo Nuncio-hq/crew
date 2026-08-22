@@ -35,9 +35,10 @@ import {
 } from "@/features/messages/lib/messageThreadPanelLayout";
 import { Button } from "@/shared/ui/button";
 import { Separator } from "@/shared/ui/separator";
-import { ComposerActivityAccessory } from "./ComposerActivityAccessory";
 import { ComposerDockBackdrop } from "./ComposerDockBackdrop";
 import { MessageComposer } from "./MessageComposer";
+import { ThreadComposerActivityRail } from "./ThreadComposerActivityRail";
+import { ThreadComposerViewContext } from "./ThreadComposerViewContext";
 import { MessageThreadPanelHead } from "./message-thread-panel-head";
 import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
@@ -51,7 +52,6 @@ import {
   ThreadPanelAncestry,
   ThreadPanelOrientationTitle,
 } from "./ThreadPanelOrientation";
-import { TypingIndicatorRow } from "./TypingIndicatorRow";
 import { UnreadDivider } from "./UnreadDivider";
 import { useComposerHeightPadding } from "./useComposerHeightPadding";
 import { useStableSendToChannel } from "./useStableSendToChannel";
@@ -870,67 +870,61 @@ export function MessageThreadPanel({
               model={projectThreadWorkspaceModel}
             />
             <ComposerDockBackdrop gutterClassName="inset-x-5" />
-            <MessageComposer
-              audienceContext={{
-                type: "thread",
-                threadRootId: threadHead.id,
-                initialAgentPubkeys,
-              }}
+            <ThreadComposerViewContext
               channelId={channelId}
               channelName={channelName}
-              channelType={channel?.channelType ?? null}
-              containerClassName={cn(
-                THREAD_PANEL_COMPOSER_GUTTER_CLASS,
-                "pb-0",
-              )}
-              layoutMode="dock"
-              disabled={disabled || isSending || !channelId}
-              draftKey={`thread:${threadHead.id}`}
-              autoSubmitDraftKey={autoSendDraftKey}
-              onAutoSubmitComplete={onAutoSubmitComplete}
-              editTarget={editTarget}
-              isSending={isSending}
-              onCancelEdit={onCancelEdit}
-              onCancelReply={composerReplyTarget ? onCancelReply : undefined}
-              onCaptureSendContext={onCaptureSendContext}
-              onEditLastOwnMessage={onEditLastOwnMessage}
-              onEditSave={onEditSave}
-              onSend={onSend}
-              placeholder={
-                isHuddleTranscript
-                  ? "Message the huddle"
-                  : `Reply in thread to ${threadHead.author}`
-              }
-              profiles={profiles}
-              replyTarget={composerReplyTarget}
-              typingParentEventId={threadHead.id}
-              typingRootEventId={threadHead.rootId}
-            />
-            {/* The activity accessory is anchored in the dock's reserved bottom
-              rail, so fading it cannot change the observed overlay height or
-              move the conversation. Its natural content height remains responsive. */}
-            <ComposerActivityAccessory
-              className={THREAD_PANEL_COMPOSER_GUTTER_CLASS}
-              visible={hasComposerBottomActivity}
+              model={projectThreadWorkspaceModel}
+              threadHead={threadHead}
             >
-              <div className="mx-auto flex w-full max-w-4xl items-center gap-2 overflow-visible pl-2">
-                {showComposerBotActivity && activityAccessoryContent ? (
-                  <div className="flex min-w-0 flex-1 overflow-visible">
-                    {activityAccessoryContent}
-                  </div>
-                ) : null}
-                {threadTypingPubkeys.length > 0 ? (
-                  <TypingIndicatorRow
-                    channel={channel}
-                    className="min-w-0 flex-1 py-0 pl-[calc(0.75rem+1px)] pr-0 [@container(min-width:40rem)]:pl-[calc(1rem+1px)]"
-                    currentPubkey={currentPubkey}
-                    profiles={profiles}
-                    typingPubkeys={threadTypingPubkeys}
-                    variant="activity"
-                  />
-                ) : null}
-              </div>
-            </ComposerActivityAccessory>
+              <MessageComposer
+                audienceContext={{
+                  type: "thread",
+                  threadRootId: threadHead.id,
+                  initialAgentPubkeys,
+                }}
+                channelId={channelId}
+                channelName={channelName}
+                channelType={channel?.channelType ?? null}
+                containerClassName={cn(
+                  THREAD_PANEL_COMPOSER_GUTTER_CLASS,
+                  "pb-0",
+                )}
+                layoutMode="dock"
+                disabled={disabled || isSending || !channelId}
+                draftKey={`thread:${threadHead.id}`}
+                autoSubmitDraftKey={autoSendDraftKey}
+                onAutoSubmitComplete={onAutoSubmitComplete}
+                editTarget={editTarget}
+                isSending={isSending}
+                onCancelEdit={onCancelEdit}
+                onCancelReply={composerReplyTarget ? onCancelReply : undefined}
+                onCaptureSendContext={onCaptureSendContext}
+                onEditLastOwnMessage={onEditLastOwnMessage}
+                onEditSave={onEditSave}
+                onSend={onSend}
+                placeholder={
+                  isHuddleTranscript
+                    ? "Message the huddle"
+                    : `Reply in thread to ${threadHead.author}`
+                }
+                profiles={profiles}
+                replyTarget={composerReplyTarget}
+                typingParentEventId={threadHead.id}
+                typingRootEventId={threadHead.rootId}
+              />
+            </ThreadComposerViewContext>
+            <ThreadComposerActivityRail
+              activityAccessoryContent={
+                showComposerBotActivity && activityAccessoryContent
+                  ? activityAccessoryContent
+                  : null
+              }
+              channel={channel}
+              currentPubkey={currentPubkey}
+              profiles={profiles}
+              typingPubkeys={threadTypingPubkeys}
+              visible={hasComposerBottomActivity}
+            />
           </div>
         </div>
       </div>
