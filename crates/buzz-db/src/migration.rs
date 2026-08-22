@@ -751,7 +751,7 @@ mod tests {
         assert!(migrations[7]
             .sql
             .as_str()
-            .contains("CASE WHEN kind IN (0, 9, 40002, 45001, 45003)"));
+            .contains("CASE WHEN kind IN (0, 9, 40002, 45001, 45003, 30023, 30623)"));
         assert!(migrations[7].sql.as_str().contains("ELSE NULL::tsvector"));
 
         // Mixed-version guards are additive because 0007/0008 may already be
