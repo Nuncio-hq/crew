@@ -13,6 +13,7 @@ import {
   resolveUserLabel,
   type UserProfileLookup,
 } from "@/features/profile/lib/identity";
+import { entityDiscussionQuery } from "@/features/projects/lib/discussionChannels";
 import { relativeTime } from "@/features/projects/lib/projectsViewHelpers";
 import type { ChannelMember } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
@@ -27,6 +28,8 @@ import { ProjectOriginReference } from "./ProjectOriginReference";
 import { OverviewRailSection } from "./ProjectOverviewPanel";
 import { ProfileIdentityButton } from "./ProjectProfileIdentity";
 import { ProjectRichContent } from "./ProjectRichContent";
+import { DiscussedInChannels } from "./DiscussionChannels";
+import { IssueAssigneeFacepile, IssueAssigneesRow } from "./IssueAssigneesRow";
 
 export function issueStatusClassName(status: ProjectIssue["status"]) {
   if (status === "Done") return "text-merged";
@@ -119,6 +122,10 @@ function IssueRow({
       title={issue.title}
       trailing={
         <>
+          <IssueAssigneeFacepile
+            assignees={issue.assignees}
+            profiles={profiles}
+          />
           {issue.comments.length > 0 ? (
             <button
               aria-label={`View ${issue.comments.length} comments`}
@@ -213,6 +220,15 @@ export function ProjectIssueDetail({
           {issue.content ? (
             <ProjectRichContent content={issue.content} tags={issue.tags} />
           ) : null}
+          <IssueAssigneesRow
+            issue={issue}
+            profiles={profiles}
+            project={project}
+          />
+          <DiscussedInChannels
+            entityLabel="this issue"
+            query={entityDiscussionQuery(issue.id)}
+          />
         </header>
 
         <section className="space-y-3 p-4">

@@ -31,7 +31,13 @@ export function useOpenEntityLink(): (link: ParsedEntityLink) => void {
           void goProject(projectId, { issueId: link.id });
           return;
         case "repo":
-          void goProject(projectId);
+        case "project":
+          void goProject(projectId, {
+            ...(link.tab ? { tab: link.tab } : {}),
+            ...(link.type === "repo" && link.commitHash
+              ? { commitHash: link.commitHash }
+              : {}),
+          });
           return;
         case "file":
           setPendingWikiFileOpen({

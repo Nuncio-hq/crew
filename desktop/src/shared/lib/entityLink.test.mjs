@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildFileLink,
   buildIssueLink,
+  buildProjectLink,
   buildPullRequestLink,
   buildRepoLink,
   entityLinkProjectRouteId,
@@ -68,6 +69,25 @@ test("parseEntityLink round-trips built links", () => {
   assert.deepEqual(parseEntityLink(repoLink), {
     ok: true,
     value: { type: "repo", owner: OWNER, dtag: "buzz-world" },
+  });
+
+  const projectLink = buildProjectLink({
+    owner: OWNER,
+    dtag: "pollinator",
+    tab: "issues",
+  });
+  assert.equal(
+    projectLink,
+    `buzz://project?owner=${OWNER}&d=pollinator&tab=issues`,
+  );
+  assert.deepEqual(parseEntityLink(projectLink), {
+    ok: true,
+    value: {
+      type: "project",
+      owner: OWNER,
+      dtag: "pollinator",
+      tab: "issues",
+    },
   });
 
   const fileLink = buildFileLink({

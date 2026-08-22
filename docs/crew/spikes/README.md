@@ -108,3 +108,4 @@ Numbers are chronological records, not plan phase identifiers used in code.
 - [`0055-call-by-name-mention-wake.md`](0055-call-by-name-mention-wake.md)
 - [`0056-hermes-default-profile-acp-spawn.md`](0056-hermes-default-profile-acp-spawn.md)
 - [`0057-tool-pane-live-mac-stability.md`](0057-tool-pane-live-mac-stability.md)
+- [`0059-projects-engine-upstream-sync.md`](0059-projects-engine-upstream-sync.md)

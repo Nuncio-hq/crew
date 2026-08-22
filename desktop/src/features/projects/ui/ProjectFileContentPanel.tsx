@@ -3,25 +3,16 @@ import * as React from "react";
 
 import type { ProjectRepoFile } from "@/features/projects/hooks";
 import { languageForPath } from "@/features/projects/lib/projectLanguages";
+import {
+  formatFileSize,
+  formatLastChangedAt,
+} from "@/features/projects/lib/projectsViewHelpers";
 import { SyntaxHighlightedCode } from "@/shared/ui/markdown";
 import { PROJECT_DETAIL_PANEL_CLASS } from "./projectPanelStyles";
-
-function formatLastChangedAt(timestamp: number | null) {
-  if (!timestamp) return "—";
-  return new Date(timestamp * 1_000).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function formatFileSize(size: number | null) {
-  if (size === null) return "—";
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
+import {
+  type RepositoryFileContentSource,
+  useRepositoryFileContent,
+} from "./useRepositoryFileContent";
 
 function BreadcrumbButton({
   children,
@@ -43,15 +34,18 @@ function BreadcrumbButton({
 
 export function ProjectFileContentPanel({
   file,
+  fileContentSource,
   highlightEnd,
   highlightStart,
   onOpenPath,
 }: {
   file: ProjectRepoFile;
+  fileContentSource?: RepositoryFileContentSource;
   highlightEnd?: number;
   highlightStart?: number;
   onOpenPath: (path: string) => void;
 }) {
+  const fileContent = useRepositoryFileContent(file, fileContentSource);
   const language = languageForPath(file.path);
   const pathSegments = file.path.split("/").filter(Boolean);
   const fileName = pathSegments[pathSegments.length - 1] ?? file.path;
@@ -100,19 +94,21 @@ export function ProjectFileContentPanel({
       <div className="border-border/50 border-b bg-muted/10 px-4 py-2 text-2xs text-muted-foreground sm:hidden">
         Last changed {formatLastChangedAt(file.lastChangedAt)}
       </div>
-      {file.previewContent ? (
+      {fileContent.isLoading ? (
+        <div className="p-6 text-sm text-muted-foreground">Loading file…</div>
+      ) : fileContent.content ? (
         <pre className="max-h-[36rem] overflow-auto bg-background/60 p-4">
           {language ? (
             <SyntaxHighlightedCode
               className="text-xs leading-relaxed"
-              code={file.previewContent}
+              code={fileContent.content}
               highlightEnd={highlightEnd}
               highlightStart={highlightStart}
               language={language}
             />
           ) : (
             <code className="block min-w-full whitespace-pre font-mono text-xs leading-relaxed text-foreground">
-              {file.previewContent.split("\n").map((line, index) => {
+              {fileContent.content.split("\n").map((line, index) => {
                 const lineNumber = index + 1;
                 const highlighted =
                   highlightStart != null &&
@@ -138,8 +134,9 @@ export function ProjectFileContentPanel({
         </pre>
       ) : (
         <div className="p-6 text-sm text-muted-foreground">
-          Preview unavailable for this file. Large and binary files only show
-          metadata.
+          {fileContent.error
+            ? "Could not load this file. Try again after refreshing the repository."
+            : "Preview unavailable for this file. Large and binary files only show metadata."}
         </div>
       )}
     </div>

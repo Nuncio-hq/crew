@@ -63,6 +63,9 @@ export function ProjectTabsList({ prsActive }: { prsActive?: boolean }) {
       >
         <ProjectTabLabel>Pull Request</ProjectTabLabel>
       </TabsTrigger>
+      <TabsTrigger className={PROJECT_TAB_TRIGGER_CLASS} value="channels">
+        <ProjectTabLabel>Channels</ProjectTabLabel>
+      </TabsTrigger>
       <TabsTrigger className={PROJECT_TAB_TRIGGER_CLASS} value="contributors">
         <ProjectTabLabel>Contributors</ProjectTabLabel>
       </TabsTrigger>

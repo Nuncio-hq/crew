@@ -21,6 +21,7 @@ export const Route = createFileRoute("/projects/$projectId")({
     issueId: typeof search.issueId === "string" ? search.issueId : undefined,
     repositoryId:
       typeof search.repositoryId === "string" ? search.repositoryId : undefined,
+    tab: typeof search.tab === "string" ? search.tab : undefined,
     thread: typeof search.thread === "string" ? search.thread : undefined,
   }),
 });
@@ -28,7 +29,7 @@ export const Route = createFileRoute("/projects/$projectId")({
 function ProjectDetailRouteComponent() {
   usePreviewFeatureWarning("projects");
   const { projectId } = Route.useParams();
-  const { commitHash, pullRequestId, issueId, repositoryId, thread } =
+  const { commitHash, pullRequestId, issueId, repositoryId, tab, thread } =
     Route.useSearch();
 
   return (
@@ -39,6 +40,7 @@ function ProjectDetailRouteComponent() {
         projectId={projectId}
         pullRequestId={pullRequestId}
         repositoryId={repositoryId}
+        tab={tab}
         thread={thread}
       />
     </React.Suspense>

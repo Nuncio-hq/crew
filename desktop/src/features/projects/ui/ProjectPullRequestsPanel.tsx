@@ -26,6 +26,7 @@ import {
   useCreateProjectPullRequestCommentMutation,
 } from "@/features/projects/hooks";
 import { projectPullRequestCommentTimelineKind } from "@/features/projects/projectPullRequests.mjs";
+import { entityDiscussionQuery } from "@/features/projects/lib/discussionChannels";
 import {
   formatExactTimestamp,
   relativeTime,
@@ -42,6 +43,7 @@ import {
   ProjectFeedRowMonoCell,
 } from "./ProjectFeedRow";
 import { CopyCommitHashButton } from "./ProjectCommitCopyButton";
+import { DiscussedInChannels } from "./DiscussionChannels";
 import type { OpenMergeRecoveryTerminal } from "./MergePullRequestButton";
 import { OverviewRailSection } from "./ProjectOverviewPanel";
 import {
@@ -627,8 +629,19 @@ export function ProjectPullRequestDetail({
             content={pullRequest.content}
             tags={pullRequest.tags}
           />
+          <DiscussedInChannels
+            className="mt-3"
+            entityLabel="this pull request"
+            query={entityDiscussionQuery(pullRequest.id)}
+          />
         </header>
-      ) : null}
+      ) : (
+        <DiscussedInChannels
+          className="m-4"
+          entityLabel="this pull request"
+          query={entityDiscussionQuery(pullRequest.id)}
+        />
+      )}
 
       {pullRequest.updates.length > 0 ? (
         <section className="space-y-3 border-border/50 border-t p-4">

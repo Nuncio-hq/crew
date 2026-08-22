@@ -18,7 +18,14 @@ const ENTITY_LINK_SCHEME = "buzz:";
 export type ParsedEntityLink =
   | { type: "pr"; id: string; owner: string; dtag: string }
   | { type: "issue"; id: string; owner: string; dtag: string }
-  | { type: "repo"; owner: string; dtag: string }
+  | {
+      type: "repo";
+      owner: string;
+      dtag: string;
+      tab?: EntityLinkTab;
+      commitHash?: string;
+    }
+  | { type: "project"; owner: string; dtag: string; tab?: EntityLinkTab }
   | {
       type: "file";
       owner: string;
@@ -33,7 +40,26 @@ export type EntityLinkParseResult =
   | { ok: false; reason: string };
 
 const HEX64_RE = /^[a-fA-F0-9]{64}$/;
+const GIT_OBJECT_ID_RE = /^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/;
 const DTAG_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+
+export const ENTITY_LINK_TABS = [
+  "files",
+  "commits",
+  "issues",
+  "prs",
+  "contributors",
+  "channels",
+] as const;
+
+export type EntityLinkTab = (typeof ENTITY_LINK_TABS)[number];
+
+export function isEntityLinkTab(value: unknown): value is EntityLinkTab {
+  return (
+    typeof value === "string" &&
+    (ENTITY_LINK_TABS as readonly string[]).includes(value)
+  );
+}
 
 function isValidDtag(dtag: string): boolean {
   return DTAG_RE.test(dtag) && !dtag.startsWith(".") && !dtag.includes("..");
@@ -55,9 +81,44 @@ function checkEventId(id: string): void {
 }
 
 /** Build a `buzz://repo` link for a repository announcement (kind 30617). */
-export function buildRepoLink(input: { owner: string; dtag: string }): string {
+function tabSuffix(tab: EntityLinkTab | undefined): string {
+  if (tab === undefined) return "";
+  if (!isEntityLinkTab(tab)) {
+    throw new Error("entityLink: unknown workspace tab");
+  }
+  return `&tab=${tab}`;
+}
+
+export function buildRepoLink(input: {
+  owner: string;
+  dtag: string;
+  tab?: EntityLinkTab;
+}): string {
   checkCoordinate(input.owner, input.dtag);
-  return `buzz://repo?owner=${input.owner.toLowerCase()}&d=${input.dtag}`;
+  return `buzz://repo?owner=${input.owner.toLowerCase()}&d=${input.dtag}${tabSuffix(input.tab)}`;
+}
+
+/** Build a `buzz://project` link for a project announcement (kind 30621). */
+export function buildProjectLink(input: {
+  owner: string;
+  dtag: string;
+  tab?: EntityLinkTab;
+}): string {
+  checkCoordinate(input.owner, input.dtag);
+  return `buzz://project?owner=${input.owner.toLowerCase()}&d=${input.dtag}${tabSuffix(input.tab)}`;
+}
+
+/** Build a link to a specific commit in a repository. */
+export function buildCommitLink(input: {
+  commitHash: string;
+  owner: string;
+  dtag: string;
+}): string {
+  checkCoordinate(input.owner, input.dtag);
+  if (!GIT_OBJECT_ID_RE.test(input.commitHash)) {
+    throw new Error("entityLink: commit must be a 40- or 64-char hex hash");
+  }
+  return `buzz://repo?owner=${input.owner.toLowerCase()}&d=${input.dtag}&tab=commits&commit=${input.commitHash.toLowerCase()}`;
 }
 
 /** Build a `buzz://pr` link for a pull request event (kind 1618). */
@@ -127,6 +188,7 @@ export function isEntityLink(href: string | undefined | null): boolean {
     href.startsWith("buzz://pr?") ||
     href.startsWith("buzz://issue?") ||
     href.startsWith("buzz://repo?") ||
+    href.startsWith("buzz://project?") ||
     href.startsWith("buzz://file?")
   );
 }
@@ -159,7 +221,13 @@ export function parseEntityLink(url: string): EntityLinkParseResult {
   }
 
   const host = parsed.hostname;
-  if (host !== "pr" && host !== "issue" && host !== "repo" && host !== "file") {
+  if (
+    host !== "pr" &&
+    host !== "issue" &&
+    host !== "repo" &&
+    host !== "project" &&
+    host !== "file"
+  ) {
     return { ok: false, reason: "wrong-host" };
   }
 
@@ -174,15 +242,18 @@ export function parseEntityLink(url: string): EntityLinkParseResult {
   }
 
   // Validate known params and reject unknown ones, and enforce single-instance.
-  const KNOWN_REPO_PARAMS = new Set(["owner", "d"]);
+  const KNOWN_REPO_PARAMS = new Set(["owner", "d", "tab", "commit"]);
+  const KNOWN_PROJECT_PARAMS = new Set(["owner", "d", "tab"]);
   const KNOWN_EVENT_PARAMS = new Set(["id", "owner", "d"]);
   const KNOWN_FILE_PARAMS = new Set(["owner", "d", "path", "lines"]);
   const knownParams =
     host === "repo"
       ? KNOWN_REPO_PARAMS
-      : host === "file"
-        ? KNOWN_FILE_PARAMS
-        : KNOWN_EVENT_PARAMS;
+      : host === "project"
+        ? KNOWN_PROJECT_PARAMS
+        : host === "file"
+          ? KNOWN_FILE_PARAMS
+          : KNOWN_EVENT_PARAMS;
 
   for (const key of parsed.searchParams.keys()) {
     if (!knownParams.has(key)) {
@@ -205,10 +276,30 @@ export function parseEntityLink(url: string): EntityLinkParseResult {
     return { ok: false, reason: "invalid-dtag" };
   }
 
-  if (host === "repo") {
+  if (host === "repo" || host === "project") {
+    const tab = parsed.searchParams.get("tab");
+    if (tab !== null && !isEntityLinkTab(tab)) {
+      return { ok: false, reason: "invalid-tab" };
+    }
+    const commitHash =
+      host === "repo" ? parsed.searchParams.get("commit") : null;
+    if (
+      commitHash !== null &&
+      (tab !== "commits" || !GIT_OBJECT_ID_RE.test(commitHash))
+    ) {
+      return { ok: false, reason: "invalid-commit" };
+    }
     return {
       ok: true,
-      value: { type: "repo", owner: owner.toLowerCase(), dtag },
+      value: {
+        type: host,
+        owner: owner.toLowerCase(),
+        dtag,
+        ...(tab !== null && isEntityLinkTab(tab) ? { tab } : {}),
+        ...(commitHash !== null
+          ? { commitHash: commitHash.toLowerCase() }
+          : {}),
+      },
     };
   }
 
@@ -264,5 +355,6 @@ export function parseEntityLink(url: string): EntityLinkParseResult {
  * different d-tag.
  */
 export function entityLinkProjectRouteId(link: ParsedEntityLink): string {
-  return `30617:${link.owner}:${link.dtag}`;
+  const kind = link.type === "project" ? 30621 : 30617;
+  return `${kind}:${link.owner}:${link.dtag}`;
 }
