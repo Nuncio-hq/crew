@@ -27,9 +27,9 @@
       "recordedAt": "2026-08-14"
     },
     "src/shared/api/relayClientSession.ts": {
-      "lines": 1070,
-      "reason": "Upstream-owned / Crew attention-recovery merge at desktop-v0.5.11 pin; hold exact wc -l.",
-      "recordedAt": "2026-08-13"
+      "lines": 1079,
+      "reason": "Upstream-owned lossless reconnect repair (#6415) plus AUTH inbound buffer (#3320) on top of the 0.5.11 attention-recovery pin; hold exact wc -l after rebase onto main.",
+      "recordedAt": "2026-08-23"
     },
     "src-tauri/src/managed_agents/readiness.rs": {
       "lines": 1730,
