@@ -4,6 +4,8 @@ import { test } from "node:test";
 import {
   commitAuthorPubkeysFromPullRequests,
   profileForCommit,
+  profileForContributor,
+  repositoryParticipantPubkeys,
 } from "./projectContributorMatching.ts";
 
 const AGENT_PUBKEY = "a".repeat(64);
@@ -125,4 +127,84 @@ test("signed PR mapping wins over the viewer git identity", () => {
     email: "thomasp@squareup.com",
   });
   assert.equal(matched?.pubkey, AGENT_PUBKEY);
+});
+
+const OTHER_PUBKEY = "0".repeat(64);
+
+// Two profiles carry the same display name, so the unauthenticated git author
+// string "Brain" matches both. Repo-announced participants break the tie.
+const AMBIGUOUS_PROFILES = {
+  [OTHER_PUBKEY]: { displayName: "Brain" },
+  [AGENT_PUBKEY]: { displayName: "Brain", isAgent: true },
+};
+
+function contributor(overrides = {}) {
+  return {
+    name: "Brain",
+    email: "",
+    commitCount: 3,
+    lastCommitAt: 1_700_000_000,
+    ...overrides,
+  };
+}
+
+test("repository participants are ordered owner, maintainers, then contributors", () => {
+  assert.deepEqual(
+    repositoryParticipantPubkeys({
+      owner: AGENT_PUBKEY.toUpperCase(),
+      maintainers: [USER_PUBKEY, AGENT_PUBKEY],
+      contributors: [OTHER_PUBKEY, USER_PUBKEY],
+    }),
+    [AGENT_PUBKEY, USER_PUBKEY, OTHER_PUBKEY],
+  );
+  assert.deepEqual(repositoryParticipantPubkeys(null), []);
+});
+
+test("an announced repository participant wins an ambiguous author match", () => {
+  const matched = profileForContributor(
+    contributor(),
+    AMBIGUOUS_PROFILES,
+    repositoryParticipantPubkeys({ owner: AGENT_PUBKEY }),
+  );
+  assert.equal(matched?.pubkey, AGENT_PUBKEY);
+});
+
+test("ambiguous matches without repo scope resolve deterministically", () => {
+  // Iteration order of the profile lookup must not decide the identity shown.
+  const forward = profileForContributor(contributor(), AMBIGUOUS_PROFILES);
+  const reversed = profileForContributor(contributor(), {
+    [AGENT_PUBKEY]: AMBIGUOUS_PROFILES[AGENT_PUBKEY],
+    [OTHER_PUBKEY]: AMBIGUOUS_PROFILES[OTHER_PUBKEY],
+  });
+  assert.equal(forward?.pubkey, OTHER_PUBKEY);
+  assert.equal(reversed?.pubkey, OTHER_PUBKEY);
+});
+
+test("commit author matching prefers announced repository participants", () => {
+  const commit = makeCommit({ authorName: "Brain", authorEmail: "" });
+  const matched = profileForCommit(
+    commit,
+    AMBIGUOUS_PROFILES,
+    new Map(),
+    null,
+    repositoryParticipantPubkeys({ owner: AGENT_PUBKEY }),
+  );
+  assert.equal(matched?.pubkey, AGENT_PUBKEY);
+});
+
+test("repo scope never invents a match for an unknown author", () => {
+  const commit = makeCommit({
+    authorName: "Someone Else",
+    authorEmail: "someone@example.com",
+  });
+  assert.equal(
+    profileForCommit(
+      commit,
+      AMBIGUOUS_PROFILES,
+      new Map(),
+      null,
+      repositoryParticipantPubkeys({ owner: AGENT_PUBKEY }),
+    ),
+    null,
+  );
 });
