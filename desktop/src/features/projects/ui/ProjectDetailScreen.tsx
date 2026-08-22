@@ -27,6 +27,7 @@ import { useProjectBranchActions } from "@/features/projects/branchMutations";
 import { useOptimisticProjectBranches } from "@/features/projects/useOptimisticProjectBranches";
 import { useProjectRepositoryRefSelection } from "@/features/projects/useProjectRepositoryRefSelection";
 import { useUpdateProjectPullRequestMutation } from "@/features/projects/pullRequestMutations";
+import { useRepositoryFileContentSource } from "./useRepositoryFileContentSource";
 import { useCreateProjectIssueMutation } from "@/features/projects/issueMutations";
 import { useProfileQuery, useUsersBatchQuery } from "@/features/profile/hooks";
 import { mergeCurrentProfileIntoLookup } from "@/features/profile/lib/identity";
@@ -101,6 +102,7 @@ type ProjectDetailScreenProps = {
   pullRequestId?: string;
   issueId?: string;
   repositoryId?: string;
+  tab?: string;
 };
 
 const PROJECT_DETAIL_PANEL_SEARCH_KEYS = [
@@ -116,7 +118,8 @@ const PROJECT_REPOSITORY_SEARCH_KEYS = [
 ] as const;
 
 export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
-  const { commitHash, projectId, pullRequestId, issueId, repositoryId } = props;
+  const { commitHash, projectId, pullRequestId, issueId, repositoryId, tab } =
+    props;
   const { goChannel, goProject, goProjects } = useAppNavigation();
   const { activeCommunity } = useCommunities();
   const mainInsetRef = useMainInsetRef();
@@ -251,6 +254,15 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     "remote",
   );
   const effectiveRepoSource = isLinkedWorkspace ? "local" : repoSource;
+  const fileContentSource = useRepositoryFileContentSource({
+    activeBranch,
+    activeTag,
+    pullRequest: selectedBranchPullRequest,
+    repository,
+    reposDir: activeCommunity?.reposDir,
+    selectedTag,
+    source: effectiveRepoSource,
+  });
   const repoSnapshotQuery = useProjectRepoSnapshotQuery(
     repository,
     activeBranch,
@@ -871,6 +883,9 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
               />
 
               <ProjectOutcomeDetail
+                openPlumbing={Boolean(
+                  tab || commitHash || issueId || pullRequestId,
+                )}
                 profiles={profiles}
                 project={project}
                 pullRequests={
@@ -884,6 +899,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
                   commitDiff={commitDiffQuery.data}
                   commitDiffError={commitDiffQuery.error}
                   commitDiffLoading={commitDiffQuery.isLoading}
+                  fileContentSource={fileContentSource}
                   createIssueAction={{
                     onCreate: handleCreateIssue,
                     pending: createIssueMutation.isPending,
@@ -912,6 +928,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
                       : undefined
                   }
                   localSnapshot={localRepoSnapshotQuery.data}
+                  initialTab={tab}
                   localSnapshotError={localRepoSnapshotQuery.error}
                   localSnapshotLoading={localRepoSnapshotQuery.isLoading}
                   onBranchChange={handleBranchChange}

@@ -10,6 +10,7 @@ export function CrewProjectDetailGate({
   projectId,
   pullRequestId,
   repositoryId,
+  tab,
   thread,
 }: {
   commitHash?: string;
@@ -17,6 +18,7 @@ export function CrewProjectDetailGate({
   projectId: string;
   pullRequestId?: string;
   repositoryId?: string;
+  tab?: string;
   thread?: string;
 }) {
   const projectQuery = useProjectQuery(projectId);
@@ -33,6 +35,7 @@ export function CrewProjectDetailGate({
       projectId={projectId}
       pullRequestId={pullRequestId}
       repositoryId={repositoryId}
+      tab={tab}
     />
   );
 }

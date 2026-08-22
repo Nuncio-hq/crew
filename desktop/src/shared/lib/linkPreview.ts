@@ -1,5 +1,6 @@
 import {
   buildIssueLink,
+  buildProjectLink,
   buildPullRequestLink,
   buildRepoLink,
   isEntityLink,
@@ -10,6 +11,7 @@ import {
 export type SupportedLinkPreviewKind =
   | "buzz-pull-request"
   | "buzz-issue"
+  | "buzz-project"
   | "buzz-repository"
   | "github-pull-request"
   | "github-issue"
@@ -34,6 +36,7 @@ export type SupportedLinkPreview = {
     | "PR"
     | "issue"
     | "repo"
+    | "project"
     | "file"
     | "folder"
     | "document"
@@ -297,6 +300,7 @@ function createPreview(
 export function buzzEntityFallbackTitle(link: ParsedEntityLink): string {
   switch (link.type) {
     case "repo":
+    case "project":
       return link.dtag;
     case "file":
       return `${link.dtag}:${link.path}`;
@@ -345,6 +349,14 @@ function parseBuzzEntityPreview(href: string): SupportedLinkPreview | null {
         provider: "Buzz",
         title,
         typeLabel: "repo",
+      };
+    case "project":
+      return {
+        kind: "buzz-project",
+        href: buildProjectLink(link),
+        provider: "Buzz",
+        title,
+        typeLabel: "project",
       };
     case "file":
       return null;

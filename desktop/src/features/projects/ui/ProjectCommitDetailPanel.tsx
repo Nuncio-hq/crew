@@ -9,12 +9,14 @@ import {
   type UserProfileLookup,
 } from "@/features/profile/lib/identity";
 import type { ProjectRepoCommit, ProjectRepoDiff } from "@/shared/api/types";
+import { commitDiscussionQuery } from "@/features/projects/lib/discussionChannels";
 import { CopyCommitHashButton } from "./ProjectCommitCopyButton";
 import { PROJECT_DETAIL_PANEL_CLASS } from "./projectPanelStyles";
 import { ProfileIdentityButton } from "./ProjectProfileIdentity";
 import { ProjectDiffFilesPanel } from "./ProjectPullRequestFilesChangedPanel";
 import { ProjectOriginReference } from "./ProjectOriginReference";
 import { ProjectRichContent } from "./ProjectRichContent";
+import { DiscussedInChannels } from "./DiscussionChannels";
 
 function commitDateLabel(timestamp: number) {
   return new Date(timestamp * 1_000).toLocaleString(undefined, {
@@ -115,6 +117,13 @@ export function ProjectCommitDetailPanel({
         {diff?.commitBody ? (
           <ProjectRichContent content={diff.commitBody} />
         ) : null}
+        <DiscussedInChannels
+          entityLabel="this commit"
+          query={commitDiscussionQuery({
+            hash: commit?.hash ?? commitHash,
+            shortHash,
+          })}
+        />
       </header>
 
       <ProjectDiffFilesPanel

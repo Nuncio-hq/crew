@@ -32,7 +32,12 @@ export type ProjectIssue = {
   statusEventId: string | null;
   updatedAt: number;
   comments: ProjectIssueComment[];
+  assignees: string[];
+  assigneeOperationHeads: Record<string, string>;
 };
+
+export const ISSUE_ASSIGNMENT_LABEL: "assignment";
+export const ISSUE_UNASSIGNMENT_LABEL: "unassignment";
 
 export const PROJECT_ISSUE_STATUS: {
   TRIAGE: "Triage";

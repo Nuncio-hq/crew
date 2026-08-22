@@ -158,6 +158,7 @@ export function useAppNavigation() {
         pullRequestId?: string;
         issueId?: string;
         repositoryId?: string;
+        tab?: string;
       },
     ) =>
       commitNavigation(
@@ -177,6 +178,7 @@ export function useAppNavigation() {
             ...(behavior?.repositoryId
               ? { repositoryId: behavior.repositoryId }
               : {}),
+            ...(behavior?.tab ? { tab: behavior.tab } : {}),
           },
         },
         behavior,

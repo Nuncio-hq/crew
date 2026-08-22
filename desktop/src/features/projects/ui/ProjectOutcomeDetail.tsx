@@ -25,11 +25,13 @@ import { ProjectOutcomeThreadPanel } from "./ProjectOutcomeThreadPanel";
 
 export function ProjectOutcomeDetail({
   children,
+  openPlumbing = false,
   project,
   profiles,
   pullRequests,
 }: {
   children: React.ReactNode;
+  openPlumbing?: boolean;
   project: Project;
   profiles?: UserProfileLookup;
   pullRequests: ProjectPullRequest[];
@@ -54,6 +56,10 @@ export function ProjectOutcomeDetail({
     channelId: string;
     conversationId: string;
   } | null>(null);
+  const [plumbingOpen, setPlumbingOpen] = React.useState(openPlumbing);
+  React.useEffect(() => {
+    if (openPlumbing) setPlumbingOpen(true);
+  }, [openPlumbing]);
   const projectChannelIds = new Set(
     [
       project.projectChannelId,
@@ -224,7 +230,11 @@ export function ProjectOutcomeDetail({
           </div>
         </section>
 
-        <details data-testid="project-plumbing">
+        <details
+          data-testid="project-plumbing"
+          onToggle={(event) => setPlumbingOpen(event.currentTarget.open)}
+          open={plumbingOpen}
+        >
           <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-border/60 px-4 py-3 text-sm font-semibold text-foreground">
             <ChevronDown className="h-4 w-4" />
             Plumbing

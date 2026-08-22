@@ -23,6 +23,7 @@ import {
   repositoryParticipantPubkeys,
   type ViewerGitIdentity,
 } from "@/features/projects/lib/projectContributorMatching";
+import { repositoryDiscussionQuery } from "@/features/projects/lib/discussionChannels";
 import type { ProjectRepoHost } from "@/features/projects/lib/projectRepoHost";
 import {
   projectRepoUnavailableReason,
@@ -35,6 +36,7 @@ import { Tabs, TabsContent } from "@/shared/ui/tabs";
 import { findReadmeFile } from "./ProjectReadmePanel";
 import { RepositoryFilesPanel } from "./ProjectRepositoryPanel";
 import type { RepoSourceHeaderControls } from "./ProjectRepositorySource";
+import type { RepositoryFileContentSource } from "./useRepositoryFileContent";
 import { ProjectCommitDetailPanel } from "./ProjectCommitDetailPanel";
 import { ActivityPanel, ContributorsPanel } from "./ProjectDetailFeedPanels";
 import { ProjectIssuesPanel } from "./ProjectIssuesPanel";
@@ -62,6 +64,7 @@ import {
   CreateIssueDialog,
   type CreateIssueDialogInput,
 } from "./CreateIssueDialog";
+import { DiscussionChannelsPanel } from "./DiscussionChannels";
 import { PROJECT_PANEL_ACTION_BUTTON_CLASS } from "./projectPanelStyles";
 import { WikiProjectTab } from "@/features/wiki/ui/WikiProjectTab";
 import { peekPendingWikiFileOpen } from "@/features/wiki/lib/wikiFileOpenStore";
@@ -135,8 +138,10 @@ export function WorkspaceTabs({
   commitDiff,
   commitDiffError,
   commitDiffLoading,
+  fileContentSource,
   createIssueAction,
   createPullRequestAction,
+  initialTab,
   updatePullRequestAction,
   localSnapshot,
   localSnapshotError,
@@ -173,8 +178,10 @@ export function WorkspaceTabs({
   commitDiff: ProjectRepoDiff | null | undefined;
   commitDiffError: unknown;
   commitDiffLoading: boolean;
+  fileContentSource?: RepositoryFileContentSource;
   createIssueAction: CreateIssueAction;
   createPullRequestAction?: CreatePullRequestAction;
+  initialTab?: string;
   updatePullRequestAction?: UpdatePullRequestAction;
   localSnapshot: ProjectLocalRepoSnapshot | null | undefined;
   localSnapshotError: unknown;
@@ -271,7 +278,9 @@ export function WorkspaceTabs({
   const [selectedTab, setSelectedTab] = React.useState(() =>
     peekPendingWikiFileOpen(project.id) || peekPendingWikiFileOpen(projectId)
       ? "files"
-      : "overview",
+      : initialTab === "commits"
+        ? "activity"
+        : initialTab || "overview",
   );
   const [pullRequestCommentTarget, setPullRequestCommentTarget] =
     React.useState<{
@@ -569,6 +578,7 @@ export function WorkspaceTabs({
         <RepositoryFilesPanel
           error={displayedSnapshotError}
           fallbackAuthorPubkey={project.owner}
+          fileContentSource={fileContentSource}
           files={files}
           isLoading={displayedSnapshotLoading}
           profiles={profiles}
@@ -584,6 +594,10 @@ export function WorkspaceTabs({
 
       <TabsContent className="m-0" value="wiki">
         <WikiProjectTab project={project} />
+      </TabsContent>
+
+      <TabsContent className="m-0" value="channels">
+        <DiscussionChannelsPanel query={repositoryDiscussionQuery(project)} />
       </TabsContent>
 
       <TabsContent className="m-0" value="contributors">

@@ -6,6 +6,8 @@ import {
   eventToProjectIssue,
   getAllTags,
   getTag,
+  ISSUE_ASSIGNMENT_LABEL,
+  ISSUE_UNASSIGNMENT_LABEL,
   nextProjectIssueCommentCreatedAt,
   PROJECT_ISSUE_STATUS,
 } from "./projectIssues.mjs";
@@ -40,6 +42,31 @@ function statusEvent({ kind, pubkey, createdAt }) {
     tags: [
       ["e", "e".repeat(64), "", "root"],
       ["a", REPO_ADDRESS],
+    ],
+  };
+}
+
+function assignmentComment(
+  pubkey,
+  assignees,
+  id,
+  label = ISSUE_ASSIGNMENT_LABEL,
+  createdAt = 200,
+) {
+  return {
+    id,
+    kind: 1,
+    pubkey,
+    created_at: createdAt,
+    content:
+      label === ISSUE_ASSIGNMENT_LABEL
+        ? "Assigned this issue"
+        : "Unassigned this issue",
+    tags: [
+      ["e", "e".repeat(64), "", "root"],
+      ["a", REPO_ADDRESS],
+      ...assignees.map((value) => ["p", value]),
+      ["t", label],
     ],
   };
 }
@@ -149,6 +176,35 @@ test("parses public and private-safe issue provenance", () => {
   assert.equal(publicIssue.originAgentName, null);
   assert.equal(privateIssue.channelId, null);
   assert.equal(privateIssue.originAgentName, "Builder");
+});
+
+test("assignees follow authorized assignment operations chronologically", () => {
+  const assignee = "d".repeat(64);
+  const volunteer = "5".repeat(64);
+  const issue = eventToProjectIssue(
+    issueEvent(),
+    [],
+    [
+      assignmentComment(AUTHOR, [assignee], "author-assign"),
+      assignmentComment(volunteer, [volunteer], "self-assign", undefined, 201),
+      assignmentComment(
+        ATTACKER,
+        [assignee],
+        "attacker-unassign",
+        ISSUE_UNASSIGNMENT_LABEL,
+        202,
+      ),
+      assignmentComment(
+        OWNER,
+        [assignee],
+        "owner-unassign",
+        ISSUE_UNASSIGNMENT_LABEL,
+        203,
+      ),
+    ],
+  );
+
+  assert.deepEqual(issue.assignees, [volunteer]);
 });
 
 test("builds repository-scoped issue creation tags", () => {
