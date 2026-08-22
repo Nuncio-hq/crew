@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Loader2 } from "lucide-react";
 
+import { subscribeAgentLiveness } from "@/features/agents/activeAgentTurnsLiveness";
 import {
   getActiveTurnActivityBounds,
   subscribeActiveAgentTurns,
@@ -513,5 +514,23 @@ function useActiveTurnActivityBounds(
     return next;
   }, [agentKey, agentPubkeys, channelId, conversationId]);
 
-  return React.useSyncExternalStore(subscribeActiveAgentTurns, getSnapshot);
+  // Membership changes arrive on the global subscription; lastSeenAt/progress
+  // advance per liveness frame, delivered by each agent's own subscription.
+  const subscribe = React.useCallback(
+    (onStoreChange: () => void) => {
+      const unsubscribers = [
+        subscribeActiveAgentTurns(onStoreChange),
+        ...agentKey
+          .split(",")
+          .filter((pubkey) => pubkey !== "")
+          .map((pubkey) => subscribeAgentLiveness(pubkey, onStoreChange)),
+      ];
+      return () => {
+        for (const unsubscribe of unsubscribers) unsubscribe();
+      };
+    },
+    [agentKey],
+  );
+
+  return React.useSyncExternalStore(subscribe, getSnapshot);
 }
