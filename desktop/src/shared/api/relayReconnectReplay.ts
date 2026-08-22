@@ -1,4 +1,5 @@
 import {
+  CHANNEL_EVENT_KINDS,
   KIND_AGENT_OBSERVER_FRAME,
   KIND_AGENT_RECEIPT,
   KIND_AGENT_USER_INPUT_ANSWER,
@@ -17,6 +18,8 @@ import {
   completeLiveSubscriptionRecovery,
   deleteSubscriptionAliases,
   markLiveRecoveryRequestSent,
+  markReconnectRepairDone,
+  shouldDispatchSubscriptionEvent,
 } from "@/shared/api/relayClosedRecovery";
 import { classifyRelayClosed } from "@/shared/api/relayClosedPolicy";
 import type {
@@ -24,12 +27,24 @@ import type {
   RelaySubscriptionFilter,
 } from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
+import type { ChannelReconnectRepairRequest } from "@/shared/api/channelReconnectRepair";
 import {
   isRateLimited,
   waitForRateLimit,
 } from "@/shared/api/relayRateLimitGate";
 
 const RECONNECT_REPLAY_SKEW_SECS = 5;
+/**
+ * Legacy cursors are event-time maxima, so cover relay future tolerance (900s)
+ * plus the channel-row storage fence and margin (960s + 5s).
+ */
+export const RELAY_INGEST_FUTURE_TOLERANCE_SECS = 900;
+export const DB_CREATED_AT_FLOOR_SECS = 960;
+export const FENCE_CLOCK_MARGIN_SECS = 5;
+export const RECONNECT_REPLAY_CHANNEL_LOOKBACK_SECS =
+  RELAY_INGEST_FUTURE_TOLERANCE_SECS +
+  DB_CREATED_AT_FLOOR_SECS +
+  FENCE_CLOCK_MARGIN_SECS;
 export const RECONNECT_REPLAY_PAGE_LIMIT = 500;
 export const RECONNECT_REPLAY_PAGE_CONCURRENCY = 4;
 
@@ -170,6 +185,21 @@ export function shouldPageReconnectReplay(filter: RelaySubscriptionFilter) {
   );
 }
 
+/**
+ * Native channel repair covers only live subscriptions carrying the full
+ * channel-event kind set on exactly one `#h` tag — the fixed filter the
+ * `get_channel_reconnect_repair` command serves. Narrower channel-scoped,
+ * observer, and durable-lifecycle subscriptions keep the history-REQ pager.
+ */
+function isChannelRepairFilter(filter: RelaySubscriptionFilter) {
+  return (
+    filter.limit > 0 &&
+    Array.isArray(filter["#h"]) &&
+    filter["#h"].length === 1 &&
+    CHANNEL_EVENT_KINDS.every((kind) => filter.kinds?.includes(kind) === true)
+  );
+}
+
 function replaySinceForSubscription(
   subscription: Extract<RelaySubscription, { mode: "live" }>,
 ): number | undefined {
@@ -186,6 +216,39 @@ function replaySinceForSubscription(
     subscription.recoveryFloorCreatedAt,
   ].filter((value): value is number => value !== undefined);
   return candidates.length === 0 ? undefined : Math.min(...candidates);
+}
+
+/**
+ * Lower bound for a native channel repair window.
+ *
+ * Legacy cursors are event-time maxima, so look back far enough to cover
+ * relay future tolerance plus the storage fence. Native repair bypasses the
+ * original WS filter, so its `since` lower bound is preserved explicitly —
+ * otherwise a from-now subscription could replay older rows and surface
+ * stale unread or notification activity on reconnect.
+ */
+function repairReplaySince(
+  subscription: Extract<RelaySubscription, { mode: "live" }>,
+): number | undefined {
+  const cursorSince =
+    subscription.lastSeenCreatedAt === undefined
+      ? undefined
+      : Math.max(
+          0,
+          subscription.lastSeenCreatedAt -
+            RECONNECT_REPLAY_CHANNEL_LOOKBACK_SECS,
+        );
+  // A pinned floor from a previously failed backfill takes precedence over
+  // the cursor: live events kept advancing `lastSeenCreatedAt` while the
+  // older window stayed unresolved, and starting from the cursor would skip
+  // it permanently.
+  const replayFloor =
+    cursorSince === undefined
+      ? subscription.pendingReplaySince
+      : Math.min(cursorSince, subscription.pendingReplaySince ?? Infinity);
+  return replayFloor === undefined
+    ? undefined
+    : Math.max(replayFloor, subscription.filter.since ?? 0);
 }
 
 function completedRecoveryFloor(
@@ -232,8 +295,46 @@ export async function recoverLiveSubscriptionHistory({
   return completed;
 }
 
+async function recoverLiveSubscriptionRepair({
+  subscription,
+  channelId,
+  generation,
+  isActive,
+  requestRepair,
+}: {
+  subscription: Extract<RelaySubscription, { mode: "live" }>;
+  channelId: string;
+  generation: number;
+  isActive: () => boolean;
+  requestRepair: (
+    request: ChannelReconnectRepairRequest,
+  ) => Promise<RelayEvent[]>;
+}): Promise<boolean> {
+  if (!isActive()) return false;
+  const since = repairReplaySince(subscription);
+  if (since === undefined) return true;
+  subscription.pendingReplaySince = since;
+  const completed = await replayReconnectHistoryPages({
+    subscription,
+    channelId,
+    since,
+    until: undefined,
+    isActive,
+    requestRepair,
+  });
+  if (completed) {
+    subscription.pendingReplaySince = undefined;
+    markReconnectRepairDone(subscription, generation);
+  }
+  return completed;
+}
+
 /**
  * Page one subscription's missed-window history.
+ *
+ * With `channelId` and `requestRepair`, pages through the native lossless
+ * channel repair command using a composite `(until, before_id)` keyset
+ * cursor. Otherwise pages history REQs through `requestHistory`.
  *
  * Returns `true` only when the window was genuinely completed (short page or
  * boundary reached). Returns `false` when the pass aborted because the
@@ -243,6 +344,103 @@ export async function recoverLiveSubscriptionHistory({
  * would erase the floor the new connection still needs.
  */
 export async function replayReconnectHistoryPages({
+  subscription,
+  channelId,
+  since,
+  until,
+  isActive,
+  requestRepair,
+  requestHistory,
+}: {
+  subscription: Extract<RelaySubscription, { mode: "live" }>;
+  channelId?: string;
+  since: number;
+  until?: number;
+  isActive: () => boolean;
+  requestRepair?: (
+    request: ChannelReconnectRepairRequest,
+  ) => Promise<RelayEvent[]>;
+  requestHistory?: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
+}): Promise<boolean> {
+  if (channelId !== undefined && requestRepair !== undefined) {
+    return replayChannelRepairPages({
+      subscription,
+      channelId,
+      since,
+      until,
+      isActive,
+      requestRepair,
+    });
+  }
+  if (requestHistory === undefined) return true;
+  return replayRequestHistoryPages({
+    subscription,
+    since,
+    until: until ?? Math.floor(Date.now() / 1_000),
+    isActive,
+    requestHistory,
+  });
+}
+
+async function replayChannelRepairPages({
+  subscription,
+  channelId,
+  since,
+  until,
+  isActive,
+  requestRepair,
+}: {
+  subscription: Extract<RelaySubscription, { mode: "live" }>;
+  channelId: string;
+  since: number;
+  until?: number;
+  isActive: () => boolean;
+  requestRepair: (
+    request: ChannelReconnectRepairRequest,
+  ) => Promise<RelayEvent[]>;
+}): Promise<boolean> {
+  let pageUntil: number | undefined = until;
+  let beforeId: string | undefined;
+
+  while (pageUntil === undefined || pageUntil >= since) {
+    if (!isActive()) return false;
+
+    const events = await requestRepair({
+      channelId,
+      since,
+      limit: RECONNECT_REPLAY_PAGE_LIMIT,
+      until: pageUntil,
+      beforeId,
+    });
+
+    if (!isActive()) return false;
+
+    for (const event of events) {
+      if (shouldDispatchSubscriptionEvent(subscription, event)) {
+        subscription.onEvent(event, { replay: true });
+      }
+    }
+    if (events.length < RECONNECT_REPLAY_PAGE_LIMIT) return true;
+
+    const terminal = events.at(-1);
+    if (!terminal || terminal.created_at < since) return true;
+    if (terminal.created_at === pageUntil && terminal.id === beforeId) {
+      throw new Error("Reconnect repair cursor did not advance");
+    }
+    if (terminal.created_at === since) {
+      // Continue across an arbitrarily dense boundary second until the relay
+      // returns a short page; the composite cursor, not timestamp subtraction,
+      // guarantees progress.
+      pageUntil = since;
+    } else {
+      pageUntil = terminal.created_at;
+    }
+    beforeId = terminal.id;
+  }
+  return true;
+}
+
+async function replayRequestHistoryPages({
   subscription,
   since,
   until,
@@ -325,7 +523,9 @@ export async function replayLiveSubscriptions({
   subscriptions,
   sendRaw,
   requestHistory,
+  requestRepair,
   now = Math.floor(Date.now() / 1_000),
+  generation = 0,
   pageReplayConcurrency = RECONNECT_REPLAY_PAGE_CONCURRENCY,
   visibleChannelId = null,
   replayBatchSize = REPLAY_BATCH_SIZE,
@@ -336,8 +536,12 @@ export async function replayLiveSubscriptions({
 }: {
   subscriptions: Map<string, RelaySubscription>;
   sendRaw: (payload: unknown[]) => Promise<void>;
-  requestHistory: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
+  requestHistory?: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
+  requestRepair?: (
+    request: ChannelReconnectRepairRequest,
+  ) => Promise<RelayEvent[]>;
   now?: number;
+  generation?: number;
   pageReplayConcurrency?: number;
   /** Channel currently visible in the UI — its subscriptions go in the first batch. */
   visibleChannelId?: string | null;
@@ -372,17 +576,36 @@ export async function replayLiveSubscriptions({
     )
     .map(([subId, subscription]) => {
       const recoveryGeneration = beginLiveSubscriptionRecovery(subscription);
-      const replaySince = replaySinceForSubscription(subscription);
+      const channelId = subscription.filter["#h"]?.[0];
+      const willRepair =
+        requestRepair !== undefined &&
+        channelId !== undefined &&
+        isChannelRepairFilter(subscription.filter);
+      const replaySince = willRepair
+        ? repairReplaySince(subscription)
+        : replaySinceForSubscription(subscription);
       const shouldPageReplay =
         replaySince !== undefined &&
-        shouldPageReconnectReplay(subscription.filter);
+        shouldPageReconnectReplay(subscription.filter) &&
+        (willRepair || requestHistory !== undefined);
+      if (willRepair && shouldPageReplay) {
+        // Install before the restored live REQ: a live frame may beat page one.
+        subscription.reconnectReplay = {
+          generation,
+          seenEventIds: new Set(),
+          liveEose: false,
+          repairDone: false,
+        };
+      }
 
       return {
         subId,
         subscription,
+        channelId,
         recoveryGeneration,
         replaySince,
         shouldPageReplay,
+        willRepair,
       };
     });
 
@@ -422,6 +645,10 @@ export async function replayLiveSubscriptions({
           replaySince,
           shouldPageReplay,
         }) => {
+          // The subscription map may change while replay is paused behind the
+          // gate or an inter-batch delay. Never resurrect a disposed entry (or
+          // overwrite its replacement) with a REQ from this stale snapshot.
+          if (!isActive() || subscriptions.get(subId) !== subscription) return;
           await sendRaw([
             "REQ",
             subId,
@@ -429,6 +656,15 @@ export async function replayLiveSubscriptions({
               ? subscription.filter
               : buildReconnectReplayFilter(subscription.filter, replaySince),
           ]);
+          // Disposal can race the asynchronous websocket invoke after the
+          // identity check. If this exact entry was deleted while REQ was in
+          // flight, CLOSE again after REQ settles so wire order converges to
+          // closed. A different object under the same ID is a replacement and
+          // must not be torn down by this stale replay.
+          if (isActive() && !subscriptions.has(subId)) {
+            await sendRaw(["CLOSE", subId]);
+            return;
+          }
           if (!markLiveRecoveryRequestSent(subscription, recoveryGeneration)) {
             return;
           }
@@ -459,7 +695,14 @@ export async function replayLiveSubscriptions({
       } => request.shouldPageReplay && request.replaySince !== undefined,
     ),
     pageReplayConcurrency,
-    async ({ subId, subscription, recoveryGeneration, replaySince }) => {
+    async ({
+      subId,
+      subscription,
+      channelId,
+      recoveryGeneration,
+      replaySince,
+      willRepair,
+    }) => {
       const isCurrentRecovery = () =>
         isActive() &&
         subscriptions.get(subId) === subscription &&
@@ -484,13 +727,23 @@ export async function replayLiveSubscriptions({
           void (async () => {
             if (!isCurrentRecovery()) return;
             try {
-              const retryNow = Math.max(now, Math.floor(Date.now() / 1_000));
-              const completed = await recoverLiveSubscriptionHistory({
-                subscription,
-                now: retryNow,
-                isActive: isCurrentRecovery,
-                requestHistory,
-              });
+              const completed =
+                willRepair && channelId !== undefined && requestRepair
+                  ? await recoverLiveSubscriptionRepair({
+                      subscription,
+                      channelId,
+                      generation,
+                      isActive: isCurrentRecovery,
+                      requestRepair,
+                    })
+                  : requestHistory === undefined
+                    ? true
+                    : await recoverLiveSubscriptionHistory({
+                        subscription,
+                        now: Math.max(now, Math.floor(Date.now() / 1_000)),
+                        isActive: isCurrentRecovery,
+                        requestHistory,
+                      });
               if (!completed || !isCurrentRecovery()) return;
               completeLiveSubscriptionRecovery(
                 subscription,
@@ -528,8 +781,11 @@ export async function replayLiveSubscriptions({
         try {
           const completed = await replayReconnectHistoryPages({
             subscription,
+            channelId: willRepair ? channelId : undefined,
             since: replaySince,
-            until: now,
+            // Native repair must not trust the renderer clock as the upper
+            // bound: the relay's newest matching row starts the keyset walk.
+            until: willRepair ? undefined : now,
             // Both guards are required. The identity check catches the sub
             // being torn down/replaced; the outer isActive() catches
             // connection supersession, which bumps the generation while the
@@ -537,6 +793,7 @@ export async function replayLiveSubscriptions({
             // alone stays true and a stale pass could complete and clear the
             // floor the superseding connection needs.
             isActive: isCurrentRecovery,
+            requestRepair: willRepair ? requestRepair : undefined,
             requestHistory,
           });
           // A stale-connection abort is NOT completion: the superseding
@@ -545,10 +802,14 @@ export async function replayLiveSubscriptions({
           // window may release it.
           if (completed) {
             subscription.pendingReplaySince = undefined;
-            subscription.recoveryFloorCreatedAt = completedRecoveryFloor(
-              subscription,
-              now,
-            );
+            if (willRepair) {
+              markReconnectRepairDone(subscription, generation);
+            } else {
+              subscription.recoveryFloorCreatedAt = completedRecoveryFloor(
+                subscription,
+                now,
+              );
+            }
             completeLiveSubscriptionRecovery(
               subscription,
               recoveryGeneration,
@@ -569,6 +830,9 @@ export async function replayLiveSubscriptions({
             return;
           }
           if (attempt === PAGE_REPLAY_MAX_ATTEMPTS) {
+            // Release the dedupe barrier: the retry loop below is unbounded,
+            // and holding every live event id until it succeeds would leak.
+            if (willRepair) markReconnectRepairDone(subscription, generation);
             subscription.onStatus?.({
               state: "recovering",
               message: lastFailureMessage,

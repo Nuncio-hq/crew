@@ -33,6 +33,7 @@ import { establishLiveSubscription } from "@/shared/api/liveSubscriptionSetup";
 import * as reconnectReplay from "@/shared/api/relayReconnectReplay";
 import { handleSessionRelayClosed } from "@/shared/api/relayClientClosedRecovery";
 import * as liveBuffer from "@/shared/api/relayLiveEventBuffer";
+import { getChannelReconnectRepairEvents } from "@/shared/api/channelReconnectRepair";
 import {
   activateRateLimit,
   parseRateLimitHint,
@@ -66,7 +67,12 @@ import {
   STALL_IDLE_TIMEOUT_MS,
 } from "@/shared/api/relayClientTimings";
 import { closeWebSocket } from "@/shared/api/relayWebSocketClose";
-import { AuthOkTracker } from "@/shared/api/relayAuthPolicy";
+import {
+  armRelayAuthentication,
+  AuthOkTracker,
+  type RelayAuthRequest,
+} from "@/shared/api/relayAuthPolicy";
+import { createRelayInboundBuffer } from "@/shared/api/relayInboundBuffer";
 import { buildThreadReferenceTags } from "@/features/messages/lib/threading";
 import { RelayTransportLeaseAuthority } from "@/shared/api/relayTransportLease";
 
@@ -78,12 +84,7 @@ export class RelayClient {
   private reconnectWaiters = new RelayReconnectWaiters();
   private reconnectDelayMs = RECONNECT_BASE_DELAY_MS;
   private keepAliveRequested = false;
-  private authRequest: {
-    pendingEventId: string;
-    resolve: () => void;
-    reject: (error: Error) => void;
-    timeout: number;
-  } | null = null;
+  private authRequest: RelayAuthRequest | null = null;
   private subscriptions = new Map<string, RelaySubscription>();
   private pendingEvents = new Map<string, PendingEvent>();
   private eventBuffer: liveBuffer.BufferedLiveEvent[] = [];
@@ -100,7 +101,6 @@ export class RelayClient {
   private stabilityTimer: number | null = null;
   private visibleChannelId: string | null = null;
   private authOkTracker = new AuthOkTracker();
-
   private terminal = false;
 
   private connectionStateEmitter = new RelayConnectionStateEmitter("idle");
@@ -529,17 +529,19 @@ export class RelayClient {
     this.connectionStateEmitter.set(
       this.hasConnectedOnce ? "reconnecting" : "connecting",
     );
-
     const generation = ++this.connectionGeneration;
-    this.onMessageChannel = new Channel<unknown>((message) => {
-      void this.handleWsMessage(message, generation).catch((error) => {
+    const inbound = createRelayInboundBuffer(
+      (message) => this.handleWsMessage(message, generation),
+      (error) => {
         if (generation !== this.connectionGeneration) return;
         this.resetConnection(
           this.normalizeRelayError(error, "Relay connection errored."),
         );
-      });
-    });
-
+      },
+    );
+    this.onMessageChannel = new Channel<unknown>((message) =>
+      inbound.receive(message),
+    );
     try {
       if (!this.relayUrl) {
         this.relayUrl = await getRelayWsUrl();
@@ -555,22 +557,21 @@ export class RelayClient {
       }
       this.wsId = wsId;
 
-      await new Promise<void>((resolve, reject) => {
-        const timeout = window.setTimeout(() => {
-          const error = new Error("Relay authentication timed out.");
+      const authentication = armRelayAuthentication(
+        AUTH_TIMEOUT_MS,
+        (request) => {
+          this.authRequest = request;
+        },
+        (error) => {
           this.authRequest = null;
           this.resetConnection(error);
-          reject(error);
-        }, AUTH_TIMEOUT_MS);
+        },
+      );
 
-        this.authRequest = {
-          pendingEventId: "",
-          resolve,
-          reject,
-          timeout,
-        };
-      });
-
+      const drain = inbound.drain();
+      await Promise.race([drain, authentication, inbound.overflow]);
+      await drain;
+      await authentication;
       this.stabilityTimer = window.setTimeout(() => {
         this.stabilityTimer = null;
         this.reconnectDelayMs = RECONNECT_BASE_DELAY_MS;
@@ -766,7 +767,7 @@ export class RelayClient {
     if (type === "EVENT" && typeof rest[0] === "string" && rest[1]) {
       if (!eventVerification.isVerifiedRelayEvent(rest[1] as RelayEvent))
         return;
-      this.handleEvent(rest[0], rest[1] as RelayEvent);
+      this.handleEvent(rest[0], rest[1] as RelayEvent, generation);
       return;
     }
     if (
@@ -783,7 +784,7 @@ export class RelayClient {
     }
 
     if (type === "EOSE" && typeof rest[0] === "string") {
-      this.handleEose(rest[0]);
+      this.handleEose(rest[0], generation);
       return;
     }
 
@@ -832,7 +833,7 @@ export class RelayClient {
     await this.sendRaw(["AUTH", event]);
   }
 
-  private handleEvent(subId: string, event: RelayEvent) {
+  private handleEvent(subId: string, event: RelayEvent, generation: number) {
     const subscription = this.subscriptions.get(subId);
     if (!subscription) return;
     if (
@@ -846,7 +847,7 @@ export class RelayClient {
     }
     if (!closedRecovery.prepareSubscriptionEvent(subscription, event)) return;
     this.eventBuffer.push(
-      liveBuffer.toBufferedLiveEvent(subId, event, subscription),
+      liveBuffer.toBufferedLiveEvent(subId, event, subscription, generation),
     );
     this.flushTimeout ??= window.setTimeout(
       () => this.flushEventBuffer(),
@@ -856,16 +857,22 @@ export class RelayClient {
 
   private flushEventBuffer() {
     this.flushTimeout = null;
-    liveBuffer.dispatchBufferedLiveEvents(this.eventBuffer, this.subscriptions);
+    const buffer = this.eventBuffer;
     this.eventBuffer = [];
+    liveBuffer.dispatchBufferedLiveEvents(
+      buffer,
+      this.subscriptions,
+      this.connectionGeneration,
+    );
   }
 
-  private handleEose(subId: string) {
+  private handleEose(subId: string, generation: number) {
     this.flushEventBuffer(); // Deliver preceding EVENT frames before EOSE.
     closedRecovery.handleSubscriptionEose({
       subscriptions: this.subscriptions,
       subId,
       closeSubscription: (id) => this.closeSubscription(id),
+      generation,
     });
   }
 
@@ -914,6 +921,8 @@ export class RelayClient {
         subscriptions: this.subscriptions,
         sendRaw: (payload) => this.sendRaw(payload),
         requestHistory: (filter) => this.requestHistory(filter),
+        requestRepair: getChannelReconnectRepairEvents,
+        generation,
         visibleChannelId: this.visibleChannelId,
         isActive: () => this.connectionGeneration === generation,
       });

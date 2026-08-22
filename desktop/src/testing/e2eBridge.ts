@@ -494,6 +494,10 @@ type E2eConfig = {
     nostrBindSignDelayMs?: number;
     /** Reject successive mock WebSocket connect attempts, then resume. */
     websocketConnectErrors?: string[];
+    /** Deliver AUTH synchronously, before the mock connect command resolves. */
+    websocketAuthBeforeConnectResolves?: boolean;
+    /** Stall the first AUTH signing command forever; later attempts complete. */
+    stallFirstAuthSigning?: boolean;
     stallWebsocketSends?: boolean;
     userSearchDelayMs?: number;
     // NIP-IA gate inputs — see tests/helpers/bridge.ts:MockBridgeOptions for
@@ -3305,6 +3309,7 @@ const mockAuthResponses: Array<{ success: boolean; message: string }> = [];
 const mockChannelHistoryCloses: string[] = [];
 let mockWebsocketUnavailable = false;
 const relayWebsocketConnectAttemptStarts: number[] = [];
+let mockAuthSigningAttempts = 0;
 let mockWebsocketSendMutexWedged = false;
 let mockClosedChannelLiveSubscription = false;
 const realSockets = new Map<number, WebSocket>();
@@ -5636,6 +5641,47 @@ function buildMockChannelWindowBounds(
  * This is the window read-model surface the overhaul introduced; without it the
  * relay-mode bridge has no handler and the timeline renders empty.
  */
+async function handleGetChannelReconnectRepair(
+  args: {
+    channelId: string;
+    since: number;
+    limit: number;
+    until?: number | null;
+    beforeId?: string | null;
+  },
+  config: E2eConfig | undefined,
+): Promise<RelayEvent[]> {
+  const kinds = new Set([
+    5, 7, 9, 9005, 40001, 40002, 40003, 40008, 40099, 45001, 45003, 46043,
+    48100, 48101, 48102, 48103,
+  ]);
+  const filter: Record<string, unknown> = {
+    "#h": [args.channelId],
+    kinds: [...kinds],
+    since: args.since,
+    limit: args.limit,
+  };
+  if (args.until != null) filter.until = args.until;
+  if (args.beforeId != null) filter.before_id = args.beforeId;
+
+  if (getIdentity(config)) return relayQuery(config, [filter]);
+  return getMockMessageStore(args.channelId)
+    .filter(
+      (event) =>
+        kinds.has(event.kind) &&
+        event.created_at >= args.since &&
+        (args.until == null ||
+          event.created_at < args.until ||
+          (event.created_at === args.until &&
+            (args.beforeId == null || event.id > args.beforeId))),
+    )
+    .sort(
+      (left, right) =>
+        right.created_at - left.created_at || left.id.localeCompare(right.id),
+    )
+    .slice(0, args.limit);
+}
+
 async function handleGetChannelWindow(
   args: {
     channelId: string;
@@ -10617,9 +10663,14 @@ async function connectMockSocket(args: { onMessage: unknown }) {
     subscriptions: new Map(),
   });
 
-  window.setTimeout(() => {
+  if (getConfig()?.mock?.websocketAuthBeforeConnectResolves) {
     sendWsText(handler, ["AUTH", `mock-challenge-${wsId}`]);
-  }, 0);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+  } else {
+    window.setTimeout(() => {
+      sendWsText(handler, ["AUTH", `mock-challenge-${wsId}`]);
+    }, 0);
+  }
 
   return wsId;
 }
@@ -11150,6 +11201,7 @@ export function maybeInstallE2eTauriMocks() {
   mockAuthResponses.length = 0;
   mockChannelHistoryCloses.length = 0;
   relayWebsocketConnectAttemptStarts.length = 0;
+  mockAuthSigningAttempts = 0;
   deferredSendMessageLiveEchoes.length = 0;
   mockGlobalAgentConfig = config.mock?.globalAgentConfig
     ? { ...config.mock.globalAgentConfig }
@@ -14325,6 +14377,11 @@ export function maybeInstallE2eTauriMocks() {
           payload as Parameters<typeof handleGetChannelMessagesBefore>[0],
           activeConfig,
         );
+      case "get_channel_reconnect_repair":
+        return handleGetChannelReconnectRepair(
+          payload as Parameters<typeof handleGetChannelReconnectRepair>[0],
+          activeConfig,
+        );
       case "get_channel_window":
         return handleGetChannelWindow(
           payload as Parameters<typeof handleGetChannelWindow>[0],
@@ -14551,6 +14608,13 @@ export function maybeInstallE2eTauriMocks() {
       case "nip44_decrypt_from_self":
         return (payload as { ciphertext: string }).ciphertext;
       case "create_auth_event":
+        mockAuthSigningAttempts++;
+        if (
+          getConfig()?.mock?.stallFirstAuthSigning &&
+          mockAuthSigningAttempts === 1
+        ) {
+          return new Promise<string>(() => {});
+        }
         if (identity) {
           return JSON.stringify(
             await signWithIdentity(identity, {
