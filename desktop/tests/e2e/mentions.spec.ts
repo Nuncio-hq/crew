@@ -1447,6 +1447,7 @@ test("owner-only builds admit cross-owner relay agents authorized by allowlist",
   await quinnRow.click();
   await page.keyboard.type("hello");
   await page.getByTestId("send-message").click();
+  await page.getByRole("button", { name: "Invite", exact: true }).click();
 
   await expect
     .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
