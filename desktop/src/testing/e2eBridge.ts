@@ -11,6 +11,11 @@ import {
   handleSaveCustomHarness,
   handleDeleteCustomHarness,
 } from "./e2eBridgeCustomHarnesses.ts";
+import type {
+  ObservedUnreadProjection,
+  ObservedUnreadResponse,
+} from "@/shared/api/tauriObservedUnread";
+import type { UnreadCatchUpChannelResult } from "@/shared/api/tauriUnreadCatchUp";
 import {
   handleCoworkVersionsCommand,
   isCoworkVersionsCommand,
@@ -3341,6 +3346,167 @@ type MockSaveSubscriptionRow = {
   kinds: string; // JSON-encoded integer array, e.g. "[9,40002]"
 };
 let mockSaveSubscriptions: MockSaveSubscriptionRow[] = [];
+
+type MockObservedUnreadScope = {
+  generation: string;
+  revision: number;
+  lastSequence: number;
+  migrationComplete: boolean;
+  events: Map<
+    string,
+    {
+      channelId: string;
+      id: string;
+      createdAt: number;
+      rootId: string | null;
+      highPriority: boolean;
+      countsTowardBadge: boolean;
+      countsTowardAppBadge: boolean;
+    }
+  >;
+  channelLatest: Map<string, number>;
+  markers: Map<string, number>;
+};
+
+const mockObservedUnreadScopes = new Map<string, MockObservedUnreadScope>();
+
+function mockObservedUnreadScopeKey(scope: {
+  pubkey: string;
+  relayUrl: string;
+}) {
+  return `${scope.pubkey.trim().toLowerCase()}:${scope.relayUrl
+    .trim()
+    .replace(/\/+$/, "")}`;
+}
+
+function getMockObservedUnreadScope(scope: {
+  pubkey: string;
+  relayUrl: string;
+}) {
+  const key = mockObservedUnreadScopeKey(scope);
+  const existing = mockObservedUnreadScopes.get(key);
+  if (existing) return existing;
+  const created: MockObservedUnreadScope = {
+    generation: "e2e",
+    revision: 0,
+    lastSequence: 0,
+    migrationComplete: false,
+    events: new Map(),
+    channelLatest: new Map(),
+    markers: new Map(),
+  };
+  mockObservedUnreadScopes.set(key, created);
+  return created;
+}
+
+function mockObservedUnreadProjections(
+  scope: MockObservedUnreadScope,
+): ObservedUnreadProjection[] {
+  const channels = new Map<string, ObservedUnreadProjection>();
+  for (const [channelId, latest] of scope.channelLatest) {
+    channels.set(channelId, {
+      channelId,
+      latest,
+      count: 0,
+      badgeCount: 0,
+      appBadgeCount: 0,
+      topLevelUnread: false,
+      highPriorityUnread: false,
+    });
+  }
+  for (const event of scope.events.values()) {
+    let readAt = Math.max(
+      scope.markers.get(event.channelId) ?? 0,
+      scope.markers.get(`msg:${event.id}`) ?? 0,
+    );
+    if (event.rootId) {
+      readAt = Math.max(
+        readAt,
+        scope.markers.get(`thread:${event.rootId}`) ?? 0,
+      );
+    }
+    if (event.createdAt <= readAt) continue;
+    const projection = channels.get(event.channelId) ?? {
+      channelId: event.channelId,
+      latest: 0,
+      count: 0,
+      badgeCount: 0,
+      appBadgeCount: 0,
+      topLevelUnread: false,
+      highPriorityUnread: false,
+    };
+    projection.latest = Math.max(projection.latest, event.createdAt);
+    projection.count += 1;
+    projection.badgeCount += event.countsTowardBadge ? 1 : 0;
+    projection.appBadgeCount += event.countsTowardAppBadge ? 1 : 0;
+    projection.topLevelUnread ||= event.rootId === null;
+    projection.highPriorityUnread ||= event.highPriority;
+    channels.set(event.channelId, projection);
+  }
+  return [...channels.values()].sort((left, right) =>
+    left.channelId.localeCompare(right.channelId),
+  );
+}
+
+function resetMockObservedUnread() {
+  mockObservedUnreadScopes.clear();
+}
+
+function mockPersonaCatalogPublications() {
+  const publications = [];
+  const claimed = new Set<string>();
+  for (const event of [...mockPersonaEvents].sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  )) {
+    const sourcePersonaId = event.tags.find((tag) => tag[0] === "d")?.[1];
+    if (!sourcePersonaId || !personaHasExactSharedTag(event)) continue;
+    const ownerPubkey = event.pubkey.toLowerCase();
+    const coordinate = `${ownerPubkey}:${sourcePersonaId}`;
+    if (claimed.has(coordinate)) continue;
+    claimed.add(coordinate);
+    let content: Record<string, unknown>;
+    try {
+      content = JSON.parse(event.content) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const optionalString = (value: unknown) =>
+      typeof value === "string" && value.trim() ? value : null;
+    publications.push({
+      eventId: event.id,
+      ownerPubkey,
+      sourcePersonaId,
+      createdAt: event.created_at,
+      agent: {
+        displayName:
+          typeof content.display_name === "string"
+            ? content.display_name
+            : "",
+        avatarUrl: optionalString(content.avatar_url),
+        systemPrompt:
+          typeof content.system_prompt === "string"
+            ? content.system_prompt
+            : "",
+        runtime: optionalString(content.runtime),
+        model: optionalString(content.model),
+        provider: optionalString(content.provider),
+        namePool: Array.isArray(content.name_pool)
+          ? content.name_pool.filter(
+              (value): value is string => typeof value === "string",
+            )
+          : [],
+        respondTo:
+          content.respond_to === "owner-only" ||
+          content.respond_to === "anyone"
+            ? content.respond_to
+            : null,
+        parallelism:
+          typeof content.parallelism === "number" ? content.parallelism : null,
+      },
+    });
+  }
+  return publications;
+}
 
 function defaultWorktreeStorageSnapshot() {
   const now = Math.floor(Date.now() / 1000);
@@ -11201,6 +11367,7 @@ export function maybeInstallE2eTauriMocks() {
   resetMockUserStatuses();
   resetMockPersonaCatalogEvents(config);
   resetMockSaveSubscriptions(config);
+  resetMockObservedUnread();
   resetMockArchivedObserverEvents(config);
   resetMockPendingCommunityDeepLinks(config);
   initializeMockHuddle(config.mock?.huddle, config);
@@ -14966,6 +15133,167 @@ export function maybeInstallE2eTauriMocks() {
       case "archive_events":
         // Returns the ArchiveBatchResult shape the UI expects.
         return { persisted: 0, dropped: 0 };
+      case "announce_archive_sync_epoch":
+        return 1;
+      case "start_archive_sync":
+      case "stop_archive_sync":
+        return null;
+      case "fetch_persona_catalog":
+        return mockPersonaCatalogPublications();
+      case "observed_unread_open_scope": {
+        const request = payload as {
+          request: {
+            scope: { pubkey: string; relayUrl: string };
+            legacyPayload?: {
+              eventsByChannel?: Record<
+                string,
+                Array<{
+                  id: string;
+                  createdAt: number;
+                  rootId?: string | null;
+                  highPriority: boolean;
+                  countsTowardBadge: boolean;
+                  countsTowardAppBadge: boolean;
+                }>
+              >;
+            };
+          };
+        };
+        const scope = getMockObservedUnreadScope(request.request.scope);
+        if (!scope.migrationComplete) {
+          for (const [channelId, events] of Object.entries(
+            request.request.legacyPayload?.eventsByChannel ?? {},
+          )) {
+            for (const event of events) {
+              if (!scope.events.has(event.id)) {
+                scope.events.set(event.id, {
+                  channelId,
+                  ...event,
+                  rootId: event.rootId ?? null,
+                });
+              }
+            }
+          }
+          scope.migrationComplete = true;
+        }
+        return {
+          kind: "snapshot",
+          scope: request.request.scope,
+          generation: scope.generation,
+          revision: scope.revision,
+          lastAckedSequence: scope.lastSequence,
+          migrationComplete: scope.migrationComplete,
+          membershipSeeded: true,
+          channels: mockObservedUnreadProjections(scope),
+        } satisfies ObservedUnreadResponse;
+      }
+      case "observed_unread_ingest": {
+        const { request } = payload as {
+          request: {
+            scope: { pubkey: string; relayUrl: string };
+            sequence: number;
+            events: Array<{
+              channelId: string;
+              id: string;
+              createdAt: number;
+              rootId: string | null;
+              highPriority: boolean;
+              countsTowardBadge: boolean;
+              countsTowardAppBadge: boolean;
+            }>;
+            channelLatest: Array<{ channelId: string; createdAt: number }>;
+            markers: Array<{ contextId: string; readAt: number | null }>;
+            clearChannels: string[];
+            clearAll: boolean;
+          };
+        };
+        const scope = getMockObservedUnreadScope(request.scope);
+        const before = new Map(
+          mockObservedUnreadProjections(scope).map((item) => [
+            item.channelId,
+            item,
+          ]),
+        );
+        if (request.clearAll) {
+          scope.events.clear();
+          scope.channelLatest.clear();
+        }
+        for (const channelId of request.clearChannels) {
+          scope.channelLatest.delete(channelId);
+          for (const [id, event] of scope.events) {
+            if (event.channelId === channelId) scope.events.delete(id);
+          }
+        }
+        for (const latest of request.channelLatest ?? []) {
+          scope.channelLatest.set(
+            latest.channelId,
+            Math.max(
+              scope.channelLatest.get(latest.channelId) ?? 0,
+              latest.createdAt,
+            ),
+          );
+        }
+        for (const event of request.events ?? []) {
+          if (!scope.events.has(event.id)) scope.events.set(event.id, event);
+        }
+        for (const marker of request.markers ?? []) {
+          if (marker.readAt === null) scope.markers.delete(marker.contextId);
+          else {
+            scope.markers.set(
+              marker.contextId,
+              Math.max(scope.markers.get(marker.contextId) ?? 0, marker.readAt),
+            );
+          }
+        }
+        const after = mockObservedUnreadProjections(scope);
+        const afterIds = new Set(after.map((item) => item.channelId));
+        const baseRevision = scope.revision;
+        scope.revision += 1;
+        scope.lastSequence = request.sequence;
+        return {
+          kind: "delta",
+          scope: request.scope,
+          generation: scope.generation,
+          baseRevision,
+          revision: scope.revision,
+          ackedSequence: request.sequence,
+          upserts: after.filter(
+            (item) =>
+              JSON.stringify(before.get(item.channelId)) !==
+              JSON.stringify(item),
+          ),
+          removed: [...before.keys()].filter((id) => !afterIds.has(id)),
+        } satisfies ObservedUnreadResponse;
+      }
+      case "unread_catch_up": {
+        const request = payload as {
+          request: {
+            channels: Array<{ id: string }>;
+            selfPubkey: string;
+          };
+        };
+        const results: UnreadCatchUpChannelResult[] =
+          request.request.channels.map((channel) => ({
+            status: "success",
+            channelId: channel.id,
+            observedEvents: [],
+            maxTrigger: 0,
+            activityRows: [],
+            discovered: {
+              participated: [],
+              authored: getMockMessageStore(channel.id)
+                .filter(
+                  (event) =>
+                    event.pubkey === request.request.selfPubkey &&
+                    getThreadReferenceFromTags(event.tags).parentEventId ===
+                      null,
+                )
+                .map((event) => event.id),
+              mentioned: [],
+            },
+          }));
+        return { channels: results };
+      }
       case "agent_metric_archive_default_enabled":
         return activeConfig?.mock?.agentMetricArchiveDefaultEnabled ?? true;
       case "set_prevent_sleep_active":

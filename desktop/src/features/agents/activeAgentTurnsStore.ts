@@ -1,3 +1,5 @@
+import * as React from "react";
+
 import { getAgentObserverSnapshot } from "@/features/agents/observerRelayStore";
 import {
   clearTurnsWatermarks,
