@@ -3301,6 +3301,54 @@ mod tests {
     }
 
     #[test]
+    fn extract_thought_level_config_id_finds_config_id() {
+        let result = serde_json::json!({
+            "sessionId": "sess-1",
+            "configOptions": [
+                { "configId": "model", "category": "model" },
+                {
+                    "configId": "effort",
+                    "category": "thought_level",
+                    "options": [{ "value": "high" }, { "value": "low" }]
+                }
+            ]
+        });
+        assert_eq!(
+            super::extract_thought_level_config_id(&result).as_deref(),
+            Some("effort")
+        );
+    }
+
+    #[test]
+    fn extract_thought_level_config_id_falls_back_to_id_key() {
+        let result = serde_json::json!({
+            "configOptions": [
+                { "id": "effort", "category": "thought_level" }
+            ]
+        });
+        assert_eq!(
+            super::extract_thought_level_config_id(&result).as_deref(),
+            Some("effort")
+        );
+    }
+
+    #[test]
+    fn extract_thought_level_config_id_none_without_category() {
+        let result = serde_json::json!({
+            "configOptions": [
+                { "configId": "model", "category": "model" }
+            ]
+        });
+        assert!(super::extract_thought_level_config_id(&result).is_none());
+    }
+
+    #[test]
+    fn extract_thought_level_config_id_none_without_config_options() {
+        let result = serde_json::json!({ "sessionId": "sess-1" });
+        assert!(super::extract_thought_level_config_id(&result).is_none());
+    }
+
+    #[test]
     fn resolve_prefers_stable_over_unstable() {
         let result = serde_json::json!({
             "configOptions": [{
@@ -4128,7 +4176,7 @@ done
     }
 
     #[tokio::test]
-    async fn goose_system_prompt_request_uses_append_contract() {
+    async fn goose_system_prompt_request_uses_set_contract() {
         let script = r#"
             read -t 2 REQ
             echo '{"jsonrpc":"2.0","id":0,"result":{"_receivedRequest":'"$REQ"'}}'
@@ -4145,7 +4193,7 @@ done
             "_goose/unstable/session/system-prompt/set"
         );
         assert_eq!(received["params"]["sessionId"], "ses_goose");
-        assert_eq!(received["params"]["mode"], "append");
+        assert_eq!(received["params"]["mode"], "set");
         assert_eq!(received["params"]["key"], "buzz");
         assert_eq!(received["params"]["text"], "Be terse");
     }
