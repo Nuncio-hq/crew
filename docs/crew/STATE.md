@@ -1,5 +1,22 @@
 # Crew State
 
+## Issue #277 — Mobile UI upstream 0.5.12 → 0.5.18 parity
+
+`mobile/` now tracks upstream `desktop-v0.5.18` wholesale: compact permalink
+chips, community invites, composer/timeline/emoji work, iOS native emoji
+picker + jump-to-latest/sticky-date glass, thread tail + iOS channel header,
+device auth for identity export, batched observer telemetry, pairing
+confirmation and the channel details page. The only Crew-owned mobile delta
+that survives the port is the agent-activity layer (`agent_activity/`,
+`AgentActivityLine` above both composers, relay observer plumbing).
+
+Desktop remains the main office (D-026 unchanged); mobile is now in scope for
+upstream parity instead of being skipped on sync. Mobile stays outside the
+required `NuncioCrew Gate` — inherited Buzz mobile CI is still not enabled, so
+mobile evidence is a manual `flutter test` / `flutter analyze` run pasted on
+the sync PR (`1307` → `1575` passing, zero failures).
+Last updated: 2026-08-22
+
 ## Issue #262 — Project-thread GitHub status recovers
 
 Transient GitHub probe failures revalidate after the existing 30-second TTL.
