@@ -2,7 +2,7 @@ import * as React from "react";
 import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import {
   getAgentObserverSnapshot,
-  subscribeAgentObserverStore,
+  subscribeAgentObserverProjections,
 } from "@/features/agents/observerRelayStore";
 import { createPreventSleepActivityTracker } from "@/features/agents/preventSleepActivity";
 import { setPreventSleepActive } from "@/shared/api/tauri";
@@ -114,7 +114,7 @@ function usePreventSleepInternal() {
     };
 
     observeActivity();
-    return subscribeAgentObserverStore(observeActivity);
+    return subscribeAgentObserverProjections(observedPubkeys, observeActivity);
   }, [enabled, expired, runningAgentPubkeyKey]);
 
   return {

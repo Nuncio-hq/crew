@@ -2,7 +2,7 @@ import * as React from "react";
 
 import {
   getAgentTranscript,
-  subscribeAgentObserverStore,
+  subscribeAgentObserverProjections,
 } from "@/features/agents/observerRelayStore";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 import { normalizePubkey } from "@/shared/lib/pubkey";
@@ -38,8 +38,13 @@ export function useWorkbenchObserverBundles(
     cacheRef.current = next;
     return next;
   }, [keys]);
+  const subscribe = React.useCallback(
+    (onStoreChange: () => void) =>
+      subscribeAgentObserverProjections(keys, onStoreChange),
+    [keys],
+  );
   const snapshot = React.useSyncExternalStore(
-    subscribeAgentObserverStore,
+    subscribe,
     getSnapshot,
     getSnapshot,
   );

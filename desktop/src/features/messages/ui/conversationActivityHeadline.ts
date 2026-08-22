@@ -6,7 +6,7 @@ import {
 } from "@/features/agents/activeAgentTurnsStore";
 import {
   getAgentTranscript,
-  subscribeAgentObserverStore,
+  subscribeAgentObserverProjection,
 } from "@/features/agents/observerRelayStore";
 import {
   getActivityHeadline,
@@ -419,7 +419,7 @@ export function useThreadAgentActivityHeadline(
   const transcriptSubscribe = React.useCallback(
     (onStoreChange: () => void) => {
       if (!enabled || !agentPubkey) return () => {};
-      return subscribeAgentObserverStore(onStoreChange);
+      return subscribeAgentObserverProjection(agentPubkey, onStoreChange);
     },
     [agentPubkey, enabled],
   );
