@@ -1939,11 +1939,6 @@ test("notification settings drive the Inbox badge and desktop alerts", async ({
     },
   ]);
 
-  await page.screenshot({
-    path: "/home/ubuntu/evidence-288/screens/6427-notification-channel-before.png",
-    fullPage: true,
-  });
-
   const clickedNotification = await page.evaluate(() => {
     const win = window as Window & {
       __BUZZ_E2E_CLICK_NOTIFICATION__?: (index: number) => boolean;
@@ -1957,11 +1952,6 @@ test("notification settings drive the Inbox badge and desktop alerts", async ({
   await expect(page.getByTestId("message-timeline")).toContainText(
     "Please review the rollout checklist.",
   );
-  await page.screenshot({
-    path: "/home/ubuntu/evidence-288/screens/6427-notification-channel-after.png",
-    fullPage: true,
-  });
-
   await openSettings(page, "notifications");
   await page.getByTestId("notifications-home-badge-toggle").click();
   await page.getByTestId("settings-back-to-app").click();
@@ -2040,11 +2030,6 @@ test("desktop notification clicks open the matching forum thread", async ({
     )
     .toBe(1);
 
-  await page.screenshot({
-    path: "/home/ubuntu/evidence-288/screens/6427-notification-forum-before.png",
-    fullPage: true,
-  });
-
   const clickedNotification = await page.evaluate(() => {
     const win = window as Window & {
       __BUZZ_E2E_CLICK_NOTIFICATION__?: (index: number) => boolean;
@@ -2061,10 +2046,6 @@ test("desktop notification clicks open the matching forum thread", async ({
   await expect(
     page.getByText("Release checklist: async feedback thread."),
   ).toBeVisible();
-  await page.screenshot({
-    path: "/home/ubuntu/evidence-288/screens/6427-notification-forum-after.png",
-    fullPage: true,
-  });
 });
 
 test("opens settings with the keyboard shortcut and updates theme", async ({
