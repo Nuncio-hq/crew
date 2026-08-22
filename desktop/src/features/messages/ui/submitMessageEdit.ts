@@ -134,6 +134,20 @@ export async function submitMessageEdit({
         ),
       ]),
     );
+    if (signal?.aborted) return;
+    const revalidatedMentionPubkeys =
+      await revalidateMentionPubkeys(addedMentionPubkeys);
+    if (signal?.aborted) return;
+    // A denied mention must not survive as a non-notifying reference either:
+    // the tag both publishes the pubkey and renders the agent chip.
+    const admitted = new Set(
+      revalidatedMentionPubkeys.map((pubkey) => pubkey.toLowerCase()),
+    );
+    const deniedMentionPubkeys = new Set(
+      addedMentionPubkeys
+        .map((pubkey) => pubkey.toLowerCase())
+        .filter((pubkey) => !admitted.has(pubkey)),
+    );
     const outgoingTags = mergeOutgoingTagsWithReferenceMentions(
       mergeOutgoingTags(
         mediaTags,
@@ -142,12 +156,8 @@ export async function submitMessageEdit({
       [
         ...draft.mentionRefs.map(({ pubkey }) => pubkey),
         ...draft.unresolvedMentionPubkeys,
-      ],
+      ].filter((pubkey) => !deniedMentionPubkeys.has(pubkey.toLowerCase())),
     );
-    if (signal?.aborted) return;
-    const revalidatedMentionPubkeys =
-      await revalidateMentionPubkeys(addedMentionPubkeys);
-    if (signal?.aborted) return;
     // Edit receivers treat `[]` as "wipe attachments"; `undefined` means
     // "leave imeta alone". Always send an explicit list on the edit path.
     await save(

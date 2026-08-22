@@ -251,6 +251,63 @@ test("edit save revalidates added mentions immediately before save", async () =>
   ]);
 });
 
+test("edit save drops reference mention tags for denied added mentions", async () => {
+  const agent = "e".repeat(64);
+  /** @type {unknown[][]} */
+  const saveCalls = [];
+  await submitMessageEdit(
+    baseOptions({
+      content: `hello @${agent}`,
+      originalContent: "hello",
+      editTarget: {
+        mentionRefs: [{ displayName: "Agent", pubkey: agent }],
+        unresolvedMentionPubkeys: [agent],
+      },
+      getMentionRefs: () => [{ displayName: "Agent", pubkey: agent }],
+      revalidateMentionPubkeys: async () => [],
+      save: async (...args) => {
+        saveCalls.push(args);
+      },
+    }),
+  );
+
+  assert.equal(saveCalls.length, 1);
+  const [, tags, mentionPubkeys] = saveCalls[0];
+  assert.deepEqual(mentionPubkeys, []);
+  assert.deepEqual(
+    tags.filter((tag) => tag[0] === "mention"),
+    [],
+  );
+});
+
+test("edit save keeps reference mention tags for admitted added mentions", async () => {
+  const agent = "e".repeat(64);
+  /** @type {unknown[][]} */
+  const saveCalls = [];
+  await submitMessageEdit(
+    baseOptions({
+      content: `hello @${agent}`,
+      originalContent: "hello",
+      editTarget: {
+        mentionRefs: [{ displayName: "Agent", pubkey: agent }],
+        unresolvedMentionPubkeys: [],
+      },
+      getMentionRefs: () => [{ displayName: "Agent", pubkey: agent }],
+      revalidateMentionPubkeys: async (pubkeys) => [...pubkeys],
+      save: async (...args) => {
+        saveCalls.push(args);
+      },
+    }),
+  );
+
+  assert.equal(saveCalls.length, 1);
+  const [, tags] = saveCalls[0];
+  assert.deepEqual(
+    tags.filter((tag) => tag[0] === "mention"),
+    [["mention", agent]],
+  );
+});
+
 test("edit upload pause revalidates revoked mentions only after upload completes", async () => {
   const agent = "d".repeat(64);
   const calls = [];
