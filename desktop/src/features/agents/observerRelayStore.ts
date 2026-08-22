@@ -321,11 +321,7 @@ function appendAgentEvents(
 
   const seen = allAtEnd
     ? new Set<string>()
-    : new Set(
-        current.map(
-          (event) => observerEventIdentity(event),
-        ),
-      );
+    : new Set(current.map((event) => observerEventIdentity(event)));
   const added: ObserverEvent[] = [];
   for (const event of admissible) {
     const identity = observerEventIdentity(event);
@@ -378,8 +374,12 @@ function appendAgentEvents(
   invalidateSnapshot(key);
   if (!trimmed) return sortedAdded;
 
-  const retainedKeys = new Set(final.map((event) => observerEventIdentity(event)));
-  return sortedAdded.filter((event) => retainedKeys.has(observerEventIdentity(event)));
+  const retainedKeys = new Set(
+    final.map((event) => observerEventIdentity(event)),
+  );
+  return sortedAdded.filter((event) =>
+    retainedKeys.has(observerEventIdentity(event)),
+  );
 }
 
 function appendAgentEvent(agentPubkey: string, event: ObserverEvent) {

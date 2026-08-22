@@ -3479,9 +3479,7 @@ function mockPersonaCatalogPublications() {
       createdAt: event.created_at,
       agent: {
         displayName:
-          typeof content.display_name === "string"
-            ? content.display_name
-            : "",
+          typeof content.display_name === "string" ? content.display_name : "",
         avatarUrl: optionalString(content.avatar_url),
         systemPrompt:
           typeof content.system_prompt === "string"
@@ -3496,8 +3494,7 @@ function mockPersonaCatalogPublications() {
             )
           : [],
         respondTo:
-          content.respond_to === "owner-only" ||
-          content.respond_to === "anyone"
+          content.respond_to === "owner-only" || content.respond_to === "anyone"
             ? content.respond_to
             : null,
         parallelism:

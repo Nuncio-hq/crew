@@ -2907,5 +2907,4 @@ describe("clearActiveTurnsForAgent", () => {
 
     mock.timers.reset();
   });
-
 });
