@@ -39,9 +39,9 @@ use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
 use crate::acp::{
-    extract_model_config_options, extract_model_state, model_in_catalog,
-    resolve_model_switch_method, AcpClient, AcpError, EnvVar, McpServer, ModelSwitchMethod,
-    StopReason, SystemPromptTransport,
+    extract_model_config_options, extract_model_state, extract_thought_level_config_id,
+    model_in_catalog, resolve_model_switch_method, AcpClient, AcpError, EnvVar, McpServer,
+    ModelSwitchMethod, StopReason, SystemPromptTransport,
 };
 use crate::config::{compose_session_title, DedupMode, PermissionMode};
 use crate::observer;
@@ -111,6 +111,12 @@ pub struct AgentModelCapabilities {
     pub config_options_raw: Vec<serde_json::Value>,
     /// Unstable: SessionModelState from session/new.
     pub available_models_raw: Option<serde_json::Value>,
+    /// B5: configId for the `thought_level` category option, if the adapter
+    /// advertised one in session/new. Resolved at session time so the
+    /// spawn-scoped effort application forwards the adapter's real configId
+    /// instead of hardcoding it. `None` when the adapter advertises no
+    /// `thought_level` option.
+    pub thought_level_config_id: Option<String>,
 }
 
 /// Verified Project-thread worktree binding for one conversation, revalidated
@@ -284,6 +290,28 @@ pub struct OwnedAgent {
     /// desktop reader to distinguish a genuine runtime override from a stale
     /// session whose persona model was edited. Reset on spawn/restart.
     pub model_overridden: bool,
+    /// Opaque per-pick `request_id` from the live `SwitchModel` that set
+    /// `desired_model`, echoed on the late `control_result` frame so the
+    /// Desktop ModelPicker can correlate it to the pick that fired the switch.
+    /// `None` for config/persona-derived models (no live pick to correlate).
+    pub desired_model_request_id: Option<String>,
+    /// True when a busy-path live switch is awaiting its deferred apply: the
+    /// switch was delivered to an in-flight turn (`sent` ack), the turn was
+    /// cancelled+requeued, and the real apply runs at the next session. On that
+    /// apply, `create_session_and_apply_model` emits a positive terminal
+    /// `control_result` (success) so the Desktop learns the outcome instead of
+    /// inferring it from timeout silence. The idle path never sets this — it
+    /// already emits its terminal immediately — so this gate prevents a
+    /// double-emit there. Consumed (reset) at apply time.
+    pub desired_model_pending_ack: bool,
+    /// Persisted startup effort value from `BUZZ_ACP_EFFORT_LEVEL` (carried from
+    /// the Desktop record via `Config.effort_level`). Held per-worker and applied
+    /// once, at the first session creation, by pairing with the adapter's
+    /// advertised `thought_level` configId. This is spawn-scoped only — there is
+    /// no pool-level effort state and no live mid-conversation effort switching.
+    /// Non-fatal when absent or when the adapter does not advertise
+    /// `thought_level`.
+    pub startup_effort: Option<String>,
     /// Normalized agent name from initialize (`agentInfo.name`/`serverInfo.name`).
     pub agent_name: String,
     /// Whether Goose accepted its custom system-prompt method. `None` probes on
@@ -387,7 +415,7 @@ fn apply_completed_before_control_signal(
     // the fresh session applies the new model on its next creation.
     if matches!(
         control_signal,
-        ControlSignal::Rotate | ControlSignal::SwitchModel(_)
+        ControlSignal::Rotate | ControlSignal::SwitchModel { .. }
     ) {
         state.invalidate(source);
     }
@@ -395,7 +423,7 @@ fn apply_completed_before_control_signal(
 
 /// Control signal for an in-flight channel turn.
 ///
-/// Not `Copy`: `SwitchModel` carries an owned `String`. Callers must clone when
+/// Not `Copy`: `SwitchModel` carries owned `String`s. Callers must clone when
 /// a value is needed after a move, or match by reference.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlSignal {
@@ -418,7 +446,14 @@ pub enum ControlSignal {
     /// setting `OwnedAgent::desired_model` before invalidation; the requeued
     /// turn re-creates the session and re-applies `desired_model`. Runtime-only
     /// — never persisted, gone on restart/respawn.
-    SwitchModel(String),
+    ///
+    /// Carries `(model_id, request_id)`: the opaque per-pick `request_id`
+    /// originates in the Desktop ModelPicker and is echoed on every
+    /// `control_result` frame so a replayed result cannot settle a later pick.
+    SwitchModel {
+        model_id: String,
+        request_id: Option<String>,
+    },
 }
 
 /// Goose-native non-cancelling steer request, sent from the main loop to an
@@ -940,6 +975,7 @@ impl AgentPool {
         &mut self,
         channel_id: Uuid,
         model_id: &str,
+        request_id: Option<String>,
     ) -> IdleSwitchResult {
         let Some(agent) = self.agents.iter_mut().flatten().find(|agent| {
             agent.state.sessions.contains_key(&channel_id)
@@ -966,6 +1002,9 @@ impl AgentPool {
 
         agent.desired_model = Some(model_id.to_string());
         agent.model_overridden = true;
+        // Carry the pick's correlator so a deferred-validation miss on the next
+        // turn's session creation emits a late frame the Desktop can match.
+        agent.desired_model_request_id = request_id;
         agent.state.invalidate_channel(&channel_id);
         agent.state.invalidate_routing_channel(channel_id);
         IdleSwitchResult::Switched
@@ -1188,17 +1227,94 @@ async fn create_session_and_apply_model(
         agent.model_capabilities = Some(AgentModelCapabilities {
             config_options_raw: extract_model_config_options(&resp.raw),
             available_models_raw: extract_model_state(&resp.raw),
+            thought_level_config_id: extract_thought_level_config_id(&resp.raw),
         });
     }
 
-    // Apply desired_model if set, matching against the fresh session/new response.
-    // Track whether the switch succeeded so session_config_captured reflects
-    // the post-switch state (not the pre-switch desired state).
-    let switch_succeeded = if let Some(ref desired) = agent.desired_model {
+    // Apply desired_model if set, matching against the fresh session/new
+    // response. `post_switch_snapshot` drives everything downstream:
+    //   `Some(value)` → a switch applied; `value` is the adapter's post-switch
+    //                   RPC response, whose `configOptions` describe the target
+    //                   model. Effort resolution and the Desktop capture both
+    //                   read it so they converge on the model the session is
+    //                   actually running, not the pre-switch default.
+    //   `None`        → no switch, or the adapter rejected/does-not-know the
+    //                   model; the session/new snapshot is cached as-is and
+    //                   `switch_succeeded` stays false.
+    let post_switch_snapshot: Option<serde_json::Value> = if let Some(ref desired) =
+        agent.desired_model
+    {
+        // Consume the busy-path pending-ack once for this apply: only the
+        // `Applied` arm turns it into a positive terminal; the rejection and
+        // unsupported arms already emit their own correlated failure frame, so
+        // taking it here keeps a leftover flag from firing a spurious success
+        // on some later unrelated session.
+        let pending_ack = std::mem::take(&mut agent.desired_model_pending_ack);
         match resolve_model_switch_method(&resp.raw, desired) {
             Some(method) => {
-                apply_model_switch(&mut agent.acp, &resp.session_id, desired, &method).await?;
-                true
+                match apply_model_switch(&mut agent.acp, &resp.session_id, desired, &method).await?
+                {
+                    ModelSwitchOutcome::Applied(switch_result) => {
+                        // The adapter rebuilds `session.configOptions` for the
+                        // target model and echoes them here. Refresh capabilities
+                        // from that authoritative snapshot when present so the
+                        // idle-switch guard and the panel reflect the target
+                        // model; drop to `None` (re-derive next session) when the
+                        // adapter returned no options so a pre-switch snapshot is
+                        // never mistaken for the target model's.
+                        if switch_result
+                            .get("configOptions")
+                            .is_some_and(|v| !v.is_null())
+                        {
+                            agent.model_capabilities = Some(AgentModelCapabilities {
+                                config_options_raw: extract_model_config_options(&switch_result),
+                                available_models_raw: extract_model_state(&switch_result),
+                                thought_level_config_id: extract_thought_level_config_id(
+                                    &switch_result,
+                                ),
+                            });
+                        } else {
+                            agent.model_capabilities = None;
+                        }
+                        // Busy-path deferred switch: emit a positive terminal so
+                        // the Desktop confirms success from a real frame instead
+                        // of inferring it from timeout silence. Gated on the
+                        // pending-ack flag so the idle path (which already acked
+                        // `switched` immediately) does not double-emit.
+                        if pending_ack {
+                            agent.acp.observe(
+                                "control_result",
+                                serde_json::json!({
+                                    "type": "switch_model",
+                                    "status": "switched",
+                                    "modelId": desired,
+                                    "requestId": agent.desired_model_request_id,
+                                }),
+                            );
+                        }
+                        Some(switch_result)
+                    }
+                    ModelSwitchOutcome::Rejected => {
+                        // The adapter explicitly rejected the switch: the session
+                        // is still on its default model. Surface a terminal
+                        // failure so the Desktop ModelPicker rejects the live pick
+                        // instead of falsely reporting success, and preserve the
+                        // pre-switch capabilities the session is really running.
+                        agent.acp.observe(
+                            "control_result",
+                            serde_json::json!({
+                                "type": "switch_model",
+                                "status": "failure",
+                                "modelId": desired,
+                                // Echo the pick's request_id so the Desktop can
+                                // correlate this late frame to the operation
+                                // that fired it, and ignore replayed results.
+                                "requestId": agent.desired_model_request_id,
+                            }),
+                        );
+                        None
+                    }
+                }
             }
             None => {
                 tracing::warn!(
@@ -1215,26 +1331,64 @@ async fn create_session_and_apply_model(
                         "type": "switch_model",
                         "status": "unsupported_model",
                         "modelId": desired,
+                        // Echo the pick's request_id (see the failure arm).
+                        "requestId": agent.desired_model_request_id,
                     }),
                 );
-                false
+                None
             }
         }
     } else {
-        false
+        None
     };
+    let switch_succeeded = post_switch_snapshot.is_some();
+
+    // Apply the worker's spawn-scoped startup effort, if configured and the
+    // running model advertises a `thought_level` option. Runs on every session
+    // creation (config options are per-session), mirroring the model-switch
+    // application above. The held value comes from `BUZZ_ACP_EFFORT_LEVEL` and
+    // never mutates — there is no pool-level effort state and no live switching.
+    // Reads the post-switch snapshot so the configId is discovered on the model
+    // the session is actually running; computed BEFORE the capture emission so
+    // the cached configOptions tell the truth about the running session.
+    let effort_snapshot = post_switch_snapshot.as_ref().unwrap_or(&resp.raw);
+    let effort_outcome = apply_startup_effort(agent, effort_snapshot, &resp.session_id).await?;
 
     // Emit session config for desktop consumption (config bridge tier 1b).
     // Emitted AFTER desired_model resolution so the desktop caches the
     // post-switch state. modelOverridden reflects whether the switch actually
-    // applied — false on the unsupported arm so the panel doesn't show a
-    // stale override badge.
+    // applied — false on the rejected/unsupported arms so the panel doesn't show
+    // a stale override badge.
+    //
+    // configOptions come from the post-switch snapshot on a successful switch
+    // (the target model's option set) and the session/new snapshot otherwise.
+    // Truthful capture: after a successful effort application the snapshot still
+    // carries the pre-set `currentValue`, so patch the applied option to the
+    // value the session is actually running. A rejected effort or a model with
+    // no `thought_level` option leaves the snapshot untouched.
+    let config_options_for_cache = {
+        let mut opts = effort_snapshot
+            .get("configOptions")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        if let Some(StartupEffortOutcome::Applied { config_id, value }) = &effort_outcome {
+            patch_config_option_current_value(&mut opts, config_id, value);
+        }
+        opts
+    };
     agent.acp.observe(
         "session_config_captured",
         serde_json::json!({
-            "configOptions": resp.raw.get("configOptions").cloned().unwrap_or(serde_json::Value::Null),
+            "configOptions": config_options_for_cache,
             "modes": resp.raw.get("modes").cloned().unwrap_or(serde_json::Value::Null),
-            "models": resp.raw.get("models").cloned().unwrap_or(serde_json::Value::Null),
+            // `models` must come from the SAME snapshot as configOptions — the
+            // post-switch snapshot on a successful switch, session/new otherwise.
+            // Taking it from `resp.raw` here would emit the target model's option
+            // set alongside the pre-switch model identity, so the desktop panel
+            // would report the old model as live after an applied switch. When a
+            // successful target response omits `models`, this emits Null rather
+            // than falling back to the pre-switch `resp.raw.models`.
+            "models": effort_snapshot.get("models").cloned().unwrap_or(serde_json::Value::Null),
             "modelOverridden": agent.model_overridden && switch_succeeded,
             // Pair identity for the desktop session-config cache, which is
             // keyed by (agent, relay) like the lifecycle frames.
@@ -1457,18 +1611,35 @@ fn is_dev_mcp_server(server: &McpServer) -> bool {
             .is_some_and(|command| command.eq_ignore_ascii_case(CAPABILITY_DEV_MCP))
 }
 
+/// Outcome of a live model-switch RPC returned by [`apply_model_switch`].
+///
+/// `Applied` and `Rejected` are distinct outcomes and must not be collapsed:
+/// the caller needs to know whether the session is now on the target model
+/// before deciding what capabilities to cache and whether to surface a failure.
+#[derive(Debug)]
+enum ModelSwitchOutcome {
+    /// The adapter accepted the switch. Carries the RPC response value, which
+    /// may include refreshed `configOptions` for the target model.
+    Applied(serde_json::Value),
+    /// The adapter returned an application-level error (e.g. JSON error,
+    /// unrecognised model). The session is still on its default model;
+    /// pre-switch capabilities must be preserved.
+    Rejected,
+}
+
 /// Send the appropriate ACP model-switch request with a timeout.
 ///
-/// On timeout or error, logs a warning and returns — the caller proceeds
-/// with the agent's default model. This is intentionally non-fatal: a stale
-/// response from a timed-out request is safely ignored by `read_until_response`
-/// (non-matching JSON-RPC IDs are skipped).
+/// Transport-class errors propagate as `Err` so the caller respawns the agent
+/// rather than reuse a poisoned stdio stream. An application-level rejection is
+/// non-fatal but distinct from success: it returns [`ModelSwitchOutcome::Rejected`]
+/// so the caller preserves pre-switch capabilities and tells Desktop the pick
+/// failed instead of silently claiming the switch landed.
 async fn apply_model_switch(
     acp: &mut AcpClient,
     session_id: &str,
     desired: &str,
     method: &ModelSwitchMethod,
-) -> Result<(), AcpError> {
+) -> Result<ModelSwitchOutcome, AcpError> {
     let method_label = match method {
         ModelSwitchMethod::ConfigOption { config_id, .. } => {
             format!("configOption (configId={config_id})")
@@ -1493,11 +1664,15 @@ async fn apply_model_switch(
     .await;
 
     match result {
-        Ok(Ok(_)) => {
+        // Return the RPC result so the caller can consume the post-switch
+        // capability snapshot the adapter echoes (claude-agent-acp rebuilds
+        // `session.configOptions` on a model change and returns them here).
+        Ok(Ok(value)) => {
             tracing::info!(
                 target: "pool::model",
                 "applied model {desired} via {method_label} on session {session_id}"
             );
+            Ok(ModelSwitchOutcome::Applied(value))
         }
         // Transport-class errors may have corrupted the stdio stream — propagate
         // so the caller can respawn the agent instead of reusing a poisoned one.
@@ -1510,14 +1685,18 @@ async fn apply_model_switch(
                 target: "pool::model",
                 "fatal error setting model {desired} via {method_label}: {e}"
             );
-            return Err(e);
+            Err(e)
         }
-        // Application-level errors (Json, etc.) — agent is fine, just uses default model.
+        // Application-level errors (Json, etc.) — the adapter explicitly
+        // rejected the switch; the session is still on its default model.
+        // Distinct from a successful switch that returned no configOptions:
+        // the caller must preserve pre-switch capabilities here.
         Ok(Err(e)) => {
             tracing::warn!(
                 target: "pool::model",
                 "failed to set model {desired} via {method_label}: {e} — proceeding with agent default"
             );
+            Ok(ModelSwitchOutcome::Rejected)
         }
         Err(_) => {
             // Outer timeout fired — the inner send_request may have left the
@@ -1526,10 +1705,123 @@ async fn apply_model_switch(
                 target: "pool::model",
                 "model set via {method_label} timed out ({MODEL_SWITCH_TIMEOUT:?}) — treating as fatal"
             );
-            return Err(AcpError::Timeout(MODEL_SWITCH_TIMEOUT));
+            Err(AcpError::Timeout(MODEL_SWITCH_TIMEOUT))
         }
     }
-    Ok(())
+}
+
+/// Outcome of applying a worker's spawn-scoped startup effort at session creation.
+///
+/// Drives truthful capture: only `Applied` patches the cached `currentValue`.
+/// `Rejected` (adapter refused) and the `None` return (model advertises no
+/// `thought_level` option, or no effort was configured) leave the session/new
+/// snapshot untouched so the panel reflects the session's real state.
+enum StartupEffortOutcome {
+    Applied { config_id: String, value: String },
+    Rejected,
+}
+
+/// Apply the worker's held `startup_effort` via `session/set_config_option`, if
+/// set and the current model advertises a `thought_level` option.
+///
+/// Returns `Ok(None)` when there is nothing to apply (no configured effort, or
+/// the model has no `thought_level` option) or `Ok(Some(_))` describing whether
+/// the adapter accepted the value. Transport-class errors propagate as `Err` so
+/// the caller respawns the worker rather than reuse a poisoned stream — mirroring
+/// [`apply_model_switch`]'s classification. Application-level rejection is
+/// non-fatal: the session proceeds on the model's default effort.
+async fn apply_startup_effort(
+    agent: &mut OwnedAgent,
+    session_new_result: &serde_json::Value,
+    session_id: &str,
+) -> Result<Option<StartupEffortOutcome>, AcpError> {
+    let Some(value) = agent.startup_effort.clone() else {
+        return Ok(None);
+    };
+    let Some(config_id) = extract_thought_level_config_id(session_new_result) else {
+        tracing::info!(
+            target: "pool::effort",
+            "startup effort {value} configured but model advertises no thought_level option — leaving agent default"
+        );
+        return Ok(None);
+    };
+
+    let result = tokio::time::timeout(MODEL_SWITCH_TIMEOUT, async {
+        agent
+            .acp
+            .session_set_config_option(session_id, &config_id, &value)
+            .await
+    })
+    .await;
+
+    match result {
+        Ok(Ok(_)) => {
+            tracing::info!(
+                target: "pool::effort",
+                "applied startup effort {value} via configId={config_id} on session {session_id}"
+            );
+            Ok(Some(StartupEffortOutcome::Applied { config_id, value }))
+        }
+        // Transport-class errors may have corrupted the stdio stream — propagate
+        // so the caller can respawn the agent instead of reusing a poisoned one.
+        Ok(Err(e @ AcpError::Io(_)))
+        | Ok(Err(e @ AcpError::WriteTimeout(_)))
+        | Ok(Err(e @ AcpError::Timeout(_)))
+        | Ok(Err(e @ AcpError::Protocol(_)))
+        | Ok(Err(e @ AcpError::AgentExited)) => {
+            tracing::error!(
+                target: "pool::effort",
+                "fatal error applying startup effort {value} via configId={config_id}: {e}"
+            );
+            Err(e)
+        }
+        // Application-level rejection (e.g. Json) — agent is fine, uses default effort.
+        Ok(Err(e)) => {
+            tracing::warn!(
+                target: "pool::effort",
+                "adapter rejected startup effort {value} via configId={config_id}: {e} — proceeding with agent default"
+            );
+            Ok(Some(StartupEffortOutcome::Rejected))
+        }
+        Err(_) => {
+            // Outer timeout fired — the inner send_request may have left the
+            // stream in an unknown state. Treat as transport error.
+            tracing::error!(
+                target: "pool::effort",
+                "startup effort {value} via configId={config_id} timed out ({MODEL_SWITCH_TIMEOUT:?}) — treating as fatal"
+            );
+            Err(AcpError::Timeout(MODEL_SWITCH_TIMEOUT))
+        }
+    }
+}
+
+/// Patch the `currentValue` of the configOption whose `configId`/`id` matches
+/// `config_id` in a session/new `configOptions` array, in place.
+///
+/// Used by truthful capture: a successful `session/set_config_option` is not
+/// reflected in the original session/new snapshot, so the accepted value is
+/// written back before the snapshot is cached. A no-op when `options` is not an
+/// array or no entry matches (the id came from the same array, so a match is
+/// expected in practice).
+fn patch_config_option_current_value(
+    options: &mut serde_json::Value,
+    config_id: &str,
+    value: &str,
+) {
+    let Some(arr) = options.as_array_mut() else {
+        return;
+    };
+    for opt in arr {
+        let matches = opt
+            .get("configId")
+            .or_else(|| opt.get("id"))
+            .and_then(|v| v.as_str())
+            == Some(config_id);
+        if matches {
+            opt["currentValue"] = serde_json::Value::String(value.to_string());
+            return;
+        }
+    }
 }
 
 /// Set the session permission mode via `session/set_config_option`.
@@ -1696,8 +1988,8 @@ fn workspace_section(cwd: &str) -> Option<String> {
             "[Workspace]\nYour absolute working directory is `{cwd}`. All workspace \
              files — `AGENTS.md`, `RESEARCH/`, `PLANS/`, `GUIDES/`, `WORK_LOGS/`, \
              `OUTBOX/` — and any repositories you clone (under `{cwd}/REPOS/`) live \
-             here. This is where you already are; do not search `$HOME` or other \
-             directories for them."
+             here. This is where you already are, so start here rather than scanning \
+             `$HOME`. Any specific path the user names is fine to read."
         ))
     } else {
         None
@@ -3216,9 +3508,15 @@ pub async fn run_prompt_task(
                     // `desired_model` here means the fresh session created by the
                     // requeued turn (busy) or the next turn (already-completed)
                     // applies the new model. Runtime-only — never persisted.
-                    if let ControlSignal::SwitchModel(ref model_id) = control_signal {
+                    if let ControlSignal::SwitchModel { model_id, request_id } = &control_signal {
                         agent.desired_model = Some(model_id.clone());
                         agent.model_overridden = true;
+                        agent.desired_model_request_id = request_id.clone();
+                        // Busy path: the real apply is deferred to the requeued
+                        // session. Arm the positive-terminal emit so that apply
+                        // reports success explicitly rather than the Desktop
+                        // inferring it from timeout silence.
+                        agent.desired_model_pending_ack = true;
                     }
                     // Control signal received. Guard against Race 1: the turn may
                     // have completed naturally just as cancel fired.
@@ -3309,7 +3607,7 @@ pub async fn run_prompt_task(
                         // MUST send a PromptResult or the main loop deadlocks.
                         if matches!(
                             control_signal,
-                            ControlSignal::Rotate | ControlSignal::SwitchModel(_)
+                            ControlSignal::Rotate | ControlSignal::SwitchModel { .. }
                         ) {
                             tracing::debug!(
                                 target: "pool::prompt",
@@ -5639,7 +5937,7 @@ fn requeue_cancelled_batch(
 ) -> Option<FlushBatch> {
     let reason = match signal {
         ControlSignal::Steer => CancelReason::Steer,
-        ControlSignal::Interrupt | ControlSignal::SwitchModel(_) => CancelReason::Interrupt,
+        ControlSignal::Interrupt | ControlSignal::SwitchModel { .. } => CancelReason::Interrupt,
         // Cancel/Rotate discard the batch — no merged re-prompt.
         ControlSignal::Cancel | ControlSignal::Rotate => return None,
     };
@@ -8969,6 +9267,9 @@ done"#
             model_capabilities: None,
             desired_model: None,
             model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
@@ -9064,6 +9365,9 @@ done"#
             model_capabilities: None,
             desired_model: None,
             model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
@@ -9241,6 +9545,9 @@ done"#
             model_capabilities: None,
             desired_model: None,
             model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
@@ -9393,6 +9700,9 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             model_capabilities: None,
             desired_model: None,
             model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
@@ -10179,7 +10489,10 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         apply_completed_before_control_signal(
             &mut s,
             &PromptSource::Channel(ch_a),
-            &ControlSignal::SwitchModel("gpt-5".into()),
+            &ControlSignal::SwitchModel {
+                model_id: "gpt-5".into(),
+                request_id: None,
+            },
         );
 
         assert!(!s.has_channel_state(&ch_a));
@@ -10220,7 +10533,10 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             (ControlSignal::Steer, Some(CancelReason::Steer)),
             (ControlSignal::Interrupt, Some(CancelReason::Interrupt)),
             (
-                ControlSignal::SwitchModel("gpt-5".into()),
+                ControlSignal::SwitchModel {
+                    model_id: "gpt-5".into(),
+                    request_id: None,
+                },
                 Some(CancelReason::Interrupt),
             ),
             (ControlSignal::Cancel, None),
@@ -10336,7 +10652,10 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             Case {
                 name: "CancelDrainTimeout + SwitchModel preserves batch with Interrupt reason",
                 error: || AcpError::CancelDrainTimeout(CONTROL_CANCEL_GRACE),
-                signal: ControlSignal::SwitchModel("gpt-5".to_string()),
+                signal: ControlSignal::SwitchModel {
+                    model_id: "gpt-5".to_string(),
+                    request_id: None,
+                },
                 expected_outcome: "CancelDrainTimeout",
                 batch_preserved: true,
                 expected_reason: Some(CancelReason::Interrupt),
@@ -10803,6 +11122,9 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             model_capabilities: None,
             desired_model: None,
             model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
@@ -10877,6 +11199,9 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             model_capabilities: None,
             desired_model: None,
             model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,

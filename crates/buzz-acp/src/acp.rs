@@ -799,7 +799,7 @@ impl AcpClient {
         })
     }
 
-    /// Send Goose's custom system-prompt request after `session/new`.
+    /// Replace Goose's custom system prompt after `session/new`.
     pub async fn session_set_goose_system_prompt(
         &mut self,
         session_id: &str,
@@ -809,7 +809,7 @@ impl AcpClient {
             "_goose/unstable/session/system-prompt/set",
             serde_json::json!({
                 "sessionId": session_id,
-                "mode": "append",
+                "mode": "set",
                 "key": "buzz",
                 "text": text,
             }),
@@ -2729,6 +2729,28 @@ pub fn extract_model_config_options(result: &serde_json::Value) -> Vec<serde_jso
 /// Returns the `models` object if present: `{ currentModelId, availableModels: [...] }`.
 pub fn extract_model_state(result: &serde_json::Value) -> Option<serde_json::Value> {
     result.get("models").cloned()
+}
+
+/// Extract the `configId` for the `thought_level` category option from a
+/// `session/new` result, if the adapter advertised one.
+///
+/// Claude Code's adapter uses `category: "thought_level"` in its `configOptions`.
+/// The configId is adapter-defined (e.g. `"effort"` on claude-agent-acp) and must
+/// not be hardcoded in the harness — this function discovers it at session time so
+/// the spawn-scoped effort application forwards the adapter's real id. Accepts both
+/// `configId` (ACP spec) and `id` (claude-agent-acp), matching the model-switch path.
+pub fn extract_thought_level_config_id(result: &serde_json::Value) -> Option<String> {
+    let arr = result["configOptions"].as_array()?;
+    for opt in arr {
+        if opt.get("category").and_then(|c| c.as_str()) == Some("thought_level") {
+            let config_id = opt
+                .get("configId")
+                .or_else(|| opt.get("id"))
+                .and_then(|v| v.as_str())?;
+            return Some(config_id.to_string());
+        }
+    }
+    None
 }
 
 /// Match a desired model ID against a fresh `session/new` response.
