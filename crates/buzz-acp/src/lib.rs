@@ -5215,6 +5215,16 @@ mod agent_draft_prompt_tests {
     }
 
     #[test]
+    fn shared_base_prompt_keeps_text_channel_no_bare_acknowledgement_rule() {
+        // The huddle voice prompt (desktop `voice_mode_guidelines`) overrides
+        // the no-bare-ack rule for spoken pickups; the text-channel rule in
+        // the shared base prompt must stay intact.
+        let prompt = include_str!("base_prompt.md");
+        assert!(prompt.contains("Never publish a bare acknowledgement."));
+        assert!(prompt.contains("If your draft contains nothing beyond acknowledgement, send nothing."));
+    }
+
+    #[test]
     fn shared_base_prompt_teaches_evidence_on_completion_within_budget() {
         let prompt = include_str!("base_prompt.md");
         let section = prompt
