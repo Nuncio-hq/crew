@@ -7,8 +7,8 @@
       "recordedAt": "2026-08-12"
     },
     "src/features/agents/observerRelayStore.ts": {
-      "lines": 1031,
-      "reason": "Upstream-owned observer retention and incremental-admission growth landed in Tier 1 performance sync.",
+      "lines": 1054,
+      "reason": "Upstream-owned observer retention and incremental-admission growth from the Tier 1 performance sync, plus ACP harness control_result dispatch from #4557.",
       "recordedAt": "2026-08-22"
     },
     "src/features/messages/ui/MessageComposer.tsx": {
