@@ -257,6 +257,33 @@ Hermes-side ask lands.
   when a clean ACP session-catalog read path exists from create/edit.
 - Credential isolation for public agents — blocked on Hermes-side ask.
 
+## Huddle voice latency levers (issue #275, upstream #5671)
+
+Upstream's huddle latency work is **env-gated and default-off**, and Crew has
+absorbed only its always-on parts. Crew's huddle voice path therefore has **no
+tuning environment variables** today — nothing to set on an agent profile, in
+`.env`, or in a managed-agent env block.
+
+Absorbed (always-on, no configuration):
+
+- A held push-to-talk shortcut groups the whole hold into one utterance; a VAD
+  pause no longer splits it even with a manually open microphone
+  (`vad_flush_allowed` in `desktop/src-tauri/src/huddle/stt.rs`).
+- Speech-boundary policy: onset confirmation, pre-roll, offset hysteresis and
+  hangover (upstream #6397), so short replies survive and trailing consonants
+  are not clipped.
+
+Not absorbed here — these levers live in `buzz-voice`/TTS internals that this
+branch does not touch, so **setting them has no effect in Crew**:
+`BUZZ_STT_SPECULATIVE`, `BUZZ_TTS_STREAMING`, `BUZZ_TTS_EMIT_FRAMES`,
+`BUZZ_STT_THREADS`, `BUZZ_TTS_THREADS`, `BUZZ_TTS_PHASE_LOG`.
+
+`BUZZ_STT_FLUSH_MS` is **not** a latency lever and must not be reintroduced:
+upstream removed it after live testing because shortening the silence window
+below natural mid-sentence pauses split one spoken sentence into several
+messages and confused listening agents. The window stays at the production
+300 ms (`SILENCE_FLUSH_FRAMES`).
+
 ## Crew roles (issue #116 Slice 1R and later slices)
 
 - **Model:** a role is a founder/owner-signed `(agent, channel)` assignment
