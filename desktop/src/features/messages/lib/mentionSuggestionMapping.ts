@@ -13,6 +13,7 @@ export type MentionSuggestionCandidate = {
   teamMembers?: TeamMentionMember[];
   avatarUrl?: string | null;
   isAgent: boolean;
+  isManagedAgent?: boolean;
   isMember: boolean;
   role?: ChannelRole | null;
   ownerPubkey?: string | null;
@@ -24,10 +25,12 @@ export function mapMentionCandidateToSuggestion(opts: {
   label: string;
   channelType?: ChannelType | null;
   currentPubkey?: string | null;
+  agentProvenanceReady: boolean;
   ownerProfiles?: UserProfileLookup;
   profiles?: UserProfileLookup;
 }): MentionSuggestion {
   const {
+    agentProvenanceReady,
     candidate,
     channelType,
     currentPubkey,
@@ -53,6 +56,17 @@ export function mapMentionCandidateToSuggestion(opts: {
         : null) ??
       null,
     isAgent: candidate.isAgent,
+    agentProvenance:
+      agentProvenanceReady && candidate.kind === "identity" && candidate.isAgent
+        ? candidate.isManagedAgent
+          ? "managed-here"
+          : candidate.ownerPubkey &&
+              currentPubkey &&
+              normalizePubkey(candidate.ownerPubkey) ===
+                normalizePubkey(currentPubkey)
+            ? "managed-elsewhere"
+            : undefined
+        : undefined,
     notInChannel:
       candidate.kind !== "team" &&
       channelType !== "dm" &&

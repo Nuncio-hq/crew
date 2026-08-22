@@ -142,6 +142,71 @@ export function toSearchHit(
   };
 }
 
+export function createDesktopNotificationActivationQueue(
+  activate: (
+    target: DesktopNotificationTarget,
+    signal: AbortSignal,
+  ) => Promise<void>,
+  onError?: (error: unknown) => void,
+): {
+  cancel: () => void;
+  enqueue: (target: DesktopNotificationTarget) => void;
+} {
+  const controller = new AbortController();
+  let pending = Promise.resolve();
+
+  return {
+    cancel: () => controller.abort(),
+    enqueue: (target) => {
+      pending = pending
+        .then(() => {
+          if (!controller.signal.aborted) {
+            return activate(target, controller.signal);
+          }
+        })
+        .catch((error) => {
+          try {
+            onError?.(error);
+          } catch {
+            // Error reporting must not poison later activations.
+          }
+        });
+    },
+  };
+}
+
+export async function activateDesktopNotificationTarget(
+  target: DesktopNotificationTarget,
+  actions: {
+    goChannel: (
+      channelId: string,
+      options?: { force?: boolean },
+    ) => Promise<unknown>;
+    goHome: () => Promise<unknown>;
+    openSearchHit: (
+      hit: SearchHit,
+      behavior?: { force?: boolean; signal?: AbortSignal },
+    ) => Promise<unknown>;
+    revealWindow: () => Promise<void>;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) return;
+
+  let navigation: Promise<unknown>;
+  if (!target.channelId) {
+    navigation = actions.goHome();
+  } else {
+    const anchor = toSearchHit(target);
+    navigation = anchor
+      ? actions.openSearchHit(anchor, { force: true, signal })
+      : actions.goChannel(target.channelId, { force: true });
+  }
+
+  void actions.revealWindow().catch(() => undefined);
+  await navigation;
+}
+
 export function deriveShellRoute(pathname: string): {
   selectedChannelId: string | null;
   selectedView: AppView;

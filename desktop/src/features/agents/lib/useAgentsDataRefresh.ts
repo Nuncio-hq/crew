@@ -5,7 +5,6 @@ import { useEffect } from "react";
 import {
   managedAgentsQueryKey,
   personasQueryKey,
-  relayAgentsQueryKey,
   teamsQueryKey,
 } from "@/features/agents/hooks";
 import { managedAgentRuntimesQueryKey } from "@/features/agents/managedAgentRuntimeHooks";
@@ -22,6 +21,12 @@ const COALESCE_MS = 200;
 // with empty deps — invalidation is global and has no reason to be
 // pubkey-scoped, so it must NOT live inside the pubkey-keyed `usePersonaSync`
 // (re-registering per identity switch would leak a listener each time).
+export const LOCAL_AGENT_DATA_QUERY_KEYS = [
+  personasQueryKey,
+  teamsQueryKey,
+  managedAgentsQueryKey,
+] as const;
+
 export function useAgentsDataRefresh(): void {
   const queryClient = useQueryClient();
 
@@ -40,10 +45,9 @@ export function useAgentsDataRefresh(): void {
     const unlisten = listen("agents-data-changed", () => {
       if (timer !== undefined) clearTimeout(timer);
       timer = setTimeout(() => {
-        void queryClient.invalidateQueries({ queryKey: personasQueryKey });
-        void queryClient.invalidateQueries({ queryKey: teamsQueryKey });
-        void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
-        void queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });
+        for (const queryKey of LOCAL_AGENT_DATA_QUERY_KEYS) {
+          void queryClient.invalidateQueries({ queryKey });
+        }
       }, COALESCE_MS);
     });
 

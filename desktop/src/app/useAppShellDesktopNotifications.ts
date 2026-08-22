@@ -1,10 +1,10 @@
 import * as React from "react";
 
 import {
+  activateDesktopNotificationTarget,
+  createDesktopNotificationActivationQueue,
   shouldBounceForChannelNotification,
-  toSearchHit,
 } from "@/app/AppShell.helpers";
-import { getThreadReference } from "@/features/messages/lib/threading";
 import { useCommunityJoinAlerts } from "@/features/community-members/useCommunityJoinAlerts";
 import { hasMentionForEvent } from "@/features/notifications/lib/shouldNotify";
 import type { NotificationSettings } from "@/features/notifications/hooks";
@@ -14,10 +14,9 @@ import {
   revealDesktopAppWindow,
   sendDesktopNotification,
 } from "@/features/notifications/lib/desktop";
-import {
-  formatNotificationTitle,
-  truncateNotificationBody,
-} from "@/features/notifications/lib/notificationFormat";
+import { formatMessageNotification } from "@/features/notifications/lib/notificationFormat";
+import { buildEventNotificationTarget } from "@/features/notifications/lib/target";
+import { useNotificationSenderName } from "@/features/notifications/useNotificationSenderName";
 import {
   playNotificationSound,
   resolveSlotSound,
@@ -37,11 +36,15 @@ export function useAppShellDesktopNotifications({
 }: {
   channels: Channel[];
   enabled: boolean;
-  goChannel: (channelId: string) => Promise<unknown>;
+  goChannel: (
+    channelId: string,
+    options?: { force?: boolean },
+  ) => Promise<unknown>;
   goHome: () => Promise<unknown>;
   notificationSettings: NotificationSettings;
   openSearchHit: (
     hit: import("@/shared/api/types").SearchHit,
+    behavior?: { force?: boolean; signal?: AbortSignal },
   ) => Promise<unknown>;
   pubkey?: string;
   silentChannelIds?: ReadonlySet<string>;
@@ -52,6 +55,7 @@ export function useAppShellDesktopNotifications({
   useCommunityJoinAlerts({
     enabled: enabled && notificationSettings.desktopEnabled,
   });
+  const resolveNotificationSenderName = useNotificationSenderName();
 
   const handleChannelNotification = React.useEffectEvent(
     (_channelId: string, event: RelayEvent) => {
@@ -72,23 +76,18 @@ export function useAppShellDesktopNotifications({
         return;
       }
 
-      const channelName = channel.name?.trim() || "Direct message";
-      const body = truncateNotificationBody(event.content, "New message");
-      const threadRootId = getThreadReference(event.tags).rootId ?? null;
+      const channelName = channel.name?.trim() || null;
+      const { title, body } = formatMessageNotification({
+        source: "dm",
+        senderName: resolveNotificationSenderName(event.pubkey),
+        channelName,
+        content: event.content,
+      });
 
       void sendDesktopNotification({
-        title: channelName,
+        title,
         body,
-        target: {
-          channelId: channel.id,
-          channelName,
-          content: event.content,
-          createdAt: event.created_at,
-          eventId: event.id,
-          kind: event.kind,
-          pubkey: event.pubkey,
-          threadRootId,
-        },
+        target: buildEventNotificationTarget(event, channel),
       }).then((didSend) => {
         if (!didSend) return;
         if (shouldPlayNotificationSound(channel.id, silentChannelIds)) {
@@ -118,25 +117,20 @@ export function useAppShellDesktopNotifications({
 
       const resolvedChannel = channels.find((c) => c.id === channelId);
       const channelName = resolvedChannel?.name?.trim() ?? null;
-      // channelLabel is "#name" for the toast title; channelName is the raw
-      // name stored in the navigation target for click-through routing.
-      const channelLabel = channelName ? `#${channelName}` : null;
-      const body = truncateNotificationBody(event.content, "New reply");
-      const threadRootId = getThreadReference(event.tags).rootId ?? null;
+      const { title, body } = formatMessageNotification({
+        source: "thread_reply",
+        senderName: resolveNotificationSenderName(event.pubkey),
+        channelName,
+        content: event.content,
+      });
 
       void sendDesktopNotification({
-        title: formatNotificationTitle({ prefix: "Reply", channelLabel }),
+        title,
         body,
-        target: {
-          channelId,
-          channelName,
-          content: event.content,
-          createdAt: event.created_at,
-          eventId: event.id,
-          kind: event.kind,
-          pubkey: event.pubkey,
-          threadRootId,
-        },
+        target: buildEventNotificationTarget(event, {
+          id: channelId,
+          name: channelName,
+        }),
       }).then((didSend) => {
         if (!didSend) return;
         if (shouldPlayNotificationSound(channelId, silentChannelIds)) {
@@ -152,21 +146,18 @@ export function useAppShellDesktopNotifications({
   const handleDesktopNotificationAction = React.useEffectEvent(
     async (
       target: import("@/features/notifications/lib/desktop").DesktopNotificationTarget,
+      signal: AbortSignal,
     ) => {
-      await revealDesktopAppWindow();
-
-      if (!target.channelId) {
-        void goHome();
-        return;
-      }
-
-      const anchor = toSearchHit(target);
-      if (!anchor) {
-        await goChannel(target.channelId);
-        return;
-      }
-
-      await openSearchHit(anchor);
+      await activateDesktopNotificationTarget(
+        target,
+        {
+          goChannel,
+          goHome,
+          openSearchHit,
+          revealWindow: revealDesktopAppWindow,
+        },
+        signal,
+      );
     },
   );
 
@@ -174,13 +165,18 @@ export function useAppShellDesktopNotifications({
     if (!enabled) return;
     let isCancelled = false;
     let cleanup = () => {};
+    const queue = createDesktopNotificationActivationQueue(
+      (target, signal) => handleDesktopNotificationAction(target, signal),
+      (error) =>
+        console.error("Failed to activate desktop notification", error),
+    );
 
     void listenForDesktopNotificationActions((target) => {
       if (isCancelled) {
         return;
       }
 
-      void handleDesktopNotificationAction(target);
+      queue.enqueue(target);
     }).then((dispose) => {
       if (isCancelled) {
         dispose();
@@ -192,6 +188,7 @@ export function useAppShellDesktopNotifications({
 
     return () => {
       isCancelled = true;
+      queue.cancel();
       cleanup();
     };
   }, [enabled]);
