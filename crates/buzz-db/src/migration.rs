@@ -625,7 +625,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 30);
+        assert_eq!(migrations.len(), 32);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -751,7 +751,7 @@ mod tests {
         assert!(migrations[7]
             .sql
             .as_str()
-            .contains("CASE WHEN kind IN (0, 9, 40002, 45001, 45003)"));
+            .contains("CASE WHEN kind IN (0, 9, 40002, 45001, 45003, 30023, 30623)"));
         assert!(migrations[7].sql.as_str().contains("ELSE NULL::tsvector"));
 
         // Mixed-version guards are additive because 0007/0008 may already be
@@ -1036,6 +1036,27 @@ mod tests {
         assert_eq!(migrations[29].version, 30);
         let deletion_recovery = migrations[29].sql.as_str();
         assert!(deletion_recovery.contains("SET LOCAL lock_timeout = '5s'"));
+    }
+
+    #[test]
+    fn workflow_run_error_codes_are_additive_and_backfilled_without_parsing_diagnostics() {
+        let mut migrations: Vec<_> = MIGRATOR.iter().collect();
+        migrations.sort_by_key(|migration| migration.version);
+
+        assert_eq!(migrations[31].version, 32);
+        let sql = migrations[31].sql.as_str();
+        assert!(sql.contains("ALTER TABLE workflow_runs ADD COLUMN error_code TEXT"));
+        assert!(sql.contains("SET error_code = 'legacy_unclassified'"));
+        assert!(sql.contains("status IN ('failed', 'cancelled')"));
+        assert!(!sql.contains("error_message LIKE"));
+        assert!(!MIGRATOR
+            .iter()
+            .find(|migration| migration.version == 1)
+            .expect("initial migration")
+            .sql
+            .as_str()
+            .contains("error_code"));
+        assert!(include_str!("../../../schema/schema.sql").contains("error_code          TEXT"));
     }
 
     #[test]

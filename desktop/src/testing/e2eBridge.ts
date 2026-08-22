@@ -303,6 +303,12 @@ type E2eConfig = {
     acpAuthMethods?: Record<string, RawAcpAuthMethodsResult>;
     acpAuthMethodsErrors?: Record<string, string>;
     acpAuthMethodsError?: string;
+    /** When set, workflow updates fail with this message. */
+    workflowUpdateError?: string;
+    /** When set, workflow deletion fails with this message. */
+    workflowDeleteError?: string;
+    /** Reject workflow run creation with this message. */
+    workflowTriggerError?: string;
     /** When set, the `delete_custom_harness` mock command throws with this message. */
     deleteCustomHarnessError?: string;
     connectAcpRuntimeResult?: RawConnectAcpRuntimeResult;
@@ -3748,6 +3754,7 @@ let mockRelayAgents: RawRelayAgent[] = defaultMockRelayAgents.map((agent) => ({
 
 type MockWorkflow = {
   id: string;
+  revision: string;
   name: string;
   owner_pubkey: string;
   channel_id: string | null;
@@ -3780,6 +3787,7 @@ type RawWorkflowRun = {
   execution_trace: RawWorkflowTraceEntry[];
   started_at: number | null;
   completed_at: number | null;
+  error_code: string | null;
   error_message: string | null;
   created_at: number;
 };
@@ -3837,6 +3845,7 @@ function workflowWireRecord(args: {
     typeof definition.name === "string" ? definition.name.trim() : "";
   return {
     id: args.id,
+    revision: `mock-revision-${args.id}-${args.updatedAt}`,
     name: nameCandidate.length > 0 ? nameCandidate : args.id,
     owner_pubkey: args.ownerPubkey,
     channel_id: args.channelId,
@@ -3932,6 +3941,7 @@ async function handleCreateWorkflow(
       : `workflow_${mockWorkflowIdCounter}`;
   const workflow: MockWorkflow = {
     id: `mock-wf-${mockWorkflowIdCounter}`,
+    revision: `mock-revision-${mockWorkflowIdCounter}-1`,
     name,
     owner_pubkey: MOCK_IDENTITY_PUBKEY,
     channel_id: args.channelId,
@@ -3961,6 +3971,7 @@ async function handleUpdateWorkflow(
   args: {
     workflowId: string;
     yamlDefinition: string;
+    expectedRevision: string;
   },
   config: E2eConfig | undefined,
 ) {
@@ -4004,10 +4015,18 @@ async function handleUpdateWorkflow(
 
   const workflow = mockWorkflows.find((w) => w.id === args.workflowId);
   if (!workflow) throw new Error(`Workflow ${args.workflowId} not found`);
+  const configuredError = window.__BUZZ_E2E__?.mock?.workflowUpdateError;
+  if (configuredError) throw new Error(configuredError);
+  if (workflow.revision !== args.expectedRevision) {
+    throw new Error(
+      "workflow changed since it was loaded; refresh and try again",
+    );
+  }
   const definition = parseWorkflowDefinition(args.yamlDefinition);
   if (typeof definition.name === "string") workflow.name = definition.name;
   workflow.definition = definition;
   workflow.updated_at = Math.floor(Date.now() / 1000);
+  workflow.revision = `mock-revision-${workflow.id}-${workflow.updated_at}-${Math.random()}`;
 
   const trigger = definition.trigger as Record<string, unknown> | undefined;
   return {
@@ -4039,6 +4058,8 @@ async function handleDeleteWorkflow(
     return;
   }
 
+  const configuredError = window.__BUZZ_E2E__?.mock?.workflowDeleteError;
+  if (configuredError) throw new Error(configuredError);
   const index = mockWorkflows.findIndex((w) => w.id === args.workflowId);
   if (index === -1) throw new Error(`Workflow ${args.workflowId} not found`);
   mockWorkflows.splice(index, 1);
@@ -4102,6 +4123,7 @@ function buildMockWorkflowRun(workflow: MockWorkflow): RawWorkflowRun {
     execution_trace: executionTrace,
     started_at: startedAt,
     completed_at: completedAt,
+    error_code: null,
     error_message: null,
     created_at: createdAt,
   };
@@ -4128,6 +4150,8 @@ async function handleTriggerWorkflow(
 
   const workflow = mockWorkflows.find((w) => w.id === args.workflowId);
   if (!workflow) throw new Error(`Workflow ${args.workflowId} not found`);
+  const configuredError = window.__BUZZ_E2E__?.mock?.workflowTriggerError;
+  if (configuredError) throw new Error(configuredError);
   const run = buildMockWorkflowRun(workflow);
   mockWorkflowRuns = [run, ...mockWorkflowRuns];
   return {
@@ -4144,11 +4168,14 @@ function handleGetWorkflowRuns(args: {
   const runs = mockWorkflowRuns.filter(
     (run) => run.workflow_id === args.workflowId,
   );
-  return args.limit ? runs.slice(0, args.limit) : runs;
+  return {
+    runs: args.limit ? runs.slice(0, args.limit) : runs,
+    next: null,
+  };
 }
 
 function handleGetRunApprovals(_args: { workflowId: string; runId: string }) {
-  return [];
+  return { approvals: [] };
 }
 
 const mockProfiles = new Map<string, RawProfile>([

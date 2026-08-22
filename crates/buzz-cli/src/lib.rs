@@ -2290,6 +2290,7 @@ mod tests {
             "messages",
             "moderation",
             "notes",
+            "org",
             "pack",
             "patches",
             "pr",
@@ -2347,6 +2348,7 @@ mod tests {
             vec![
                 "archive",
                 "archived",
+                "call",
                 "draft-create",
                 "draft-update",
                 "unarchive"
@@ -2487,7 +2489,7 @@ mod tests {
     #[test]
     fn subcommand_counts_are_stable() {
         let expected: Vec<(&str, usize)> = vec![
-            ("agents", 5),
+            ("agents", 6),
             ("canvas", 2),
             ("channels", 16),
             ("dms", 4),
@@ -2496,6 +2498,7 @@ mod tests {
             ("issues", 6),
             ("media", 1),
             ("messages", 8),
+            ("org", 5),
             ("pack", 2),
             ("patches", 4),
             ("pr", 5),
