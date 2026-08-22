@@ -640,7 +640,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 31);
+        assert_eq!(migrations.len(), 32);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -766,7 +766,7 @@ mod tests {
         assert!(migrations[7]
             .sql
             .as_str()
-            .contains("CASE WHEN kind IN (0, 9, 40002, 45001, 45003)"));
+            .contains("CASE WHEN kind IN (0, 9, 40002, 45001, 45003, 30023, 30623)"));
         assert!(migrations[7].sql.as_str().contains("ELSE NULL::tsvector"));
 
         // Mixed-version guards are additive because 0007/0008 may already be
