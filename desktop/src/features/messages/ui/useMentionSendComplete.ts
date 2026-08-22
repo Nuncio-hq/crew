@@ -45,7 +45,7 @@ type UseMentionSendCompleteOptions = {
   isMountedRef: React.MutableRefObject<boolean>;
   mentions: Pick<
     UseMentionsResult,
-    "isAgentPubkey" | "restoreDraftMentionRefs"
+    "isAgentPubkey" | "restoreDraftMentionRefs" | "revalidateMentionPubkeys"
   >;
   onPrepareSendChannel?: (
     additionalParticipantPubkeys?: string[],
@@ -132,8 +132,15 @@ export function useMentionSendComplete({
       };
       let uploadStarted = false;
       try {
+        const admittedMentionPubkeys = uniqueNormalizedPubkeys(
+          await mentions.revalidateMentionPubkeys(mentionPubkeys),
+        );
+        if (!isMountedRef.current) return persistPreflightDraft();
+        const admittedMentionPubkeySet = new Set(admittedMentionPubkeys);
         const readyAgentPubkeys = new Set(
-          (draft.readyAgentPubkeys ?? []).map(normalizePubkey),
+          uniqueNormalizedPubkeys(draft.readyAgentPubkeys ?? []).filter(
+            (pubkey) => admittedMentionPubkeySet.has(pubkey),
+          ),
         );
         const managedAgentsByPubkey = await getManagedAgentsByPubkey();
         if (!isMountedRef.current) {
@@ -143,8 +150,7 @@ export function useMentionSendComplete({
         for (const agent of draft.preparedManagedAgents ?? []) {
           managedAgentsByPubkey.set(normalizePubkey(agent.pubkey), agent);
         }
-        const normalizedMentionPubkeys =
-          uniqueNormalizedPubkeys(mentionPubkeys);
+        const normalizedMentionPubkeys = admittedMentionPubkeys;
         const managedMentionPubkeys = normalizedMentionPubkeys.filter(
           (pubkey) => managedAgentsByPubkey.has(pubkey),
         );
@@ -284,13 +290,24 @@ export function useMentionSendComplete({
             outgoingTags ?? [],
           );
           if (signal?.aborted) return;
+          // Re-check mention authorization immediately before the network send:
+          // a directory or ownership change during upload/resolve must drop the
+          // agent mention rather than ride along on the published event.
+          const revalidatedMentionPubkeys =
+            await mentions.revalidateMentionPubkeys(mentionPubkeys);
+          if (signal?.aborted) return;
+          const revalidatedExplicitAgentPubkeys =
+            filterEffectiveExplicitAgentPubkeys(
+              draft.explicitAgentPubkeys,
+              revalidatedMentionPubkeys,
+            );
           let finalContent = builtContent;
-          if (effectiveExplicitAgentPubkeys.length > 0) {
+          if (revalidatedExplicitAgentPubkeys.length > 0) {
             try {
               finalContent = await resolveCurrentProjectChannelAgentMessage({
                 channelId: sendChannelId ?? draft.capturedChannelId ?? "",
                 content: finalContent,
-                explicitAgentPubkeys: effectiveExplicitAgentPubkeys,
+                explicitAgentPubkeys: revalidatedExplicitAgentPubkeys,
                 binding: workspaceBinding,
               });
             } catch (error) {
@@ -312,14 +329,14 @@ export function useMentionSendComplete({
               channelIdRef.current === null)
           ) {
             clearComposer(
-              resolvePostSendContent?.(effectiveExplicitAgentPubkeys),
+              resolvePostSendContent?.(revalidatedExplicitAgentPubkeys),
             );
           }
           const taskRouting = resolveProjectThreadAgentRouting({
             content: finalContent,
-            explicitAgentPubkeys: effectiveExplicitAgentPubkeys,
+            explicitAgentPubkeys: revalidatedExplicitAgentPubkeys,
             isThreadReply: draft.capturedThreadContext !== null,
-            mentionPubkeys,
+            mentionPubkeys: revalidatedMentionPubkeys,
           });
           const routedOutgoingTags = mergeOutgoingTagsWithReferenceMentions(
             finalOutgoingTags,
@@ -333,12 +350,12 @@ export function useMentionSendComplete({
             draft.capturedThreadContext,
           );
           if (signal?.aborted) return;
-          if (effectiveExplicitAgentPubkeys.length > 0) {
+          if (revalidatedExplicitAgentPubkeys.length > 0) {
             onSuccessfulExplicitAgentAudience?.({
               channelId: sendChannelId ?? draft.capturedChannelId ?? "",
               expectedGeneration: draft.audienceGeneration,
               expectedRevision: draft.audienceRevision,
-              explicitAgentPubkeys: effectiveExplicitAgentPubkeys,
+              explicitAgentPubkeys: revalidatedExplicitAgentPubkeys,
             });
           }
           if (draft.sentDraftKey) {
@@ -410,6 +427,7 @@ export function useMentionSendComplete({
       isMountedRef,
       mentions.isAgentPubkey,
       mentions.restoreDraftMentionRefs,
+      mentions.revalidateMentionPubkeys,
       onPrepareSendChannel,
       onSendRef,
       onSuccessfulExplicitAgentAudience,

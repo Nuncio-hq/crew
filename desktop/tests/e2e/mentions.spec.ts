@@ -73,6 +73,22 @@ async function readOutgoingMentionPubkeys(
   content: string,
 ) {
   return page.evaluate((expectedContent) => {
+    const signedEvent = (
+      window as Window & {
+        __BUZZ_E2E_SIGNED_EVENTS__?: Array<{
+          content?: string;
+          tags?: string[][];
+        }>;
+      }
+    ).__BUZZ_E2E_SIGNED_EVENTS__?.find(
+      (event) => event.content === expectedContent,
+    );
+    if (signedEvent) {
+      return (signedEvent.tags ?? [])
+        .filter((tag) => tag[0] === "p" && tag[1])
+        .map((tag) => tag[1]);
+    }
+
     const entries =
       (
         window as Window & {
@@ -84,6 +100,25 @@ async function readOutgoingMentionPubkeys(
       ).__BUZZ_E2E_COMMAND_LOG__ ?? [];
 
     for (const entry of entries) {
+      if (entry.command === "send_channel_message") {
+        const payload = entry.payload as
+          | { content?: string; mentionPubkeys?: string[] }
+          | undefined;
+        if (payload?.content === expectedContent) {
+          return payload.mentionPubkeys ?? [];
+        }
+      }
+
+      if (entry.command === "sign_event") {
+        const unsignedEvent = entry.payload as
+          | { content?: string; tags?: string[][] }
+          | undefined;
+        if (unsignedEvent?.content !== expectedContent) continue;
+        return (unsignedEvent.tags ?? [])
+          .filter((tag) => tag[0] === "p" && tag[1])
+          .map((tag) => tag[1]);
+      }
+
       if (entry.command !== "plugin:websocket|send") continue;
       const data = (
         entry.payload as { message?: { data?: string } } | undefined
@@ -969,6 +1004,74 @@ test("relay-only shared agents appear in forum mentions", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("forum sends revalidate relay-agent authorization before signing", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    deferredComposerUploads: true,
+    uploadDescriptors: [
+      {
+        url: `https://mock.relay/media/${"f".repeat(64)}.pdf`,
+        sha256: "f".repeat(64),
+        size: 12345,
+        type: "application/pdf",
+        uploaded: Math.floor(Date.now() / 1000),
+        filename: "forum-race.pdf",
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        respondTo: "allowlist",
+        respondToAllowlist: [MOCK_VIEWER_PUBKEY],
+        channelNames: ["watercooler"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-watercooler").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("watercooler");
+  await page.getByRole("button", { name: "Start a new post..." }).click();
+
+  const input = page.getByTestId("message-input");
+  await input.fill("@quinn");
+  await page.getByTestId("mention-autocomplete").getByText("quinn").click();
+  await page.keyboard.type("hello");
+  await page.getByRole("button", { name: "Attach file" }).click();
+  const removeAttachment = page.getByRole("button", {
+    name: "Remove attachment",
+  });
+  await expect(removeAttachment).toBeVisible();
+  await page.evaluate(() => {
+    window.__BUZZ_E2E__.mock ??= {};
+    window.__BUZZ_E2E__.mock.agentListDelayMs = 1_000;
+    window.__BUZZ_E2E__.mock.relayAgentListErrors = Array(100).fill(
+      "mock forum directory revoked before send",
+    );
+  });
+
+  await page.getByTestId("send-message").click();
+  await expect(input).toHaveAttribute("contenteditable", "false");
+  await expect(removeAttachment).toBeDisabled();
+  await removeAttachment.evaluate((button: HTMLButtonElement) =>
+    button.click(),
+  );
+  await expect(removeAttachment).toBeVisible();
+  await input.focus();
+  await page.keyboard.type(" later edit");
+  await expect(input).toContainText("@quinn hello");
+  await expect(input).not.toContainText("later edit");
+
+  const outgoingContent = `@quinn hello\n[forum-race.pdf](https://mock.relay/media/${"f".repeat(64)}.pdf)`;
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, outgoingContent))
+    .not.toBeNull();
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, outgoingContent))
+    .not.toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
+});
+
 test("relay-only allowlisted agents are visible in channel mentions", async ({
   page,
 }) => {
@@ -995,6 +1098,362 @@ test("relay-only allowlisted agents are visible in channel mentions", async ({
   await expect(dropdown.getByText("agent")).toBeVisible();
 });
 
+test("relay-agent directory errors fail closed and recover after a fresh fetch", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    relayAgentListErrors: ["mock directory unavailable", null],
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        respondTo: "allowlist",
+        respondToAllowlist: [MOCK_VIEWER_PUBKEY],
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  const input = page.getByTestId("message-input");
+  await input.fill("@quinn");
+  await expect(autocomplete(page)).toHaveCount(0);
+
+  await page.evaluate(async () => {
+    await window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+      queryKey: ["relay-agents"],
+    });
+  });
+  await expect(autocomplete(page).getByText("quinn")).toBeVisible();
+
+  await page.evaluate(() => {
+    window.__BUZZ_E2E__.mock ??= {};
+    window.__BUZZ_E2E__.mock.agentListDelayMs = 1_000;
+    void window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+      queryKey: ["relay-agents"],
+    });
+  });
+  await expect(autocomplete(page).getByText("quinn")).toHaveCount(0);
+  await expect(autocomplete(page).getByText("quinn")).toBeVisible();
+});
+
+test("relay-only allowlisted agents emit a p tag when sent", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        respondTo: "allowlist",
+        respondToAllowlist: [MOCK_VIEWER_PUBKEY],
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.evaluate(
+    async ({ channelId, pubkey }) => {
+      const invoke = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
+      if (!invoke) throw new Error("Mock bridge is not installed.");
+      await invoke("add_channel_members", {
+        channelId,
+        pubkeys: [pubkey],
+        role: "bot",
+      });
+      await window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+        queryKey: ["channels"],
+      });
+    },
+    {
+      channelId: GENERAL_CHANNEL_ID,
+      pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+    },
+  );
+
+  const input = page.getByTestId("message-input");
+  await input.fill("@quinn");
+  const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
+  await expect(quinnRow).toBeVisible();
+  await quinnRow.click();
+  await page.keyboard.type("hello");
+  await expect(input).toHaveText("@quinn hello");
+  const baselineCommands = await readCommandLog(page);
+  await page.getByTestId("send-message").click();
+
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+    .toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
+
+  const commands = await readCommandLog(page);
+  expect(commandCount(commands, "revalidate_relay_agents")).toBe(
+    commandCount(baselineCommands, "revalidate_relay_agents") + 2,
+  );
+  expect(commandCount(commands, "list_relay_agents")).toBe(
+    commandCount(baselineCommands, "list_relay_agents"),
+  );
+});
+
+test("managed agents keep their p tag when relay discovery fails before send", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        status: "running",
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        respondTo: "allowlist",
+        respondToAllowlist: [MOCK_VIEWER_PUBKEY],
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+
+  const input = page.getByTestId("message-input");
+  await input.fill("@quinn");
+  const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
+  await expect(quinnRow).toBeVisible();
+  await quinnRow.click();
+  await expect(input).toHaveText("@quinn ");
+  await page.keyboard.type("hello");
+  await expect(input).toHaveText("@quinn hello");
+
+  await page.evaluate(() => {
+    window.__BUZZ_E2E__.mock ??= {};
+    window.__BUZZ_E2E__.mock.relayAgentListErrors = Array(5).fill(
+      "mock unrelated relay directory failure",
+    );
+  });
+  await page.getByTestId("send-message").click();
+
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+    .toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
+});
+
+test("targeted revocation before send causes no agent side effects", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        respondTo: "allowlist",
+        respondToAllowlist: [MOCK_VIEWER_PUBKEY],
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.evaluate(
+    async ({ channelId, pubkey }) => {
+      const invoke = window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
+      if (!invoke) throw new Error("Mock bridge is not installed.");
+      await invoke("add_channel_members", {
+        channelId,
+        pubkeys: [pubkey],
+        role: "bot",
+      });
+      await window.__BUZZ_E2E_QUERY_CLIENT__?.invalidateQueries({
+        queryKey: ["channels"],
+      });
+    },
+    {
+      channelId: GENERAL_CHANNEL_ID,
+      pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+    },
+  );
+  const input = page.getByTestId("message-input");
+  await input.fill("@quinn");
+  const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
+  await expect(quinnRow).toBeVisible();
+  await quinnRow.click();
+  await page.keyboard.type("hello");
+
+  await page.evaluate((pubkey) => {
+    window.__BUZZ_E2E__.mock ??= {};
+    window.__BUZZ_E2E__.mock.relayAgentRevalidationRevokedPubkeys = [pubkey];
+  }, ALLOWLIST_RELAY_AGENT_PUBKEY);
+  const baselineCommands = await readCommandLog(page);
+  await page.getByTestId("send-message").click();
+
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+    .not.toBeNull();
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+    .not.toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
+  const commands = await readCommandLog(page);
+  expect(commandCount(commands, "revalidate_relay_agents")).toBe(
+    commandCount(baselineCommands, "revalidate_relay_agents") + 2,
+  );
+  expect(commandCount(commands, "list_relay_agents")).toBe(
+    commandCount(baselineCommands, "list_relay_agents"),
+  );
+  for (const command of [
+    "add_channel_members",
+    "start_managed_agent",
+    "attach_managed_agent",
+    "sync_agents_to_active_huddle",
+  ]) {
+    expect(commandCount(commands, command)).toBe(
+      commandCount(baselineCommands, command),
+    );
+  }
+});
+
+test("selected relay agents revoked after the invite prompt cause no side effects", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        respondTo: "allowlist",
+        respondToAllowlist: [MOCK_VIEWER_PUBKEY],
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  const input = page.getByTestId("message-input");
+  await input.fill("@quinn");
+  const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
+  await expect(quinnRow).toBeVisible();
+  await quinnRow.click();
+  await page.keyboard.type("hello");
+  await page.getByTestId("send-message").click();
+  const inviteButton = page.getByRole("button", {
+    name: "Invite",
+    exact: true,
+  });
+  await expect(inviteButton).toBeVisible();
+
+  await page.evaluate(() => {
+    window.__BUZZ_E2E__.mock ??= {};
+    window.__BUZZ_E2E__.mock.relayAgentListErrors = Array(5).fill(
+      "mock directory revoked after invite prompt",
+    );
+  });
+  const baselineCommands = await readCommandLog(page);
+  await inviteButton.click();
+
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+    .not.toBeNull();
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+    .not.toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
+  const commands = await readCommandLog(page);
+  for (const command of [
+    "add_channel_members",
+    "start_managed_agent",
+    "attach_managed_agent",
+    "sync_agents_to_active_huddle",
+  ]) {
+    expect(commandCount(commands, command)).toBe(
+      commandCount(baselineCommands, command),
+    );
+  }
+});
+
+test("selected relay agents revoked during send emit no p tag", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        respondTo: "allowlist",
+        respondToAllowlist: [MOCK_VIEWER_PUBKEY],
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  const input = page.getByTestId("message-input");
+  await input.fill("@quinn");
+  const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
+  await expect(quinnRow).toBeVisible();
+  await quinnRow.click();
+  await page.keyboard.type("hello");
+
+  await page.evaluate(() => {
+    window.__BUZZ_E2E__.mock ??= {};
+    window.__BUZZ_E2E__.mock.agentListDelayMs = 300;
+  });
+  await page.getByTestId("send-message").click();
+  await page.getByRole("button", { name: "Invite", exact: true }).click();
+  await page.evaluate(() => {
+    window.__BUZZ_E2E__.mock ??= {};
+    window.__BUZZ_E2E__.mock.relayAgentListErrors = Array(100).fill(
+      "mock directory revoked mid-send",
+    );
+  });
+
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+    .not.toBeNull();
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+    .not.toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
+});
+
+test("owner-only builds admit cross-owner relay agents authorized by allowlist", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    ownerOnlyAccessBuild: true,
+    searchProfiles: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        displayName: "quinn",
+        ownerPubkey: TEST_IDENTITIES.outsider.pubkey,
+        isAgent: true,
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        respondTo: "allowlist",
+        respondToAllowlist: [MOCK_VIEWER_PUBKEY],
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  const input = page.getByTestId("message-input");
+  await input.fill("@quinn");
+  const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
+  await expect(quinnRow).toBeVisible();
+  await quinnRow.click();
+  await page.keyboard.type("hello");
+  await page.getByTestId("send-message").click();
+  await page.getByRole("button", { name: "Invite", exact: true }).click();
+
+  await expect
+    .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+    .toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
+});
+
 test("relay-only allowlisted agents stay hidden outside their channel", async ({
   page,
 }) => {
@@ -1018,10 +1477,19 @@ test("relay-only allowlisted agents stay hidden outside their channel", async ({
   await expect(autocomplete(page)).toHaveCount(0);
 });
 
-test("relay-only anyone agents are visible when a channel is shared", async ({
+test("owner-only builds admit cross-owner relay agents authorized for anyone", async ({
   page,
 }) => {
   await installMockBridge(page, {
+    ownerOnlyAccessBuild: true,
+    searchProfiles: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        displayName: "quinn",
+        ownerPubkey: TEST_IDENTITIES.outsider.pubkey,
+        isAgent: true,
+      },
+    ],
     relayAgents: [
       {
         pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
