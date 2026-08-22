@@ -1,3 +1,5 @@
+import * as React from "react";
+
 import { getAgentObserverSnapshot } from "@/features/agents/observerRelayStore";
 import {
   clearTurnsWatermarks,
@@ -39,6 +41,8 @@ import {
   triggeringEventIds,
   type ActiveTurn,
 } from "@/features/agents/activeAgentTurnModel";
+import { subscribeAgentObserverStore } from "@/features/agents/observerRelayStore";
+import type { AgentObserverStoreUpdate } from "@/features/agents/observerRelayStore";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   isDocumentVisible,
@@ -59,7 +63,6 @@ export {
   useActiveAgentTurnsByChannel,
   useActiveTurnsByConversation,
   useActiveAgentsForConversation,
-  useActiveAgentTurnsBridge,
 } from "@/features/agents/activeAgentTurnsHooks";
 
 /** One working channel surfaced to the UI, anchored to the desktop clock. */
@@ -829,6 +832,44 @@ export function syncActiveAgentTurnsFromObserver(
     const snapshot = getAgentObserverSnapshot(agent.pubkey, true);
     syncAgentTurnsFromEvents(agent.pubkey, snapshot.events);
   }
+}
+
+/**
+ * Build the steady-state observer listener once per agent-list revision. Observer
+ * publications carry only newly admitted events for one agent, so this callback
+ * does not revisit unrelated agents or their retained journals.
+ */
+export function createActiveAgentTurnsObserverListener(
+  agents: readonly { pubkey: string; status: string }[],
+): (update?: AgentObserverStoreUpdate) => void {
+  const activeAgentPubkeys = new Set(
+    agents
+      .filter(
+        (agent) => agent.status === "running" || agent.status === "deployed",
+      )
+      .map((agent) => normalizePubkey(agent.pubkey)),
+  );
+
+  return (update?: AgentObserverStoreUpdate) => {
+    if (
+      !update ||
+      !activeAgentPubkeys.has(normalizePubkey(update.agentPubkey))
+    ) {
+      return;
+    }
+    syncAgentTurnsFromEvents(update.agentPubkey, [...update.events]);
+  };
+}
+
+export function useActiveAgentTurnsBridge(
+  agents: readonly { pubkey: string; status: string }[],
+) {
+  React.useEffect(() => {
+    syncActiveAgentTurnsFromObserver(agents);
+    return subscribeAgentObserverStore(
+      createActiveAgentTurnsObserverListener(agents),
+    );
+  }, [agents]);
 }
 
 /**

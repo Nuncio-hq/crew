@@ -14,6 +14,7 @@ import {
   restoreActiveAgentTurnsForCommunity,
   clearSavedCommunitySnapshot,
   clearActiveTurnsForAgent,
+  createActiveAgentTurnsObserverListener,
   getConversationOutcomeEntry,
 } from "./activeAgentTurnsStore.ts";
 import {
@@ -2177,6 +2178,82 @@ describe("observer → active-turns bridge sync", () => {
       0,
       "inactive agents must not populate the active-turns store",
     );
+  });
+
+  it("publishes only newly admitted events for the changed agent", () => {
+    const updates = [];
+    const unsubscribeObserver = subscribeAgentObserverStore((update) => {
+      updates.push(update);
+    });
+    const retained = makeEvent({ seq: 1, kind: "turn_started" });
+    const admitted = makeEvent({
+      seq: 2,
+      kind: "acp_write",
+      timestamp: "2024-01-01T00:00:01Z",
+    });
+
+    injectObserverEventsForE2E(AGENT, [retained]);
+    injectObserverEventsForE2E(AGENT, [retained, admitted]);
+    unsubscribeObserver();
+
+    assert.equal(updates.length, 2);
+    assert.equal(updates[1].agentPubkey, AGENT);
+    assert.deepEqual(
+      updates[1].events.map((event) => event.seq),
+      [2],
+      "the publication must omit retained and duplicate history",
+    );
+  });
+
+  it("steady-state listener processes the changed active agent only", () => {
+    const listener = createActiveAgentTurnsObserverListener([
+      { pubkey: AGENT, status: "deployed" },
+      { pubkey: AGENT_2, status: "stopped" },
+    ]);
+
+    listener({
+      agentPubkey: AGENT,
+      events: [makeEvent({ seq: 1, turnId: "active-turn" })],
+    });
+    listener({
+      agentPubkey: AGENT_2,
+      events: [
+        makeEvent({
+          seq: 1,
+          turnId: "stopped-turn",
+          channelId: "stopped-channel",
+        }),
+      ],
+    });
+
+    assert.equal(getActiveTurnsForAgent(AGENT).length, 1);
+    assert.equal(
+      getActiveTurnsForAgent(AGENT_2).length,
+      0,
+      "an unrelated stopped agent update must not enter turn state",
+    );
+  });
+
+  it("incremental terminal update clears a hydrated turn without replay", () => {
+    injectObserverEventsForE2E(AGENT, [
+      makeEvent({ seq: 1, kind: "turn_started" }),
+    ]);
+    syncActiveAgentTurnsFromObserver(bridgeAgents);
+    assert.equal(getActiveTurnsForAgent(AGENT).length, 1);
+
+    const listener = createActiveAgentTurnsObserverListener(bridgeAgents);
+    listener({
+      agentPubkey: AGENT,
+      events: [
+        makeEvent({
+          seq: 2,
+          kind: "turn_completed",
+          timestamp: "2024-01-01T00:00:05Z",
+        }),
+      ],
+    });
+
+    assert.equal(getActiveTurnsForAgent(AGENT).length, 0);
   });
 });
 

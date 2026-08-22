@@ -13,6 +13,7 @@ import {
 } from "@/shared/constants/kinds";
 import {
   getTextPayload,
+  toRelayFrames,
   type ConnectionState,
   type RelayLiveEventContext,
   type RelayLiveSubscriptionStatus,
@@ -531,13 +532,15 @@ export class RelayClient {
     );
 
     const generation = ++this.connectionGeneration;
-    this.onMessageChannel = new Channel<unknown>((message) => {
-      void this.handleWsMessage(message, generation).catch((error) => {
-        if (generation !== this.connectionGeneration) return;
-        this.resetConnection(
-          this.normalizeRelayError(error, "Relay connection errored."),
-        );
-      });
+    this.onMessageChannel = new Channel<unknown>((delivery) => {
+      for (const message of toRelayFrames(delivery)) {
+        void this.handleWsMessage(message, generation).catch((error) => {
+          if (generation !== this.connectionGeneration) return;
+          this.resetConnection(
+            this.normalizeRelayError(error, "Relay connection errored."),
+          );
+        });
+      }
     });
 
     try {
