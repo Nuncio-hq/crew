@@ -22,6 +22,7 @@ import {
   useAgentObserverConnectionState,
   useAgentObserverConnectionStates,
 } from "@/features/agents/useAgentObserverConnectionState";
+import { useSharedNowWhen } from "@/features/agents/lib/sharedNow";
 import { useManagedAgentRuntimesQuery } from "@/features/agents/managedAgentRuntimeHooks";
 import {
   findManagedAgentRuntime,
@@ -58,6 +59,10 @@ export function useMissionInboxSections({
     [currentPubkey, ownedAgentPubkeys, storedNeedsYou],
   );
   const activeTurns = useMissionInboxActiveTurns();
+  // Attention states (stalled / lost contact) age out of `now` rather than
+  // store events, and liveness frames no longer wake global subscribers —
+  // re-derive on the shared 1s clock while any turn is live.
+  const now = useSharedNowWhen(activeTurns.length > 0);
   const outcomes = useMissionInboxOutcomes();
   const { activeCommunity } = useCommunities();
   const receipts = React.useSyncExternalStore(
@@ -137,6 +142,7 @@ export function useMissionInboxSections({
         connectionStateByAgent,
         sleepingAgentPubkeys,
         snoozedUntilByConversation,
+        now,
       }),
     [
       activeTurns,
@@ -146,6 +152,7 @@ export function useMissionInboxSections({
       effectiveDoneSet,
       inboxItems,
       needsYou,
+      now,
       ownedAgentPubkeys,
       outcomes,
       receipts,

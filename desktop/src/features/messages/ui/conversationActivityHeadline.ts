@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { subscribeAgentLiveness } from "@/features/agents/activeAgentTurnsLiveness";
 import {
   subscribeActiveAgentTurns,
   walkActiveAgentTurns,
@@ -395,17 +396,32 @@ export function useThreadAgentActivityHeadline(
   enabled: boolean,
   profiles: UserProfileLookup | undefined,
 ): ConversationActivityHeadlineSelection | null {
-  const agentsSubscribe = React.useCallback(
-    (onStoreChange: () => void) => {
-      if (!enabled) return () => {};
-      return subscribeActiveAgentTurns(onStoreChange);
-    },
-    [enabled],
-  );
   const getAgentsSnapshot = React.useCallback(
     () =>
       enabled ? getLiveAgentsForConversation(conversationId) : EMPTY_AGENTS,
     [conversationId, enabled],
+  );
+  // Membership changes arrive on the global subscription; per-agent liveness
+  // keeps lastActivityAt (and therefore the most-recent-agent pick) fresh,
+  // resubscribed whenever the conversation's agent set changes.
+  const liveAgentsKey = getAgentsSnapshot()
+    .map((agent) => agent.agentPubkey)
+    .join(",");
+  const agentsSubscribe = React.useCallback(
+    (onStoreChange: () => void) => {
+      if (!enabled) return () => {};
+      const unsubscribers = [
+        subscribeActiveAgentTurns(onStoreChange),
+        ...liveAgentsKey
+          .split(",")
+          .filter((pubkey) => pubkey !== "")
+          .map((pubkey) => subscribeAgentLiveness(pubkey, onStoreChange)),
+      ];
+      return () => {
+        for (const unsubscribe of unsubscribers) unsubscribe();
+      };
+    },
+    [enabled, liveAgentsKey],
   );
   const agents = React.useSyncExternalStore(
     agentsSubscribe,
