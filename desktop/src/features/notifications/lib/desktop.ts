@@ -210,6 +210,7 @@ export async function listenForDesktopNotificationActions(
 
   let pluginListener: { unregister: () => Promise<void> } | null = null;
   let nativeUnlisten: (() => void) | null = null;
+  let redrainUnlisten: (() => void) | null = null;
 
   if (isTauri()) {
     const usesMacActivationQueue = isMacPlatform();
@@ -269,6 +270,23 @@ export async function listenForDesktopNotificationActions(
       nativeUnlisten = null;
     }
 
+    if (usesMacActivationQueue) {
+      const redrain = () => {
+        void dispatchNativeActivations().catch((error) => {
+          console.error(
+            "Failed to drain macOS notification activations on focus",
+            error,
+          );
+        });
+      };
+      window.addEventListener("focus", redrain);
+      document.addEventListener("visibilitychange", redrain);
+      redrainUnlisten = () => {
+        window.removeEventListener("focus", redrain);
+        document.removeEventListener("visibilitychange", redrain);
+      };
+    }
+
     if (nativeUnlisten && usesMacActivationQueue) {
       try {
         await dispatchNativeActivations();
@@ -288,6 +306,7 @@ export async function listenForDesktopNotificationActions(
     );
     void pluginListener?.unregister();
     nativeUnlisten?.();
+    redrainUnlisten?.();
   };
 }
 
@@ -337,7 +356,7 @@ export async function requestDockBounce(): Promise<void> {
 
 export async function revealDesktopAppWindow(): Promise<void> {
   if (!isTauri()) {
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && typeof window.focus === "function") {
       window.focus();
     }
     return;
@@ -345,9 +364,23 @@ export async function revealDesktopAppWindow(): Promise<void> {
 
   try {
     const currentWindow = getCurrentWindow();
-    await currentWindow.unminimize();
-    await currentWindow.show();
-    await currentWindow.setFocus();
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 1_500);
+      (async () => {
+        await currentWindow.unminimize();
+        await currentWindow.show();
+        await currentWindow.setFocus();
+      })().then(
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
   } catch {
     // Best effort only.
   }

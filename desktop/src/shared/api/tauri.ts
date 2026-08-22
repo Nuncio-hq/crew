@@ -92,7 +92,6 @@ type RawSearchResponse = {
   hits: RawSearchHit[];
   found: number;
 };
-
 type RawRelayAgent = {
   pubkey: string;
   owner_pubkey?: string | null;
@@ -105,6 +104,7 @@ type RawRelayAgent = {
   respond_to?: RelayAgent["respondTo"];
   respond_to_allowlist?: string[];
 };
+
 import type { RestartDiffEntry as RawRestartDiffEntry } from "./restartDiff";
 export type RawManagedAgent = {
   pubkey: string;
@@ -165,6 +165,7 @@ type RawManagedAgentLog = {
   content: string;
   log_path: string;
 };
+
 import {
   fromRawAcpRuntimeCatalogEntry,
   type RawAcpRuntimeCatalogEntry,
@@ -602,7 +603,6 @@ export async function createAuthEvent(input: {
   const eventJson = await invokeTauri<string>("create_auth_event", input);
   return JSON.parse(eventJson) as RelayEvent;
 }
-
 function fromRawRelayAgent(agent: RawRelayAgent): RelayAgent {
   return {
     pubkey: agent.pubkey,
