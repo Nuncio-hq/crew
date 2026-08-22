@@ -5060,6 +5060,64 @@ mod agent_draft_prompt_tests {
         assert!(prompt.contains("Do not ask about runtime, provider, model, credentials"));
     }
 
+    /// Upstream #6340 compacts the agent-creation guidance into two
+    /// paragraphs: the two questions plus one owner-reviewed draft line.
+    #[test]
+    fn shared_base_prompt_agent_creation_is_compact_upstream_form() {
+        let prompt = include_str!("base_prompt.md");
+        let section = prompt
+            .split_once("## Conversational Agent Creation\n")
+            .and_then(|(_, rest)| {
+                rest.split_once("\n## Communication Patterns")
+                    .map(|(section, _)| section)
+            })
+            .expect("agent creation section must exist");
+        assert!(section.contains("its name and what it should do day-to-day"));
+        assert!(section.contains("Write the `--system-prompt` yourself"));
+        assert!(section.contains(
+            "Open an owner-reviewed draft with `buzz agents draft-create \
+             --channel <current-channel-uuid> --display-name <name> \
+             --system-prompt <instructions>`"
+        ));
+        assert!(section.contains("using the UUID from `[Context]`"));
+        assert!(section.contains("Never claim the agent exists until the owner saves it"));
+        assert!(section.contains("use `buzz agents draft-update --help`"));
+        // Verbose pre-#6340 phrasings are gone.
+        assert!(!section.contains("Turn the user's rough purpose"));
+        assert!(!section.contains("Buzz Desktop resolves local runtime/provider/model defaults"));
+        assert!(!section.contains("Draft updates also require owner review and save"));
+        assert!(
+            section.lines().filter(|line| !line.is_empty()).count() <= 2,
+            "section must stay within the two-paragraph upstream budget"
+        );
+    }
+
+    /// The Crew office sections must survive the upstream compose, and stay
+    /// placed after upstream's Communication Patterns (UPSTREAM-SYNC.md).
+    #[test]
+    fn shared_base_prompt_keeps_crew_office_sections_after_communication_patterns() {
+        let prompt = include_str!("base_prompt.md");
+        let communication = prompt
+            .find("\n## Communication Patterns")
+            .expect("upstream Communication Patterns must exist");
+        for heading in [
+            "\n## CoS intake (when your channel role is intake)",
+            "\n## Evidence on completion",
+            "\n## Client acceptance (Gate C) — done ≠ CI green",
+        ] {
+            let at = prompt
+                .find(heading)
+                .unwrap_or_else(|| panic!("Crew section missing: {heading}"));
+            assert!(
+                at > communication,
+                "Crew section moved above upstream: {heading}"
+            );
+        }
+        assert!(prompt.contains("buzz agents call --channel <UUID> --agent <Name>"));
+        assert!(prompt.contains("Never publish a bare acknowledgement"));
+        assert!(prompt.contains("crew-evidence"));
+    }
+
     #[test]
     fn shared_base_prompt_teaches_real_newlines_for_multiline_messages() {
         let prompt = include_str!("base_prompt.md");
