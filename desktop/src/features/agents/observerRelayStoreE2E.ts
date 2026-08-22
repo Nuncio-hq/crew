@@ -17,8 +17,11 @@ export type ObserverRelayStoreE2EApi = {
   appendAgentEvents: (
     agentPubkey: string,
     events: readonly ObserverEvent[],
-  ) => boolean;
-  notifyListeners: () => void;
+  ) => ObserverEvent[] | null;
+  notifyListeners: (update?: {
+    agentPubkey: string;
+    events: readonly ObserverEvent[];
+  }) => void;
   setConnectionState: (
     nextState: ConnectionState,
     nextErrorMessage?: string | null,
@@ -80,7 +83,9 @@ export function injectObserverEventsForE2E(
     applyCrewE2EInjectSideEffects(agentPubkey, events);
   }
   if (opened || appended) {
-    store.notifyListeners();
+    store.notifyListeners(
+      appended ? { agentPubkey, events: appended } : undefined,
+    );
   }
 }
 
