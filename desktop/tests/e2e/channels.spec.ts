@@ -4054,20 +4054,12 @@ test("members sidebar marks a same-owner duplicate from another setup", async ({
   await expect(
     page.getByTestId(`sidebar-member-other-setup-${remotePubkey}`),
   ).toHaveCount(0);
-  await page.screenshot({
-    fullPage: true,
-    path: "/home/ubuntu/evidence-288/screens/members-duplicate-before.png",
-  });
   await expect(
     page.getByTestId(`sidebar-member-other-setup-${remotePubkey}`),
   ).toBeVisible();
   await expect(
     page.getByTestId(`sidebar-member-other-setup-${localPubkey}`),
   ).toHaveCount(0);
-  await page.screenshot({
-    fullPage: true,
-    path: "/home/ubuntu/evidence-288/screens/members-duplicate-after.png",
-  });
 });
 
 test("members sidebar can invite relay-authorized agents", async ({ page }) => {

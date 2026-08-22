@@ -1119,10 +1119,6 @@ test("owner-only builds show verified same-owner relay agents", async ({
   await page.getByTestId("message-input").fill("@quinn");
 
   await expect(autocomplete(page).getByText("quinn")).toBeVisible();
-  await page.screenshot({
-    fullPage: true,
-    path: "/home/ubuntu/evidence-288/screens/mentions-owner-only-same-owner.png",
-  });
 });
 
 test("duplicate same-owner agents identify the other setup only after directories settle", async ({
@@ -1155,10 +1151,6 @@ test("duplicate same-owner agents identify the other setup only after directorie
   await page.getByTestId("message-input").fill("@duplicate");
 
   await expect(autocomplete(page)).toHaveCount(0);
-  await page.screenshot({
-    fullPage: true,
-    path: "/home/ubuntu/evidence-288/screens/mentions-duplicate-before.png",
-  });
 
   const dropdown = autocomplete(page);
   await expect(dropdown).toBeVisible();
@@ -1172,10 +1164,6 @@ test("duplicate same-owner agents identify the other setup only after directorie
   await expect(
     remoteRow.getByTestId("mention-agent-other-setup"),
   ).toBeVisible();
-  await page.screenshot({
-    fullPage: true,
-    path: "/home/ubuntu/evidence-288/screens/mentions-duplicate-after.png",
-  });
 });
 
 test("shared agents wait for initial directory authorization", async ({
