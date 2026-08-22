@@ -710,22 +710,18 @@ describe("eager initial hydration loop control flow (production runHydrationLoop
   });
 });
 
-// ── Archive window beyond MAX_OBSERVER_EVENTS cap (regression) ────────────────
+// ── Bounded archive window (regression) ───────────────────────────────────────
 //
 // The live observer relay store caps per-agent events at MAX_OBSERVER_EVENTS
-// (3,000). Before this fix, archived events flowed through the same capped path,
-// so loading more than 3,000 archived frames silently discarded the oldest ones.
-// The channel-scoped archive window is uncapped — all loaded history persists.
-//
-// This describe block injects 3,100 archived events and verifies every one
-// is preserved in the archive window without truncation.
+// (3,000). The channel-scoped archive is a paging cache over SQLite, so it keeps
+// the newest 3,000 frames and can reload older pages on demand.
 
-describe("archive window holds more than MAX_OBSERVER_EVENTS (3000) frames", () => {
+describe("archive window is bounded to 3000 frames per channel", () => {
   beforeEach(() => {
     resetAgentObserverStore();
   });
 
-  it("test_archive_window_retains_all_events_beyond_3000_cap", async () => {
+  it("test_archive_window_retains_newest_events_at_3000_cap", async () => {
     _testRegisterKnownAgents(SUB_ID, [AGENT_PUBKEY]);
 
     const OVER_CAP = 3100;
@@ -757,8 +753,8 @@ describe("archive window holds more than MAX_OBSERVER_EVENTS (3000) frames", () 
     const archiveEvents = _testGetArchivedChannelEvents(AGENT_PUBKEY, "chan-1");
     assert.equal(
       archiveEvents.length,
-      OVER_CAP,
-      `archive window must hold all ${OVER_CAP} events without truncation (cap was 3000)`,
+      3000,
+      "archive window must retain only the newest 3000 events",
     );
 
     // The live snapshot must be empty — separation is strict.
@@ -769,14 +765,14 @@ describe("archive window holds more than MAX_OBSERVER_EVENTS (3000) frames", () 
       "live snapshot must not contain any archived events",
     );
 
-    // All 3100 events must be sorted ascending.
+    // The retained window stays sorted in ascending causal order.
     assert.equal(
       archiveEvents[0].seq,
-      1,
-      "first archived event must be seq=1 (oldest)",
+      101,
+      "first archived event must be the oldest retained event",
     );
     assert.equal(
-      archiveEvents[OVER_CAP - 1].seq,
+      archiveEvents[archiveEvents.length - 1].seq,
       OVER_CAP,
       `last archived event must be seq=${OVER_CAP} (newest)`,
     );
@@ -828,7 +824,7 @@ describe("archive window holds more than MAX_OBSERVER_EVENTS (3000) frames", () 
 //   - Tool start (archive) + tool_call_update (live) yields one complete row.
 //   - Permission request (archive) + response (live) yields the resolved outcome.
 //   - The combined raw event window feeds raw rail / header count.
-//   - The >3,000-frame retention guarantee still holds.
+//   - The bounded archive window still participates in raw-event merging.
 
 import {
   subscribeAgentObserverStore,

@@ -20,6 +20,7 @@ import {
 import {
   getAgentObserverSnapshot,
   getArchivedChannelEvents,
+  subscribeAgentObserverProjections,
   subscribeAgentObserverStore,
 } from "@/features/agents/observerRelayStore";
 import { mergeObserverEventWindows } from "@/features/agents/ui/agentSessionPanelLayout";
@@ -30,9 +31,6 @@ import { useCommunities } from "@/features/communities/useCommunities";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { normalizePubkey } from "@/shared/lib/pubkey";
-
-const subscribeToObserverStore = (onStoreChange: () => void) =>
-  subscribeAgentObserverStore(onStoreChange);
 
 export function useDeclaredPlansForThread(args: {
   channelId: string | null;
@@ -56,6 +54,11 @@ export function useDeclaredPlansForThread(args: {
   });
   const summaries = useActiveTurnSummariesForConversation(conversationId);
   useLoadArchivedObserverEvents(Boolean(channelId), channelId);
+  const subscribeToObserverStore = React.useCallback(
+    (onStoreChange: () => void) =>
+      subscribeAgentObserverProjections(knownAgentPubkeys, onStoreChange),
+    [knownAgentPubkeys],
+  );
   const observerGeneration = React.useSyncExternalStore(
     subscribeToObserverStore,
     getObserverGeneration,
