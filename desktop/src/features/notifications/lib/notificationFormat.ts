@@ -47,3 +47,55 @@ export function formatNotificationTitle(opts: {
     ? `${opts.prefix} in ${opts.channelLabel}`
     : opts.prefix;
 }
+
+export type MessageNotificationSource =
+  | "mention"
+  | "approval"
+  | "needs_action"
+  | "dm"
+  | "thread_reply";
+
+const MESSAGE_BODY_FALLBACKS: Record<MessageNotificationSource, string> = {
+  mention: "Something in Buzz needs your attention.",
+  approval: "A workflow is waiting for your approval.",
+  needs_action: "Something in Buzz needs your attention.",
+  dm: "New message",
+  thread_reply: "New reply",
+};
+
+export function formatMessageNotification(opts: {
+  source: MessageNotificationSource;
+  senderName?: string | null;
+  channelName?: string | null;
+  content: string;
+}): { title: string; body: string } {
+  const { source, content } = opts;
+  const senderName = opts.senderName?.trim() || null;
+  const channelName = opts.channelName?.trim() || null;
+  const body = truncateNotificationBody(
+    content,
+    MESSAGE_BODY_FALLBACKS[source],
+  );
+
+  if (source === "dm") {
+    return { title: senderName ?? channelName ?? "Direct message", body };
+  }
+
+  const channelLabel = channelName ? `#${channelName}` : null;
+  const prefix =
+    source === "mention"
+      ? senderName
+        ? `${senderName} mentioned you`
+        : "@Mention"
+      : source === "approval"
+        ? senderName
+          ? `${senderName} requested approval`
+          : "Approval Requested"
+        : source === "thread_reply"
+          ? senderName
+            ? `${senderName} replied`
+            : "Reply"
+          : (senderName ?? "Needs Action");
+
+  return { title: formatNotificationTitle({ prefix, channelLabel }), body };
+}

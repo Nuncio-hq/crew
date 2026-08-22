@@ -1,21 +1,19 @@
 part of 'thread_detail_page.dart';
 
-int _threadTailIndex(int replyCount) => replyCount;
+/// Returns whether a bounded tail correction reached the effective end.
+///
+/// Item positions can lag the active scroll position by a frame, so an exact
+/// end-of-scroll measurement is sufficient even while the tail item still
+/// reports outside the visible boundary.
+@visibleForTesting
+bool threadTailCorrectionReachedEnd({
+  required bool tailIsVisible,
+  required double? extentAfter,
+}) =>
+    tailIsVisible ||
+    (extentAfter != null && extentAfter <= _threadTailScrollTolerance);
 
-double _threadTailTrailingBoundary({
-  required bool hasComposerDock,
-  required double viewportHeight,
-  required double dockHeight,
-}) {
-  if (!hasComposerDock) return 1.001;
-  if (!viewportHeight.isFinite ||
-      viewportHeight <= 0 ||
-      !dockHeight.isFinite ||
-      dockHeight <= 0) {
-    return double.negativeInfinity;
-  }
-  return 1 - (dockHeight / viewportHeight) + 0.001;
-}
+int _threadTailIndex(int replyCount) => replyCount;
 
 void _resumeThreadTailFollow({
   required bool Function() isVisible,
@@ -63,15 +61,6 @@ ThreadSummary _buildNestedSummary(
   );
 }
 
-class _ThreadTailMetricsObserver with WidgetsBindingObserver {
-  final VoidCallback onMetricsChanged;
-
-  _ThreadTailMetricsObserver({required this.onMetricsChanged});
-
-  @override
-  void didChangeMetrics() => onMetricsChanged();
-}
-
 /// Serializes deferred tail work behind the latest user scroll intent.
 class _ThreadTailIntent {
   var _generation = 0;
@@ -85,6 +74,18 @@ class _ThreadTailIntent {
   }
 
   void endDrag() => isDragging = false;
+
+  void scheduleNextFrame({
+    required bool allowed,
+    required bool Function() revalidate,
+    required VoidCallback action,
+  }) {
+    if (!allowed) return;
+    final generation = ++_generation;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (generation == _generation && revalidate()) action();
+    });
+  }
 
   void schedule({
     required bool allowed,

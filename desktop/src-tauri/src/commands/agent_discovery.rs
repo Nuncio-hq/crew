@@ -6,9 +6,8 @@ use crate::{
         command_availability, AcpRuntimeCatalogEntry, DiscoverManagedAgentPrereqsRequest,
         InstallRuntimeResult, ManagedAgentPrereqsInfo, RelayAgentInfo, DEFAULT_ACP_COMMAND,
     },
-    nostr_convert,
-    relay::query_relay,
 };
+mod agent_discovery_ownership;
 mod git_bash_prerequisite;
 mod install_capture;
 mod install_exec;
@@ -18,8 +17,10 @@ mod managed_adapter_install;
 mod managed_node;
 mod forced_single_flight;
 mod post_install_verification;
+use agent_discovery_ownership::list_relay_agents_inner;
 pub use git_bash_prerequisite::discover_git_bash_prerequisite;
 use install_runtime::install_acp_runtime_blocking;
+
 /// Discover the ACP runtime catalog. `force: false` (the default) serves the
 /// cheap cached path; `force: true` runs the expensive re-discovery. See
 /// [`forced_single_flight`] for the split and single-flight coalescing.
@@ -860,23 +861,7 @@ pub async fn discover_managed_agent_prereqs(
 
 #[tauri::command]
 pub async fn list_relay_agents(state: State<'_, AppState>) -> Result<Vec<RelayAgentInfo>, String> {
-    // Query kind:10100 agent profile events from the relay.
-    let events = query_relay(
-        &state,
-        &[serde_json::json!({
-            "kinds": [10100],
-        })],
-    )
-    .await?;
-
-    // The convert helper returns `{"agents": [...]}`. Extract and re-deserialize
-    // into the strongly-typed `Vec<RelayAgentInfo>` the frontend expects.
-    let value = nostr_convert::agents_from_events(&events);
-    let agents = value
-        .get("agents")
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!([]));
-    serde_json::from_value(agents).map_err(|e| format!("agent parse failed: {e}"))
+    list_relay_agents_inner(&state).await
 }
 
 #[cfg(test)]

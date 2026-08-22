@@ -31,6 +31,7 @@ test("flushMentionDebounce returns the fresh suggestion with its fresh start ind
       candidate({ displayName: "Beta", pubkey: "b".repeat(64) }),
     ],
     activePersonaIds: new Set(),
+    agentProvenanceReady: true,
     channelType: "group",
   });
 
@@ -48,6 +49,7 @@ test("flushMentionDebounce returns no-match for a fresh query with no matches", 
     searchableNamesLowerRef: ref(["alpha", "beta"]),
     candidates: [candidate()],
     activePersonaIds: new Set(),
+    agentProvenanceReady: true,
     channelType: "group",
   });
 
@@ -62,6 +64,7 @@ test("flushMentionDebounce returns null for an empty fresh query", () => {
     searchableNamesLowerRef: ref(["alpha", "beta"]),
     candidates: [candidate()],
     activePersonaIds: new Set(),
+    agentProvenanceReady: true,
     channelType: "group",
   });
 
@@ -99,6 +102,7 @@ test("flushMentionDebounce preserves a team expansion selected with Enter", () =
       }),
     ],
     activePersonaIds: new Set(),
+    agentProvenanceReady: true,
     channelType: "group",
   });
 
@@ -106,4 +110,27 @@ test("flushMentionDebounce preserves a team expansion selected with Enter", () =
   assert.equal(flushed?.suggestion.kind, "team");
   assert.deepEqual(flushed?.suggestion.teamMembers, teamMembers);
   assert.equal(flushed?.suggestion.notInChannel, false);
+});
+
+test("flushMentionDebounce propagates agent provenance readiness", () => {
+  const flushed = flushMentionDebounce({
+    debounceTimerRef: ref(setTimeout(() => {}, 1000)),
+    latestValueRef: ref("@be"),
+    latestCursorRef: ref(3),
+    searchableNamesLowerRef: ref(["beta"]),
+    candidates: [
+      candidate({
+        isAgent: true,
+        isManagedAgent: false,
+        ownerPubkey: "a".repeat(64),
+      }),
+    ],
+    activePersonaIds: new Set(),
+    agentProvenanceReady: true,
+    channelType: "group",
+    currentPubkey: "a".repeat(64),
+  });
+
+  assert.equal(flushed?.type, "match");
+  assert.equal(flushed?.suggestion.agentProvenance, "managed-elsewhere");
 });

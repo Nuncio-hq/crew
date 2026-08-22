@@ -20,6 +20,7 @@ import type {
 } from "@/features/projects/hooks";
 import {
   commitAuthorPubkeysFromPullRequests,
+  repositoryParticipantPubkeys,
   type ViewerGitIdentity,
 } from "@/features/projects/lib/projectContributorMatching";
 import type { ProjectRepoHost } from "@/features/projects/lib/projectRepoHost";
@@ -248,6 +249,10 @@ export function WorkspaceTabs({
   const commitAuthorPubkeys = React.useMemo(
     () => commitAuthorPubkeysFromPullRequests(pullRequests),
     [pullRequests],
+  );
+  const repoParticipants = React.useMemo(
+    () => repositoryParticipantPubkeys(project),
+    [project],
   );
   const selectedPullRequest =
     pullRequests.find(
@@ -494,6 +499,7 @@ export function WorkspaceTabs({
             profiles={profiles}
             pullRequests={pullRequests}
             repoContributors={displayedContributors}
+            repoParticipants={repoParticipants}
             snapshot={displayedSnapshot}
             viewerGitIdentity={viewerGitIdentity}
           />
@@ -584,6 +590,7 @@ export function WorkspaceTabs({
         <ContributorsPanel
           profiles={profiles}
           repoContributors={displayedContributors}
+          repoParticipants={repoParticipants}
         />
       </TabsContent>
       {createPullRequestAction && createPullRequestOpen ? (
