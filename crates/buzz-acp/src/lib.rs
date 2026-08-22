@@ -2439,6 +2439,11 @@ async fn tokio_main() -> Result<()> {
         })
         .collect();
 
+    // Whether each slot has ever held a live engine. In a lazy pool this is what
+    // separates "spare capacity nobody asked for" from "a slot that crashed and
+    // owes us a respawn" (#295). Eager pools are materialized by definition.
+    let mut slot_materialized: Vec<bool> = vec![!config.lazy_pool; config.agents as usize];
+
     //
     // Branches 1 & 2 both need to borrow `pool`, but they access different
     // fields (result_rx vs join_set). We use `rx_and_join_set()` to split the
@@ -2483,7 +2488,7 @@ async fn tokio_main() -> Result<()> {
                     "waking",
                     None,
                 );
-                let startup = PoolStartup::from_config(&config, observer.clone());
+                let startup = PoolStartup::for_wake(&config, observer.clone());
                 let wake_tx = wake_tx.clone();
                 let wake_shutdown = shutdown_rx.clone();
                 wake_tasks.spawn(async move {
@@ -2500,6 +2505,29 @@ async fn tokio_main() -> Result<()> {
             }
         }
 
+        // A starved concurrent turn is the only thing that grows a lazy pool:
+        // materialize one more engine at the lowest empty slot, still capped by
+        // `parallelism` and gated by that slot's circuit breaker (#295). The
+        // starved batch stays queued and dispatches once the engine lands.
+        if config.lazy_pool && pool_ready && pool.take_fill_demand() {
+            if let Some(idx) = next_lazy_fill_slot(&pool, &mut crash_history) {
+                crash_history[idx].respawn_in_flight = true;
+                tracing::info!(
+                    agent = idx,
+                    live = pool.live_count(),
+                    cap = config.agents,
+                    "lazy slot fill: concurrent-turn demand"
+                );
+                spawn_slot_fill(
+                    idx,
+                    &config,
+                    observer.clone(),
+                    &respawn_tx,
+                    &mut respawn_tasks,
+                );
+            }
+        }
+
         if pool_ready && last_maintenance.elapsed() >= maintenance_interval {
             last_maintenance = std::time::Instant::now();
             queue.compact_expired_state();
@@ -2509,6 +2537,9 @@ async fn tokio_main() -> Result<()> {
             // loop so it never blocks event processing.
             for (idx, slot) in crash_history.iter_mut().enumerate() {
                 if pool.slot_alive(idx) || slot.respawn_in_flight {
+                    continue;
+                }
+                if !maintenance_refill_allowed(config.lazy_pool, slot_materialized[idx]) {
                     continue;
                 }
                 if !slot.can_refill() {
@@ -2573,6 +2604,7 @@ async fn tokio_main() -> Result<()> {
                         load_session_supported,
                     };
                     pool.return_agent(agent);
+                    slot_materialized[rr.index] = true;
                     tracing::info!(agent = rr.index, "respawn complete");
                     respawn_collected = true;
                 }
@@ -3603,6 +3635,9 @@ async fn tokio_main() -> Result<()> {
                             }
                         }
                         pool_ready = true;
+                        for (idx, materialized) in slot_materialized.iter_mut().enumerate() {
+                            *materialized = pool.slot_alive(idx);
+                        }
                         emit_runtime_lifecycle(
                             observer.as_ref(),
                             &runtime_start_nonce,
@@ -3646,6 +3681,8 @@ async fn tokio_main() -> Result<()> {
                     "listening",
                     None,
                 );
+                // The next wake starts from one engine again.
+                reset_slot_materialization(&mut slot_materialized);
                 tracing::info!(should_rewake, "engine pool drained — listening");
                 if should_rewake || queue.has_flushable_work() {
                     // Next loop iteration starts the wake (Listening + work).
@@ -5322,6 +5359,11 @@ async fn shutdown_agent_pool(pool: &mut AgentPool) {
 
 struct PoolStartup {
     agents: u32,
+    /// Number of addressable slots in the resulting pool. Equals `agents` for
+    /// eager startups; on a lazy wake it stays at the configured `parallelism`
+    /// cap while `agents` is 1, so slots 1..cap remain `None` holes that
+    /// concurrent-turn demand can materialize later (#295).
+    slot_capacity: u32,
     command: String,
     args: Vec<String>,
     extra_env: Vec<(String, String)>,
@@ -5332,10 +5374,77 @@ struct PoolStartup {
     user_input_enabled: bool,
 }
 
+/// How many engines a wake spawns: one in lazy mode, the whole warm pool in
+/// eager mode. A cap of 0 spawns nothing either way.
+fn wake_spawn_count(lazy_pool: bool, cap: u32) -> u32 {
+    if lazy_pool { cap.min(1) } else { cap }
+}
+
+/// Lowest slot a lazy pool may materialize right now, or `None` when the pool
+/// already sits at its `parallelism` cap or every empty slot is blocked by an
+/// in-flight fill or an open circuit. `crash_history` is sized to the cap, so
+/// iterating it enforces the cap by construction (#295).
+fn next_lazy_fill_slot(pool: &AgentPool, crash_history: &mut [SlotCircuit]) -> Option<usize> {
+    for (idx, slot) in crash_history.iter_mut().enumerate() {
+        if pool.slot_alive(idx) || slot.respawn_in_flight || !slot.can_refill() {
+            continue;
+        }
+        return Some(idx);
+    }
+    None
+}
+
+/// Whether the periodic maintenance sweep may refill an empty slot.
+///
+/// In a lazy pool a slot that was never materialized is spare capacity, not a
+/// crashed engine — only concurrent-turn demand grows the pool. Slots that were
+/// once live keep the normal crash-refill behavior, and eager pools always
+/// backfill failed startup slots.
+fn maintenance_refill_allowed(lazy_pool: bool, slot_materialized: bool) -> bool {
+    !lazy_pool || slot_materialized
+}
+
+/// Forget the fill level of a spun-down pool so the next wake starts from a
+/// single engine again.
+fn reset_slot_materialization(slot_materialized: &mut [bool]) {
+    slot_materialized.fill(false);
+}
+
+/// Materialize one engine for `idx` in the background, reusing the respawn
+/// plumbing (`RespawnGuard` + `respawn_rx`) so the main loop stays unblocked.
+fn spawn_slot_fill(
+    idx: usize,
+    config: &Config,
+    observer: Option<observer::ObserverHandle>,
+    respawn_tx: &mpsc::Sender<RespawnResult>,
+    respawn_tasks: &mut tokio::task::JoinSet<()>,
+) {
+    let cmd = config.agent_command.clone();
+    let args = config.agent_args.clone();
+    let env = config.persona_env_vars.clone();
+    let has_codex = config.has_generated_codex_config;
+    let user_input_enabled = config.user_input_enabled;
+    let guard = RespawnGuard::new(idx, respawn_tx.clone());
+    respawn_tasks.spawn(async move {
+        let result = spawn_and_init(
+            &cmd,
+            &args,
+            &env,
+            has_codex,
+            user_input_enabled,
+            idx,
+            observer,
+        )
+        .await;
+        guard.send(result);
+    });
+}
+
 impl PoolStartup {
     fn from_config(config: &Config, observer: Option<observer::ObserverHandle>) -> Self {
         Self {
             agents: config.agents,
+            slot_capacity: config.agents,
             command: config.agent_command.clone(),
             args: config.agent_args.clone(),
             extra_env: config.persona_env_vars.clone(),
@@ -5346,6 +5455,14 @@ impl PoolStartup {
             user_input_enabled: config.user_input_enabled,
         }
     }
+
+    /// Startup plan for waking an idle pool. Lazy pools spawn a single engine
+    /// and keep `parallelism` purely as a concurrency cap.
+    fn for_wake(config: &Config, observer: Option<observer::ObserverHandle>) -> Self {
+        let mut startup = Self::from_config(config, observer);
+        startup.agents = wake_spawn_count(config.lazy_pool, config.agents);
+        startup
+    }
 }
 
 async fn initialize_agent_pool(
@@ -5354,7 +5471,8 @@ async fn initialize_agent_pool(
 ) -> Result<AgentPool> {
     // One agent failing to start must not kill the whole pool.
     // Attempt each spawn under a 60-second timeout; a partial pool is valid.
-    let mut agent_slots: Vec<Option<OwnedAgent>> = Vec::with_capacity(startup.agents as usize);
+    let slot_capacity = startup.slot_capacity.max(startup.agents) as usize;
+    let mut agent_slots: Vec<Option<OwnedAgent>> = Vec::with_capacity(slot_capacity);
     for i in 0..startup.agents as usize {
         let spawn_result = AcpClient::spawn(
             &startup.command,
@@ -5457,7 +5575,16 @@ async fn initialize_agent_pool(
             startup.agents
         );
     }
-    tracing::info!("agent_pool_ready agents={}", live_count);
+    // Pad the remaining capacity with holes so slot indices stay addressable
+    // for demand-driven fill without spawning anything now.
+    while agent_slots.len() < slot_capacity {
+        agent_slots.push(None);
+    }
+    tracing::info!(
+        "agent_pool_ready agents={} cap={}",
+        live_count,
+        slot_capacity
+    );
     Ok(AgentPool::from_slots(agent_slots))
 }
 
@@ -9516,6 +9643,239 @@ mod error_outcome_emission_tests {
             crash_history[0].open_until.is_none(),
             "a gone Project folder must not open the crash circuit"
         );
+    }
+
+    // ── #295 lazy engine-slot fill ────────────────────────────────────────
+    //
+    // A wake must cost one engine process tree, not `parallelism` trees.
+    // `parallelism` is a cap; slots 1..N materialize only on concurrent-turn
+    // demand.
+
+    /// Bash fake engine: appends one spawn marker, then answers every
+    /// JSON-RPC request with a minimal successful `initialize` result.
+    fn fake_engine_script(marker: &std::path::Path) -> String {
+        let quoted = marker.to_string_lossy().replace('\'', "'\\''");
+        format!(
+            r#"printf 'spawn\n' >> '{quoted}'
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  printf '%s\n' "{{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{{\"protocolVersion\":1,\"agentInfo\":{{\"name\":\"fake\"}}}}}}"
+done"#
+        )
+    }
+
+    fn spawn_marker_count(marker: &std::path::Path) -> usize {
+        std::fs::read_to_string(marker)
+            .map(|body| body.lines().count())
+            .unwrap_or(0)
+    }
+
+    fn fake_engine_config(agents: u32, lazy_pool: bool, marker: &std::path::Path) -> Config {
+        let mut config = test_config();
+        config.agents = agents;
+        config.lazy_pool = lazy_pool;
+        config.agent_command = "bash".into();
+        config.agent_args = vec!["-c".into(), fake_engine_script(marker)];
+        config
+    }
+
+    fn open_circuit() -> SlotCircuit {
+        SlotCircuit {
+            crash_times: Vec::new(),
+            open_until: None,
+            respawn_in_flight: false,
+        }
+    }
+
+    #[test]
+    fn wake_spawn_count_is_one_for_lazy_and_cap_for_eager() {
+        assert_eq!(wake_spawn_count(true, 10), 1);
+        assert_eq!(wake_spawn_count(false, 10), 10);
+        assert_eq!(wake_spawn_count(true, 0), 0);
+    }
+
+    #[tokio::test]
+    async fn lazy_wake_spawns_exactly_one_engine_and_keeps_cap_slots() {
+        let marker =
+            std::env::temp_dir().join(format!("buzz-acp-lazy-wake-{}.log", Uuid::new_v4()));
+        let config = fake_engine_config(4, true, &marker);
+        let startup = PoolStartup::for_wake(&config, None);
+        assert_eq!(startup.agents, 1, "lazy wake spawns a single engine");
+        assert_eq!(startup.slot_capacity, 4, "the cap still sizes the slot vec");
+
+        let mut pool = initialize_agent_pool(&startup, None)
+            .await
+            .expect("lazy wake pool");
+        assert_eq!(pool.live_count(), 1, "one live engine serves the wake turn");
+        assert_eq!(
+            pool.agents_mut().len(),
+            4,
+            "slots 1..N stay addressable as None holes for demand fill"
+        );
+        assert_eq!(
+            spawn_marker_count(&marker),
+            1,
+            "exactly one engine subprocess per wake"
+        );
+        shutdown_agent_pool(&mut pool).await;
+        let _ = std::fs::remove_file(&marker);
+    }
+
+    #[tokio::test]
+    async fn eager_wake_still_fills_every_slot_up_front() {
+        let marker =
+            std::env::temp_dir().join(format!("buzz-acp-eager-wake-{}.log", Uuid::new_v4()));
+        let config = fake_engine_config(4, false, &marker);
+        let startup = PoolStartup::for_wake(&config, None);
+        assert_eq!(startup.agents, 4, "eager deploys keep warm-pool fill");
+
+        let mut pool = initialize_agent_pool(&startup, None)
+            .await
+            .expect("eager pool");
+        assert_eq!(pool.live_count(), 4);
+        assert_eq!(spawn_marker_count(&marker), 4);
+        shutdown_agent_pool(&mut pool).await;
+        let _ = std::fs::remove_file(&marker);
+    }
+
+    /// Quantitative footprint measurement for the perf claim: one wake of a
+    /// `parallelism: 10` agent costs 1 engine lazily and 10 eagerly.
+    #[tokio::test]
+    async fn engine_spawn_footprint_lazy_versus_eager_at_parallelism_ten() {
+        let lazy_marker =
+            std::env::temp_dir().join(format!("buzz-acp-footprint-lazy-{}.log", Uuid::new_v4()));
+        let eager_marker =
+            std::env::temp_dir().join(format!("buzz-acp-footprint-eager-{}.log", Uuid::new_v4()));
+
+        let lazy_config = fake_engine_config(10, true, &lazy_marker);
+        let mut lazy_pool = initialize_agent_pool(&PoolStartup::for_wake(&lazy_config, None), None)
+            .await
+            .expect("lazy pool");
+        let lazy_spawns = spawn_marker_count(&lazy_marker);
+        shutdown_agent_pool(&mut lazy_pool).await;
+
+        let eager_config = fake_engine_config(10, false, &eager_marker);
+        let mut eager_pool =
+            initialize_agent_pool(&PoolStartup::for_wake(&eager_config, None), None)
+                .await
+                .expect("eager pool");
+        let eager_spawns = spawn_marker_count(&eager_marker);
+        shutdown_agent_pool(&mut eager_pool).await;
+
+        println!("engine_spawns_per_wake lazy={lazy_spawns} eager={eager_spawns}");
+        assert_eq!(lazy_spawns, 1);
+        assert_eq!(eager_spawns, 10);
+        let _ = std::fs::remove_file(&lazy_marker);
+        let _ = std::fs::remove_file(&eager_marker);
+    }
+
+    #[tokio::test]
+    async fn concurrent_turn_demand_fills_the_lowest_empty_slot_once() {
+        // Slot 0 is checked out on a live turn; slots 1..3 are unmaterialized.
+        let mut pool = AgentPool::from_slots(vec![None, None, None, None]);
+        let task_id = pool.join_set.spawn(async {}).id();
+        pool.task_map_mut().insert(
+            task_id,
+            crate::pool::TaskMeta {
+                agent_index: 0,
+                channel_id: Some(Uuid::new_v4()),
+                routing_channel_id: None,
+                turn_id: "turn-0".into(),
+                recoverable_batch: None,
+                control_tx: None,
+                steer_tx: None,
+                successful_steer_deliveries: HashSet::new(),
+            },
+        );
+        let mut crash_history: Vec<SlotCircuit> = (0..4).map(|_| open_circuit()).collect();
+
+        assert_eq!(
+            next_lazy_fill_slot(&pool, &mut crash_history),
+            Some(1),
+            "demand materializes the lowest empty slot"
+        );
+        crash_history[1].respawn_in_flight = true;
+        assert_eq!(
+            next_lazy_fill_slot(&pool, &mut crash_history),
+            Some(2),
+            "a slot already filling is never double-spawned"
+        );
+    }
+
+    #[tokio::test]
+    async fn demand_fill_never_exceeds_the_parallelism_cap() {
+        let mut pool =
+            AgentPool::from_slots(vec![Some(dummy_agent(0).await), Some(dummy_agent(1).await)]);
+        let mut crash_history: Vec<SlotCircuit> = (0..2).map(|_| open_circuit()).collect();
+        assert_eq!(
+            next_lazy_fill_slot(&pool, &mut crash_history),
+            None,
+            "a pool at its cap has nothing left to materialize"
+        );
+        shutdown_agent_pool(&mut pool).await;
+    }
+
+    #[test]
+    fn tripped_slot_circuit_blocks_demand_fill() {
+        let pool = AgentPool::from_slots(vec![None, None]);
+        let mut crash_history: Vec<SlotCircuit> = (0..2).map(|_| open_circuit()).collect();
+        crash_history[0].respawn_in_flight = true;
+        crash_history[1].open_until = Some(std::time::Instant::now() + Duration::from_secs(60));
+        assert_eq!(
+            next_lazy_fill_slot(&pool, &mut crash_history),
+            None,
+            "an open slot circuit must stop further fill attempts"
+        );
+    }
+
+    /// A later *sequential* turn reuses the engine that is already live, so a
+    /// lazy pool that grew once does not keep growing.
+    #[tokio::test]
+    async fn sequential_turn_reuses_the_live_engine_without_growing_the_pool() {
+        let mut pool = AgentPool::from_slots(vec![Some(dummy_agent(0).await), None, None, None]);
+        let agent = pool
+            .try_claim(Some(Uuid::new_v4()))
+            .expect("the live engine serves the turn");
+        assert!(
+            !pool.take_fill_demand(),
+            "a served turn never asks for another engine"
+        );
+        pool.return_agent(agent);
+
+        let mut crash_history: Vec<SlotCircuit> = (0..4).map(|_| open_circuit()).collect();
+        assert_eq!(
+            next_lazy_fill_slot(&pool, &mut crash_history),
+            Some(1),
+            "capacity is still available, but nothing requested it"
+        );
+        shutdown_agent_pool(&mut pool).await;
+    }
+
+    #[test]
+    fn lazy_maintenance_sweep_does_not_backfill_unmaterialized_holes() {
+        assert!(
+            !maintenance_refill_allowed(true, false),
+            "a never-materialized lazy slot is not a crashed slot"
+        );
+        assert!(
+            maintenance_refill_allowed(true, true),
+            "a materialized slot that crashed is still refilled"
+        );
+        assert!(
+            maintenance_refill_allowed(false, false),
+            "eager pools keep backfilling failed startup slots"
+        );
+    }
+
+    #[test]
+    fn drain_resets_slot_materialization_so_the_next_wake_spawns_one() {
+        let mut materialized = vec![true, true, false, false];
+        reset_slot_materialization(&mut materialized);
+        assert!(
+            materialized.iter().all(|m| !m),
+            "drain leaves no memory of the previous fill level"
+        );
+        assert!(!maintenance_refill_allowed(true, materialized[0]));
     }
 }
 
