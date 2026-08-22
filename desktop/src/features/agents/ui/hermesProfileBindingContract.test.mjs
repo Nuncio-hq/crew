@@ -217,8 +217,9 @@ test("trusted boundary card shows profile reuse as shared-state information", as
     "Product, Research",
     "Crew approves ACP tool requests automatically;",
     "own approval policy still applies.",
-    "One managed agent uses this profile across its configured communities.",
-    "Memory, skills, and profile state are shared.",
+    "This profile is not bound to a managed agent yet.",
+    "When bound, memory, skills, and profile state are shared across that",
+    "configured communities.",
   ]) {
     assert.ok(html.includes(text), `missing visible boundary copy: ${text}`);
   }
@@ -451,6 +452,27 @@ test("profile usage follows configured communities, not obsolete record pins", (
     usedIn: ["Product", "Research"],
     otherUses: [],
     hasPresentationMismatch: false,
+    isBound: true,
+  });
+});
+
+test("unbound create draft does not claim active profile usage", () => {
+  const usage = hermesProfileBinding.deriveHermesProfileUsage({
+    profile: "default",
+    currentRelayUrl: "wss://product.example",
+    currentAgentName: null,
+    communities: [
+      { name: "Product", relayUrl: "wss://product.example" },
+      { name: "Research", relayUrl: "wss://research.example" },
+    ],
+    agents: [],
+  });
+
+  assert.deepEqual(usage, {
+    usedIn: [],
+    otherUses: [],
+    hasPresentationMismatch: false,
+    isBound: false,
   });
 });
 
@@ -476,6 +498,7 @@ test("profile usage survives native records without a relay identity", () => {
     usedIn: ["Product", "Research"],
     otherUses: [],
     hasPresentationMismatch: false,
+    isBound: true,
   });
 });
 

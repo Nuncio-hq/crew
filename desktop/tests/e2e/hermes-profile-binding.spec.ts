@@ -212,15 +212,23 @@ test.describe("hermes profile binding", () => {
     );
     await expect(page.getByTestId("hermes-profile-error")).toHaveCount(0);
     await expect(
-      page.getByTestId("hermes-home-profile-readonly"),
+      page.getByTestId("hermes-home-profile-readonly").first(),
     ).toBeVisible();
     await expect(
-      page.getByTestId("hermes-home-profile-readonly"),
+      page.getByTestId("hermes-home-profile-readonly").first(),
     ).toContainText(/edit this profile in Hermes/i);
     await expect(page.getByTestId("hermes-profile-model-loading")).toHaveCount(
       0,
     );
     await expect(page.getByText("Reading profile settings…")).toHaveCount(0);
+    await expect(dialog.locator("#persona-model")).toHaveCount(0);
+    await expect(page.getByTestId("hermes-effective-boundary")).toContainText(
+      "Not yet",
+    );
+    await expect(page.getByTestId("hermes-effective-boundary")).toContainText(
+      "not bound to a managed agent yet",
+    );
+    await expect(createSubmit(dialog)).toBeEnabled();
   });
 
   test("create: lists existing disk profiles and pick binds", async ({
@@ -239,11 +247,9 @@ test.describe("hermes profile binding", () => {
     const list = page.getByTestId("hermes-profile-combobox-list");
     await expect(list).toBeVisible();
     await expect(list.getByTestId("hermes-profile-option")).toHaveCount(3);
-    await expect(list.getByTestId("hermes-profile-option")).toContainText([
-      "Personal (default)",
-      "builder",
-      "scout",
-    ]);
+    await expect(list.getByText("Personal (default)")).toBeVisible();
+    await expect(list.getByText("builder", { exact: true })).toBeVisible();
+    await expect(list.getByText("scout", { exact: true })).toBeVisible();
     await expect(list.getByText("default", { exact: true })).toHaveCount(0);
 
     await list
@@ -276,11 +282,9 @@ test.describe("hermes profile binding", () => {
 
     const list = page.getByTestId("hermes-profile-combobox-list");
     await expect(list).toBeVisible();
-    await expect(list.getByTestId("hermes-profile-option")).toContainText([
-      "Personal (default)",
-      "builder",
-      "scout",
-    ]);
+    await expect(list.getByText("Personal (default)")).toBeVisible();
+    await expect(list.getByText("builder", { exact: true })).toBeVisible();
+    await expect(list.getByText("scout", { exact: true })).toBeVisible();
 
     await list
       .getByTestId("hermes-profile-option")
@@ -467,7 +471,7 @@ test.describe("hermes profile binding", () => {
       "One managed agent uses this profile across its configured communities.",
     );
     await expect(usage).toContainText(
-      "Memory, skills, and profile state are shared.",
+      "memory, skills, and profile state are shared across that agent's configured communities.",
     );
   });
 

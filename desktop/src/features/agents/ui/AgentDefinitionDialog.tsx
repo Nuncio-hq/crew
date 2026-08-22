@@ -509,11 +509,13 @@ export function AgentDefinitionDialog({
     runtime,
     runtimeCanChooseLlmProvider,
   });
-  const isExplicitModelRequired = aiConfigurationMode === "custom";
+  const isExplicitModelRequired =
+    aiConfigurationMode === "custom" && modelFieldVisible;
   const customAiPairSatisfied = agentAiConfigurationModeSatisfied(
     aiConfigurationMode,
     { provider, model },
     runtimeCanChooseLlmProvider,
+    modelFieldVisible,
   );
   const selectedRuntimeIsAvailable =
     runtime.trim().length === 0 ||

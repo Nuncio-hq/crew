@@ -72,6 +72,18 @@ test("Codex/Claude Customize needs only a model, not the hidden provider", () =>
   );
 });
 
+test("profile-owned Customize does not require a hidden model or provider", () => {
+  assert.equal(
+    agentAiConfigurationModeSatisfied(
+      "custom",
+      { provider: "", model: "" },
+      false,
+      false,
+    ),
+    true,
+  );
+});
+
 test("Buzz Agent/Goose Customize still requires both provider and model", () => {
   assert.equal(
     agentAiConfigurationModeSatisfied(
