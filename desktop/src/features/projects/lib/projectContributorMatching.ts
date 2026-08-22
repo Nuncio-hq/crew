@@ -37,12 +37,61 @@ function profileMatchesContributor(
   );
 }
 
+/**
+ * Pubkeys the repository announcement itself names — owner first, then
+ * maintainers, then contributors. A git author string can match several
+ * community profiles at once (identical display names are not reserved), so
+ * the repo's own participants are tried first and the remaining profiles are
+ * tried in a stable order. This only reorders candidates: it never turns a
+ * non-match into a match.
+ */
+export function repositoryParticipantPubkeys(
+  repository:
+    | {
+        owner?: string | null;
+        maintainers?: readonly string[];
+        contributors?: readonly string[];
+      }
+    | null
+    | undefined,
+): string[] {
+  if (!repository) return [];
+  const announced = [
+    repository.owner ?? "",
+    ...(repository.maintainers ?? []),
+    ...(repository.contributors ?? []),
+  ]
+    .map((pubkey) => pubkey.trim().toLowerCase())
+    .filter(Boolean);
+  return [...new Set(announced)];
+}
+
+function orderedProfileEntries(
+  profiles: UserProfileLookup,
+  repoParticipants: readonly string[] | undefined,
+) {
+  const entries = Object.entries(profiles).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  if (!repoParticipants?.length) return entries;
+  const ranked = new Map(
+    repoParticipants.map((pubkey, index) => [pubkey, index]),
+  );
+  const rank = ([pubkey]: [string, unknown]) =>
+    ranked.get(pubkey.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+  return entries.sort((left, right) => rank(left) - rank(right));
+}
+
 export function profileForContributor(
   contributor: ProjectRepoContributor,
   profiles: UserProfileLookup | undefined,
+  repoParticipants?: readonly string[],
 ) {
   if (!profiles) return null;
-  for (const [pubkey, profile] of Object.entries(profiles)) {
+  for (const [pubkey, profile] of orderedProfileEntries(
+    profiles,
+    repoParticipants,
+  )) {
     if (profileMatchesContributor(contributor, profile, pubkey)) {
       return { pubkey, profile };
     }
@@ -53,6 +102,7 @@ export function profileForContributor(
 export function profileForCommitAuthor(
   commit: ProjectRepoCommit,
   profiles: UserProfileLookup | undefined,
+  repoParticipants?: readonly string[],
 ) {
   if (!profiles) return null;
   const contributor = {
@@ -61,12 +111,7 @@ export function profileForCommitAuthor(
     commitCount: 0,
     lastCommitAt: commit.timestamp,
   };
-  for (const [pubkey, profile] of Object.entries(profiles)) {
-    if (profileMatchesContributor(contributor, profile, pubkey)) {
-      return { pubkey, profile };
-    }
-  }
-  return null;
+  return profileForContributor(contributor, profiles, repoParticipants);
 }
 
 /**
@@ -139,6 +184,7 @@ export function profileForCommit(
   profiles: UserProfileLookup | undefined,
   commitAuthorPubkeys?: Map<string, string>,
   viewerGitIdentity?: ViewerGitIdentity | null,
+  repoParticipants?: readonly string[],
 ) {
   const mappedPubkey =
     commitAuthorPubkeys?.get(commit.hash.toLowerCase()) ??
@@ -149,7 +195,11 @@ export function profileForCommit(
       return { pubkey: mappedPubkey.toLowerCase(), profile };
     }
   }
-  const authorMatch = profileForCommitAuthor(commit, profiles);
+  const authorMatch = profileForCommitAuthor(
+    commit,
+    profiles,
+    repoParticipants,
+  );
   if (authorMatch) {
     return authorMatch;
   }

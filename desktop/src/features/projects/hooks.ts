@@ -66,7 +66,7 @@ import {
   fetchProjectEventsExhaustively,
 } from "./projectEnumeration";
 import { projectMatchesRouteId } from "./projectRoutes";
-import { firstCloneUrl } from "./lib/projectCloneUrl";
+import { cloneUrlList, firstCloneUrl } from "./lib/projectCloneUrl";
 
 export type {
   Project,
@@ -490,15 +490,17 @@ async function fetchProjectLocalRepoSnapshot(
   project: Repository,
   reposDir?: string | null,
   branchName?: string | null,
+  selectedTag?: string | null,
 ): Promise<ProjectLocalRepoSnapshot | null> {
   return readProjectLocalRepoSnapshot({
-    cloneUrl: firstCloneUrl(project) ?? null,
+    cloneUrls: cloneUrlList(project),
     localWorkspacePath: project.localWorkspacePath,
     localWorkspaceStatus: project.localWorkspaceStatus,
     reposDir,
     projectDtag: project.dtag,
     defaultBranch: branchName ?? project.defaultBranch,
     baseBranch: project.defaultBranch,
+    selectedTag,
   });
 }
 
@@ -771,11 +773,15 @@ export function useProjectLocalRepoSnapshotQuery(
   project: Repository | null | undefined,
   reposDir?: string | null,
   branchName?: string | null,
+  selectedTag?: string | null,
 ) {
   const selectedBranch = branchName ?? project?.defaultBranch ?? null;
 
   return useQuery({
-    enabled: Boolean(project && project?.localWorkspaceStatus !== "invalid"),
+    // A selected tag is remote-only, so no local read is attempted.
+    enabled: Boolean(
+      project && project?.localWorkspaceStatus !== "invalid" && !selectedTag,
+    ),
     queryKey: [
       "project",
       project?.id ?? "none",
@@ -784,10 +790,16 @@ export function useProjectLocalRepoSnapshotQuery(
       project?.localWorkspaceStatus ?? "unlinked",
       reposDir ?? "default",
       selectedBranch ?? "default",
+      selectedTag ?? "no-tag",
     ],
     queryFn: () => {
       if (!project) throw new Error("No project selected.");
-      return fetchProjectLocalRepoSnapshot(project, reposDir, selectedBranch);
+      return fetchProjectLocalRepoSnapshot(
+        project,
+        reposDir,
+        selectedBranch,
+        selectedTag,
+      );
     },
     staleTime: 10_000,
     retry: 1,

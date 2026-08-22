@@ -281,6 +281,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     repository,
     activeCommunity?.reposDir,
     activeBranch,
+    selectedTag,
   );
   const repoSyncStatusQuery = useProjectRepoSyncStatusQuery(
     repository,
@@ -318,6 +319,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     isError: localRepoSnapshotQuery.isError,
     isLinked: isLinkedWorkspace,
     isLoading: localRepoSnapshotQuery.isLoading,
+    isTagSelected: Boolean(selectedTag),
   });
   const hasRemoteSnapshot = snapshotHasContent(repoSnapshotQuery.data);
   const displayedRepoDiff =

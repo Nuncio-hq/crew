@@ -55,15 +55,26 @@ export async function readProjectLocalRepoSnapshot(
   input: {
     baseBranch?: string | null;
     cloneUrl?: string | null;
+    /**
+     * Every clone URL the repository announces. A checkout's origin may be any
+     * of them (a NIP-34 announcement can list a relay-hosted mirror beside the
+     * canonical host), so each is tried in announced order.
+     */
+    cloneUrls?: readonly string[];
     defaultBranch?: string | null;
     localWorkspacePath?: string | null;
     localWorkspaceStatus?: "invalid" | "linked" | "unlinked";
     projectDtag: string;
     reposDir?: string | null;
+    /** A selected tag is remote-only; see the fail-closed note below. */
+    selectedTag?: string | null;
   },
   dependencies: SnapshotDependencies = runtimeDependencies,
 ) {
   if (input.localWorkspaceStatus === "invalid") return null;
+  // The native reader only resolves branches. Reading a working copy while a
+  // tag is selected would label branch-tip data as the tag, so decline.
+  if (input.selectedTag) return null;
   if (input.localWorkspacePath) {
     return readExactLocalWorkspaceSnapshot(
       {
@@ -75,13 +86,21 @@ export async function readProjectLocalRepoSnapshot(
       dependencies,
     );
   }
-  return dependencies.getLocalSnapshot({
-    baseBranch: input.baseBranch,
-    cloneUrl: input.cloneUrl,
-    defaultBranch: input.defaultBranch,
-    projectDtag: input.projectDtag,
-    reposDir: input.reposDir,
-  });
+  const cloneUrlCandidates =
+    input.cloneUrls && input.cloneUrls.length > 0
+      ? input.cloneUrls
+      : [input.cloneUrl ?? null];
+  for (const cloneUrl of cloneUrlCandidates) {
+    const result = await dependencies.getLocalSnapshot({
+      baseBranch: input.baseBranch,
+      cloneUrl,
+      defaultBranch: input.defaultBranch,
+      projectDtag: input.projectDtag,
+      reposDir: input.reposDir,
+    });
+    if (result) return result;
+  }
+  return null;
 }
 
 export function localWorkspaceSourceState(input: {
@@ -89,7 +108,12 @@ export function localWorkspaceSourceState(input: {
   isError: boolean;
   isLinked: boolean;
   isLoading: boolean;
+  isTagSelected?: boolean;
 }) {
+  // A tag is served from the remote repository only, so Local cannot be the
+  // source even when a usable checkout exists.
+  if (input.isTagSelected)
+    return { disabled: true, label: "Local unavailable" };
   if (input.hasSnapshot) return { disabled: false, label: "Local" };
   if (input.isLoading) return { disabled: false, label: "Local checking" };
   return {

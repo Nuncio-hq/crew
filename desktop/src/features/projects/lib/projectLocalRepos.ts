@@ -1,5 +1,5 @@
 import type { Project, Repository } from "@/features/projects/hooks";
-import { firstCloneUrl } from "@/features/projects/lib/projectCloneUrl";
+import { cloneUrlList } from "@/features/projects/lib/projectCloneUrl";
 
 function localRepoNameCandidate(value: string | null | undefined) {
   const trimmed = value?.trim().replace(/\.git$/i, "") ?? "";
@@ -28,9 +28,11 @@ function cloneUrlRepoName(cloneUrl: string | undefined) {
 }
 
 function localRepoCandidates(repository: Repository) {
+  // Every announced clone URL is a possible checkout origin, so each one's
+  // repository name counts — not just the first URL's.
   return [
     localRepoNameCandidate(repository.dtag),
-    cloneUrlRepoName(firstCloneUrl(repository)),
+    ...cloneUrlList(repository).map(cloneUrlRepoName),
   ].filter((candidate, index, candidates): candidate is string =>
     Boolean(candidate && candidates.indexOf(candidate) === index),
   );
