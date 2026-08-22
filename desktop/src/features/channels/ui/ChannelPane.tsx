@@ -5,7 +5,7 @@ import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
 import { ComposerDockBackdrop } from "@/features/messages/ui/ComposerDockBackdrop";
 import { ComposerUploadProgressOverlay } from "@/features/messages/ui/ComposerUploadProgressOverlay";
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
-import { ChannelComposerContextProviders } from "@/features/channels/ui/ChannelComposerContextProviders";
+import { ComposerWorkspaceBindingProvider } from "@/features/messages/ui/composerWorkspaceBinding";
 import { ComposerWorkspaceSelector } from "@/features/messages/ui/ComposerWorkspaceSelector";
 import { ChannelLocalWorkspaceChip } from "@/features/channels/ui/ChannelLocalWorkspaceChip";
 import {
@@ -724,10 +724,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                 {activeChannel?.id ? (
                   <ChannelOriginPrompt channelId={activeChannel.id} />
                 ) : null}
-                <ChannelComposerContextProviders
-                  binding={workspaceBinding}
-                  channel={activeChannel ?? null}
-                >
+                <ComposerWorkspaceBindingProvider value={workspaceBinding}>
                   <MessageComposer
                     channelId={activeChannel?.id ?? null}
                     channelName={activeChannel?.name ?? "channel"}
@@ -782,7 +779,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                       </>
                     }
                   />
-                </ChannelComposerContextProviders>
+                </ComposerWorkspaceBindingProvider>
                 {/* The activity accessory is anchored in the dock's reserved
                     bottom rail, so fading it cannot change the observed
                     overlay height or move the conversation. Its natural

@@ -29,21 +29,18 @@ test("the send path appends visible-page context after workspace context", async
   assert.ok(hook.includes("useComposerViewContext()"));
 });
 
-test("Crew mounts the visible-page provider in its own channel and thread chrome", async () => {
+test("Crew mounts the visible-page provider in its own thread chrome", async () => {
   const channelPane = await source("../channels/ui/ChannelPane.tsx");
   const threadPanel = await source("../messages/ui/MessageThreadPanel.tsx");
-  assert.ok(channelPane.includes("<ChannelComposerContextProviders"));
   assert.ok(threadPanel.includes("<ThreadComposerViewContext"));
-  for (const wrapper of [
-    "../channels/ui/ChannelComposerContextProviders.tsx",
-    "../messages/ui/ThreadComposerViewContext.tsx",
-  ]) {
-    const text = await source(wrapper);
-    assert.ok(
-      text.includes("<ComposerViewContextProvider"),
-      `${wrapper} must mount the Crew-owned visible-page provider`,
-    );
-  }
+  const wrapper = await source("../messages/ui/ThreadComposerViewContext.tsx");
+  assert.ok(
+    wrapper.includes("<ComposerViewContextProvider"),
+    "the thread wrapper must mount the Crew-owned visible-page provider",
+  );
+  // The channel dock shows nothing beyond the channel itself, so its sends stay
+  // byte-identical to what the sender typed.
+  assert.equal(channelPane.includes("ComposerViewContextProvider"), false);
   // Guardrail #278: no upstream Projects chrome comes back with this context.
   for (const forbidden of ["ProjectAgentChatPanel", "ProjectsOverview"]) {
     assert.equal(channelPane.includes(forbidden), false);

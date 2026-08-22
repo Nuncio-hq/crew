@@ -13,24 +13,15 @@ function channelItem(
   return { id: channelId, kind: "channel", title: `#${channelName}` };
 }
 
-/** Visible-page context for the channel composer. */
-export function channelViewContext(
-  channelId: string | null,
-  channelName: string | null,
-): CrewViewContext | null {
-  if (!channelId || !channelName) return null;
-  return {
-    scope: "channel",
-    selection: [channelItem(channelId, channelName)],
-    view: `Channel #${channelName}`,
-  };
-}
-
 /**
  * Visible-page context for thread focus mode: the thread the sender is reading
  * plus the workspace entities Crew already shows in that thread's chrome
  * (repository/branch from the worktree target, GitHub PR from the PR hub).
  * Nothing here is inferred — absent chrome means absent selection.
+ *
+ * Returns null unless that chrome contributes a selection the agent cannot
+ * already derive from the message it receives: a bare channel or thread reply
+ * stays byte-identical to what the sender typed.
  */
 export function threadViewContext({
   branch,
@@ -50,6 +41,7 @@ export function threadViewContext({
   threadTitle: string;
 }): CrewViewContext | null {
   if (!threadRootId || !channelId || !channelName) return null;
+  if (!(repositoryPath && branch) && !pullRequest) return null;
   const selection: CrewViewSelectionItem[] = [];
   if (threadTitle.trim()) {
     selection.push({ id: threadRootId, kind: "task", title: threadTitle });
