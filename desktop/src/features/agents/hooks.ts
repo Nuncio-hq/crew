@@ -25,7 +25,6 @@ import {
   createManagedAgent,
   deleteManagedAgent,
   deleteCustomHarness,
-  discoverAcpRuntimes,
   discoverBackendProviders,
   discoverGitBashPrerequisite,
   discoverManagedAgentPrereqs,
@@ -44,6 +43,7 @@ import {
 } from "@/shared/api/tauri";
 import { listHermesProfiles } from "@/shared/api/hermesProfiles";
 import type { HarnessDefinitionInput } from "@/shared/api/tauri";
+import { discoverAcpRuntimes } from "@/shared/api/tauriAcpDiscovery";
 import {
   setManagedAgentAutoRestart,
   setManagedAgentStartOnAppLaunch,
@@ -51,6 +51,11 @@ import {
   stopManagedAgent,
 } from "@/shared/api/tauriManagedAgents";
 import { bootstrapManagedAgentRuntimePairs } from "@/features/agents/managedAgentRuntimeHooks";
+import {
+  acpRuntimesQueryKey,
+  refreshAcpRuntimes,
+} from "@/features/agents/acpRuntimesQuery";
+export { useAcpRuntimesQueryForced } from "@/features/agents/acpRuntimesQuery";
 import {
   createPersona,
   deletePersona,
@@ -125,7 +130,6 @@ export const relayAgentsQueryKey = ["relay-agents"] as const;
 export const managedAgentsQueryKey = ["managed-agents"] as const;
 export const hermesProfilesQueryKey = ["hermes-profiles"] as const;
 export const personasQueryKey = ["personas"] as const;
-export const acpRuntimesQueryKey = ["acp-runtimes"] as const;
 export const acpAuthMethodsQueryKey = ["acp-auth-methods"] as const;
 export const managedAgentPrereqsQueryKey = ["managed-agent-prereqs"] as const;
 export const backendProvidersQueryKey = ["backend-providers"] as const;
@@ -201,12 +205,26 @@ function invalidateManagedAgentQueriesInBackground(
   );
 }
 
+/**
+ * Discover the ACP runtime catalog.
+ *
+ * This always serves the **cheap** backend path: the last cached runtime
+ * availability + auth statuses, no process spawns, low-millisecond. Hot
+ * surfaces (channel switch, composer, member bar) render from cache — a
+ * 30-minute `staleTime` keeps channel switches from re-triggering discovery.
+ *
+ * Fresh auth/version state (Settings, onboarding sign-in, post-mutation) comes
+ * from `refreshAcpRuntimes`, which runs the expensive forced path explicitly
+ * and writes the result into this same cache. Keeping the query's own
+ * `queryFn` cheap guarantees an automatic staleness refetch never re-runs the
+ * probe pipeline.
+ */
 export function useAcpRuntimesQuery(options?: { enabled?: boolean }) {
   return useQuery({
     enabled: options?.enabled ?? true,
     queryKey: acpRuntimesQueryKey,
-    queryFn: discoverAcpRuntimes,
-    staleTime: 60_000,
+    queryFn: () => discoverAcpRuntimes(),
+    staleTime: 30 * 60_000,
   });
 }
 
@@ -240,7 +258,7 @@ export function useConnectAcpRuntimeMutation() {
     mutationFn: (input: { runtimeId: string; methodId: string }) =>
       connectAcpRuntime(input.runtimeId, input.methodId),
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: acpRuntimesQueryKey });
+      void refreshAcpRuntimes(queryClient);
       void queryClient.invalidateQueries({ queryKey: acpAuthMethodsQueryKey });
       void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
     },
@@ -252,7 +270,7 @@ export function useInstallAcpRuntimeMutation() {
   return useMutation({
     mutationFn: (runtimeId: string) => installAcpRuntime(runtimeId),
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: acpRuntimesQueryKey });
+      void refreshAcpRuntimes(queryClient);
       void queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
     },
   });
@@ -269,7 +287,7 @@ export function useSaveCustomHarnessMutation() {
       originalId?: string;
     }) => saveCustomHarness(definition, originalId),
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: acpRuntimesQueryKey });
+      void refreshAcpRuntimes(queryClient);
     },
   });
 }
@@ -279,7 +297,7 @@ export function useDeleteCustomHarnessMutation() {
   return useMutation({
     mutationFn: (id: string) => deleteCustomHarness(id),
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: acpRuntimesQueryKey });
+      void refreshAcpRuntimes(queryClient);
     },
   });
 }
