@@ -179,12 +179,12 @@ impl SpawnConfigSnapshot {
                         &descriptor.command,
                         &descriptor.env,
                     );
-            // Effort has ONE representation in the snapshot: `effort_level`
-            // below, always holding `effective_effort`. Stripping the env key
-            // here means a canonical/user-env authority handoff at the same
-            // value is a no-op (no phantom `env.BUZZ_ACP_EFFORT_LEVEL` add or
-            // remove) and an env-only effort edit surfaces as exactly one
-            // `effort_level` entry rather than a duplicate under `env.`.
+                // Effort has ONE representation in the snapshot: `effort_level`
+                // below, always holding `effective_effort`. Stripping the env key
+                // here means a canonical/user-env authority handoff at the same
+                // value is a no-op (no phantom `env.BUZZ_ACP_EFFORT_LEVEL` add or
+                // remove) and an env-only effort edit surfaces as exactly one
+                // `effort_level` entry rather than a duplicate under `env.`.
                 env.remove(EFFORT_LEVEL_ENV_VAR);
                 env
             },

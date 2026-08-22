@@ -276,7 +276,10 @@ export function AgentInstanceEditDialog({
     return runtimeSupportsLlmProviderSelection(matched?.id ?? "");
   }, [runtimes, originalAgentCommand]);
 
-  // The prospective runtime id feeds both the save gate and submission.
+  // The runtime id active after submit. Inheriting resolves from the LINKED PERSONA's runtime
+  // (that is what runs once the override is cleared, not the current override).
+  // Falls back to dual-match (command path, then id) when no persona or its runtime is unset.
+  // This single prospective id feeds BOTH the block-save gate and submit so they always agree.
   const prospectiveRuntimeId = React.useMemo(() => {
     if (!inheritHarness) {
       return selectedRuntime?.id ?? selectedRuntimeId;
@@ -456,11 +459,8 @@ export function AgentInstanceEditDialog({
     provider: providerForDiscovery,
     selectedRuntime,
   });
-
-  // D2/D3: the top-level API key owns display while the readiness gate keeps the
-  // complete required-key list; advancedRequiredEnvKeys drives EnvVarsEditor
-  // display only. The effective snapshot covers persona inheritance during an
-  // instance inherit transition.
+  // D2/D3: top-level API key owns display; readiness gate keeps the full
+  // required-key list. Effective snapshot covers persona inherit transitions.
   const providerApiKeyEnvVar = getProviderApiKeyEnvVar(effectiveProvider);
   const personaSatisfied =
     providerApiKeyEnvVar != null &&
