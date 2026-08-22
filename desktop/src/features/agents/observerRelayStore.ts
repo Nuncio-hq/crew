@@ -3,7 +3,11 @@ import * as React from "react";
 import { subscribeToAgentObserverFrames } from "@/shared/api/observerRelay";
 import { relayClient } from "@/shared/api/relayClient";
 import type { RelayLiveEventContext } from "@/shared/api/relayClientShared";
-import type { RelayEvent, ManagedAgent } from "@/shared/api/types";
+import type {
+  ControlResultFrame,
+  RelayEvent,
+  ManagedAgent,
+} from "@/shared/api/types";
 import { putAgentSessionConfig } from "@/shared/api/tauri";
 import { putManagedAgentRuntimeLifecycle } from "@/shared/api/tauriManagedAgents";
 import { getIdentity } from "@/shared/api/tauriIdentity";
@@ -57,6 +61,7 @@ import {
 } from "./observerRelayStoreE2E";
 import {
   clearControlResultListeners,
+  dispatchControlResult,
   subscribeControlResults,
 } from "./controlResultDispatch";
 
@@ -281,7 +286,7 @@ function appendAgentEvents(
   }
   if (added.length === 0) return false;
 
-  const sortedAdded = added.sort(compareObserverEvents);
+  const sortedAdded = [...added].sort(compareObserverEvents);
   const sorted = [...current, ...sortedAdded].sort(compareObserverEvents);
   const trimmed = sorted.length > MAX_OBSERVER_EVENTS;
   const final = trimmed
@@ -496,6 +501,15 @@ function processLiveObserverEvents(
     if (parsed.kind === "session_config_captured") {
       void putAgentSessionConfig(agentPubkey, parsed.payload);
       onSessionConfigCaptured?.(agentPubkey);
+    } else if (parsed.kind === "control_result") {
+      // Thread the envelope's channelId into the frame so the ModelPicker can
+      // count a terminal switch result once per distinct channel.
+      if (isControlResultFrame(parsed.payload)) {
+        dispatchControlResult(agentPubkey, {
+          ...parsed.payload,
+          channelId: parsed.channelId,
+        });
+      }
     } else if (parsed.kind === "managed_agent_runtime_lifecycle") {
       void putManagedAgentRuntimeLifecycle(agentPubkey, parsed.payload).catch(
         (error) => {
@@ -693,6 +707,15 @@ export function subscribeAgentObserverStore(listener: () => void) {
   return () => {
     listeners.delete(listener);
   };
+}
+
+function isControlResultFrame(payload: unknown): payload is ControlResultFrame {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    typeof (payload as { type?: unknown }).type === "string" &&
+    typeof (payload as { status?: unknown }).status === "string"
+  );
 }
 
 /**

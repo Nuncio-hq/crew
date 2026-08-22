@@ -1306,10 +1306,21 @@ fn handle_switch_model_control(
     // Prefer the exact turn emitted by the observer. The conversation ID
     // remains the stable fallback when the turn completed between the
     // desktop snapshot and this control frame.
-    let turn_in_flight = pool.task_map().values().any(|meta| {
+    // Opaque per-pick correlator, echoed on every result frame so the Desktop
+    // can ignore a replayed result for an earlier pick. Optional: absent on
+    // older Desktop clients, in which case the frames simply carry no id.
+    let request_id = payload
+        .get("requestId")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+
+    // A turn is in flight for this channel iff a task_map entry exists. The
+    // agent is moved out of the pool during a turn, so the control oneshot is
+    // the only reachable lever; an idle channel has no such entry.
+    let turn_in_flight = pool.task_map().values().any(|m| {
         turn_id
-            .map(|turn_id| meta.turn_id == turn_id)
-            .unwrap_or(meta.channel_id == Some(target_conversation_id))
+            .map(|turn_id| m.turn_id == turn_id)
+            .unwrap_or(m.channel_id == Some(target_conversation_id))
     });
 
     let status = if turn_in_flight {
@@ -1320,14 +1331,20 @@ fn handle_switch_model_control(
             signal_in_flight_turn(
                 pool,
                 turn_id,
-                ControlSignal::SwitchModel(model_id.to_string()),
+                ControlSignal::SwitchModel {
+                    model_id: model_id.to_string(),
+                    request_id: request_id.clone(),
+                },
             )
         } else {
             signal_in_flight_task(
                 pool,
                 target_conversation_id,
                 channel_id,
-                ControlSignal::SwitchModel(model_id.to_string()),
+                ControlSignal::SwitchModel {
+                    model_id: model_id.to_string(),
+                    request_id: request_id.clone(),
+                },
             )
         };
         if fired {
@@ -1337,7 +1354,7 @@ fn handle_switch_model_control(
         }
     } else {
         // Idle path: validate against the cached catalog before invalidating.
-        match pool.switch_idle_agent_model(target_conversation_id, model_id) {
+        match pool.switch_idle_agent_model(target_conversation_id, model_id, request_id.clone()) {
             IdleSwitchResult::Switched => "switched",
             IdleSwitchResult::UnsupportedModel => "unsupported_model",
             IdleSwitchResult::NoIdleAgent => "no_active_turn",
@@ -1361,6 +1378,9 @@ fn handle_switch_model_control(
                 "modelId": model_id,
                 "conversationId": conversation_id.map(|id| id.to_string()),
                 "turnId": turn_id,
+                // Echo the correlator on the immediate ack so a `sent` /
+                // `turn_ending` / idle-path terminal frame matches the pick.
+                "requestId": request_id,
             }),
         );
     }
@@ -2544,6 +2564,9 @@ async fn tokio_main() -> Result<()> {
                         model_capabilities: None,
                         desired_model: config.model.clone(),
                         model_overridden: false,
+                        desired_model_request_id: None,
+                        desired_model_pending_ack: false,
+                        startup_effort: config.effort_level.clone(),
                         agent_name,
                         goose_system_prompt_supported: None,
                         protocol_version,
@@ -5294,6 +5317,7 @@ struct PoolStartup {
     extra_env: Vec<(String, String)>,
     has_generated_codex_config: bool,
     model: Option<String>,
+    effort_level: Option<String>,
     observer: Option<observer::ObserverHandle>,
     user_input_enabled: bool,
 }
@@ -5307,6 +5331,7 @@ impl PoolStartup {
             extra_env: config.persona_env_vars.clone(),
             has_generated_codex_config: config.has_generated_codex_config,
             model: config.model.clone(),
+            effort_level: config.effort_level.clone(),
             observer,
             user_input_enabled: config.user_input_enabled,
         }
@@ -5380,6 +5405,9 @@ async fn initialize_agent_pool(
                             model_capabilities: None,
                             desired_model: startup.model.clone(),
                             model_overridden: false,
+                            desired_model_request_id: None,
+                            desired_model_pending_ack: false,
+                            startup_effort: startup.effort_level.clone(),
                             agent_name,
                             goose_system_prompt_supported: None,
                             protocol_version,
@@ -6137,7 +6165,10 @@ mod owner_control_command_tests {
         assert!(signal_in_flight_turn(
             &mut pool,
             "turn-b",
-            ControlSignal::SwitchModel("opus".into())
+            ControlSignal::SwitchModel {
+                model_id: "opus".into(),
+                request_id: None,
+            }
         ));
         assert!(matches!(
             first_rx.try_recv(),
@@ -6145,7 +6176,10 @@ mod owner_control_command_tests {
         ));
         assert_eq!(
             second_rx.await.unwrap(),
-            ControlSignal::SwitchModel("opus".into())
+            ControlSignal::SwitchModel {
+                model_id: "opus".into(),
+                request_id: None,
+            }
         );
     }
 }
@@ -7632,6 +7666,7 @@ mod build_mcp_servers_tests {
             typing_enabled: true,
             memory_enabled: false,
             model: None,
+            effort_level: None,
             session_title: None,
             permission_mode: config::PermissionMode::BypassPermissions,
             respond_to: config::RespondTo::Anyone,
@@ -7875,6 +7910,7 @@ mod error_outcome_emission_tests {
             typing_enabled: true,
             memory_enabled: false,
             model: None,
+            effort_level: None,
             session_title: None,
             permission_mode: config::PermissionMode::BypassPermissions,
             respond_to: config::RespondTo::Anyone,
@@ -7921,6 +7957,9 @@ mod error_outcome_emission_tests {
             model_capabilities: None,
             desired_model: None,
             model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             // Error branches under test never read this; 1 is the legacy

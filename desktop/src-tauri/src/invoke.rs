@@ -261,6 +261,7 @@ macro_rules! desktop_invoke_handler {
             get_managed_agent_log,
             get_agent_models,
             discover_agent_models,
+            persist_agent_effort_level,
             agent_access_owner_only,
             get_agent_config_surface,
             get_runtime_file_config,

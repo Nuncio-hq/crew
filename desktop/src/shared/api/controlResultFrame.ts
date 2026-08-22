@@ -7,6 +7,10 @@ export type ControlResultFrame = {
     | "blind_session_reset";
   status: string;
   modelId?: string;
+  /** Opaque per-pick id echoed from the switch request. */
+  requestId?: string;
+  /** Channel identity from the observer envelope. */
+  channelId?: string | null;
   conversationId?: string | null;
   turnId?: string | null;
   dispatchedCount?: number;

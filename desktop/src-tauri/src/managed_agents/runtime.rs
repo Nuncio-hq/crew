@@ -14,6 +14,7 @@ use crate::{
     util::now_iso,
 };
 
+use super::claude_config::apply_startup_env;
 mod path;
 pub(in crate::managed_agents) use path::build_augmented_path;
 pub(crate) use path::{compose_path_entries, should_skip_claude_executable, should_use_inherited};
@@ -748,7 +749,6 @@ pub fn spawn_agent_child(
     }
 
     command.env("BUZZ_ACP_RELAY_OBSERVER", "true");
-
     // ── Git credential helper for Buzz relay ──────────────────────────
     //
     // Agents need to clone/push repos hosted on the Buzz relay's git
@@ -783,7 +783,6 @@ pub fn spawn_agent_child(
             record.name,
         );
     }
-
     // ── User env vars: definition floor + global + live persona + agent overrides ──
     //
     // `descriptor.env` is the fully-layered result from `resolve_effective_harness_descriptor`:
@@ -795,6 +794,8 @@ pub fn spawn_agent_child(
     for (key, value) in &descriptor.env {
         command.env(key, value);
     }
+    let effective_model = effective_model.as_deref();
+    apply_startup_env(&mut command, record, runtime_meta, effective_model);
     configure_runtime_cli(&mut command, runtime_meta);
     crate::managed_agents::hermes_profile::strip_model_env_for_profile_locked_runtime(
         &mut command,
@@ -828,7 +829,7 @@ pub fn spawn_agent_child(
             relay_url: &effective_relay_url,
             team_instructions: team_instructions.as_deref(),
             system_prompt: effective_prompt.as_deref(),
-            model: effective_model.as_deref(),
+            model: effective_model,
             provider: effective_provider.as_deref(),
         },
     );
