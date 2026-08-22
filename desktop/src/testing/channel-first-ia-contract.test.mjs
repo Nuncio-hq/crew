@@ -113,6 +113,34 @@ test("a missing guarded file is caught", async () => {
   assert.equal(violations[0].marker, "file");
 });
 
+test("a Playwright config missing a Phase 1 regression spec is caught", async () => {
+  const playwrightRule = CHANNEL_FIRST_IA_RULES.find(
+    ({ path: filePath }) => filePath === "playwright.config.ts",
+  );
+  assert.ok(playwrightRule);
+
+  const violations = await withFixture(
+    {
+      "playwright.config.ts": [
+        "channels-only-sidebar.spec.ts",
+        "sidebar-snapshot.spec.ts",
+        "workbench.spec.ts",
+      ].join("\n"),
+    },
+    (projectRoot) =>
+      runChannelFirstIaCheck({
+        projectRoot,
+        rules: [playwrightRule],
+        throwOnViolations: false,
+      }),
+  );
+
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].kind, "required");
+  assert.equal(violations[0].marker, "workspace-binding-selector.spec.ts");
+  assert.match(violations[0].reason, /#278 Phase 1/);
+});
+
 test("a clean fixture has no channel-first IA violations", async () => {
   const violations = await withFixture(
     {

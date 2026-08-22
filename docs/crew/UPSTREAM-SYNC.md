@@ -48,6 +48,7 @@ conflict in the channel-first information architecture:
 | `desktop/src/app/routes/workbench.$channelId.$threadRootId.tsx` | Keep `redirect`; no `WorkbenchScreen` or `WorkbenchRail` |
 | `desktop/src/features/messages/ui/message-thread-panel-head.tsx` | Keep `LiveJobDesk`; no `Open workbench` or `WorkbenchScreen` |
 | `desktop/src/features/channels/ui/ChannelPane.tsx` | No `onSelectProjects` or `ProjectsOverviewPanel` |
+| `desktop/playwright.config.ts` | Keep `channels-only-sidebar.spec.ts`, `sidebar-snapshot.spec.ts`, `workbench.spec.ts`, and `workspace-binding-selector.spec.ts` in the Playwright test-match globs |
 
 Run the machine check with `pnpm --filter buzz check:channel-first-ia`.
 The open question about a grep guard is resolved as a repo-level `pnpm check`

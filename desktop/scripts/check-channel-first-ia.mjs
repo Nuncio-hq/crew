@@ -158,6 +158,27 @@ export const CHANNEL_FIRST_IA_RULES = [
       ),
     ],
   },
+  {
+    path: "playwright.config.ts",
+    required: [
+      required(
+        "channels-only-sidebar.spec.ts",
+        "an upstream merge that reorders/replaces the Playwright test-match globs must not silently drop the channel-first IA regression specs (#278 Phase 1)",
+      ),
+      required(
+        "sidebar-snapshot.spec.ts",
+        "an upstream merge that reorders/replaces the Playwright test-match globs must not silently drop the channel-first IA regression specs (#278 Phase 1)",
+      ),
+      required(
+        "workbench.spec.ts",
+        "an upstream merge that reorders/replaces the Playwright test-match globs must not silently drop the channel-first IA regression specs (#278 Phase 1)",
+      ),
+      required(
+        "workspace-binding-selector.spec.ts",
+        "an upstream merge that reorders/replaces the Playwright test-match globs must not silently drop the channel-first IA regression specs (#278 Phase 1)",
+      ),
+    ],
+  },
 ];
 
 if (
