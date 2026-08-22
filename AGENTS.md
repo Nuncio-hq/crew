@@ -245,12 +245,14 @@ or invoke with the full path.
 thread. To read the linked thread:
 
 ```bash
-buzz messages thread --channel <uuid> --event <hex> --format compact
+buzz --format compact messages thread --event 'buzz://message?channel=<uuid>&id=<hex>'
+buzz --format compact messages thread --channel <uuid> --event <hex>
 ```
 
-Extract `channel` and `id` from the URL query parameters. The optional
-`thread` parameter (root event ID) can be ignored — `messages thread` resolves
-the full thread from the event ID alone.
+Pass the link verbatim — it carries the channel, so `--channel` is optional
+(when given it must match the link). The optional `thread` parameter (root
+event ID) is ignored — `messages thread` resolves the full thread from the
+event ID alone.
 
 All reads return sig-stripped JSON arrays; all writes return
 `{event_id, accepted, message}`; creates add the entity ID. Exit codes:
