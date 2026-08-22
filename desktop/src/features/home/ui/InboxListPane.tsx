@@ -415,7 +415,7 @@ export function InboxListPane({
 
               <div
                 className={cn(
-                  "mt-1.5 text-sm leading-5 [&_a]:font-medium [&_a]:text-current",
+                  "mt-1.5 text-message [&_a]:font-medium [&_a]:text-current",
                   isDone
                     ? "font-normal text-muted-foreground"
                     : "font-semibold text-foreground",

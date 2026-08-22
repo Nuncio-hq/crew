@@ -1,5 +1,6 @@
+import type { ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Eye } from "lucide-react";
 import {
   setThreadViewMode,
   useThreadViewMode,
@@ -8,6 +9,18 @@ import {
 import { useCommunities } from "@/features/communities/useCommunities";
 import { AvatarFramingSlider } from "@/features/profile/ui/AnimatedAvatarControls";
 import { contrastColorForBackground } from "@/features/profile/ui/ProfileAvatarEditor.utils";
+import {
+  previewConversationDensity,
+  setConversationDensity,
+  useConversationDensity,
+  type ConversationDensity,
+} from "@/shared/lib/conversationDensityPreference";
+import {
+  previewFontSize,
+  setFontSize,
+  useFontSize,
+  type FontSize,
+} from "@/shared/lib/fontSizePreference";
 import {
   setLinkPreviewStyle,
   useLinkPreviewStyle,
@@ -29,8 +42,157 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
+import { SegmentedControl } from "@/shared/ui/segmented-control";
 import { Switch } from "@/shared/ui/switch";
 import { SettingsOptionRow } from "./SettingsOptionGroup";
+
+const CONVERSATION_DENSITY_OPTIONS: readonly {
+  value: ConversationDensity;
+  label: string;
+}[] = [
+  { value: "compact", label: "Compact" },
+  { value: "comfortable", label: "Comfy" },
+  { value: "spacious", label: "Spacious" },
+];
+
+const FONT_SIZE_OPTIONS: readonly {
+  value: FontSize;
+  label: string;
+}[] = [
+  { value: "smaller", label: "Smaller" },
+  { value: "default", label: "Default" },
+  { value: "larger", label: "Larger" },
+];
+
+function ConversationDensityPreviewMessage({
+  author,
+  avatar,
+  children,
+  timestamp,
+}: {
+  author: string;
+  avatar: string;
+  children: ReactNode;
+  timestamp: string;
+}) {
+  return (
+    <article className="flex gap-2.5 py-conversation-row">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
+        {avatar}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 leading-message-author">
+          <span className="text-message font-bold leading-message-author tracking-tight text-foreground">
+            {author}
+          </span>
+          <span className="text-message-timestamp font-normal text-muted-foreground/65">
+            {timestamp}
+          </span>
+        </div>
+        <div className="mt-conversation-body text-message text-foreground">
+          {children}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/**
+ * Preview card for the font/density controls. The surface stays transparent so
+ * it renders in the active Crew chrome (D-063) rather than a Buzz gradient.
+ */
+function ConversationPreview() {
+  return (
+    <div className="px-4 py-3" data-testid="conversation-preview">
+      <div
+        aria-hidden="true"
+        className="relative overflow-hidden rounded-xl border border-border/65 bg-transparent"
+        data-testid="conversation-preview-surface"
+      >
+        <span className="absolute right-3.5 top-3 inline-flex items-center gap-1 text-2xs font-medium text-muted-foreground/55">
+          <Eye aria-hidden="true" className="size-3" />
+          Preview
+        </span>
+        <div className="p-4" data-testid="conversation-preview-content">
+          <ConversationDensityPreviewMessage
+            author="Maya"
+            avatar="M"
+            timestamp="9:41"
+          >
+            The revised conversation layout is ready to review.
+          </ConversationDensityPreviewMessage>
+          <ConversationDensityPreviewMessage
+            author="Theo"
+            avatar="T"
+            timestamp="9:43"
+          >
+            <p>
+              I added a longer message so you can compare line height and text
+              spacing.
+            </p>
+            <p className="mt-conversation-paragraph">
+              The same rhythm carries through channels, threads, DMs, and Inbox.
+            </p>
+          </ConversationDensityPreviewMessage>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** App-wide type sizing and conversation-specific spacing controls. */
+export function ConversationDisplaySettings() {
+  const density = useConversationDensity();
+  const fontSize = useFontSize();
+
+  return (
+    <div data-testid="conversation-display-group">
+      <SettingsOptionRow data-testid="font-size-row">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Font size</p>
+          <p
+            className="text-sm font-normal text-muted-foreground/70"
+            data-settings-subcopy
+          >
+            Applies across conversations and interface text
+          </p>
+        </div>
+        <SegmentedControl
+          legend="Font size"
+          onPreviewChange={previewFontSize}
+          onValueChange={setFontSize}
+          optionTestIdPrefix="font-size"
+          options={FONT_SIZE_OPTIONS}
+          size="wide"
+          testId="font-size-control"
+          value={fontSize}
+        />
+      </SettingsOptionRow>
+      <SettingsOptionRow data-testid="conversation-density-row">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Conversation density</p>
+          <p
+            className="text-sm font-normal text-muted-foreground/70"
+            data-settings-subcopy
+          >
+            Spacing in conversations and Markdown content across Crew
+          </p>
+        </div>
+        <SegmentedControl
+          legend="Conversation density"
+          onPreviewChange={previewConversationDensity}
+          onValueChange={setConversationDensity}
+          optionTestIdPrefix="conversation-density"
+          options={CONVERSATION_DENSITY_OPTIONS}
+          size="wide"
+          testId="conversation-density-control"
+          value={density}
+        />
+      </SettingsOptionRow>
+      <ConversationPreview />
+    </div>
+  );
+}
 
 /** Buzz navigation can use either its production tint or a stronger tab. */
 export function ProminentActiveTabSetting() {

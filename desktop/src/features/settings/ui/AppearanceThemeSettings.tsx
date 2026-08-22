@@ -28,6 +28,7 @@ import { useTheme } from "@/shared/theme/ThemeProvider";
 import { SyntaxHighlightedCode } from "@/shared/ui/markdown/CodeBlock";
 import { appearanceCommunityLabel } from "../lib/appearanceScopeCopy";
 import {
+  ConversationDisplaySettings,
   GlassBackgroundSetting,
   LinkPreviewStyleSetting,
   ThreadLayoutSetting,
@@ -234,6 +235,13 @@ export function AppearanceThemeSettings() {
           </div>
 
           <GlassBackgroundSetting />
+        </SettingsOptionGroup>
+
+        <SettingsOptionGroup
+          data-testid="appearance-display-card"
+          title="Display"
+        >
+          <ConversationDisplaySettings />
         </SettingsOptionGroup>
 
         <SettingsOptionGroup
