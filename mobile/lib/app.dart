@@ -9,6 +9,7 @@ import 'features/activity/inbox_local_state_provider.dart';
 import 'features/activity/inbox_read_state.dart';
 import 'features/channels/unread_badge/unread_badge_provider.dart';
 import 'features/home/home_page.dart';
+import 'features/invites/invite_create_page.dart';
 import 'features/pairing/pairing_page.dart';
 import 'features/channels/agent_activity/active_agent_turns_provider.dart';
 import 'features/channels/agent_activity/observer_subscription.dart';
@@ -151,6 +152,7 @@ class App extends HookConsumerWidget {
 
 Widget _buildSettingsPage(BuildContext context) => SettingsPage(
   profileHeader: const SettingsProfileHeader(),
+  invitePageBuilder: (_) => const CommunityInvitePage(),
   identityRecoveryPageBuilder: (_) =>
       const PairingPage(addingCommunity: true, identityRecoveryOnly: true),
 );
