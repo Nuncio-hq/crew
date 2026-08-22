@@ -27,6 +27,7 @@ export function useAppNavigation() {
         to: string;
         params?: Record<string, string>;
         search?: Record<string, string | undefined>;
+        state?: Record<string, unknown>;
       },
       behavior: NavigationBehavior = {},
     ) => {

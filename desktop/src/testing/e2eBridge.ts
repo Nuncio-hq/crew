@@ -3845,6 +3845,7 @@ function workflowWireRecord(args: {
     typeof definition.name === "string" ? definition.name.trim() : "";
   return {
     id: args.id,
+    revision: `mock-revision-${args.id}-${args.updatedAt}`,
     name: nameCandidate.length > 0 ? nameCandidate : args.id,
     owner_pubkey: args.ownerPubkey,
     channel_id: args.channelId,
