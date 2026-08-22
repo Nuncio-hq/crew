@@ -1453,8 +1453,9 @@ mod tests {
 
     #[test]
     fn resolve_effective_agent_env_user_env_wins_over_structured_fields() {
-        // User env_vars must win over baked defaults; in OSS builds baked map is empty,
-        // so this validates the user-env layer is present in the output.
+        // A record whose env_vars explicitly set provider/model must win over
+        // any baked defaults. In OSS test builds the baked map is empty, so
+        // this test validates the user-env layer is present in the output.
         let mut env_vars = BTreeMap::new();
         env_vars.insert("BUZZ_AGENT_PROVIDER".to_string(), "anthropic".to_string());
         env_vars.insert(
@@ -1520,7 +1521,6 @@ mod tests {
             relay_mesh: None,
             effort_level: None,
         };
-
         let runtime = known_acp_runtime_exact("buzz-agent");
         let effective = resolve_effective_agent_env(&record, &[], runtime, &Default::default());
 

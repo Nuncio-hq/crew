@@ -8,6 +8,8 @@
 //! effort authority for all local agents. Written after `descriptor.env` so
 //! user-supplied entries cannot shadow a persisted canonical value.
 
+use super::{BackendKind, KnownAcpRuntime, ManagedAgentRecord};
+
 /// The spawn-time env var carrying startup effort. Shared by the spawn
 /// application ([`apply_effort_env`]) and the snapshot projection
 /// (`spawn_snapshot::effective_effort`) so the value the harness receives and
@@ -46,6 +48,22 @@ pub fn apply_effort_env(command: &mut std::process::Command, effort_level: Optio
         command.env(EFFORT_LEVEL_ENV_VAR, e);
     }
     // None: no canonical value — leave whatever descriptor.env wrote intact.
+}
+
+/// Apply the canonical startup effort and local Claude model authorities after
+/// layered user environment. Effort remains available to every local runtime;
+/// Claude alone maps the resolved model to `ANTHROPIC_MODEL` and removes
+/// `BUZZ_ACP_MODEL`, so startup has one model authority.
+pub fn apply_startup_env(
+    command: &mut std::process::Command,
+    record: &ManagedAgentRecord,
+    runtime_meta: Option<&KnownAcpRuntime>,
+    effective_model: Option<&str>,
+) {
+    apply_effort_env(command, record.effort_level.as_deref());
+    if record.backend == BackendKind::Local && runtime_meta.is_some_and(|r| r.id == "claude") {
+        apply_claude_model_env(command, effective_model);
+    }
 }
 
 #[cfg(test)]

@@ -354,9 +354,18 @@ export type ManagedAgent = {
   modelSource: "definition" | "global" | "instance_legacy" | null;
   /** LLM inference provider, from the agent's pinned record snapshot. */
   provider: string | null;
-  /** True when the linked persona has been edited since this agent was created. */
+  /**
+   * `true` when the linked persona has been edited since this agent was
+   * created — the running agent uses the older pinned snapshot. Surface a
+   * "out of date" marker and prompt the user to delete + respawn to update.
+   * Always `false` for non-persona agents and for orphaned agents.
+   */
   personaOutOfDate: boolean;
-  /** True when this agent's linked persona no longer exists. */
+  /**
+   * `true` when the agent's linked persona no longer exists. Distinct from
+   * out-of-date: there is no current persona to respawn into, so do not prompt
+   * a respawn — the pinned snapshot is all the config that remains.
+   */
   personaOrphaned: boolean;
   /**
    * `true` when the running process was spawned with a config that no longer
@@ -473,10 +482,8 @@ export type CancelManagedAgentTurnResult = {
 };
 
 /**
- * Outcome of a live `switch_model` control frame, surfaced asynchronously via
- * the agent's `control_result` observer frame. Busy path: `sent` (cancel +
- * requeue on the new model) or `turn_ending` (oneshot already consumed this
- * turn). Idle path: `switched`, `unsupported_model`, or `no_active_turn`.
+ * Outcome of a live `switch_model` control frame. Busy: `sent`/`turn_ending`.
+ * Idle: `switched`, `unsupported_model`, or `no_active_turn`.
  */
 export type SwitchManagedAgentModelStatus =
   | "sent"
