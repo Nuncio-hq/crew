@@ -6,7 +6,7 @@ import {
   getAgentTranscript,
   getArchivedChannelEvents,
   ingestArchivedObserverEvents,
-  subscribeAgentObserverStore,
+  subscribeAgentObserverProjection,
 } from "@/features/agents/observerRelayStore";
 import {
   listSaveSubscriptions,
@@ -25,12 +25,6 @@ import {
 } from "./archivePagingState";
 export type { ArchivePagingState } from "./archivePagingState";
 
-// Stable subscribe reference shared by all useSyncExternalStore hooks.
-// subscribeAgentObserverStore already has a fixed identity, so this thin
-// wrapper satisfies React's requirement without per-hook useCallback.
-const subscribeToStore = (onStoreChange: () => void) =>
-  subscribeAgentObserverStore(onStoreChange);
-
 export function useObserverEvents(
   enabled: boolean,
   agentPubkey?: string | null,
@@ -39,8 +33,13 @@ export function useObserverEvents(
     () => getAgentObserverSnapshot(agentPubkey, enabled),
     [agentPubkey, enabled],
   );
+  const subscribe = React.useCallback(
+    (onStoreChange: () => void) =>
+      subscribeAgentObserverProjection(agentPubkey, onStoreChange),
+    [agentPubkey],
+  );
 
-  const snapshot = React.useSyncExternalStore(subscribeToStore, getSnapshot);
+  const snapshot = React.useSyncExternalStore(subscribe, getSnapshot);
 
   React.useEffect(() => {
     if (enabled && agentPubkey) {
@@ -59,8 +58,13 @@ export function useAgentTranscript(
     () => getAgentTranscript(agentPubkey, enabled),
     [agentPubkey, enabled],
   );
+  const subscribe = React.useCallback(
+    (onStoreChange: () => void) =>
+      subscribeAgentObserverProjection(agentPubkey, onStoreChange),
+    [agentPubkey],
+  );
 
-  return React.useSyncExternalStore(subscribeToStore, getSnapshot);
+  return React.useSyncExternalStore(subscribe, getSnapshot);
 }
 
 /**
@@ -85,8 +89,13 @@ export function useArchivedChannelEvents(
     () => getArchivedChannelEvents(agentPubkey, channelId),
     [agentPubkey, channelId],
   );
+  const subscribe = React.useCallback(
+    (onStoreChange: () => void) =>
+      subscribeAgentObserverProjection(agentPubkey, onStoreChange),
+    [agentPubkey],
+  );
 
-  return React.useSyncExternalStore(subscribeToStore, getSnapshot);
+  return React.useSyncExternalStore(subscribe, getSnapshot);
 }
 
 const ARCHIVED_EVENTS_PAGE_SIZE = 200;
