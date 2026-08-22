@@ -41,9 +41,7 @@ import {
   triggeringEventIds,
   type ActiveTurn,
 } from "@/features/agents/activeAgentTurnModel";
-import {
-  subscribeAgentObserverStore,
-} from "@/features/agents/observerRelayStore";
+import { subscribeAgentObserverStore } from "@/features/agents/observerRelayStore";
 import type { AgentObserverStoreUpdate } from "@/features/agents/observerRelayStore";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
