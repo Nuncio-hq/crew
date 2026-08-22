@@ -31,6 +31,30 @@ The local upstream push URL is deliberately disabled. Never push to
 - Use short-lived area branches; do not create long-lived component branches.
 - Perform upstream integration on `sync/upstream-YYYY-MM-DD`.
 
+## Channel-first IA guardrail (#278)
+
+Before merging `desktop-v0.5.18`, use this reviewer checklist for every
+conflict in the channel-first information architecture:
+
+| File | Reviewer checklist |
+| --- | --- |
+| `desktop/src/features/sidebar/ui/AppSidebar.tsx` | No `onSelectProjects`, `onSelectWorkbench`, `useProjectFolderChannelIds`, or `WorkTreeSection` |
+| `desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx` | No `open-projects-view`, `open-workbench-view`, `onSelectProjects`, or `onSelectWorkbench` |
+| `desktop/src/features/work-tree/ui/WorkTreeSidebarBlock.tsx` | No `WorkTreeSection` |
+| `desktop/src/app/AppShell.tsx` | No `onSelectProjects` or `onSelectWorkbench` |
+| `desktop/src/app/AppShell.helpers.ts` | No `selectedView: "workbench"` |
+| `desktop/src/app/navigation/useAppNavigation.ts` | No navigation to `to: "/workbench"` |
+| `desktop/src/app/routes/workbench.tsx` | Keep `redirect`; no `WorkbenchScreen` or `WorkbenchRail` |
+| `desktop/src/app/routes/workbench.$channelId.$threadRootId.tsx` | Keep `redirect`; no `WorkbenchScreen` or `WorkbenchRail` |
+| `desktop/src/features/messages/ui/message-thread-panel-head.tsx` | Keep `LiveJobDesk`; no `Open workbench` or `WorkbenchScreen` |
+| `desktop/src/features/channels/ui/ChannelPane.tsx` | No `onSelectProjects` or `ProjectsOverviewPanel` |
+
+Run the machine check with `pnpm --filter buzz check:channel-first-ia`.
+The open question about a grep guard is resolved as a repo-level `pnpm check`
+leg plus a unit test; do not add a workflow grep. Reject any conflict hunk
+that adds `onSelectProjects`, a Projects sidebar section, or a Workbench
+picker.
+
 ## Upstream files Crew edits
 
 | File | Justification | Resolve hint |
