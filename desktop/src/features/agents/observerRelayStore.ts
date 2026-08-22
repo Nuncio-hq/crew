@@ -90,7 +90,14 @@ const IDLE_SNAPSHOT: ObserverSnapshot = {
 const EMPTY_EVENTS: ObserverEvent[] = [];
 const EMPTY_TRANSCRIPT: TranscriptItem[] = [];
 
-const listeners = new Set<() => void>();
+export type AgentObserverStoreUpdate = {
+  agentPubkey: string;
+  events: readonly ObserverEvent[];
+};
+
+type AgentObserverStoreListener = (update?: AgentObserverStoreUpdate) => void;
+
+const listeners = new Set<AgentObserverStoreListener>();
 const eventsByAgent = new Map<string, ObserverEvent[]>();
 const transcriptByAgent = new Map<string, TranscriptState>();
 const snapshotByAgent = new Map<string, ObserverSnapshot>();
@@ -202,9 +209,9 @@ let generation = 0;
 let relayConnectionHealthy = false;
 let observerSubscriptionReady = false;
 
-function notifyListeners() {
+function notifyListeners(update?: AgentObserverStoreUpdate) {
   for (const listener of listeners) {
-    listener();
+    listener(update);
   }
 }
 
@@ -266,12 +273,17 @@ function observerTag(event: RelayEvent, tagName: string) {
 function appendAgentEvents(
   agentPubkey: string,
   events: readonly ObserverEvent[],
-): boolean {
-  if (events.length === 0) return false;
+): ObserverEvent[] | null {
+  if (events.length === 0) return null;
 
   const key = normalizePubkey(agentPubkey);
   const current = eventsByAgent.get(key) ?? [];
-  const seen = new Set(current.map((event) => observerEventIdentity(event)));
+
+  const seen = new Set(
+    current.map(
+      (event) => observerEventIdentity(event),
+    ),
+  );
   const added: ObserverEvent[] = [];
   for (const event of events) {
     const identity = observerEventIdentity(event);
@@ -279,7 +291,7 @@ function appendAgentEvents(
     seen.add(identity);
     added.push(event);
   }
-  if (added.length === 0) return false;
+  if (added.length === 0) return null;
 
   const sortedAdded = added.sort(compareObserverEvents);
   const sorted = [...current, ...sortedAdded].sort(compareObserverEvents);
@@ -312,12 +324,24 @@ function appendAgentEvents(
     prunePendingAgentRequests(collectTriggeringEventIds()),
   );
   invalidateSnapshot(key);
-  return true;
+  if (!trimmed) return sortedAdded;
+
+  const retainedKeys = new Set(
+    final.map(
+      (event) => `${event.timestamp.length}:${event.timestamp}:${event.seq}`,
+    ),
+  );
+  return sortedAdded.filter((event) =>
+    retainedKeys.has(
+      `${event.timestamp.length}:${event.timestamp}:${event.seq}`,
+    ),
+  );
 }
 
 function appendAgentEvent(agentPubkey: string, event: ObserverEvent) {
-  if (appendAgentEvents(agentPubkey, [event])) {
-    notifyListeners();
+  const added = appendAgentEvents(agentPubkey, [event]);
+  if (added) {
+    notifyListeners({ agentPubkey, events: added });
   }
 }
 
@@ -484,7 +508,7 @@ function processLiveObserverEvents(
   // callbacks. Those callbacks historically observed their triggering frame
   // in the raw/transcript stores; batching must preserve that visibility while
   // deferring only the global external-store publication.
-  const observerChanged = appendAgentEvents(agentPubkey, acceptedEvents);
+  const addedEvents = appendAgentEvents(agentPubkey, acceptedEvents);
 
   for (const parsed of acceptedEvents) {
     const managementRequest = parseAgentManagementRequest(parsed.payload);
@@ -507,8 +531,10 @@ function processLiveObserverEvents(
     }
   }
 
-  if (observerChanged) {
-    notifyListeners();
+  // Preserve the harness's envelope backpressure: retained state was committed
+  // before specialized callbacks, but external-store subscribers publish once.
+  if (addedEvents) {
+    notifyListeners({ agentPubkey, events: addedEvents });
   }
   return true;
 }
@@ -688,7 +714,9 @@ export function ensureRelayObserverSubscription() {
   return startPromise;
 }
 
-export function subscribeAgentObserverStore(listener: () => void) {
+export function subscribeAgentObserverStore(
+  listener: AgentObserverStoreListener,
+) {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
@@ -891,8 +919,9 @@ export function syncAgentObserverEvents(
   agentPubkey: string,
   events: ObserverEvent[],
 ) {
-  if (appendAgentEvents(agentPubkey, events)) {
-    notifyListeners();
+  const added = appendAgentEvents(agentPubkey, events);
+  if (added) {
+    notifyListeners({ agentPubkey, events: added });
   }
 }
 
