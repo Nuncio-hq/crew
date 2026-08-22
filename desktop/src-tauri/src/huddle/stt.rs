@@ -171,8 +171,30 @@ const SILENCE_FLUSH_FRAMES: usize = 19;
 /// earshot requires exactly 256 samples per frame at 16 kHz.
 const VAD_FRAME_SAMPLES: usize = 256;
 
-/// VAD probability threshold — above this is considered speech.
-const VAD_THRESHOLD: f32 = 0.5;
+/// Probability a frame must exceed to *open* a speech segment.
+///
+/// Deliberately above [`VAD_OFFSET_THRESHOLD`]: a single threshold at 0.5 made
+/// room noise open segments while also cutting trailing vowels, because the
+/// same borderline frames decide both edges.
+const VAD_ONSET_THRESHOLD: f32 = 0.6;
+
+/// Probability a frame must fall below to start the silence countdown once a
+/// segment is open. The gap to [`VAD_ONSET_THRESHOLD`] is the hysteresis band.
+const VAD_OFFSET_THRESHOLD: f32 = 0.35;
+
+/// Consecutive above-onset frames required before a segment opens.
+/// 3 frames ≈ 48 ms — enough to reject isolated earshot false positives.
+const ONSET_CONFIRM_FRAMES: usize = 3;
+
+/// Frames of pre-onset audio retained so a confirmed segment keeps the speech
+/// that preceded detection. 8 frames ≈ 128 ms, which covers the plosive onset
+/// earshot needs evidence for before it will call a frame voiced.
+const PRE_ROLL_FRAMES: usize = 8;
+
+/// Trailing silence frames kept in a flushed segment. ≈96 ms of room tone
+/// stops Parakeet from clipping the final consonant, without feeding it the
+/// full silence window that triggered the flush.
+const HANGOVER_FRAMES: usize = 6;
 
 /// Minimum voiced audio needed before an utterance may be decoded.
 /// One earshot false-positive frame is only 16 ms; requiring 192 ms prevents
@@ -267,14 +289,8 @@ fn stt_worker(
     let mut input_buf_48k: Vec<f32> = Vec::with_capacity(chunk_in * 2);
     // Leftover 16 kHz samples that didn't fill a full VAD frame.
     let mut leftover_16k: Vec<f32> = Vec::new();
-    // Accumulated speech frames (16 kHz).
-    let mut speech_buf: Vec<f32> = Vec::new();
-    // Consecutive silence frame count.
-    let mut silence_frames: usize = 0;
-    // Whether we're currently in a speech segment.
-    let mut in_speech = false;
-    // Number of frames earshot classified as voiced in the current segment.
-    let mut voiced_frames = 0;
+    // Speech boundary state: onset confirmation, pre-roll, hangover.
+    let mut endpoint = VadEndpoint::default();
     // Timestamp when TTS last stopped — used for the playback-tail cooldown.
     let mut tts_stopped_at: Option<std::time::Instant> = None;
 
@@ -308,12 +324,10 @@ fn stt_worker(
                 || manual_mic_unmuted
                     .as_ref()
                     .is_some_and(|manual| manual.load(Ordering::Acquire));
-            if transmit_was_active && !transmit_now && in_speech && !speech_buf.is_empty() {
-                flush_to_stt(&speech_buf, voiced_frames, &recognizer, &text_tx);
-                speech_buf.clear();
-                silence_frames = 0;
-                in_speech = false;
-                voiced_frames = 0;
+            if transmit_was_active && !transmit_now {
+                if let Some(segment) = endpoint.take_segment() {
+                    dispatch_segment(&segment, &recognizer, &text_tx);
+                }
             }
             transmit_was_active = transmit_now;
         }
@@ -344,10 +358,7 @@ fn stt_worker(
                     &resampled,
                     &mut leftover_16k,
                     &mut vad,
-                    &mut speech_buf,
-                    &mut silence_frames,
-                    &mut in_speech,
-                    &mut voiced_frames,
+                    &mut endpoint,
                     &recognizer,
                     &text_tx,
                     &tts_active,
@@ -397,17 +408,16 @@ fn resample_chunk(resampler: &mut rubato::Fft<f32>, chunk_48k: &[f32]) -> Vec<f3
 ///   - After TTS stops, a cooldown prevents tail audio from being transcribed.
 ///
 /// When `ptt_active` is `Some`, input is accepted while either the shortcut is
-/// held or the microphone is manually unmuted. Manual-open input keeps normal
-/// VAD pause flushing; shortcut-only input flushes when the shortcut closes.
+/// held or the microphone is manually unmuted. A held shortcut groups the whole
+/// hold into one utterance and flushes on release; with the shortcut up, a
+/// manually open microphone keeps normal VAD pause flushing
+/// (see [`vad_flush_allowed`]).
 #[allow(clippy::too_many_arguments)]
 fn process_16k_samples(
     samples: &[f32],
     leftover: &mut Vec<f32>,
     vad: &mut earshot::Detector<earshot::DefaultPredictor>,
-    speech_buf: &mut Vec<f32>,
-    silence_frames: &mut usize,
-    in_speech: &mut bool,
-    voiced_frames: &mut usize,
+    endpoint: &mut VadEndpoint,
     recognizer: &sherpa_onnx::OfflineRecognizer,
     text_tx: &tokio_mpsc::Sender<String>,
     tts_active: &Arc<AtomicBool>,
@@ -421,83 +431,58 @@ fn process_16k_samples(
         let frame: Vec<f32> = leftover.drain(..VAD_FRAME_SAMPLES).collect();
         let clamped: Vec<f32> = frame.iter().map(|&s| s.clamp(-1.0, 1.0)).collect();
         let prob = vad.predict_f32(&clamped);
-        let is_speech = prob > VAD_THRESHOLD;
 
         let manually_open = manual_mic_unmuted.is_some_and(|manual| manual.load(Ordering::Acquire));
         // Shortcut-enabled mode accepts input from either the held shortcut or
-        // a manually open microphone.
-        let is_speech = if let Some(ptt) = ptt_active {
-            is_speech && (ptt.load(Ordering::Acquire) || manually_open)
+        // a manually open microphone. A closed input path reads as silence.
+        let prob = if let Some(ptt) = ptt_active {
+            if ptt.load(Ordering::Acquire) || manually_open {
+                prob
+            } else {
+                0.0
+            }
         } else {
-            is_speech
+            prob
         };
-
-        let tts_playing = tts_active.load(Ordering::Acquire);
 
         // While TTS is playing, discard local mic input. The native TTS output
         // is not available as an echo-cancellation reference to this worker, so
         // VAD cannot reliably tell speaker feedback from a human interruption.
         // Push-to-talk and remote participant audio provide the intentional
         // cancellation paths instead.
-        if tts_playing {
-            *in_speech = false;
-            speech_buf.clear();
-            *silence_frames = 0;
-            *voiced_frames = 0;
+        if tts_active.load(Ordering::Acquire) {
+            endpoint.reset();
             continue;
         }
 
         // TTS not playing — check cooldown window.
         if let Some(stopped) = *tts_stopped_at {
             if stopped.elapsed() < TTS_COOLDOWN {
-                // Still in cooldown — discard but keep tracking speech state.
-                if !is_speech {
-                    *in_speech = false;
-                }
-                speech_buf.clear();
-                *silence_frames = 0;
-                *voiced_frames = 0;
+                // Still in cooldown — playback tail is not the user speaking.
+                endpoint.reset();
                 continue;
-            } else {
-                // Cooldown expired — clear the timer and reset all segment state.
-                *tts_stopped_at = None;
-                *in_speech = false;
-                *silence_frames = 0;
-                *voiced_frames = 0;
             }
+            // Cooldown expired — clear the timer and start from a clean edge.
+            *tts_stopped_at = None;
+            endpoint.reset();
         }
 
-        if is_speech {
-            *silence_frames = 0;
-            *in_speech = true;
-            *voiced_frames += 1;
-            speech_buf.extend_from_slice(&frame);
+        let allow_silence_flush = vad_flush_allowed(
+            ptt_active.is_some(),
+            ptt_active.is_some_and(|ptt| ptt.load(Ordering::Acquire)),
+            manually_open,
+        );
+        if let Some(segment) = endpoint.push_frame(prob, &frame, allow_silence_flush) {
+            dispatch_segment(&segment, recognizer, text_tx);
+            continue;
+        }
 
-            // OOM guard: flush and reset if the buffer exceeds 30 s of audio.
-            if speech_buf.len() >= MAX_SPEECH_SAMPLES {
-                flush_to_stt(speech_buf, *voiced_frames, recognizer, text_tx);
-                speech_buf.clear();
-                *silence_frames = 0;
-                *in_speech = false;
-                *voiced_frames = 0;
-            }
-        } else if *in_speech {
-            // Still accumulate during brief silence gaps.
-            speech_buf.extend_from_slice(&frame);
-            *silence_frames += 1;
-
-            // A manually open microphone behaves like normal VAD. A
-            // shortcut-only transmission stays grouped until key release.
-            if (ptt_active.is_none() || manually_open) && *silence_frames >= SILENCE_FLUSH_FRAMES {
-                // End of utterance — transcribe.
-                flush_to_stt(speech_buf, *voiced_frames, recognizer, text_tx);
-                speech_buf.clear();
-                *silence_frames = 0;
-                *in_speech = false;
-                *voiced_frames = 0;
+        // OOM guard: flush and reset if the segment exceeds 30 s of audio.
+        if endpoint.segment_samples().len() >= MAX_SPEECH_SAMPLES {
+            if let Some(segment) = endpoint.take_segment() {
+                dispatch_segment(&segment, recognizer, text_tx);
             }
         }
-        // If not in speech and not accumulating, just discard the frame.
     }
 }
 
@@ -535,6 +520,213 @@ fn has_enough_voiced_audio(voiced_frames: usize) -> bool {
     voiced_frames >= MIN_VOICED_FRAMES
 }
 
+// ── Speech boundaries ─────────────────────────────────────────────────────────
+
+/// What the caller should do with a finished [`Segment`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SegmentDisposition {
+    /// Enough voiced audio to be worth decoding.
+    Decode,
+    /// Too little voiced audio — drop it, but say so.
+    DropShort,
+}
+
+/// A finished speech segment: 16 kHz mono samples plus how many of its frames
+/// the VAD considered voiced.
+#[derive(Debug, Default)]
+struct Segment {
+    samples: Vec<f32>,
+    voiced_frames: usize,
+}
+
+impl Segment {
+    /// Whether this segment carries enough voiced audio to decode.
+    fn disposition(&self) -> SegmentDisposition {
+        if has_enough_voiced_audio(self.voiced_frames) {
+            SegmentDisposition::Decode
+        } else {
+            SegmentDisposition::DropShort
+        }
+    }
+}
+
+/// Speech endpointing state machine — pure, so boundary policy is testable
+/// without a recognizer, a VAD, or an audio device.
+///
+/// Policy, per frame:
+///   - **onset**: [`ONSET_CONFIRM_FRAMES`] consecutive frames above
+///     [`VAD_ONSET_THRESHOLD`] open a segment; the frames that proved it and up
+///     to [`PRE_ROLL_FRAMES`] of preceding audio are retained.
+///   - **hysteresis**: once open, a frame is still speech until it falls below
+///     [`VAD_OFFSET_THRESHOLD`], so trailing vowels don't start a countdown.
+///   - **offset**: [`SILENCE_FLUSH_FRAMES`] of sub-offset frames end the
+///     segment, keeping only [`HANGOVER_FRAMES`] of the trailing silence.
+#[derive(Debug, Default)]
+struct VadEndpoint {
+    /// Bounded ring of pre-onset frames, newest last.
+    pre_roll: std::collections::VecDeque<Vec<f32>>,
+    /// Consecutive above-onset frames not yet long enough to confirm a segment.
+    candidate: Vec<Vec<f32>>,
+    /// Audio of the open segment.
+    segment: Vec<f32>,
+    /// Voiced frames in the open segment.
+    voiced_frames: usize,
+    /// Consecutive sub-offset frames since the last voiced frame.
+    silence_frames: usize,
+    /// Whether a segment is currently open.
+    in_speech: bool,
+}
+
+impl VadEndpoint {
+    /// Whether a segment is currently open.
+    #[cfg(test)]
+    fn in_speech(&self) -> bool {
+        self.in_speech
+    }
+
+    /// Consecutive sub-offset frames seen since the last voiced frame.
+    #[cfg(test)]
+    fn silence_frames(&self) -> usize {
+        self.silence_frames
+    }
+
+    /// Audio accumulated in the open segment (empty when closed).
+    fn segment_samples(&self) -> &[f32] {
+        &self.segment
+    }
+
+    /// Feed one VAD frame.
+    ///
+    /// `prob` is the VAD speech probability and `frame` its audio.
+    /// `allow_silence_flush` is false while a push-to-talk shortcut is held, so
+    /// the whole hold is grouped into one utterance and only released on
+    /// [`Self::take_segment`].
+    ///
+    /// Returns the finished segment when this frame ended one.
+    fn push_frame(
+        &mut self,
+        prob: f32,
+        frame: &[f32],
+        allow_silence_flush: bool,
+    ) -> Option<Segment> {
+        if self.in_speech {
+            if prob > VAD_OFFSET_THRESHOLD {
+                self.silence_frames = 0;
+                self.voiced_frames += 1;
+                self.segment.extend_from_slice(frame);
+                return None;
+            }
+
+            self.silence_frames += 1;
+            self.segment.extend_from_slice(frame);
+            if allow_silence_flush && self.silence_frames >= SILENCE_FLUSH_FRAMES {
+                return self.take_segment();
+            }
+            return None;
+        }
+
+        if prob > VAD_ONSET_THRESHOLD {
+            self.candidate.push(frame.to_vec());
+            if self.candidate.len() >= ONSET_CONFIRM_FRAMES {
+                self.in_speech = true;
+                self.silence_frames = 0;
+                self.voiced_frames = self.candidate.len();
+                let pre_roll = std::mem::take(&mut self.pre_roll);
+                let candidate = std::mem::take(&mut self.candidate);
+                for buffered in pre_roll.iter().chain(candidate.iter()) {
+                    self.segment.extend_from_slice(buffered);
+                }
+            }
+            return None;
+        }
+
+        // The run broke before it could confirm: those frames become pre-roll
+        // for whatever comes next, along with this silent frame.
+        for unconfirmed in std::mem::take(&mut self.candidate) {
+            push_bounded(&mut self.pre_roll, unconfirmed);
+        }
+        push_bounded(&mut self.pre_roll, frame.to_vec());
+        None
+    }
+
+    /// Close the open segment, if any, and return it.
+    ///
+    /// Used by the push-to-talk release edge and the long-utterance guard.
+    fn take_segment(&mut self) -> Option<Segment> {
+        if !self.in_speech || self.segment.is_empty() {
+            self.reset();
+            return None;
+        }
+
+        let mut samples = std::mem::take(&mut self.segment);
+        let trailing = self.silence_frames.saturating_sub(HANGOVER_FRAMES) * VAD_FRAME_SAMPLES;
+        samples.truncate(samples.len().saturating_sub(trailing));
+        let segment = Segment {
+            samples,
+            voiced_frames: self.voiced_frames,
+        };
+        self.reset();
+        Some(segment)
+    }
+
+    /// Drop all buffered audio and close any open segment.
+    ///
+    /// Called on hard boundaries — TTS playback and its cooldown — where
+    /// retained audio is the app's own output rather than a user's speech.
+    fn reset(&mut self) {
+        self.pre_roll.clear();
+        self.candidate.clear();
+        self.segment.clear();
+        self.voiced_frames = 0;
+        self.silence_frames = 0;
+        self.in_speech = false;
+    }
+}
+
+/// Whether a VAD pause may end the current utterance.
+///
+/// A held push-to-talk shortcut is an explicit "I am not done talking", so
+/// silence never ends the utterance while it is held — even when the
+/// microphone is also manually open. The hold flushes on release, through the
+/// worker's transmit edge. With the shortcut up, a manually open microphone
+/// keeps normal VAD pause flushing.
+///
+/// `_manually_open` is deliberately not consulted: it used to allow flushing
+/// during a hold, which cut a held utterance into pieces whenever the speaker
+/// paused mid-sentence with a manually open microphone.
+fn vad_flush_allowed(shortcut_enabled: bool, shortcut_held: bool, _manually_open: bool) -> bool {
+    !(shortcut_enabled && shortcut_held)
+}
+
+/// Push onto a ring bounded to [`PRE_ROLL_FRAMES`], dropping the oldest frame.
+fn push_bounded(pre_roll: &mut std::collections::VecDeque<Vec<f32>>, frame: Vec<f32>) {
+    if pre_roll.len() == PRE_ROLL_FRAMES {
+        pre_roll.pop_front();
+    }
+    pre_roll.push_back(frame);
+}
+
+/// Decode a finished segment, or log why it was dropped.
+///
+/// Short segments used to vanish inside `flush_to_stt`, which made "my short
+/// reply never transcribed" indistinguishable from a model failure.
+fn dispatch_segment(
+    segment: &Segment,
+    recognizer: &sherpa_onnx::OfflineRecognizer,
+    text_tx: &tokio_mpsc::Sender<String>,
+) {
+    match segment.disposition() {
+        SegmentDisposition::Decode => {
+            flush_to_stt(&segment.samples, segment.voiced_frames, recognizer, text_tx)
+        }
+        SegmentDisposition::DropShort => eprintln!(
+            "buzz-desktop: STT dropped short segment ({} voiced frames < {MIN_VOICED_FRAMES}, {} samples)",
+            segment.voiced_frames,
+            segment.samples.len()
+        ),
+    }
+}
+
 /// Convert raw bytes (f32 LE) to f32 samples.
 /// Caller should ensure `bytes.len() % 4 == 0`; extra bytes are silently truncated.
 ///
@@ -552,13 +744,5 @@ fn bytes_to_f32(bytes: &[u8]) -> Vec<f32> {
 use super::drain_until_shutdown;
 
 #[cfg(test)]
-mod tests {
-    use super::{has_enough_voiced_audio, MIN_VOICED_FRAMES};
-
-    #[test]
-    fn short_vad_blips_do_not_reach_the_recognizer() {
-        assert!(!has_enough_voiced_audio(1));
-        assert!(!has_enough_voiced_audio(MIN_VOICED_FRAMES - 1));
-        assert!(has_enough_voiced_audio(MIN_VOICED_FRAMES));
-    }
-}
+#[path = "stt_tests.rs"]
+mod tests;

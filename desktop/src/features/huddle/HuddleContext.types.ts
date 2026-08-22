@@ -1,6 +1,23 @@
 import type { AudioInputDevice } from "./lib/useAudioDevices";
 import type { VoiceInputMode } from "./lib/useHuddlePttState";
 
+/**
+ * High-frequency huddle audio levels, kept out of {@link HuddleContextValue}.
+ *
+ * The Rust playout loop emits speaker levels every 50 ms and the local mic
+ * analyser updates at ~30 Hz. Carrying them on the main huddle context made
+ * every `useHuddle()` consumer re-render at that rate; only meters subscribe
+ * here.
+ */
+export interface HuddleLevelsValue {
+  /** Local microphone level, normalized to 0–1. */
+  micLevel: number;
+  /** Pubkeys the backend currently considers to be speaking. */
+  activeSpeakers: string[];
+  /** Per-participant levels, normalized to 0–1. */
+  speakerLevels: Record<string, number>;
+}
+
 export interface HuddleContextValue {
   localAudioTrack: MediaStreamTrack | null;
   isStarting: boolean;
@@ -11,12 +28,9 @@ export interface HuddleContextValue {
   toggleMute: () => void;
   /** Interrupt this agent only if it still owns the active utterance. */
   interruptAgentSpeech: (agentPubkey: string) => Promise<void>;
-  micLevel: number;
   pttActive: boolean;
   voiceInputMode: VoiceInputMode;
   setVoiceInputMode: (mode: VoiceInputMode) => Promise<void>;
-  activeSpeakers: string[];
-  speakerLevels: Record<string, number>;
   audioDevices: AudioInputDevice[];
   selectedDeviceId: string;
   setSelectedDeviceId: (id: string) => void;
