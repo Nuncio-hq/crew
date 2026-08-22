@@ -210,6 +210,30 @@ lookup table or an id comparison in a component.
     events refresh only local persona/team/managed-agent caches; they must
     never invalidate the remote relay directory.
 
+13. **A hidden field never blocks Save, and a visible incomplete one explains
+    itself.** `agentAiConfigurationSubmitBlockReason` derives the submit-block
+    copy from the same visibility inputs the fields render from
+    (`needsProviderSelection` / `needsModelSelection`), so a provider or model
+    the runtime metadata hides can't silently disable the footer. Dialogs pass
+    the reason to the footer instead of computing their own message.
+14. **Definition edits seed access from the instance being edited.** A
+    definition's stored `respondTo` / `respondToAllowlist` can lag behind the
+    managed-agent instance enforcing it, so `editPersonaDialogState` takes the
+    linked instance's access and prefers it — a definition edit must not
+    re-widen access the owner already narrowed on the instance. Conversely,
+    `personaManagedAgentUpdate` pushes a non-null definition policy down to its
+    linked instances (allowlist only when the mode is `allowlist`); a null
+    definition policy is "unspecified" and never overwrites instance access.
+15. **Archived identities are omitted from forward-looking discovery, not from
+    the archive surfaces.** `buildUnifiedGroups` / `pickProfileAgent` take the
+    `useIsArchivedPredicate()` predicate and drop archived standalone and
+    unknown-definition instances, and skip archived instances when resolving a
+    definition card's navigation target (returning `undefined` when every
+    linked instance is archived). Matched definition groups keep their full
+    instance list so the card still represents them, and the predicate's
+    fail-open-while-loading and self-exempt behavior is load-bearing — don't
+    reimplement archive checks locally.
+
 ## The tests that enforce this
 
 - `lib/agentConfigCore.test.mjs` — field model per harness × scope, clearing
@@ -228,6 +252,13 @@ lookup table or an id comparison in a component.
 - `ui/respondToFieldContract.test.mjs` — plain-language mode labels, the
   persistent warning contract for shared agent access, and its two render
   positions (after the people picker for `allowlist`).
+- `ui/unifiedAgentGroups.test.mjs` — archive-aware grouping and definition
+  target selection, including the fail-open predicate and all-archived cases.
+- `ui/agentAiConfigurationPolicy.test.mjs` — submit-block reasons vs hidden
+  provider/model fields.
+- `ui/personaDialogState.test.mjs` — instance-seeded access in edit state.
+- `features/profile/ui/UserProfilePanelUtils.test.mjs` — definition→instance
+  access sync, including the null-policy no-op.
 - `lib/agentAccessWarning.test.mjs` — every mode × run-location copy variant
   plus both resolvers, including unknown-reads-as-local and
   blank-`runOn`-is-not-a-provider.

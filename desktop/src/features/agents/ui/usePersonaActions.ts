@@ -474,10 +474,20 @@ export function usePersonaActions() {
     setShouldLoadAcpRuntimes(true);
   }
 
-  function openEdit(persona: AgentPersona) {
+  function openEdit(persona: AgentPersona, linkedAgent?: ManagedAgent) {
     clearFeedback("library");
     setShouldLoadAcpRuntimes(true);
-    setPersonaDialogState(editPersonaDialogState(persona));
+    setPersonaDialogState(
+      editPersonaDialogState(
+        persona,
+        linkedAgent
+          ? {
+              respondTo: linkedAgent.respondTo,
+              respondToAllowlist: linkedAgent.respondToAllowlist,
+            }
+          : undefined,
+      ),
+    );
   }
 
   function openDuplicate(persona: AgentPersona) {

@@ -15,6 +15,7 @@ import {
   shouldShowManagedAgentSleepingBadge,
 } from "@/features/agents/managedAgentRuntimeStatus";
 import { useCommunities } from "@/features/communities/useCommunities";
+import { useIsArchivedPredicate } from "@/features/identity-archive/hooks";
 import { useUserProfileQuery } from "@/features/profile/hooks";
 import type {
   AgentPersona,
@@ -60,7 +61,7 @@ type UnifiedAgentsSectionProps = {
   isPersonasPending: boolean;
   onOpenCatalog: () => void;
   onDuplicatePersona: (persona: AgentPersona) => void;
-  onEditPersona: (persona: AgentPersona) => void;
+  onEditPersona: (persona: AgentPersona, linkedAgent?: ManagedAgent) => void;
   onSharePersona: (
     persona: AgentPersona,
     linkedAgent: ManagedAgent | undefined,
@@ -106,9 +107,10 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
     onDeletePersona,
   } = props;
 
+  const isArchived = useIsArchivedPredicate();
   const { groups, ungrouped, unknown } = React.useMemo(
-    () => buildUnifiedGroups(personas, agents),
-    [personas, agents],
+    () => buildUnifiedGroups(personas, agents, isArchived),
+    [personas, agents, isArchived],
   );
   const { activeCommunity } = useCommunities();
   const activeRelayUrl = activeCommunity?.relayUrl ?? null;
@@ -159,7 +161,7 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
               onClick={onOpenCatalog}
             />
             {groups.map((group) => {
-              const profileAgent = pickProfileAgent(group.agents);
+              const profileAgent = pickProfileAgent(group.agents, isArchived);
               return (
                 <AgentPersonaCard
                   actions={(effectiveAvatarUrl, isEffectiveAvatarLoading) => (

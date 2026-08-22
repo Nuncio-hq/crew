@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { LinkedInstanceAccess } from "@/features/agents/ui/personaDialogState";
 import type {
   AcpRuntimeCatalogEntry,
   AgentPersona,
@@ -259,6 +260,22 @@ export function resolveAgentInstruction(
   );
 }
 
+/**
+ * The access policy of the instance a profile panel is editing. A definition's
+ * stored policy can be staler (and wider) than the instance actually enforcing
+ * it, so seeding the edit dialog from the instance keeps a definition edit from
+ * silently re-widening access the owner already narrowed.
+ */
+export function linkedInstanceAccess(
+  agent: ManagedAgent | undefined,
+): LinkedInstanceAccess | undefined {
+  if (!agent) return undefined;
+  return {
+    respondTo: agent.respondTo,
+    respondToAllowlist: agent.respondToAllowlist,
+  };
+}
+
 export function personaManagedAgentUpdate(
   agent: ManagedAgent,
   persona: AgentPersona,
@@ -289,6 +306,22 @@ export function personaManagedAgentUpdate(
 
   if (!stringRecordEqual(persona.envVars, agent.envVars)) {
     input.envVars = persona.envVars;
+    hasChanges = true;
+  }
+
+  // A definition edit that changes who may send instructions has to reach the
+  // instance that enforces it. `respondTo == null` means the definition states
+  // no policy, so it must never overwrite the instance's own access.
+  if (persona.respondTo != null && persona.respondTo !== agent.respondTo) {
+    input.respondTo = persona.respondTo;
+    hasChanges = true;
+  }
+
+  if (
+    persona.respondTo === "allowlist" &&
+    !stringArrayEqual(persona.respondToAllowlist, agent.respondToAllowlist)
+  ) {
+    input.respondToAllowlist = [...persona.respondToAllowlist];
     hasChanges = true;
   }
 
