@@ -34,6 +34,7 @@ type SubmitMessageEditOptions = Omit<
   extractMentionPubkeys: (content: string) => string[];
   getMentionRefs: (content: string) => DraftMentionRef[];
   editTargetId: string;
+  enqueueUpload?: typeof enqueueBackgroundMediaUpload;
   editTarget: Pick<
     MessageComposerEditTarget,
     "mentionRefs" | "unresolvedMentionPubkeys"
@@ -42,6 +43,7 @@ type SubmitMessageEditOptions = Omit<
   ownerPubkey: string | null;
   restoreComposer: (draft: EditDraft) => void;
   restoreMentionRefs: (refs: DraftMentionRef[]) => void;
+  revalidateMentionPubkeys: (pubkeys: readonly string[]) => Promise<string[]>;
   shouldRestoreComposer: () => boolean;
   setDeferredUploadPending: (isPending: boolean) => void;
   /** Whether the edit should explicitly suppress link previews. */
@@ -62,6 +64,7 @@ export async function submitMessageEdit({
   content,
   customEmoji,
   editTargetId,
+  enqueueUpload = enqueueBackgroundMediaUpload,
   editTarget,
   extractMentionPubkeys,
   getMentionRefs,
@@ -71,6 +74,7 @@ export async function submitMessageEdit({
   queuedAttachments,
   restoreComposer,
   restoreMentionRefs,
+  revalidateMentionPubkeys,
   setDeferredUploadPending,
   shouldRestoreComposer,
   save,
@@ -141,12 +145,15 @@ export async function submitMessageEdit({
       ],
     );
     if (signal?.aborted) return;
+    const revalidatedMentionPubkeys =
+      await revalidateMentionPubkeys(addedMentionPubkeys);
+    if (signal?.aborted) return;
     // Edit receivers treat `[]` as "wipe attachments"; `undefined` means
     // "leave imeta alone". Always send an explicit list on the edit path.
     await save(
       finalContent,
       outgoingTags ?? [],
-      addedMentionPubkeys,
+      revalidatedMentionPubkeys,
       removedMentionPubkeys,
       suppressLinkPreviews ?? false,
       editTargetId,
@@ -154,7 +161,7 @@ export async function submitMessageEdit({
   };
 
   if (hasQueuedAttachments) {
-    enqueueBackgroundMediaUpload({
+    enqueueUpload({
       attachments: draft.queuedAttachments,
       onComplete: async (uploaded, signal) => {
         try {
