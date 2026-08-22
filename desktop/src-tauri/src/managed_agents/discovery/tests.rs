@@ -236,7 +236,7 @@ fn record_with(
         runtime_pid: None,
         backend: Default::default(),
         backend_agent_id: None,
-        provider_policy_pending: false,
+        hermes_profile: None,
         provider_binary_path: None,
         team_id: None,
         persona_team_dir: None,
@@ -265,7 +265,6 @@ fn record_with(
         definition_respond_to_allowlist: Vec::new(),
         definition_parallelism: None,
         relay_mesh: None,
-        effort_level: None,
     }
 }
 

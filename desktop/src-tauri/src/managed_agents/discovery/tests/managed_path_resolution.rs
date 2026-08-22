@@ -69,10 +69,13 @@ fn resolve_command_prefers_buzz_managed_npm_shim_over_path() {
 
     std::env::set_var("HOME", &home);
     std::env::set_var("XDG_DATA_HOME", &xdg_data);
+    let platform = crate::managed_agents::managed_platform_segment()
+        .expect("managed platform segment on unix CI hosts");
     let managed_bin = dirs::data_dir()
         .expect("data dir")
         .join("Buzz")
         .join("node-tools")
+        .join(platform)
         .join("bin");
     std::fs::create_dir_all(&managed_bin).expect("create managed bin");
 
