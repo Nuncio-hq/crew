@@ -119,6 +119,7 @@ export function useMentions(
     !relayAgentsQuery.isFetching;
   const agentDirectoriesReady =
     managedAgentDirectoryReady && relayAgentDirectoryReady;
+  const agentProvenanceReady = agentDirectoriesReady;
   const canSearchGlobalUsers = canSearchGlobalPeople && agentDirectoriesReady;
   const userSearchQuery = useInfiniteUserSearchQuery(mentionQuery ?? "", {
     allowEmpty: true,
@@ -347,7 +348,7 @@ export function useMentions(
         personaId:
           managedAgentPersonaIdsByPubkey.get(pubkey) ??
           (activePersonaById.has(pubkey) ? pubkey : undefined),
-        ownerPubkey: null,
+        ownerPubkey: agent.ownerPubkey,
         isAgent: true,
       });
     }
@@ -523,6 +524,7 @@ export function useMentions(
       .slice(0, MENTION_SUGGESTION_LIMIT)
       .map(({ candidate, label }) =>
         mapMentionCandidateToSuggestion({
+          agentProvenanceReady,
           candidate,
           label,
           channelType: options?.channelType,
@@ -533,6 +535,7 @@ export function useMentions(
       );
   }, [
     activePersonaIds,
+    agentProvenanceReady,
     currentPubkey,
     mentionCandidatesWithTeams,
     mentionQuery,
@@ -910,6 +913,7 @@ export function useMentions(
             searchableNamesLowerRef,
             candidates: mentionCandidatesWithTeams,
             activePersonaIds,
+            agentProvenanceReady,
             channelType: options?.channelType,
             currentPubkey,
             ownerProfiles: ownerProfilesQuery.data?.profiles,
@@ -939,6 +943,7 @@ export function useMentions(
     },
     [
       activePersonaIds,
+      agentProvenanceReady,
       cancelMentionAutocomplete,
       currentPubkey,
       isMentionOpen,

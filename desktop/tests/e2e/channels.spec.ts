@@ -4007,6 +4007,61 @@ test("members sidebar virtualizes large channel rosters", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("members sidebar marks a same-owner duplicate from another setup", async ({
+  page,
+}) => {
+  const localPubkey = "f".repeat(64);
+  const remotePubkey = "1".repeat(64);
+  await installMockBridge(page, {
+    agentListDelayMs: 5_000,
+    managedAgents: [
+      {
+        pubkey: localPubkey,
+        name: "duplicate",
+        status: "stopped",
+        channelNames: ["general"],
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: remotePubkey,
+        ownerPubkey: MOCK_IDENTITY_PUBKEY,
+        name: "duplicate",
+        respondTo: "anyone",
+        channelNames: ["general"],
+      },
+    ],
+    searchProfiles: [
+      {
+        pubkey: remotePubkey,
+        displayName: "duplicate",
+        ownerPubkey: MOCK_IDENTITY_PUBKEY,
+        isAgent: true,
+      },
+    ],
+  });
+  await page.goto("/");
+  await invokeMockCommand(page, "add_channel_members", {
+    channelId: GENERAL_CHANNEL_ID,
+    pubkeys: [remotePubkey],
+    role: "bot",
+  });
+  await openMembersSidebar(page, "general");
+
+  await expect(
+    page.getByTestId(`sidebar-member-${remotePubkey}`),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId(`sidebar-member-other-setup-${remotePubkey}`),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId(`sidebar-member-other-setup-${remotePubkey}`),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId(`sidebar-member-other-setup-${localPubkey}`),
+  ).toHaveCount(0);
+});
+
 test("members sidebar can invite relay-authorized agents", async ({ page }) => {
   await installMockBridge(page, {
     relayAgents: [

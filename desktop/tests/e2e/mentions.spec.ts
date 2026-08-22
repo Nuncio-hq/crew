@@ -1531,6 +1531,109 @@ test("relay-only excluded agents stay hidden from channel mentions", async ({
   await expect(autocomplete(page)).toHaveCount(0);
 });
 
+test("owner-only builds hide other-owned relay agents", async ({ page }) => {
+  await installMockBridge(page, {
+    ownerOnlyAccessBuild: true,
+    searchProfiles: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        displayName: "quinn",
+        ownerPubkey: TEST_IDENTITIES.outsider.pubkey,
+        isAgent: true,
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        ownerPubkey: TEST_IDENTITIES.outsider.pubkey,
+        name: "quinn",
+        respondTo: "owner-only",
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.getByTestId("message-input").fill("@quinn");
+
+  await expect(autocomplete(page)).toHaveCount(0);
+});
+
+test("owner-only builds show verified same-owner relay agents", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    ownerOnlyAccessBuild: true,
+    searchProfiles: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        displayName: "quinn",
+        ownerPubkey: MOCK_VIEWER_PUBKEY,
+        isAgent: true,
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+        ownerPubkey: MOCK_VIEWER_PUBKEY,
+        name: "quinn",
+        respondTo: "owner-only",
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.getByTestId("message-input").fill("@quinn");
+
+  await expect(autocomplete(page).getByText("quinn")).toBeVisible();
+});
+
+test("duplicate same-owner agents identify the other setup only after directories settle", async ({
+  page,
+}) => {
+  const localPubkey = "f".repeat(64);
+  const remotePubkey = "1".repeat(64);
+  await installMockBridge(page, {
+    agentListDelayMs: 1_000,
+    managedAgents: [
+      {
+        pubkey: localPubkey,
+        name: "duplicate",
+        status: "stopped",
+        channelNames: ["general"],
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: remotePubkey,
+        ownerPubkey: MOCK_VIEWER_PUBKEY,
+        name: "duplicate",
+        respondTo: "anyone",
+        channelNames: ["general"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.getByTestId("message-input").fill("@duplicate");
+
+  await expect(autocomplete(page)).toHaveCount(0);
+
+  const dropdown = autocomplete(page);
+  await expect(dropdown).toBeVisible();
+  const localRow = dropdown.getByTestId(`mention-suggestion-${localPubkey}`);
+  const remoteRow = dropdown.getByTestId(`mention-suggestion-${remotePubkey}`);
+  await expect(localRow).toBeVisible();
+  await expect(remoteRow).toBeVisible();
+  await expect(localRow.getByTestId("mention-agent-other-setup")).toHaveCount(
+    0,
+  );
+  await expect(
+    remoteRow.getByTestId("mention-agent-other-setup"),
+  ).toBeVisible();
+});
+
 test("shared agents wait for initial directory authorization", async ({
   page,
 }) => {

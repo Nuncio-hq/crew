@@ -38,12 +38,19 @@ function pluralize(count: number, singular: string, plural = `${singular}s`) {
 export function ContributorsPanel({
   profiles,
   repoContributors,
+  repoParticipants,
 }: {
   profiles?: UserProfileLookup;
   repoContributors: ProjectRepoContributor[];
+  /** Pubkeys the repository announcement lists, preferred on ambiguity. */
+  repoParticipants?: readonly string[];
 }) {
   const rows = repoContributors.map((contributor) => {
-    const matchedProfile = profileForContributor(contributor, profiles);
+    const matchedProfile = profileForContributor(
+      contributor,
+      profiles,
+      repoParticipants,
+    );
     const label = matchedProfile
       ? resolveUserLabel({ pubkey: matchedProfile.pubkey, profiles })
       : contributor.name || contributor.email || "Unknown contributor";
@@ -132,6 +139,7 @@ export function ActivityPanel({
   profiles,
   pullRequests,
   repoContributors,
+  repoParticipants,
   viewerGitIdentity,
 }: {
   branch?: string;
@@ -142,6 +150,8 @@ export function ActivityPanel({
   profiles?: UserProfileLookup;
   pullRequests?: ProjectPullRequest[];
   repoContributors: ProjectRepoContributor[];
+  /** Pubkeys the repository announcement lists, preferred on ambiguity. */
+  repoParticipants?: readonly string[];
   viewerGitIdentity?: ViewerGitIdentity | null;
 }) {
   const commits = snapshot?.commits ?? [];
@@ -188,6 +198,7 @@ export function ActivityPanel({
             profiles,
             commitAuthorPubkeys,
             viewerGitIdentity,
+            repoParticipants,
           );
           const authorLabel = matchedProfile
             ? resolveUserLabel({

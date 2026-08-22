@@ -135,6 +135,7 @@ export default defineConfig({
         "**/drafts-all-fix-screenshots.spec.ts",
         "**/inbox-refactor-screenshots.spec.ts",
         "**/crew-theme-screenshots.spec.ts",
+        "**/crew-appearance-density.spec.ts",
         "**/channel-sort.spec.ts",
         "**/identity-lost.spec.ts",
         "**/deep-link-invite.spec.ts",

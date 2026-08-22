@@ -244,8 +244,8 @@ enum Cmd {
     #[command(subcommand)]
     UserInput(UserInputCmd),
     /// Founder-signed org roster helpers (Crew). Chart Show/Tree/Publish removed (#233).
-#[command(subcommand)]
-Org(OrgCmd),
+    #[command(subcommand)]
+    Org(OrgCmd),
 }
 
 #[derive(Subcommand)]
@@ -672,8 +672,9 @@ pub enum ChannelsCmd {
         /// Channel description
         #[arg(long)]
         description: Option<String>,
-        /// Make the channel ephemeral: lifetime in seconds. The relay archives
-        /// it once this many seconds pass without a new message.
+        /// Make the channel temporary/ephemeral: idle lifetime in seconds. If
+        /// omitted, the channel is permanent. The relay archives it once this
+        /// many seconds pass without a new message.
         #[arg(long, value_name = "SECONDS")]
         ttl: Option<i64>,
         /// Apply a desktop-local channel template by name (case-insensitive):
@@ -2162,6 +2163,24 @@ mod tests {
         ] {
             assert_eq!(normalize_auth_tag_input(garbage), garbage.trim());
         }
+    }
+
+    /// Upstream #6340: `channels create --ttl` help states that omitting the
+    /// flag creates a permanent channel.
+    #[test]
+    fn channels_create_ttl_help_documents_permanent_default() {
+        let mut cmd = Cli::command();
+        let help = cmd
+            .find_subcommand_mut("channels")
+            .expect("channels subcommand")
+            .find_subcommand_mut("create")
+            .expect("create subcommand")
+            .render_long_help()
+            .to_string();
+        assert!(
+            help.contains("If omitted, the channel is permanent"),
+            "ttl help must document the permanent default: {help}"
+        );
     }
 
     /// Smoke test: CLI definition is valid and parseable.
