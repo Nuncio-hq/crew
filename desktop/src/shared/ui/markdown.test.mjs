@@ -580,6 +580,16 @@ test("messageLinkUrlTransform: preserves buzz://message href with thread", () =>
   assert.match(html, /href="buzz:\/\/message\?[^"]*thread=t1"/);
 });
 
+test("messageLinkUrlTransform: preserves buzz://channel href", () => {
+  const html = renderMarkdown(
+    "Open [general](buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32)",
+  );
+  assert.match(
+    html,
+    /href="buzz:\/\/channel\/580ca78b-9dae-46f3-8854-bd671853ba32"/,
+  );
+});
+
 test("messageLinkUrlTransform: still strips javascript: scheme", () => {
   const html = renderMarkdown("[xss](javascript:alert(1))");
   // defaultUrlTransform replaces unsafe schemes with the empty string.

@@ -5176,6 +5176,11 @@ mod agent_draft_prompt_tests {
         assert!(prompt.contains("buzz agents call --channel <UUID> --agent <Name>"));
         assert!(prompt.contains("Never publish a bare acknowledgement"));
         assert!(prompt.contains("crew-evidence"));
+        // #6186 follow-through: keep working after pickup; do not prescribe todos.
+        assert!(prompt.contains(
+            "After publishing a pickup message, keep working until you publish the verified result, blocker, or key decision or information that needs to be surfaced."
+        ));
+        assert!(!prompt.contains("create an open todo **before** sending the pickup acknowledgment"));
     }
 
     #[test]
