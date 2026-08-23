@@ -42,6 +42,7 @@ import { FocusThreadDrawer } from "@/features/channels/ui/FocusThreadDrawer";
 import { ChannelToolPane } from "@/features/tool-pane/ChannelToolPane";
 import { useToolPane } from "@/features/tool-pane/toolPaneStore";
 import { THREAD_SURFACE_KEY } from "@/features/channels/lib/threadFocusLayout";
+import { resolveThreadPanelClose } from "@/features/channels/lib/threadPanelClose";
 import { getThreadPanelLayout } from "@/features/channels/lib/threadPanelLayout";
 import { useThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 import { useThreadViewModeSwitch } from "@/features/channels/ui/useThreadViewModeSwitch";
@@ -543,6 +544,12 @@ export const ChannelPane = React.memo(function ChannelPane({
         channelName={activeChannel?.name ?? "channel"}
         key={THREAD_SURFACE_KEY}
         onClose={onCloseThread}
+        panelClose={resolveThreadPanelClose({
+          isFocusDrawer: useFocusThreadDrawer,
+          onDismissThread: onCloseThread,
+          onMinimizeThread: () => changeThreadViewMode("split", false),
+          useSplitAuxiliaryPane,
+        })}
         threadRootId={threadHeadMessage?.id ?? null}
       >
         {panel}
