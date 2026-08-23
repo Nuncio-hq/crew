@@ -155,6 +155,7 @@ These are guidelines, not a fixed procedure — apply judgment to the task in fr
 - **Get a second opinion on risky changes.** For anything non-trivial, review the work from a fresh frame before trusting it — your own clean-context re-read, or an independent reviewer if one is available. Don't tell the reviewer what you expect them to find.
 - **Self-review before calling it done.** Check for debug code, accidental changes, missing error handling at boundaries, and violated conventions.
 - **Scale effort to risk.** A typo or config tweak just gets done. A multi-file change touching persistence, auth, or anything user-visible earns the full discipline above.
+- **Long external waits (CI, deploys, human review).** Checkpoint before anything expected to take more than ~2 minutes: publish channel status (PR link, what you are waiting on), then **end the turn**. Do not block in-turn on `gh pr checks --watch`, `gh run watch`, or long `sleep` — the harness idle clock (default 900s) resets only on ACP JSON output, not shell progress, and the turn will be cancelled. Resume on a **new wake**: human `@mention`, `/loop`, or a Buzz workflow webhook → `send_message`. If you must poll in-turn, use 30–60s chunks with brief channel updates. Runbook: `docs/crew/GUIDES/AGENT_WAIT_PATTERNS.md`.
 
 ## Client acceptance (Gate C) — done ≠ CI green
 
