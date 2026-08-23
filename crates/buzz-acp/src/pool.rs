@@ -381,6 +381,9 @@ pub struct AgentPool {
     result_rx: mpsc::UnboundedReceiver<PromptResult>,
     pub join_set: JoinSet<()>,
     task_map: HashMap<tokio::task::Id, TaskMeta>,
+    /// Set when a channel turn found every live engine busy. Consumed by the
+    /// harness to materialize one more slot in a lazy pool (see #295).
+    fill_demand: bool,
 }
 
 /// Result returned by a completed prompt task.
@@ -755,6 +758,7 @@ impl AgentPool {
             result_rx,
             join_set: JoinSet::new(),
             task_map: HashMap::new(),
+            fill_demand: false,
         }
     }
 
@@ -779,7 +783,23 @@ impl AgentPool {
 
         // Pass 2: first idle agent.
         let idx = self.agents.iter().position(|slot| slot.is_some());
-        idx.map(|i| self.agents[i].take().unwrap())
+        match idx {
+            Some(i) => self.agents[i].take(),
+            None => {
+                // Only real channel work justifies growing the pool;
+                // heartbeats ride whatever engine is already live.
+                if channel_id.is_some() {
+                    self.fill_demand = true;
+                }
+                None
+            }
+        }
+    }
+
+    /// Take the pending "one more engine, please" signal raised by a starved
+    /// channel turn. Returns `true` at most once per starvation event.
+    pub fn take_fill_demand(&mut self) -> bool {
+        std::mem::take(&mut self.fill_demand)
     }
 
     /// Return an agent to its slot after a task completes.
@@ -7744,6 +7764,37 @@ mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
     use serde_json::json;
+
+    /// #295: a starved *channel* turn is the only signal that grows a lazy
+    /// pool. Heartbeats run on the already-live slot or not at all.
+    #[test]
+    fn channel_claim_starvation_signals_fill_demand_but_heartbeat_does_not() {
+        let mut pool = AgentPool::from_slots(vec![None]);
+
+        assert!(pool.try_claim(None).is_none());
+        assert!(
+            !pool.take_fill_demand(),
+            "a heartbeat must never materialize an additional engine slot"
+        );
+
+        assert!(pool.try_claim(Some(Uuid::new_v4())).is_none());
+        assert!(
+            pool.take_fill_demand(),
+            "a starved concurrent turn asks for one more slot"
+        );
+        assert!(
+            !pool.take_fill_demand(),
+            "fill demand is consumed by the fill attempt"
+        );
+
+        // A burst of starved turns coalesces into a single fill request, so a
+        // burst of `cap + k` dispatches grows the pool one engine at a time.
+        for _ in 0..5 {
+            assert!(pool.try_claim(Some(Uuid::new_v4())).is_none());
+        }
+        assert!(pool.take_fill_demand());
+        assert!(!pool.take_fill_demand());
+    }
 
     #[test]
     fn legacy_system_composition_includes_role_and_routing() {
