@@ -2,6 +2,7 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import { resolveCurrentProjectChannelAgentMessage } from "@/features/projects/lib/project-local-workspace-runtime";
+import { appendCrewViewAgentContext } from "@/features/projects/lib/project-view-agent-context";
 import { filterEffectiveExplicitAgentPubkeys } from "@/features/messages/lib/effectiveExplicitAgentPubkeys";
 import { resolveProjectThreadAgentRouting } from "@/features/messages/lib/projectThreadAgentRouting";
 import {
@@ -26,6 +27,7 @@ import {
   type PendingNonMemberMentionSend,
   uniqueNormalizedPubkeys,
 } from "./useMentionSendFlow.helpers";
+import { useComposerViewContext } from "./composerViewContext";
 import { useComposerWorkspaceBinding } from "./composerWorkspaceBinding";
 
 type UseMentionSendCompleteOptions = {
@@ -101,6 +103,7 @@ export function useMentionSendComplete({
   setSpoileredAttachmentUrls,
 }: UseMentionSendCompleteOptions) {
   const workspaceBinding = useComposerWorkspaceBinding();
+  const viewContext = useComposerViewContext();
   return React.useCallback(
     async (
       draft: PendingNonMemberMentionSend,
@@ -319,6 +322,12 @@ export function useMentionSendComplete({
               toast.error(message);
               throw error instanceof Error ? error : new Error(message);
             }
+            // Visible-page context is agent-only and additive: it never
+            // replaces the workspace context the harness parses.
+            finalContent = appendCrewViewAgentContext(
+              finalContent,
+              viewContext,
+            );
           }
           // No-upload: clear after resolve succeeds, before the network send, so
           // persistent audiences transition atomically while a failed Project
@@ -439,6 +448,7 @@ export function useMentionSendComplete({
       setNonMemberPromptError,
       setPendingImeta,
       setSpoileredAttachmentUrls,
+      viewContext,
       workspaceBinding,
     ],
   );

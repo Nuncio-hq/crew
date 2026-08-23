@@ -22,9 +22,9 @@
       "recordedAt": "2026-08-12"
     },
     "src/features/messages/ui/MessageThreadPanel.tsx": {
-      "lines": 998,
-      "reason": "Tightened after #205 extracted ThreadPanelEmptyState (P6) out of the upstream-heavy panel.",
-      "recordedAt": "2026-08-14"
+      "lines": 992,
+      "reason": "Tightened after #272 extracted ThreadComposerActivityRail out of the panel (D-022).",
+      "recordedAt": "2026-08-22"
     },
     "src/shared/api/relayClientSession.ts": {
       "lines": 1079,

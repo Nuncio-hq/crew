@@ -98,6 +98,24 @@ fn mode_folder_selects_cowork_without_worktree_binding() {
 }
 
 #[test]
+fn visible_page_view_context_never_shadows_the_workspace_url() {
+    // Crew's visible-page context (#272) rides the same hidden-reference seam.
+    // Its `project-workspace-view` URL must stay data: it carries no repo/path,
+    // and a preceding view line must not be parsed as workspace metadata.
+    let view_only = "[v]: <buzz://project-workspace-view?scope=thread&items=2&total=2> \"Current Crew thread view\"\n\nFix it";
+    assert!(parse_project_workspace(view_only).unwrap().is_none());
+
+    let both = format!(
+        "{view_only_line}\n[ctx]: <buzz://project-workspace?repo=acme%2Fapp&path=%2Ftmp%2Fapp> \"Project\"\n\nFix it",
+        view_only_line =
+            "[v]: <buzz://project-workspace-view?scope=thread&items=2&total=2> \"View\""
+    );
+    let workspace = parse_project_workspace(&both).unwrap().unwrap();
+    assert_eq!(workspace.repo_address, "acme/app");
+    assert_eq!(workspace.local_path, PathBuf::from("/tmp/app"));
+}
+
+#[test]
 fn rejects_relative_workspace_path() {
     let content = "buzz://project-workspace?repo=acme%2Fapp&path=relative";
     assert!(parse_project_workspace(content).is_err());
