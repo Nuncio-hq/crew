@@ -138,15 +138,11 @@ test("crew-evidence plus a buzz:// permalink still renders the evidence card", a
   await expect(card.getByTestId("evidence-reject")).toBeVisible();
   // Dispatch order: evidence card owns the row. A compact permalink chip
   // must not replace the body (that would look like a broken chip).
-  await expect(
-    timeline.getByTestId("message-row").filter({ has: card }),
-  ).toBeVisible();
-  await expect(
-    timeline
-      .getByTestId("message-row")
-      .filter({ has: card })
-      .locator("[data-buzz-link-kind='pr']"),
-  ).toHaveCount(0);
+  const row = timeline.getByTestId("message-row").filter({
+    has: page.getByTestId("evidence-card-test-run"),
+  });
+  await expect(row).toBeVisible();
+  await expect(row.locator("[data-buzz-link-kind='pr']")).toHaveCount(0);
 });
 
 test("ordinary buzz:// permalinks render compact chips, not raw URLs", async ({
