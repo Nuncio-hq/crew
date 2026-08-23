@@ -524,9 +524,7 @@ function MessageComposerImpl({
     // Edit mode
     if (editTargetRef.current && onEditSaveRef.current) {
       if (isEditSubmissionLocked) return;
-      // No empty-edit guard here: clearing an edit to empty (no text, no
-      // attachments) flows through to onEditSave as empty content, which
-      // deletes the message instead of publishing it (see handleEditSave).
+      // Empty edits delete the message through handleEditSave.
       await submitMessageEdit({
         content: trimmed,
         suppressLinkPreviews,
@@ -575,6 +573,7 @@ function MessageComposerImpl({
           setSpoileredAttachmentUrls(draft.spoileredAttachmentUrls);
         },
         restoreMentionRefs: mentions.restoreDraftMentionRefs,
+        revalidateMentionPubkeys: mentions.revalidateMentionPubkeys,
         shouldRestoreComposer: () => canRestoreEditDraftRef.current,
         setDeferredUploadPending: setDeferredEditPending,
         setUploadError: (message) =>
@@ -663,6 +662,7 @@ function MessageComposerImpl({
     effectiveDraftKey,
     mentions.getDraftMentionRefs,
     mentions.restoreDraftMentionRefs,
+    mentions.revalidateMentionPubkeys,
   ]);
   submitMessageRef.current = submitMessage;
   // ── Auto-submit on draft send ────────────────────────────────────────────

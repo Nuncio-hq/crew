@@ -34,6 +34,7 @@ type SubmitMessageEditOptions = Omit<
   extractMentionPubkeys: (content: string) => string[];
   getMentionRefs: (content: string) => DraftMentionRef[];
   editTargetId: string;
+  enqueueUpload?: typeof enqueueBackgroundMediaUpload;
   editTarget: Pick<
     MessageComposerEditTarget,
     "mentionRefs" | "unresolvedMentionPubkeys"
@@ -42,6 +43,7 @@ type SubmitMessageEditOptions = Omit<
   ownerPubkey: string | null;
   restoreComposer: (draft: EditDraft) => void;
   restoreMentionRefs: (refs: DraftMentionRef[]) => void;
+  revalidateMentionPubkeys: (pubkeys: readonly string[]) => Promise<string[]>;
   shouldRestoreComposer: () => boolean;
   setDeferredUploadPending: (isPending: boolean) => void;
   /** Whether the edit should explicitly suppress link previews. */
@@ -62,6 +64,7 @@ export async function submitMessageEdit({
   content,
   customEmoji,
   editTargetId,
+  enqueueUpload = enqueueBackgroundMediaUpload,
   editTarget,
   extractMentionPubkeys,
   getMentionRefs,
@@ -71,6 +74,7 @@ export async function submitMessageEdit({
   queuedAttachments,
   restoreComposer,
   restoreMentionRefs,
+  revalidateMentionPubkeys,
   setDeferredUploadPending,
   shouldRestoreComposer,
   save,
@@ -130,6 +134,20 @@ export async function submitMessageEdit({
         ),
       ]),
     );
+    if (signal?.aborted) return;
+    const revalidatedMentionPubkeys =
+      await revalidateMentionPubkeys(addedMentionPubkeys);
+    if (signal?.aborted) return;
+    // A denied mention must not survive as a non-notifying reference either:
+    // the tag both publishes the pubkey and renders the agent chip.
+    const admitted = new Set(
+      revalidatedMentionPubkeys.map((pubkey) => pubkey.toLowerCase()),
+    );
+    const deniedMentionPubkeys = new Set(
+      addedMentionPubkeys
+        .map((pubkey) => pubkey.toLowerCase())
+        .filter((pubkey) => !admitted.has(pubkey)),
+    );
     const outgoingTags = mergeOutgoingTagsWithReferenceMentions(
       mergeOutgoingTags(
         mediaTags,
@@ -138,15 +156,14 @@ export async function submitMessageEdit({
       [
         ...draft.mentionRefs.map(({ pubkey }) => pubkey),
         ...draft.unresolvedMentionPubkeys,
-      ],
+      ].filter((pubkey) => !deniedMentionPubkeys.has(pubkey.toLowerCase())),
     );
-    if (signal?.aborted) return;
     // Edit receivers treat `[]` as "wipe attachments"; `undefined` means
     // "leave imeta alone". Always send an explicit list on the edit path.
     await save(
       finalContent,
       outgoingTags ?? [],
-      addedMentionPubkeys,
+      revalidatedMentionPubkeys,
       removedMentionPubkeys,
       suppressLinkPreviews ?? false,
       editTargetId,
@@ -154,7 +171,7 @@ export async function submitMessageEdit({
   };
 
   if (hasQueuedAttachments) {
-    enqueueBackgroundMediaUpload({
+    enqueueUpload({
       attachments: draft.queuedAttachments,
       onComplete: async (uploaded, signal) => {
         try {
