@@ -22,7 +22,7 @@ test("the send path appends visible-page context after workspace context", async
 
   // Hidden context is agent-only: it must live inside the explicit-agent guard.
   const guardIndex = hook.lastIndexOf(
-    "if (effectiveExplicitAgentPubkeys.length > 0) {",
+    "if (revalidatedExplicitAgentPubkeys.length > 0) {",
     viewIndex,
   );
   assert.ok(guardIndex >= 0 && guardIndex < viewIndex);
