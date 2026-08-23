@@ -119,10 +119,7 @@ export function useDeclaredPlansForThread(args: {
           managedNames.get(pubkey),
         ),
         events,
-        liveSessionId: latestSessionIdFromEvents(
-          snapshot.events,
-          conversationId,
-        ),
+        liveSessionId: latestSessionIdFromEvents(events, conversationId),
         liveness: planLiveness({
           working: workingPubkeys.has(pubkey),
           sleeping: isManagedAgentRuntimeSleeping(
