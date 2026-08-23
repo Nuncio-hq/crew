@@ -76,6 +76,14 @@ import {
   dispatchControlResult,
   subscribeControlResults,
 } from "./controlResultDispatch";
+import {
+  clearPendingObserverNotifications,
+  notifyListeners,
+  subscribeAgentObserverStore,
+} from "./observerRelayStoreNotify";
+
+export { subscribeAgentObserverStore };
+export { flushPendingNotificationsForTest } from "./lib/coalescedNotify";
 
 export {
   injectObserverEventsForE2E,
@@ -119,7 +127,6 @@ export type AgentObserverStoreUpdate = {
 
 type AgentObserverStoreListener = (update?: AgentObserverStoreUpdate) => void;
 
-const listeners = new Set<AgentObserverStoreListener>();
 const eventsByAgent = new Map<string, ObserverEvent[]>();
 const transcriptByAgent = new Map<string, TranscriptState>();
 const snapshotByAgent = new Map<string, ObserverSnapshot>();
@@ -237,12 +244,6 @@ let eventProcessingQueue: Promise<void> = Promise.resolve();
 let generation = 0;
 let relayConnectionHealthy = false;
 let observerSubscriptionReady = false;
-
-function notifyListeners(update?: AgentObserverStoreUpdate) {
-  for (const listener of listeners) {
-    listener(update);
-  }
-}
 
 function invalidateSnapshot(key: string) {
   snapshotByAgent.delete(key);
@@ -681,15 +682,6 @@ export function ensureRelayObserverSubscription() {
   return startPromise;
 }
 
-export function subscribeAgentObserverStore(
-  listener: AgentObserverStoreListener,
-) {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
 function isControlResultFrame(payload: unknown): payload is ControlResultFrame {
   return (
     typeof payload === "object" &&
@@ -1009,6 +1001,7 @@ export function resetAgentObserverStore() {
   onSessionConfigCaptured = null;
   connectionState = "idle";
   errorMessage = null;
+  clearPendingObserverNotifications();
   notifyListeners();
   void unsubscribe?.();
 }
