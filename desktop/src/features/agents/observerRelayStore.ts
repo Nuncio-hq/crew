@@ -45,6 +45,18 @@ import {
   unwrapObserverBatch,
 } from "./observerEventIdentity";
 import {
+  appendArchivedChannelEvents,
+  compareObserverEvents,
+  isObserverEventAfter,
+  markObserverAgentActivity,
+  peekArchivedChannelEvents,
+  readArchivedChannelEvents,
+  resetArchivedChannelEvents,
+  resetObserverAgentRetention,
+  retainObserverAgentProjection,
+  selectIdleObserverAgents,
+} from "./observerRelayRetention";
+import {
   applyCrewAppendBatchSideEffects,
   applyCrewLiveFrameSideEffects,
   effectiveCrewObserverConnectionState,
@@ -73,6 +85,10 @@ export {
   _testProcessLiveObserverEvents,
   _testRegisterKnownAgents,
 };
+export {
+  compareObserverEvents,
+  isObserverEventAfter,
+} from "./observerRelayRetention";
 
 const MAX_OBSERVER_EVENTS = 3000;
 const OBSERVER_EVENTS_LOW_WATER = Math.floor(MAX_OBSERVER_EVENTS * 0.9);
@@ -125,15 +141,6 @@ function isAfterEvictionFloor(
   }
   return event.seq > floor.seq;
 }
-
-// Channel-scoped archive event journal — holds paged history loaded from the local
-// SQLite archive without the MAX_OBSERVER_EVENTS live-relay cap. Keyed by
-// `${normalizedAgentPubkey}:${channelId}`. The live relay path writes to
-// `eventsByAgent` (per-agent, capped) and this map is NEVER written by live
-// events — separation is strict so loading deep history can never evict live frames
-// or vice versa. UI consumers merge the raw events from both sources, then derive
-// TranscriptState once over the combined window.
-const archiveEventsByChannel = new Map<string, ObserverEvent[]>();
 
 // Per-agent, per-channel latest-live-session-id.
 // Key: `${normalizePubkey(agentPubkey)}:${channelId}`.
@@ -345,6 +352,7 @@ function appendAgentEvents(
     ? sorted.slice(sorted.length - OBSERVER_EVENTS_LOW_WATER)
     : sorted;
   eventsByAgent.set(key, final);
+  markObserverAgentActivity(key);
 
   // Record the newest event this trim discarded as the agent's eviction floor.
   // It is the entry just below the retained window; the floor only advances,
@@ -414,41 +422,6 @@ export function collectTriggeringEventIds(): Set<string> {
 }
 
 /**
- * Compose the map key for the channel-scoped archive transcript.
- * Separates agent identity from channel with `:` — the same delimiter used by
- * liveSessionKey so all composite keys in this module are consistently shaped.
- */
-function archiveChannelKey(agentPubkey: string, channelId: string): string {
-  return `${normalizePubkey(agentPubkey)}:${channelId}`;
-}
-
-/** Append one identity-deduplicated event to the uncapped archive window. */
-function appendArchivedChannelEvent(
-  agentPubkey: string,
-  channelId: string,
-  event: ObserverEvent,
-): boolean {
-  const key = archiveChannelKey(agentPubkey, channelId);
-  const current = archiveEventsByChannel.get(key) ?? [];
-
-  if (
-    current.some(
-      (existing) =>
-        observerEventIdentity(existing) === observerEventIdentity(event),
-    )
-  ) {
-    return false;
-  }
-
-  // Archive pages arrive newest-first from SQLite, so each new event sorts
-  // BEFORE the existing entries. Sort the combined array to maintain ascending
-  // order for consumers that call buildTranscriptState over the window.
-  const sorted = [...current, event].sort(compareObserverEvents);
-  archiveEventsByChannel.set(key, sorted);
-  return true;
-}
-
-/**
  * Read the channel-scoped archive raw events for a given (agent, channel)
  * pair. Returns an empty array when no archive has been loaded yet.
  *
@@ -462,71 +435,7 @@ export function getArchivedChannelEvents(
   channelId: string | null | undefined,
 ): ObserverEvent[] {
   if (!agentPubkey || !channelId) return EMPTY_EVENTS;
-  return (
-    archiveEventsByChannel.get(archiveChannelKey(agentPubkey, channelId)) ??
-    EMPTY_EVENTS
-  );
-}
-
-export function compareObserverEvents(
-  left: ObserverEvent,
-  right: ObserverEvent,
-) {
-  const causalOrder = compareObserverCausalOrder(left, right);
-  if (causalOrder !== 0) return causalOrder;
-  return observerEventIdentity(left).localeCompare(
-    observerEventIdentity(right),
-  );
-}
-
-type ObserverOrderFields = Pick<
-  ObserverEvent,
-  "agentIndex" | "seq" | "sessionId" | "sourceEventId" | "timestamp" | "turnId"
->;
-
-function compareObserverCausalOrder(
-  left: ObserverOrderFields,
-  right: ObserverOrderFields,
-) {
-  const sameAgentIndex = left.agentIndex === right.agentIndex;
-  const sameSession =
-    sameAgentIndex &&
-    left.sessionId != null &&
-    left.sessionId === right.sessionId;
-  const sameTurn =
-    sameAgentIndex && left.turnId != null && left.turnId === right.turnId;
-  if ((sameSession || sameTurn) && left.seq !== right.seq) {
-    return left.seq - right.seq;
-  }
-  const leftTime = Date.parse(left.timestamp);
-  const rightTime = Date.parse(right.timestamp);
-  if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
-    const timeDiff = leftTime - rightTime;
-    if (timeDiff !== 0) {
-      return timeDiff;
-    }
-  }
-
-  return (
-    (left.agentIndex ?? -1) - (right.agentIndex ?? -1) ||
-    (left.sessionId ?? "").localeCompare(right.sessionId ?? "") ||
-    (left.turnId ?? "").localeCompare(right.turnId ?? "") ||
-    (left.sourceEventId ?? "").localeCompare(right.sourceEventId ?? "") ||
-    left.seq - right.seq
-  );
-}
-
-/**
- * Returns true if `candidate` sorts strictly after `stored` using the same
- * two-key ordering as `compareObserverEvents`: later timestamp wins; equal
- * timestamp falls back to higher seq.  Extracted so latest-live advancement
- * cannot drift from transcript ordering.
- */
-export function isObserverEventAfter(
-  candidate: ObserverOrderFields,
-  stored: ObserverOrderFields,
-): boolean {
-  return compareObserverCausalOrder(candidate, stored) > 0;
+  return readArchivedChannelEvents(agentPubkey, channelId, EMPTY_EVENTS);
 }
 
 // Per-event processing shared by every event a live frame carries (one for a
@@ -790,6 +699,61 @@ function isControlResultFrame(payload: unknown): payload is ControlResultFrame {
   );
 }
 
+/** Subscribe to observer changes while retaining one agent projection. */
+export function subscribeAgentObserverProjection(
+  agentPubkey: string | null | undefined,
+  listener: AgentObserverStoreListener,
+) {
+  return subscribeAgentObserverProjections(
+    agentPubkey ? [agentPubkey] : [],
+    listener,
+  );
+}
+
+/** Subscribe to observer changes while retaining several agent projections. */
+export function subscribeAgentObserverProjections(
+  agentPubkeys: Iterable<string>,
+  listener: AgentObserverStoreListener,
+) {
+  const releases = [
+    ...new Set([...agentPubkeys].map((pubkey) => normalizePubkey(pubkey))),
+  ]
+    .filter(Boolean)
+    .map(retainObserverAgentProjection);
+  const unsubscribe = subscribeAgentObserverStore(listener);
+  return () => {
+    unsubscribe();
+    for (const release of releases) release();
+  };
+}
+
+/** Prune inactive, unmounted live observer projections after their grace. */
+export function pruneIdleAgentObserverData(
+  activeAgentPubkeys: Iterable<string>,
+  now = Date.now(),
+): boolean {
+  const candidates = new Set([
+    ...eventsByAgent.keys(),
+    ...transcriptByAgent.keys(),
+    ...snapshotByAgent.keys(),
+    ...evictionFloorByAgent.keys(),
+  ]);
+  const idleAgents = selectIdleObserverAgents(
+    candidates,
+    activeAgentPubkeys,
+    now,
+  );
+  if (idleAgents.length === 0) return false;
+  for (const key of idleAgents) {
+    eventsByAgent.delete(key);
+    transcriptByAgent.delete(key);
+    snapshotByAgent.delete(key);
+    evictionFloorByAgent.delete(key);
+  }
+  notifyListeners();
+  return true;
+}
+
 /**
  * Subscribe to agent-management request frames. Returns an unsubscribe
  * function.
@@ -928,6 +892,14 @@ export async function ingestArchivedObserverEvents(
   _decryptFn: (event: RelayEvent) => Promise<unknown> = decryptObserverEvent,
 ): Promise<void> {
   let archiveChanged = false;
+  const archivedByChannel = new Map<
+    string,
+    {
+      agentPubkey: string;
+      channelId: string;
+      events: ObserverEvent[];
+    }
+  >();
   for (const event of rawEvents) {
     const agentPubkey = observerTag(event, "agent");
     const frame = observerTag(event, "frame");
@@ -950,17 +922,21 @@ export async function ingestArchivedObserverEvents(
       const parsed = (await _decryptFn(event)) as ObserverEvent;
       for (const inner of unwrapObserverBatch(parsed)) {
         const archived = { ...inner, sourceEventId: event.id };
-        // Route archived events to the channel-scoped archive window (no cap)
-        // rather than the per-agent live-relay store (MAX_OBSERVER_EVENTS cap).
+        // Route archived events to the channel-scoped archive window rather
+        // than the per-agent live-relay store (MAX_OBSERVER_EVENTS cap).
         // Events without a channelId fall through to the live store so they
         // remain visible in the agent's general transcript.
         if (archived.channelId) {
-          const added = appendArchivedChannelEvent(
-            agentPubkey,
-            archived.channelId,
-            archived,
-          );
-          if (added) archiveChanged = true;
+          const key = `${normalizePubkey(agentPubkey)}:${archived.channelId}`;
+          const batch = archivedByChannel.get(key);
+          if (batch) batch.events.push(archived);
+          else {
+            archivedByChannel.set(key, {
+              agentPubkey,
+              channelId: archived.channelId,
+              events: [archived],
+            });
+          }
         } else {
           // Live path already calls notifyListeners() inside appendAgentEvent.
           appendAgentEvent(agentPubkey, archived);
@@ -968,6 +944,17 @@ export async function ingestArchivedObserverEvents(
       }
     } catch {
       logObserverDrop("decrypt_failed", event, generation);
+    }
+  }
+  for (const batch of archivedByChannel.values()) {
+    if (
+      appendArchivedChannelEvents(
+        batch.agentPubkey,
+        batch.channelId,
+        batch.events,
+      )
+    ) {
+      archiveChanged = true;
     }
   }
   // Batch-notify once for the whole page of archive events. appendAgentEvent
@@ -1008,7 +995,8 @@ export function resetAgentObserverStore() {
   evictionFloorByAgent.clear();
   connectionErrorByAgent.clear();
   agentsWithCurrentLiveContact.clear();
-  archiveEventsByChannel.clear();
+  resetArchivedChannelEvents();
+  resetObserverAgentRetention();
   resetProjectThreadWorkspaceStore();
   resetDispatchedEventIdsStore();
   knownAgentPubkeys.clear();
@@ -1050,5 +1038,5 @@ bindObserverRelayStoreE2E({
   registerKnownAgents,
   processLiveObserverEvents,
   getArchivedChannelEvents: (agentPubkey, channelId) =>
-    archiveEventsByChannel.get(archiveChannelKey(agentPubkey, channelId)) ?? [],
+    peekArchivedChannelEvents(agentPubkey, channelId),
 });

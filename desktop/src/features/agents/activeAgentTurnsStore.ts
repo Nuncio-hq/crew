@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { getAgentObserverSnapshot } from "@/features/agents/observerRelayStore";
+import * as observerStore from "@/features/agents/observerRelayStore";
 import {
   clearTurnsWatermarks,
   gateEventByWatermark,
@@ -421,11 +421,11 @@ function pruneExpired() {
     changed = true;
   }
   if (activeTurnsByAgent.size > 0) {
-    // Attention states cross elapsed-time thresholds even when no new frame
-    // mutates the turn. Refresh external-store snapshots on the prune cadence.
+    // Refresh elapsed attention states on the prune cadence without new frames.
     bumpActiveTurnsGeneration();
     changed = true;
   }
+  observerStore.pruneIdleAgentObserverData(activeTurnsByAgent.keys(), now);
   if (changed) {
     notifyListeners();
   }
@@ -844,7 +844,7 @@ export function syncActiveAgentTurnsFromObserver(
 ) {
   for (const agent of agents) {
     if (agent.status !== "running" && agent.status !== "deployed") continue;
-    const snapshot = getAgentObserverSnapshot(agent.pubkey, true);
+    const snapshot = observerStore.getAgentObserverSnapshot(agent.pubkey, true);
     syncAgentTurnsFromEvents(agent.pubkey, snapshot.events);
   }
 }

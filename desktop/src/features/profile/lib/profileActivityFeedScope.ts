@@ -6,7 +6,7 @@ import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlA
 import {
   getAgentObserverSnapshot,
   getAgentTranscript,
-  subscribeAgentObserverStore,
+  subscribeAgentObserverProjection,
 } from "@/features/agents/observerRelayStore";
 import type {
   ObserverEvent,
@@ -255,7 +255,10 @@ export function useProfileActivityFeedScope(
   }, [activeTurns, activityAgent, agentCacheKey, hasObserver]);
 
   const snapshot = React.useSyncExternalStore((onStoreChange) => {
-    const unsubscribeObserver = subscribeAgentObserverStore(onStoreChange);
+    const unsubscribeObserver = subscribeAgentObserverProjection(
+      activityAgent?.pubkey,
+      onStoreChange,
+    );
     const unsubscribeTurns = subscribeActiveAgentTurns(onStoreChange);
     return () => {
       unsubscribeObserver();
