@@ -13,16 +13,10 @@ import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { requestOpenSnapshotImport } from "@/features/agents/openSnapshotImportFromUrlEvent";
-import { parseChannelLink } from "@/features/messages/lib/channelLink";
-import {
-  parseMessageLink,
-  resolveMessageLinkRenderTarget,
-  type ParsedMessageLink,
-} from "@/features/messages/lib/messageLink";
+import type { ParsedMessageLink } from "@/features/messages/lib/messageLink";
 import { invokeTauri } from "@/shared/api/tauri";
 import { useChannelNavigation } from "@/shared/context/ChannelNavigationContext";
 import { cn } from "@/shared/lib/cn";
-import { parseEntityLink } from "@/shared/lib/entityLink";
 import { parseSupportedLinkPreview } from "@/shared/lib/linkPreview";
 import { rewriteRelayUrl } from "@/shared/lib/mediaUrl";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
@@ -53,18 +47,15 @@ import {
   SyntaxHighlightedCode,
 } from "./markdown/CodeBlock";
 import {
-  EntityLinkAnchor,
-  renderEntityLinkAnchor,
+  buzzPermalinkComponents,
+  tryRenderBuzzPermalinkAnchor,
+} from "./markdown/buzzPermalinkComponents";
+import {
   useEntityCardOpenHandlers,
   useOpenEntityLink,
 } from "./markdown/entityLinks";
 import { ExternalLinkAnchor } from "./markdown/ExternalLinkAnchor";
 import { FileCard } from "./markdown/FileCard";
-import {
-  ChannelDeepLinkAnchor,
-  MarkdownChannelDeepLink,
-  MarkdownChannelReference,
-} from "./markdown/ChannelDeepLink";
 import { InlineEmojiPopover } from "./markdown/InlineEmojiPopover";
 import { createLinkPreviewImageLightbox } from "./markdown/LinkPreviewImageLightbox";
 import { MarkdownInput } from "./markdown/MarkdownInput";
@@ -116,8 +107,6 @@ import {
 import { MarkdownMention } from "./markdown/MarkdownMention";
 import { MarkdownTable } from "./markdown/MarkdownTable";
 import { ProgressiveImage } from "./markdown/ProgressiveImage";
-import { BuzzInlineLink } from "./markdown/BuzzLinkChip";
-import { MessageLinkPill } from "./markdown/MessageLinkPill";
 import { renderCachedMarkdown } from "./markdown/nodeCache";
 import { useMessageLinkPreviews } from "./markdown/useMessageLinkPreviews";
 import {
@@ -1355,61 +1344,22 @@ export function createMarkdownComponents(
       );
     }
 
-    // Keep Buzz channel/message navigation in-app.
-    if (href) {
-      if (parseChannelLink(href).ok) {
-        return (
-          <ChannelDeepLinkAnchor
-            {...props}
-            href={href}
-            interactive={interactive}
-          >
-            {children}
-          </ChannelDeepLinkAnchor>
-        );
-      }
-      const messageLinkTarget = resolveMessageLinkRenderTarget({
-        href,
-        label,
-      });
-      if (messageLinkTarget.kind !== "none") {
-        if (messageLinkTarget.kind === "pill") {
-          return (
-            <MessageLinkPill
-              channels={channels}
-              interactive={interactive}
-              link={messageLinkTarget.link}
-              onOpenChannel={onOpenChannel}
-              onOpenMessageLink={onOpenMessageLink}
-            />
-          );
-        }
-
-        return (
-          <BuzzInlineLink
-            title={href}
-            interactive={interactive}
-            onOpenLink={() => onOpenMessageLink(messageLinkTarget.link)}
-          >
-            {children}
-          </BuzzInlineLink>
-        );
-      }
-      // Malformed message deep links fall through to external handling.
-    }
-
-    // `buzz://pr|issue|repo?…` entity links navigate in-app; malformed ones
-    // fall through to the default anchor. Authored labels stay ordinary
-    // links; bare URLs become compact chips. Wiki `buzz://file` stays inline.
-    const entityAnchor = renderEntityLinkAnchor({
+    // Keep Buzz channel/message/entity navigation in-app.
+    const permalink = tryRenderBuzzPermalinkAnchor({
       children,
       href,
-      onOpenEntityLink,
-      relayOrigin,
       interactive,
-      asChip: label === href,
+      label,
+      props,
+      runtime: {
+        channels,
+        onOpenChannel,
+        onOpenEntityLink,
+        onOpenMessageLink,
+        relayOrigin,
+      },
     });
-    if (entityAnchor) return entityAnchor;
+    if (permalink) return permalink;
 
     const supportedLinkPreview = href
       ? parseSupportedLinkPreview(href, relayOrigin)
@@ -1625,60 +1575,7 @@ export function createMarkdownComponents(
       }
       return <InlineEmojiPopover alt={alt} resolvedSrc={resolvedSrc} />;
     },
-    "channel-deep-link": ({ children }: { children?: React.ReactNode }) => (
-      <MarkdownChannelDeepLink interactive={interactive}>
-        {children}
-      </MarkdownChannelDeepLink>
-    ),
-    "channel-link": ({ children }: { children?: React.ReactNode }) => (
-      <MarkdownChannelReference interactive={interactive}>
-        {children}
-      </MarkdownChannelReference>
-    ),
-    "entity-link": function MarkdownEntityLink({
-      children,
-    }: {
-      children?: React.ReactNode;
-    }) {
-      const { onOpenEntityLink, relayOrigin } = useMarkdownRuntime();
-      const href = String(children ?? "");
-      if (!parseEntityLink(href).ok)
-        return <span data-entity-link="">{href}</span>;
-      return (
-        <EntityLinkAnchor
-          href={href}
-          interactive={interactive}
-          onOpenEntityLink={onOpenEntityLink}
-          relayOrigin={relayOrigin}
-        >
-          {href}
-        </EntityLinkAnchor>
-      );
-    },
-    "message-link": function MarkdownMessageLink({
-      children,
-    }: {
-      children?: React.ReactNode;
-    }) {
-      const { channels, onOpenChannel, onOpenMessageLink } =
-        useMarkdownRuntime();
-      const href = String(children ?? "");
-      const parsed = parseMessageLink(href);
-      if (!parsed.ok) {
-        // Malformed link: render the raw URL rather than a misleading pill.
-        return <span data-message-link="">{href}</span>;
-      }
-
-      return (
-        <MessageLinkPill
-          channels={channels}
-          interactive={interactive}
-          link={parsed.value}
-          onOpenChannel={onOpenChannel}
-          onOpenMessageLink={onOpenMessageLink}
-        />
-      );
-    },
+    ...buzzPermalinkComponents(interactive),
   } as Components;
 }
 
