@@ -490,7 +490,8 @@ export type SwitchManagedAgentModelStatus =
   | "turn_ending"
   | "switched"
   | "unsupported_model"
-  | "no_active_turn";
+  | "no_active_turn"
+  | "failure";
 
 export type { ControlResultFrame } from "@/shared/api/controlResultFrame";
 
@@ -614,6 +615,9 @@ export type ConfigSourceReport = {
 
 export type ExtensionEntry = { name: string; kind: string; enabled: boolean };
 
+/** B5/I-7: a single adapter-advertised value for an ACP config option. */
+export type AcpConfigOptionValue = { value: string; displayName?: string };
+
 export type NormalizedConfig = {
   model: NormalizedField | null;
   provider: NormalizedField | null;
@@ -632,6 +636,12 @@ export type RuntimeConfigSurface = {
   advanced: ConfigField[];
   extensions: ExtensionEntry[];
   sources: ConfigSourceReport;
+  /** #3493: `true` when the surface was read from a user-set `CLAUDE_CONFIG_DIR` — drives the Keychain caveat note in the panel. */
+  claudeConfigDirCustom?: boolean;
+  /** B5: the adapter-advertised `thought_level` configId, discovered from the running session. Present only for claude after the first session. Drives the effort picker. */
+  effortConfigId?: string;
+  /** B5/I-7: adapter-advertised option values for the `thought_level` option — the picker renders these instead of hardcoded values. */
+  effortOptions?: AcpConfigOptionValue[];
 };
 
 export type UpdateManagedAgentInput = {

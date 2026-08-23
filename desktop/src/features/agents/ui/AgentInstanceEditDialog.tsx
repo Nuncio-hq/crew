@@ -23,6 +23,7 @@ import { ChooserDialogContent } from "@/shared/ui/chooser-dialog-content";
 import { Dialog } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { setManagedAgentAutoRestart } from "@/shared/api/tauriManagedAgents";
+import { EffortPickerField } from "./EffortPickerField";
 import { EditAgentAdvancedFields } from "./EditAgentAdvancedFields";
 import { EditAgentModelAndProfileSection } from "./EditAgentModelAndProfileSection";
 import {
@@ -458,7 +459,6 @@ export function AgentInstanceEditDialog({
     provider: providerForDiscovery,
     selectedRuntime,
   });
-
   // D2/D3: top-level API key owns display; readiness gate keeps the full
   // required-key list. Effective snapshot covers persona inherit transitions.
   const providerApiKeyEnvVar = getProviderApiKeyEnvVar(effectiveProvider);
@@ -1069,7 +1069,6 @@ export function AgentInstanceEditDialog({
                 value={apiKeyValue}
               />
             ) : null}
-            {/* Model / Hermes profile (field-model driven) */}
             <EditAgentModelAndProfileSection
               currentAgentName={name}
               disabled={updateMutation.isPending}
@@ -1091,6 +1090,7 @@ export function AgentInstanceEditDialog({
               showCustomModelInput={showCustomModelInput}
               showProfileField={showHermesProfileField}
             />
+            <EffortPickerField agent={agent} config={configSurfaceQuery.data} />
             <AgentAiDefaultsNotice
               hidden={modelWriteThrough}
               onEditDefaults={() => setAiDefaultsOpen(true)}

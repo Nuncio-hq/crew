@@ -933,10 +933,10 @@ pub async fn create_managed_agent(
             } else {
                 relay_mesh.clone()
             },
+            effort_level: None,
         };
         crate::managed_agents::hermes_profile::validate_profile_bound_agent_invariants(&record)?;
         records.push(record);
-
         save_managed_agents(&app, &records)?;
 
         let record = records
