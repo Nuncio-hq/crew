@@ -1,0 +1,25 @@
+# Example: GitHub CI completion → wake agent in project channel
+#
+# Paste into Buzz workflow editor (YAML mode) or create via buzz workflows.
+# Replace CHANNEL_UUID, AGENT_DISPLAY_NAME, and repo filter as needed.
+# Setup: docs/crew/examples/CI_WEBHOOK_WAKE_SETUP.md
+#
+# Trigger: webhook (GitHub check_suite.completed or workflow_run.completed)
+# Action: post a channel message that @mentions the agent so ACP wakes on mention.
+
+name: CI complete — wake agent
+description: >
+  Posts to the project channel when a GitHub webhook reports CI finished.
+  Wire GitHub repo Settings → Webhooks to the Buzz workflow webhook URL.
+
+trigger:
+  on: webhook
+
+steps:
+  - id: notify_agent
+    action: send_message
+    channel: CHANNEL_UUID
+    text: |
+      @AGENT_DISPLAY_NAME CI finished for this branch.
+      Check PR status and continue ship / fix loop.
+      (Webhook payload is in workflow run context — filter in GitHub if needed.)
