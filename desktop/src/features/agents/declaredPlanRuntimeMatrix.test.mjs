@@ -4,7 +4,8 @@ import test from "node:test";
 import { projectAgentDeclaredPlan } from "./declaredPlanProjection.ts";
 import { snapshotFromObserverEvent } from "./declaredPlanSnapshot.ts";
 
-const AGENT = "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111";
+const AGENT =
+  "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111";
 const CONV = "11111111-2222-3333-4444-555555555555";
 
 function acpReadEvent(seq, update, overrides = {}) {
