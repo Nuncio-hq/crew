@@ -3,6 +3,7 @@ import type { RelayAgent } from "@/shared/api/types";
 
 type RawRelayAgent = {
   pubkey: string;
+  owner_pubkey?: string | null;
   name: string;
   agent_type: string;
   channels: string[];
@@ -23,6 +24,7 @@ export async function revalidateRelayAgents(
   });
   return agents.map((agent) => ({
     pubkey: agent.pubkey,
+    ownerPubkey: agent.owner_pubkey ?? null,
     name: agent.name,
     agentType: agent.agent_type,
     channels: agent.channels,
