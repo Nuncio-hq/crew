@@ -7,7 +7,7 @@ const DEFAULT_LIMIT: usize = 2000;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReadFileParams {
-    /// File path (absolute or relative to workdir).
+    /// File path (absolute, relative to workdir, or `~`-prefixed).
     pub path: String,
     /// 0-based line offset to start reading from. Defaults to 0.
     #[serde(default)]

@@ -1,7 +1,8 @@
 //! Path resolution and file I/O shared across dev-mcp tools.
 //!
 //! `resolve_path` resolves and canonicalizes a user-supplied path against a
-//! workspace root. No containment enforcement — the resolved path may land
+//! workspace root, expanding a leading `~` to the home directory the way the
+//! `shell` tool's bash does. No containment enforcement — the resolved path may land
 //! anywhere on the filesystem (consistent with the `shell` tool's posture).
 //!
 //! `read_text_file` builds on `resolve_path` to provide the full
@@ -18,6 +19,12 @@ pub(crate) const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 /// the result. Returns an error string suitable for `ErrorData::invalid_params`
 /// if the path cannot be resolved.
 pub(crate) fn resolve_path(root: &Path, path: &str) -> Result<PathBuf, String> {
+    // Agents type home-relative paths (`~/.hermes/config.toml`) because the
+    // shell tool expands them; the file tools call `canonicalize` directly, so
+    // without this they'd look for a literal `~` directory under the workspace.
+    let expanded = expand_tilde(path, dirs::home_dir().as_deref());
+    let path: &str = &expanded;
+
     // The agent runs inside MSYS bash and naturally hands us MSYS-form absolute
     // paths (`/c/Users/...`). On Windows those are NOT `is_absolute()` (a leading
     // `/` has no drive `Prefix`), so without translation they'd take the relative
@@ -39,6 +46,29 @@ pub(crate) fn resolve_path(root: &Path, path: &str) -> Result<PathBuf, String> {
         .map_err(|e| format!("path not accessible: {} ({e})", candidate.display()))?;
 
     Ok(resolved)
+}
+
+/// Expand a leading `~` (bare, or followed by a path separator) to `home`.
+///
+/// Only the shell's unambiguous cases are expanded. `~other/x` names another
+/// user's home, which this process cannot resolve without a passwd lookup, and
+/// a `~` anywhere but the first character is a legitimate filename character —
+/// both are returned unchanged, as is any input when `home` is unknown.
+fn expand_tilde(path: &str, home: Option<&Path>) -> String {
+    let Some(home) = home else {
+        return path.to_string();
+    };
+    let Some(rest) = path.strip_prefix('~') else {
+        return path.to_string();
+    };
+    if rest.is_empty() {
+        return home.to_string_lossy().to_string();
+    }
+    let Some(rest) = rest.strip_prefix(std::path::is_separator) else {
+        // `~user/...` — not ours to guess.
+        return path.to_string();
+    };
+    home.join(rest).to_string_lossy().to_string()
 }
 
 /// Translate the MSYS/Cygwin absolute path forms bash would accept into a
@@ -184,6 +214,71 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    // --- leading `~` expansion (upstream #6271) ---
+
+    #[test]
+    fn tilde_alone_expands_to_home() {
+        let home = Path::new("/home/agent");
+        assert_eq!(expand_tilde("~", Some(home)), "/home/agent");
+    }
+
+    #[test]
+    fn tilde_slash_expands_to_home_relative_path() {
+        let home = Path::new("/home/agent");
+        assert_eq!(
+            expand_tilde("~/.hermes/config.toml", Some(home)),
+            Path::new("/home/agent/.hermes/config.toml")
+                .to_string_lossy()
+                .to_string()
+        );
+    }
+
+    #[test]
+    fn tilde_is_left_alone_when_home_is_unknown() {
+        assert_eq!(
+            expand_tilde("~/.hermes/config.toml", None),
+            "~/.hermes/config.toml"
+        );
+    }
+
+    #[test]
+    fn named_user_tilde_is_not_expanded() {
+        // `~other/x` means another user's home — we do not guess it.
+        let home = Path::new("/home/agent");
+        assert_eq!(expand_tilde("~other/x", Some(home)), "~other/x");
+    }
+
+    #[test]
+    fn non_leading_or_absent_tilde_is_untouched() {
+        let home = Path::new("/home/agent");
+        assert_eq!(expand_tilde("src/lib.rs", Some(home)), "src/lib.rs");
+        assert_eq!(expand_tilde("/etc/hosts", Some(home)), "/etc/hosts");
+        assert_eq!(expand_tilde("docs/~draft.md", Some(home)), "docs/~draft.md");
+        assert_eq!(expand_tilde("", Some(home)), "");
+    }
+
+    #[test]
+    fn resolve_path_reads_home_relative_path_via_tilde() {
+        // Integration: `~/<name>` resolves to the same file as the absolute
+        // home path, proving the tool no longer treats `~` as a literal
+        // directory under the workspace root.
+        let home = match dirs::home_dir() {
+            Some(h) => h,
+            None => return,
+        };
+        let name = format!("dev-mcp-tilde-probe-{}", std::process::id());
+        let absolute = home.join(&name);
+        fs::write(&absolute, b"tilde").expect("write probe file");
+        let workspace = tempdir().expect("tempdir");
+        let resolved = resolve_path(workspace.path(), &format!("~/{name}"));
+        let _ = fs::remove_file(&absolute);
+        let resolved = resolved.expect("tilde path resolves");
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(&absolute).unwrap_or(absolute)
+        );
+    }
 
     #[test]
     fn resolve_path_allows_outside_workspace() {
