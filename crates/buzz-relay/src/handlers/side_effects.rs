@@ -1033,6 +1033,67 @@ async fn emit_addressable_discovery_event(
     Ok(())
 }
 
+fn group_members_tags(group_id: &str, members: &[MemberRecord]) -> anyhow::Result<Vec<Tag>> {
+    let mut tags: Vec<Tag> = Vec::with_capacity(members.len() + 1);
+    tags.push(Tag::parse(["d", group_id])?);
+    for member in members {
+        let pubkey_hex = hex::encode(&member.pubkey);
+        // NIP-29 convention: ["p", pubkey, relay_url, role]. Empty relay_url
+        // because the canonical relay is implicit (this event is signed by it).
+        tags.push(Tag::parse(["p", &pubkey_hex, "", &member.role])?);
+    }
+    Ok(tags)
+}
+
+async fn store_group_members_event(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    channel_id: Uuid,
+    member_snapshot: &mut buzz_db::channel::LockedMemberSnapshot,
+) -> anyhow::Result<Option<buzz_core::StoredEvent>> {
+    let group_id = channel_id.to_string();
+    let tags = group_members_tags(&group_id, &member_snapshot.members)?;
+    let relay_pubkey = state.relay_keypair.public_key().to_bytes();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let ts = member_snapshot
+        .latest_member_event_timestamp(tenant.community(), channel_id, &relay_pubkey)
+        .await?
+        .map(|timestamp| timestamp + 1)
+        .unwrap_or(now)
+        .max(now);
+    let event = EventBuilder::new(Kind::Custom(KIND_NIP29_GROUP_MEMBERS as u16), "")
+        .tags(tags)
+        .custom_created_at(nostr::Timestamp::from(ts))
+        .sign_with_keys(&state.relay_keypair)
+        .map_err(|error| anyhow::anyhow!("failed to sign member snapshot: {error}"))?;
+    let (stored, inserted) = member_snapshot
+        .replace_member_event(tenant.community(), channel_id, &event)
+        .await?;
+    Ok(inserted.then_some(stored))
+}
+
+async fn dispatch_group_members_event(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    stored: Option<buzz_core::StoredEvent>,
+    relay_pubkey_hex: &str,
+) {
+    if let Some(stored) = stored {
+        dispatch_persistent_event(
+            tenant,
+            state,
+            &stored,
+            KIND_NIP29_GROUP_MEMBERS,
+            relay_pubkey_hex,
+            None,
+        )
+        .await;
+    }
+}
+
 /// Emit NIP-29 group discovery events (39000, 39001, 39002) signed by the relay keypair.
 /// Called after group creation, metadata changes, or membership changes.
 /// Events are stored channel-scoped (`channel_id = Some(...)`) so that existing
@@ -1135,24 +1196,18 @@ pub async fn emit_group_discovery_events(
         .await?;
     }
 
-    {
-        let mut tags: Vec<Tag> = vec![Tag::parse(["d", &group_id])?];
-        for m in &members {
-            let pubkey_hex = hex::encode(&m.pubkey);
-            // NIP-29 convention: ["p", pubkey, relay_url, role]. Empty relay_url
-            // because the canonical relay is implicit (this event is signed by it).
-            tags.push(Tag::parse(["p", &pubkey_hex, "", &m.role])?);
-        }
-        emit_addressable_discovery_event(
-            tenant,
-            state,
-            channel_id,
-            KIND_NIP29_GROUP_MEMBERS,
-            tags,
-            &relay_pubkey_hex,
-        )
+    // Re-capture membership behind the writer lock immediately before the
+    // authoritative 39002 replacement. Metadata/admin snapshots retain their
+    // existing behavior; only membership publication needs this freshness fence.
+    let relay_pubkey = state.relay_keypair.public_key().to_bytes();
+    let mut member_snapshot = state
+        .db
+        .lock_member_snapshot(tenant.community(), channel_id, &relay_pubkey)
         .await?;
-    }
+    let stored_members =
+        store_group_members_event(tenant, state, channel_id, &mut member_snapshot).await?;
+    member_snapshot.release().await?;
+    dispatch_group_members_event(tenant, state, stored_members, &relay_pubkey_hex).await;
 
     Ok(())
 }
@@ -3042,6 +3097,68 @@ pub async fn publish_nip43_member_removed(
     publish_nip43_delta(tenant, state, 8001, target_pubkey_hex, "member-removed").await
 }
 
+/// Repair legacy kind:39002 snapshots truncated by the former 1,000-member
+/// database cap.
+///
+/// The scan is deliberately limited to canonical rosters above that boundary,
+/// so normal-sized channels and already-correct large snapshots incur no
+/// rewrites. Community identity travels with every candidate; a shared relay
+/// never resolves a channel against a neighboring tenant.
+pub async fn reconcile_large_channel_member_snapshots(
+    state: &Arc<AppState>,
+) -> anyhow::Result<usize> {
+    const LEGACY_ROSTER_LIMIT: i64 = 1_000;
+
+    let relay_pubkey = state.relay_keypair.public_key();
+    let candidates = state
+        .db
+        .list_large_channel_rosters_needing_reconciliation(
+            LEGACY_ROSTER_LIMIT,
+            &relay_pubkey.to_bytes(),
+        )
+        .await?;
+    let relay_pubkey_hex = relay_pubkey.to_hex();
+    let mut reconciled = 0usize;
+
+    for candidate in candidates {
+        let result = async {
+            let channel_id = candidate.channel_id;
+            // Hold the membership-writer lock from roster capture through
+            // replacement. Otherwise a rolling deployment can publish stale
+            // roster A after another relay commits and publishes roster B.
+            let mut member_snapshot = state
+                .db
+                .lock_member_snapshot(candidate.community_id, channel_id, &relay_pubkey.to_bytes())
+                .await?;
+            let tenant = TenantContext::resolved(candidate.community_id, candidate.host.clone());
+            let stored_members =
+                store_group_members_event(&tenant, state, channel_id, &mut member_snapshot).await?;
+            member_snapshot.release().await?;
+            dispatch_group_members_event(&tenant, state, stored_members, &relay_pubkey_hex).await;
+            Ok::<bool, anyhow::Error>(true)
+        }
+        .await;
+
+        match result {
+            Ok(true) => reconciled += 1,
+            Ok(false) => {}
+            Err(error) => {
+                metrics::counter!("buzz_channel_roster_reconciliation_failures_total").increment(1);
+                warn!(
+                    community_id = %candidate.community_id,
+                    host = %candidate.host,
+                    channel_id = %candidate.channel_id,
+                    %error,
+                    "large channel roster reconciliation failed"
+                );
+            }
+        }
+    }
+
+    metrics::counter!("buzz_channel_roster_reconciliations_total").increment(reconciled as u64);
+    Ok(reconciled)
+}
+
 /// Reconcile channels that exist in the DB but don't have kind:39000 events.
 ///
 /// This handles the case where channels were created via direct SQL inserts
@@ -3371,6 +3488,33 @@ fn topic_for_subscription(channel_id: Option<Uuid>) -> EventTopic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_members_snapshot_keeps_members_past_one_thousand() {
+        let channel_id = Uuid::new_v4();
+        let members: Vec<MemberRecord> = (0_u16..1_501)
+            .map(|index| MemberRecord {
+                channel_id,
+                pubkey: vec![(index >> 8) as u8, index as u8],
+                role: if index == 1_500 { "owner" } else { "member" }.to_string(),
+                joined_at: chrono::Utc::now(),
+                invited_by: None,
+                removed_at: None,
+            })
+            .collect();
+
+        let tags = group_members_tags(&channel_id.to_string(), &members).expect("build tags");
+        assert_eq!(tags.len(), 1_502, "d tag plus every member p tag");
+
+        let late_pubkey = hex::encode(&members[1_500].pubkey);
+        assert!(tags.iter().any(|tag| {
+            let fields = tag.as_slice();
+            fields.len() == 4
+                && fields[0] == "p"
+                && fields[1] == late_pubkey
+                && fields[3] == "owner"
+        }));
+    }
 
     #[test]
     fn delete_tombstone_omits_absent_moderation_metadata() {

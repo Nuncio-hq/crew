@@ -96,6 +96,13 @@ type LiveSubscription = {
   recoveryEoseReceived?: boolean;
   /** Token preventing stale recovery promises from reopening a newer cycle. */
   recoveryGeneration?: number;
+  /** Dispatch-level duplicate suppression shared by restored-live and repair. */
+  reconnectReplay?: {
+    generation: number;
+    seenEventIds: Set<string>;
+    liveEose: boolean;
+    repairDone: boolean;
+  };
   closedRetryAttempt?: number;
   closedRetryTimeout?: number;
 };
