@@ -5,6 +5,7 @@ import {
   type DeclaredPlanSource,
   type DeclaredPlanStatus,
 } from "@/features/agents/declaredPlanSnapshot";
+import { compareObserverEvents } from "@/features/agents/observerRelayRetention";
 import type { ObserverEvent } from "@/features/agents/ui/agentSessionTypes";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
@@ -50,22 +51,20 @@ export function projectAgentDeclaredPlan(
   const matching = input.events.filter((event) =>
     eventMatchesConversation(event, conversationId),
   );
-  matching.sort(compareObserverSeq);
   let snapshot: DeclaredPlanSnapshot | null = null;
-  for (let i = matching.length - 1; i >= 0; i--) {
-    const event = matching[i];
-    if (!event) continue;
+  let latestAuthority: ObserverEvent | null = null;
+  for (const event of matching) {
     if (!sessionIsLive(event, input.retiredSessionIds, input.liveSessionId)) {
       continue;
     }
     const parsed = snapshotFromObserverEvent(event);
-    if (parsed === "clear") {
-      snapshot = null;
-      break;
-    }
-    if (parsed) {
-      snapshot = parsed;
-      break;
+    if (parsed === null) continue;
+    if (
+      !latestAuthority ||
+      compareDeclaredPlanAuthorityEvents(event, latestAuthority) > 0
+    ) {
+      latestAuthority = event;
+      snapshot = parsed === "clear" ? null : parsed;
     }
   }
 
@@ -153,7 +152,7 @@ export function latestSessionIdFromEvents(
       eventMatchesConversation(event, conversationId) &&
       Boolean(event.sessionId),
   );
-  matching.sort(compareObserverSeq);
+  matching.sort(compareObserverEvents);
   for (let i = matching.length - 1; i >= 0; i--) {
     const sessionId = matching[i]?.sessionId;
     if (sessionId) return sessionId;
@@ -172,9 +171,22 @@ function sessionIsLive(
   return true;
 }
 
-function compareObserverSeq(left: ObserverEvent, right: ObserverEvent): number {
-  if (left.seq !== right.seq) return left.seq - right.seq;
-  return left.timestamp.localeCompare(right.timestamp);
+/**
+ * Plan authority is timestamp-first: `seq` resets when an agent process
+ * restarts while the ACP session id can stay the same, so seq-only ordering
+ * would keep a stale declared snapshot (#190).
+ */
+function compareDeclaredPlanAuthorityEvents(
+  left: ObserverEvent,
+  right: ObserverEvent,
+): number {
+  const leftTime = Date.parse(left.timestamp);
+  const rightTime = Date.parse(right.timestamp);
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
+    const timeDiff = leftTime - rightTime;
+    if (timeDiff !== 0) return timeDiff;
+  }
+  return compareObserverEvents(left, right);
 }
 
 export type { DeclaredPlanEntry, DeclaredPlanSource, DeclaredPlanStatus };

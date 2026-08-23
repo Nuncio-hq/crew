@@ -319,6 +319,28 @@ test("latestSessionIdFromEvents uses the live window, not an older archived sess
   );
 });
 
+test("latest plan wins after agent restart resets seq but timestamp advances", () => {
+  const plan = projectAgentDeclaredPlan(CONV, {
+    agentPubkey: DEV,
+    agentName: "Hermes Dev",
+    liveness: "working",
+    liveSessionId: "sess-live",
+    events: [
+      planEvent(0, 50, [{ content: "Stale step", status: "pending" }], {
+        timestamp: "2026-08-13T10:00:50.000Z",
+        sessionId: "sess-live",
+      }),
+      planEvent(0, 3, [{ content: "Stale step", status: "completed" }], {
+        timestamp: "2026-08-13T10:01:03.000Z",
+        sessionId: "sess-live",
+      }),
+    ],
+  });
+  assert.deepEqual(plan.entries, [
+    { content: "Stale step", status: "completed" },
+  ]);
+});
+
 test("collectParticipatingAgentPubkeys lists mentioned known agents without inventing others", () => {
   const pubkeys = collectParticipatingAgentPubkeys({
     knownAgentPubkeys: new Set([DEV, SCOUT]),
