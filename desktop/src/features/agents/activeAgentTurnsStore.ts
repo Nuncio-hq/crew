@@ -50,6 +50,11 @@ import {
 } from "@/features/agents/activeAgentTurnModel";
 import { subscribeAgentObserverStore } from "@/features/agents/observerRelayStore";
 import type { AgentObserverStoreUpdate } from "@/features/agents/observerRelayStore";
+import {
+  activeAgentTurnsListenerCount,
+  notifyListeners,
+  subscribeActiveAgentTurnsListeners,
+} from "@/features/agents/activeAgentTurnsStoreNotify";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   isDocumentVisible,
@@ -63,6 +68,7 @@ export {
   walkConversationOutcomes,
   type ConversationOutcomeEntry,
 } from "@/features/agents/conversationOutcomeLedger";
+export { flushPendingNotificationsForTest } from "@/features/agents/lib/coalescedNotify";
 
 export {
   useActiveAgentTurns,
@@ -96,7 +102,6 @@ export type ActiveChannelTurnSummary = {
 
 // Module-level state: agentPubkey → turnId → ActiveTurn
 const activeTurnsByAgent = new Map<string, Map<string, ActiveTurn>>();
-const listeners = new Set<() => void>();
 
 // Desktop minus agent-host clock. The running minimum rejects network jitter;
 // read-time anchors retroactively tighten as better samples arrive.
@@ -145,12 +150,6 @@ function recordOutcomeAndBump(
 ) {
   if (!recordConversationOutcome(conversationId, entry)) return;
   bumpActiveTurnsGeneration();
-}
-
-function notifyListeners() {
-  for (const listener of listeners) {
-    listener();
-  }
 }
 
 /**
@@ -602,13 +601,13 @@ function stopPruneInterval() {
 }
 
 export function subscribeActiveAgentTurns(listener: () => void) {
-  listeners.add(listener);
-  if (listeners.size === 1) {
+  const unsubscribe = subscribeActiveAgentTurnsListeners(listener);
+  if (activeAgentTurnsListenerCount() === 1) {
     ensurePruneInterval();
   }
   return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0) {
+    unsubscribe();
+    if (activeAgentTurnsListenerCount() === 0) {
       stopPruneInterval();
     }
   };
