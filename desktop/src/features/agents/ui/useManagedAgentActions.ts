@@ -43,7 +43,7 @@ export function useManagedAgentActions() {
   const stopMutation = useStopManagedAgentMutation();
   const deleteMutation = useDeleteManagedAgentMutation();
   const createAgentMutation = useCreateManagedAgentMutation();
-  const availableRuntimesQuery = useAvailableAcpRuntimes();
+  const availableRuntimesQuery = useAvailableAcpRuntimes({ enabled: false });
   const startOnLaunchMutation = useSetManagedAgentStartOnAppLaunchMutation();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [agentToAddToChannel, setAgentToAddToChannel] =

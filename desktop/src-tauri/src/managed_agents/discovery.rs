@@ -52,6 +52,8 @@ fn common_binary_paths() -> &'static [PathBuf] {
             paths.extend([
                 home.join(".local/share/mise/shims"),
                 home.join(".local/bin"),
+                // xAI Grok Build installer default (https://x.ai/cli/install.sh).
+                home.join(".grok/bin"),
                 home.join(".volta/bin"),
                 home.join(".asdf/shims"),
                 home.join(".bun/bin"),
