@@ -185,6 +185,7 @@ export default defineConfig({
         "**/evidence-cards.spec.ts",
         "**/evidence-cross-check.spec.ts",
         "**/evidence-reactions.spec.ts",
+        "**/tooltip-semantics.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

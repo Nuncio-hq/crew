@@ -84,5 +84,6 @@ export function useHomeInboxEdit({
     setEmptyDeleteId,
     onRequestEmptyEditDelete: setEmptyDeleteId,
     onDelete,
+    deleteInboxMessage,
   };
 }

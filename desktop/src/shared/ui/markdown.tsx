@@ -13,6 +13,7 @@ import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { requestOpenSnapshotImport } from "@/features/agents/openSnapshotImportFromUrlEvent";
+import { parseChannelLink } from "@/features/messages/lib/channelLink";
 import {
   parseMessageLink,
   resolveMessageLinkRenderTarget,
@@ -21,6 +22,7 @@ import {
 import { invokeTauri } from "@/shared/api/tauri";
 import { useChannelNavigation } from "@/shared/context/ChannelNavigationContext";
 import { cn } from "@/shared/lib/cn";
+import { parseEntityLink } from "@/shared/lib/entityLink";
 import { parseSupportedLinkPreview } from "@/shared/lib/linkPreview";
 import { rewriteRelayUrl } from "@/shared/lib/mediaUrl";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
@@ -34,8 +36,6 @@ import {
 } from "@/shared/lib/computeConfigNudge";
 import {
   INLINE_CODE_CHIP_CLASS,
-  MENTION_CHIP_BASE_CLASSES,
-  MENTION_CHIP_HOVER_CLASSES,
   MESSAGE_MARKDOWN_CLASS,
 } from "@/shared/ui/mentionChip";
 
@@ -53,12 +53,18 @@ import {
   SyntaxHighlightedCode,
 } from "./markdown/CodeBlock";
 import {
+  EntityLinkAnchor,
   renderEntityLinkAnchor,
   useEntityCardOpenHandlers,
   useOpenEntityLink,
 } from "./markdown/entityLinks";
 import { ExternalLinkAnchor } from "./markdown/ExternalLinkAnchor";
 import { FileCard } from "./markdown/FileCard";
+import {
+  ChannelDeepLinkAnchor,
+  MarkdownChannelDeepLink,
+  MarkdownChannelReference,
+} from "./markdown/ChannelDeepLink";
 import { InlineEmojiPopover } from "./markdown/InlineEmojiPopover";
 import { createLinkPreviewImageLightbox } from "./markdown/LinkPreviewImageLightbox";
 import { MarkdownInput } from "./markdown/MarkdownInput";
@@ -110,6 +116,7 @@ import {
 import { MarkdownMention } from "./markdown/MarkdownMention";
 import { MarkdownTable } from "./markdown/MarkdownTable";
 import { ProgressiveImage } from "./markdown/ProgressiveImage";
+import { BuzzInlineLink } from "./markdown/BuzzLinkChip";
 import { MessageLinkPill } from "./markdown/MessageLinkPill";
 import { renderCachedMarkdown } from "./markdown/nodeCache";
 import { useMessageLinkPreviews } from "./markdown/useMessageLinkPreviews";
@@ -1270,7 +1277,7 @@ function ImageMosaic({ children }: { children: React.ReactNode[] }) {
   );
 }
 
-function createMarkdownComponents(
+export function createMarkdownComponents(
   interactive = true,
   mediaInset = false,
 ): Components {
@@ -1285,6 +1292,7 @@ function createMarkdownComponents(
     const {
       channels,
       imetaByUrl,
+      onOpenChannel,
       onOpenEntityLink,
       onOpenMessageLink,
       onImportSnapshotFromUrl,
@@ -1347,10 +1355,19 @@ function createMarkdownComponents(
       );
     }
 
-    // Intercept `buzz://message?channel=…&id=…` links so a click navigates
-    // in-app instead of opening the URL in the OS browser. http(s) links
-    // continue to use the existing target="_blank" behavior.
+    // Keep Buzz channel/message navigation in-app.
     if (href) {
+      if (parseChannelLink(href).ok) {
+        return (
+          <ChannelDeepLinkAnchor
+            {...props}
+            href={href}
+            interactive={interactive}
+          >
+            {children}
+          </ChannelDeepLinkAnchor>
+        );
+      }
       const messageLinkTarget = resolveMessageLinkRenderTarget({
         href,
         label,
@@ -1362,37 +1379,35 @@ function createMarkdownComponents(
               channels={channels}
               interactive={interactive}
               link={messageLinkTarget.link}
+              onOpenChannel={onOpenChannel}
               onOpenMessageLink={onOpenMessageLink}
             />
           );
         }
 
         return (
-          <a
-            {...props}
-            className="font-medium text-primary underline underline-offset-4 transition-colors hover:text-primary/80 cursor-pointer"
-            href={href}
-            onClick={(event) => {
-              event.preventDefault();
-              onOpenMessageLink(messageLinkTarget.link);
-            }}
+          <BuzzInlineLink
+            title={href}
+            interactive={interactive}
+            onOpenLink={() => onOpenMessageLink(messageLinkTarget.link)}
           >
             {children}
-          </a>
+          </BuzzInlineLink>
         );
       }
-      // Malformed message deep link — fall through to the default
-      // anchor (renders as a normal external link).
+      // Malformed message deep links fall through to external handling.
     }
 
     // `buzz://pr|issue|repo?…` entity links navigate in-app; malformed ones
-    // fall through to the default anchor.
+    // fall through to the default anchor. Authored labels stay ordinary
+    // links; bare URLs become compact chips. Wiki `buzz://file` stays inline.
     const entityAnchor = renderEntityLinkAnchor({
-      anchorProps: props,
       children,
       href,
       onOpenEntityLink,
       relayOrigin,
+      interactive,
+      asChip: label === href,
     });
     if (entityAnchor) return entityAnchor;
 
@@ -1610,44 +1625,34 @@ function createMarkdownComponents(
       }
       return <InlineEmojiPopover alt={alt} resolvedSrc={resolvedSrc} />;
     },
-    "channel-link": function MarkdownChannelLink({
+    "channel-deep-link": ({ children }: { children?: React.ReactNode }) => (
+      <MarkdownChannelDeepLink interactive={interactive}>
+        {children}
+      </MarkdownChannelDeepLink>
+    ),
+    "channel-link": ({ children }: { children?: React.ReactNode }) => (
+      <MarkdownChannelReference interactive={interactive}>
+        {children}
+      </MarkdownChannelReference>
+    ),
+    "entity-link": function MarkdownEntityLink({
       children,
     }: {
       children?: React.ReactNode;
     }) {
-      const { channels, onOpenChannel } = useMarkdownRuntime();
-      const text = String(children ?? "");
-      const channelName = text.startsWith("#") ? text.slice(1) : text;
-      const channel = channels.find(
-        (c) =>
-          c.channelType !== "dm" &&
-          c.name.toLowerCase() === channelName.toLowerCase(),
-      );
-
-      if (channel && interactive) {
-        return (
-          <button
-            type="button"
-            data-channel-link=""
-            aria-label={`Open channel ${channelName}`}
-            className={cn(
-              "cursor-pointer",
-              MENTION_CHIP_BASE_CLASSES,
-              MENTION_CHIP_HOVER_CLASSES,
-            )}
-            onClick={() => {
-              onOpenChannel(channel.id);
-            }}
-          >
-            {children}
-          </button>
-        );
-      }
-
+      const { onOpenEntityLink, relayOrigin } = useMarkdownRuntime();
+      const href = String(children ?? "");
+      if (!parseEntityLink(href).ok)
+        return <span data-entity-link="">{href}</span>;
       return (
-        <span data-channel-link="" className={MENTION_CHIP_BASE_CLASSES}>
-          {children}
-        </span>
+        <EntityLinkAnchor
+          href={href}
+          interactive={interactive}
+          onOpenEntityLink={onOpenEntityLink}
+          relayOrigin={relayOrigin}
+        >
+          {href}
+        </EntityLinkAnchor>
       );
     },
     "message-link": function MarkdownMessageLink({
@@ -1655,12 +1660,12 @@ function createMarkdownComponents(
     }: {
       children?: React.ReactNode;
     }) {
-      const { channels, onOpenMessageLink } = useMarkdownRuntime();
+      const { channels, onOpenChannel, onOpenMessageLink } =
+        useMarkdownRuntime();
       const href = String(children ?? "");
       const parsed = parseMessageLink(href);
       if (!parsed.ok) {
-        // Malformed `buzz://message?…` — render the raw URL as plain text
-        // rather than a misleading clickable pill.
+        // Malformed link: render the raw URL rather than a misleading pill.
         return <span data-message-link="">{href}</span>;
       }
 
@@ -1669,6 +1674,7 @@ function createMarkdownComponents(
           channels={channels}
           interactive={interactive}
           link={parsed.value}
+          onOpenChannel={onOpenChannel}
           onOpenMessageLink={onOpenMessageLink}
         />
       );
@@ -1681,7 +1687,7 @@ function createMarkdownComponents(
  * four instances ever exist. Module-stable maps mean cached markdown element
  * trees (see ./markdown/nodeCache.ts) never embed per-mount closures.
  */
-const MARKDOWN_COMPONENT_SCHEMA_VERSION = "5";
+const MARKDOWN_COMPONENT_SCHEMA_VERSION = "8";
 const markdownComponentsByVariant = new Map<string, MarkdownComponentSet>();
 
 type MarkdownComponentSet = { components: Components; variant: string };
@@ -1779,6 +1785,7 @@ function MarkdownInner({
       onOpenEntityLink,
       onOpenMessageLink,
       relayOrigin,
+      resolveChannelReferences: true,
       snapshotSharedBy,
       onImportSnapshotFromUrl: (
         fileBytes: number[],

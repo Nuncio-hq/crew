@@ -784,6 +784,7 @@ export function HomeView({
                   : undefined
               }
               onDelete={inboxEdit.onDelete}
+              onDeleteMessage={inboxEdit.deleteInboxMessage}
               onManageChannel={(channelId) => {
                 handleCloseProfilePanel();
                 handleManageChannel(

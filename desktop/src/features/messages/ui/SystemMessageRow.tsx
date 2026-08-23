@@ -20,12 +20,8 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import { isPositiveEmojiParticle } from "@/shared/ui/EmojiBurstProvider";
 import { agentMentionAvatarStyle } from "@/shared/ui/agentMentionAvatar";
-import {
-  MENTION_CHIP_BASE_CLASSES,
-  MENTION_CHIP_HOVER_CLASSES,
-  MENTION_CHIP_PREFIX_CLASS,
-  MESSAGE_MARKDOWN_CLASS,
-} from "@/shared/ui/mentionChip";
+import { InlineChip } from "@/shared/ui/InlineChip";
+import { MESSAGE_MARKDOWN_CLASS } from "@/shared/ui/mentionChip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
@@ -278,26 +274,28 @@ function ProfileName({
 }) {
   const isAgentMention = highlight && isAgent;
   const avatar = isAgentMention ? agentMentionAvatarStyle(avatarUrl) : {};
-  const node = (
-    <span
-      data-mention={highlight ? "" : undefined}
+  const node = highlight ? (
+    <InlineChip
+      data-mention=""
       className={cn(
-        pubkey && "cursor-pointer",
-        highlight
-          ? cn(
-              MENTION_CHIP_BASE_CLASSES,
-              MENTION_CHIP_HOVER_CLASSES,
-              isAgentMention && "agent-mention-highlight",
-              avatar.className,
-            )
-          : "rounded-xs transition-colors hover:text-foreground",
+        isAgentMention && "agent-mention-highlight",
+        isAgentMention && avatar.className,
         underlineOnHover && "hover:underline",
       )}
+      icon={isAgentMention ? "agent" : "human"}
+      interactive={Boolean(pubkey)}
       style={avatar.style}
     >
-      {highlight && !isAgentMention ? (
-        <span className={MENTION_CHIP_PREFIX_CLASS}>@</span>
-      ) : null}
+      {children}
+    </InlineChip>
+  ) : (
+    <span
+      className={cn(
+        pubkey && "cursor-pointer",
+        "rounded-xs transition-colors hover:text-foreground",
+        underlineOnHover && "hover:underline",
+      )}
+    >
       {children}
     </span>
   );

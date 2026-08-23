@@ -19,10 +19,15 @@ export type ImetaEntry = {
 export type ImetaLookup = Map<string, ImetaEntry>;
 
 export type MessageLinkPillProps = {
-  channels: Channel[];
+  channels?: Channel[];
+  /** Original permalink text, preserved for the context menu's Copy action. */
+  href?: string;
   interactive: boolean;
   link: ParsedMessageLink;
+  onOpenChannel: (channelId: string) => void;
   onOpenMessageLink: (link: ParsedMessageLink) => void;
+  /** Bounded directory lookup for unknown channel ids. */
+  resolveChannelReference?: boolean;
   threadExcerpt?: string | null;
   variant?: "default" | "sent-from-thread";
 };
@@ -38,6 +43,11 @@ export type MarkdownRuntime = {
   /** Navigate to a Buzz git entity (`buzz://pr|issue|repo` deep link). */
   onOpenEntityLink: (link: ParsedEntityLink) => void;
   onOpenMessageLink: (link: ParsedMessageLink) => void;
+  /**
+   * When true, unknown channel ids may look up the member list via
+   * `openChannelDirectory`. Static/test renderers leave this unset.
+   */
+  resolveChannelReferences?: boolean;
   /**
    * The resolved relay origin (e.g. `https://buzz.block.builderlab.xyz`),
    * or `null` when not yet resolved. Used by the anchor component to

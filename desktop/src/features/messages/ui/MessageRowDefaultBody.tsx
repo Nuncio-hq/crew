@@ -127,11 +127,8 @@ export function MessageRowDefaultBody({
     />
   );
 
-  const handoverModel = parseHandoverModel(message.tags);
-  if (handoverModel) {
-    return <HandoverNoteCard message={message} modelId={handoverModel} />;
-  }
-
+  // Dispatch order is a Crew/upstream seam: crew-evidence → handover →
+  // compact Buzz permalinks (inside Markdown) → ordinary Markdown.
   const evidenceKind = parseEvidenceKind(message.tags);
   if (evidenceKind) {
     return (
@@ -148,6 +145,11 @@ export function MessageRowDefaultBody({
         reactions={reactions}
       />
     );
+  }
+
+  const handoverModel = parseHandoverModel(message.tags);
+  if (handoverModel) {
+    return <HandoverNoteCard message={message} modelId={handoverModel} />;
   }
 
   if (!reviewRootEventId || !reviewTimecode || !openVideoReviewAt) {

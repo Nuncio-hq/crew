@@ -18,6 +18,7 @@ const INERT_MARKDOWN_RUNTIME: MarkdownRuntime = {
   onOpenEntityLink: () => {},
   onOpenMessageLink: () => {},
   relayOrigin: null,
+  resolveChannelReferences: false,
 };
 
 export const MarkdownRuntimeContext = React.createContext<MarkdownRuntime>(
