@@ -1,5 +1,15 @@
 # Crew State
 
+## Issue #285 — Buzz desktop-v0.5.18 pin
+
+Pinned to `desktop-v0.5.18` /
+`39f8b46935736334cdd7045a4e4b5d7eb1a33888`. The 0.5.12–0.5.18 wave
+already landed through child issues on `main`; this parent records the
+pin without a second tag merge. Channel-first IA stays (#278). Settings
+shows `v0.5.18 · Local` from the desktop manifests. Machine-readable
+source: [`upstream-buzz.json`](upstream-buzz.json).
+Last updated: 2026-08-23
+
 ## Issue #277 — Mobile UI upstream 0.5.12 → 0.5.18 parity
 
 `mobile/` now tracks upstream `desktop-v0.5.18` wholesale: compact permalink
@@ -358,8 +368,8 @@ Implementation slices below remain the code truth for what is built today.
 - GitHub: `https://github.com/Nuncio-hq/crew`
 - Fork parent: `https://github.com/block/buzz`
 - Default branch: `main`
-- Baseline upstream commit: `248b9d1b7666aacbcb1485b76e81de30a271ba0e`
-  (`desktop-v0.5.11`; see [`upstream-buzz.json`](upstream-buzz.json))
+- Baseline upstream commit: `39f8b46935736334cdd7045a4e4b5d7eb1a33888`
+  (`desktop-v0.5.18`; see [`upstream-buzz.json`](upstream-buzz.json))
 - Production code changes: merged through PR #1 and PR #2
 - Required merge gate: additive `NuncioCrew CI`, macOS Apple Silicon only;
   `NuncioCrew Gate` is enforced on `main`
@@ -427,7 +437,7 @@ Out of scope for this slice:
 - Identity store: existing system-Keychain service `buzz-desktop`.
 - Buzz and NuncioCrew must not run concurrently.
 - The build includes real release versions of all five agent sidecars.
-- Settings displays the pinned Buzz version `v0.5.11 · Local`; the
+- Settings displays the pinned Buzz version `v0.5.18 · Local`; the
   machine-readable source is [`upstream-buzz.json`](upstream-buzz.json).
 - Updater configuration and updater signing are disabled for this flavor.
 
@@ -451,8 +461,8 @@ Out of scope for this slice:
   manifests, public versioned assets before channel advance, updater key-ID
   match, and explicit entitlements verification.
 - Buzz source pin: [`upstream-buzz.json`](upstream-buzz.json), currently
-  `0.5.11` / `desktop-v0.5.11` at
-  `248b9d1b7666aacbcb1485b76e81de30a271ba0e`.
+  `0.5.18` / `desktop-v0.5.18` at
+  `39f8b46935736334cdd7045a4e4b5d7eb1a33888`.
 - The protected Environment, reviewer, nine encrypted release secrets, updater
   public variable, and Nuncio updater keypair are configured.
 - Signed dry run `30537460233` and publish run `30538712572` passed.
@@ -747,7 +757,7 @@ Consistent smoke fails on main fixed without weakening assertions:
 - **evidence-reactions Reject** — selector scoped to `message-timeline` card
   (thread-head dual render is intentional after Reject opens composer).
 
-## Advisory integration drift inventory (2026-08-12)
+## Advisory integration drift inventory (2026-08-23)
 
 Issue #171 — lane stays advisory (D-047). Expected failures are listed in
 [`CI.md`](CI.md) so red means a new problem outside that set:
@@ -755,9 +765,10 @@ Issue #171 — lane stays advisory (D-047). Expected failures are listed in
 - **Fixed:** `evidence-reactions-relay` Reject strict-mode — same
   `message-timeline` card scope as smoke PR #170 (relay variant was out of
   #170 scope).
-- **Accepted upstream drift** (resolve via
-  [`UPSTREAM-SYNC.md`](UPSTREAM-SYNC.md), no sprawl issues): consistent
-  `agents.spec.ts` catalog/create/overflow cases, `profile.spec.ts`
-  runtime-tab + Inbox badge cases, and `integration.spec.ts` live mention
-  home-feed refetch cases. Confirmed on runs 31567147317 / 31573328800 /
-  PR #176.
+- **Resolved on the 0.5.18 wave** (run
+  [`32620379962`](https://github.com/Nuncio-hq/crew/actions/runs/32620379962)
+  after #319): `agents.spec.ts` catalog/create/share/emoji/discovery cases
+  and `integration.spec.ts` live mention home-feed refetch. Dropped from
+  [`CI.md`](CI.md).
+- **Still accepted upstream drift:** `agents.spec.ts` narrow overflow;
+  `profile.spec.ts` runtime-tab respond-to and Inbox badge. Same run.
