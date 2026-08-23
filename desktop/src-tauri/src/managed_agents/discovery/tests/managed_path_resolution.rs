@@ -52,12 +52,10 @@ fn common_binary_paths_probes_legacy_goose_install_dir() {
 #[cfg(unix)]
 #[test]
 fn common_binary_paths_probes_grok_install_dir() {
-    use std::path::PathBuf;
-
     let home = dirs::home_dir().expect("HOME is always set on Unix");
     let grok_dir = home.join(".grok").join("bin");
 
-    let probed = super::super::common_binary_paths();
+    let probed = super::super::login_shell::home_binary_probe_dirs(&home);
 
     assert!(
         probed.contains(&grok_dir),

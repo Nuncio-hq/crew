@@ -138,6 +138,21 @@ pub(crate) fn refresh_login_shell_path() {
     *guard = LoginShellPath::Uninit;
 }
 
+/// Well-known per-user binary dirs probed when resolving harness commands.
+///
+/// Includes `~/.grok/bin` (xAI Grok Build default install location) alongside
+/// the usual mise/volta/asdf/bun shims.
+pub(crate) fn home_binary_probe_dirs(home: &Path) -> [PathBuf; 6] {
+    [
+        home.join(".local/share/mise/shims"),
+        home.join(".local/bin"),
+        home.join(".grok/bin"),
+        home.join(".volta/bin"),
+        home.join(".asdf/shims"),
+        home.join(".bun/bin"),
+    ]
+}
+
 #[cfg(test)]
 pub(crate) fn is_login_shell_path_uninit() -> bool {
     matches!(
