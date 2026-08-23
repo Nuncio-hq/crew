@@ -31,6 +31,13 @@ import {
   snapshotAgentSessionGenerations,
 } from "@/features/agents/activeAgentSessionGeneration";
 import {
+  bumpActiveTurnsDataVersion,
+  notifyAgentLivenessListeners,
+  resetStableActiveTurnSnapshots,
+  stableAgentsForConversation,
+  stableChannelTurnSummaries,
+} from "@/features/agents/activeAgentTurnsLiveness";
+import {
   applyObserverFrame,
   createActiveTurn,
   MAX_TERMINAL_TOMBSTONES,
@@ -119,11 +126,16 @@ function bumpActiveTurnsGeneration() {
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
   activeTurnsGeneration += 1;
+  bumpActiveTurnsDataVersion();
+}
+
+function invalidateAgentSnapshots(agentKey: string) {
+  cachedTurnSummaries.delete(agentKey);
+  cachedControlTargets.delete(agentKey);
 }
 
 function invalidateCache(agentKey: string) {
-  cachedTurnSummaries.delete(agentKey);
-  cachedControlTargets.delete(agentKey);
+  invalidateAgentSnapshots(agentKey);
   bumpActiveTurnsGeneration();
 }
 
@@ -541,11 +553,12 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
         return;
       }
       if (frame.found) {
-        // Every observer frame is liveness, even when it is not substantive
-        // progress. Invalidate external-store projections for token, usage,
-        // stdout, and raw ACP traffic without moving the progress clock.
-        invalidateCache(key);
-        notifyListeners();
+        // A frame for a live turn changes no turn membership: refresh only
+        // this agent's projections and wake only its liveness listeners —
+        // never the global generation or listeners (issue #286).
+        invalidateAgentSnapshots(key);
+        bumpActiveTurnsDataVersion();
+        notifyAgentLivenessListeners(key);
         return;
       }
       break;
@@ -706,8 +719,9 @@ export function getActiveAgentsForConversation(
     }
   }
   const result = agentPubkeys.sort();
-  cachedAgentsByConversation.set(conversationId, result);
-  return result;
+  const stable = stableAgentsForConversation(conversationId, result);
+  cachedAgentsByConversation.set(conversationId, stable);
+  return stable;
 }
 
 /**
@@ -752,8 +766,9 @@ export function getActiveTurnsByChannel(): ActiveChannelTurnSummary[] {
       agentPubkeys: [...summary.agentPubkeys].sort(),
     }))
     .sort((a, b) => a.channelId.localeCompare(b.channelId));
-  cachedChannelTurnSummaries = result;
-  return result;
+  const stable = stableChannelTurnSummaries(result);
+  cachedChannelTurnSummaries = stable;
+  return stable;
 }
 
 /** Desktop-clock activity bounds for the given agents, optionally scoped. */
@@ -916,6 +931,7 @@ export function resetActiveAgentTurnsStore() {
   cachedControlTargets.clear();
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
+  resetStableActiveTurnSnapshots();
   activeTurnsGeneration += 1;
   terminalAtByAgent.clear();
   clearConversationOutcomeLedger();
@@ -1045,6 +1061,7 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
   cachedControlTargets.clear();
   cachedAgentsByConversation.clear();
   cachedChannelTurnSummaries = null;
+  resetStableActiveTurnSnapshots();
   activeTurnsGeneration += 1;
   notifyListeners();
 }
