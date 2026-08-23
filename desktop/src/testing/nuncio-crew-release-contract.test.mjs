@@ -391,10 +391,7 @@ test("Buzz manifests stay pinned and the exact upstream source is machine-readab
   assert.deepEqual(upstreamPin, EXPECTED_UPSTREAM_PIN);
   assert.equal(packageJson.version, EXPECTED_UPSTREAM_PIN.buzzVersion);
   assert.equal(tauriConfig.version, EXPECTED_UPSTREAM_PIN.buzzVersion);
-  assert.match(
-    cargoToml,
-    /^\[package\][\s\S]*?^version = "0\.5\.18"$/m,
-  );
+  assert.match(cargoToml, /^\[package\][\s\S]*?^version = "0\.5\.18"$/m);
   assert.match(
     cargoLock,
     /^\[\[package\]\]\nname = "buzz-desktop"\nversion = "0\.5\.18"$/m,
