@@ -3,6 +3,10 @@ import { Plugin, PluginKey, type Transaction } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
 import { agentMentionAvatarDecoration } from "@/shared/ui/agentMentionAvatar";
+import {
+  inlineChipIconClasses,
+  MENTION_CHIP_BASE_CLASSES,
+} from "@/shared/ui/mentionChip";
 
 export const mentionHighlightKey = new PluginKey("mentionHighlight");
 
@@ -282,16 +286,17 @@ function buildDecorations(
       node.text,
       pos,
       mentionPatterns,
-      "mention-chip",
+      `${MENTION_CHIP_BASE_CLASSES} ${inlineChipIconClasses("human")}`,
+      { hidePrefix: true },
     );
     addMatchesForPatterns(
       decorations,
       node.text,
       pos,
       agentMentionPatterns,
-      "mention-chip agent-mention-highlight",
+      `${MENTION_CHIP_BASE_CLASSES} ${inlineChipIconClasses("agent")}`,
       {
-        hideMentionPrefix: true,
+        hidePrefix: true,
         resolveAttrs: (matchedText) =>
           resolveAgentMentionAvatarAttrs(matchedText, agentAvatarsByName),
       },
@@ -301,7 +306,8 @@ function buildDecorations(
       node.text,
       pos,
       channelPatterns,
-      "mention-chip",
+      `${MENTION_CHIP_BASE_CLASSES} ${inlineChipIconClasses("channel")}`,
+      { hidePrefix: true },
     );
   });
 
@@ -337,6 +343,7 @@ function addMatchesForPatterns(
   patterns: RegExp[],
   className: string,
   options?: {
+    hidePrefix?: boolean;
     hideMentionPrefix?: boolean;
     resolveAttrs?: (matchedText: string) => {
       classSuffix?: string;
@@ -359,10 +366,12 @@ function addMatchesForPatterns(
       if (attrs.style) {
         chipAttrs.style = attrs.style;
       }
-      if (options?.hideMentionPrefix && match[0].startsWith("@")) {
+      const hidePrefix =
+        options?.hidePrefix === true || options?.hideMentionPrefix === true;
+      if (hidePrefix && /^[@#]/.test(match[0])) {
         decorations.push(
           Decoration.inline(from, from + 1, {
-            class: "agent-mention-at-hidden",
+            class: "mention-prefix-hidden",
             spellcheck: "false",
           }),
         );

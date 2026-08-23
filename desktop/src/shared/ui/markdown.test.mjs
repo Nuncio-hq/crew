@@ -534,6 +534,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 
+import { isChannelLink } from "../../features/messages/lib/channelLink.ts";
 import { isMessageLink } from "../../features/messages/lib/messageLink.ts";
 import { parseEntityLink } from "../lib/entityLink.ts";
 import remarkSpoilers from "../lib/remarkSpoilers.ts";
@@ -545,7 +546,7 @@ const EVENT_HEX =
 
 function buzzDeepLinkUrlTransform(value, key) {
   if (key !== "href") return defaultUrlTransform(value);
-  if (isMessageLink(value)) return value;
+  if (isMessageLink(value) || isChannelLink(value)) return value;
   if (parseEntityLink(value).ok) return value;
   return defaultUrlTransform(value);
 }
@@ -578,6 +579,16 @@ test("messageLinkUrlTransform: preserves buzz://message href with thread", () =>
     "[link](buzz://message?channel=c1&id=m1&thread=t1)",
   );
   assert.match(html, /href="buzz:\/\/message\?[^"]*thread=t1"/);
+});
+
+test("messageLinkUrlTransform: preserves buzz://channel href", () => {
+  const html = renderMarkdown(
+    "Open [general](buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32)",
+  );
+  assert.match(
+    html,
+    /href="buzz:\/\/channel\/580ca78b-9dae-46f3-8854-bd671853ba32"/,
+  );
 });
 
 test("messageLinkUrlTransform: still strips javascript: scheme", () => {
@@ -653,14 +664,17 @@ test("buzzDeepLinkUrlTransform: strips malformed buzz://pr (unknown param)", () 
 // link when the URL origin exactly matches the active relay origin. This covers
 // the inline anchor click path (not just card extraction).
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderEntityLinkAnchor } from "../ui/markdown/entityLinks.tsx";
+import { createMarkdownComponents } from "../ui/markdown.tsx";
+import { renderCachedMarkdown } from "../ui/markdown/nodeCache.ts";
+import { MarkdownRuntimeContext } from "../ui/markdown/runtimeContext.ts";
 
 const CLONE_URL = `https://relay.example/git/${OWNER_HEX}/my-repo`;
 
 test("renderEntityLinkAnchor_matchingOriginCloneUrl_returnsEntityAnchor", () => {
   // Origin matches active relay — anchor should navigate in-app (non-null).
   const el = renderEntityLinkAnchor({
-    anchorProps: {},
     children: React.createElement("span", null, "my-repo"),
     href: CLONE_URL,
     onOpenEntityLink: () => {},
@@ -684,7 +698,6 @@ test("renderEntityLinkAnchor_matchingOriginCloneUrl_returnsEntityAnchor", () => 
 test("renderEntityLinkAnchor_lookalikeDomainCloneUrl_returnsNull", () => {
   // Origin does NOT match active relay — must fall through to ExternalLinkAnchor.
   const el = renderEntityLinkAnchor({
-    anchorProps: {},
     children: React.createElement("span", null, "my-repo"),
     href: CLONE_URL,
     onOpenEntityLink: () => {},
@@ -700,7 +713,6 @@ test("renderEntityLinkAnchor_lookalikeDomainCloneUrl_returnsNull", () => {
 test("renderEntityLinkAnchor_noRelayOrigin_cloneUrlReturnsNull", () => {
   // No known relay origin — must fail closed, not guess.
   const el = renderEntityLinkAnchor({
-    anchorProps: {},
     children: React.createElement("span", null, "my-repo"),
     href: CLONE_URL,
     onOpenEntityLink: () => {},
@@ -717,7 +729,6 @@ test("renderEntityLinkAnchor_directEntityLink_returnsAnchorRegardlessOfOrigin", 
   // A direct buzz://pr link always resolves in-app — it does not require origin.
   const prLink = `buzz://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`;
   const el = renderEntityLinkAnchor({
-    anchorProps: {},
     children: React.createElement("span", null, "My PR"),
     href: prLink,
     onOpenEntityLink: () => {},
@@ -1014,4 +1025,96 @@ test("nudgeGuard_noSentinel_proseRenderedCardAbsent", () => {
     html.includes("data-markdown-prose"),
     "markdownNode must render when no sentinel is present",
   );
+});
+
+function runtimeProvider(channels, markdown) {
+  return React.createElement(
+    QueryClientProvider,
+    { client: new QueryClient() },
+    React.createElement(
+      MarkdownRuntimeContext.Provider,
+      {
+        value: {
+          channels,
+          onOpenChannel: () => {},
+          onOpenEntityLink: () => {},
+          onOpenMessageLink: () => {},
+          relayOrigin: null,
+        },
+      },
+      markdown,
+    ),
+  );
+}
+
+test("bare Buzz permalinks render cohesive icon-prefixed chips", () => {
+  const channelId = "580ca78b-9dae-46f3-8854-bd671853ba32";
+  const links = [
+    `buzz://message?channel=${channelId}&id=${EVENT_HEX}`,
+    `buzz://channel/${channelId}`,
+    `buzz://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`,
+    `buzz://issue?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`,
+    `buzz://repo?owner=${OWNER_HEX}&d=buzz-world`,
+  ];
+  const markdown = renderCachedMarkdown({
+    components: createMarkdownComponents(true, false),
+    content: links.join(" "),
+    variant: "entity-link-integration-test",
+  });
+  const html = renderToStaticMarkup(
+    runtimeProvider(
+      [
+        {
+          id: channelId,
+          isMember: true,
+          name: "engineering",
+          visibility: "open",
+        },
+      ],
+      markdown,
+    ),
+  );
+
+  const visibleText = html.replace(/<[^>]+>/g, "");
+  assert.equal((html.match(/data-buzz-link=""/g) ?? []).length, 5);
+  assert.match(html, /inline-chip-icon-message/);
+  assert.match(html, /data-channel-deep-link=""/);
+  assert.match(html, /wrapping-inline-chip/);
+  assert.match(html, /inline-chip-icon-pr/);
+  assert.match(html, /inline-chip-icon-issue/);
+  assert.match(html, /inline-chip-icon-repo/);
+  assert.equal((html.match(/data-buzz-link-kind="pr"/g) ?? []).length, 1);
+  assert.equal((visibleText.match(/buzz-world/g) ?? []).length, 3);
+  assert.doesNotMatch(visibleText, /c3b589fa/);
+});
+
+test("inline issue and pull-request chips show the repository name without the event hash", () => {
+  const issueHtml = renderToStaticMarkup(
+    renderEntityLinkAnchor({
+      children: null,
+      href: `buzz://issue?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`,
+      onOpenEntityLink: () => {},
+      relayOrigin: null,
+    }),
+  );
+  const issueText = issueHtml.replace(/<[^>]+>/g, "");
+  assert.equal(issueText, "buzz-world");
+  assert.doesNotMatch(issueText, /c3b589fa/);
+  assert.match(issueHtml, /data-buzz-link-kind="issue"/);
+  assert.match(issueHtml, /inline-chip-icon-issue/);
+});
+
+test("wiki buzz://file citations stay ordinary inline links, not chips", () => {
+  const fileLink = `buzz://file?owner=${OWNER_HEX}&d=crew&path=docs%2Fwiki.md&lines=1-8`;
+  const el = renderEntityLinkAnchor({
+    children: "docs/wiki.md",
+    href: fileLink,
+    onOpenEntityLink: () => {},
+    relayOrigin: null,
+    asChip: true,
+  });
+  const html = renderToStaticMarkup(el);
+  assert.doesNotMatch(html, /data-buzz-link-kind=/);
+  assert.doesNotMatch(html, /inline-chip-icon-/);
+  assert.match(html, /docs\/wiki\.md/);
 });

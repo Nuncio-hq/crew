@@ -545,6 +545,21 @@ mod tests {
     }
 
     #[test]
+    fn tool_description_scopes_todo_to_cross_turn_work() {
+        let src = include_str!("lib.rs");
+        assert!(
+            src.contains(
+                "Session checklist only for work that must continue across turns or survive context compaction"
+            ),
+            "todo tool description must match upstream #6216"
+        );
+        assert!(
+            !src.contains("Session task list. Omit `todos` to read current state."),
+            "pre-#6216 open-ended todo description must not remain"
+        );
+    }
+
+    #[test]
     fn marking_done_then_removing_no_warning() {
         let s = TodoState::new();
         write(&s, &[("task", false)]);

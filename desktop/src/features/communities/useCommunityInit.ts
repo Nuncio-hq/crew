@@ -50,6 +50,7 @@ import { resetAvatarPresentations } from "@/features/profile/avatarPresentationS
 import { resetAvatarProfileSync } from "@/features/profile/avatarProfileSync";
 import { resetSidebarRelayConnectionCardState } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
 import { clearMarkdownNodeCache } from "@/shared/ui/markdown/nodeCache";
+import { resetMessageLinkMetadataCache } from "@/shared/ui/markdown/useMessageLinkMetadata";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
 import { resetWikiStore } from "@/features/wiki/lib/wikiStore";
 import { resetWorkTreeDisclosureStore } from "@/features/work-tree/lib/workTreeDisclosure";
@@ -110,6 +111,7 @@ function resetCommunityState({
   resetBackgroundMediaUploads();
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
+  resetMessageLinkMetadataCache();
   resetGovernorStatusForTests();
   resetWikiStore();
   resetWorkTreeDisclosureStore();
