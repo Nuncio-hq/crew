@@ -358,6 +358,12 @@ test("release identity and updater manifest are Nuncio-owned", async () => {
   );
 });
 
+const EXPECTED_UPSTREAM_PIN = {
+  buzzVersion: "0.5.18",
+  buzzTag: "desktop-v0.5.18",
+  buzzCommit: "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+};
+
 test("Buzz manifests stay pinned and the exact upstream source is machine-readable", () => {
   const packageJson = JSON.parse(
     readFileSync(resolve(repoRoot, "desktop/package.json"), "utf8"),
@@ -372,13 +378,29 @@ test("Buzz manifests stay pinned and the exact upstream source is machine-readab
     resolve(repoRoot, "desktop/src-tauri/Cargo.toml"),
     "utf8",
   );
+  const cargoLock = readFileSync(
+    resolve(repoRoot, "desktop/src-tauri/Cargo.lock"),
+    "utf8",
+  );
+  const settingsView = readFileSync(
+    resolve(repoRoot, "desktop/src/features/settings/ui/SettingsView.tsx"),
+    "utf8",
+  );
   const upstreamPin = JSON.parse(readFileSync(upstreamPinPath, "utf8"));
-  const pinValues = Object.values(upstreamPin);
 
-  assert.equal(packageJson.version, "0.5.11");
-  assert.equal(tauriConfig.version, "0.5.11");
-  assert.match(cargoToml, /^\[package\][\s\S]*?^version = "0\.5\.11"$/m);
-  assert.ok(pinValues.includes("0.5.11"));
-  assert.ok(pinValues.includes("desktop-v0.5.11"));
-  assert.ok(pinValues.includes("248b9d1b7666aacbcb1485b76e81de30a271ba0e"));
+  assert.deepEqual(upstreamPin, EXPECTED_UPSTREAM_PIN);
+  assert.equal(packageJson.version, EXPECTED_UPSTREAM_PIN.buzzVersion);
+  assert.equal(tauriConfig.version, EXPECTED_UPSTREAM_PIN.buzzVersion);
+  assert.match(
+    cargoToml,
+    /^\[package\][\s\S]*?^version = "0\.5\.18"$/m,
+  );
+  assert.match(
+    cargoLock,
+    /^\[\[package\]\]\nname = "buzz-desktop"\nversion = "0\.5\.18"$/m,
+  );
+  assert.match(settingsView, /from "@tauri-apps\/api\/app"/);
+  assert.match(settingsView, /void getVersion\(\)\.then\(setAppVersion\)/);
+  assert.match(settingsView, /data-testid="settings-version"/);
+  assert.match(settingsView, /v\{appVersion\}/);
 });

@@ -41,13 +41,16 @@ Inventory from consistent fails across runs
 (PR #165) and
 [`31573328800`](https://github.com/Nuncio-hq/crew/actions/runs/31573328800)
 (PR #168), reconfirmed on PR #176; Crew-owned strict-mode miss closed in #171.
+Re-checked after the 0.5.18 children on run
+[`32620379962`](https://github.com/Nuncio-hq/crew/actions/runs/32620379962)
+(#319): catalog/create/share/emoji/discovery and live-mention home-feed
+refetch now pass and are dropped. Remaining rows still failed on that run.
 
 | Spec / case | Disposition | Notes |
 | --- | --- | --- |
 | `evidence-reactions-relay.spec.ts` — Accept/Reject strict-mode duplicate `evidence-reaction-rejected` | **Fixed** (#171) | Timeline-scoped card locator; mirrors smoke PR #170. Reject opens thread → dual card is product-correct. |
-| `agents.spec.ts` — embedded create discard cancel; narrow overflow; catalog chooser order; catalog detail; share-to-catalog; emoji avatar; community discovery; unresolved publisher "Community member" | **Accepted upstream drift** | Inherited Buzz agents/catalog UI vs Crew pin. Resolve on next upstream sync per [`UPSTREAM-SYNC.md`](UPSTREAM-SYNC.md); do not open sprawl issues. |
-| `profile.spec.ts` — runtime-tab respond-to / agent-type counts; Inbox badge from notification settings | **Accepted upstream drift** | Inherited Buzz profile/runtime/inbox surface vs Crew pin. Same sync path. |
-| `integration.spec.ts` — live channel + forum mentions refetch home feed | **Accepted upstream drift** | Inherited Buzz live-mention / home-feed path vs Crew pin (seen on #168/#176 runs). Same sync path. |
+| `agents.spec.ts` — moves agent actions into an overflow menu in a narrow view | **Accepted upstream drift** | Still red on run 32620379962 after the 0.5.18 children. Do not open sprawl issues. |
+| `profile.spec.ts` — runtime-tab respond-to; Inbox badge from notification settings | **Accepted upstream drift** | Still red on the same run. |
 
 One-run / non-intersecting fails (e.g. occasional `onboarding.spec.ts` cases) are
 **not** in this expected set — treat them as new signal until they appear on

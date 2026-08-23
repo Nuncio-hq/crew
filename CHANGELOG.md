@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.18
+
+### NuncioCrew upstream pin
+
+- chore(crew): pin Buzz Desktop `desktop-v0.5.18` (`39f8b46935736334cdd7045a4e4b5d7eb1a33888`) after children absorbed the tag on `main` ([#285](https://github.com/Nuncio-hq/crew/issues/285)). No second tag merge. Channel-first IA stays ([#278](https://github.com/Nuncio-hq/crew/issues/278)).
+
+Children already on `main`: #279–#284, #275, #274, #270, #273, #272, #276, #277, #278, #237, plus Tier 2 #288–#292.
+
+[Compare desktop-v0.5.11...desktop-v0.5.18](https://github.com/block/buzz/compare/desktop-v0.5.11...desktop-v0.5.18)
+
 ## v0.5.11
 
 ### NuncioCrew upstream sync
