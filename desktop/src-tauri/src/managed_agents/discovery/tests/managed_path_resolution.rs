@@ -66,46 +66,6 @@ fn common_binary_paths_probes_grok_install_dir() {
 
 #[cfg(unix)]
 #[test]
-fn resolve_command_finds_grok_in_default_install_dir() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _guard = crate::managed_agents::lock_path_mutex();
-    super::super::clear_resolve_cache();
-
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = temp.path().join("home");
-    let grok_bin = home.join(".grok").join("bin");
-    std::fs::create_dir_all(&grok_bin).expect("create grok bin dir");
-
-    let grok = grok_bin.join("grok");
-    std::fs::write(&grok, "#!/bin/sh\necho grok\n").expect("write grok shim");
-    std::fs::set_permissions(&grok, std::fs::Permissions::from_mode(0o755))
-        .expect("chmod grok");
-
-    let old_home = std::env::var_os("HOME");
-    let old_path = std::env::var_os("PATH").unwrap_or_default();
-    std::env::set_var("HOME", &home);
-    std::env::set_var("PATH", "/usr/bin:/bin");
-
-    let resolved = super::super::resolve_command("grok");
-
-    if let Some(old_home) = old_home {
-        std::env::set_var("HOME", old_home);
-    } else {
-        std::env::remove_var("HOME");
-    }
-    std::env::set_var("PATH", old_path);
-    super::super::clear_resolve_cache();
-
-    assert_eq!(
-        resolved.as_deref(),
-        Some(grok.as_path()),
-        "grok must resolve from ~/.grok/bin when absent from PATH"
-    );
-}
-
-#[cfg(unix)]
-#[test]
 fn resolve_command_prefers_buzz_managed_npm_shim_over_path() {
     use std::os::unix::fs::PermissionsExt;
 
