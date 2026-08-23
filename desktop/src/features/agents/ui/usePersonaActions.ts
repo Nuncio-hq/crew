@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   managedAgentsQueryKey,
   personasQueryKey,
-  useAcpRuntimesQuery,
+  useAcpRuntimesQueryForced,
   useCreateManagedAgentMutation,
   useCreatePersonaMutation,
   useDeletePersonaMutation,
@@ -86,8 +86,9 @@ export function usePersonaActions() {
     useSetPersonaCatalogSharedMutation(communityId);
   const [shouldLoadAcpRuntimes, setShouldLoadAcpRuntimes] =
     React.useState(false);
-  const acpRuntimesQuery = useAcpRuntimesQuery({
+  const acpRuntimesQuery = useAcpRuntimesQueryForced({
     enabled: shouldLoadAcpRuntimes,
+    forceOnMount: false,
   });
   const createAgentMutation = useCreateManagedAgentMutation();
   const createPersonaMutation = useCreatePersonaMutation();

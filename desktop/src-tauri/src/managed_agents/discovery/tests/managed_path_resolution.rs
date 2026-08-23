@@ -51,6 +51,21 @@ fn common_binary_paths_probes_legacy_goose_install_dir() {
 
 #[cfg(unix)]
 #[test]
+fn common_binary_paths_probes_grok_install_dir() {
+    let home = dirs::home_dir().expect("HOME is always set on Unix");
+    let grok_dir = home.join(".grok").join("bin");
+
+    let probed = super::super::login_shell::home_binary_probe_dirs(&home);
+
+    assert!(
+        probed.contains(&grok_dir),
+        "Grok Build install dir {} must be probed, got: {probed:?}",
+        grok_dir.display()
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn resolve_command_prefers_buzz_managed_npm_shim_over_path() {
     use std::os::unix::fs::PermissionsExt;
 

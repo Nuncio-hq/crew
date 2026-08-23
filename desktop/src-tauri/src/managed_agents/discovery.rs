@@ -49,13 +49,7 @@ fn common_binary_paths() -> &'static [PathBuf] {
             paths.insert(0, managed_bin);
         }
         if let Some(home) = dirs::home_dir() {
-            paths.extend([
-                home.join(".local/share/mise/shims"),
-                home.join(".local/bin"),
-                home.join(".volta/bin"),
-                home.join(".asdf/shims"),
-                home.join(".bun/bin"),
-            ]);
+            paths.extend(login_shell::home_binary_probe_dirs(&home));
         }
         // Windows well-known dirs for npm global shims and standalone installer targets.
         #[cfg(windows)]
