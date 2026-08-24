@@ -231,6 +231,74 @@ test.describe("hermes profile binding", () => {
     await expect(createSubmit(dialog)).toBeEnabled();
   });
 
+  test("create: personal default agent card shows profile label, not Crew default", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      hermesProfiles: [],
+      hermesProfileConfigs: {
+        default: { provider: "xai", model: "grok-3" },
+      },
+      globalAgentConfig: {
+        env_vars: {},
+        provider: "anthropic",
+        model: "claude-opus-4-20250514",
+      },
+    });
+    const dialog = await openCreateCustomize(page);
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await waitForAnimations(page);
+    await dialog.locator("#persona-display-name").fill("Home Hermes");
+
+    await dialog.getByTestId("hermes-profile-combobox-trigger").click();
+    await waitForAnimations(page);
+    await page.getByText("Personal (default)").click();
+    await page.getByTestId("hermes-home-profile-confirm-accept").click();
+
+    await createSubmit(dialog).click();
+    await expect(dialog).toBeHidden({ timeout: 15_000 });
+
+    const agentCard = page
+      .locator('[data-testid^="persona-agent-row-"]')
+      .filter({ hasText: "Home Hermes" });
+    await expect(agentCard).toBeVisible({ timeout: 10_000 });
+    await expect(agentCard).toContainText("Personal (default) · grok-3");
+    await expect(agentCard).not.toContainText("Default model");
+    await expect(agentCard).not.toContainText("claude-opus");
+  });
+
+  test("create: scout profile agent card shows profile model from disk, not Crew default", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      hermesProfiles: ["scout"],
+      hermesProfileConfigs: {
+        scout: { provider: "anthropic", model: "claude-sonnet" },
+      },
+      globalAgentConfig: {
+        env_vars: {},
+        provider: "anthropic",
+        model: "claude-opus-4-20250514",
+      },
+    });
+    const dialog = await openCreateCustomize(page);
+    await pickRuntime(page, dialog, /Hermes Agent/);
+    await waitForAnimations(page);
+    await dialog.locator("#persona-display-name").fill("Hermes Scout");
+    await dialog.locator("#persona-hermes-profile").fill("scout");
+
+    await createSubmit(dialog).click();
+    await expect(dialog).toBeHidden({ timeout: 15_000 });
+
+    const agentCard = page
+      .locator('[data-testid^="persona-agent-row-"]')
+      .filter({ hasText: "Hermes Scout" });
+    await expect(agentCard).toBeVisible({ timeout: 10_000 });
+    await expect(agentCard).toContainText("scout · claude-sonnet");
+    await expect(agentCard).not.toContainText("Default model");
+    await expect(agentCard).not.toContainText("claude-opus");
+  });
+
   test("create: lists existing disk profiles and pick binds", async ({
     page,
   }) => {

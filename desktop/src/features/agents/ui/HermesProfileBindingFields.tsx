@@ -5,8 +5,9 @@
  * `ownedByProfile` omission) — never from a hardcoded runtime id.
  */
 import * as React from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { readHermesProfileModel } from "@/shared/api/hermesProfiles";
 import type { RespondToMode } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
@@ -18,6 +19,7 @@ import {
 } from "../hooks";
 import {
   buildHermesProfileOccupancy,
+  crewMayReadHermesProfileModel,
   deriveHermesProfileUsage,
   deriveProfileBoundAgentBoundary,
   ensureHermesHomeProfileOption,
@@ -46,12 +48,31 @@ export function ProfileOwnedModelRow({
   profileName,
   liveModel,
   className,
+  fetchLiveModel = true,
 }: {
   profileName?: string | null;
   /** Live ACP session model when a clean read path exists; otherwise omit. */
   liveModel?: string | null;
   className?: string;
+  /** When true, read profile config for display when `liveModel` is absent. */
+  fetchLiveModel?: boolean;
 }) {
+  const trimmedName = profileName?.trim() || "";
+  const query = useQuery({
+    queryKey: ["hermes-profile-model", trimmedName],
+    queryFn: () => readHermesProfileModel(trimmedName),
+    enabled:
+      fetchLiveModel &&
+      Boolean(trimmedName) &&
+      crewMayReadHermesProfileModel(trimmedName) &&
+      !liveModel?.trim(),
+    refetchOnMount: "always",
+  });
+  const resolvedModel =
+    liveModel?.trim() ||
+    (query.data?.status === "ok" ? (query.data.model?.trim() ?? "") : "") ||
+    null;
+
   return (
     <div
       className={cn("space-y-1.5", className)}
@@ -59,7 +80,7 @@ export function ProfileOwnedModelRow({
     >
       <p className="text-sm font-medium text-foreground">Model</p>
       <p className="text-sm text-muted-foreground">
-        {profileOwnedModelLabel(profileName, liveModel)}
+        {profileOwnedModelLabel(profileName, resolvedModel)}
       </p>
     </div>
   );

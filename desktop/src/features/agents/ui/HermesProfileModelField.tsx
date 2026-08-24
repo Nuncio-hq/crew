@@ -10,6 +10,7 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import {
   crewMayMutateHermesProfile,
+  crewMayReadHermesProfileModel,
   hermesHomeProfileEditInHermesCopy,
 } from "../lib/hermesProfileBinding";
 import { ProfileOwnedModelRow } from "./HermesProfileBindingFields";
@@ -39,7 +40,8 @@ export function HermesProfileModelField({
     queryKey,
     queryFn: () => readHermesProfileModel(profileName),
     enabled:
-      profileName.trim().length > 0 && crewMayMutateHermesProfile(profileName),
+      profileName.trim().length > 0 &&
+      crewMayReadHermesProfileModel(profileName),
     refetchOnMount: "always",
   });
   const [provider, setProvider] = React.useState("");
@@ -87,6 +89,7 @@ export function HermesProfileModelField({
           Model and provider for the personal default profile are owned by
           Hermes. {hermesHomeProfileEditInHermesCopy()}
         </p>
+        <ProfileOwnedModelRow profileName={profileName} fetchLiveModel />
       </div>
     );
   }

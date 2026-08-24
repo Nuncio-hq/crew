@@ -92,6 +92,37 @@ pub fn is_hermes_runtime(effective_command: &str) -> bool {
     crate::managed_agents::known_acp_runtime(effective_command).is_some_and(|r| r.id == "hermes")
 }
 
+/// When true, Crew must not project definition/global model onto the managed-agent
+/// API surface — the bound Hermes profile owns the runtime model.
+pub fn crew_model_projection_suppressed(
+    hermes_profile: Option<&str>,
+    effective_command: &str,
+) -> bool {
+    hermes_profile
+        .map(str::trim)
+        .is_some_and(|profile| !profile.is_empty())
+        && is_hermes_runtime(effective_command)
+}
+
+/// Blank Crew-projected model fields when a Hermes profile owns the runtime model.
+pub fn projected_crew_model_fields(
+    hermes_profile: Option<&str>,
+    effective_command: &str,
+    model: Option<String>,
+    provider: Option<String>,
+    model_source: Option<crate::managed_agents::effective_config::ConfigSource>,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<crate::managed_agents::effective_config::ConfigSource>,
+) {
+    if crew_model_projection_suppressed(hermes_profile, effective_command) {
+        (None, None, None)
+    } else {
+        (model, provider, model_source)
+    }
+}
+
 /// Last-write guard (spike 0013): strip `BUZZ_ACP_MODEL` from the spawn
 /// command when the effective runtime is Hermes, so field-resolution and
 /// user env maps cannot override the profile's model.
@@ -416,6 +447,15 @@ mod tests {
         record.backend = BackendKind::Local;
         validate_profile_bound_agent_invariants(&record)
             .expect("owner-only local profile-bound Hermes agent must be accepted");
+    }
+
+    #[test]
+    fn crew_model_projection_suppressed_for_profile_bound_hermes() {
+        assert!(crew_model_projection_suppressed(Some("default"), "hermes"));
+        assert!(crew_model_projection_suppressed(Some("scout"), "hermes"));
+        assert!(!crew_model_projection_suppressed(Some("scout"), "goose"));
+        assert!(!crew_model_projection_suppressed(None, "hermes"));
+        assert!(!crew_model_projection_suppressed(Some(""), "hermes"));
     }
 
     fn minimal_record(pubkey: &str, relay: &str) -> ManagedAgentRecord {

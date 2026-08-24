@@ -18,6 +18,8 @@ import {
   ownsAuthorAgent,
 } from "@/features/profile/lib/identity";
 import { formatElapsed } from "@/features/agents/ui/agentSessionUtils";
+import { profileCardModelLabel } from "@/features/agents/lib/hermesProfileBinding";
+import { useHermesProfileModelDisplay } from "@/features/agents/hooks/useHermesProfileModelDisplay";
 import { usePresenceQuery } from "@/features/presence/hooks";
 import { useUserStatusQuery } from "@/features/user-status/hooks";
 import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
@@ -154,6 +156,9 @@ export function UserProfilePopover({
   const relayAgent = relayAgentsQuery.data?.find((a) => a.pubkey === pubkey);
   const managedAgent = managedAgentsQuery.data?.find(
     (a) => a.pubkey === pubkey,
+  );
+  const profileModelFromDisk = useHermesProfileModelDisplay(
+    open ? managedAgent?.hermesProfile : null,
   );
   const profile = profileQuery.data;
   const ownerPubkey = profile?.ownerPubkey ?? null;
@@ -414,7 +419,14 @@ export function UserProfilePopover({
               ) : relayAgent?.agentType ? (
                 <InfoBadge>{runtimeLabel(relayAgent.agentType)}</InfoBadge>
               ) : null}
-              {managedAgent?.model ? (
+              {managedAgent?.hermesProfile ? (
+                <InfoBadge>
+                  {profileCardModelLabel(
+                    managedAgent.hermesProfile,
+                    profileModelFromDisk ?? managedAgent.model,
+                  )}
+                </InfoBadge>
+              ) : managedAgent?.model ? (
                 <InfoBadge>{managedAgent.model}</InfoBadge>
               ) : null}
               {managedAgent?.acpCommand ? (

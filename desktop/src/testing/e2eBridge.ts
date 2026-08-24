@@ -9533,8 +9533,14 @@ async function handleCreateManagedAgent(
     parallelism: mintParallelism,
     system_prompt: args.input.systemPrompt?.trim() || null,
     avatar_url: avatarUrl,
-    model: args.input.model?.trim() || linkedPersona?.model || null,
-    provider: args.input.provider?.trim() || linkedPersona?.provider || null,
+    model:
+      hermesProfile && agentCommand === "hermes"
+        ? null
+        : args.input.model?.trim() || linkedPersona?.model || null,
+    provider:
+      hermesProfile && agentCommand === "hermes"
+        ? null
+        : args.input.provider?.trim() || linkedPersona?.provider || null,
     env_vars: { ...(args.input.envVars ?? {}) },
     status: args.input.spawnAfterCreate ? "running" : "stopped",
     pid: args.input.spawnAfterCreate ? 42000 + mockManagedAgents.length : null,
@@ -14073,19 +14079,19 @@ export function maybeInstallE2eTauriMocks() {
       case "read_hermes_profile_model": {
         const { name } = payload as { name: string };
         const trimmed = name?.trim() ?? "";
-        if (!mockHermesProfiles.has(trimmed)) {
+        if (trimmed === "default" || mockHermesProfiles.has(trimmed)) {
+          const values = mockHermesProfileConfigs.get(trimmed);
           return {
-            status: "does_not_exist",
+            status: "ok",
             name: trimmed,
-            message: `Hermes profile '${trimmed}' does not exist`,
+            provider: values?.provider ?? null,
+            model: values?.model ?? null,
           };
         }
-        const values = mockHermesProfileConfigs.get(trimmed);
         return {
-          status: "ok",
+          status: "does_not_exist",
           name: trimmed,
-          provider: values?.provider ?? null,
-          model: values?.model ?? null,
+          message: `Hermes profile '${trimmed}' does not exist`,
         };
       }
       case "write_hermes_profile_model": {
@@ -15067,7 +15073,7 @@ export function maybeInstallE2eTauriMocks() {
                 tag.length === 4 &&
                 tag[1]?.toLowerCase() === me,
             );
-            if (auth && auth[1] && auth[3]) {
+            if (auth?.[1] && auth?.[3]) {
               tags.push(["auth", auth[1], auth[2] ?? "", auth[3]]);
             }
           }

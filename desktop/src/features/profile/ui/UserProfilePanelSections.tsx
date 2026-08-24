@@ -8,6 +8,7 @@ import {
 } from "@/features/agents/lib/managedAgentControlActions";
 import { RestartDiffBadge } from "@/features/agents/ui/RestartDiffBadge";
 import { AgentConfigPanel } from "@/features/agents/ui/AgentConfigPanel";
+import { HermesProfileModelLifecycleNotice } from "@/features/agents/ui/HermesProfileModelLifecycleNotice";
 import type { IdentityArchiveActions } from "@/features/identity-archive/hooks";
 import { getPresenceLabel } from "@/features/presence/lib/presence";
 import { PresenceDot } from "@/features/presence/ui/PresenceBadge";
@@ -547,6 +548,11 @@ export function ProfileSummaryView({
               <div className="space-y-4">
                 {showRuntimePreview ? (
                   <UserProfileRuntimePreviewNotice />
+                ) : null}
+                {managedAgent?.hermesProfile?.trim() ? (
+                  <HermesProfileModelLifecycleNotice
+                    profileName={managedAgent.hermesProfile}
+                  />
                 ) : null}
                 <ProfileRuntimeTabContent
                   autoRestartEnabled={

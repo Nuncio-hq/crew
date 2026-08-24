@@ -295,6 +295,8 @@ pub fn build_managed_agent_summary(
         .unwrap_or("")
         .to_string();
 
+    let (effective_model, effective_provider, model_source) = crate::managed_agents::hermes_profile::projected_crew_model_fields(record.hermes_profile.as_deref(), &descriptor.command, effective_model, effective_provider, model_source);
+
     Ok(ManagedAgentSummary {
         pubkey: record.pubkey.clone(),
         name: record.name.clone(),

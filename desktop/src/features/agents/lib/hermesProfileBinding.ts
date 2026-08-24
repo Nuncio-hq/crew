@@ -29,6 +29,12 @@ export function crewMayMutateHermesProfile(name: string): boolean {
   return !isHermesHomeProfile(name);
 }
 
+/** True when Crew may read profile model settings for display (includes home). */
+export function crewMayReadHermesProfileModel(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length > 0 && validateHermesProfileName(trimmed) == null;
+}
+
 export function hermesHomeProfileDisplayLabel(name: string): string {
   return isHermesHomeProfile(name) ? "Personal (default)" : name.trim();
 }
@@ -224,6 +230,24 @@ export function profileOwnedModelLabel(
     return `Model: decided by profile ${name}`;
   }
   return "Model: decided by profile";
+}
+
+/** Short label for agent cards and profile badges. */
+export function profileCardModelLabel(
+  profileName: string | null | undefined,
+  liveModel?: string | null,
+): string {
+  const displayName = profileName?.trim()
+    ? hermesHomeProfileDisplayLabel(profileName)
+    : null;
+  const model = liveModel?.trim() || null;
+  if (displayName && model) {
+    return `${displayName} · ${model}`;
+  }
+  if (displayName) {
+    return `Profile: ${displayName}`;
+  }
+  return "Profile-owned model";
 }
 
 /**
