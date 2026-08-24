@@ -7,7 +7,9 @@ export function useAgentCardModelLabel({
   personaModel,
   defaultModel,
 }: {
-  agent: Pick<ManagedAgent, "modelSource" | "model" | "hermesProfile"> | undefined;
+  agent:
+    | Pick<ManagedAgent, "modelSource" | "model" | "hermesProfile">
+    | undefined;
   personaModel: string | null | undefined;
   defaultModel: string;
 }): string {

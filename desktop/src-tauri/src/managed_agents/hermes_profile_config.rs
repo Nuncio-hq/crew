@@ -471,7 +471,7 @@ printf 'model:\n  provider: "%s"\n  default: "%s"\n' "$provider" "$model" > "$co
             }
         );
         assert!(matches!(
-            write_profile_config("default"),
+            write_profile_config("default", None, None),
             HermesProfileConfigResult::InvalidName { .. }
         ));
     }

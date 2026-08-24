@@ -7,8 +7,7 @@ export function HermesProfileModelLifecycleNotice({
   profileName: string;
 }) {
   const trimmed = profileName.trim();
-  const display =
-    trimmed === "default" ? "Personal (default)" : trimmed;
+  const display = trimmed === "default" ? "Personal (default)" : trimmed;
 
   return (
     <p
@@ -19,8 +18,8 @@ export function HermesProfileModelLifecycleNotice({
       <code>~/.hermes</code> or <code>profiles/{trimmed}</code>). Change it in
       Hermes or with <code>hermes config set</code> — not in Crew. Crew will not
       ask you to restart when the profile model changes; the new model applies
-      on the next fresh ACP session (use <code>!rotate</code> in Hermes to
-      force one).
+      on the next fresh ACP session (use <code>!rotate</code> in Hermes to force
+      one).
     </p>
   );
 }
