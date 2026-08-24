@@ -5,7 +5,7 @@ import {
   isAgentCardAvatarLoading,
   resolveAgentCardAvatarUrl,
 } from "@/features/agents/lib/agentCardAvatar";
-import { resolveAgentCardModelLabel } from "@/features/agents/lib/agentCardModelLabel";
+import { useAgentCardModelLabel } from "@/features/agents/ui/AgentCardModelLabel";
 import { friendlyAgentLastError } from "@/features/agents/lib/friendlyAgentLastError";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 import { useManagedAgentRuntimesQuery } from "@/features/agents/managedAgentRuntimeHooks";
@@ -292,7 +292,7 @@ function AgentPersonaCard({
   onStartPersona: (persona: AgentPersona) => void;
 }) {
   const title = persona.displayName;
-  const modelLabel = resolveAgentCardModelLabel({
+  const modelLabel = useAgentCardModelLabel({
     agent,
     personaModel: persona.model,
     defaultModel,
@@ -421,6 +421,11 @@ function StandaloneAgentCard({
   onStartAgent: (pubkey: string) => void;
 }) {
   const title = agent.name;
+  const modelLabel = useAgentCardModelLabel({
+    agent,
+    personaModel: null,
+    defaultModel,
+  });
   const profileQuery = useUserProfileQuery(agent.pubkey);
   const friendlyError = friendlyAgentLastError(
     agent.lastError,
@@ -468,11 +473,7 @@ function StandaloneAgentCard({
       avatarUrl={profileQuery.data?.avatarUrl}
       dataTestId={`managed-agent-${agent.pubkey}`}
       label={title}
-      modelLabel={resolveAgentCardModelLabel({
-        agent,
-        personaModel: null,
-        defaultModel,
-      })}
+      modelLabel={modelLabel}
       onClick={() => {
         onOpenAgentProfile(
           agent.pubkey,

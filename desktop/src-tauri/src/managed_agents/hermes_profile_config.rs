@@ -42,18 +42,12 @@ pub enum HermesProfileConfigResult {
     },
 }
 
-fn profile_dir(name: &str) -> Result<(String, PathBuf), HermesProfileConfigResult> {
+fn profile_dir_for_read(name: &str) -> Result<(String, PathBuf), HermesProfileConfigResult> {
     let trimmed = name.trim();
     if let Err(message) = validate_hermes_profile_name(trimmed) {
         return Err(HermesProfileConfigResult::InvalidName {
             name: trimmed.to_string(),
             message,
-        });
-    }
-    if !crew_may_mutate_hermes_profile(trimmed) {
-        return Err(HermesProfileConfigResult::InvalidName {
-            name: trimmed.to_string(),
-            message: "hermes profile 'default' cannot be edited by Crew".to_string(),
         });
     }
     let Some(dir) = hermes_profile_dir(trimmed) else {
@@ -63,6 +57,20 @@ fn profile_dir(name: &str) -> Result<(String, PathBuf), HermesProfileConfigResul
         });
     };
     Ok((trimmed.to_string(), dir))
+}
+
+fn profile_dir(name: &str) -> Result<(String, PathBuf), HermesProfileConfigResult> {
+    let (trimmed, dir) = match profile_dir_for_read(name) {
+        Ok(value) => value,
+        Err(result) => return Err(result),
+    };
+    if !crew_may_mutate_hermes_profile(&trimmed) {
+        return Err(HermesProfileConfigResult::InvalidName {
+            name: trimmed.clone(),
+            message: "hermes profile 'default' cannot be edited by Crew".to_string(),
+        });
+    }
+    Ok((trimmed, dir))
 }
 
 fn read_values(name: &str, dir: &Path) -> Result<(Option<String>, Option<String>), String> {
@@ -112,7 +120,7 @@ fn read_from_dir(name: &str, dir: &Path) -> HermesProfileConfigResult {
 
 /// Reads the two model settings exposed by a Hermes profile.
 pub fn read_profile_config(name: &str) -> HermesProfileConfigResult {
-    match profile_dir(name) {
+    match profile_dir_for_read(name) {
         Ok((name, dir)) => read_from_dir(&name, &dir),
         Err(result) => result,
     }
@@ -447,9 +455,31 @@ printf 'model:\n  provider: "%s"\n  default: "%s"\n' "$provider" "$model" > "$co
     }
 
     #[test]
+    fn home_profile_can_be_read_but_not_written() {
+        let (_guard, home, _profile, _script) = setup();
+        fs::write(
+            home.path().join("config.yaml"),
+            "model:\n  provider: anthropic\n  default: claude-sonnet\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_profile_config("default"),
+            HermesProfileConfigResult::Ok {
+                name: "default".to_string(),
+                provider: Some("anthropic".to_string()),
+                model: Some("claude-sonnet".to_string()),
+            }
+        );
+        assert!(matches!(
+            write_profile_config("default"),
+            HermesProfileConfigResult::InvalidName { .. }
+        ));
+    }
+
+    #[test]
     fn invalid_profile_name_is_rejected() {
         assert!(matches!(
-            read_profile_config("default"),
+            read_profile_config("Bad Name"),
             HermesProfileConfigResult::InvalidName { .. }
         ));
     }

@@ -295,6 +295,16 @@ pub fn build_managed_agent_summary(
         .unwrap_or("")
         .to_string();
 
+    let (effective_model, effective_provider, model_source) =
+        if crate::managed_agents::hermes_profile::crew_model_projection_suppressed(
+            record.hermes_profile.as_deref(),
+            &descriptor.command,
+        ) {
+            (None, None, None)
+        } else {
+            (effective_model, effective_provider, model_source)
+        };
+
     Ok(ManagedAgentSummary {
         pubkey: record.pubkey.clone(),
         name: record.name.clone(),
