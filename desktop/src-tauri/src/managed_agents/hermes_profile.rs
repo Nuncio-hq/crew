@@ -104,6 +104,25 @@ pub fn crew_model_projection_suppressed(
         && is_hermes_runtime(effective_command)
 }
 
+/// Blank Crew-projected model fields when a Hermes profile owns the runtime model.
+pub fn projected_crew_model_fields(
+    hermes_profile: Option<&str>,
+    effective_command: &str,
+    model: Option<String>,
+    provider: Option<String>,
+    model_source: Option<crate::managed_agents::effective_config::ConfigSource>,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<crate::managed_agents::effective_config::ConfigSource>,
+) {
+    if crew_model_projection_suppressed(hermes_profile, effective_command) {
+        (None, None, None)
+    } else {
+        (model, provider, model_source)
+    }
+}
+
 /// Last-write guard (spike 0013): strip `BUZZ_ACP_MODEL` from the spawn
 /// command when the effective runtime is Hermes, so field-resolution and
 /// user env maps cannot override the profile's model.

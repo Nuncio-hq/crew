@@ -15073,7 +15073,7 @@ export function maybeInstallE2eTauriMocks() {
                 tag.length === 4 &&
                 tag[1]?.toLowerCase() === me,
             );
-            if (auth && auth[1] && auth[3]) {
+            if (auth?.[1] && auth?.[3]) {
               tags.push(["auth", auth[1], auth[2] ?? "", auth[3]]);
             }
           }

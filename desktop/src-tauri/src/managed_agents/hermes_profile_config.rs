@@ -60,10 +60,7 @@ fn profile_dir_for_read(name: &str) -> Result<(String, PathBuf), HermesProfileCo
 }
 
 fn profile_dir(name: &str) -> Result<(String, PathBuf), HermesProfileConfigResult> {
-    let (trimmed, dir) = match profile_dir_for_read(name) {
-        Ok(value) => value,
-        Err(result) => return Err(result),
-    };
+    let (trimmed, dir) = profile_dir_for_read(name)?;
     if !crew_may_mutate_hermes_profile(&trimmed) {
         return Err(HermesProfileConfigResult::InvalidName {
             name: trimmed.clone(),
