@@ -42,6 +42,7 @@ import { ThreadComposerViewContext } from "./ThreadComposerViewContext";
 import { MessageThreadPanelHead } from "./message-thread-panel-head";
 import { ThreadMessageSkeleton } from "./MessageThreadPanelSkeleton";
 import { MessageRow, type ThreadDepthGuideAction } from "./MessageRow";
+import { AddToChatProvider } from "./AddToChatContext";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
 import { ThreadPanelDeclaredPlansBody } from "./ThreadPanelDeclaredPlansBody";
 import { ThreadPanelEmptyState } from "./ThreadPanelEmptyState";
@@ -278,8 +279,7 @@ export function MessageThreadPanel({
   );
   const hasConstrainedColumn = columnMaxWidthPx != null;
 
-  // Live ref so onCaptureSendContext can read reply state at submit time
-  // (before any async mention-flow awaits change navigation state).
+  // Capture reply state before async mention flow can change navigation.
   const replyTargetMessageRef = React.useRef(replyTargetMessage);
   replyTargetMessageRef.current = replyTargetMessage;
 
@@ -953,40 +953,40 @@ export function MessageThreadPanel({
     </>
   );
   return (
-    <VideoReviewNavigationProvider>
-      <AuxiliaryPanel
-        className="relative"
-        // The focus drawer animates itself; a second slide here would compound.
-        enterMotion={!isFocusMode}
-        footer={threadFooter}
-        header={
-          isHuddleTranscript ? undefined : (
-            <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
-          )
-        }
-        isSinglePanelView={isSinglePanelView}
-        layout={layout}
-        onClose={onClose}
-        testId="message-thread-panel"
-        transparentChrome={transparentChrome}
-        widthPx={widthPx}
-      >
-        {/* Sticky status bar lives outside the scroll region so expand/collapse
-            cannot fight useAnchoredScroll's ResizeObserver. Sibling padded
-            column keeps docked header chrome from stealing Workspace clicks. */}
-        <ThreadPanelDeclaredPlansBody
-          channelId={channelId}
-          isFocusMode={isFocusMode}
-          isHuddleTranscript={Boolean(isHuddleTranscript)}
-          panelChromeMode={panelChromeMode}
-          profiles={profiles}
-          threadHead={threadHead}
-          threadMessages={threadMessages}
-          workspaceModel={projectThreadWorkspaceModel}
+    <AddToChatProvider>
+      <VideoReviewNavigationProvider>
+        <AuxiliaryPanel
+          className="relative"
+          // The focus drawer animates itself; a second slide here would compound.
+          enterMotion={!isFocusMode}
+          footer={threadFooter}
+          header={
+            isHuddleTranscript ? undefined : (
+              <AuxiliaryPanelHeader>{threadHeaderContent}</AuxiliaryPanelHeader>
+            )
+          }
+          isSinglePanelView={isSinglePanelView}
+          layout={layout}
+          onClose={onClose}
+          testId="message-thread-panel"
+          transparentChrome={transparentChrome}
+          widthPx={widthPx}
         >
-          {threadScrollRegion}
-        </ThreadPanelDeclaredPlansBody>
-      </AuxiliaryPanel>
-    </VideoReviewNavigationProvider>
+          {/* Keep status outside scrolling so resize cannot fight anchored scroll. */}
+          <ThreadPanelDeclaredPlansBody
+            channelId={channelId}
+            isFocusMode={isFocusMode}
+            isHuddleTranscript={Boolean(isHuddleTranscript)}
+            panelChromeMode={panelChromeMode}
+            profiles={profiles}
+            threadHead={threadHead}
+            threadMessages={threadMessages}
+            workspaceModel={projectThreadWorkspaceModel}
+          >
+            {threadScrollRegion}
+          </ThreadPanelDeclaredPlansBody>
+        </AuxiliaryPanel>
+      </VideoReviewNavigationProvider>
+    </AddToChatProvider>
   );
 }

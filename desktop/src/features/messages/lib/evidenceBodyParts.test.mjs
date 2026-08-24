@@ -42,4 +42,43 @@ describe("splitEvidenceBody", () => {
       narrative: "",
     });
   });
+
+  it("preserves Markdown image destinations instead of promoting them as links", () => {
+    const imageUrl = `https://relay.example/media/${"a".repeat(64)}.png`;
+    const parts = splitEvidenceBody(
+      `Rendered evidence:\n\n![image](${imageUrl})`,
+    );
+
+    assert.equal(parts.narrative, `Rendered evidence:\n![image](${imageUrl})`);
+    assert.deepEqual(parts.links, []);
+  });
+
+  it("preserves Markdown video destinations for authenticated inline playback", () => {
+    const videoUrl = `https://relay.example/media/${"d".repeat(64)}.mp4`;
+    const parts = splitEvidenceBody(
+      `Recorded evidence:\n\n![video](${videoUrl})`,
+    );
+
+    assert.equal(parts.narrative, `Recorded evidence:\n![video](${videoUrl})`);
+    assert.deepEqual(parts.links, []);
+  });
+
+  it("removes a duplicate plain URL without deleting its image destination", () => {
+    const imageUrl = `https://relay.example/media/${"b".repeat(64)}.png`;
+    const parts = splitEvidenceBody(`![proof](${imageUrl}) ${imageUrl}`);
+
+    assert.equal(parts.narrative, `![proof](${imageUrl})`);
+    assert.deepEqual(
+      parts.links.map((link) => link.href),
+      [imageUrl],
+    );
+  });
+
+  it("preserves angle-bracket Markdown image destinations", () => {
+    const imageUrl = `https://relay.example/media/${"c".repeat(64)}.png`;
+    const parts = splitEvidenceBody(`![proof](<${imageUrl}>)`);
+
+    assert.equal(parts.narrative, `![proof](<${imageUrl}>)`);
+    assert.deepEqual(parts.links, []);
+  });
 });

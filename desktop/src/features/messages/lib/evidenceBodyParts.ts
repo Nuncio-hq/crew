@@ -54,6 +54,10 @@ function normalizeWhitespace(value: string): string {
     .trim();
 }
 
+function isMarkdownMediaDestination(line: string, urlStart: number): boolean {
+  return /!\[[^\]]*\]\(\s*<?$/.test(line.slice(0, urlStart));
+}
+
 /**
  * Pull structured claim lines and URLs out of an evidence body.
  * Safe on empty/malformed input; never throws.
@@ -75,13 +79,21 @@ export function splitEvidenceBody(body: string): EvidenceBodyParts {
       continue;
     }
 
-    let scrubbed = line;
+    const narrativeSegments: string[] = [];
+    let segmentStart = 0;
     for (const match of line.matchAll(URL_RE)) {
       const raw = match[0];
-      const link = classifyLink(raw);
-      if (!linkMap.has(link.href)) linkMap.set(link.href, link);
-      scrubbed = scrubbed.replace(raw, "");
+      narrativeSegments.push(line.slice(segmentStart, match.index));
+      if (isMarkdownMediaDestination(line, match.index)) {
+        narrativeSegments.push(raw);
+      } else {
+        const link = classifyLink(raw);
+        if (!linkMap.has(link.href)) linkMap.set(link.href, link);
+      }
+      segmentStart = match.index + raw.length;
     }
+    narrativeSegments.push(line.slice(segmentStart));
+    const scrubbed = narrativeSegments.join("");
 
     // Drop bullet leftovers like "- GitHub: " or "- Buzz PR: " once the URL
     // was promoted to an action button.

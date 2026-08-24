@@ -50,6 +50,7 @@ import { FailureNoticeRetryButton } from "./FailureNoticeRetryButton";
 import { MessageActionBar } from "./MessageActionBar";
 import { MessageAgentOwner } from "./MessageAgentOwner";
 import { MessageRowDefaultBody } from "./MessageRowDefaultBody";
+import { MessageSelectionAddToChat } from "./MessageSelectionAddToChat";
 import { MessageAuthorText, MessageHeaderRow } from "./MessageHeader";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { SentFromThreadLine } from "./SentFromThreadLine";
@@ -161,9 +162,8 @@ export const MessageRow = React.memo(
     videoReviewCommentRootId?: string;
     videoReviewContext?: VideoReviewContext;
   }) {
-    // Keep the transient send state with its timestamp rather than collapsing
-    // it into a grouped message row with no header.
     const isDisplayedAsContinuation = isContinuation && !message.pending;
+    // Pending messages retain their own visible send metadata.
     const [expandedDiffId, setExpandedDiffId] = React.useState<string | null>(
       null,
     );
@@ -217,10 +217,6 @@ export const MessageRow = React.memo(
       () => resolveMentionProps(message.tags, profiles),
       [profiles, message.tags],
     );
-    // "Is this pubkey an agent" = the community-scoped baseline every surface
-    // shares (managed ∪ relay) plus the pubkey's own profile `isAgent` flag from this surface's lookup. Both are per-pubkey
-    // O(1) checks — no per-row rescan of `profiles` (that duplicated parent
-    // work in every mounted row and re-ran on each profile-lookup change).
     const knownAgentPubkeys = useKnownAgentPubkeys();
     const isKnownAgentPubkey = React.useCallback(
       (pubkey: string) => {
@@ -364,9 +360,7 @@ export const MessageRow = React.memo(
             "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
         )}
         // Only pass the author pubkey for agent-authored messages so
-        // config-nudge cards can authenticate the sender. Uses the
-        // raw event signer (signerPubkey), not a relay-delegated display
-        // author, because the agent itself must have signed the card.
+        // config-nudge cards authenticate the raw signer, not delegated display.
         configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
           message,
           isKnownAgentPubkey,
@@ -701,7 +695,13 @@ export const MessageRow = React.memo(
     const messageBodyNode = (
       <>
         <SentFromThreadLine channelId={channelId} tags={message.tags} />
-        {renderBody()}
+        <MessageSelectionAddToChat
+          enabled={Boolean(
+            message.pubkey && isKnownAgentPubkey(message.pubkey),
+          )}
+        >
+          {renderBody()}
+        </MessageSelectionAddToChat>
         <FailureNoticeRetryButton channelId={channelId} message={message} />
         {continuationMetadataNode}
         <MessageReactions

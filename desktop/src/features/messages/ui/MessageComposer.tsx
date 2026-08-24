@@ -61,6 +61,7 @@ import { submitMessageEdit } from "./submitMessageEdit";
 import { useComposerLinkPreviews } from "./useComposerLinkPreviews";
 import { scheduleSettleGatedAutoSubmit } from "./messageComposerAutoSubmit";
 import type { MessageComposerProps } from "./MessageComposer.types";
+import { useComposerAddToChat } from "./useComposerAddToChat";
 function MessageComposerImpl({
   audienceContext = null,
   channelId = null,
@@ -205,7 +206,6 @@ function MessageComposerImpl({
   const disabledRef = React.useRef(disabled);
   const isSendingRef = React.useRef(isSending);
   const isUploadingRef = React.useRef(media.isUploading);
-  // Sync lock: taken before any async send so rapid Enter can't double-submit.
   const isSubmitLockedRef = React.useRef(false);
   const onSendRef = React.useRef(onSend);
   const onEditSaveRef = React.useRef(onEditSave);
@@ -227,8 +227,7 @@ function MessageComposerImpl({
     emojiAutocomplete.isEmojiAutocompleteOpen;
   const submitMessageRef = React.useRef<() => void>(() => {});
   const composerScrollRef = React.useRef<HTMLDivElement>(null);
-  // Set after `useLinkEditor` exists below; the editor's link-click handler
-  // delegates through this ref to break the hook ordering cycle (the editor
+  // Set after `useLinkEditor`; refs break the editor/link hook ordering cycle.
   // needs `onEditLink`, but the link editor needs the editor's `richText`).
   const onEditLinkRef = React.useRef<
     ((info: LinkSelectionInfo) => void) | null
@@ -283,6 +282,7 @@ function MessageComposerImpl({
       }
     },
   });
+  useComposerAddToChat(composerDisabled, richText, scrollComposerToBottom);
   const linkEditor = useLinkEditor(richText);
   syncContentRefFromEditorRef.current = () => {
     const markdown = richText.getMarkdown();

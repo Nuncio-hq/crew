@@ -49,9 +49,17 @@ function reactionIsCurrentUser(
   );
 }
 
-function EvidenceNarrative({ content }: { content: string }) {
+function EvidenceNarrative({
+  content,
+  imetaByUrl,
+}: {
+  content: string;
+  imetaByUrl?: ImetaLookup;
+}) {
   if (!content.trim()) return null;
-  return <Markdown content={content} className="text-sm" />;
+  return (
+    <Markdown content={content} className="text-sm" imetaByUrl={imetaByUrl} />
+  );
 }
 
 function EvidenceLinks({
@@ -104,7 +112,13 @@ function EvidenceLinks({
   );
 }
 
-function MetricsLayout({ message }: { message: TimelineMessage }) {
+function MetricsLayout({
+  imetaByUrl,
+  message,
+}: {
+  imetaByUrl?: ImetaLookup;
+  message: TimelineMessage;
+}) {
   const values = new Map<string, string>();
   for (const match of message.body.matchAll(
     /(before|after|delta)\s*:\s*([^|,\n]+)/gi,
@@ -133,13 +147,19 @@ function MetricsLayout({ message }: { message: TimelineMessage }) {
           ))}
         </div>
       ) : null}
-      <EvidenceNarrative content={narrative} />
+      <EvidenceNarrative content={narrative} imetaByUrl={imetaByUrl} />
       <EvidenceLinks links={parts.links} />
     </div>
   );
 }
 
-function TestRunLayout({ message }: { message: TimelineMessage }) {
+function TestRunLayout({
+  imetaByUrl,
+  message,
+}: {
+  imetaByUrl?: ImetaLookup;
+  message: TimelineMessage;
+}) {
   const claim = parseEvidenceClaim("test-run", message.body);
   const parts = splitEvidenceBody(message.body);
   const named = parseEvidenceTestEntries(message.body);
@@ -160,11 +180,15 @@ function TestRunLayout({ message }: { message: TimelineMessage }) {
           skipped={claim.skipped}
         />
       ) : null}
-      <EvidenceNarrative content={narrative} />
+      <EvidenceNarrative content={narrative} imetaByUrl={imetaByUrl} />
       <EvidenceLinks links={parts.links} />
       {/* Fallback when the body has no Tests: line — show raw markdown once. */}
       {!claim && parts.narrative.length === 0 ? (
-        <Markdown content={message.body} className="text-sm" />
+        <Markdown
+          content={message.body}
+          className="text-sm"
+          imetaByUrl={imetaByUrl}
+        />
       ) : null}
     </div>
   );
@@ -249,7 +273,13 @@ function stripNamedTestSections(narrative: string): string {
   return kept.join("\n").trim();
 }
 
-function DiffStatLayout({ message }: { message: TimelineMessage }) {
+function DiffStatLayout({
+  imetaByUrl,
+  message,
+}: {
+  imetaByUrl?: ImetaLookup;
+  message: TimelineMessage;
+}) {
   const claim = parseEvidenceClaim("diff-stat", message.body);
   const parts = splitEvidenceBody(message.body);
   return (
@@ -263,7 +293,7 @@ function DiffStatLayout({ message }: { message: TimelineMessage }) {
           />
         </div>
       ) : null}
-      <EvidenceNarrative content={parts.narrative} />
+      <EvidenceNarrative content={parts.narrative} imetaByUrl={imetaByUrl} />
       <EvidenceLinks links={parts.links} />
       {!claim && parts.narrative.length === 0 && parts.links.length === 0 ? (
         <Markdown content={message.body} className="text-sm" />
@@ -357,11 +387,11 @@ export function EvidenceCard({
           : "Metrics";
   const layout =
     kind === "metrics" ? (
-      <MetricsLayout message={message} />
+      <MetricsLayout imetaByUrl={imetaByUrl} message={message} />
     ) : kind === "test-run" ? (
-      <TestRunLayout message={message} />
+      <TestRunLayout imetaByUrl={imetaByUrl} message={message} />
     ) : kind === "diff-stat" ? (
-      <DiffStatLayout message={message} />
+      <DiffStatLayout imetaByUrl={imetaByUrl} message={message} />
     ) : (
       <VisualLayout imetaByUrl={imetaByUrl} message={message} />
     );
