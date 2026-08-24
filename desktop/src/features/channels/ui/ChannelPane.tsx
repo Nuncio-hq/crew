@@ -40,7 +40,7 @@ import { RightAuxiliaryPane } from "@/features/channels/ui/RightAuxiliaryPane";
 import { ThreadViewModeToggle } from "@/features/channels/ui/ThreadViewModeToggle";
 import { FocusThreadDrawer } from "@/features/channels/ui/FocusThreadDrawer";
 import { ChannelToolPane } from "@/features/tool-pane/ChannelToolPane";
-import { useToolPane } from "@/features/tool-pane/toolPaneStore";
+import * as tools from "@/features/tool-pane/toolPaneStore";
 import { THREAD_SURFACE_KEY } from "@/features/channels/lib/threadFocusLayout";
 import { resolveThreadPanelClose } from "@/features/channels/lib/threadPanelClose";
 import { getThreadPanelLayout } from "@/features/channels/lib/threadPanelLayout";
@@ -480,7 +480,6 @@ export const ChannelPane = React.memo(function ChannelPane({
     threadHeadMessage,
     threadMessages,
   });
-
   const isOverlay = useIsThreadPanelOverlay();
   const useSplitAuxiliaryPane = !isSinglePanelView && !isOverlay;
   const threadViewMode = useThreadViewMode();
@@ -488,7 +487,8 @@ export const ChannelPane = React.memo(function ChannelPane({
     threadViewMode === "focus" &&
     useSplitAuxiliaryPane &&
     (Boolean(threadHeadMessage) || shouldShowThreadSkeleton);
-  const toolPane = useToolPane();
+  const toolPane = tools.useToolPane();
+  const dismiss = () => tools.dismiss(onCloseThread, useFocusThreadDrawer);
   const { channelIsCovered, markExitComplete } = useFocusDrawerPresence(
     useFocusThreadDrawer,
     onCloseThread,
@@ -859,7 +859,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                 onAutoSubmitComplete={handleAutoSubmitComplete}
                 onCancelEdit={onCancelEdit}
                 onCancelReply={onCancelThreadReply}
-                onClose={onCloseThread}
+                onClose={dismiss}
                 onDelete={onDelete}
                 onEdit={onEdit}
                 onEditLastOwnMessage={handleEditLastOwnThreadMessage}
@@ -923,7 +923,7 @@ export const ChannelPane = React.memo(function ChannelPane({
             const panel = (
               <MessageThreadPanelSkeleton
                 {...threadLayoutProps}
-                onClose={onCloseThread}
+                onClose={dismiss}
                 widthPx={threadPanelWidthPx}
               />
             );

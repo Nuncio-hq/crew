@@ -5,7 +5,7 @@ import type {
   SimHolding,
 } from "../../src/features/tool-pane/types";
 import { waitForAnimations } from "../helpers/animations";
-import { installMockBridge } from "../helpers/bridge";
+import { TEST_IDENTITIES, installMockBridge } from "../helpers/bridge";
 import { openSettings } from "../helpers/settings";
 
 const GENERAL = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
@@ -157,6 +157,50 @@ test.describe("channel Tool Pane (#196)", () => {
       () => window.__BUZZ_E2E_GOVERNOR_STATUS__?.().sims[0]?.lifecycle,
     );
     expect(lifecycle).toBe("booted");
+  });
+
+  test("closing a split thread returns to the channel instead of the hidden simulator", async ({
+    page,
+  }) => {
+    await installMockBridge(page);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByTestId("channel-general").click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          Boolean(
+            window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelName: "general",
+            }),
+          ),
+        ),
+      )
+      .toBe(true);
+    await page.evaluate(
+      ({ pubkey }) =>
+        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+          channelName: "general",
+          content: "Reply that opens the split thread",
+          parentEventId: "mock-general-welcome",
+          pubkey,
+        }),
+      { pubkey: TEST_IDENTITIES.alice.pubkey },
+    );
+    await expect(
+      page.getByTestId("message-thread-summary").first(),
+    ).toBeVisible();
+    await openTools(page, "sim");
+
+    await page.getByTestId("message-thread-summary").first().click();
+    await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+    await expect(page.getByTestId("channel-tool-pane")).toHaveCount(0);
+
+    await page.getByTestId("auxiliary-panel-close").click();
+
+    await expect(page.getByTestId("message-thread-panel")).toHaveCount(0);
+    await expect(page.getByTestId("channel-tool-pane")).toHaveCount(0);
+    await expect(page.getByTestId("channel-drop-zone")).toBeVisible();
+    await expect(page).not.toHaveURL(/(?:\?|&)thread=/);
   });
 
   test("sidebar dots and governor strip match holdings", async ({ page }) => {

@@ -29,6 +29,11 @@ export function closeToolPane() {
   publish({ ...snapshot, open: false, poppedOut: false });
 }
 
+export function dismiss(onDismiss: () => void, keepToolPane: boolean) {
+  if (!keepToolPane) closeToolPane();
+  onDismiss();
+}
+
 export function toggleToolPane(tab?: ToolPaneTab) {
   if (snapshot.open && (!tab || tab === snapshot.tab)) {
     closeToolPane();
