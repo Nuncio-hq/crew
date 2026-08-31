@@ -12,7 +12,8 @@ function isGenericDmChannelName(name: string) {
     normalized === "dm" ||
     normalized === "direct message" ||
     normalized === "direct messages" ||
-    /^group dm\s*(\(\d+\))?$/.test(normalized)
+    /^group dm\s*(\(\d+\))?$/.test(normalized) ||
+    /^[0-9a-f]{64}$/.test(normalized)
   );
 }
 

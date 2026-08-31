@@ -1,11 +1,19 @@
 import * as React from "react";
 
+import {
+  useManagedAgentsQuery,
+  usePersonasQuery,
+  useRelayAgentsQuery,
+} from "@/features/agents/hooks";
+import { personaAvatarById } from "@/features/agents/lib/agentCardAvatar";
+import { mergeAgentNamesIntoProfiles } from "@/features/channels/ui/useChannelActivityTyping";
 import { usePresenceQuery } from "@/features/presence/hooks";
 import { resolveUserLabel } from "@/features/profile/lib/identity";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { resolveChannelDisplayLabel } from "@/features/sidebar/lib/channelLabels";
 import type { SidebarDmParticipant } from "@/features/sidebar/ui/SidebarSection";
 import type { Channel, PresenceStatus } from "@/shared/api/types";
+import { normalizePubkey } from "@/shared/lib/pubkey";
 
 export function useDmSidebarMetadata({
   currentPubkey,
@@ -51,7 +59,32 @@ export function useDmSidebarMetadata({
   const dmProfilesQuery = useUsersBatchQuery(dmParticipantPubkeys, {
     enabled: enabled && directMessages.length > 0,
   });
-  const dmProfiles = dmProfilesQuery.data?.profiles;
+  const managedAgentsQuery = useManagedAgentsQuery({
+    enabled: enabled && directMessages.length > 0,
+  });
+  const personasQuery = usePersonasQuery({
+    enabled: enabled && directMessages.length > 0,
+  });
+  const relayAgentsQuery = useRelayAgentsQuery({
+    enabled: enabled && directMessages.length > 0,
+  });
+  const dmProfiles = React.useMemo(
+    () =>
+      mergeAgentNamesIntoProfiles(
+        dmProfilesQuery.data?.profiles ?? {},
+        managedAgentsQuery.data ?? [],
+        relayAgentsQuery.data ?? [],
+        currentPubkey,
+        personaAvatarById(personasQuery.data ?? []),
+      ),
+    [
+      currentPubkey,
+      dmProfilesQuery.data?.profiles,
+      managedAgentsQuery.data,
+      personasQuery.data,
+      relayAgentsQuery.data,
+    ],
+  );
   const dmPresenceByChannelId = React.useMemo(
     () =>
       Object.fromEntries(
@@ -85,14 +118,10 @@ export function useDmSidebarMetadata({
       Object.fromEntries(
         directMessages.map((channel) => [
           channel.id,
-          resolveChannelDisplayLabel(
-            channel,
-            currentPubkey,
-            dmProfilesQuery.data?.profiles,
-          ),
+          resolveChannelDisplayLabel(channel, currentPubkey, dmProfiles),
         ]),
       ),
-    [currentPubkey, directMessages, dmProfilesQuery.data],
+    [currentPubkey, directMessages, dmProfiles],
   );
   const dmParticipantsByChannelId = React.useMemo(
     () =>
@@ -122,7 +151,7 @@ export function useDmSidebarMetadata({
             channel.id,
             visibleParticipants.map((participant) => ({
               avatarUrl:
-                dmProfiles?.[participant.pubkey.toLowerCase()]?.avatarUrl ??
+                dmProfiles[normalizePubkey(participant.pubkey)]?.avatarUrl ??
                 null,
               label: resolveUserLabel({
                 currentPubkey,

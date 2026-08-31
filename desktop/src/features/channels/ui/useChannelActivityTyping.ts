@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { reportChannelBotTyping } from "@/features/agents/agentWorkingSignal";
+import { resolveAgentCardAvatarUrl } from "@/features/agents/lib/agentCardAvatar";
 import type { TypingIndicatorEntry } from "@/features/messages/useChannelTyping";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type {
@@ -134,6 +135,7 @@ export function mergeAgentNamesIntoProfiles(
   managedAgents: ManagedAgent[],
   relayAgents: RelayAgent[],
   currentPubkey?: string | null,
+  personaAvatars?: Record<string, string | null>,
 ): UserProfileLookup {
   const merged = { ...profiles };
   for (const agent of relayAgents) {
@@ -148,10 +150,17 @@ export function mergeAgentNamesIntoProfiles(
   }
   for (const agent of managedAgents) {
     const key = normalizePubkey(agent.pubkey);
+    const personaAvatar = agent.personaId
+      ? (personaAvatars?.[agent.personaId] ?? null)
+      : null;
     merged[key] = {
       ...merged[key],
       displayName: merged[key]?.displayName || agent.name,
-      avatarUrl: merged[key]?.avatarUrl ?? agent.avatarUrl,
+      avatarUrl: resolveAgentCardAvatarUrl(
+        merged[key]?.avatarUrl,
+        agent.avatarUrl,
+        personaAvatar,
+      ),
       nip05Handle: merged[key]?.nip05Handle ?? null,
       ownerPubkey: merged[key]?.ownerPubkey ?? currentPubkey ?? null,
       isAgent: true,
