@@ -78,7 +78,6 @@ import {
 } from "./agentAiConfigurationPolicy";
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
 import { useCreateHermesBinding } from "./createHermesBindingFields";
-import { resolveHermesProfileForCreate } from "../lib/hermesProfileBinding";
 import { deriveModelFieldVisibility } from "../lib/modelFieldVisibility";
 import { AgentDefinitionCustomAiFields } from "./AgentDefinitionCustomAiFields";
 import { AgentDefinitionIdentityFields } from "./AgentDefinitionIdentityFields";
@@ -120,7 +119,7 @@ type AgentDefinitionDialogProps = {
 
 export type AgentDefinitionSubmitOptions = {
   publishCatalogUpdates: boolean;
-  /** Instance binding collected on create-start; ignored on definition edit. */
+  /** Instance binding. Create always sends it; edit omits when unchanged. */
   hermesProfile?: string | null;
 };
 
@@ -383,6 +382,7 @@ export function AgentDefinitionDialog({
         },
         {
           publishCatalogUpdates: publishCatalogUpdatesOnSave && hasUserChanges,
+          hermesProfile: hermesProfileForSubmit,
         },
       );
       return;
@@ -390,10 +390,7 @@ export function AgentDefinitionDialog({
 
     await onSubmit(baseInput, {
       publishCatalogUpdates: false,
-      hermesProfile: resolveHermesProfileForCreate(
-        hermesProfile,
-        selectedRuntime,
-      ),
+      hermesProfile: hermesProfileForSubmit,
     });
   }
 
@@ -408,8 +405,9 @@ export function AgentDefinitionDialog({
     modelOwnedByProfile,
     modelWriteThrough,
     profileError: hermesProfileError,
+    hermesProfileForSubmit,
   } = useCreateHermesBinding({
-    enabled: isCreateMode,
+    personaId: initialValues && "id" in initialValues ? initialValues.id : null,
     hermesProfile,
     onHermesProfileChange: setHermesProfile,
     respondTo: behaviorDraft.respondTo,

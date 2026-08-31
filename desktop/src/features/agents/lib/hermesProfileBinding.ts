@@ -421,6 +421,35 @@ export function buildHermesProfileOccupancy(args: {
   return map;
 }
 
+export type PersonaInstanceHermesProfileAgent = {
+  pubkey: string;
+  personaId: string | null | undefined;
+  hermesProfile: string | null | undefined;
+};
+
+/**
+ * Instance patches when a definition save carries a Hermes profile binding.
+ * `undefined` means omit (no-op). `null`/empty clears bound instances.
+ */
+export function personaInstanceHermesProfileUpdates(args: {
+  personaId: string;
+  hermesProfile: string | null | undefined;
+  agents: readonly PersonaInstanceHermesProfileAgent[];
+}): Array<{ pubkey: string; hermesProfile: string | null }> {
+  if (args.hermesProfile === undefined) return [];
+  const id = args.personaId.trim();
+  if (!id) return [];
+  const next = args.hermesProfile?.trim() || null;
+  const updates: Array<{ pubkey: string; hermesProfile: string | null }> = [];
+  for (const agent of args.agents) {
+    if (agent.personaId !== id) continue;
+    const current = agent.hermesProfile?.trim() || null;
+    if (current === next) continue;
+    updates.push({ pubkey: agent.pubkey, hermesProfile: next });
+  }
+  return updates;
+}
+
 /** Occupancy gate for save: bound-to-other blocks; free/self/unknown OK. */
 export function hermesProfileOccupancyError(
   raw: string,

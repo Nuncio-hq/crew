@@ -1,17 +1,26 @@
 /**
- * Create-flow Hermes binding + profile-owned model row.
+ * Create/edit Hermes binding + profile-owned model row.
  * Extracted so AgentDefinitionDialog stays under the file-size ratchet.
+ *
+ * Visibility follows the runtime catalog (`profileArg` / write-through), not
+ * create-vs-edit. Occupancy treats a linked instance as self so Edit agent
+ * can keep its already-bound profile.
  */
 import * as React from "react";
 
 import type { AcpRuntimeCatalogEntry, RespondToMode } from "@/shared/api/types";
+import { useManagedAgentsQuery } from "../hooks";
 import {
   deriveAgentConfigFieldModel,
   getRenderableHermesProfileField,
   isModelWriteThrough,
   isModelOwnedByProfile,
 } from "../lib/agentConfigCore";
-import { shouldClearHermesProfileOnRuntimeChange } from "../lib/hermesProfileBinding";
+import {
+  resolveHermesProfileForCreate,
+  resolveHermesProfileForUpdate,
+  shouldClearHermesProfileOnRuntimeChange,
+} from "../lib/hermesProfileBinding";
 import { EMPTY_GLOBAL_CONFIG } from "./AgentConfigFields";
 import {
   HermesProfileField,
@@ -22,49 +31,81 @@ import { HermesProfileModelField } from "./HermesProfileModelField";
 import { HermesSoulEditor } from "./HermesSoulEditor";
 
 export function useCreateHermesBinding({
-  enabled,
+  personaId = null,
   hermesProfile,
   onHermesProfileChange,
   respondTo,
   runtime,
 }: {
-  enabled: boolean;
+  /** Definition id while editing; null/absent on create. */
+  personaId?: string | null;
   hermesProfile: string;
   onHermesProfileChange: (next: string) => void;
   respondTo: RespondToMode | null;
   runtime: AcpRuntimeCatalogEntry | undefined;
 }) {
+  const isCreate = !personaId?.trim();
+  const agentsQuery = useManagedAgentsQuery({ enabled: !isCreate });
+  const linkedAgent = React.useMemo(() => {
+    const id = personaId?.trim();
+    if (!id) return null;
+    return (
+      (agentsQuery.data ?? []).find((agent) => agent.personaId === id) ?? null
+    );
+  }, [agentsQuery.data, personaId]);
+
   React.useEffect(() => {
     if (hermesProfile && shouldClearHermesProfileOnRuntimeChange(runtime)) {
       onHermesProfileChange("");
     }
   }, [hermesProfile, onHermesProfileChange, runtime]);
+
+  React.useEffect(() => {
+    if (shouldClearHermesProfileOnRuntimeChange(runtime)) return;
+    const bound = linkedAgent?.hermesProfile?.trim() ?? "";
+    if (!bound || hermesProfile.trim()) return;
+    onHermesProfileChange(bound);
+  }, [
+    hermesProfile,
+    linkedAgent?.hermesProfile,
+    onHermesProfileChange,
+    runtime,
+  ]);
+
   const fieldModel = React.useMemo(
     () =>
       deriveAgentConfigFieldModel({
         config: EMPTY_GLOBAL_CONFIG,
         hermesProfile,
         runtime,
-        scope: "instance",
+        scope: isCreate ? "definition" : "instance",
       }),
-    [hermesProfile, runtime],
+    [hermesProfile, isCreate, runtime],
   );
-  const showProfileField =
-    enabled && getRenderableHermesProfileField(fieldModel) != null;
-  const modelOwnedByProfile = enabled && isModelOwnedByProfile(fieldModel);
-  const modelWriteThrough = enabled && isModelWriteThrough(fieldModel);
+  const offersBinding = getRenderableHermesProfileField(fieldModel) != null;
+  const showProfileField = offersBinding && (isCreate || linkedAgent != null);
+  const modelOwnedByProfile = isModelOwnedByProfile(fieldModel);
+  const modelWriteThrough = isModelWriteThrough(fieldModel);
   const { blockingError } = useHermesProfileBindingState({
+    currentAgentName: linkedAgent?.name ?? null,
+    editingPubkey: linkedAgent?.pubkey ?? null,
     enabled: showProfileField,
     hermesProfile,
-    editingPubkey: null,
+    required: showProfileField,
     respondTo,
-    required: true,
   });
   return {
     showProfileField,
     modelOwnedByProfile,
     modelWriteThrough,
     profileError: blockingError,
+    hermesProfileForSubmit: isCreate
+      ? resolveHermesProfileForCreate(hermesProfile, runtime)
+      : resolveHermesProfileForUpdate(
+          linkedAgent?.hermesProfile,
+          hermesProfile,
+          runtime,
+        ),
   };
 }
 

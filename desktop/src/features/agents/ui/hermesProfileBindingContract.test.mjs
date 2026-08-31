@@ -37,6 +37,7 @@ import {
   hermesProfileOccupancyLabel,
   isHermesHomeProfile,
   normalizeHermesProfileList,
+  personaInstanceHermesProfileUpdates,
   profileOwnedModelLabel,
   resolveHermesProfileForCreate,
   resolveHermesProfileForUpdate,
@@ -600,4 +601,76 @@ test("profile write-through no longer uses the owned-model omission", () => {
   });
   assert.equal(isModelOwnedByProfile(model), false);
   assert.equal(isModelWriteThrough(model), true);
+});
+
+test("definition dialog Hermes binding is not create-only", async () => {
+  const dialogSource = await readFile(
+    new URL("./AgentDefinitionDialog.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.equal(dialogSource.includes("enabled: isCreateMode"), false);
+  assert.match(createBindingSource, /personaId/);
+  assert.equal(
+    createBindingSource.includes("enabled && isModelWriteThrough"),
+    false,
+  );
+  assert.match(
+    createBindingSource,
+    /const modelWriteThrough = isModelWriteThrough\(fieldModel\)/,
+  );
+});
+
+test("personaInstanceHermesProfileUpdates patches changed linked instances only", () => {
+  assert.deepEqual(
+    personaInstanceHermesProfileUpdates({
+      personaId: "persona-1",
+      hermesProfile: undefined,
+      agents: [
+        {
+          pubkey: "aaa",
+          personaId: "persona-1",
+          hermesProfile: "scout",
+        },
+      ],
+    }),
+    [],
+  );
+  assert.deepEqual(
+    personaInstanceHermesProfileUpdates({
+      personaId: "persona-1",
+      hermesProfile: "builder",
+      agents: [
+        {
+          pubkey: "aaa",
+          personaId: "persona-1",
+          hermesProfile: "scout",
+        },
+        {
+          pubkey: "bbb",
+          personaId: "persona-1",
+          hermesProfile: "builder",
+        },
+        {
+          pubkey: "ccc",
+          personaId: "persona-other",
+          hermesProfile: "scout",
+        },
+      ],
+    }),
+    [{ pubkey: "aaa", hermesProfile: "builder" }],
+  );
+  assert.deepEqual(
+    personaInstanceHermesProfileUpdates({
+      personaId: "persona-1",
+      hermesProfile: null,
+      agents: [
+        {
+          pubkey: "aaa",
+          personaId: "persona-1",
+          hermesProfile: "scout",
+        },
+      ],
+    }),
+    [{ pubkey: "aaa", hermesProfile: null }],
+  );
 });
