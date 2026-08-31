@@ -131,11 +131,57 @@ test.describe("hermes profile binding", () => {
     await waitForAnimations(page);
 
     await expect(page.getByTestId("hermes-profile-field")).toBeVisible();
+    await expect(dialog.locator("#persona-model")).toHaveCount(0);
     await dialog.locator("#persona-hermes-profile").fill("scout");
     await expect(page.getByTestId("hermes-profile-model-field")).toBeVisible();
     await expect(page.getByTestId("hermes-profile-model-field")).toContainText(
       "changing it here changes it everywhere",
     );
+  });
+
+  test("edit definition: Hermes shows profile picker instead of model", async ({
+    page,
+  }) => {
+    const PERSONA_ID = "persona-hermes-default";
+    await installMockBridge(page, {
+      hermesProfiles: ["scout"],
+      managedAgents: [
+        {
+          pubkey: HERMES_AGENT_PUBKEY,
+          name: "Hermes Default",
+          personaId: PERSONA_ID,
+          status: "stopped",
+          channelNames: ["agents"],
+          runtime: "hermes",
+          hermesProfile: "scout",
+        },
+      ],
+      personas: [
+        {
+          id: PERSONA_ID,
+          displayName: "Hermes Default",
+          systemPrompt: "",
+          runtime: "hermes",
+          model: "grok-4.6",
+        },
+      ],
+    });
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByTestId("open-agents-view").click();
+    await page
+      .getByRole("button", { name: "Open actions for Hermes Default" })
+      .click();
+    await page.getByRole("menuitem", { name: "Edit" }).click();
+    const dialog = page.getByTestId("persona-dialog");
+    await expect(dialog).toBeVisible({ timeout: 10_000 });
+    await expect(
+      dialog.getByRole("heading", { name: "Edit agent" }),
+    ).toBeVisible();
+    await expect(page.getByTestId("hermes-profile-field")).toBeVisible();
+    await expect(dialog.locator("#persona-hermes-profile")).toHaveValue(
+      "scout",
+    );
+    await expect(dialog.locator("#persona-model")).toHaveCount(0);
   });
 
   test("create: switching away clears the hidden Hermes profile", async ({

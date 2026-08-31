@@ -15,6 +15,7 @@ import {
   useCreatePersonaMutation,
   useManagedAgentsQuery,
   usePersonasQuery,
+  useUpdateManagedAgentMutation,
   useUpdatePersonaMutation,
 } from "./hooks";
 import {
@@ -28,8 +29,10 @@ import { useChannelsQuery } from "@/features/channels/hooks";
 import { resolveManagedAgentAvatarUrl } from "./ui/managedAgentAvatar";
 import type { AgentCreateIntent } from "./ui/agentCreateIntent";
 import { editPersonaDialogState } from "./ui/personaDialogState";
+import { personaInstanceHermesProfileUpdates } from "./lib/hermesProfileBinding";
 import type {
   CreatePersonaInput,
+  ManagedAgent,
   UpdatePersonaInput,
 } from "@/shared/api/types";
 
@@ -65,6 +68,7 @@ export function useAgentManagement() {
   const runtimesQuery = useAcpRuntimesQueryForced({ forceOnMount: false });
   const createPersonaMutation = useCreatePersonaMutation();
   const updatePersonaMutation = useUpdatePersonaMutation();
+  const updateManagedAgentMutation = useUpdateManagedAgentMutation();
   const createAgentMutation = useCreateManagedAgentMutation();
   const [request, setRequest] = React.useState<AgentManagementRequest | null>(
     null,
@@ -240,7 +244,10 @@ export function useAgentManagement() {
     }
   }
 
-  async function submitUpdate(input: CreatePersonaInput | UpdatePersonaInput) {
+  async function submitUpdate(
+    input: CreatePersonaInput | UpdatePersonaInput,
+    options?: { hermesProfile?: string | null },
+  ) {
     if (request?.action !== "update" || !("id" in input)) {
       return false;
     }
@@ -248,6 +255,15 @@ export function useAgentManagement() {
     try {
       assertAgentCanActFromOrigin(request.request.channelId);
       await updatePersonaMutation.mutateAsync(input);
+      const instanceUpdates = personaInstanceHermesProfileUpdates({
+        personaId: input.id,
+        hermesProfile: options?.hermesProfile,
+        agents:
+          queryClient.getQueryData<ManagedAgent[]>(managedAgentsQueryKey) ?? [],
+      });
+      for (const update of instanceUpdates) {
+        await updateManagedAgentMutation.mutateAsync(update);
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: personasQueryKey }),
         queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey }),

@@ -13,6 +13,7 @@ import {
   usePreviewAgentSnapshotImportMutation,
   useConfirmAgentSnapshotImportMutation,
   useSetPersonaActiveMutation,
+  useUpdateManagedAgentMutation,
   useUpdatePersonaMutation,
   type AgentSnapshotImportPreview,
   type AgentSnapshotImportResult,
@@ -34,6 +35,7 @@ import {
   useUpdatePersonaAndPublishMutation,
 } from "@/features/agents/lib/usePersonaCatalogRelay";
 import { personaSaveNotice } from "@/features/agents/lib/personaSaveNotice";
+import { personaInstanceHermesProfileUpdates } from "@/features/agents/lib/hermesProfileBinding";
 import { useCreatedAgentChannelAttachment } from "@/features/agents/useCreatedAgentChannelAttachment";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { useIdentityQuery } from "@/shared/api/hooks";
@@ -93,6 +95,7 @@ export function usePersonaActions() {
   const createAgentMutation = useCreateManagedAgentMutation();
   const createPersonaMutation = useCreatePersonaMutation();
   const updatePersonaMutation = useUpdatePersonaMutation();
+  const updateManagedAgentMutation = useUpdateManagedAgentMutation();
   const updatePersonaAndPublishMutation =
     useUpdatePersonaAndPublishMutation(communityId);
   const deletePersonaMutation = useDeletePersonaMutation();
@@ -218,6 +221,16 @@ export function usePersonaActions() {
         } else {
           await updatePersonaMutation.mutateAsync(input);
           setPersonaNoticeMessage(personaSaveNotice(input.displayName, null));
+        }
+        const instanceUpdates = personaInstanceHermesProfileUpdates({
+          personaId: input.id,
+          hermesProfile: options?.hermesProfile,
+          agents:
+            queryClient.getQueryData<ManagedAgent[]>(managedAgentsQueryKey) ??
+            [],
+        });
+        for (const update of instanceUpdates) {
+          await updateManagedAgentMutation.mutateAsync(update);
         }
       } else {
         const runtime = availableRuntimes.find(
