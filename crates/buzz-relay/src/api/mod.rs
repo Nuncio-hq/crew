@@ -117,11 +117,12 @@ pub mod relay_members {
     /// its NIP-OA owner *is* — access is granted via delegation.
     ///
     /// On open relays (`require_relay_membership = false`), returns `Ok(None)`
-    /// immediately — no membership check is performed. Callers that need NIP-OA
-    /// owner extraction on open relays should call [`extract_nip_oa_owner`] directly.
+    /// immediately — no membership check is performed.
     ///
     /// Returns `Ok(None)` when the caller is a direct member (closed relay) or when
-    /// no NIP-OA tag is present/applicable (open relay without auth tag).
+    /// no NIP-OA tag is present/applicable (open relay without auth tag). Direct
+    /// members still need [`owner_for_nip_oa_backfill`] so a NIP-OA tag can fill
+    /// `users.agent_owner_pubkey`.
     pub async fn enforce_relay_membership(
         state: &AppState,
         community: CommunityId,
@@ -147,11 +148,9 @@ pub mod relay_members {
 
     /// Extract NIP-OA owner from an auth tag without membership enforcement.
     ///
-    /// Used on open relays (`require_relay_membership = false`) to opportunistically
-    /// extract the owner pubkey for agent→owner backfill. The NIP-OA signature is
-    /// cryptographically self-proving, so no feature flag is needed — if the tag
-    /// verifies, the owner relationship is authentic. Returns `None` if the tag
-    /// is absent or invalid.
+    /// The NIP-OA signature is cryptographically self-proving, so no feature
+    /// flag is needed — if the tag verifies, the owner relationship is authentic.
+    /// Returns `None` if the tag is absent or invalid.
     pub fn extract_nip_oa_owner(
         pubkey_bytes: &[u8],
         auth_tag_header: Option<&str>,
@@ -165,6 +164,20 @@ pub mod relay_members {
                 None
             }
         }
+    }
+
+    /// Owner pubkey to persist after a successful membership check.
+    ///
+    /// Direct members on a closed relay make `enforce_relay_membership` return
+    /// `Ok(None)`. ACP AUTH/`x-auth-tag` still carries a NIP-OA tag; receipts
+    /// and observer frames need `users.agent_owner_pubkey`. Closed vs open must
+    /// not drop that tag.
+    pub fn owner_for_nip_oa_backfill(
+        membership_owner: Option<nostr::PublicKey>,
+        pubkey_bytes: &[u8],
+        auth_tag: Option<&str>,
+    ) -> Option<nostr::PublicKey> {
+        membership_owner.or_else(|| extract_nip_oa_owner(pubkey_bytes, auth_tag))
     }
 
     /// Persist a cryptographically verified NIP-OA agent→owner relationship.
@@ -272,6 +285,40 @@ pub mod relay_members {
 
             let result = extract_nip_oa_owner(&agent_pubkey.to_bytes(), Some("not valid json"));
 
+            assert_eq!(result, None);
+        }
+
+        /// Direct member on a closed relay: enforce returns None, but a valid
+        /// NIP-OA tag still yields the owner for users.agent_owner_pubkey.
+        #[test]
+        fn closed_relay_direct_member_still_backfills_nip_oa_owner() {
+            let owner_keys = Keys::generate();
+            let agent_keys = Keys::generate();
+            let agent_pubkey = agent_keys.public_key();
+            let tag_json = compute_auth_tag(&owner_keys, &agent_pubkey, "")
+                .expect("compute_auth_tag must succeed");
+
+            let result = owner_for_nip_oa_backfill(None, &agent_pubkey.to_bytes(), Some(&tag_json));
+
+            assert_eq!(result, Some(owner_keys.public_key()));
+        }
+
+        #[test]
+        fn via_owner_membership_is_kept_without_reextract() {
+            let owner_keys = Keys::generate();
+            let agent_keys = Keys::generate();
+            let result = owner_for_nip_oa_backfill(
+                Some(owner_keys.public_key()),
+                &agent_keys.public_key().to_bytes(),
+                None,
+            );
+            assert_eq!(result, Some(owner_keys.public_key()));
+        }
+
+        #[test]
+        fn missing_tag_and_no_membership_owner_skips_backfill() {
+            let agent_keys = Keys::generate();
+            let result = owner_for_nip_oa_backfill(None, &agent_keys.public_key().to_bytes(), None);
             assert_eq!(result, None);
         }
     }
