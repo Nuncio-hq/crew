@@ -24,6 +24,7 @@ import {
   usePersonasQuery,
   useRelayAgentsQuery,
 } from "@/features/agents/hooks";
+import { personaAvatarById } from "@/features/agents/lib/agentCardAvatar";
 import { mergeChannelKnownAgentPubkeys } from "@/features/agents/knownAgentPubkeys";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { pickWelcomeGuideAgent } from "@/features/onboarding/welcomeGuide";
@@ -308,6 +309,11 @@ export function ChannelScreen({
   });
   const relayAgentsQuery = useRelayAgentsQuery();
   const relayAgents = relayAgentsQuery.data ?? [];
+  const personasQuery = usePersonasQuery();
+  const personaAvatars = React.useMemo(
+    () => personaAvatarById(personasQuery.data ?? []),
+    [personasQuery.data],
+  );
   const knownAgentPubkeys = React.useMemo(
     () =>
       mergeChannelKnownAgentPubkeys(channelMembers, managedAgents, relayAgents),
@@ -359,6 +365,7 @@ export function ChannelScreen({
     currentProfile,
     currentPubkey,
     managedAgents,
+    personaAvatars,
     profiles: messageProfilesQuery.data?.profiles,
     relayAgents,
   });
@@ -373,7 +380,6 @@ export function ChannelScreen({
     }
     return pubkeys;
   }, [knownAgentPubkeys, messageProfiles, communityAgentPubkeys]);
-  const personasQuery = usePersonasQuery();
   const { personaLookup, respondToLookup } = React.useMemo(() => {
     const agents = managedAgentsQuery.data ?? [];
     const personaById = new Map(

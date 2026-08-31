@@ -10,6 +10,7 @@ import {
 import { resetActiveAgentTurnsStore } from "../../agents/activeAgentTurnsStore.ts";
 import {
   channelScopedBotTypingPubkeyKey,
+  mergeAgentNamesIntoProfiles,
   mergeMemberAgentFlagsIntoProfiles,
 } from "./useChannelActivityTyping.ts";
 
@@ -154,5 +155,55 @@ describe("mergeMemberAgentFlagsIntoProfiles", () => {
       isAgent: true,
     });
     assert.equal(profiles[AGENT].isAgent, undefined);
+  });
+});
+
+describe("mergeAgentNamesIntoProfiles", () => {
+  it("uses the persona default avatar when kind:0 has no picture", () => {
+    const profiles = mergeAgentNamesIntoProfiles(
+      {},
+      [
+        {
+          pubkey: AGENT,
+          name: "Hermes Default",
+          personaId: "persona-hermes",
+          avatarUrl: null,
+        },
+      ],
+      [],
+      AGENT_2,
+      { "persona-hermes": "https://example.com/hermes.png" },
+    );
+
+    assert.equal(profiles[AGENT].avatarUrl, "https://example.com/hermes.png");
+    assert.equal(profiles[AGENT].displayName, "Hermes Default");
+  });
+
+  it("keeps the kind:0 picture over the persona default", () => {
+    const profiles = mergeAgentNamesIntoProfiles(
+      {
+        [AGENT]: {
+          displayName: "Hermes Default",
+          name: null,
+          avatarUrl: "https://relay.example/kind0.png",
+          nip05Handle: null,
+          isAgent: true,
+          ownerPubkey: null,
+        },
+      },
+      [
+        {
+          pubkey: AGENT,
+          name: "Hermes Default",
+          personaId: "persona-hermes",
+          avatarUrl: null,
+        },
+      ],
+      [],
+      undefined,
+      { "persona-hermes": "https://example.com/hermes.png" },
+    );
+
+    assert.equal(profiles[AGENT].avatarUrl, "https://relay.example/kind0.png");
   });
 });

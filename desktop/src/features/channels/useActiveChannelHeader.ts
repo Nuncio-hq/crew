@@ -1,5 +1,12 @@
 import * as React from "react";
 
+import {
+  useManagedAgentsQuery,
+  usePersonasQuery,
+  useRelayAgentsQuery,
+} from "@/features/agents/hooks";
+import { personaAvatarById } from "@/features/agents/lib/agentCardAvatar";
+import { mergeAgentNamesIntoProfiles } from "@/features/channels/ui/useChannelActivityTyping";
 import { useEphemeralChannelDisplay } from "@/features/channels/useEphemeralChannelDisplay";
 import { usePresenceQuery } from "@/features/presence/hooks";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
@@ -47,6 +54,32 @@ export function useActiveChannelHeader(
   const activeDmProfilesQuery = useUsersBatchQuery(activeDmParticipantPubkeys, {
     enabled: activeDmParticipantPubkeys.length > 0,
   });
+  const managedAgentsQuery = useManagedAgentsQuery({
+    enabled: activeDmParticipantPubkeys.length > 0,
+  });
+  const personasQuery = usePersonasQuery({
+    enabled: activeDmParticipantPubkeys.length > 0,
+  });
+  const relayAgentsQuery = useRelayAgentsQuery({
+    enabled: activeDmParticipantPubkeys.length > 0,
+  });
+  const dmProfiles = React.useMemo(
+    () =>
+      mergeAgentNamesIntoProfiles(
+        activeDmProfilesQuery.data?.profiles ?? {},
+        managedAgentsQuery.data ?? [],
+        relayAgentsQuery.data ?? [],
+        currentPubkey,
+        personaAvatarById(personasQuery.data ?? []),
+      ),
+    [
+      activeDmProfilesQuery.data?.profiles,
+      currentPubkey,
+      managedAgentsQuery.data,
+      personasQuery.data,
+      relayAgentsQuery.data,
+    ],
+  );
   const activeChannelEphemeralDisplay =
     useEphemeralChannelDisplay(activeChannel);
   const activeDmPresenceStatus: PresenceStatus | null =
@@ -57,39 +90,31 @@ export function useActiveChannelHeader(
       : null;
   const activeDmAvatarUrl =
     activeDmParticipantPubkeys.length > 0
-      ? (activeDmProfilesQuery.data?.profiles?.[
-          normalizePubkey(activeDmParticipantPubkeys[0] ?? "")
-        ]?.avatarUrl ?? null)
+      ? (dmProfiles[normalizePubkey(activeDmParticipantPubkeys[0] ?? "")]
+          ?.avatarUrl ?? null)
       : null;
   const activeDmHeaderParticipants = React.useMemo(
     () =>
       activeDmParticipants.map((participant) => {
-        const profile =
-          activeDmProfilesQuery.data?.profiles?.[
-            normalizePubkey(participant.pubkey)
-          ] ?? null;
+        const profile = dmProfiles[normalizePubkey(participant.pubkey)] ?? null;
 
         return {
           pubkey: participant.pubkey,
           displayName: resolveUserLabel({
             currentPubkey,
             fallbackName: participant.fallbackName,
-            profiles: activeDmProfilesQuery.data?.profiles,
+            profiles: dmProfiles,
             pubkey: participant.pubkey,
           }),
           avatarUrl: profile?.avatarUrl ?? null,
         };
       }),
-    [activeDmParticipants, activeDmProfilesQuery.data?.profiles, currentPubkey],
+    [activeDmParticipants, currentPubkey, dmProfiles],
   );
 
   return {
     activeChannelTitle: activeChannel
-      ? resolveChannelDisplayLabel(
-          activeChannel,
-          currentPubkey,
-          activeDmProfilesQuery.data?.profiles,
-        )
+      ? resolveChannelDisplayLabel(activeChannel, currentPubkey, dmProfiles)
       : "Channels",
     activeDmAvatarUrl,
     activeDmHeaderParticipants,

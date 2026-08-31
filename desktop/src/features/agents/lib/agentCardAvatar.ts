@@ -6,14 +6,22 @@
  * profile is missing or has no picture.
  */
 export function resolveAgentCardAvatarUrl(
-  profileAvatarUrl: string | null | undefined,
-  personaAvatarUrl: string | null | undefined,
+  ...candidates: Array<string | null | undefined>
 ): string | null {
-  for (const candidate of [profileAvatarUrl, personaAvatarUrl]) {
+  for (const candidate of candidates) {
     const trimmed = candidate?.trim();
     if (trimmed) return trimmed;
   }
   return null;
+}
+
+/** Map of persona id → default avatar, used when kind:0 has no picture. */
+export function personaAvatarById(
+  personas: readonly { id: string; avatarUrl: string | null }[],
+): Record<string, string | null> {
+  return Object.fromEntries(
+    personas.map((persona) => [persona.id, persona.avatarUrl]),
+  );
 }
 
 /**
