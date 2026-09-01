@@ -80,6 +80,19 @@ export function personaRuntimeById(
   );
 }
 
+type PersonaAvatarSource = {
+  id: string;
+  avatarUrl: string | null;
+  runtime: string | null;
+};
+
+type ManagedAgentAvatarSource = {
+  pubkey: string;
+  avatarUrl?: string | null;
+  runtime?: string | null;
+  personaId?: string | null;
+};
+
 /** Kind:0 picture, then instance, then persona, then runtime bitmap. */
 export function resolveManagedAgentDisplayAvatarUrl({
   profileAvatarUrl,
@@ -102,6 +115,32 @@ export function resolveManagedAgentDisplayAvatarUrl({
       effectiveRuntimeId(agentRuntime, personaRuntime),
     ),
   );
+}
+
+export function mentionAvatarForManagedAgent(
+  agent: ManagedAgentAvatarSource,
+  personas: readonly PersonaAvatarSource[],
+  profileAvatarUrl?: string | null,
+): string | null {
+  const persona = agent.personaId
+    ? personas.find((item) => item.id === agent.personaId)
+    : undefined;
+  return resolveManagedAgentDisplayAvatarUrl({
+    profileAvatarUrl,
+    agentAvatarUrl: agent.avatarUrl,
+    agentRuntime: agent.runtime,
+    personaAvatarUrl: persona?.avatarUrl,
+    personaRuntime: persona?.runtime,
+  });
+}
+
+export function mentionAvatarForPersona(
+  persona: Pick<PersonaAvatarSource, "avatarUrl" | "runtime">,
+): string | null {
+  return resolveManagedAgentDisplayAvatarUrl({
+    personaAvatarUrl: persona.avatarUrl,
+    personaRuntime: persona.runtime,
+  });
 }
 
 /**

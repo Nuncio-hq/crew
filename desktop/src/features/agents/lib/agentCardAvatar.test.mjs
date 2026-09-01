@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   isAgentCardAvatarLoading,
+  mentionAvatarForManagedAgent,
+  mentionAvatarForPersona,
   personaAvatarById,
   personaRuntimeById,
   resolveAgentCardAvatarUrl,
@@ -142,6 +144,34 @@ test("managed agent display avatar inherits persona runtime when instance is unp
       personaRuntime: "hermes",
     }),
     "/harness-logos/hermes.png",
+  );
+});
+
+test("mention helpers resolve running agents and unused personas", () => {
+  const personas = [
+    { id: "persona-hermes", avatarUrl: null, runtime: "hermes" },
+    {
+      id: "persona-fizz",
+      avatarUrl: "data:image/png;base64,fizz",
+      runtime: null,
+    },
+  ];
+  assert.equal(
+    mentionAvatarForManagedAgent(
+      {
+        pubkey: "aa".repeat(32),
+        avatarUrl: null,
+        runtime: null,
+        personaId: "persona-hermes",
+      },
+      personas,
+      null,
+    ),
+    "/harness-logos/hermes.png",
+  );
+  assert.equal(
+    mentionAvatarForPersona(personas[1]),
+    "data:image/png;base64,fizz",
   );
 });
 

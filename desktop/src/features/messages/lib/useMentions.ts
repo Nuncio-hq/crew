@@ -5,7 +5,10 @@ import {
   useRelayAgentsQuery,
   useTeamsQuery,
 } from "@/features/agents/hooks";
-import { resolveManagedAgentDisplayAvatarUrl } from "@/features/agents/lib/agentCardAvatar";
+import {
+  mentionAvatarForManagedAgent,
+  mentionAvatarForPersona,
+} from "@/features/agents/lib/agentCardAvatar";
 import {
   useChannelMembersQuery,
   useChannelsQuery,
@@ -355,23 +358,15 @@ export function useMentions(
       });
     }
     for (const agent of managedAgentsQuery.data ?? []) {
-      const pubkey = normalizePubkey(agent.pubkey);
-      const linkedPersona = agent.personaId
-        ? (personasQuery.data ?? []).find(
-            (persona) => persona.id === agent.personaId,
-          )
-        : undefined;
       addCandidate({
         kind: "identity",
         pubkey: agent.pubkey,
         displayName: agent.name,
-        avatarUrl: resolveManagedAgentDisplayAvatarUrl({
-          profileAvatarUrl: profiles?.[pubkey]?.avatarUrl,
-          agentAvatarUrl: agent.avatarUrl,
-          agentRuntime: agent.runtime,
-          personaAvatarUrl: linkedPersona?.avatarUrl,
-          personaRuntime: linkedPersona?.runtime,
-        }),
+        avatarUrl: mentionAvatarForManagedAgent(
+          agent,
+          activePersonas,
+          profiles?.[normalizePubkey(agent.pubkey)]?.avatarUrl,
+        ),
         isMember: false,
         isAgent: true,
         isManagedAgent: true,
@@ -411,10 +406,7 @@ export function useMentions(
         kind: "persona" as const,
         personaId: persona.id,
         displayName: persona.displayName,
-        avatarUrl: resolveManagedAgentDisplayAvatarUrl({
-          personaAvatarUrl: persona.avatarUrl,
-          personaRuntime: persona.runtime,
-        }),
+        avatarUrl: mentionAvatarForPersona(persona),
         isMember: false,
         isAgent: true,
       }))
@@ -447,7 +439,6 @@ export function useMentions(
     mentionableAgentPubkeys,
     crewRoleByPubkey,
     personaNameByPubkey,
-    personasQuery.data,
     profiles,
     relayAgentDirectoryReady,
     relayAgentNamesByPubkey,
