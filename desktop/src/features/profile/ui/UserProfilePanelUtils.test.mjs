@@ -7,6 +7,7 @@ import {
   personaManagedAgentUpdate,
   profilePanelTabFromSearch,
   profilePanelViewFromSearch,
+  resolvePanelProfile,
 } from "./UserProfilePanelUtils.ts";
 
 function agent(overrides = {}) {
@@ -238,4 +239,49 @@ test("profilePanelTabFromSearch falls back to info for invalid values", () => {
   assert.equal(parseProfilePanelTab("missing"), null);
   assert.equal(profilePanelTabFromSearch("missing"), "info");
   assert.equal(profilePanelTabFromSearch(null), "info");
+});
+
+test("resolvePanelProfile uses Hermes runtime bitmap when no picture exists", () => {
+  const profile = resolvePanelProfile({
+    managedAgent: agent({
+      avatarUrl: null,
+      runtime: "hermes",
+    }),
+    persona: persona({ avatarUrl: null, runtime: null }),
+    profile: {
+      pubkey: "deadbeef".repeat(8),
+      displayName: "Hermes Default",
+      avatarUrl: null,
+      about: null,
+      nip05Handle: null,
+      ownerPubkey: null,
+      hasProfileEvent: false,
+    },
+  });
+
+  assert.equal(profile?.avatarUrl, "/harness-logos/hermes.png");
+});
+
+test("resolvePanelProfile prefers persona clay-bee over runtime bitmap", () => {
+  const profile = resolvePanelProfile({
+    managedAgent: agent({
+      avatarUrl: null,
+      runtime: "hermes",
+    }),
+    persona: persona({
+      avatarUrl: "data:image/png;base64,fizz",
+      runtime: "hermes",
+    }),
+    profile: {
+      pubkey: "deadbeef".repeat(8),
+      displayName: "Fizz",
+      avatarUrl: null,
+      about: null,
+      nip05Handle: null,
+      ownerPubkey: null,
+      hasProfileEvent: false,
+    },
+  });
+
+  assert.equal(profile?.avatarUrl, "data:image/png;base64,fizz");
 });

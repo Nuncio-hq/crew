@@ -63,3 +63,17 @@ test("agentMentionAvatarDecoration: null when no avatar", () => {
   assert.equal(agentMentionAvatarDecoration(null), null);
   assert.equal(agentMentionAvatarDecoration(""), null);
 });
+
+test("agentMentionAvatarStyle: runtime public faces paint mention chips", () => {
+  for (const url of [
+    "/harness-logos/hermes.png",
+    "/harness-logos/claude.png",
+    "/harness-logos/goose.svg",
+    "/harness-logos/cursor.svg",
+    "/harness-logos/terminal.svg",
+  ]) {
+    const result = agentMentionAvatarStyle(url);
+    assert.equal(result.className, AGENT_MENTION_AVATAR_CLASS);
+    assert.equal(result.style?.[AGENT_MENTION_AVATAR_VAR], `url("${url}")`);
+  }
+});
