@@ -3,8 +3,13 @@ import test from "node:test";
 
 import {
   isAgentCardAvatarLoading,
+  mentionAvatarForManagedAgent,
+  mentionAvatarForPersona,
   personaAvatarById,
+  personaRuntimeById,
   resolveAgentCardAvatarUrl,
+  resolveManagedAgentDisplayAvatarUrl,
+  resolveRuntimeDefaultAvatarUrl,
 } from "./agentCardAvatar.ts";
 
 test("running agent card prefers the pubkey profile avatar", () => {
@@ -54,5 +59,137 @@ test("personaAvatarById indexes default avatars by persona id", () => {
       fizz: "https://example.com/fizz.png",
       honey: null,
     },
+  );
+});
+
+test("personaRuntimeById indexes harness ids by persona id", () => {
+  assert.deepEqual(
+    personaRuntimeById([
+      { id: "fizz", runtime: "hermes" },
+      { id: "honey", runtime: null },
+    ]),
+    {
+      fizz: "hermes",
+      honey: null,
+    },
+  );
+});
+
+test("resolveRuntimeDefaultAvatarUrl covers compiled-in runtimes and aliases", () => {
+  assert.equal(
+    resolveRuntimeDefaultAvatarUrl("hermes"),
+    "/harness-logos/hermes.png",
+  );
+  assert.equal(
+    resolveRuntimeDefaultAvatarUrl("hermes-agent"),
+    "/harness-logos/hermes.png",
+  );
+  assert.equal(
+    resolveRuntimeDefaultAvatarUrl("claude"),
+    "/harness-logos/claude.png",
+  );
+  assert.equal(
+    resolveRuntimeDefaultAvatarUrl("claude-code"),
+    "/harness-logos/claude.png",
+  );
+  assert.equal(
+    resolveRuntimeDefaultAvatarUrl("goose"),
+    "/harness-logos/goose.svg",
+  );
+  assert.equal(
+    resolveRuntimeDefaultAvatarUrl("cursor"),
+    "/harness-logos/cursor.svg",
+  );
+  assert.equal(
+    resolveRuntimeDefaultAvatarUrl("codex"),
+    "/harness-logos/terminal.svg",
+  );
+  assert.equal(resolveRuntimeDefaultAvatarUrl("custom"), null);
+  assert.equal(resolveRuntimeDefaultAvatarUrl("unknown-runtime"), null);
+});
+
+test("managed agent display avatar uses Hermes runtime when no picture exists", () => {
+  assert.equal(
+    resolveManagedAgentDisplayAvatarUrl({
+      profileAvatarUrl: null,
+      agentAvatarUrl: null,
+      agentRuntime: "hermes",
+      personaAvatarUrl: null,
+      personaRuntime: null,
+    }),
+    "/harness-logos/hermes.png",
+  );
+});
+
+test("managed agent display avatar prefers persona clay-bee over runtime", () => {
+  assert.equal(
+    resolveManagedAgentDisplayAvatarUrl({
+      profileAvatarUrl: null,
+      agentAvatarUrl: null,
+      agentRuntime: "hermes",
+      personaAvatarUrl: "data:image/png;base64,fizz",
+      personaRuntime: "hermes",
+    }),
+    "data:image/png;base64,fizz",
+  );
+});
+
+test("managed agent display avatar inherits persona runtime when instance is unpinned", () => {
+  assert.equal(
+    resolveManagedAgentDisplayAvatarUrl({
+      profileAvatarUrl: null,
+      agentAvatarUrl: null,
+      agentRuntime: null,
+      personaAvatarUrl: null,
+      personaRuntime: "hermes",
+    }),
+    "/harness-logos/hermes.png",
+  );
+});
+
+test("mention helpers resolve running agents and unused personas", () => {
+  const personas = [
+    { id: "persona-hermes", avatarUrl: null, runtime: "hermes" },
+    {
+      id: "persona-fizz",
+      avatarUrl: "data:image/png;base64,fizz",
+      runtime: null,
+    },
+  ];
+  assert.equal(
+    mentionAvatarForManagedAgent(
+      {
+        pubkey: "aa".repeat(32),
+        avatarUrl: null,
+        runtime: null,
+        personaId: "persona-hermes",
+      },
+      personas,
+      null,
+    ),
+    "/harness-logos/hermes.png",
+  );
+  assert.equal(
+    mentionAvatarForPersona(personas[1]),
+    "data:image/png;base64,fizz",
+  );
+});
+
+test("managed agent display avatar uses Claude, Goose, Cursor, and Codex faces", () => {
+  assert.equal(
+    resolveManagedAgentDisplayAvatarUrl({ agentRuntime: "claude" }),
+    "/harness-logos/claude.png",
+  );
+  assert.equal(
+    resolveManagedAgentDisplayAvatarUrl({ agentRuntime: "goose" }),
+    "/harness-logos/goose.svg",
+  );
+  assert.equal(
+    resolveManagedAgentDisplayAvatarUrl({ agentRuntime: "cursor" }),
+    "/harness-logos/cursor.svg",
+  );
+  assert.equal(
+    resolveManagedAgentDisplayAvatarUrl({ agentRuntime: "codex" }),
+    "/harness-logos/terminal.svg",
   );
 });

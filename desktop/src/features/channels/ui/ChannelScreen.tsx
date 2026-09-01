@@ -24,7 +24,10 @@ import {
   usePersonasQuery,
   useRelayAgentsQuery,
 } from "@/features/agents/hooks";
-import { personaAvatarById } from "@/features/agents/lib/agentCardAvatar";
+import {
+  personaAvatarById,
+  personaRuntimeById,
+} from "@/features/agents/lib/agentCardAvatar";
 import { mergeChannelKnownAgentPubkeys } from "@/features/agents/knownAgentPubkeys";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { pickWelcomeGuideAgent } from "@/features/onboarding/welcomeGuide";
@@ -314,6 +317,10 @@ export function ChannelScreen({
     () => personaAvatarById(personasQuery.data ?? []),
     [personasQuery.data],
   );
+  const personaRuntimes = React.useMemo(
+    () => personaRuntimeById(personasQuery.data ?? []),
+    [personasQuery.data],
+  );
   const knownAgentPubkeys = React.useMemo(
     () =>
       mergeChannelKnownAgentPubkeys(channelMembers, managedAgents, relayAgents),
@@ -366,6 +373,7 @@ export function ChannelScreen({
     currentPubkey,
     managedAgents,
     personaAvatars,
+    personaRuntimes,
     profiles: messageProfilesQuery.data?.profiles,
     relayAgents,
   });

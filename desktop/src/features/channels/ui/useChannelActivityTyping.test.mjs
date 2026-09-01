@@ -168,6 +168,7 @@ describe("mergeAgentNamesIntoProfiles", () => {
           name: "Hermes Default",
           personaId: "persona-hermes",
           avatarUrl: null,
+          runtime: null,
         },
       ],
       [],
@@ -177,6 +178,70 @@ describe("mergeAgentNamesIntoProfiles", () => {
 
     assert.equal(profiles[AGENT].avatarUrl, "https://example.com/hermes.png");
     assert.equal(profiles[AGENT].displayName, "Hermes Default");
+  });
+
+  it("uses the Hermes runtime bitmap when no picture or persona avatar exists", () => {
+    const profiles = mergeAgentNamesIntoProfiles(
+      {},
+      [
+        {
+          pubkey: AGENT,
+          name: "Hermes Default",
+          personaId: null,
+          avatarUrl: null,
+          runtime: "hermes",
+        },
+      ],
+      [],
+    );
+
+    assert.equal(profiles[AGENT].avatarUrl, "/harness-logos/hermes.png");
+  });
+
+  it("uses Claude, Goose, Cursor, and Codex runtime faces", () => {
+    const cases = [
+      ["claude", "/harness-logos/claude.png"],
+      ["goose", "/harness-logos/goose.svg"],
+      ["cursor", "/harness-logos/cursor.svg"],
+      ["codex", "/harness-logos/terminal.svg"],
+    ];
+    for (const [runtime, avatarUrl] of cases) {
+      const profiles = mergeAgentNamesIntoProfiles(
+        {},
+        [
+          {
+            pubkey: AGENT,
+            name: runtime,
+            personaId: null,
+            avatarUrl: null,
+            runtime,
+          },
+        ],
+        [],
+      );
+      assert.equal(profiles[AGENT].avatarUrl, avatarUrl);
+    }
+  });
+
+  it("inherits the persona runtime bitmap when the instance has no pin", () => {
+    const profiles = mergeAgentNamesIntoProfiles(
+      {},
+      [
+        {
+          pubkey: AGENT,
+          name: "Hermes Default",
+          personaId: "persona-hermes",
+          avatarUrl: null,
+          runtime: null,
+        },
+      ],
+      [],
+      undefined,
+      {},
+      { "persona-hermes": "hermes" },
+    );
+
+    assert.equal(profiles[AGENT].avatarUrl, "/harness-logos/hermes.png");
   });
 
   it("keeps the kind:0 picture over the persona default", () => {
@@ -197,6 +262,7 @@ describe("mergeAgentNamesIntoProfiles", () => {
           name: "Hermes Default",
           personaId: "persona-hermes",
           avatarUrl: null,
+          runtime: "hermes",
         },
       ],
       [],

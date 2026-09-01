@@ -5,7 +5,10 @@ import {
   usePersonasQuery,
   useRelayAgentsQuery,
 } from "@/features/agents/hooks";
-import { personaAvatarById } from "@/features/agents/lib/agentCardAvatar";
+import {
+  personaAvatarById,
+  personaRuntimeById,
+} from "@/features/agents/lib/agentCardAvatar";
 import { mergeAgentNamesIntoProfiles } from "@/features/channels/ui/useChannelActivityTyping";
 import { useEphemeralChannelDisplay } from "@/features/channels/useEphemeralChannelDisplay";
 import { usePresenceQuery } from "@/features/presence/hooks";
@@ -71,6 +74,7 @@ export function useActiveChannelHeader(
         relayAgentsQuery.data ?? [],
         currentPubkey,
         personaAvatarById(personasQuery.data ?? []),
+        personaRuntimeById(personasQuery.data ?? []),
       ),
     [
       activeDmProfilesQuery.data?.profiles,

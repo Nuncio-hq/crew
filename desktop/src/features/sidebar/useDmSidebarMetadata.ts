@@ -5,7 +5,10 @@ import {
   usePersonasQuery,
   useRelayAgentsQuery,
 } from "@/features/agents/hooks";
-import { personaAvatarById } from "@/features/agents/lib/agentCardAvatar";
+import {
+  personaAvatarById,
+  personaRuntimeById,
+} from "@/features/agents/lib/agentCardAvatar";
 import { mergeAgentNamesIntoProfiles } from "@/features/channels/ui/useChannelActivityTyping";
 import { usePresenceQuery } from "@/features/presence/hooks";
 import { resolveUserLabel } from "@/features/profile/lib/identity";
@@ -76,6 +79,7 @@ export function useDmSidebarMetadata({
         relayAgentsQuery.data ?? [],
         currentPubkey,
         personaAvatarById(personasQuery.data ?? []),
+        personaRuntimeById(personasQuery.data ?? []),
       ),
     [
       currentPubkey,

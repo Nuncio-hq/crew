@@ -41,6 +41,7 @@ export function useMessageProfiles({
   currentPubkey,
   managedAgents,
   personaAvatars,
+  personaRuntimes,
   profiles,
   relayAgents,
 }: {
@@ -49,6 +50,7 @@ export function useMessageProfiles({
   currentPubkey: string | undefined;
   managedAgents: ManagedAgent[];
   personaAvatars?: Record<string, string | null>;
+  personaRuntimes?: Record<string, string | null>;
   profiles: UserProfileLookup | undefined;
   relayAgents: RelayAgent[];
 }): UserProfileLookup {
@@ -61,6 +63,7 @@ export function useMessageProfiles({
         relayAgents,
         currentPubkey,
         personaAvatars,
+        personaRuntimes,
       ),
       channelMembers,
     );
@@ -70,6 +73,7 @@ export function useMessageProfiles({
     currentPubkey,
     managedAgents,
     personaAvatars,
+    personaRuntimes,
     profiles,
     relayAgents,
   ]);

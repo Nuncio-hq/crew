@@ -6,6 +6,10 @@ import {
   useTeamsQuery,
 } from "@/features/agents/hooks";
 import {
+  mentionAvatarForManagedAgent,
+  mentionAvatarForPersona,
+} from "@/features/agents/lib/agentCardAvatar";
+import {
   useChannelMembersQuery,
   useChannelsQuery,
 } from "@/features/channels/hooks";
@@ -358,6 +362,11 @@ export function useMentions(
         kind: "identity",
         pubkey: agent.pubkey,
         displayName: agent.name,
+        avatarUrl: mentionAvatarForManagedAgent(
+          agent,
+          activePersonas,
+          profiles?.[normalizePubkey(agent.pubkey)]?.avatarUrl,
+        ),
         isMember: false,
         isAgent: true,
         isManagedAgent: true,
@@ -397,7 +406,7 @@ export function useMentions(
         kind: "persona" as const,
         personaId: persona.id,
         displayName: persona.displayName,
-        avatarUrl: persona.avatarUrl,
+        avatarUrl: mentionAvatarForPersona(persona),
         isMember: false,
         isAgent: true,
       }))

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { resolveManagedAgentDisplayAvatarUrl } from "@/features/agents/lib/agentCardAvatar";
 import type { LinkedInstanceAccess } from "@/features/agents/ui/personaDialogState";
 import type {
   AcpRuntimeCatalogEntry,
@@ -172,6 +173,7 @@ export function buildPersonaDraftProfile(persona: AgentPersona): Profile {
 }
 
 export function resolvePanelProfile({
+  managedAgent,
   persona,
   profile,
 }: {
@@ -181,7 +183,16 @@ export function resolvePanelProfile({
 }): Profile | undefined {
   const baseProfile =
     profile ?? (persona ? buildPersonaDraftProfile(persona) : undefined);
-  return withProfileAvatarFallback(baseProfile, [persona?.avatarUrl]);
+  const avatarUrl = resolveManagedAgentDisplayAvatarUrl({
+    profileAvatarUrl: baseProfile?.avatarUrl,
+    agentAvatarUrl: managedAgent?.avatarUrl,
+    agentRuntime: managedAgent?.runtime,
+    personaAvatarUrl: persona?.avatarUrl,
+    personaRuntime: persona?.runtime,
+  });
+  return baseProfile && avatarUrl !== baseProfile.avatarUrl
+    ? { ...baseProfile, avatarUrl }
+    : baseProfile;
 }
 
 export function resolveProfileAvatarUrl(
