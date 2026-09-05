@@ -373,7 +373,11 @@ impl RestClient {
                             } else {
                                 const MAX: usize = 512;
                                 let clipped = if trimmed.len() > MAX {
-                                    format!("{}…", &trimmed[..MAX])
+                                    let mut end = MAX;
+                                    while !trimmed.is_char_boundary(end) {
+                                        end -= 1;
+                                    }
+                                    format!("{}…", &trimmed[..end])
                                 } else {
                                     trimmed.to_owned()
                                 };
@@ -679,6 +683,8 @@ type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 pub struct HarnessRelay {
     /// Receiver for events forwarded by the background task.
     event_rx: mpsc::Receiver<Option<BuzzEvent>>,
+    /// Background-owned subscription intent; denial updates cannot be dropped.
+    subscription_snapshot_rx: tokio::sync::watch::Receiver<HashSet<Uuid>>,
     /// Receiver for encrypted observer control events addressed to this agent.
     observer_control_rx: Option<mpsc::Receiver<Event>>,
     /// Sender for commands to the background task.
@@ -756,6 +762,8 @@ impl HarnessRelay {
         let (observer_control_tx, observer_control_rx) =
             mpsc::channel::<Event>(event_channel_capacity());
         let (cmd_tx, cmd_rx) = mpsc::channel::<RelayCommand>(CMD_CHANNEL_CAPACITY);
+        let (subscription_snapshot_tx, subscription_snapshot_rx) =
+            tokio::sync::watch::channel(HashSet::new());
 
         let bg_keys = keys.clone();
         let bg_relay_url = relay_url.to_string();
@@ -768,6 +776,7 @@ impl HarnessRelay {
                 handshake_buffer,
                 event_tx,
                 observer_control_tx,
+                subscription_snapshot_tx,
                 cmd_rx,
                 bg_keys,
                 bg_relay_url,
@@ -779,6 +788,7 @@ impl HarnessRelay {
 
         Ok(Self {
             event_rx,
+            subscription_snapshot_rx,
             observer_control_rx: Some(observer_control_rx),
             cmd_tx,
             http: reqwest::Client::builder()
@@ -791,6 +801,12 @@ impl HarnessRelay {
             auth_tag,
             bg_handle: Some(bg_handle),
         })
+    }
+
+    /// Latest background subscription intent, including denial and reconnect changes.
+    /// Consumers can borrow immediately without waiting for the changed notification.
+    pub(crate) fn subscription_snapshots(&self) -> tokio::sync::watch::Receiver<HashSet<Uuid>> {
+        self.subscription_snapshot_rx.clone()
     }
 
     /// Discover channels the agent is a member of.
@@ -1121,6 +1137,8 @@ impl TwoGenDedup {
 struct BgState {
     /// Active subscriptions: channel_id → subscription_id string.
     active_subscriptions: HashMap<Uuid, String>,
+    /// Latest subscription intent, independent of bounded message delivery queues.
+    subscription_snapshot: tokio::sync::watch::Sender<HashSet<Uuid>>,
     /// Most recent `created_at` timestamp seen per channel (for `since` filter).
     last_seen: HashMap<Uuid, u64>,
     /// Two-generation dedup set of event IDs seen.
@@ -1208,6 +1226,7 @@ impl BgState {
     fn new() -> Self {
         Self {
             active_subscriptions: HashMap::new(),
+            subscription_snapshot: tokio::sync::watch::channel(HashSet::new()).0,
             last_seen: HashMap::new(),
             seen_ids: TwoGenDedup::new(SEEN_ID_LIMIT),
             active_filters: HashMap::new(),
@@ -1229,6 +1248,17 @@ impl BgState {
             resubscribe_retry: HashSet::new(),
             backoff_step: 0,
         }
+    }
+
+    fn publish_subscription_snapshot(&self) {
+        self.subscription_snapshot.send_if_modified(|snapshot| {
+            let current: HashSet<_> = self.active_subscriptions.keys().copied().collect();
+            if *snapshot == current {
+                return false;
+            }
+            *snapshot = current;
+            true
+        });
     }
 
     /// Record a received event for dedup and `since` tracking.
@@ -1405,10 +1435,12 @@ fn apply_command_to_state(state: &mut BgState, cmd: RelayCommand) {
                     .or(state.startup_watermark)
                     .unwrap_or_else(unix_now_secs)
             });
+            state.publish_subscription_snapshot();
         }
         RelayCommand::Unsubscribe { channel_id } => {
             state.active_subscriptions.remove(&channel_id);
             state.clear_channel_state(&channel_id);
+            state.publish_subscription_snapshot();
         }
         RelayCommand::SubscribeMembership => {
             state.membership_sub_active = true;
@@ -1538,6 +1570,7 @@ async fn execute_connected_command(
                     .active_subscriptions
                     .insert(channel_id, channel_sub_id(channel_id));
                 state.active_filters.insert(channel_id, filter);
+                state.publish_subscription_snapshot();
                 // Evict stale drain entries so the drain loop can't send a
                 // duplicate REQ for this now-live subscription.
                 state.rate_limited_pending.remove(&channel_id);
@@ -1569,6 +1602,7 @@ async fn execute_connected_command(
                 debug!("unsubscribed from channel {channel_id}");
             }
             state.clear_channel_state(&channel_id);
+            state.publish_subscription_snapshot();
             true
         }
         RelayCommand::SubscribeMembership => {
@@ -1681,6 +1715,7 @@ async fn run_background_task(
     initial_handshake_buffer: std::collections::VecDeque<RelayMessage>,
     event_tx: mpsc::Sender<Option<BuzzEvent>>,
     observer_control_tx: mpsc::Sender<Event>,
+    subscription_snapshot_tx: tokio::sync::watch::Sender<HashSet<Uuid>>,
     mut cmd_rx: mpsc::Receiver<RelayCommand>,
     keys: Keys,
     relay_url: String,
@@ -1688,6 +1723,7 @@ async fn run_background_task(
     auth_tag: Option<nostr::Tag>,
 ) {
     let mut state = BgState::new();
+    state.subscription_snapshot = subscription_snapshot_tx;
 
     let handshake_ok = process_handshake_buffer(
         &mut ws,
@@ -3690,6 +3726,7 @@ fn drop_channel_on_access_denied(state: &mut BgState, sub_id: &str, message: &st
     );
     state.active_subscriptions.remove(&channel_id);
     state.clear_channel_state(&channel_id);
+    state.publish_subscription_snapshot();
     true
 }
 
@@ -4648,7 +4685,7 @@ mod tests {
             .expect("signing should succeed")
     }
 
-    async fn test_ws_pair() -> (WsStream, WebSocketStream<tokio::net::TcpStream>) {
+    pub(super) async fn test_ws_pair() -> (WsStream, WebSocketStream<tokio::net::TcpStream>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test websocket");
@@ -4665,7 +4702,7 @@ mod tests {
         (client, server.await.expect("join test websocket server"))
     }
 
-    async fn next_test_frame(
+    pub(super) async fn next_test_frame(
         server: &mut WebSocketStream<tokio::net::TcpStream>,
     ) -> serde_json::Value {
         let message = timeout(Duration::from_secs(1), server.next())
@@ -6574,3 +6611,11 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "relay/subscription-recovery-tests.rs"]
+mod subscription_recovery_tests;
+
+#[cfg(test)]
+#[path = "relay/discovery-contract-tests.rs"]
+mod discovery_contract_tests;
