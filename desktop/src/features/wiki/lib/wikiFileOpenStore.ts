@@ -14,10 +14,14 @@ let pending: PendingWikiFileOpen | null = null;
 /** Strip `30617:` so entity-link route ids match Repository.id (`owner:dtag`). */
 export function wikiFileOpenRepoId(projectId: string): string {
   const value = projectId.trim();
-  if (value.startsWith(REPO_ADDRESS_PREFIX)) {
-    return value.slice(REPO_ADDRESS_PREFIX.length).toLowerCase();
-  }
-  return value.toLowerCase();
+  const coordinate = value.startsWith(REPO_ADDRESS_PREFIX)
+    ? value.slice(REPO_ADDRESS_PREFIX.length)
+    : value;
+  const ownerEnd = coordinate.indexOf(":");
+  if (ownerEnd < 0) return coordinate;
+  // Owner hex is case-insensitive; the repository d-tag is an exact key and
+  // can itself contain colons.
+  return `${coordinate.slice(0, ownerEnd).toLowerCase()}${coordinate.slice(ownerEnd)}`;
 }
 
 export function wikiFileOpenMatchesProject(

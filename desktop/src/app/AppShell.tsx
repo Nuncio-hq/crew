@@ -1,4 +1,5 @@
 import * as React from "react";
+import { ProtectedGlobalOverlay } from "@protected-feature-components";
 import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useLocation } from "@tanstack/react-router";
 import { deriveShellRoute, markAllReadSources } from "@/app/AppShell.helpers";
@@ -31,6 +32,7 @@ import {
   useHideDmMutation,
   useOpenDmMutation,
 } from "@/features/channels/hooks";
+import { useDmResurfaceFromMessages } from "@/features/channels/useDmResurfaceFromMessages";
 import { useUnreadChannels } from "@/features/channels/useUnreadChannels";
 import { useMembershipNotifications } from "@/features/channels/useMembershipNotifications";
 import { useFeedItemState } from "@/features/home/useFeedItemState";
@@ -55,6 +57,7 @@ import {
 import {
   useSetUserStatusMutation,
   useUserStatusQuery,
+  visibleUserStatus,
   useUserStatusSubscription,
 } from "@/features/user-status/hooks";
 import { useCommunityEmojiLiveUpdates } from "@/features/custom-emoji/hooks";
@@ -92,7 +95,7 @@ import { useWebviewScrollBoundaryLock } from "@/shared/hooks/useWebviewScrollBou
 import { joinChannel } from "@/shared/api/tauri";
 import type { Channel, ChannelVisibility, SearchHit } from "@/shared/api/types";
 import { ChannelNavigationProvider } from "@/shared/context/ChannelNavigationContext";
-import { useMessageDeepLinks } from "@/shared/useMessageDeepLinks";
+import { useAppDeepLinks } from "@/shared/useAppDeepLinks";
 import { SidebarProvider } from "@/shared/ui/sidebar";
 import { RelayConnectionOverlay } from "@/app/RelayConnectionOverlay";
 import { useSidebarRelayConnectionCard } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
@@ -490,6 +493,11 @@ export function AppShell() {
   const { applyCanvas, applyAgents } = useApplyTemplate();
   const openDmMutation = useOpenDmMutation();
   const hideDmMutation = useHideDmMutation();
+  useDmResurfaceFromMessages({
+    pubkey: identityQuery.data?.pubkey,
+    relayUrl: communitiesHook.activeCommunity?.relayUrl,
+    reopen: openDmMutation.mutateAsync,
+  });
   const {
     browseDialogType,
     openBrowseChannels: handleOpenBrowseChannels,
@@ -633,8 +641,8 @@ export function AppShell() {
   );
 
   const handleOpenSearchResult = React.useCallback(
-    (hit: SearchHit) => {
-      void openSearchHit(hit);
+    (hit: SearchHit, query: string) => {
+      void openSearchHit(hit, { query });
     },
     [openSearchHit],
   );
@@ -645,12 +653,13 @@ export function AppShell() {
     unreadChannelNotificationCount,
   });
   // Dispatch `buzz://message` deep links only from the main window; the companion is dedicated to its active Huddle route.
-  useMessageDeepLinks(!isHuddleRoom);
+  useAppDeepLinks(!isHuddleRoom);
   const handleOpenCreateChannel = React.useCallback(
     () => setIsCreateChannelOpen(true),
     [],
   );
   useAppShellKeyboardShortcuts({
+    activeChannelId: activeChannel?.id ?? null,
     canSearchCurrentChannel:
       selectedView === "channel" && Boolean(activeChannel),
     disabled: settingsOpen || isHuddleRoom,
@@ -875,9 +884,7 @@ export function AppShell() {
                           onSetPresenceStatus={(status) =>
                             presenceSession.setStatus(status)
                           }
-                          onSetUserStatus={(text, emoji) =>
-                            setUserStatusMutation.mutate({ text, emoji })
-                          }
+                          onSetUserStatus={setUserStatusMutation.mutate}
                           onClearUserStatus={() =>
                             setUserStatusMutation.mutate({
                               text: "",
@@ -887,9 +894,11 @@ export function AppShell() {
                           profile={profileQuery.data}
                           selfUserStatus={
                             deferredPubkey
-                              ? (selfStatusQuery.data?.[
-                                  deferredPubkey.toLowerCase()
-                                ] ?? undefined)
+                              ? (visibleUserStatus(
+                                  selfStatusQuery.data?.[
+                                    deferredPubkey.toLowerCase()
+                                  ],
+                                ) ?? undefined)
                               : undefined
                           }
                           selectedChannelId={selectedChannelId}
@@ -959,6 +968,7 @@ export function AppShell() {
                     onOpenChange={setIsSendFeedbackOpen}
                     open={isSendFeedbackOpen}
                   />
+                  {!isHuddleRoom ? <ProtectedGlobalOverlay /> : null}
                 </AppWorkflowEditorOverlayProvider>
               </AppProfilePanelProvider>
             </SidebarProvider>

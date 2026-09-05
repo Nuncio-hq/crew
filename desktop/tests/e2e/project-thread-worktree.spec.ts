@@ -471,13 +471,24 @@ test("Project threads show truthful isolated workspace and agent handoff", async
   await expect(panel.getByText("Ready", { exact: true })).toBeVisible();
   await expect(panel).toContainText("buzz/aaaaaaaaaaaa");
 
+  await panel.getByRole("button", { name: "Close details" }).click();
   const githubInvokesBeforePr = await countGitHubStatusInvokes(page);
-  await panel.getByRole("button", { name: /^PR$/ }).click();
-  await expect(panel).toContainText("Pull request");
-  await expect(panel).toContainText(
-    "Keep the 2×3 layout and existing app colors.",
-  );
-  await expect(panel).toContainText("#9 Thread integration strip");
+  await panel.getByTestId("thread-forge-summary-card").click();
+  const hub = page
+    .getByTestId("channel-tool-pane")
+    .getByTestId("thread-pr-hub");
+  await expect(hub).toBeVisible();
+  await expect(page.getByTestId("thread-pr-hub-changes")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.__BUZZ_E2E_COMMAND_LOG__
+            ?.filter((entry) => entry.command === "get_thread_forge_pr_detail")
+            .at(-1)?.payload,
+      ),
+    )
+    .toMatchObject({ owner: "Nuncio-hq", name: "crew", number: 9 });
   // #34: opening the PR drawer must not start an unbounded refresh loop.
   await expect
     .poll(() => countGitHubStatusInvokes(page))
@@ -492,10 +503,17 @@ test("Project threads show truthful isolated workspace and agent handoff", async
     .toBe(githubInvokesAfterPr);
 
   await waitForAnimations(page);
-  await panel.screenshot({
+  await hub.screenshot({
     path: "test-results/thread-worktree/02-pr-history.png",
   });
-  await panel.getByRole("button", { name: "Close details" }).click();
+  const chatToggle = page
+    .getByTestId("thread-forge-pane-toggle")
+    .getByRole("button", { name: "Chat", exact: true });
+  if (await chatToggle.isVisible()) await chatToggle.click();
+  await page
+    .getByRole("button", { name: "Show thread beside channel" })
+    .click();
+  await expect(panel).toBeVisible();
   await emitReplyMention(page, ROOT_A);
   await panel.getByRole("button", { name: /Handoff/ }).click();
   await expect(panel).toContainText("Handoff in this thread");
@@ -600,7 +618,7 @@ test("Degraded GitHub availability shows a muted chip, not silent empty", async 
   await expect(githubChip).toBeVisible();
   await expect(githubChip).toHaveAttribute(
     "title",
-    "GitHub CLI (gh) not found",
+    "GitHub CLI (gh) not found. Click to retry.",
   );
   await expect(panel.getByRole("button", { name: /^PR$/ })).toHaveCount(0);
   await expect(panel.getByRole("button", { name: /^CI$/ })).toHaveCount(0);

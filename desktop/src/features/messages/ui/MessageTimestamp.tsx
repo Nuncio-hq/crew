@@ -1,7 +1,9 @@
 import {
   formatFullDateTime,
+  formatTime,
   formatTimeWithoutDayPeriod,
 } from "@/features/messages/lib/dateFormatters";
+import { formatItemTimestamp } from "@/shared/lib/datetime";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
@@ -9,14 +11,14 @@ export function MessageTimestamp({
   className,
   createdAt,
   hideDayPeriod = false,
-  time,
 }: {
   className?: string;
   createdAt: number;
   hideDayPeriod?: boolean;
-  time: string;
 }) {
-  const displayTime = hideDayPeriod ? formatTimeWithoutDayPeriod(time) : time;
+  const displayTime = hideDayPeriod
+    ? formatTimeWithoutDayPeriod(formatTime(createdAt))
+    : formatItemTimestamp(createdAt, { withTime: true });
 
   return (
     <Tooltip>

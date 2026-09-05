@@ -1888,203 +1888,211 @@ steps:
 
     // -- SEC-006: event-path regression (requires Postgres) ----------------
 
-    async fn setup_db() -> buzz_db::Db {
-        let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
-            .or_else(|_| std::env::var("DATABASE_URL"))
-            // Local-only test default; this is not a production credential.
-            .unwrap_or_else(|_| {
-                let local_test_database = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1
-                local_test_database.to_owned()
-            });
-        buzz_db::Db::new(&buzz_db::DbConfig {
-            database_url,
-            ..Default::default()
-        })
-        .await
-        .expect("connect test DB")
-    }
+    mod postgres_tests {
+        use super::*;
 
-    /// Create a community, a channel owned by `creator`, and add `member` as a
-    /// plain member. Returns `(community, channel)`.
-    async fn setup_channel(db: &buzz_db::Db, creator: &[u8], member: &[u8]) -> (CommunityId, Uuid) {
-        let host = format!("sec006-{}.example", Uuid::new_v4().simple());
-        let community = match db
-            .create_community_with_owner(&host, &hex::encode(creator))
+        async fn setup_db() -> buzz_db::Db {
+            let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+                .or_else(|_| std::env::var("DATABASE_URL"))
+                // Local-only test default; this is not a production credential.
+                .unwrap_or_else(|_| {
+                    let local_test_database = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1
+                    local_test_database.to_owned()
+                });
+            buzz_db::Db::new(&buzz_db::DbConfig {
+                database_url,
+                ..Default::default()
+            })
             .await
-            .expect("create community")
-        {
-            buzz_db::CreateCommunityWithOwnerResult::Created(rec) => rec.id,
-            other => panic!("unexpected community create result: {other:?}"),
-        };
-        db.ensure_user(community, creator)
-            .await
-            .expect("creator user");
-        db.ensure_user(community, member)
-            .await
-            .expect("member user");
-        let channel_id = Uuid::new_v4();
-        db.create_channel_with_id(
-            community,
-            channel_id,
-            &format!("ch-{}", channel_id.simple()),
-            buzz_db::channel::ChannelType::Stream,
-            buzz_db::channel::ChannelVisibility::Open,
-            None,
-            creator,
-            None,
-        )
-        .await
-        .expect("create channel");
-        db.add_member(
-            community,
-            channel_id,
-            member,
-            buzz_db::channel::MemberRole::Member,
-            Some(creator),
-        )
-        .await
-        .expect("add member");
-        (community, channel_id)
-    }
+            .expect("connect test DB")
+        }
 
-    fn message_event(channel_id: Uuid) -> buzz_core::StoredEvent {
-        let keys = nostr::Keys::generate();
-        let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "hello")
-            .sign_with_keys(&keys)
-            .expect("sign");
-        buzz_core::StoredEvent::new(event, Some(channel_id))
-    }
-
-    /// The event path must stop creating runs the moment the workflow's owner
-    /// loses channel membership — even while the workflow row is still
-    /// `enabled` (the disable-on-removal side effect is a separate, relay-side
-    /// write; this gate must hold on its own).
-    #[tokio::test]
-    #[ignore = "requires Postgres"]
-    async fn on_event_denies_run_after_owner_removed() {
-        let db = setup_db().await;
-        let creator = nostr::Keys::generate().public_key().to_bytes().to_vec();
-        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
-        let (community, channel_id) = setup_channel(&db, &creator, &member).await;
-
-        let def_json = serde_json::json!({
-            "name": "sec006-event",
-            "trigger": {"on": "message_posted"},
-            "steps": [{"id": "s1", "action": "send_message", "text": "hi"}],
-            "enabled": true,
-        })
-        .to_string();
-        let workflow_id = db
-            .create_workflow(
+        /// Create a community, a channel owned by `creator`, and add `member` as a
+        /// plain member. Returns `(community, channel)`.
+        async fn setup_channel(
+            db: &buzz_db::Db,
+            creator: &[u8],
+            member: &[u8],
+        ) -> (CommunityId, Uuid) {
+            let host = format!("sec006-{}.example", Uuid::new_v4().simple());
+            let community = match db
+                .create_community_with_owner(&host, &hex::encode(creator))
+                .await
+                .expect("create community")
+            {
+                buzz_db::CreateCommunityWithOwnerResult::Created(rec) => rec.id,
+                other => panic!("unexpected community create result: {other:?}"),
+            };
+            db.ensure_user(community, creator)
+                .await
+                .expect("creator user");
+            db.ensure_user(community, member)
+                .await
+                .expect("member user");
+            let channel_id = Uuid::new_v4();
+            db.create_channel_with_id(
                 community,
-                Some(channel_id),
-                &member,
-                "sec006-event",
-                &def_json,
-                &[0u8; 32],
+                channel_id,
+                &format!("ch-{}", channel_id.simple()),
+                buzz_db::channel::ChannelType::Stream,
+                buzz_db::channel::ChannelVisibility::Open,
+                None,
+                creator,
+                None,
             )
             .await
-            .expect("create workflow");
-
-        let engine = Arc::new(WorkflowEngine::new(db.clone(), WorkflowConfig::default()));
-
-        // Owner is an active member: the event fires the workflow.
-        engine
-            .on_event(community, &message_event(channel_id))
-            .await
-            .expect("on_event while member");
-        let runs = db
-            .list_workflow_runs(community, workflow_id, 10)
-            .await
-            .expect("list runs");
-        assert_eq!(runs.len(), 1, "member owner's workflow must fire");
-
-        // Remove the owner (actor = channel creator, an owner-role member).
-        db.remove_member(community, channel_id, &member, &creator)
-            .await
-            .expect("remove member");
-
-        // Workflow row is still enabled — only the authority gate stands.
-        engine
-            .on_event(community, &message_event(channel_id))
-            .await
-            .expect("on_event after removal");
-        let runs = db
-            .list_workflow_runs(community, workflow_id, 10)
-            .await
-            .expect("list runs after removal");
-        assert_eq!(
-            runs.len(),
-            1,
-            "no new run may be created after the owner lost membership"
-        );
-    }
-
-    /// Exfiltration-capable definitions (call_webhook) require the owner to
-    /// currently hold an elevated role — a plain member's workflow must not
-    /// fire even though the owner is still an active channel member.
-    #[tokio::test]
-    #[ignore = "requires Postgres"]
-    async fn on_event_denies_webhook_definition_for_plain_member_owner() {
-        let db = setup_db().await;
-        let creator = nostr::Keys::generate().public_key().to_bytes().to_vec();
-        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
-        let (community, channel_id) = setup_channel(&db, &creator, &member).await;
-
-        let def_json = serde_json::json!({
-            "name": "sec006-hook",
-            "trigger": {"on": "message_posted"},
-            "steps": [{"id": "s1", "action": "call_webhook", "url": "https://example.com/x"}],
-            "enabled": true,
-        })
-        .to_string();
-
-        // Same definition, two owners: plain member vs channel owner.
-        let wf_member = db
-            .create_workflow(
+            .expect("create channel");
+            db.add_member(
                 community,
-                Some(channel_id),
-                &member,
-                "hook-member",
-                &def_json,
-                &[0u8; 32],
+                channel_id,
+                member,
+                buzz_db::channel::MemberRole::Member,
+                Some(creator),
             )
             .await
-            .expect("create member workflow");
-        let wf_owner = db
-            .create_workflow(
-                community,
-                Some(channel_id),
-                &creator,
-                "hook-owner",
-                &def_json,
-                &[1u8; 32],
-            )
-            .await
-            .expect("create owner workflow");
+            .expect("add member");
+            (community, channel_id)
+        }
 
-        let engine = Arc::new(WorkflowEngine::new(db.clone(), WorkflowConfig::default()));
-        engine
-            .on_event(community, &message_event(channel_id))
-            .await
-            .expect("on_event");
+        fn message_event(channel_id: Uuid) -> buzz_core::StoredEvent {
+            let keys = nostr::Keys::generate();
+            let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "hello")
+                .sign_with_keys(&keys)
+                .expect("sign");
+            buzz_core::StoredEvent::new(event, Some(channel_id))
+        }
 
-        let member_runs = db
-            .list_workflow_runs(community, wf_member, 10)
-            .await
-            .expect("member runs");
-        assert!(
-            member_runs.is_empty(),
-            "plain member's call_webhook workflow must not fire"
-        );
-        let owner_runs = db
-            .list_workflow_runs(community, wf_owner, 10)
-            .await
-            .expect("owner runs");
-        assert_eq!(
-            owner_runs.len(),
-            1,
-            "channel owner's call_webhook workflow fires"
-        );
+        /// The event path must stop creating runs the moment the workflow's owner
+        /// loses channel membership — even while the workflow row is still
+        /// `enabled` (the disable-on-removal side effect is a separate, relay-side
+        /// write; this gate must hold on its own).
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn on_event_denies_run_after_owner_removed() {
+            let db = setup_db().await;
+            let creator = nostr::Keys::generate().public_key().to_bytes().to_vec();
+            let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+            let (community, channel_id) = setup_channel(&db, &creator, &member).await;
+
+            let def_json = serde_json::json!({
+                "name": "sec006-event",
+                "trigger": {"on": "message_posted"},
+                "steps": [{"id": "s1", "action": "send_message", "text": "hi"}],
+                "enabled": true,
+            })
+            .to_string();
+            let workflow_id = db
+                .create_workflow(
+                    community,
+                    Some(channel_id),
+                    &member,
+                    "sec006-event",
+                    &def_json,
+                    &[0u8; 32],
+                )
+                .await
+                .expect("create workflow");
+
+            let engine = Arc::new(WorkflowEngine::new(db.clone(), WorkflowConfig::default()));
+
+            // Owner is an active member: the event fires the workflow.
+            engine
+                .on_event(community, &message_event(channel_id))
+                .await
+                .expect("on_event while member");
+            let runs = db
+                .list_workflow_runs(community, workflow_id, 10)
+                .await
+                .expect("list runs");
+            assert_eq!(runs.len(), 1, "member owner's workflow must fire");
+
+            // Remove the owner (actor = channel creator, an owner-role member).
+            db.remove_member(community, channel_id, &member, &creator)
+                .await
+                .expect("remove member");
+
+            // Workflow row is still enabled — only the authority gate stands.
+            engine
+                .on_event(community, &message_event(channel_id))
+                .await
+                .expect("on_event after removal");
+            let runs = db
+                .list_workflow_runs(community, workflow_id, 10)
+                .await
+                .expect("list runs after removal");
+            assert_eq!(
+                runs.len(),
+                1,
+                "no new run may be created after the owner lost membership"
+            );
+        }
+
+        /// Exfiltration-capable definitions (call_webhook) require the owner to
+        /// currently hold an elevated role — a plain member's workflow must not
+        /// fire even though the owner is still an active channel member.
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn on_event_denies_webhook_definition_for_plain_member_owner() {
+            let db = setup_db().await;
+            let creator = nostr::Keys::generate().public_key().to_bytes().to_vec();
+            let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+            let (community, channel_id) = setup_channel(&db, &creator, &member).await;
+
+            let def_json = serde_json::json!({
+                "name": "sec006-hook",
+                "trigger": {"on": "message_posted"},
+                "steps": [{"id": "s1", "action": "call_webhook", "url": "https://example.com/x"}],
+                "enabled": true,
+            })
+            .to_string();
+
+            // Same definition, two owners: plain member vs channel owner.
+            let wf_member = db
+                .create_workflow(
+                    community,
+                    Some(channel_id),
+                    &member,
+                    "hook-member",
+                    &def_json,
+                    &[0u8; 32],
+                )
+                .await
+                .expect("create member workflow");
+            let wf_owner = db
+                .create_workflow(
+                    community,
+                    Some(channel_id),
+                    &creator,
+                    "hook-owner",
+                    &def_json,
+                    &[1u8; 32],
+                )
+                .await
+                .expect("create owner workflow");
+
+            let engine = Arc::new(WorkflowEngine::new(db.clone(), WorkflowConfig::default()));
+            engine
+                .on_event(community, &message_event(channel_id))
+                .await
+                .expect("on_event");
+
+            let member_runs = db
+                .list_workflow_runs(community, wf_member, 10)
+                .await
+                .expect("member runs");
+            assert!(
+                member_runs.is_empty(),
+                "plain member's call_webhook workflow must not fire"
+            );
+            let owner_runs = db
+                .list_workflow_runs(community, wf_owner, 10)
+                .await
+                .expect("owner runs");
+            assert_eq!(
+                owner_runs.len(),
+                1,
+                "channel owner's call_webhook workflow fires"
+            );
+        }
     }
 }

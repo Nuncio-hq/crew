@@ -129,7 +129,7 @@ test.describe("Pocket voice settings", () => {
       "My voice",
     );
     await expect(page.getByTestId("pocket-voice-delete")).toBeVisible();
-    await page.getByRole("button", { name: "Preview" }).click();
+    await page.getByTestId("pocket-voice-preview").click();
 
     await page.getByTestId("pocket-voice-delete").click();
     await expect(page.getByText("Delete imported voice?")).toBeVisible();
@@ -138,7 +138,7 @@ test.describe("Pocket voice settings", () => {
       "Mary",
     );
     await expect(page.getByTestId("pocket-voice-delete")).toBeHidden();
-    await page.getByRole("button", { name: "Preview" }).click();
+    await page.getByTestId("pocket-voice-preview").click();
 
     const mutations = await page.evaluate(() =>
       (window.__BUZZ_E2E_COMMAND_LOG__ ?? [])

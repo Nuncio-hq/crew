@@ -112,6 +112,19 @@ run_unit_tests() {
   # the two lists must stay in step or the fallback silently covers less.
   run_test_step "buzz-backend-kubernetes tests" \
     cargo test -p buzz-backend-kubernetes -- --nocapture
+
+  # buzz-agent model-capabilities corpus: the Rust half of the cross-language
+  # drift guard. model_capabilities.rs embeds scripts/model-capabilities.json +
+  # scripts/normative-corpus.json via include_str! and replays the full locked
+  # corpus as pure in-process tests (no infra). Mirrors the nextest path in
+  # `just test-unit` — the two lists must stay in step.
+  run_test_step "buzz-agent unit tests" \
+    cargo test -p buzz-agent --lib -- --nocapture
+
+  # ACP author-gate and queue tests are pure unit tests. Keep this fallback in
+  # step with `just test-unit`; ignored lifecycle tests run elsewhere.
+  run_test_step "buzz-acp unit tests" \
+    cargo test -p buzz-acp --lib -- --nocapture
 }
 
 # ---- DB / integration tests (infra required) --------------------------------
@@ -123,6 +136,12 @@ run_integration_tests() {
 
   run_test_step "buzz-db tests" \
     cargo test -p buzz-db -- --nocapture
+
+  # Global queue claims and deletion fencing need database-per-test isolation.
+  # The released nextest profile clones the desired schema for each test.
+  export BUZZ_POSTGRES_ADMIN_URL="${BUZZ_POSTGRES_ADMIN_URL:-${DATABASE_URL%/*}/postgres}"
+  run_test_step "isolated PostgreSQL tests" \
+    "${SCRIPT_DIR}/postgres-test-run.sh"
 
   if find crates/buzz-auth/tests -maxdepth 1 -name '*.rs' -print -quit 2>/dev/null | grep -q .; then
     run_test_step "buzz-auth integration tests" \

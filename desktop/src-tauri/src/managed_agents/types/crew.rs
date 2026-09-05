@@ -19,6 +19,8 @@ pub struct AcpRuntimeCatalogEntry {
     pub provider_env_var: Option<String>,
     /// Environment variable used to apply thinking effort, when supported.
     pub thinking_env_var: Option<String>,
+    /// Canonical effort vocabulary projected from runtime metadata.
+    pub effort_canonical_values: Option<Vec<String>>,
     pub max_tokens_env_var: Option<String>,
     pub context_limit_env_var: Option<String>,
     pub max_rounds_env_var: Option<String>,

@@ -358,3 +358,8 @@ export function entityLinkProjectRouteId(link: ParsedEntityLink): string {
   const kind = link.type === "project" ? 30621 : 30617;
   return `${kind}:${link.owner}:${link.dtag}`;
 }
+
+/** Whether an owner and repository/project coordinate can form a deep link. */
+export function isLinkableCoordinate(owner: string, dtag: string): boolean {
+  return HEX64_RE.test(owner) && isValidDtag(dtag);
+}

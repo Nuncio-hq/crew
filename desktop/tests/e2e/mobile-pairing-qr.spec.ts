@@ -60,9 +60,12 @@ test("mobile pairing starts on demand and reveals the QR code", async ({
   const startButton = card.getByTestId("start-pairing-button");
   await expect(card).toBeVisible();
   await expect(card).toHaveCSS("border-top-width", "0px");
-  await expect(card).toHaveCSS("border-radius", "16px");
+  const cardSurface = card.locator('[data-slot="settings-section-card"]');
+  await expect(cardSurface).toHaveCSS("border-radius", "16px");
   expect(
-    await card.evaluate((element) => getComputedStyle(element).backgroundColor),
+    await cardSurface.evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    ),
   ).not.toBe("rgba(0, 0, 0, 0)");
   await expect(startButton).toHaveText("Start pairing");
   await expect(steps.getByText("Scan QR code", { exact: true })).toBeVisible();

@@ -226,7 +226,7 @@ pub fn build_snapshot(
             .display_name
             .clone()
             .unwrap_or_else(|| record.name.clone()),
-        about: None, // kind:0 `about` not yet surfaced in ManagedAgentRecord
+        about: super::effective_agent_description(record.description.as_deref()),
         avatar_data_url,
         avatar_url: avatar_url_ref,
     };
@@ -410,6 +410,17 @@ pub(crate) fn validate_snapshot(snapshot: &AgentSnapshot) -> Result<(), String> 
     if snapshot.profile.display_name.trim().is_empty() {
         return Err("Snapshot profile.displayName is empty".to_string());
     }
+    super::validate_agent_definition_text(
+        &snapshot.profile.display_name,
+        snapshot
+            .definition
+            .system_prompt
+            .as_deref()
+            .unwrap_or_default(),
+    )
+    .map_err(|error| format!("Snapshot definition is unsafe: {error}"))?;
+    super::validate_agent_description_text(snapshot.profile.about.as_deref())
+        .map_err(|error| format!("Snapshot description is unsafe: {error}"))?;
     Ok(())
 }
 

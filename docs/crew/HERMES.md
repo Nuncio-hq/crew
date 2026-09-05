@@ -262,30 +262,36 @@ Hermes-side ask lands.
 
 ## Huddle voice latency levers (issue #275, upstream #5671)
 
-Upstream's huddle latency work is **env-gated and default-off**, and Crew has
-absorbed only its always-on parts. Crew's huddle voice path therefore has **no
-tuning environment variables** today — nothing to set on an agent profile, in
-`.env`, or in a managed-agent env block.
+The stable Buzz 0.5.22 voice pipeline supersedes Crew's earlier partial ports
+of upstream #6397 and #5671. Its always-on behavior includes:
 
-Absorbed (always-on, no configuration):
+- A held push-to-talk shortcut groups the whole hold into one utterance,
+  including when the microphone is manually open.
+- Confirmed onset, bounded pre-roll, offset hysteresis and hangover preserve
+  short replies and word boundaries. Segment reset clears pre-roll so audio
+  cannot leak into a later transcript.
+- Independent local and remote speech state prevents overlapping speakers
+  from being combined into one artificial utterance.
+- Confirmed open-mic speech acquires the shared human floor. Isolated output
+  routes interrupt immediately; acoustically coupled routes require the
+  released sustained-speech debounce. Push-to-talk keeps explicit cancellation.
 
-- A held push-to-talk shortcut groups the whole hold into one utterance; a VAD
-  pause no longer splits it even with a manually open microphone
-  (`vad_flush_allowed` in `desktop/src-tauri/src/huddle/stt.rs`).
-- Speech-boundary policy: onset confirmation, pre-roll, offset hysteresis and
-  hangover (upstream #6397), so short replies survive and trailing consonants
-  are not clipped.
+The release also includes experimental, opt-in latency controls:
+`BUZZ_STT_SPECULATIVE=1`, `BUZZ_TTS_STREAMING=1`, `BUZZ_TTS_EMIT_FRAMES`,
+`BUZZ_STT_THREADS`, `BUZZ_TTS_THREADS`, and `BUZZ_TTS_PHASE_LOG=1`.
+Speculation, streaming and phase logging default off; STT/TTS intra-op thread
+counts default to one. Streaming's emit size defaults to 12 Flow LM frames.
+These are read by the **desktop voice process**, not by a Hermes agent's
+profile or managed-agent environment. The upgrade does not change user config
+or enable the experiments.
 
-Not absorbed here — these levers live in `buzz-voice`/TTS internals that this
-branch does not touch, so **setting them has no effect in Crew**:
-`BUZZ_STT_SPECULATIVE`, `BUZZ_TTS_STREAMING`, `BUZZ_TTS_EMIT_FRAMES`,
-`BUZZ_STT_THREADS`, `BUZZ_TTS_THREADS`, `BUZZ_TTS_PHASE_LOG`.
-
-`BUZZ_STT_FLUSH_MS` is **not** a latency lever and must not be reintroduced:
-upstream removed it after live testing because shortening the silence window
-below natural mid-sentence pauses split one spoken sentence into several
-messages and confused listening agents. The window stays at the production
-300 ms (`SILENCE_FLUSH_FRAMES`).
+`BUZZ_STT_FLUSH_MS` remains removed and must not be reintroduced. The silence
+window is fixed at the released 31 frames of 256 samples at 16 kHz, about
+496 ms (nominally 500 ms), to avoid splitting natural conversational pauses.
+The earlier partial port's 19-frame / 304 ms value is superseded. Thresholds
+and pre-roll follow the released Earshot 1.1.0 operating point; changing the
+model or thresholds requires the matched-corpus validation described in
+`desktop/src-tauri/src/huddle/stt.rs`.
 
 ## Crew roles (issue #116 Slice 1R and later slices)
 

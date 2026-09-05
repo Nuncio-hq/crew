@@ -1,3 +1,4 @@
+import type { StartManagedAgentOptions } from "@/shared/api/tauriManagedAgents";
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -53,9 +54,15 @@ import {
 import { bootstrapManagedAgentRuntimePairs } from "@/features/agents/managedAgentRuntimeHooks";
 import {
   acpRuntimesQueryKey,
+  applyBootWarmGate,
+  getBootWarmSnapshot,
   refreshAcpRuntimes,
+  subscribeBootWarm,
 } from "@/features/agents/acpRuntimesQuery";
-export { useAcpRuntimesQueryForced } from "@/features/agents/acpRuntimesQuery";
+export {
+  useAcpRuntimesQueryForced,
+  useRetryBootWarm,
+} from "@/features/agents/acpRuntimesQuery";
 import {
   createPersona,
   deletePersona,
@@ -220,12 +227,23 @@ function invalidateManagedAgentQueriesInBackground(
  * probe pipeline.
  */
 export function useAcpRuntimesQuery(options?: { enabled?: boolean }) {
-  return useQuery({
+  const query = useQuery({
     enabled: options?.enabled ?? true,
     queryKey: acpRuntimesQueryKey,
     queryFn: () => discoverAcpRuntimes(),
     staleTime: 30 * 60_000,
   });
+  // Overlay the launch boot-warm gate so cheap consumers never present a cold
+  // catalog as authoritative: until the first forced pass settles, an un-warmed
+  // catalog reads as loading (`pending`) or a retryable error (`failed`) rather
+  // than "every harness not installed". `applyBootWarmGate` preserves an
+  // already-good list and passes through untouched while idle/settled.
+  const bootWarm = React.useSyncExternalStore(
+    subscribeBootWarm,
+    getBootWarmSnapshot,
+    getBootWarmSnapshot,
+  );
+  return applyBootWarmGate(query, bootWarm);
 }
 
 export function useAvailableAcpRuntimes(options?: { enabled?: boolean }) {
@@ -584,7 +602,12 @@ export function useStartManagedAgentMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (pubkey: string) => startManagedAgent(pubkey),
+    mutationFn: (
+      input: string | (StartManagedAgentOptions & { pubkey: string }),
+    ) =>
+      typeof input === "string"
+        ? startManagedAgent(input)
+        : startManagedAgent(input.pubkey, input),
     onSuccess: (updated) => {
       queryClient.setQueryData<ManagedAgent[]>(
         managedAgentsQueryKey,
@@ -804,12 +827,16 @@ export function useProvisionChannelManagedAgentMutation(
         throw new Error("No channel selected.");
       }
 
-      const [managedAgents, members] = await Promise.all([
+      const [managedAgents, members, personas] = await Promise.all([
         listManagedAgents(),
         getChannelMembers(effectiveChannelId),
+        rest.personaId && rest.respondTo === undefined
+          ? listPersonas()
+          : Promise.resolve([]),
       ]);
       return provisionChannelManagedAgent(rest, {
         managedAgents,
+        personas,
         channelMemberPubkeys: new Set(
           members.map((member) => normalizePubkey(member.pubkey)),
         ),

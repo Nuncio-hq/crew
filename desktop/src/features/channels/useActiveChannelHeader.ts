@@ -22,6 +22,7 @@ export type ActiveDmHeaderParticipant = {
   pubkey: string;
   displayName: string;
   avatarUrl: string | null;
+  isAgent?: boolean;
 };
 
 export function useActiveChannelHeader(
@@ -111,6 +112,7 @@ export function useActiveChannelHeader(
             pubkey: participant.pubkey,
           }),
           avatarUrl: profile?.avatarUrl ?? null,
+          ...(profile?.isAgent === true ? { isAgent: true } : {}),
         };
       }),
     [activeDmParticipants, currentPubkey, dmProfiles],

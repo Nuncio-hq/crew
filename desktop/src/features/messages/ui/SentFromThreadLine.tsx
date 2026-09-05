@@ -48,6 +48,7 @@ export function SentFromThreadLine({
           void goChannel(targetChannelId);
         }}
         onOpenMessageLink={onOpenMessageLink}
+        resolveChannelReference
         threadExcerpt={reference.rootExcerpt}
         variant="sent-from-thread"
       />

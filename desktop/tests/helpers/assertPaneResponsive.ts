@@ -25,10 +25,11 @@ function rectsOverlap(
  */
 export async function assertPaneResponsive(
   page: Page,
-  paneTestId: string,
+  paneTarget: string | Locator,
   options: AssertPaneResponsiveOptions = {},
 ): Promise<void> {
-  const pane = page.getByTestId(paneTestId);
+  const pane =
+    typeof paneTarget === "string" ? page.getByTestId(paneTarget) : paneTarget;
   await expect(pane).toBeVisible();
 
   const report = await pane.evaluate((element, minCh) => {

@@ -3,7 +3,9 @@ mod agent_control;
 mod app_menu;
 mod app_state;
 mod archive;
+mod build_identity;
 mod builderlab;
+mod channel_head_cache;
 mod commands;
 mod deep_link;
 mod egress_guard;
@@ -44,6 +46,7 @@ mod resource_governor;
 mod run_lifecycle;
 mod secret_store;
 mod shutdown;
+mod team_catalog;
 mod templates;
 mod terminal_runtime;
 #[cfg_attr(not(test), allow(dead_code))]
@@ -61,11 +64,9 @@ use agent_control::{
 };
 use app_state::{build_app_state, resolve_persisted_identity, AppState};
 use builderlab::*;
+pub use commands::print_agent_access_owner_only_probe_if_requested;
 use commands::*;
-use deep_link::{
-    acknowledge_pending_community_deep_link, handle_deep_link_url,
-    take_pending_community_deep_link, PendingCommunityDeepLinks,
-};
+use deep_link::*;
 use huddle::audio_output::{
     get_audio_output_device, list_audio_output_devices, set_audio_output_device,
 };
@@ -96,11 +97,7 @@ use tauri_plugin_window_state::StateFlags;
 use wiki_worker::wiki_generate;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // mesh-llm's async chains (model download, node start/join) overflow
-    // tokio's default 2 MiB worker stacks — a stack-guard SIGABRT, not a
-    // panic. Upstream mesh-llm and mesh-console both run on 8 MiB worker
-    // stacks for this reason; give Tauri's command runtime the same headroom
-    // before anything else touches tauri::async_runtime.
+    // mesh-llm async chains overflow tokio's default 2 MiB stacks; run on 8 MiB like upstream.
     #[cfg(feature = "mesh-llm")]
     match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -131,7 +128,7 @@ pub fn run() {
             }
             // Forward any deep link URLs from the duplicate launch.
             for arg in &argv {
-                if arg.starts_with("buzz://") {
+                if crate::build_identity::is_deep_link_for_build(arg) {
                     handle_deep_link_url(app, arg);
                 }
             }
@@ -205,95 +202,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init());
 
-    // The global-shortcut plugin is omitted from test builds: linking it into
-    // the lib-test binary makes it fail to load on Windows (STATUS_ENTRYPOINT_NOT_FOUND) before any test runs.
-    #[cfg(not(test))]
-    let builder = builder.plugin({
-        use tauri_plugin_global_shortcut::ShortcutState;
-
-        // Generation counter for the release delay task. Incremented on
-        // every press — a delayed release only fires if the generation
-        // hasn't changed (i.e. no new press happened during the delay).
-        // This prevents press→release→press within 200 ms from having
-        // the first release clobber the second press.
-        let ptt_press_gen = Arc::new(std::sync::atomic::AtomicU64::new(0));
-
-        tauri_plugin_global_shortcut::Builder::new()
-            .with_handler(move |app, _shortcut, event| {
-                let state = match app.try_state::<AppState>() {
-                    Some(s) => s,
-                    None => return,
-                };
-
-                // Only act if a huddle is active and mode is PTT.
-                let (is_ptt_mode, is_active) = match state.huddle_state.lock() {
-                    Ok(hs) => (
-                        hs.voice_input_mode == huddle::VoiceInputMode::PushToTalk,
-                        matches!(
-                            hs.phase,
-                            huddle::HuddlePhase::Connected | huddle::HuddlePhase::Active
-                        ),
-                    ),
-                    Err(_) => return,
-                };
-
-                if !is_ptt_mode || !is_active {
-                    return;
-                }
-
-                match event.state {
-                    ShortcutState::Pressed => {
-                        // Bump generation — invalidates any pending release delay.
-                        ptt_press_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
-
-                        if let Ok(hs) = state.huddle_state.lock() {
-                            hs.ptt_active
-                                .store(true, std::sync::atomic::Ordering::Release);
-                            // Only cancel TTS if it's actually playing — avoids
-                            // a stale cancel flag that drops the next queued message.
-                            if hs.tts_active.load(std::sync::atomic::Ordering::Acquire) {
-                                hs.tts_cancel
-                                    .store(true, std::sync::atomic::Ordering::Release);
-                            }
-                        }
-                        // Emit ptt-state=true to the frontend.
-                        // The React side plays the press audio cue on this event
-                        // (Web Audio API via HuddleContext). Rust-side rodio audio
-                        // was considered but rejected: the rodio OutputStream must
-                        // outlive the handler and sharing it across the shortcut
-                        // closure adds lifecycle complexity for marginal gain.
-                        // The React implementation is sufficient and simpler.
-                        let _ = app.emit("ptt-state", true);
-                    }
-                    ShortcutState::Released => {
-                        // Capture generation at release time.
-                        let gen_at_release =
-                            ptt_press_gen.load(std::sync::atomic::Ordering::Acquire);
-                        let gen_arc = Arc::clone(&ptt_press_gen);
-                        let app_handle = app.clone();
-                        // 200 ms release delay — captures the tail of the utterance.
-                        // Only applies if no new press happened during the delay.
-                        tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                            // Check generation — if it changed, a new press arrived.
-                            if gen_arc.load(std::sync::atomic::Ordering::Acquire) != gen_at_release
-                            {
-                                return; // Superseded by a new press.
-                            }
-                            if let Some(state) = app_handle.try_state::<AppState>() {
-                                if let Ok(hs) = state.huddle_state.lock() {
-                                    hs.ptt_active
-                                        .store(false, std::sync::atomic::Ordering::Release);
-                                }
-                            }
-                            // Emit ptt-state=false — React plays the release audio cue.
-                            let _ = app_handle.emit("ptt-state", false);
-                        });
-                    }
-                }
-            })
-            .build()
-    });
+    let builder = ptt_shortcut::install(builder);
 
     // Register the updater only in configured release builds; omit it locally.
     #[cfg(buzz_updater_enabled)]
@@ -314,6 +223,8 @@ pub fn run() {
         .manage(build_app_state())
         .manage(ClipboardState::new())
         .manage(PendingCommunityDeepLinks::default())
+        .manage(PendingNavigationDeepLinks::default())
+        .manage(PendingEntityDeepLinks::default())
         .manage(BuilderlabSession::default())
         .manage(BuilderlabLogin::default())
         .manage(commands::pairing::PairingHandle::new())
@@ -324,6 +235,7 @@ pub fn run() {
         .manage(crate::resource_governor::ResourceGovernorHandle::new())
         .manage(crate::resource_governor::MjpegFrames(Default::default()))
         .manage(crate::agent_control::AgentControlHandle::new())
+        .manage(channel_head_cache::ChannelHeadCacheStore::default())
         .setup(move |app| {
             let app_handle = app.handle().clone();
             #[cfg(target_os = "macos")]
@@ -417,16 +329,14 @@ pub fn run() {
             // agent spawns can resolve custom/preset runtime ids without
             // waiting for the frontend's discover_acp_providers call.  This is
             // a pure directory scan — no PATH probing, no async work.
-            {
-                let custom_dir = app_handle
-                    .path()
-                    .app_data_dir()
-                    .ok()
-                    .map(|d| d.join("custom_harnesses"));
-                managed_agents::custom_harnesses::warm_harness_registry_from_dir(
-                    custom_dir.as_deref(),
-                );
-            }
+            let custom_harness_dir = app_handle
+                .path()
+                .app_data_dir()
+                .ok()
+                .map(|d| d.join("custom_harnesses"));
+            managed_agents::custom_harnesses::warm_harness_registry_from_dir(
+                custom_harness_dir.as_deref(),
+            );
 
             // Store the AppHandle so huddle commands can emit `huddle-state-changed`
             // events via `huddle::emit_huddle_state` without threading the handle
@@ -456,10 +366,7 @@ pub fn run() {
                 // Route mesh-llm's download progress (model weights, runtime)
                 // onto Tauri events so the UI can render real progress.
                 crate::mesh_llm::install_progress_sink(&app_handle);
-                let mesh_app = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    crate::mesh_llm::start_coordinator(mesh_app).await;
-                });
+                tauri::async_runtime::spawn(crate::mesh_llm::start_coordinator(app_handle.clone()));
             }
 
             // Start the localhost media streaming proxy. Uses the shared HTTP
@@ -498,6 +405,7 @@ pub fn run() {
             if let Err(error) = ensure_nest() {
                 eprintln!("buzz-desktop: failed to create nest: {error}");
             }
+            archive::spawn_warm_init(app_handle.clone());
 
             // Resolve the REPOS symlink from the persisted repos_dir BEFORE
             // agents are restored below, and decide whether restore is safe.
@@ -521,7 +429,10 @@ pub fn run() {
             // the now-inert ~/.sprout; the frontend dedupes the toast.
             // Suppressed when a reset completed this boot: the nest was wiped and
             // a fresh ~/.sprout-less state is exactly what we want.
-            if !reset_outcome.completed && migration::migrate_legacy_nest() {
+            if !crate::build_identity::is_demo_build()
+                && !reset_outcome.completed
+                && migration::migrate_legacy_nest()
+            {
                 let _ = app_handle.emit("legacy-nest-migrated", ());
             }
 
@@ -559,15 +470,7 @@ pub fn run() {
             // and on cold start. The single-instance plugin handles forwarding
             // from duplicate launches on Windows/Linux.
             #[cfg(desktop)]
-            {
-                use tauri_plugin_deep_link::DeepLinkExt;
-                let dl_handle = app.handle().clone();
-                app.deep_link().on_open_url(move |event| {
-                    for url in event.urls() {
-                        handle_deep_link_url(&dl_handle, url.as_str());
-                    }
-                });
-            }
+            deep_link::install_deep_link_handlers(app);
 
             // Defer launch-time agent restoration until `apply_workspace` has
             // installed the active workspace relay and identity. Starting here

@@ -14,6 +14,9 @@ async fn rejected_receipt_cannot_panic_or_requeue_completed_agent_work() {
         let mut fixture = Fixture::new(Response::Reject(status, body)).await;
         let channel = Uuid::new_v4();
         let mut ctx = make_prompt_context_no_owner();
+        let (metadata, _, _metadata_server) =
+            super::super::tests::counting_resolver(serde_json::json!([])).await;
+        ctx.channel_info = metadata;
         ctx.agent_keys = fixture.rest.keys.clone();
         ctx.rest_client = fixture.rest.clone();
         ctx.relay_url = fixture.rest.base_url.clone();
@@ -29,6 +32,7 @@ async fn rejected_receipt_cannot_panic_or_requeue_completed_agent_work() {
                     name: "receipt-boundary".into(),
                     channel_type: "stream".into(),
                     description: None,
+                    project: None,
                 },
             );
         let outbox = receipt_outbox_dir(&ctx).expect("outbox");

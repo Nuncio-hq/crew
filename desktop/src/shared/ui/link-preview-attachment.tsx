@@ -1,3 +1,4 @@
+import { setToolPaneTab } from "@/features/tool-pane/toolPaneStore";
 import type { MouseEvent } from "react";
 
 import { setThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
@@ -5,7 +6,10 @@ import { parseForgePullRequestUrl } from "@/features/messages/lib/parseForgePull
 import { setThreadForgeHubSubject } from "@/features/messages/lib/threadForgeHubSubjectStore";
 import { getThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
 import type { ResolvedLinkPreview } from "@/shared/lib/useResolvedLinkPreviews";
-import { useLinkPreviewStyle } from "@/shared/lib/linkPreviewStylePreference";
+import {
+  type LinkPreviewStyle,
+  useLinkPreviewStyle,
+} from "@/shared/lib/linkPreviewStylePreference";
 import { rewriteRelayUrl } from "@/shared/lib/mediaUrl";
 import { useMediaProxyPort } from "@/shared/lib/useMediaProxyPort";
 import { CompactLinkPreviewAttachment } from "@/shared/ui/compact-link-preview-attachment";
@@ -14,6 +18,54 @@ import {
   RichLinkPreviewAttachment,
 } from "@/shared/ui/rich-link-preview-attachment";
 
+type LinkPreviewAttachmentProps = {
+  className?: string;
+  ImageLightbox: LinkPreviewImageLightboxComponent;
+  onOpen?: () => void;
+  onRemove?: () => void;
+  preview: ResolvedLinkPreview;
+  showControls?: boolean;
+  showExpandControl?: boolean;
+};
+
+/** Renders a link preview with an explicit presentation style. */
+export function LinkPreviewAttachmentPresentation({
+  className,
+  ImageLightbox,
+  onOpen,
+  onRemove,
+  preview,
+  showControls,
+  showExpandControl,
+  style,
+}: LinkPreviewAttachmentProps & {
+  style: LinkPreviewStyle;
+}) {
+  if (style === "rich") {
+    return (
+      <RichLinkPreviewAttachment
+        className={className}
+        ImageLightbox={ImageLightbox}
+        onOpen={onOpen}
+        onRemove={onRemove}
+        preview={preview}
+        showControls={showControls}
+        showExpandControl={showExpandControl}
+      />
+    );
+  }
+
+  return (
+    <CompactLinkPreviewAttachment
+      className={className}
+      onOpen={onOpen}
+      onRemove={onRemove}
+      preview={preview}
+      showControls={showControls}
+    />
+  );
+}
+
 export function LinkPreviewAttachment({
   className,
   ImageLightbox,
@@ -21,14 +73,8 @@ export function LinkPreviewAttachment({
   onRemove,
   preview,
   showControls,
-}: {
-  className?: string;
-  ImageLightbox: LinkPreviewImageLightboxComponent;
-  onOpen?: () => void;
-  onRemove?: () => void;
-  preview: ResolvedLinkPreview;
-  showControls?: boolean;
-}) {
+  showExpandControl,
+}: LinkPreviewAttachmentProps) {
   useMediaProxyPort();
   const renderedPreview = {
     ...preview,
@@ -41,25 +87,18 @@ export function LinkPreviewAttachment({
   };
   const style = useLinkPreviewStyle();
   const forgeRef = parseForgePullRequestUrl(preview.href);
-  const previewNode =
-    style === "rich" ? (
-      <RichLinkPreviewAttachment
-        className={className}
-        ImageLightbox={ImageLightbox}
-        onOpen={onOpen}
-        onRemove={onRemove}
-        preview={renderedPreview}
-        showControls={showControls}
-      />
-    ) : (
-      <CompactLinkPreviewAttachment
-        className={className}
-        onOpen={onOpen}
-        onRemove={onRemove}
-        preview={renderedPreview}
-        showControls={showControls}
-      />
-    );
+  const previewNode = (
+    <LinkPreviewAttachmentPresentation
+      className={className}
+      ImageLightbox={ImageLightbox}
+      onOpen={onOpen}
+      onRemove={onRemove}
+      preview={renderedPreview}
+      showControls={showControls}
+      showExpandControl={showExpandControl}
+      style={style}
+    />
+  );
 
   if (!forgeRef) return previewNode;
   const locator = forgeRef;
@@ -77,6 +116,7 @@ export function LinkPreviewAttachment({
       rootEventId: view?.rootEventId ?? null,
       source: "url",
     });
+    setToolPaneTab("pr");
     setThreadViewMode("focus");
   }
 

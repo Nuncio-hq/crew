@@ -1,6 +1,9 @@
 import { basename, dirname, normalize } from "@tauri-apps/api/path";
 
-import { getProjectLocalRepoSnapshot } from "@/shared/api/projectGit";
+import {
+  getProjectLocalRepoFileContent,
+  getProjectLocalRepoSnapshot,
+} from "@/shared/api/projectGit";
 import type { ProjectLocalRepoSnapshot } from "@/shared/api/types";
 
 type SnapshotInput = {
@@ -49,6 +52,30 @@ export async function readExactLocalWorkspaceSnapshot(
     );
   }
   return result;
+}
+
+/** Read lazy file content only from the verified linked workspace. */
+export async function readExactLocalWorkspaceFileContent(
+  input: SnapshotInput & { path: string },
+  dependencies: SnapshotDependencies & {
+    getLocalFileContent: typeof getProjectLocalRepoFileContent;
+  } = {
+    ...runtimeDependencies,
+    getLocalFileContent: getProjectLocalRepoFileContent,
+  },
+): Promise<string | null> {
+  const snapshot = await readExactLocalWorkspaceSnapshot(input, dependencies);
+  if (!snapshot) return null;
+  const [reposDir, projectDtag] = await Promise.all([
+    dependencies.dirname(snapshot.path),
+    dependencies.basename(snapshot.path),
+  ]);
+  return dependencies.getLocalFileContent({
+    reposDir,
+    projectDtag,
+    cloneUrl: null,
+    path: input.path,
+  });
 }
 
 export async function readProjectLocalRepoSnapshot(

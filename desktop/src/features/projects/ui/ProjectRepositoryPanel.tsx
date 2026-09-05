@@ -1,3 +1,8 @@
+import { ProjectFileContentPanel } from "./ProjectFileContentPanel";
+import {
+  consumePendingWikiFileOpen,
+  peekPendingWikiFileOpen,
+} from "@/features/wiki/lib/wikiFileOpenStore";
 import {
   Braces,
   ChevronRight,
@@ -27,6 +32,7 @@ import type {
 } from "@/features/projects/hooks";
 import {
   nextRepositoryEntryLimit,
+  pluralize,
   relativeTime,
   REPOSITORY_ENTRY_PAGE_SIZE,
 } from "@/features/projects/lib/projectsViewHelpers";
@@ -35,13 +41,11 @@ import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { UserSearchResult } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { normalizePubkey } from "@/shared/lib/pubkey";
+import { BuzzLoadingState } from "@/shared/ui/BuzzLoadingState";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
-import {
-  PROJECT_DETAIL_PANEL_CLASS,
-  PROJECT_DETAIL_PANEL_MESSAGE_CLASS,
-} from "./projectPanelStyles";
-import { ProjectFileContentPanel } from "./ProjectFileContentPanel";
-import { consumePendingWikiFileOpen } from "@/features/wiki/lib/wikiFileOpenStore";
+import { PROJECT_DETAIL_PANEL_CLASS } from "./projectPanelStyles";
+import { ProjectRepositoryLatestCommitRow } from "./ProjectRepositoryLatestCommitRow";
+import { ProjectPanelState } from "./ProjectPanelState";
 import {
   type RepoSourceHeaderControls,
   RepoSourceDropdown,
@@ -49,20 +53,10 @@ import {
   RepositoryBranchDropdown,
 } from "./ProjectRepositorySource";
 import type { RepositoryFileContentSource } from "./useRepositoryFileContent";
-
-function pluralize(count: number, singular: string) {
-  return `${count} ${singular}${count === 1 ? "" : "s"}`;
-}
-
-export function formatLastChangedAt(timestamp: number | null) {
-  if (!timestamp) return "—";
-  return new Date(timestamp * 1_000).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+import {
+  type RepositoryFilesContext,
+  useRepositoryFilesNavigation,
+} from "./useRepositoryFilesNavigation";
 
 function normalizeAuthorLookupValue(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? "";
@@ -148,7 +142,7 @@ function RepositoryCommitCell({
   if (!commit) return <span className="text-muted-foreground">—</span>;
 
   return (
-    <p className="truncate text-sm text-foreground">
+    <p className="truncate text-xs text-foreground">
       {commit.subject}
       <span className="text-muted-foreground">
         {" "}
@@ -421,9 +415,10 @@ function RepositoryEntryIcon({ entry }: { entry: RepositoryFileEntry }) {
   return (
     <span
       className={cn(
-        "flex h-6 w-6 shrink-0 items-center justify-center",
+        "flex h-6 w-6 shrink-0 items-center justify-center rounded-md",
         visual.containerClassName,
       )}
+      data-testid="project-repository-entry-icon"
     >
       <Icon className={cn("h-4 w-4", visual.className)} />
     </span>
@@ -541,40 +536,51 @@ function BreadcrumbButton({
 
 export function RepositoryFilesPanel({
   files,
+  fileOpenRequestKey,
+  projectId,
   fileContentSource,
+  initialPath,
   snapshot,
   isLoading,
   error,
   profiles,
   fallbackAuthorPubkey,
+  onContextChange,
+  onOpenCommit,
   sourceControls,
   unavailableMessage,
 }: {
   files: ProjectRepoFile[];
+  /** Entity-link activation key; repeats must reapply the requested line range. */
+  fileOpenRequestKey?: string;
+  /** Repository coordinate used to scope pending Wiki citations. */
+  projectId?: string;
   fileContentSource?: RepositoryFileContentSource;
+  initialPath?: string;
   snapshot: ProjectRepoSnapshot | null | undefined;
   isLoading: boolean;
   error: unknown;
   profiles?: UserProfileLookup;
   fallbackAuthorPubkey?: string;
+  onContextChange?: (context: RepositoryFilesContext) => void;
+  onOpenCommit?: (commitHash: string) => void;
   /** Branch picker + remote/local toggle rendered in the panel header. */
   sourceControls?: RepoSourceHeaderControls;
   unavailableMessage?: string;
 }) {
-  const [currentPath, setCurrentPath] = React.useState("");
-  const [selectedFile, setSelectedFile] =
-    React.useState<ProjectRepoFile | null>(null);
-  const [visibleEntryCount, setVisibleEntryCount] = React.useState(
-    REPOSITORY_ENTRY_PAGE_SIZE,
-  );
-  const openPath = React.useCallback((path: string) => {
-    setCurrentPath(path);
-    setVisibleEntryCount(REPOSITORY_ENTRY_PAGE_SIZE);
-  }, []);
-  const [lineHighlight, setLineHighlight] = React.useState<{
-    start: number;
-    end: number;
-  } | null>(null);
+  const {
+    currentPath,
+    openPath,
+    selectedFile,
+    setSelectedFile,
+    setVisibleEntryCount,
+    visibleEntryCount,
+  } = useRepositoryFilesNavigation({
+    files,
+    initialPath,
+    onContextChange,
+    pageSize: REPOSITORY_ENTRY_PAGE_SIZE,
+  });
   const entries = React.useMemo(
     () => repositoryEntries(files, currentPath),
     [currentPath, files],
@@ -615,64 +621,36 @@ export function RepositoryFilesPanel({
     latestCommit,
     latestCommitProfile,
   );
-  const pathSegments = currentPath ? currentPath.split("/") : [];
-
-  const filesKey = React.useMemo(
-    () => files.map((file) => file.path).join("\0"),
-    [files],
-  );
-
-  const appliedFilesKey = React.useRef("");
+  const [lineHighlight, setLineHighlight] = React.useState<{
+    start: number;
+    end: number;
+  } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: every entity-link activation must reapply an unchanged file's range.
   React.useEffect(() => {
-    if (!filesKey) return;
-    const pending = consumePendingWikiFileOpen();
-    if (pending) {
-      const file = files.find((item) => item.path === pending.path) ?? null;
-      if (file) {
-        setSelectedFile(file);
-        setLineHighlight({ start: pending.startLine, end: pending.endLine });
-        appliedFilesKey.current = filesKey;
-        return;
-      }
-    }
-    if (appliedFilesKey.current === filesKey) return;
-    appliedFilesKey.current = filesKey;
-    setCurrentPath("");
-    setSelectedFile(null);
-    setLineHighlight(null);
-    setVisibleEntryCount(REPOSITORY_ENTRY_PAGE_SIZE);
-  }, [files, filesKey]);
+    if (!projectId || files.length === 0) return;
+    const pending = peekPendingWikiFileOpen(projectId);
+    if (!pending) return;
+    const file = files.find((item) => item.path === pending.path);
+    if (!file) return;
+    consumePendingWikiFileOpen(projectId);
+    setSelectedFile(file);
+    setLineHighlight({ start: pending.startLine, end: pending.endLine });
+  }, [files, fileOpenRequestKey, projectId, setSelectedFile]);
+  const pathSegments = currentPath ? currentPath.split("/") : [];
 
   // Loading/error/empty states keep the header controls visible — the
   // remote/local toggle must stay reachable when one source fails to load.
-  const stateMessage = isLoading
-    ? "Loading repository files…"
-    : unavailableMessage
-      ? unavailableMessage
-      : error
-        ? "Could not load the repository file tree."
-        : files.length === 0
-          ? "No files have been pushed yet."
-          : null;
-  if (stateMessage) {
+  if (isLoading) {
     if (!sourceControls) {
-      return (
-        <div
-          className={PROJECT_DETAIL_PANEL_MESSAGE_CLASS}
-          data-project-detail-panel
-        >
-          {stateMessage}
-        </div>
-      );
+      return <BuzzLoadingState label="Loading repository files" />;
     }
     return (
       <div className={PROJECT_DETAIL_PANEL_CLASS} data-project-detail-panel>
-        <div className="flex min-h-14 min-w-0 items-center gap-1 border-border/50 border-b px-3 py-3">
+        <div className="flex min-h-14 min-w-0 items-center gap-1 border-border/50 border-b px-4 py-3">
           <RepoSourceDropdown controls={sourceControls} />
           <RepositoryBranchDropdown
             branch={sourceControls.branch}
             branchOptions={sourceControls.branchOptions}
-            compact
             createBranchDisabled={sourceControls.createBranchDisabled}
             createBranchTitle={sourceControls.createBranchTitle}
             deleteBranchDisabled={sourceControls.deleteBranchDisabled}
@@ -688,7 +666,56 @@ export function RepositoryFilesPanel({
             <RepoSyncActionButton controls={sourceControls} />
           </div>
         </div>
-        <div className="p-4 text-sm text-muted-foreground">{stateMessage}</div>
+        <BuzzLoadingState label="Loading repository files" />
+      </div>
+    );
+  }
+  const stateMessage = unavailableMessage
+    ? unavailableMessage
+    : error
+      ? "Could not load the repository file tree."
+      : files.length === 0
+        ? "No files have been pushed yet."
+        : null;
+  if (stateMessage) {
+    const state = (
+      <ProjectPanelState
+        description={
+          error || unavailableMessage
+            ? "Refresh the repository or check its access settings."
+            : "Files pushed to this repository will appear here."
+        }
+        error={Boolean(error || unavailableMessage)}
+        panel={!sourceControls}
+        title={stateMessage}
+      />
+    );
+    if (!sourceControls) {
+      return state;
+    }
+    return (
+      <div className={PROJECT_DETAIL_PANEL_CLASS} data-project-detail-panel>
+        <div className="flex min-h-14 min-w-0 items-center gap-1 border-border/50 border-b px-4 py-3">
+          <RepoSourceDropdown controls={sourceControls} />
+          <RepositoryBranchDropdown
+            branch={sourceControls.branch}
+            branchOptions={sourceControls.branchOptions}
+            createBranchDisabled={sourceControls.createBranchDisabled}
+            createBranchTitle={sourceControls.createBranchTitle}
+            deleteBranchDisabled={sourceControls.deleteBranchDisabled}
+            deleteBranchTitle={sourceControls.deleteBranchTitle}
+            onBranchChange={sourceControls.onBranchChange}
+            onCreateBranch={sourceControls.onCreateBranch}
+            onDeleteBranch={sourceControls.onDeleteBranch}
+            onTagChange={sourceControls.onTagChange}
+            selectedTag={sourceControls.selectedTag}
+            tagOptions={sourceControls.tagOptions}
+          />
+          <div className="ml-auto flex shrink-0 items-center">
+            <RepoSyncActionButton controls={sourceControls} />
+          </div>
+        </div>
+        {state}
       </div>
     );
   }
@@ -698,10 +725,9 @@ export function RepositoryFilesPanel({
       <ProjectFileContentPanel
         file={selectedFile}
         fileContentSource={fileContentSource}
-        highlightEnd={lineHighlight?.end}
         highlightStart={lineHighlight?.start}
+        highlightEnd={lineHighlight?.end}
         onOpenPath={(path) => {
-          setSelectedFile(null);
           setLineHighlight(null);
           openPath(path);
         }}
@@ -711,69 +737,83 @@ export function RepositoryFilesPanel({
 
   return (
     <div className={PROJECT_DETAIL_PANEL_CLASS} data-project-detail-panel>
-      <div className="flex min-h-14 min-w-0 items-center gap-1 border-border/50 border-b px-3 py-3">
-        {sourceControls ? (
-          <>
-            <RepoSourceDropdown controls={sourceControls} />
-            <RepositoryBranchDropdown
-              branch={sourceControls.branch}
-              branchOptions={sourceControls.branchOptions}
-              compact
-              createBranchDisabled={sourceControls.createBranchDisabled}
-              createBranchTitle={sourceControls.createBranchTitle}
-              deleteBranchDisabled={sourceControls.deleteBranchDisabled}
-              deleteBranchTitle={sourceControls.deleteBranchTitle}
-              onBranchChange={sourceControls.onBranchChange}
-              onCreateBranch={sourceControls.onCreateBranch}
-              onDeleteBranch={sourceControls.onDeleteBranch}
-              onTagChange={sourceControls.onTagChange}
-              selectedTag={sourceControls.selectedTag}
-              tagOptions={sourceControls.tagOptions}
-            />
-          </>
-        ) : (
-          <BreadcrumbButton onClick={() => openPath("")}>
-            Files
-          </BreadcrumbButton>
-        )}
-        {sourceControls && pathSegments.length > 0 ? (
-          <>
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+      {sourceControls || pathSegments.length > 0 ? (
+        <div className="flex min-h-14 min-w-0 items-center gap-1 border-border/50 border-b px-4 py-3">
+          {sourceControls ? (
+            <>
+              <RepoSourceDropdown controls={sourceControls} />
+              <RepositoryBranchDropdown
+                branch={sourceControls.branch}
+                branchOptions={sourceControls.branchOptions}
+                createBranchDisabled={sourceControls.createBranchDisabled}
+                createBranchTitle={sourceControls.createBranchTitle}
+                deleteBranchDisabled={sourceControls.deleteBranchDisabled}
+                deleteBranchTitle={sourceControls.deleteBranchTitle}
+                onBranchChange={sourceControls.onBranchChange}
+                onCreateBranch={sourceControls.onCreateBranch}
+                onDeleteBranch={sourceControls.onDeleteBranch}
+                onTagChange={sourceControls.onTagChange}
+                selectedTag={sourceControls.selectedTag}
+                tagOptions={sourceControls.tagOptions}
+              />
+            </>
+          ) : (
             <BreadcrumbButton onClick={() => openPath("")}>
               Files
             </BreadcrumbButton>
-          </>
-        ) : null}
-        {pathSegments.map((segment, index) => {
-          const nextPath = pathSegments.slice(0, index + 1).join("/");
-          return (
-            <React.Fragment key={nextPath}>
+          )}
+          {sourceControls && pathSegments.length > 0 ? (
+            <>
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-              <BreadcrumbButton onClick={() => openPath(nextPath)}>
-                {segment}
+              <BreadcrumbButton onClick={() => openPath("")}>
+                Files
               </BreadcrumbButton>
-            </React.Fragment>
-          );
-        })}
-        {sourceControls ? (
-          <div className="ml-auto flex shrink-0 items-center">
-            <RepoSyncActionButton controls={sourceControls} />
-          </div>
-        ) : null}
-      </div>
+            </>
+          ) : null}
+          {pathSegments.map((segment, index) => {
+            const nextPath = pathSegments.slice(0, index + 1).join("/");
+            return (
+              <React.Fragment key={nextPath}>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+                <BreadcrumbButton onClick={() => openPath(nextPath)}>
+                  {segment}
+                </BreadcrumbButton>
+              </React.Fragment>
+            );
+          })}
+          {sourceControls ? (
+            <div className="ml-auto flex shrink-0 items-center">
+              <RepoSyncActionButton controls={sourceControls} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
-      <div className="overflow-x-auto">
-        <table className="w-full caption-bottom text-sm">
+      <div className="overflow-x-auto px-2 pb-2">
+        <table className="w-full border-collapse caption-bottom text-sm">
           <thead>
-            <tr className="border-border/50 border-b bg-muted/20">
+            <ProjectRepositoryLatestCommitRow
+              commitShortHash={latestCommit?.shortHash}
+              onOpen={
+                latestCommit && onOpenCommit
+                  ? () => onOpenCommit(latestCommit.hash)
+                  : undefined
+              }
+            >
               <th className="px-4 py-3 text-left font-normal" colSpan={3}>
                 {latestCommit ? (
-                  <div className="flex min-w-0 items-center justify-between gap-3 text-sm">
+                  <div
+                    className="flex min-w-0 items-center justify-between gap-3 text-xs"
+                    data-testid="project-repository-latest-commit-summary"
+                  >
                     <div className="flex min-w-0 items-center gap-2">
                       <UserAvatar
                         accent={latestCommitProfile?.isAgent === true}
                         avatarUrl={latestCommitProfile?.avatarUrl ?? null}
                         displayName={latestCommitAuthorLabel}
+                        shape={
+                          latestCommitProfile?.isAgent ? "squircle" : "circle"
+                        }
                         size="sm"
                       />
                       <p className="min-w-0 flex-1 truncate text-foreground">
@@ -814,22 +854,19 @@ export function RepositoryFilesPanel({
                   </p>
                 )}
               </th>
-            </tr>
+            </ProjectRepositoryLatestCommitRow>
           </thead>
           <tbody>
-            {visibleEntries.map((entry, index) => {
+            {visibleEntries.map((entry) => {
               const latestCommit = entry.latestCommit;
-              const rowIsLast = index === visibleEntries.length - 1;
               const openEntry = () =>
                 openRepositoryEntry(entry, openPath, setSelectedFile);
 
               return (
                 <tr
                   aria-label={`Open ${entry.type} ${entry.name}`}
-                  className={cn(
-                    "cursor-pointer transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:outline-hidden",
-                    !rowIsLast && "border-border/50 border-b",
-                  )}
+                  className="group/repository-entry cursor-pointer text-xs focus-visible:outline-hidden"
+                  data-testid="project-repository-entry-row"
                   key={`${entry.type}:${entry.path}`}
                   onClick={openEntry}
                   onKeyDown={(event) =>
@@ -837,7 +874,7 @@ export function RepositoryFilesPanel({
                   }
                   tabIndex={0}
                 >
-                  <td className="min-w-52 p-3 align-middle">
+                  <td className="min-w-52 px-3 py-2 align-middle transition-colors group-hover/repository-entry:rounded-l-md group-hover/repository-entry:bg-muted/35 group-focus-visible/repository-entry:rounded-l-md group-focus-visible/repository-entry:bg-muted/35">
                     <div className="flex min-w-0 items-center gap-2">
                       <RepositoryEntryIcon entry={entry} />
                       <span className="truncate font-medium text-foreground">
@@ -845,13 +882,13 @@ export function RepositoryFilesPanel({
                       </span>
                     </div>
                   </td>
-                  <td className="max-w-96 p-3 align-middle">
+                  <td className="max-w-96 p-2 align-middle transition-colors group-hover/repository-entry:bg-muted/35 group-focus-visible/repository-entry:bg-muted/35">
                     <RepositoryCommitCell
                       commit={latestCommit}
                       profiles={profiles}
                     />
                   </td>
-                  <td className="w-36 whitespace-nowrap p-3 text-right align-middle text-muted-foreground">
+                  <td className="w-36 whitespace-nowrap p-2 text-right align-middle text-muted-foreground transition-colors group-hover/repository-entry:rounded-r-md group-hover/repository-entry:bg-muted/35 group-focus-visible/repository-entry:rounded-r-md group-focus-visible/repository-entry:bg-muted/35">
                     {latestCommit ? (
                       <time
                         dateTime={new Date(

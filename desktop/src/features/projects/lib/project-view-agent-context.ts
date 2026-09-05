@@ -144,3 +144,42 @@ export function appendCrewViewAgentContext(
   ].join("");
   return `[${label}]: <${viewUrl}> "${crewViewAgentContextTitle(context)}"\n\n${content}`;
 }
+
+/** Reads only the generated leading context definitions, preserving signed bytes. */
+export function extractCrewSubmittedAgentContext(
+  content: string,
+): string | null {
+  const definition =
+    /^\[buzz-(project|view)-context-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\]: <(buzz:\/\/project-workspace(?:-view)?\?[^>\r\n]+)> "(?:[^"\\\r\n]|\\[^\r\n])*"\n\n/;
+  const seen = new Set<string>();
+  let offset = 0;
+  let payloadEnd = 0;
+  // The send path emits at most one visible-view and one workspace definition.
+  while (seen.size < 2) {
+    const match = definition.exec(content.slice(offset));
+    if (!match || seen.has(match[1])) break;
+    try {
+      const url = new URL(match[2]);
+      const expectedHost =
+        match[1] === "view" ? "project-workspace-view" : "project-workspace";
+      if (url.hostname !== expectedHost) break;
+      if (match[1] === "view") {
+        if (
+          !["channel", "thread"].includes(url.searchParams.get("scope") ?? "")
+        )
+          break;
+      } else if (
+        !url.searchParams.get("repo") ||
+        !url.searchParams.get("path")?.startsWith("/")
+      ) {
+        break;
+      }
+    } catch {
+      break;
+    }
+    seen.add(match[1]);
+    offset += match[0].length;
+    payloadEnd = offset - 2;
+  }
+  return payloadEnd ? content.slice(0, payloadEnd) : null;
+}

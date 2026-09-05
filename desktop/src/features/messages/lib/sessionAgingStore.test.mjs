@@ -5,14 +5,46 @@ import {
   clearAllSessionAging,
   clearSessionAging,
   getSessionAging,
+  getSessionAgingSnapshot,
+  subscribeSessionAging,
   parseSessionAgingPayload,
   putSessionAging,
   sessionAgingBannerText,
-} from "./sessionAgingStore.test-support.mjs";
+} from "./sessionAgingStore.ts";
 
 describe("sessionAgingStore (#173)", () => {
   beforeEach(() => {
     clearAllSessionAging();
+  });
+
+  it("publishes new immutable snapshots for aging changes and removal", () => {
+    const snapshots = [getSessionAgingSnapshot()];
+    const unsubscribe = subscribeSessionAging(() => {
+      snapshots.push(getSessionAgingSnapshot());
+    });
+    const entry = parseSessionAgingPayload("aa".repeat(32), {
+      channelId: "channel",
+      conversationId: "thread",
+      aging: true,
+      compactionSignal: "known",
+      compactionCount: 3,
+    });
+    assert.ok(entry);
+    putSessionAging(entry);
+    putSessionAging({ ...entry, compactionCount: 4 });
+    clearSessionAging(entry.agentPubkey, entry.conversationId);
+    unsubscribe();
+    assert.equal(snapshots.length, 4);
+    assert.deepEqual(
+      snapshots.map((snapshot) => snapshot.size),
+      [0, 1, 1, 0],
+    );
+    assert.equal([...snapshots[1].values()][0].compactionCount, 3);
+    assert.equal([...snapshots[2].values()][0].compactionCount, 4);
+    for (let i = 1; i < snapshots.length; i++) {
+      assert.notEqual(snapshots[i], snapshots[i - 1]);
+    }
+    assert.equal(getSessionAgingSnapshot(), snapshots[3]);
   });
 
   it("stores aging only when aging=true and never fabricates unknown counts", () => {

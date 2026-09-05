@@ -3,36 +3,36 @@
   "files": {
     "src/features/agents/activeAgentTurnsStore.ts": {
       "lines": 1075,
-      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (focus-refetch / agent turn store); +4 for prune-on-subscribe no-notify guard; later ACP/perf growth on main to 1059; +17 for the liveness/membership notification split (issue #286) — bulk extracted to activeAgentTurnsLiveness.ts per D-022; coalesced notify extracted for issue #287.",
+      "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (focus-refetch / agent turn store); +4 for prune-on-subscribe no-notify guard; later ACP/perf growth on main to 1059; +17 for the liveness/membership notification split (issue #286) \u2014 bulk extracted to activeAgentTurnsLiveness.ts per D-022; coalesced notify extracted for issue #287.",
       "recordedAt": "2026-08-23"
     },
     "src/features/agents/observerRelayStore.ts": {
-      "lines": 1035,
+      "lines": 1021,
       "reason": "Upstream-owned observer retention and incremental-admission growth from the Tier 1 performance sync, plus ACP harness control_result dispatch from #4557; tightened after Crew extracted bounded archive retention to observerRelayRetention.ts (#293); coalesced notify extracted for issue #287.",
       "recordedAt": "2026-08-23"
     },
     "src/features/messages/ui/MessageComposer.tsx": {
-      "lines": 1040,
+      "lines": 1017,
       "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (imeta edit lifecycle + send-to-channel seams).",
       "recordedAt": "2026-08-12"
     },
     "src/features/messages/ui/MessageRow.tsx": {
-      "lines": 1014,
+      "lines": 1012,
       "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (Send to channel); Crew evidence pass-through remains additive.",
       "recordedAt": "2026-08-12"
     },
     "src/features/messages/ui/MessageThreadPanel.tsx": {
-      "lines": 992,
+      "lines": 984,
       "reason": "Tightened after #272 extracted ThreadComposerActivityRail out of the panel (D-022).",
       "recordedAt": "2026-08-22"
     },
     "src/shared/api/relayClientSession.ts": {
-      "lines": 1079,
+      "lines": 1066,
       "reason": "Upstream-owned lossless reconnect repair (#6415) plus AUTH inbound buffer (#3320) on top of the 0.5.11 attention-recovery pin; hold exact wc -l after rebase onto main.",
       "recordedAt": "2026-08-23"
     },
     "src-tauri/src/managed_agents/readiness.rs": {
-      "lines": 1700,
+      "lines": 1673,
       "reason": "Upstream-owned Hermes readiness; tightened after Cursor Auto model extract (D-022).",
       "recordedAt": "2026-08-20"
     }

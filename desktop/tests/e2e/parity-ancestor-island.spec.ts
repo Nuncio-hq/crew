@@ -110,13 +110,19 @@ test("live relay: an ancestor island does not strand the history frontier", asyn
   // A real wheel-up gesture per pass: the older-history sentinel arms on a
   // genuine leave→enter transition (IntersectionObserver), so a raw scrollTop=0
   // write can fail to re-fire. A wheel event is what a real user issues.
-  const wheelToTop = async () => {
-    for (let step = 0; step < 12; step += 1) {
+  const wheelToTop = async (collectVisible: () => Promise<void>) => {
+    // Sample each viewport as a user scrolls. A 6000px jump can skip virtualized
+    // rows even when the relay returned the complete contiguous history.
+    const stepPixels = await timeline.evaluate((element) =>
+      Math.max(1, Math.floor(element.clientHeight / 2)),
+    );
+    for (let step = 0; step < 120; step += 1) {
+      await collectVisible();
       const atTop = await timeline.evaluate(
         (element) => (element as HTMLDivElement).scrollTop <= 1,
       );
       if (atTop) break;
-      await page.mouse.wheel(0, -6000);
+      await page.mouse.wheel(0, -stepPixels);
       await page.waitForTimeout(40);
     }
   };
@@ -130,7 +136,7 @@ test("live relay: an ancestor island does not strand the history frontier", asyn
   let stallStreak = 0;
   for (let attempt = 0; attempt < 200 && seen.size < GAP_COUNT; attempt += 1) {
     const before = seen.size;
-    await wheelToTop();
+    await wheelToTop(collect);
     try {
       await expect
         .poll(

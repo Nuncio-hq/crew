@@ -9,6 +9,7 @@ import { Check, ChevronDown, Search } from "lucide-react";
 
 import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
+import { resolveModelLabel } from "../lib/formatAgentModelLabel";
 import { Input } from "@/shared/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import {
@@ -339,7 +340,6 @@ export function AgentModelField({
   allowDefaultModel = true,
   defaultModelLabel,
   disableSelectDuringDiscovery = true,
-  keepSelectedModelValueLabel = false,
   id = "agent-model",
   isCustomModelEditing,
   isRequired,
@@ -371,8 +371,6 @@ export function AgentModelField({
   defaultModelLabel?: string;
   /** Disable the trigger while live model discovery refreshes the option list. */
   disableSelectDuringDiscovery?: boolean;
-  /** Keep the closed trigger from swapping to discovered display labels. */
-  keepSelectedModelValueLabel?: boolean;
   /** DOM id for the model select. Defaults to `"agent-model"`. Override in
    *  contexts where multiple instances coexist on the same page (e.g. the
    *  global-config settings card) to avoid duplicate DOM ids. */
@@ -427,9 +425,12 @@ export function AgentModelField({
       isSharedCompute,
     }),
   };
-  const discoveredWithoutDefault = (discoveredModelOptions ?? []).filter(
-    (option) => option.id.trim() !== "",
-  );
+  const discoveredWithoutDefault = (discoveredModelOptions ?? [])
+    .filter((option) => option.id.trim() !== "")
+    .map((option) => ({
+      ...option,
+      label: resolveModelLabel(option.id, option.label, provider),
+    }));
   const baseModelOptions = isSharedCompute
     ? [defaultOption, ...discoveredWithoutDefault]
     : [
@@ -447,7 +448,13 @@ export function AgentModelField({
   const effectiveModelOptions =
     shouldShowPendingModelOption &&
     !baseModelOptions.some((option) => option.id === trimmedModel)
-      ? [...baseModelOptions, { id: trimmedModel, label: trimmedModel }]
+      ? [
+          ...baseModelOptions,
+          {
+            id: trimmedModel,
+            label: resolveModelLabel(trimmedModel, null, provider),
+          },
+        ]
       : baseModelOptions;
 
   // isModelCustom: true when the current model isn't in any known option set.
@@ -513,12 +520,6 @@ export function AgentModelField({
   // yields an empty list and discovery has finished, add a disabled sentinel
   // row so the user sees "No models found" instead of a bare white bar.
   appendNoModelsSentinel(modelOptions, modelDiscoveryLoading);
-  const stableSelectedModelLabel =
-    keepSelectedModelValueLabel &&
-    modelSelectValue === trimmedModel &&
-    trimmedModel.length > 0
-      ? trimmedModel
-      : undefined;
   // While discovery is in flight with nothing selected, the closed field
   // reads "Loading models…" instead of a select-prompt — the field isn't
   // waiting on the user, it's waiting on the harness.
@@ -547,7 +548,6 @@ export function AgentModelField({
       placeholder={restingPlaceholder}
       placeholderClassName={placeholderClassName}
       searchable
-      selectedLabel={stableSelectedModelLabel}
       testId={testId ?? id}
       value={modelSelectValue}
     />

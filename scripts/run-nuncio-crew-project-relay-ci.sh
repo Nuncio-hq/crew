@@ -55,7 +55,7 @@ export PGSCHEMA_PLAN_PASSWORD=buzz_dev
 ./bin/pgschema apply --file schema/schema.sql --auto-approve
 docker exec -i -e PGPASSWORD=buzz_dev buzz-postgres \
   psql -U buzz -d buzz -v ON_ERROR_STOP=1 \
-  < scripts/attach-schema-partitions.sql
+  < scripts/reconcile-schema-after-pgschema.sql
 docker exec -e PGPASSWORD=buzz_dev buzz-postgres \
   psql -U buzz -d buzz -v ON_ERROR_STOP=1 -c "
 INSERT INTO communities (id, host)
@@ -74,6 +74,7 @@ nohup env \
   BUZZ_S3_BUCKET=buzz-media \
   BUZZ_S3_REGION=us-east-1 \
   BUZZ_S3_ADDRESSING_STYLE=path \
+  BUZZ_RELAY_PRIVATE_KEY="$(openssl rand -hex 32)" \
   BUZZ_REQUIRE_AUTH_TOKEN=false \
   BUZZ_RECONCILE_CHANNELS=false \
   BUZZ_RATE_LIMIT_HUMAN_MESSAGES_PER_MIN=100000 \

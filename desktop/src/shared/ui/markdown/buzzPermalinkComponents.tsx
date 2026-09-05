@@ -8,8 +8,8 @@ import {
 } from "@/features/messages/lib/messageLink";
 import { parseEntityLink } from "@/shared/lib/entityLink";
 
-import { BuzzInlineLink } from "./BuzzLinkChip";
 import {
+  AuthoredDeepLinkAnchor,
   ChannelDeepLinkAnchor,
   MarkdownChannelDeepLink,
   MarkdownChannelReference,
@@ -26,6 +26,7 @@ type PermalinkRuntime = Pick<
   | "onOpenEntityLink"
   | "onOpenMessageLink"
   | "relayOrigin"
+  | "resolveChannelReferences"
 >;
 
 /**
@@ -53,6 +54,7 @@ export function tryRenderBuzzPermalinkAnchor({
     onOpenEntityLink,
     onOpenMessageLink,
     relayOrigin,
+    resolveChannelReferences,
   } = runtime;
 
   if (href && parseChannelLink(href).ok) {
@@ -75,19 +77,21 @@ export function tryRenderBuzzPermalinkAnchor({
             channels={channels}
             interactive={interactive}
             link={messageLinkTarget.link}
+            resolveChannelReference={resolveChannelReferences}
             onOpenChannel={onOpenChannel}
             onOpenMessageLink={onOpenMessageLink}
           />
         );
       }
       return (
-        <BuzzInlineLink
-          title={href}
+        <AuthoredDeepLinkAnchor
+          channelId={messageLinkTarget.link.channelId}
+          href={href}
           interactive={interactive}
-          onOpenLink={() => onOpenMessageLink(messageLinkTarget.link)}
+          messageLink={messageLinkTarget.link}
         >
           {children}
-        </BuzzInlineLink>
+        </AuthoredDeepLinkAnchor>
       );
     }
     // Malformed message deep links fall through to entity / external handling.
@@ -137,7 +141,12 @@ function MarkdownMessageLink({
   children?: React.ReactNode;
   interactive: boolean;
 }) {
-  const { channels, onOpenChannel, onOpenMessageLink } = useMarkdownRuntime();
+  const {
+    channels,
+    onOpenChannel,
+    onOpenMessageLink,
+    resolveChannelReferences,
+  } = useMarkdownRuntime();
   const href = String(children ?? "");
   const parsed = parseMessageLink(href);
   if (!parsed.ok) {
@@ -149,6 +158,7 @@ function MarkdownMessageLink({
       channels={channels}
       interactive={interactive}
       link={parsed.value}
+      resolveChannelReference={resolveChannelReferences}
       onOpenChannel={onOpenChannel}
       onOpenMessageLink={onOpenMessageLink}
     />

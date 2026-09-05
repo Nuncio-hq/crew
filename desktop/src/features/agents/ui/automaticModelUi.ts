@@ -9,6 +9,7 @@ import {
 } from "./agentConfigOptions";
 
 export type AutomaticModelUiState = {
+  allowInheritedModel: boolean;
   selectableAutoModel: boolean;
   offerAutomaticModel: boolean;
   resolvedModelSelectValue: string;
@@ -33,6 +34,7 @@ export function resolveAutomaticModelUiState({
     runtime ?? { id: "", modelEnvVar: null },
   ).selectableAutoModel;
   return {
+    allowInheritedModel: Boolean(runtime?.modelEnvVar),
     selectableAutoModel,
     offerAutomaticModel: shouldOfferAutomaticModelOption({
       isRelayMesh,
@@ -53,10 +55,12 @@ export function decorateAutomaticModelOptions<
 >(
   options: T[],
   {
+    allowInheritedModel = false,
     isRelayMesh,
     offerAutomaticModel,
     selectableAutoModel,
   }: {
+    allowInheritedModel?: boolean;
     isRelayMesh: boolean;
     offerAutomaticModel: boolean;
     selectableAutoModel: boolean;
@@ -65,10 +69,12 @@ export function decorateAutomaticModelOptions<
   return options
     .filter(
       (option) =>
-        offerAutomaticModel || option.value !== AUTO_MODEL_DROPDOWN_VALUE,
+        allowInheritedModel ||
+        offerAutomaticModel ||
+        option.value !== AUTO_MODEL_DROPDOWN_VALUE,
     )
     .map((option) =>
-      option.value === AUTO_MODEL_DROPDOWN_VALUE
+      option.value === AUTO_MODEL_DROPDOWN_VALUE && offerAutomaticModel
         ? {
             ...option,
             label: automaticModelOptionLabel({

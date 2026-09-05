@@ -23,6 +23,7 @@ export function UserProfileAgentManagementRows({
   canDeleteAgent,
   isDeletePending,
   managedAgent,
+  supplementalAction,
   onDeleteAgent,
   onDuplicateAgent,
   onExportAgent,
@@ -32,6 +33,7 @@ export function UserProfileAgentManagementRows({
   canDeleteAgent: boolean;
   isDeletePending: boolean;
   managedAgent?: ManagedAgent;
+  supplementalAction?: React.ReactNode;
   onDeleteAgent: (options?: HermesAwareAgentDeleteOptions) => void;
   onDuplicateAgent?: () => void;
   onExportAgent?: () => void;
@@ -39,6 +41,7 @@ export function UserProfileAgentManagementRows({
   if (
     !onDuplicateAgent &&
     !onExportAgent &&
+    !supplementalAction &&
     !canArchiveAgent &&
     !canDeleteAgent
   ) {
@@ -65,6 +68,7 @@ export function UserProfileAgentManagementRows({
           testId="user-profile-export-agent-row"
         />
       ) : null}
+      {supplementalAction}
       {canArchiveAgent ? (
         <ProfileArchiveAgentRow archiveActions={archiveActions} />
       ) : null}
@@ -79,10 +83,11 @@ export function UserProfileAgentManagementRows({
   );
 }
 
-function ProfileAgentActionRow({
+export function ProfileAgentActionRow({
   destructive = false,
   disabled = false,
   icon: Icon,
+  iconClassName,
   label,
   onClick,
   testId,
@@ -90,6 +95,7 @@ function ProfileAgentActionRow({
   destructive?: boolean;
   disabled?: boolean;
   icon: LucideIcon;
+  iconClassName?: string;
   label: string;
   onClick: () => void;
   testId: string;
@@ -104,9 +110,10 @@ function ProfileAgentActionRow({
     >
       <Icon
         className={
-          destructive
+          iconClassName ??
+          (destructive
             ? "h-4 w-4 shrink-0 text-destructive"
-            : "h-4 w-4 shrink-0 text-muted-foreground"
+            : "h-4 w-4 shrink-0 text-muted-foreground")
         }
         data-slot="profile-action-icon"
       />

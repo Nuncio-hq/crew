@@ -2969,6 +2969,7 @@ mod tests {
         .expect("signed stranger answer");
         runtime
             .handle_event(&BuzzEvent {
+                connection_generation: 0,
                 channel_id,
                 event: stranger_answer,
             })
@@ -2990,6 +2991,7 @@ mod tests {
         .expect("signed owner answer");
         runtime
             .handle_event(&BuzzEvent {
+                connection_generation: 0,
                 channel_id,
                 event: wrong_relation_answer,
             })
@@ -3011,6 +3013,7 @@ mod tests {
         .expect("signed owner answer");
         runtime
             .handle_event(&BuzzEvent {
+                connection_generation: 0,
                 channel_id,
                 event: owner_answer,
             })
@@ -3032,6 +3035,7 @@ mod tests {
         .expect("signed late answer");
         runtime
             .handle_event(&BuzzEvent {
+                connection_generation: 0,
                 channel_id,
                 event: late_answer,
             })
@@ -3116,6 +3120,7 @@ mod tests {
         .expect("answer signature");
         runtime
             .handle_event(&BuzzEvent {
+                connection_generation: 0,
                 channel_id,
                 event: answer,
             })
@@ -3143,6 +3148,7 @@ mod tests {
         .expect("answer signature");
         runtime
             .handle_event(&BuzzEvent {
+                connection_generation: 0,
                 channel_id,
                 event: decline,
             })

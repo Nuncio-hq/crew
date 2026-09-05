@@ -1,5 +1,6 @@
 use super::{
-    find_managed_agent_mut, kill_stale_tracked_processes, load_managed_agents, load_personas,
+    bestie_assignment::recover_pending_assignment_cleanup, find_managed_agent_mut,
+    kill_stale_tracked_processes, load_managed_agents, load_personas, managed_agents_base_dir,
     save_managed_agents, spawn_agent_child, sync_managed_agent_processes, BackendKind,
     ManagedAgentProcess,
 };
@@ -114,6 +115,11 @@ pub async fn restore_managed_agents_on_launch(
         }
 
         let mut records = load_managed_agents(app)?;
+        recover_pending_assignment_cleanup(&managed_agents_base_dir(app)?, |pending_pubkey| {
+            records
+                .iter()
+                .any(|record| record.pubkey.eq_ignore_ascii_case(pending_pubkey))
+        })?;
         let mut runtimes = state
             .managed_agent_processes
             .lock()
@@ -338,6 +344,7 @@ pub async fn restore_managed_agents_on_launch(
                                                 &key.relay_url,
                                                 true,
                                                 owner_hex_ref,
+                                                None,
                                             )
                                         }) {
                                         Ok(process) => {
@@ -438,11 +445,16 @@ pub async fn restore_managed_agents_on_launch(
                         private_key_nsec: record.private_key_nsec.clone(),
                         name: record.name.clone(),
                         relay_url: record.relay_url.clone(),
+                        target_relay_url: Some(crate::relay::relay_ws_url_with_override(&state)),
                         avatar_url: record.avatar_url.clone(),
                         auth_tag: record.auth_tag.clone(),
                         pubkey: record.pubkey.clone(),
                         agent_command: effective_command,
                         persona_id: record.persona_id.clone(),
+                        about: crate::managed_agents::record_effective_description(
+                            record,
+                            &reconcile_personas,
+                        ),
                     },
                 ))
             })
@@ -460,9 +472,14 @@ pub async fn restore_managed_agents_on_launch(
         let reconcile_app = app.clone();
         tauri::async_runtime::spawn(async move {
             let state = reconcile_app.state::<AppState>();
-            if let Err(e) =
-                crate::commands::reconcile_agent_profile(&state, &reconcile_app, &pubkey, &data)
-                    .await
+            if let Err(e) = crate::commands::reconcile_agent_profile(
+                &state,
+                &reconcile_app,
+                &pubkey,
+                &data,
+                None,
+            )
+            .await
             {
                 eprintln!("buzz-desktop: profile reconciliation failed for agent {pubkey}: {e}");
             }
@@ -470,6 +487,79 @@ pub async fn restore_managed_agents_on_launch(
     }
 
     Ok(())
+}
+
+fn profile_reconcile_completed(outcome: crate::commands::ProfileReconcileOutcome) -> bool {
+    outcome == crate::commands::ProfileReconcileOutcome::Reconciled
+}
+
+pub(crate) fn spawn_pending_profile_reconciliations(app: &tauri::AppHandle, workspace_relay: &str) {
+    let state = app.state::<AppState>();
+    if !state
+        .managed_agent_profile_reconcile_enabled()
+        .load(Ordering::Acquire)
+    {
+        return;
+    }
+    let items = match crate::commands::load_pending_profile_reconciliations(app, workspace_relay) {
+        Ok(items) => items,
+        Err(error) => {
+            eprintln!("buzz-desktop: failed to load pending profile reconciliations: {error}");
+            return;
+        }
+    };
+
+    for (pubkey, data) in items {
+        let reconcile_app = app.clone();
+        let relay_url = data
+            .target_relay_url
+            .clone()
+            .unwrap_or_else(|| data.relay_url.clone());
+        tauri::async_runtime::spawn(async move {
+            let state = reconcile_app.state::<AppState>();
+            match crate::commands::reconcile_agent_profile(
+                &state,
+                &reconcile_app,
+                &pubkey,
+                &data,
+                None,
+            )
+            .await
+            {
+                Ok(outcome) if profile_reconcile_completed(outcome) => {
+                    if let Err(error) = crate::commands::mark_profile_reconciled(
+                        &reconcile_app,
+                        &pubkey,
+                        &relay_url,
+                    ) {
+                        eprintln!(
+                            "buzz-desktop: failed to record profile reconciliation for agent {pubkey}: {error}"
+                        );
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => eprintln!(
+                    "buzz-desktop: profile reconciliation failed for agent {pubkey}: {error}"
+                ),
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod profile_reconcile_tests {
+    use super::profile_reconcile_completed;
+    use crate::commands::ProfileReconcileOutcome;
+
+    #[test]
+    fn skipped_reconciliation_never_retires_pending_work() {
+        assert!(profile_reconcile_completed(
+            ProfileReconcileOutcome::Reconciled
+        ));
+        assert!(!profile_reconcile_completed(
+            ProfileReconcileOutcome::SkippedDisabled
+        ));
+    }
 }
 
 #[cfg(feature = "mesh-llm")]

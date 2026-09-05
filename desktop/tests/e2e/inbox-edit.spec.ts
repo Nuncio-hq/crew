@@ -265,9 +265,40 @@ test("editing an immediate attachment reply preserves its media tags", async ({
     .locator('[data-testid="home-inbox-context-message"]')
     .filter({ hasText: "Attachment reply before editing." });
   await expect(reply).toBeVisible();
-  await expect(
-    reply.getByRole("link", { name: ATTACHMENT_FILENAME }),
-  ).toHaveAttribute("href", ATTACHMENT_URL);
+  const expectAttachmentDownload = async (
+    row: import("@playwright/test").Locator,
+  ) => {
+    const downloadsBefore = await page.evaluate(
+      () =>
+        (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+          (entry) => entry.command === "download_file",
+        ).length,
+    );
+    await row
+      .getByRole("button", {
+        name: `${ATTACHMENT_FILENAME} 12 KB`,
+        exact: true,
+      })
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+            (entry) => entry.command === "download_file",
+          ),
+        ),
+      )
+      .toHaveLength(downloadsBefore + 1);
+    expect(
+      await page.evaluate(
+        () =>
+          (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).findLast(
+            (entry) => entry.command === "download_file",
+          )?.payload,
+      ),
+    ).toEqual({ url: ATTACHMENT_URL, filename: ATTACHMENT_FILENAME });
+  };
+  await expectAttachmentDownload(reply);
   const replyId = await reply.getAttribute("data-message-id");
   expect(replyId).not.toBeNull();
   const replyRow = detail.locator(`[data-message-id="${replyId}"]`);
@@ -317,9 +348,7 @@ test("editing an immediate attachment reply preserves its media tags", async ({
   expect(releasedEchoes).toBe(1);
 
   await expect(replyRow).toContainText("Attachment reply after editing.");
-  await expect(
-    replyRow.getByRole("link", { name: ATTACHMENT_FILENAME }),
-  ).toHaveAttribute("href", ATTACHMENT_URL);
+  await expectAttachmentDownload(replyRow);
 });
 
 test("Inbox offers Edit and Delete actions only for manageable messages", async ({

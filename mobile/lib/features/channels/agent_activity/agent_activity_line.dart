@@ -14,6 +14,7 @@ import 'active_agent_turns_provider.dart';
 import 'agent_activity_chrome.dart';
 import 'agent_activity_sheet.dart';
 import 'agent_working_signal.dart';
+import 'conversation_id.dart';
 import 'observer_control.dart';
 
 /// Static inline activity line above the composer (mobile M2 / desktop phase 3).
@@ -31,6 +32,23 @@ class AgentActivityLine extends HookConsumerWidget {
     this.conversationId,
     this.threadHeadId,
   });
+
+  /// Resolve the same durable conversation identity used by thread controls.
+  factory AgentActivityLine.forThread({
+    Key? key,
+    required String channelId,
+    required String rootEventId,
+    required String threadHeadId,
+  }) => AgentActivityLine(
+    key: key,
+    channelId: channelId,
+    conversationId: conversationIdForSurface(
+      channelId: channelId,
+      isDm: false,
+      rootEventId: rootEventId,
+    ),
+    threadHeadId: threadHeadId,
+  );
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

@@ -318,6 +318,7 @@ export function BotActivityComposerAction({
                     isInline ? "!h-4.5 !w-4.5 text-3xs" : "shrink-0",
                   )}
                   displayName={agent.name}
+                  shape="squircle"
                   fallbackDelayMs={isInline ? 0 : undefined}
                   key={agent.pubkey}
                   size="xs"

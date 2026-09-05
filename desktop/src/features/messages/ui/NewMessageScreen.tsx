@@ -263,6 +263,8 @@ export function NewMessageScreen() {
           content,
           mentionPubkeys,
           mediaTags,
+          // The first DM is not subscribed yet; await acknowledged HTTP publication.
+          transport: "http",
         });
       } catch (error) {
         preparedDirectMessageRef.current = null;

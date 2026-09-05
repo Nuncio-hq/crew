@@ -1,25 +1,27 @@
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::managed_agents::{
     buzz_managed_command_path, buzz_managed_node_bin_dir, AcpAvailabilityStatus,
     AcpRuntimeCatalogEntry, AuthStatus, CommandAvailabilityInfo, HarnessSource,
 };
 mod auth_status_cache;
+mod bounded_command;
 mod login_shell;
 mod presets;
 mod runtime_metadata;
 #[macro_use]
 mod windows_install;
-mod known_runtimes;
-use known_runtimes::KNOWN_ACP_RUNTIMES;
-#[cfg(test)]
-use known_runtimes::{
-    BUZZ_AGENT_AVATAR_URL, CLAUDE_CODE_AVATAR_URL, CODEX_AVATAR_URL, GOOSE_AVATAR_URL,
-};
+pub(super) const GOOSE_AVATAR_URL: &str = "https://goose-docs.ai/img/logo_dark.png";
+pub(super) const CLAUDE_CODE_AVATAR_URL: &str = "https://anthropic.gallerycdn.vsassets.io/extensions/anthropic/claude-code/2.1.77/1773707456892/Microsoft.VisualStudio.Services.Icons.Default";
+pub(super) const CODEX_AVATAR_URL: &str = "https://openai.gallerycdn.vsassets.io/extensions/openai/chatgpt/26.5313.41514/1773706730621/Microsoft.VisualStudio.Services.Icons.Default";
+pub(super) const BUZZ_AGENT_AVATAR_URL: &str =
+    "https://raw.githubusercontent.com/block/buzz/refs/heads/main/crates/buzz-agent/buzz-agent.png";
+
+mod catalog;
+pub(crate) use catalog::KNOWN_ACP_RUNTIMES;
 pub use login_shell::{find_nvm_default_bin, login_shell_path};
 pub(crate) use login_shell::{find_via_login_shell, refresh_login_shell_path};
 #[cfg(test)]
@@ -31,7 +33,10 @@ pub(crate) use presets::{
     preset_harness_ids,
 };
 use presets::{preset_catalog_entry, PRESET_HARNESSES};
+pub(crate) use runtime_metadata::EffortNormalization;
 pub(crate) use runtime_metadata::KnownAcpRuntime;
+#[cfg(test)]
+pub(crate) use runtime_metadata::GOOSE_EFFORT_NORMALIZATION;
 
 fn common_binary_paths() -> &'static [PathBuf] {
     static PATHS: OnceLock<Vec<PathBuf>> = OnceLock::new();
@@ -234,7 +239,11 @@ pub fn effective_agent_command(
 }
 
 mod overrides;
-pub use overrides::{apply_agent_command_update, create_time_agent_command_override};
+pub use overrides::remove_record_effort_aliases;
+pub use overrides::{
+    apply_agent_command_update, apply_env_vars_then_effort_transition,
+    create_time_agent_command_override,
+};
 
 /// Prefix of the typed dangling-harness error produced by
 /// `try_record_agent_command` / `resolve_effective_harness_descriptor`.
@@ -452,6 +461,16 @@ pub fn resolve_command(command: &str) -> Option<PathBuf> {
 pub fn resolve_command_cached(command: &str) -> Option<PathBuf> {
     if let Some(managed) = resolve_buzz_managed_command(command) {
         return Some(managed);
+    }
+    // Bundled sidecars (e.g. `buzz-agent`) ship next to the app executable, so
+    // `resolve_workspace_command` finds them with a filesystem stat and no
+    // login-shell spawn — the same class of work the managed-shim check above
+    // already performs. Without this the cheap path could never see the sidecar
+    // until a forced discovery warmed the resolve cache, so `buzz-agent` (which
+    // cannot legitimately be missing) reported "not installed" at every cold
+    // launch across the create/edit and agent-defaults surfaces.
+    if let Some(workspace) = resolve_workspace_command(command) {
+        return Some(workspace);
     }
     resolve_cache()
         .lock()
@@ -682,10 +701,9 @@ pub(crate) fn is_npm_global_install(cmd: &str) -> bool {
 
 /// Run a CLI auth probe with a 10-second process-level timeout.
 ///
-/// Spawns the probe CLI as a child process. Stdout and stderr are drained on
-/// background threads to prevent pipe-buffer deadlock. On timeout the child is
-/// killed and `Unknown` is returned; no orphaned threads or processes are left
-/// behind. Returns `Unknown` on timeout.
+/// On timeout or spawn failure the child is killed and `Unknown` is returned;
+/// no orphaned threads or processes are left behind (see
+/// [`bounded_command::output_with_timeout`]).
 fn probe_auth_status(binary_path: &Path, probe_args: &[&str]) -> AuthStatus {
     use crate::managed_agents::readiness::cli_probe;
 
@@ -696,81 +714,17 @@ fn probe_auth_status(binary_path: &Path, probe_args: &[&str]) -> AuthStatus {
     if let Some(ref path) = augmented_path {
         command.env("PATH", path);
     }
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    crate::util::configure_no_window(&mut command);
+    // Window suppression is owned by `output_with_timeout`'s spawn
+    // (`BOUNDED_CREATION_FLAGS` carries `CREATE_NO_WINDOW`); a
+    // `configure_no_window` call here would be clobbered by that later
+    // `creation_flags` set, so it is deliberately omitted.
 
-    let mut child = match command.spawn() {
-        Ok(c) => c,
-        Err(_) => return AuthStatus::Unknown,
+    let Some(output) = bounded_command::output_with_timeout(command, Duration::from_secs(10))
+    else {
+        return AuthStatus::Unknown;
     };
 
-    // Drain stdout/stderr on background threads to prevent pipe-buffer deadlock.
-    let stdout_pipe = child.stdout.take();
-    let stderr_pipe = child.stderr.take();
-
-    let stdout_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut pipe) = stdout_pipe {
-            let _ = pipe.read_to_end(&mut buf);
-        }
-    });
-    let stderr_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut pipe) = stderr_pipe {
-            let _ = pipe.read_to_end(&mut buf);
-        }
-        buf
-    });
-
-    // Save PID for kill-on-timeout before moving child into the wait thread.
-    let child_pid = child.id();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let wait_thread = std::thread::spawn(move || {
-        let _ = tx.send(child.wait());
-    });
-
-    // 10-second timeout for auth probes.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let exit_status = loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(child_pid as i32, libc::SIGTERM);
-            }
-            #[cfg(not(unix))]
-            let _ = child_pid;
-            drop(rx);
-            let _ = wait_thread.join();
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
-            return AuthStatus::Unknown;
-        }
-        match rx.recv_timeout(Duration::from_millis(100).min(remaining)) {
-            Ok(Ok(status)) => break status,
-            Ok(Err(_)) => {
-                let _ = wait_thread.join();
-                let _ = stdout_thread.join();
-                let _ = stderr_thread.join();
-                return AuthStatus::Unknown;
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                let _ = stdout_thread.join();
-                let _ = stderr_thread.join();
-                return AuthStatus::Unknown;
-            }
-        }
-    };
-
-    let _ = wait_thread.join();
-    let _ = stdout_thread.join();
-    let stderr_bytes = stderr_thread.join().unwrap_or_default();
-
-    match cli_probe::classify_probe_output(&stderr_bytes, exit_status.success()) {
+    match cli_probe::classify_probe_output(&output.stderr, output.status.success()) {
         cli_probe::ProbeOutcome::LoggedIn => AuthStatus::LoggedIn,
         cli_probe::ProbeOutcome::LoggedOut => AuthStatus::LoggedOut,
         cli_probe::ProbeOutcome::ConfigInvalid { stderr_excerpt } => AuthStatus::ConfigInvalid {
@@ -1083,6 +1037,9 @@ fn discover_acp_runtime_phase1(runtime: &'static KnownAcpRuntime, force: bool) -
             model_env_var: runtime.model_env_var.map(str::to_string),
             provider_env_var: runtime.provider_env_var.map(str::to_string),
             thinking_env_var: runtime.thinking_env_var.map(str::to_string),
+            effort_canonical_values: runtime
+                .effort_normalization
+                .map(|norm| norm.canonical.iter().map(|s| s.to_string()).collect()),
             max_tokens_env_var: runtime.max_tokens_env_var.map(str::to_string),
             context_limit_env_var: runtime.context_limit_env_var.map(str::to_string),
             max_rounds_env_var: runtime.max_rounds_env_var.map(str::to_string),
@@ -1225,6 +1182,7 @@ pub fn discover_acp_runtimes_from(
                 model_env_var: None,
                 provider_env_var: None,
                 thinking_env_var: None,
+                effort_canonical_values: None,
                 max_tokens_env_var: None,
                 context_limit_env_var: None,
                 max_rounds_env_var: None,

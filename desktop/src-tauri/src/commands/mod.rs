@@ -12,6 +12,7 @@ mod agent_settings;
 mod agent_update_rollback;
 mod agents;
 mod assignment_publish;
+mod bestie;
 mod canvas;
 mod canvas_tooling;
 mod channel_reconnect_repair;
@@ -31,15 +32,18 @@ mod identity_archive;
 mod join_policy;
 mod legacy_storage;
 mod link_preview;
+mod managed_agent_definition;
 pub(crate) mod media;
 mod media_animated;
 mod media_download;
+mod media_fetch_cancellation;
+mod media_filename;
 mod media_gif;
 mod media_raw;
 mod media_snapshot_png;
 mod media_transcode;
 mod media_upload_progress;
-mod mention_authorization;
+mod media_voice_note;
 #[cfg(feature = "mesh-llm")]
 pub(crate) mod mesh_llm;
 #[cfg(feature = "mesh-llm")]
@@ -109,6 +113,7 @@ pub use agents::*;
 pub(crate) use assignment_publish::{
     assignment_announcement_content, publish_assignment_announcement,
 };
+pub use bestie::*;
 pub use canvas::*;
 pub use canvas_tooling::*;
 pub use channel_reconnect_repair::*;
@@ -128,8 +133,8 @@ pub use legacy_storage::*;
 pub use link_preview::*;
 pub use media::*;
 pub use media_download::*;
+pub use media_fetch_cancellation::*;
 pub use media_raw::*;
-pub use mention_authorization::*;
 #[cfg(feature = "mesh-llm")]
 pub use mesh_llm::*;
 pub use messages::*;

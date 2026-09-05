@@ -1,8 +1,15 @@
-import { ExternalLink } from "lucide-react";
+import { Check, ChevronDown, ExternalLink, GitBranch } from "lucide-react";
 
 import type { Project, Repository } from "@/features/projects/hooks";
 import type { useProjectRepoPresentation } from "@/features/projects/useProjectRepoHost";
 import { Button } from "@/shared/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/shared/ui/dropdown-menu";
 import type { ProjectDetailWorkItemCrumb } from "./ProjectDetailChrome";
 import { ProjectRepositoryManagement } from "./ProjectRepositoryManagement";
 
@@ -24,7 +31,7 @@ export function ProjectDetailRepositoryHeader({
   repository: Repository;
 }) {
   return (
-    <section className="space-y-3">
+    <section className="space-y-3" data-testid="project-repository-header">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-0.5">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -55,6 +62,48 @@ export function ProjectDetailRepositoryHeader({
           <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
             Repository
           </span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                aria-label="Select repository"
+                className="h-7 max-w-48 gap-1.5"
+                data-testid="project-repository-picker"
+                size="sm"
+                variant="outline"
+              >
+                <GitBranch className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{repository.name}</span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Repositories</DropdownMenuLabel>
+              {project.repositories.map((candidate) => (
+                <DropdownMenuItem
+                  key={candidate.id}
+                  data-testid={`project-repository-${candidate.dtag}`}
+                  onSelect={() => onRepositoryChange(candidate.id)}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {candidate.name}
+                  </span>
+                  {candidate.id === repository.id ? (
+                    <Check className="h-4 w-4 shrink-0" />
+                  ) : null}
+                </DropdownMenuItem>
+              ))}
+              {(project.unavailableRepositoryAddresses ?? []).map((address) => (
+                <DropdownMenuItem key={address} disabled>
+                  <span className="min-w-0 flex-1 truncate">
+                    {address.slice(address.indexOf(":", 6) + 1)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Unavailable
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <ProjectRepositoryManagement
             identityPubkey={identityPubkey}
             onChange={onRepositoryChange}

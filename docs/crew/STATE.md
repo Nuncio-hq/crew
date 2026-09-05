@@ -1,5 +1,49 @@
 # Crew State
 
+## Buzz Desktop 0.5.22 — local integration candidate and merge gate
+
+The working branch integrates released source through `desktop-v0.5.22`
+(`9ceb1f79bbc21785a0a075c40aecb3c058b1ea15`). All 191 source dispositions are
+accounted for. Local `just ci`, dependency policy and required integration lanes
+passed. Latest desktop rerun: 7031 passed, one existing skip (7032 total); Tauri: 3431 passed,
+19 ignored; mobile: 2086 passed. Full integration: 126 DB, 379 isolated PostgreSQL and 314 workspace
+integration tests passed; counts overlap across lanes.
+
+Integration fixes include the PR comment refresh loop, member provenance visibility,
+narrow tool-pane sizing and hard-top wheel pagination. Final clean-bundle release
+smoke passed 3/3: all 10,000 ids with exact hash, 199 continuations, maximum 164
+mounted rows, zero duplicates/order errors/render-pending timeouts. [PR #342](https://github.com/Nuncio-hq/crew/pull/342) records the integration. The [NuncioCrew Gate job](https://github.com/Nuncio-hq/crew/actions/runs/33960807141/job/101293603794) and [manual sync workflow](https://github.com/Nuncio-hq/crew/actions/runs/33960815111) passed on `0ef5491fc7faee1f19f109c0e4a5a7c7ae4b0890`. The encompassing [CI run](https://github.com/Nuncio-hq/crew/actions/runs/33960807141) was **cancelled after smoke shards 3/4 timed out with failures**. [PR #342 checks](https://github.com/Nuncio-hq/crew/pull/342/checks) are the canonical remote evidence. Merge requires full NuncioCrew CI (including every desktop smoke shard) and manual upstream compatibility to pass on the exact source head being merged. No merge, release, deployment or hosted-provider success is claimed.
+
+Final local repairs restore aging snapshot updates, repository selection, contextual
+thread reading and channel-home navigation; collapsed sidebars stop intercepting
+input, and search keeps its input visible within the short-window viewport.
+The native publication fixture preserves rejection and lost-ack readback behavior.
+Channel membership must be known and accessible before composing a discussion can
+navigate or write a scoped draft. Existing parallel-agent/thread identity remains.
+See the [final desktop review](../../plans/reports/reviewer-20260905-final-desktop-reconciliation.md)
+and [project browser report](../../plans/reports/tester-20260905-project-commit-reconciliation.md).
+Earlier huddle, relay and membership results remain in the integration record;
+local browser selections overlap.
+
+Global Projects search now filters every overview section; list selection supports
+keyboard/ranges and preserves selection when channel access is unavailable.
+Discussion browsing uses the existing open directory and awaits joined membership.
+These completed desktop repairs are recorded in local source commit `36410d3f6`;
+its 40-test project-review browser suite passed on macOS and Linux. The final
+Virtua correction preserves unacknowledged prepend scroll ownership through stale
+scroll-end timers, with manual-input exits and clamped no-op acknowledgment.
+The full virtualization suite passed 11/11 on both macOS and Linux, retries zero.
+Final source checkpoint `5d11998fe` includes all semantic repairs; the final unit
+run and official checks cover this candidate.
+
+Crew keeps channel-first navigation, one agent across independent thread UUIDs,
+resume-first sessions, Hermes profile ownership, text-only zoom, theme identity,
+and the 1000-line policy. See the
+[integration record](verification/upstream-0-5-22-integration.md) and its linked
+191-commit ledger for source evidence, deliberate exceptions and test limits.
+Working-branch pin metadata names the target; the historical 0.5.18 entry below
+records the previous completed sync.
+
 ## Issues #337 / #338 — channel recovery and receipt compatibility
 
 Recovery code updated (2026-09-05): the harness reads the relay background
@@ -54,14 +98,13 @@ these boundaries; final CI evidence belongs to the pull request. No live
 long-running provider success is claimed. Current hosted recovery evidence and
 remaining provider/relay blockers for #337 and #338 are recorded above.
 
-## Issue #285 — Buzz desktop-v0.5.18 pin
+## Issue #285 — prior Buzz desktop-v0.5.18 pin
 
-Pinned to `desktop-v0.5.18` /
+Previously pinned to `desktop-v0.5.18` /
 `39f8b46935736334cdd7045a4e4b5d7eb1a33888`. The 0.5.12–0.5.18 wave
 already landed through child issues on `main`; this parent records the
-pin without a second tag merge. Channel-first IA stays (#278). Settings
-shows `v0.5.18 · Local` from the desktop manifests. Machine-readable
-source: [`upstream-buzz.json`](upstream-buzz.json).
+pin without a second tag merge. Channel-first IA stays (#278). That sync recorded `v0.5.18 · Local`; current working-branch metadata is in
+[`upstream-buzz.json`](upstream-buzz.json).
 Last updated: 2026-08-23
 
 ## Issue #277 — Mobile UI upstream 0.5.12 → 0.5.18 parity

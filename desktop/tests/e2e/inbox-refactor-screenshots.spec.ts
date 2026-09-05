@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 /**
  * Screenshots documenting the focused Inbox behavior for PR #2045.
  *
@@ -352,8 +353,214 @@ test.describe("inbox refactor screenshots", () => {
     await expect(page.getByTestId("home-inbox-selected-message")).toContainText(
       "Started on the changelog — first pass is up.",
     );
+
+    const selectedMessage = page.getByTestId("home-inbox-selected-message");
+    const selectedAuthor = selectedMessage.getByTestId("message-author");
+    const selectedBody = selectedMessage.locator(".message-markdown").first();
+    const selectedTimestamp = selectedMessage.getByTestId(
+      "inbox-message-timestamp",
+    );
+    const remainingListPreview = page
+      .locator("[data-testid^='home-inbox-item-']")
+      .locator(".inbox-preview-markdown")
+      .first();
+    const composerInput = page.getByTestId("message-input");
+    const readConversationMetrics = () =>
+      Promise.all([
+        remainingListPreview.evaluate((element) => {
+          const style = window.getComputedStyle(element);
+          return {
+            fontSize: style.fontSize,
+            lineHeight: style.lineHeight,
+          };
+        }),
+        selectedMessage.evaluate((element) => {
+          const style = window.getComputedStyle(element);
+          return {
+            paddingBottom: style.paddingBottom,
+            paddingTop: style.paddingTop,
+          };
+        }),
+        selectedMessage.evaluate((element) => {
+          const header = element.querySelector<HTMLElement>(
+            "[data-testid='message-header']",
+          );
+          const body = element.querySelector<HTMLElement>(
+            "[data-testid='message-body']",
+          );
+          if (!header || !body) {
+            throw new Error("Inbox message spacing geometry is missing");
+          }
+          // Round to 0.1px: under Cmd +/- zoom the rem gap is fractional and
+          // layout snaps it to 1/64px.
+          return (
+            Math.round(
+              (body.getBoundingClientRect().top -
+                header.getBoundingClientRect().bottom) *
+                10,
+            ) / 10
+          );
+        }),
+        selectedAuthor.evaluate((element) => {
+          const style = window.getComputedStyle(element);
+          return {
+            fontSize: style.fontSize,
+            lineHeight: style.lineHeight,
+          };
+        }),
+        selectedBody.evaluate((element) => {
+          const style = window.getComputedStyle(element);
+          return {
+            fontSize: style.fontSize,
+            lineHeight: style.lineHeight,
+          };
+        }),
+        selectedTimestamp.evaluate((element) => {
+          const style = window.getComputedStyle(element);
+          return {
+            fontSize: style.fontSize,
+            lineHeight: style.lineHeight,
+          };
+        }),
+        composerInput.evaluate((element) => {
+          const style = window.getComputedStyle(element);
+          return {
+            fontSize: style.fontSize,
+            lineHeight: style.lineHeight,
+          };
+        }),
+      ]);
+    await expect
+      .poll(readConversationMetrics)
+      .toEqual([
+        { fontSize: "14px", lineHeight: "20px" },
+        { paddingBottom: "4px", paddingTop: "4px" },
+        2,
+        { fontSize: "14px", lineHeight: "16px" },
+        { fontSize: "14px", lineHeight: "20px" },
+        { fontSize: "12px", lineHeight: "16px" },
+        { fontSize: "14px", lineHeight: "20px" },
+      ]);
     await waitForAnimations(page);
 
     await page.screenshot({ path: `${SHOTS}/04-thread-context.png` });
+
+    await applyConversationPreferences(page, "default", "compact");
+    await expect
+      .poll(readConversationMetrics)
+      .toEqual([
+        { fontSize: "14px", lineHeight: "20px" },
+        { paddingBottom: "4px", paddingTop: "4px" },
+        0,
+        { fontSize: "14px", lineHeight: "16px" },
+        { fontSize: "14px", lineHeight: "20px" },
+        { fontSize: "12px", lineHeight: "16px" },
+        { fontSize: "14px", lineHeight: "20px" },
+      ]);
+
+    await applyConversationPreferences(page, "smaller", "compact");
+    await expect
+      .poll(readConversationMetrics)
+      .toEqual([
+        { fontSize: "13px", lineHeight: "18.5714px" },
+        { paddingBottom: "4px", paddingTop: "4px" },
+        0,
+        { fontSize: "13px", lineHeight: "14.8571px" },
+        { fontSize: "13px", lineHeight: "18.5714px" },
+        { fontSize: "11.1429px", lineHeight: "14.8571px" },
+        { fontSize: "13px", lineHeight: "18.5714px" },
+      ]);
+    await waitForAnimations(page);
+    await page.screenshot({ path: `${SHOTS}/05-thread-context-compact.png` });
+
+    await applyConversationPreferences(page, "larger", "spacious");
+    await expect
+      .poll(readConversationMetrics)
+      .toEqual([
+        { fontSize: "15px", lineHeight: "21.4286px" },
+        { paddingBottom: "8px", paddingTop: "8px" },
+        4,
+        { fontSize: "15px", lineHeight: "17.1429px" },
+        { fontSize: "15px", lineHeight: "21.4286px" },
+        { fontSize: "12.8571px", lineHeight: "17.1429px" },
+        { fontSize: "15px", lineHeight: "21.4286px" },
+      ]);
+    await waitForAnimations(page);
+    await page.screenshot({ path: `${SHOTS}/06-thread-context-spacious.png` });
+
+    await applyConversationPreferences(page, "default", "comfortable");
+
+    await page.evaluate(() => {
+      const isMac = /mac|iphone|ipad|ipod/i.test(navigator.platform);
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          code: "Equal",
+          ctrlKey: !isMac,
+          key: "+",
+          metaKey: isMac,
+          shiftKey: true,
+        }),
+      );
+    });
+
+    // Crew scales conversation text while preserving root rem and layout spacing.
+    await expect
+      .poll(async () => [
+        await page.evaluate(
+          () => window.getComputedStyle(document.documentElement).fontSize,
+        ),
+        ...(await readConversationMetrics()),
+      ])
+      .toEqual([
+        "16px",
+        { fontSize: "15.4px", lineHeight: "22px" },
+        { paddingBottom: "4px", paddingTop: "4px" },
+        2,
+        { fontSize: "15.4px", lineHeight: "17.6px" },
+        { fontSize: "15.4px", lineHeight: "22px" },
+        { fontSize: "13.2px", lineHeight: "17.6px" },
+        { fontSize: "15.4px", lineHeight: "22px" },
+      ]);
   });
 });
+
+async function applyConversationPreferences(
+  page: Page,
+  fontSize: FontSize,
+  density: ConversationDensity,
+) {
+  await page.evaluate(
+    ({ densityKey, densityValue, fontSizeKey, fontSizeValue }) => {
+      const update = (key: string, value: string) => {
+        const oldValue = window.localStorage.getItem(key);
+        window.localStorage.setItem(key, value);
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key,
+            newValue: value,
+            oldValue,
+            storageArea: window.localStorage,
+          }),
+        );
+      };
+      update(densityKey, densityValue);
+      update(fontSizeKey, fontSizeValue);
+    },
+    {
+      densityKey: CONVERSATION_DENSITY_STORAGE_KEY,
+      densityValue: density,
+      fontSizeKey: FONT_SIZE_STORAGE_KEY,
+      fontSizeValue: fontSize,
+    },
+  );
+}
+
+type FontSize = "smaller" | "default" | "larger";
+
+type ConversationDensity = "compact" | "comfortable" | "spacious";
+
+const CONVERSATION_DENSITY_STORAGE_KEY = "buzz.appearance.conversationDensity";
+
+const FONT_SIZE_STORAGE_KEY = "buzz.appearance.fontSize";

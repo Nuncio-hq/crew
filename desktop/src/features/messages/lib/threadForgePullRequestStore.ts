@@ -114,7 +114,19 @@ export function useThreadForgePullRequest(
   worktreePath?: string | null,
   baseRef?: string | null,
 ) {
-  const key = ref ? cacheKey(ref, worktreePath) : null;
+  const owner = ref?.owner;
+  const name = ref?.name;
+  const number = ref?.number;
+  // Callers may construct a ref while rendering. Cache reloads follow the PR
+  // identity, so a completed request cannot trigger another forced request.
+  const stableRef = React.useMemo(
+    () =>
+      owner !== undefined && name !== undefined && number !== undefined
+        ? { owner, name, number }
+        : null,
+    [owner, name, number],
+  );
+  const key = stableRef ? cacheKey(stableRef, worktreePath) : null;
   const getSnapshot = React.useCallback(
     () => (key ? (entries.get(key)?.snapshot ?? PENDING) : PENDING),
     [key],
@@ -125,11 +137,14 @@ export function useThreadForgePullRequest(
     () => reloadGeneration,
   );
   React.useEffect(() => {
-    if (ref) void load(ref, worktreePath, baseRef, generation > 0);
-  }, [ref, worktreePath, baseRef, generation]);
+    if (stableRef) void load(stableRef, worktreePath, baseRef, generation > 0);
+  }, [stableRef, worktreePath, baseRef, generation]);
   const refresh = React.useCallback(
-    () => (ref ? load(ref, worktreePath, baseRef, true) : Promise.resolve()),
-    [ref, worktreePath, baseRef],
+    () =>
+      stableRef
+        ? load(stableRef, worktreePath, baseRef, true)
+        : Promise.resolve(),
+    [stableRef, worktreePath, baseRef],
   );
   return { refresh, snapshot };
 }

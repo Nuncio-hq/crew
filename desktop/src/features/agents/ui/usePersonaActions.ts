@@ -72,7 +72,6 @@ import {
 } from "../lib/instanceInputForDefinition";
 import {
   PERSONA_CREATE_RUNTIME_UNAVAILABLE_MESSAGE,
-  personaSubmitFeedbackSurface,
   type PersonaFeedbackSurface,
 } from "./personaSubmitFeedback";
 
@@ -127,7 +126,6 @@ export function usePersonaActions() {
     React.useState<AgentSnapshotImportResult | null>(null);
   const [snapshotImportConfirmError, setSnapshotImportConfirmError] =
     React.useState<string | null>(null);
-  const [isCatalogDialogOpen, setIsCatalogDialogOpen] = React.useState(false);
   const [personaNoticeMessage, setPersonaNoticeMessage] = React.useState<
     string | null
   >(null);
@@ -200,7 +198,7 @@ export function usePersonaActions() {
 
     // Catalog create keeps the modal open on failure — feedback must toast on
     // the catalog surface or the user never sees why Add agent did nothing.
-    clearFeedback(personaSubmitFeedbackSurface(isCatalogDialogOpen));
+    clearFeedback();
     setIsPersonaSubmitPending(true);
     try {
       if ("id" in input) {
@@ -381,6 +379,7 @@ export function usePersonaActions() {
           updatedPersona = await createPersonaMutation.mutateAsync({
             displayName: persona.displayName,
             avatarUrl: persona.avatarUrl ?? undefined,
+            description: persona.description ?? undefined,
             systemPrompt: persona.systemPrompt,
             runtime: persona.runtime ?? undefined,
             model: persona.model ?? undefined,
@@ -483,8 +482,8 @@ export function usePersonaActions() {
     setSnapshotImportConfirmError(null);
   }
 
-  function prepareCreate() {
-    clearFeedback("library");
+  function prepareCreate(surface: PersonaFeedbackSurface = "library") {
+    clearFeedback(surface);
     setShouldLoadAcpRuntimes(true);
   }
 
@@ -508,15 +507,6 @@ export function usePersonaActions() {
     clearFeedback("library");
     setShouldLoadAcpRuntimes(true);
     setPersonaDialogState(duplicatePersonaDialogState(persona));
-  }
-
-  function openCatalog() {
-    clearFeedback("catalog");
-    // Create-agent lives inside the catalog modal; load harnesses even when
-    // callers forget prepareCreate (belt-and-suspenders with openUnifiedCatalog).
-    setShouldLoadAcpRuntimes(true);
-    void catalogQuery.refetch();
-    setIsCatalogDialogOpen(true);
   }
 
   function openDelete(persona: AgentPersona) {
@@ -659,8 +649,6 @@ export function usePersonaActions() {
     setPersonaToDelete,
     personaToShare,
     setPersonaToShare,
-    isCatalogDialogOpen,
-    setIsCatalogDialogOpen,
     personaNoticeMessage,
     personaErrorMessage,
     personaFeedbackSurface,
@@ -671,7 +659,6 @@ export function usePersonaActions() {
     prepareCreate,
     openEdit,
     openDuplicate,
-    openCatalog,
     openDelete,
     openShare,
     personaToExportSnapshot,

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
 const SHOTS = "test-results/config-bridge";
@@ -150,9 +151,7 @@ async function openAgentProfileFromChannel(
 
 // Settle any in-flight animations before capture.
 async function settleAnimations(panel: import("@playwright/test").Locator) {
-  await panel.evaluate((el) =>
-    Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)),
-  );
+  await waitForAnimations(panel.page());
 }
 
 test.describe("config bridge screenshots", () => {
@@ -180,8 +179,12 @@ test.describe("config bridge screenshots", () => {
       tab: "Runtime",
     });
 
-    // The folded config panel: provenance sentences inline under each value.
-    await expect(panel.getByText("Set in Buzz").first()).toBeVisible();
+    // Shared configuration shows effective values without source prose.
+    await expect(panel.getByText("gpt-4o", { exact: true })).toBeVisible();
+    await expect(panel.getByText("gpt-4o-mini", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(panel.getByText("Set in Buzz")).toHaveCount(0);
     await settleAnimations(panel);
 
     await panel.screenshot({ path: `${SHOTS}/01-folded-config-panel.png` });
@@ -196,12 +199,16 @@ test.describe("config bridge screenshots", () => {
       { tab: "Runtime" },
     );
 
-    // A runtimeOverride model shows the live model, the persona baseline as a
-    // NON-struck secondary value, and the "Live override" sentence.
+    // Runtime override changes the effective value without exposing a stale baseline.
     await expect(
       panel.getByText("Live override (this session only)"),
+    ).toHaveCount(0);
+    await expect(panel.getByText("gpt-4o-mini", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(
+      panel.getByText("claude-opus-4-20250514", { exact: true }),
     ).toBeVisible();
-    await expect(panel.getByText("gpt-4o", { exact: true })).toBeVisible();
     await settleAnimations(panel);
 
     await panel.screenshot({
@@ -209,7 +216,7 @@ test.describe("config bridge screenshots", () => {
     });
   });
 
-  test("03 — provenance sentences", async ({ page }) => {
+  test("03 — mixed sources show effective values", async ({ page }) => {
     await installMockBridge(page, { managedAgents: MANAGED_AGENTS });
 
     const panel = await openAgentProfileFromChannel(
@@ -220,15 +227,12 @@ test.describe("config bridge screenshots", () => {
       },
     );
 
-    // Multiple distinct provenance origins visible at once.
-    await expect(panel.getByText("Set in Buzz").first()).toBeVisible();
+    // Different source origins retain their effective values in the shared rows.
+    for (const value of ["gpt-4o", "openai", "auto", "medium"]) {
+      await expect(panel.getByText(value, { exact: true })).toBeVisible();
+    }
+    await expect(panel.getByText("Set in Buzz")).toHaveCount(0);
     await expect(panel.getByText("Inherited from template")).toHaveCount(0);
-    await expect(
-      panel.getByText("From environment variable (GOOSE_MODE)"),
-    ).toBeVisible();
-    await expect(
-      panel.getByText("From config file (~/.config/goose/config.yaml)").first(),
-    ).toBeVisible();
     await settleAnimations(panel);
 
     await panel.screenshot({
@@ -243,10 +247,12 @@ test.describe("config bridge screenshots", () => {
       tab: "Runtime",
     });
 
-    // ACP-only fields show "Available after agent starts" before spawn.
-    await expect(
-      panel.getByText("Available after agent starts").first(),
-    ).toBeVisible();
+    // Saved values remain visible before spawn; unavailable ACP values use em dashes.
+    await expect(panel.getByText("gpt-4o-mini", { exact: true })).toBeVisible();
+    await expect(panel.getByText("—", { exact: true })).toHaveCount(2);
+    await expect(panel.getByText("Available after agent starts")).toHaveCount(
+      0,
+    );
     await settleAnimations(panel);
 
     await panel.screenshot({ path: `${SHOTS}/04-pre-spawn-state.png` });

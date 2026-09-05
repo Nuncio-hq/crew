@@ -2,9 +2,8 @@ import * as React from "react";
 import { RefreshCcw } from "lucide-react";
 
 import { useAppShell } from "@/app/AppShellContext";
-import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
-import { useChannelsQuery, useOpenDmMutation } from "@/features/channels/hooks";
+import { useChannelsQuery } from "@/features/channels/hooks";
 import { RightAuxiliaryPane } from "@/features/channels/ui/RightAuxiliaryPane";
 import { ChannelManagementSheet } from "@/features/channels/ui/ChannelManagementSheet";
 import {
@@ -32,6 +31,7 @@ import { useHomeMissionInboxListActions } from "@/features/home/useHomeMissionIn
 import { useHomeViewChannelAuxiliary } from "@/features/home/useHomeViewChannelAuxiliary";
 import { useHomeViewProfilePanelSearch } from "@/features/home/useHomeViewProfilePanelSearch";
 import { useInboxThreadContext } from "@/features/home/useInboxThreadContext";
+import { useHiddenDmInboxNavigation } from "@/features/home/useHiddenDmInboxNavigation";
 import { UserProfilePanel } from "@/features/profile/ui/UserProfilePanel";
 import {
   profilePanelTabFromSearch,
@@ -165,9 +165,6 @@ export function HomeView({
     applyInboxSearchPatch,
     onOpenContext,
   );
-  const { goChannel } = useAppNavigation();
-  const openDmMutation = useOpenDmMutation();
-  const openDm = openDmMutation.mutateAsync;
   const handleUserSelectItem = React.useCallback(
     (itemId: string | null) => {
       clearVerifiedTarget();
@@ -175,14 +172,6 @@ export function HomeView({
       applyInboxSearchPatch({ item: itemId });
     },
     [applyInboxSearchPatch, clearVerifiedTarget],
-  );
-  const handleOpenDm = React.useCallback(
-    async (pubkeys: string[]) => {
-      clearVerifiedTarget();
-      const dm = await openDm({ pubkeys });
-      await goChannel(dm.id);
-    },
-    [clearVerifiedTarget, goChannel, openDm],
   );
   const { activeReminderEventIds, openReminder } = useRemindLater();
   const {
@@ -429,6 +418,19 @@ export function HomeView({
     }
     return null;
   }, [filteredItems, selectedConversationId, selectedEventId]);
+  const {
+    canOpenSelected,
+    handleOpenDirect,
+    handleOpenDm: openInboxDm,
+    handleOpenSelectedContext,
+    isReopenPending,
+    isReopenErrored,
+  } = useHiddenDmInboxNavigation({
+    availableChannelIds,
+    currentPubkey,
+    onOpenContext,
+    selectedItem,
+  });
   const unreadBoundaryEventId = React.useMemo(() => {
     if (!selectedItem) return null;
     if (unreadBoundary?.conversationId === selectedItem.conversationId) {
@@ -661,16 +663,10 @@ export function HomeView({
               onMarkUnread={markItemUnread}
               onOpenDirect={(item) => {
                 clearVerifiedTarget();
-                const channelId = item.item.channelId;
-                if (!channelId) {
-                  return;
-                }
-                onOpenContext(
-                  channelId,
-                  item.id,
-                  getThreadReference(item.item.tags).rootId,
-                );
+                handleOpenDirect(item);
               }}
+              isReopenPending={isReopenPending}
+              isReopenErrored={isReopenErrored}
               onRemindLater={(item) => {
                 clearVerifiedTarget();
                 const channelId = item.item.channelId;
@@ -753,10 +749,7 @@ export function HomeView({
             <InboxDetailPane
               agentPubkeys={inboxAgentPubkeys}
               canDelete={canDelete}
-              canOpenChannel={Boolean(
-                selectedItem?.item.channelId &&
-                  availableChannelIds.has(selectedItem.item.channelId),
-              )}
+              canOpenChannel={canOpenSelected}
               canReply={canReply}
               channel={selectedChannel}
               contextChannelName={selectedChannel?.name ?? null}
@@ -803,8 +796,10 @@ export function HomeView({
                   );
                   return;
                 }
-                onOpenContext(channelId, messageId, threadRootId);
+                handleOpenSelectedContext(channelId, messageId, threadRootId);
               }}
+              reopenPending={isReopenPending(selectedItem?.item.channelId)}
+              reopenErrored={isReopenErrored(selectedItem?.item.channelId)}
               onSendReply={handleSendReply}
               onToggleReaction={
                 canReact
@@ -860,7 +855,10 @@ export function HomeView({
                 isSinglePanelView={isSinglePanelAuxiliaryView}
                 layout="split"
                 onClose={handleCloseProfilePanel}
-                onOpenDm={handleOpenDm}
+                onOpenDm={async (pubkeys) => {
+                  clearVerifiedTarget();
+                  await openInboxDm(pubkeys);
+                }}
                 onOpenProfile={handleOpenProfilePanel}
                 onTabChange={handleProfilePanelTabChange}
                 onViewChange={handleProfilePanelViewChange}

@@ -2,27 +2,32 @@
 
 ## Reporting a Vulnerability
 
-**Please do not report security vulnerabilities through public GitHub issues.**
+**Do not report security vulnerabilities through a public GitHub issue, pull
+request, discussion, or other public channel.** This checkout is
+[NuncioCrew](https://github.com/Nuncio-hq/crew); reports about this fork must not
+be sent to Block's upstream support address by default.
 
-If you discover a security vulnerability in Buzz, please report it by emailing
-**buzz@block.xyz**. Include as much detail as possible:
+### Private reporting setup is pending
+
+GitHub private vulnerability reporting is **not enabled** for `Nuncio-hq/crew`
+(verified 2026-09-05). No alternative Crew private contact is documented here.
+A maintainer must enable the repository's private-reporting form or publish an
+approved private contact before this repository can offer a reporting route.
+Do not put vulnerability details in a public issue while that setup is pending.
+
+The upstream private-advisory policy is retained as the intended reporting
+workflow; this source upgrade does not enable a GitHub setting or promise a
+response deadline. Once a verified private route is available, reports should
+include:
 
 - A description of the vulnerability and its potential impact
-- Steps to reproduce or a proof-of-concept (if available)
-- The affected version(s) or commit range
-- Any suggested mitigations you've identified
+- Steps to reproduce or a proof-of-concept, if available
+- The affected versions or commit range
+- Suggested mitigations, if known
 
-You will receive an acknowledgment within **48 hours**. We aim to provide a
-full response — including a timeline for a fix — within **7 days** of initial
-contact. We'll keep you informed as we work toward a resolution.
-
-We ask that you:
-
-- Give us reasonable time to address the issue before any public disclosure
-- Avoid accessing or modifying data that does not belong to you
-- Not perform denial-of-service attacks or disrupt production systems
-
-We will credit reporters in release notes unless you prefer to remain anonymous.
+Avoid accessing or modifying other people's data and do not disrupt production
+systems. Coordinate disclosure privately once the maintainers establish the
+reporting route.
 
 ---
 
@@ -121,6 +126,6 @@ We use `cargo audit` in CI to scan for known vulnerabilities in dependencies.
 ## Disclosure Policy
 
 We follow [coordinated disclosure](https://en.wikipedia.org/wiki/Coordinated_vulnerability_disclosure).
-Once a fix is ready and released, we will publish a security advisory on
-GitHub describing the vulnerability, its impact, and the fix. Reporters will
-be credited unless they request anonymity.
+Once a private reporting route is established, use it to coordinate validation,
+remediation, disclosure, and reporter attribution. This document does not claim
+that a vulnerability has been fixed or released.

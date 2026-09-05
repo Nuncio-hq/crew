@@ -10,10 +10,7 @@ import {
   parseEntityLink,
   type ParsedEntityLink,
 } from "@/shared/lib/entityLink";
-import {
-  parseSupportedLinkPreview,
-  type SupportedLinkPreview,
-} from "@/shared/lib/linkPreview";
+import { parseSupportedLinkPreview } from "@/shared/lib/linkPreview";
 import {
   loadBuzzEntityMetadata,
   type LinkPreviewMetadata,
@@ -192,16 +189,21 @@ export function useOpenEntityLink(): (link: ParsedEntityLink) => void {
   return React.useCallback(
     (link: ParsedEntityLink) => {
       const projectId = entityLinkProjectRouteId(link);
+      const entityNavigationId = crypto.randomUUID();
       switch (link.type) {
         case "pr":
-          void goProject(projectId, { pullRequestId: link.id });
+          void goProject(projectId, {
+            entityNavigationId,
+            pullRequestId: link.id,
+          });
           return;
         case "issue":
-          void goProject(projectId, { issueId: link.id });
+          void goProject(projectId, { entityNavigationId, issueId: link.id });
           return;
         case "repo":
         case "project":
           void goProject(projectId, {
+            entityNavigationId,
             ...(link.tab ? { tab: link.tab } : {}),
             ...(link.type === "repo" && link.commitHash
               ? { commitHash: link.commitHash }
@@ -215,7 +217,11 @@ export function useOpenEntityLink(): (link: ParsedEntityLink) => void {
             startLine: link.startLine,
             endLine: link.endLine,
           });
-          void goProject(projectId);
+          void goProject(projectId, {
+            entityNavigationId,
+            tab: "files",
+            filePath: link.path,
+          });
           return;
         default: {
           const _exhaustive: never = link;
@@ -225,27 +231,6 @@ export function useOpenEntityLink(): (link: ParsedEntityLink) => void {
     },
     [goProject],
   );
-}
-
-/**
- * In-app open handlers for `buzz://` entity preview cards, keyed by href.
- * External cards get no handler and keep their OS-opened anchor.
- */
-export function useEntityCardOpenHandlers(
-  previews: SupportedLinkPreview[],
-  onOpenEntityLink: (link: ParsedEntityLink) => void,
-): Map<string, () => void> {
-  return React.useMemo(() => {
-    const handlers = new Map<string, () => void>();
-    for (const preview of previews) {
-      if (!isEntityLink(preview.href)) continue;
-      const parsed = parseEntityLink(preview.href);
-      if (parsed.ok) {
-        handlers.set(preview.href, () => onOpenEntityLink(parsed.value));
-      }
-    }
-    return handlers;
-  }, [onOpenEntityLink, previews]);
 }
 
 /**
@@ -284,7 +269,7 @@ export function EntityLinkAnchor({
   interactive?: boolean;
   asChip?: boolean;
 }): React.ReactElement | null {
-  const { data: projects } = useProjectsQuery();
+  const { data: projects } = useProjectsQuery(interactive);
   return renderEntityLinkAnchor({
     children,
     href,
@@ -328,17 +313,37 @@ export function renderEntityLinkAnchor({
   const presentation = entityLinkPresentation(parsed.value);
   const renderAsChip = asChip && presentation.asChip;
 
-  if (!renderAsChip) {
+  const inlineLink = (metadata?: LinkPreviewMetadata | null) => {
+    const resolvedContext = metadata?.title.trim();
+    const ariaLabel = resolvedContext
+      ? `${presentation.ariaLabel}: ${resolvedContext}`
+      : presentation.ariaLabel;
     return (
       <BuzzInlineLink
         href={href}
         title={href}
-        aria-label={presentation.ariaLabel}
+        aria-label={ariaLabel}
         interactive={interactive}
         onOpenLink={() => onOpenEntityLink(parsed.value)}
       >
         {children}
       </BuzzInlineLink>
+    );
+  };
+
+  if (!renderAsChip) {
+    return interactive ? (
+      <EntityMetadataTooltip
+        fallback={presentation.label}
+        footer={presentation.tooltipFooter}
+        href={canonicalHref}
+        link={parsed.value}
+        projects={projects}
+      >
+        {inlineLink}
+      </EntityMetadataTooltip>
+    ) : (
+      inlineLink()
     );
   }
 

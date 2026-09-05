@@ -111,7 +111,7 @@ All configuration is via environment variables (or CLI flags — every env var h
 | `BUZZ_ACP_AGENT_COMMAND` | no | `goose` | Agent binary to spawn. |
 | `BUZZ_ACP_AGENT_ARGS` | no | `acp` | Agent arguments (comma-separated). |
 | `BUZZ_ACP_MCP_COMMAND` | no | `""` (empty) | Path to an optional MCP server binary to provide to the agent subprocess. |
-| `BUZZ_ACP_IDLE_TIMEOUT` | no | `900` | Ordinary silence timeout in seconds; parseable ACP output resets it. |
+| `BUZZ_ACP_IDLE_TIMEOUT` | no | `1500` | Ordinary silence timeout in seconds; parseable ACP output resets it. |
 | `BUZZ_ACP_TOOL_IDLE_TIMEOUT` | no | `max(2400, idle timeout)` | Fixed silence allowance from each tracked tool start, in seconds. Does not extend the hard turn cap. |
 | `BUZZ_ACP_MAX_TURN_DURATION` | no | `7200` | Absolute wall-clock cap per turn (safety valve). |
 | `BUZZ_ACP_AGENT_RECEIPTS` | no | `false` | Publish a channel-scoped terminal receipt after successful turns that stream a result summary. |

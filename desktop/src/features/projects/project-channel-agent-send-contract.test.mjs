@@ -158,7 +158,10 @@ test("the send hook returns before clearing a draft when context resolution fail
   assert.ok(failureMessageIndex >= 0);
   assert.ok(failureMessageIndex > resolverIndex);
 
-  const failureThrowIndex = source.indexOf("throw error", failureMessageIndex);
+  const failureThrowIndex = source.indexOf(
+    "throw new Error(message",
+    failureMessageIndex,
+  );
   assert.ok(failureThrowIndex >= 0);
   assert.ok(failureThrowIndex > failureMessageIndex);
 
@@ -167,7 +170,7 @@ test("the send hook returns before clearing a draft when context resolution fail
   // this failure branch wiped content.
   const resolveToThrowSlice = source.slice(resolverIndex, failureThrowIndex);
   assert.equal(
-    resolveToThrowSlice.includes("clearComposer("),
+    /clearComposer(?:AfterPreflight)?\(/.test(resolveToThrowSlice),
     false,
     "resolve-fail path must not call clearComposer before throw",
   );
@@ -180,7 +183,7 @@ test("the send hook returns before clearing a draft when context resolution fail
   assert.ok(clearAfterResolveIndex > failureThrowIndex);
 
   const clearComposerIndex = source.indexOf(
-    "clearComposer(",
+    "clearComposerAfterPreflight(",
     clearAfterResolveIndex,
   );
   assert.ok(clearComposerIndex >= 0);
@@ -199,7 +202,7 @@ test("the send hook returns before clearing a draft when context resolution fail
 
   // No-upload path must not clear again after finishSend returns.
   const clearAfterNoUploadCall = source.indexOf(
-    "clearComposer(",
+    "clearComposerAfterPreflight(",
     noUploadFinishCall,
   );
   assert.equal(clearAfterNoUploadCall, -1);

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::client::BuzzClient;
 use crate::commands::with_git_provenance;
+use crate::commands::GIT_ORIGIN_CHANNEL_ENV;
 use crate::error::CliError;
 use crate::validate::{read_or_stdin, sdk_err, validate_hex64, validate_repo_id};
 use buzz_sdk::{GitIssueMeta, GitRepoCoord, GitStatusMeta};
@@ -40,30 +41,8 @@ fn assignment_note_label(assignees: &[String], label: Option<&str>) -> Result<St
         }
     }
     Err(CliError::Usage(
-        "unable to generate an assignee label within 128 characters".into(),
+        "Unable to generate an assignee label between 1 and 128 characters".into(),
     ))
-}
-
-fn issue_assignment_filters(issue: &str, signer: &str) -> Vec<serde_json::Value> {
-    vec![
-        serde_json::json!({
-            "kinds": [1621],
-            "ids": [issue],
-            "limit": 1
-        }),
-        serde_json::json!({
-            "kinds": [1],
-            "#e": [issue],
-            "#t": [ISSUE_ASSIGNMENT_LABEL, ISSUE_UNASSIGNMENT_LABEL],
-            "limit": 500
-        }),
-        serde_json::json!({
-            "kinds": [1],
-            "#e": [issue],
-            "authors": [signer],
-            "limit": 1
-        }),
-    ]
 }
 
 #[derive(Clone, Copy)]
@@ -286,15 +265,82 @@ pub async fn cmd_create_issue(
     Ok(())
 }
 
-pub async fn cmd_get_issue(client: &BuzzClient, event: &str) -> Result<(), CliError> {
-    validate_hex64(event)?;
-    let filter = serde_json::json!({
-        "kinds": [1621],
-        "ids": [event]
-    });
-    let resp = client.query(&filter).await?;
-    println!("{resp}");
-    Ok(())
+async fn resolve_issue_repo_target(
+    client: &BuzzClient,
+    repo_owner: Option<&str>,
+    repo_id: Option<&str>,
+    channel: Option<&str>,
+) -> Result<(String, String), CliError> {
+    let owner = repo_owner.map(str::trim).filter(|value| !value.is_empty());
+    let id = repo_id.map(str::trim).filter(|value| !value.is_empty());
+    match (owner, id) {
+        (Some(owner), Some(id)) => Ok((owner.to_string(), id.to_string())),
+        (None, None) => {
+            let channel = channel
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .or_else(|| std::env::var(GIT_ORIGIN_CHANNEL_ENV).ok());
+            let Some(channel) = channel else {
+                return Err(CliError::Usage(
+                    "provide --repo-owner and --repo-id, or --channel (or set BUZZ_GIT_ORIGIN_CHANNEL_ID)".into(),
+                ));
+            };
+            let resolved = crate::commands::project_channel::resolve_or_ensure_repo_for_channel(
+                client, &channel,
+            )
+            .await?;
+            Ok((resolved.repo_owner, resolved.repo_id))
+        }
+        _ => Err(CliError::Usage(
+            "provide both --repo-owner and --repo-id, or --channel".into(),
+        )),
+    }
+}
+
+/// Publish an issue assignment: a kind:1 comment on the issue whose `p`
+/// tags are the assignees, labeled `t: assignment` (same event shape the
+/// Desktop app writes). Clients trust it when signed by the issue author
+/// or repo owner, or when it is a self-assignment.
+pub async fn cmd_assign_issue(
+    client: &BuzzClient,
+    issue: &str,
+    repo_owner: &str,
+    repo_id: &str,
+    assignees: &[String],
+    label: Option<&str>,
+) -> Result<(), CliError> {
+    publish_issue_assignment_operation(
+        client,
+        issue,
+        repo_owner,
+        repo_id,
+        assignees,
+        label,
+        IssueAssignmentOperation::Assign,
+    )
+    .await
+}
+
+/// Publish an issue unassignment with the same trust rules as assignment.
+pub async fn cmd_unassign_issue(
+    client: &BuzzClient,
+    issue: &str,
+    repo_owner: &str,
+    repo_id: &str,
+    assignees: &[String],
+    label: Option<&str>,
+) -> Result<(), CliError> {
+    publish_issue_assignment_operation(
+        client,
+        issue,
+        repo_owner,
+        repo_id,
+        assignees,
+        label,
+        IssueAssignmentOperation::Unassign,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -313,6 +359,7 @@ async fn publish_issue_assignment_operation(
     for assignee in assignees {
         validate_hex64(assignee)?;
     }
+
     let label = assignment_note_label(assignees, label)?;
     let content = operation.content(&label);
     let repo = GitRepoCoord {
@@ -364,9 +411,28 @@ async fn issue_assignment_context(
     signer: &str,
     include_prior: bool,
 ) -> Result<IssueAssignmentContext, CliError> {
+    let root_filter = serde_json::json!({
+        "kinds": [1621],
+        "ids": [issue],
+        "limit": 1
+    });
+    let assignment_filter = serde_json::json!({
+        "kinds": [1],
+        "#e": [issue],
+        "#t": [ISSUE_ASSIGNMENT_LABEL, ISSUE_UNASSIGNMENT_LABEL],
+        "limit": 500
+    });
+    let signer_comment_filter = serde_json::json!({
+        "kinds": [1],
+        "#e": [issue],
+        "authors": [signer],
+        "limit": 1
+    });
     let response = client
-        .query_multi(&issue_assignment_filters(issue, signer))
+        .query_multi(&[root_filter, assignment_filter, signer_comment_filter])
         .await?;
+    // CLI read responses intentionally omit signatures, so deserialize only
+    // the event fields needed for assignment reduction.
     let events = serde_json::from_str::<Vec<AssignmentQueryEvent>>(&response)
         .map_err(|error| CliError::Other(format!("parse issue assignment context: {error}")))?;
     let root = events
@@ -375,7 +441,8 @@ async fn issue_assignment_context(
         .ok_or_else(|| CliError::Other("issue root was not returned by the relay".into()))?;
     let expected_repo = format!("30617:{}:{}", repo.owner.to_ascii_lowercase(), repo.id);
     let root_matches_repo = root.tags.iter().any(|tag| {
-        tag.first().map(String::as_str) == Some("a") && tag.get(1) == Some(&expected_repo)
+        tag.as_slice().first().map(String::as_str) == Some("a")
+            && tag.as_slice().get(1) == Some(&expected_repo)
     });
     if !root_matches_repo {
         return Err(CliError::Other(
@@ -410,44 +477,15 @@ async fn issue_assignment_context(
     Ok(IssueAssignmentContext { created_at, prior })
 }
 
-pub async fn cmd_assign_issue(
-    client: &BuzzClient,
-    issue: &str,
-    repo_owner: &str,
-    repo_id: &str,
-    assignees: &[String],
-    label: Option<&str>,
-) -> Result<(), CliError> {
-    publish_issue_assignment_operation(
-        client,
-        issue,
-        repo_owner,
-        repo_id,
-        assignees,
-        label,
-        IssueAssignmentOperation::Assign,
-    )
-    .await
-}
-
-pub async fn cmd_unassign_issue(
-    client: &BuzzClient,
-    issue: &str,
-    repo_owner: &str,
-    repo_id: &str,
-    assignees: &[String],
-    label: Option<&str>,
-) -> Result<(), CliError> {
-    publish_issue_assignment_operation(
-        client,
-        issue,
-        repo_owner,
-        repo_id,
-        assignees,
-        label,
-        IssueAssignmentOperation::Unassign,
-    )
-    .await
+pub async fn cmd_get_issue(client: &BuzzClient, event: &str) -> Result<(), CliError> {
+    validate_hex64(event)?;
+    let filter = serde_json::json!({
+        "kinds": [1621],
+        "ids": [event]
+    });
+    let resp = client.query(&filter).await?;
+    println!("{resp}");
+    Ok(())
 }
 
 pub async fn cmd_list_issues(
@@ -557,11 +595,21 @@ pub async fn dispatch(cmd: crate::IssuesCmd, client: &BuzzClient) -> Result<(), 
         IssuesCmd::Create {
             repo_owner,
             repo_id,
+            channel,
             title,
             content,
             label,
             to,
-        } => cmd_create_issue(client, &repo_owner, &repo_id, &title, &content, &label, &to).await,
+        } => {
+            let (repo_owner, repo_id) = resolve_issue_repo_target(
+                client,
+                repo_owner.as_deref(),
+                repo_id.as_deref(),
+                channel.as_deref(),
+            )
+            .await?;
+            cmd_create_issue(client, &repo_owner, &repo_id, &title, &content, &label, &to).await
+        }
         IssuesCmd::Get { event } => cmd_get_issue(client, &event).await,
         IssuesCmd::List {
             repo_owner,
@@ -640,7 +688,45 @@ pub async fn dispatch(cmd: crate::IssuesCmd, client: &BuzzClient) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use super::{assignment_note_label, issue_assignment_filters};
+    use super::{
+        assignment_note_label, reduce_assignment_operations, AssignmentEvent, AssignmentQueryEvent,
+        ISSUE_ASSIGNMENT_LABEL, ISSUE_UNASSIGNMENT_LABEL,
+    };
+
+    const ISSUE: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const AUTHOR: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const OWNER: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const VOLUNTEER: &str = "5555555555555555555555555555555555555555555555555555555555555555";
+
+    fn assignment_event(
+        pubkey: &str,
+        id: &str,
+        assignment: bool,
+        created_at: u64,
+        prior: Option<&str>,
+    ) -> AssignmentEvent {
+        let mut tags = vec![
+            vec!["e".into(), ISSUE.into(), "".into(), "root".into()],
+            vec!["p".into(), VOLUNTEER.into()],
+            vec![
+                "t".into(),
+                if assignment {
+                    ISSUE_ASSIGNMENT_LABEL.into()
+                } else {
+                    ISSUE_UNASSIGNMENT_LABEL.into()
+                },
+            ],
+        ];
+        if let Some(prior) = prior {
+            tags.push(vec!["prior".into(), prior.into()]);
+        }
+        AssignmentEvent {
+            id: id.into(),
+            pubkey: pubkey.into(),
+            created_at,
+            tags,
+        }
+    }
 
     #[test]
     fn assignment_note_label_enforces_desktop_length_limit() {
@@ -651,20 +737,109 @@ mod tests {
         );
         assert!(assignment_note_label(&assignees, Some("")).is_err());
         assert!(assignment_note_label(&assignees, Some(&"x".repeat(129))).is_err());
+        assert_eq!(
+            assignment_note_label(&assignees, None).unwrap(),
+            "aaaaaaaa…"
+        );
+        let many_assignees = (0..50)
+            .map(|index| format!("{index:064x}"))
+            .collect::<Vec<_>>();
+        let generated = assignment_note_label(&many_assignees, None).unwrap();
+        assert!(generated.chars().count() <= 128);
+        assert!(generated.contains("others"));
     }
 
     #[test]
-    fn assignment_fetch_is_relay_real_and_not_comment_window_bounded() {
-        let filters = issue_assignment_filters(&"e".repeat(64), &"a".repeat(64));
-        let assignment_filter = &filters[1];
+    fn assignment_query_event_accepts_sig_stripped_cli_reads() {
+        let event = serde_json::from_value::<AssignmentQueryEvent>(serde_json::json!({
+            "id": "1".repeat(64),
+            "kind": 1,
+            "pubkey": VOLUNTEER,
+            "created_at": 200,
+            "tags": [["e", ISSUE, "", "root"]]
+        }))
+        .unwrap();
 
-        assert_eq!(assignment_filter["kinds"], serde_json::json!([1]));
-        assert_eq!(
-            assignment_filter["#t"],
-            serde_json::json!(["assignment", "unassignment"])
+        assert_eq!(event.kind, 1);
+        assert_eq!(event.pubkey, VOLUNTEER);
+    }
+
+    #[test]
+    fn uncaused_future_self_operations_lose_to_authority() {
+        let owner_unassign = "1".repeat(64);
+        let state = reduce_assignment_operations(
+            ISSUE,
+            AUTHOR,
+            OWNER,
+            &[
+                assignment_event(VOLUNTEER, &"2".repeat(64), true, 1_000, None),
+                assignment_event(OWNER, &owner_unassign, false, 200, None),
+            ],
         );
-        assert_eq!(assignment_filter["limit"], serde_json::json!(500));
-        assert!(assignment_filter.get("since").is_none());
-        assert!(assignment_filter.get("until").is_none());
+        assert!(!state.assignees.contains(VOLUNTEER));
+        assert_eq!(state.heads.get(VOLUNTEER), Some(&owner_unassign));
+
+        let owner_assign = "3".repeat(64);
+        let state = reduce_assignment_operations(
+            ISSUE,
+            AUTHOR,
+            OWNER,
+            &[
+                assignment_event(VOLUNTEER, &"4".repeat(64), false, 1_000, None),
+                assignment_event(OWNER, &owner_assign, true, 200, None),
+            ],
+        );
+        assert!(state.assignees.contains(VOLUNTEER));
+        assert_eq!(state.heads.get(VOLUNTEER), Some(&owner_assign));
+    }
+
+    #[test]
+    fn causal_self_operations_can_follow_authority() {
+        let owner_assign = "5".repeat(64);
+        let self_unassign = "6".repeat(64);
+        let state = reduce_assignment_operations(
+            ISSUE,
+            AUTHOR,
+            OWNER,
+            &[
+                assignment_event(OWNER, &owner_assign, true, 200, None),
+                assignment_event(VOLUNTEER, &self_unassign, false, 300, Some(&owner_assign)),
+            ],
+        );
+        assert!(!state.assignees.contains(VOLUNTEER));
+        assert_eq!(state.heads.get(VOLUNTEER), Some(&self_unassign));
+
+        let owner_unassign = "7".repeat(64);
+        let self_assign = "8".repeat(64);
+        let state = reduce_assignment_operations(
+            ISSUE,
+            AUTHOR,
+            OWNER,
+            &[
+                assignment_event(OWNER, &owner_unassign, false, 200, None),
+                assignment_event(VOLUNTEER, &self_assign, true, 300, Some(&owner_unassign)),
+            ],
+        );
+        assert!(state.assignees.contains(VOLUNTEER));
+        assert_eq!(state.heads.get(VOLUNTEER), Some(&self_assign));
+    }
+
+    #[test]
+    fn stale_causal_self_operation_is_ignored() {
+        let initial_assign = "9".repeat(64);
+        let owner_unassign = "a".repeat(64);
+        let state = reduce_assignment_operations(
+            ISSUE,
+            AUTHOR,
+            OWNER,
+            &[
+                assignment_event(OWNER, &initial_assign, true, 100, None),
+                assignment_event(OWNER, &owner_unassign, false, 200, None),
+                assignment_event(VOLUNTEER, &"c".repeat(64), true, 300, Some(&initial_assign)),
+            ],
+        );
+
+        assert!(!state.assignees.contains(VOLUNTEER));
+        assert_eq!(state.heads.get(VOLUNTEER), Some(&owner_unassign));
     }
 }

@@ -914,6 +914,7 @@ test("remarkMessageLinks: text inside inlineCode is left alone", () => {
 import {
   computeConfigNudge,
   selectProseOrNudge,
+  selectNudgeLeadingContent,
 } from "../lib/computeConfigNudge.ts";
 import { stripConfigNudgeSentinel } from "../lib/configNudge.ts";
 
@@ -943,7 +944,7 @@ function nudgeBody(agentPubkey) {
 // `computeConfigNudge.ts` — `computeConfigNudge` to detect the payload and
 // `selectProseOrNudge` for the prose-suppression branch — without importing
 // any Tauri or context dependencies.
-function GuardStub({ content, configNudgeAuthorPubkey }) {
+function GuardStub({ content, configNudgeAuthorPubkey, leadingInlineContent }) {
   const configNudge = computeConfigNudge(
     content,
     true,
@@ -960,6 +961,7 @@ function GuardStub({ content, configNudgeAuthorPubkey }) {
     "div",
     null,
     selectProseOrNudge(configNudge, markdownNode),
+    selectNudgeLeadingContent(configNudge, leadingInlineContent),
     configNudge !== null
       ? React.createElement("div", { "data-config-nudge": "" })
       : null,
@@ -1080,6 +1082,7 @@ test("bare Buzz permalinks render cohesive icon-prefixed chips", () => {
   assert.match(html, /inline-chip-icon-message/);
   assert.match(html, /data-channel-deep-link=""/);
   assert.match(html, /wrapping-inline-chip/);
+  assert.match(html, /inline-chip-leading-fragment[^>]*>engin</);
   assert.match(html, /inline-chip-icon-pr/);
   assert.match(html, /inline-chip-icon-issue/);
   assert.match(html, /inline-chip-icon-repo/);
@@ -1117,4 +1120,350 @@ test("wiki buzz://file citations stay ordinary inline links, not chips", () => {
   assert.doesNotMatch(html, /data-buzz-link-kind=/);
   assert.doesNotMatch(html, /inline-chip-icon-/);
   assert.match(html, /docs\/wiki\.md/);
+});
+
+test("messageLinkUrlTransform: rejects malformed buzz://channel href", () => {
+  const html = renderMarkdown(
+    "Click [here](buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32?extra=true)",
+  );
+  assert.match(html, /href=""/);
+});
+
+test("buzzDeepLinkUrlTransform: preserves buzz://project autolink href", () => {
+  const projectLink = `buzz://project?owner=${OWNER_HEX}&d=onboarding`;
+  const html = renderMarkdown(`<${projectLink}>`);
+  assert.match(html, /href="buzz:\/\/project\?/);
+  assert.doesNotMatch(html, /href=""/);
+});
+
+test("nudgeGuard_sentinelPresentMatchingAuthor_preservesLeadingContent", () => {
+  const body = nudgeBody(AGENT_PUBKEY);
+  const html = renderToStaticMarkup(
+    React.createElement(GuardStub, {
+      content: body,
+      configNudgeAuthorPubkey: AGENT_PUBKEY,
+      leadingInlineContent: React.createElement(
+        "span",
+        { "data-video-review-timecode": "" },
+        "[00:10]",
+      ),
+    }),
+  );
+  assert.ok(
+    html.includes("data-video-review-timecode"),
+    "leading video-review content must remain visible beside the nudge card",
+  );
+  assert.ok(
+    !html.includes("data-markdown-prose"),
+    "nudge prose must remain suppressed while leading content is preserved",
+  );
+});
+
+test("inline entity chip labels are bounded without truncating their accessible names", () => {
+  const longRepository = `repo-${"x".repeat(50)}`;
+  const html = renderToStaticMarkup(
+    renderEntityLinkAnchor({
+      children: null,
+      href: `buzz://repo?owner=${OWNER_HEX}&d=${longRepository}`,
+      onOpenEntityLink: () => {},
+      relayOrigin: null,
+    }),
+  );
+  const visibleText = html.replace(/<[^>]+>/g, "");
+  assert.equal(Array.from(visibleText).length, 48);
+  assert.match(visibleText, /…$/);
+  assert.match(
+    html,
+    new RegExp(`aria-label="Open repository ${longRepository}"`),
+  );
+});
+
+test("inline message chips omit fetched metadata and the event hash", () => {
+  const channelId = "580ca78b-9dae-46f3-8854-bd671853ba32";
+  const markdown = renderCachedMarkdown({
+    components: createMarkdownComponents(true, false),
+    content: `buzz://message?channel=${channelId}&id=${EVENT_HEX}`,
+    variant: "inline-message-chip-metadata-test",
+  });
+  // A readable channel is the case that used to swap the chip label from the
+  // truncated event hash to the fetched snippet once metadata resolved.
+  const html = renderToStaticMarkup(
+    React.createElement(
+      QueryClientProvider,
+      { client: new QueryClient() },
+      React.createElement(
+        MarkdownRuntimeContext.Provider,
+        {
+          value: {
+            channels: [
+              {
+                id: channelId,
+                isMember: true,
+                name: "engineering",
+                visibility: "open",
+              },
+            ],
+            onOpenChannel: () => {},
+            onOpenEntityLink: () => {},
+            onOpenMessageLink: () => {},
+            relayOrigin: null,
+          },
+        },
+        markdown,
+      ),
+    ),
+  );
+
+  const visibleText = html.replace(/<[^>]+>/g, "");
+  assert.equal((html.match(/data-message-link=""/g) ?? []).length, 1);
+  assert.equal(visibleText.trim(), "engineering");
+  assert.doesNotMatch(visibleText, /c3b589fa/);
+  assert.doesNotMatch(visibleText, /·/);
+});
+
+test("authored Buzz permalink labels remain ordinary links", () => {
+  const channelId = "580ca78b-9dae-46f3-8854-bd671853ba32";
+  const links = [
+    `[the message](buzz://message?channel=${channelId}&id=${EVENT_HEX})`,
+    `[the compatibility message](buzz://channel/${channelId}/${EVENT_HEX})`,
+    `[**design discussion**](buzz://channel/${channelId})`,
+    `[the issue](buzz://issue?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world)`,
+  ];
+  const markdown = renderCachedMarkdown({
+    components: createMarkdownComponents(true, false),
+    content: links.join(" "),
+    variant: "authored-buzz-link-integration-test",
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(
+      QueryClientProvider,
+      { client: new QueryClient() },
+      React.createElement(
+        MarkdownRuntimeContext.Provider,
+        {
+          value: {
+            channels: [{ id: channelId, name: "engineering" }],
+            onOpenChannel: () => {},
+            onOpenEntityLink: () => {},
+            onOpenMessageLink: () => {},
+            relayOrigin: null,
+          },
+        },
+        markdown,
+      ),
+    ),
+  );
+
+  assert.equal((html.match(/data-buzz-link=""/g) ?? []).length, 0);
+  assert.match(html, />the message</);
+  assert.match(html, />the compatibility message</);
+  assert.match(html, /aria-label="Open message: the compatibility message"/);
+  assert.match(html, />design discussion</);
+  assert.match(html, /aria-label="Open channel: design discussion"/);
+  assert.doesNotMatch(html, /\[object Object\]/);
+  assert.match(html, />the issue</);
+  assert.equal((html.match(/underline-offset-4/g) ?? []).length, 4);
+});
+
+test("generic audio attachments render outside paragraph markup", () => {
+  const href = "https://relay.example/media/meeting.mp3";
+  const markdown = renderCachedMarkdown({
+    components: createMarkdownComponents(true, false),
+    content: `[meeting.mp3](${href})`,
+    variant: "generic-audio-block-integration-test",
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(
+      MarkdownRuntimeContext.Provider,
+      {
+        value: {
+          channels: [],
+          imetaByUrl: new Map([
+            [
+              href,
+              {
+                duration: 42,
+                filename: "meeting.mp3",
+                m: "audio/mpeg",
+              },
+            ],
+          ]),
+          onOpenChannel: () => {},
+          onOpenEntityLink: () => {},
+          onOpenMessageLink: () => {},
+          relayOrigin: "https://relay.example",
+        },
+      },
+      markdown,
+    ),
+  );
+
+  assert.match(html, /data-testid="audio-message-attachment"/);
+  assert.match(html, /aria-label="Download meeting.mp3"/);
+  assert.doesNotMatch(html, /<p[^>]*>\s*<div/);
+});
+
+test("bare Buzz permalinks shorten unavailable channel identifiers", () => {
+  const channelId = "580ca78b-9dae-46f3-8854-bd671853ba32";
+  const markdown = renderCachedMarkdown({
+    components: createMarkdownComponents(true, false),
+    content: [
+      `buzz://message?channel=${channelId}&id=${EVENT_HEX}`,
+      `buzz://channel/${channelId}`,
+    ].join(" "),
+    variant: "unknown-channel-buzz-link-integration-test",
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(
+      MarkdownRuntimeContext.Provider,
+      {
+        value: {
+          channels: [],
+          onOpenChannel: () => {},
+          onOpenEntityLink: () => {},
+          onOpenMessageLink: () => {},
+          relayOrigin: null,
+        },
+      },
+      markdown,
+    ),
+  );
+
+  assert.equal(
+    (html.match(/inline-chip-leading-fragment[^>]*>580ca<\/span>78b/g) ?? [])
+      .length,
+    2,
+  );
+  assert.doesNotMatch(html, /#channel/);
+});
+
+test("channel references replace the authored hash with the channel icon", () => {
+  const channelId = "580ca78b-9dae-46f3-8854-bd671853ba32";
+  const markdown = renderCachedMarkdown({
+    channelNames: ["engineering"],
+    components: createMarkdownComponents(true, false),
+    content: "See #engineering",
+    variant: "channel-reference-icon-integration-test",
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(
+      MarkdownRuntimeContext.Provider,
+      {
+        value: {
+          channels: [{ id: channelId, name: "engineering" }],
+          onOpenChannel: () => {},
+          onOpenEntityLink: () => {},
+          onOpenMessageLink: () => {},
+          relayOrigin: null,
+        },
+      },
+      markdown,
+    ),
+  );
+
+  assert.match(html, /inline-chip-icon-channel/);
+  assert.match(html, /wrapping-inline-chip/);
+  assert.match(html, /inline-chip-leading-fragment[^>]*>engin</);
+  assert.match(html.replace(/<[^>]+>/g, ""), /engineering/);
+  assert.doesNotMatch(html, />#engineering</);
+});
+
+test("resolved human mentions preserve the Crew at-sign treatment", () => {
+  const markdown = renderCachedMarkdown({
+    components: createMarkdownComponents(false, false),
+    content: "Ask @alice",
+    mentionNames: ["alice"],
+    variant: "human-mention-icon-integration-test",
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(
+      MarkdownRuntimeContext.Provider,
+      {
+        value: {
+          channels: [],
+          mentionPubkeysByName: { alice: HUMAN_PUBKEY },
+          onOpenChannel: () => {},
+          onOpenEntityLink: () => {},
+          onOpenMessageLink: () => {},
+          relayOrigin: null,
+        },
+      },
+      markdown,
+    ),
+  );
+
+  assert.match(html, /data-mention=""/);
+  assert.match(html, /mention-chip-prefix/);
+  assert.match(html.replace(/<[^>]+>/g, ""), /@alice/);
+  assert.doesNotMatch(html, /inline-chip-icon-human/);
+});
+
+test("agent mentions retain the bot treatment instead of the human icon", () => {
+  const markdown = renderCachedMarkdown({
+    components: createMarkdownComponents(false, false),
+    content: "Ask @alice",
+    mentionNames: ["alice"],
+    variant: "agent-mention-icon-integration-test",
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(
+      MarkdownRuntimeContext.Provider,
+      {
+        value: {
+          agentMentionPubkeysByName: { alice: AGENT_PUBKEY },
+          channels: [],
+          mentionPubkeysByName: { alice: AGENT_PUBKEY },
+          onOpenChannel: () => {},
+          onOpenEntityLink: () => {},
+          onOpenMessageLink: () => {},
+          relayOrigin: null,
+        },
+      },
+      markdown,
+    ),
+  );
+
+  assert.match(html, /data-mention=""/);
+  assert.match(html, /agent-mention-highlight/);
+  assert.match(html, /agent-mention-highlight/);
+  assert.match(html, />alice</);
+  assert.doesNotMatch(html, />@alice</);
+});
+
+test("renderEntityLinkAnchor renders Buzz entity links as chips", () => {
+  const prLink = `buzz://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`;
+  const el = renderEntityLinkAnchor({
+    children: "PR · abc123",
+    href: prLink,
+    interactive: true,
+    onOpenEntityLink: () => {},
+    relayOrigin: null,
+  });
+  const html = renderToStaticMarkup(el);
+  assert.match(html, /data-buzz-link=""/);
+  assert.match(html, /<span/);
+  assert.match(html, /role="button"/);
+  assert.match(html, /tabindex="0"/);
+  assert.match(html, /data-buzz-link-kind="pr"/);
+  assert.match(html, /wrapping-inline-chip/);
+  assert.match(html, /inline-chip-leading-fragment[^>]*>buzz-</);
+  assert.doesNotMatch(html, /\btruncate\b/);
+  assert.doesNotMatch(html, /<a/);
+  assert.doesNotMatch(html, /<button/);
+});
+
+test("renderEntityLinkAnchor keeps chip styling when interaction is disabled", () => {
+  const repoLink = `buzz://repo?owner=${OWNER_HEX}&d=buzz-world`;
+  const el = renderEntityLinkAnchor({
+    children: "buzz-world",
+    href: repoLink,
+    interactive: false,
+    onOpenEntityLink: () => {},
+    relayOrigin: null,
+  });
+  const html = renderToStaticMarkup(el);
+  assert.match(html, /data-buzz-link=""/);
+  assert.match(html, /<span/);
+  assert.match(html, /class="mention-chip\s/);
+  assert.doesNotMatch(html, /<button/);
 });

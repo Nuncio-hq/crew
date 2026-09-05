@@ -27,12 +27,14 @@ export async function cancelManagedAgentTurn(
   channelId: string,
   conversationId: string,
   turnId?: string | null,
+  requestId?: string,
 ): Promise<void> {
   await sendAgentObserverControl(pubkey, {
     type: "cancel_turn",
     channelId,
     conversationId,
     ...(turnId ? { turnId } : {}),
+    ...(requestId ? { requestId } : {}),
   });
 }
 

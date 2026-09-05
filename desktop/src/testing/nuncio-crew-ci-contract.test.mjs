@@ -65,9 +65,30 @@ test("relay-native Project behavior remains an automatic conditional gate", () =
   assert.match(ci, /desktop\/src\/features\/projects\/\*\*/);
   assert.match(ci, /- 'crates\/\*\*'/);
   assert.match(ci, /- 'docker-compose\.yml'/);
-  assert.match(ci, /- 'scripts\/attach-schema-partitions\.sql'/);
+  assert.match(ci, /- 'scripts\/reconcile-schema-after-pgschema\.sql'/);
   assert.match(ci, /CREW_LIVE_RELAY_URL:\s*ws:\/\/localhost:3000/);
   assert.match(ci, /needs\.project-relay\.result/);
+});
+
+test("isolated CI relay launches provide an ephemeral signing key", () => {
+  const ci = workflow("nuncio-crew-ci.yml");
+  const integrationStart = ci.indexOf("      - name: Start relay");
+  assert.ok(integrationStart > 0);
+  const integration = ci.slice(
+    integrationStart,
+    ci.indexOf("      - name:", integrationStart + 1),
+  );
+  const project = readFileSync(
+    resolve(repoRoot, "scripts/run-nuncio-crew-project-relay-ci.sh"),
+    "utf8",
+  );
+  for (const source of [integration, project]) {
+    const launch = source.slice(
+      source.indexOf("nohup env"),
+      source.indexOf("./target/ci/buzz-relay >"),
+    );
+    assert.match(launch, /BUZZ_RELAY_PRIVATE_KEY="\$\(openssl rand -hex 32\)"/);
+  }
 });
 
 test("buzz-acp is path-gated and registered in the merge gate", () => {
@@ -229,6 +250,7 @@ test("merge gate accepts deliberately skipped conditional work", async () => {
       "desktop-rust": "skipped",
       "macos-arm": "success",
       "project-relay": "skipped",
+      postgres: "skipped",
       "buzz-acp": "skipped",
     }),
   );
@@ -253,6 +275,7 @@ test("merge gate rejects a skipped Desktop Rust job when rust paths changed", as
       "desktop-rust": "skipped",
       "macos-arm": "success",
       "project-relay": "skipped",
+      postgres: "skipped",
       "buzz-acp": "skipped",
     }),
   );
@@ -274,6 +297,7 @@ test("merge gate rejects a skipped buzz-acp job when acp paths changed", async (
       "desktop-rust": "success",
       "macos-arm": "success",
       "project-relay": "skipped",
+      postgres: "skipped",
       "buzz-acp": "skipped",
     }),
   );
@@ -296,6 +320,7 @@ test("merge gate rejects failed, cancelled, or missing dependencies", async () =
         "desktop-rust": "success",
         "macos-arm": result,
         "project-relay": "success",
+        postgres: "success",
         "buzz-acp": "success",
       }),
     );
@@ -311,6 +336,7 @@ test("merge gate rejects failed, cancelled, or missing dependencies", async () =
       "desktop-rust": "skipped",
       "macos-arm": "skipped",
       "project-relay": "skipped",
+      postgres: "skipped",
       "buzz-acp": "skipped",
     }),
   );
@@ -332,6 +358,7 @@ test("merge gate rejects a skipped relevant job or a run for irrelevant paths", 
       "desktop-rust": "skipped",
       "macos-arm": "skipped",
       "project-relay": "skipped",
+      postgres: "skipped",
       "buzz-acp": "skipped",
     }),
   );
@@ -346,7 +373,44 @@ test("merge gate rejects a skipped relevant job or a run for irrelevant paths", 
       "desktop-rust": "skipped",
       "macos-arm": "skipped",
       "project-relay": "skipped",
+      postgres: "skipped",
       "buzz-acp": "skipped",
     }),
   );
+});
+
+test("PostgreSQL CI uses the isolated runner and is required by the merge gate", async () => {
+  const ci = workflow("nuncio-crew-ci.yml");
+  const postgres = ci.slice(
+    ci.indexOf("\n  postgres:"),
+    ci.indexOf("\n  project-relay:"),
+  );
+  assert.match(postgres, /needs\.changes\.outputs\.relay == 'true'/);
+  assert.match(postgres, /cargo-nextest@0\.9\.136/);
+  assert.match(postgres, /run: scripts\/postgres-test-run\.sh/);
+  assert.match(ci, /needs\.postgres\.result/);
+  assert.match(ci, /'\.config\/nextest\.toml'/);
+  const { assertNuncioCrewCiResults } = await import(
+    pathToFileURL(gateHelperPath).href
+  );
+  const successful = {
+    "ci-policy": "success",
+    desktop: "false",
+    "desktop-rust-changed": "false",
+    relay: "true",
+    acp: "false",
+    "desktop-fast": "skipped",
+    "desktop-rust": "skipped",
+    "macos-arm": "skipped",
+    "project-relay": "success",
+    "buzz-acp": "skipped",
+    postgres: "success",
+  };
+  assert.doesNotThrow(() => assertNuncioCrewCiResults(successful));
+  for (const postgres of ["skipped", "failure", "cancelled", undefined]) {
+    assert.throws(
+      () => assertNuncioCrewCiResults({ ...successful, postgres }),
+      /postgres/,
+    );
+  }
 });

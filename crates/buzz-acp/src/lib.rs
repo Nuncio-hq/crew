@@ -19,6 +19,8 @@ mod observer;
 mod org_roster;
 mod pool;
 mod pool_lifecycle;
+mod prompt_framing;
+mod prompt_project;
 mod queue;
 mod relay;
 mod retry_turn;
@@ -38,7 +40,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp::{AcpClient, EnvVar, McpServer};
-use anyhow::Result;
+use anyhow::{ensure, Context, Result};
 use buzz_core::kind::{
     KIND_AGENT_USER_INPUT_ANSWER, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
     KIND_ORG_ROSTER, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_REMINDER,
@@ -91,6 +93,22 @@ const MODELS_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for `buzz-acp authenticate`. Browser-based vendor auth can require
 /// human interaction, so it must not share the short probe timeout.
 const AUTHENTICATE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// Resolve the process working directory for ACP session metadata and prompts.
+///
+/// `std::env::current_dir()` returns an absolute path on every supported
+/// platform. Keep the explicit invariant check so a future source cannot
+/// silently introduce a relative path, and surface resolution failures instead
+/// of substituting a misleading Unix-specific fallback.
+fn current_working_directory() -> Result<String> {
+    let cwd = std::env::current_dir().context("failed to resolve current working directory")?;
+    ensure!(
+        cwd.is_absolute(),
+        "current working directory is not absolute: {}",
+        cwd.display()
+    );
+    Ok(cwd.to_string_lossy().into_owned())
+}
 
 /// Publish a kind:20001 presence update event via the WebSocket connection.
 ///
@@ -241,47 +259,15 @@ async fn is_owner_or_sibling(
     is_sibling
 }
 
-/// Inbound author gate decision: does this author's event fire a turn?
-///
-/// Coarse security policy applied before subscription rules. Both `OwnerOnly`
-/// and `Allowlist` accept the owner and same-owner siblings; `Allowlist`
-/// additionally accepts the explicit external pubkey list.
-///
-/// # DM hardening (`is_dm`)
-///
-/// Clients auto-p-tag every DM participant, so in a DM *any* participant's
-/// message looks like a mention and would fire a turn. Combined with
-/// agent-initiated DMs (the agent can be asked to DM a third party), that
-/// turns `anyone`/`allowlist` modes into transitive access grants: whoever
-/// lands in a DM with the agent can prompt it. To close that hole, when
-/// `is_dm` is true only the owner and cryptographically verified same-owner
-/// siblings may fire a turn — the explicit allowlist and `anyone` mode do
-/// NOT apply inside DMs. `Nobody` still drops everything. Callers must
-/// resolve `is_dm` fail-closed: unknown channel type ⇒ treat as DM.
-async fn author_allowed(
-    respond_to: &RespondTo,
-    allowlist: &HashSet<String>,
-    author: &str,
-    is_dm: bool,
-    owner_cache: &OwnerCache,
-    rest_client: &relay::RestClient,
-) -> bool {
-    if is_dm {
-        return match respond_to {
-            RespondTo::Nobody => false,
-            _ => is_owner_or_sibling(author, owner_cache, rest_client).await,
-        };
-    }
-    match respond_to {
-        RespondTo::Anyone => true,
-        RespondTo::Nobody => false,
-        RespondTo::OwnerOnly => is_owner_or_sibling(author, owner_cache, rest_client).await,
-        RespondTo::Allowlist => {
-            allowlist.contains(author)
-                || is_owner_or_sibling(author, owner_cache, rest_client).await
-        }
-    }
-}
+include!("workflow-attribution.rs");
+
+// Keep relay identity private so both listeners must cross the verified gate.
+#[path = "inbound-author-gate.rs"]
+mod inbound_author_gate;
+
+use inbound_author_gate::{AuthorizedListenerEvent, InboundAuthorGate};
+
+include!("normal-listener-ingress.rs");
 
 /// Resolve whether `channel_id` is a DM, for the inbound author gate.
 ///
@@ -300,7 +286,7 @@ pub(crate) async fn is_dm_channel(
     channel_id: Uuid,
     channel_info: &pool::ChannelInfoResolver,
 ) -> bool {
-    match channel_info.resolve(channel_id).await {
+    match channel_info.resolve_channel_metadata(channel_id).await {
         Some(info) => info.channel_type == "dm",
         None => {
             tracing::warn!(
@@ -1261,6 +1247,7 @@ fn handle_cancel_turn_control(
             &context,
             serde_json::json!({
                 "type": "cancel_turn",
+                "requestId": payload.get("requestId"),
                 "status": status,
                 "drainedCount": drained_count,
                 "conversationId": conversation_id.map(|id| id.to_string()),
@@ -1956,6 +1943,63 @@ mod shutdown_drain_grace_tests {
     }
 }
 
+/// Oldest a caller-supplied replay floor may reach back from startup. Bounds
+/// the stale-event burst when a spawn request sat around (e.g. the desktop
+/// slept between the send and this spawn actually running).
+const REPLAY_FLOOR_MAX_AGE_SECS: u64 = 15 * 60;
+
+/// Resolve the startup watermark from process-start time and an optional
+/// replay floor (`--replay-floor` / `BUZZ_ACP_REPLAY_FLOOR`).
+///
+/// A publish-first mention send publishes the triggering message BEFORE this
+/// harness spawns, so the watermark must reach back to the send timestamp for
+/// the first REQ (`since = watermark − 5s`) to replay that message. Floors
+/// older than [`REPLAY_FLOOR_MAX_AGE_SECS`] clamp to that bound; floors in
+/// the future clamp to `now` (a skewed sender must not push the watermark
+/// forward past startup and re-open the blind spot the watermark closes).
+fn startup_watermark_with_floor(now_unix: u64, replay_floor: Option<u64>) -> u64 {
+    match replay_floor {
+        Some(floor) => floor.clamp(now_unix.saturating_sub(REPLAY_FLOOR_MAX_AGE_SECS), now_unix),
+        None => now_unix,
+    }
+}
+
+#[cfg(test)]
+mod replay_floor_tests {
+    use super::{startup_watermark_with_floor, REPLAY_FLOOR_MAX_AGE_SECS};
+
+    const NOW: u64 = 1_700_000_000;
+
+    #[test]
+    fn no_floor_keeps_startup_time() {
+        assert_eq!(startup_watermark_with_floor(NOW, None), NOW);
+    }
+
+    #[test]
+    fn recent_floor_moves_watermark_back_to_the_send_timestamp() {
+        // The publish-first case: message sent 4s before the harness booted.
+        assert_eq!(startup_watermark_with_floor(NOW, Some(NOW - 4)), NOW - 4);
+    }
+
+    #[test]
+    fn stale_floor_clamps_to_the_max_age_bound() {
+        assert_eq!(
+            startup_watermark_with_floor(NOW, Some(NOW - REPLAY_FLOOR_MAX_AGE_SECS - 1)),
+            NOW - REPLAY_FLOOR_MAX_AGE_SECS
+        );
+    }
+
+    #[test]
+    fn future_floor_is_ignored() {
+        assert_eq!(startup_watermark_with_floor(NOW, Some(NOW + 60)), NOW);
+    }
+
+    #[test]
+    fn early_epoch_now_does_not_underflow() {
+        assert_eq!(startup_watermark_with_floor(10, Some(0)), 0);
+    }
+}
+
 pub fn run() -> Result<()> {
     config::propagate_legacy_env_vars();
     tokio_main()
@@ -2059,10 +2103,11 @@ async fn tokio_main() -> Result<()> {
     // the initial subscribe_since for channels discovered at startup. The Subscribe
     // handler falls back to subscribe_since when last_seen is None, closing the
     // blind spot between "agents ready" and "first REQ sent".
-    let startup_watermark: u64 = std::time::SystemTime::now()
+    let now_unix: u64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
+    let startup_watermark = startup_watermark_with_floor(now_unix, config.replay_floor_unix);
 
     let pubkey_hex = config.keys.public_key().to_hex();
 
@@ -2086,6 +2131,10 @@ async fn tokio_main() -> Result<()> {
     }
 
     tracing::info!("connected to relay at {}", config.relay_url);
+
+    let relay_rest_client = relay.rest_client();
+    let mut author_gate_ctx =
+        InboundAuthorGate::connect(&relay_rest_client, &pubkey_hex, "startup").await;
 
     relay
         .subscribe_membership_notifications()
@@ -2278,6 +2327,7 @@ async fn tokio_main() -> Result<()> {
     }
 
     let base_prompt_content = config.base_prompt_content.take();
+    let cwd = current_working_directory()?;
     let ctx = Arc::new(PromptContext {
         mcp_servers: build_mcp_servers(&config),
         initial_message: config.initial_message.clone(),
@@ -2297,10 +2347,7 @@ async fn tokio_main() -> Result<()> {
             Some(include_str!("base_prompt.md"))
         },
         heartbeat_prompt: config.heartbeat_prompt.clone(),
-        cwd: std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("/"))
-            .to_string_lossy()
-            .to_string(),
+        cwd,
         rest_client: relay.rest_client(),
         channel_info: pool::ChannelInfoResolver::new(channel_info_map, relay.rest_client()),
         context_message_limit: config.context_message_limit,
@@ -3105,33 +3152,16 @@ async fn tokio_main() -> Result<()> {
                             // launched by the same human). Allowlist adds the
                             // explicit pubkey list on top, for external people;
                             // it never revokes same-owner team bots.
-                            {
-                                let author = buzz_event.event.pubkey.to_hex();
-                                // DM hardening: resolve channel type (fail-closed
-                                // to DM) so allowlist/anyone modes cannot be
-                                // exercised by non-owner authors inside DMs.
-                                let is_dm =
-                                    inbound_is_dm;
-                                let allowed = author_allowed(
-                                    &config.respond_to,
-                                    &config.respond_to_allowlist,
-                                    &author,
-                                    is_dm,
-                                    &owner_cache,
-                                    &ctx.rest_client,
-                                )
-                                .await;
-                                if !allowed {
-                                    tracing::debug!(
-                                        channel_id = %buzz_event.channel_id,
-                                        author = %buzz_event.event.pubkey.to_hex(),
-                                        mode = %config.respond_to,
-                                        is_dm,
-                                        "inbound author gate — dropping event"
-                                    );
-                                    continue;
-                                }
-                            }
+                            let Some(authorized_event) = authorize_normal_listener_event(
+                                &mut author_gate_ctx,
+                                buzz_event,
+                                &config.respond_to,
+                                &config.respond_to_allowlist,
+                                &owner_cache,
+                                &ctx.channel_info,
+                                &ctx.rest_client,
+                            ).await else { continue; };
+                            let buzz_event = authorized_event.event();
 
                             ctx.org_budget.last_inbound_at.store(
                                 buzz_event.event.created_at.as_secs(),
@@ -3170,106 +3200,21 @@ async fn tokio_main() -> Result<()> {
                                 }
                             }
 
-                            let matched = filter::match_event(&buzz_event.event, buzz_event.channel_id, &rules, &pubkey_hex).await;
-                            let prompt_tag = match matched {
-                                Some(m) => m.prompt_tag,
-                                None => {
-                                    tracing::debug!(channel_id = %buzz_event.channel_id, kind = buzz_event.event.kind.as_u16(), "event matched no rule — dropping");
-                                    continue;
-                                }
-                            };
-                            // Capture author pubkey before queue.push() moves
-                            // buzz_event.event (needed for mode gate below).
+                            // Preserve the raw signer for Crew's human edit hold policy.
                             let author_hex = buzz_event.event.pubkey.to_hex();
-                            let event_id_hex = buzz_event.event.id.to_hex();
-                            // Clone for the non-cancelling steer fork, which
-                            // needs the event to render the steer body. The
-                            // clone is unconditional because we don't know
-                            // yet whether the mode gate will demand a steer
-                            // — checking `multiple_event_handling` here
-                            // would couple the queueing path to the mode
-                            // and break the existing invariant that every
-                            // accepted event goes through `queue.push`
-                            // first. `nostr::Event::clone` is cheap (Arc-
-                            // backed payload) so the cost is negligible.
-                            let event_for_steer = buzz_event.event.clone();
-                            let prompt_tag_for_steer = prompt_tag.clone();
-                            // Sibling agents do not mis-click — skip the hold.
-                            // Owner (human) and everyone else get the hold so
-                            // accidental sends stay editable via v2.
                             let hold_exempt = owner_cache.get() != Some(author_hex.as_str())
-                                && is_owner_or_sibling(
-                                    &author_hex,
-                                    &owner_cache,
-                                    &ctx.rest_client,
-                                )
-                                .await;
-                            let accepted = queue.push(QueuedEvent {
-                                channel_id: inbound_conversation_id,
-                                event: buzz_event.event,
-                                received_at: std::time::Instant::now(),
-                                prompt_tag,
-                                edited_content: None,
-                                hold_exempt,
-                            });
-                            // 👀 — immediate "seen" reaction, only if the event
-                            // was actually queued (not dropped by DedupMode::Drop).
-                            // Fire-and-forget: on rare fast-failure paths the
-                            // guard's cleanup may race with this add, leaving a
-                            // cosmetic stale 👀. Acceptable — see ReactionGuard docs.
-                            if accepted {
-                                let rc = ctx.rest_client.clone();
-                                let eid = event_id_hex.clone();
-                                tokio::spawn(async move {
-                                    pool::reaction_add(&rc, &eid, "👀").await;
-                                });
-                            }
-                            // Event is already queued. If mode requires it AND
-                            // the channel has an in-flight task, fire cancel —
-                            // OR take the non-cancelling (ACP steer) fork for Steer signals.
-                            if accepted && queue.is_channel_in_flight(inbound_conversation_id) {
-                                // Author eligibility (owner ∪ allowlist ∪ siblings)
-                                // is already enforced by the inbound author gate
-                                // above, so the mid-turn signal fires for every
-                                // event that reaches here.
-                                let signal = mode_gate_signal(
-                                    config.multiple_event_handling,
-                                    &author_hex,
-                                    owner_cache.get(),
-                                );
-                                if let Some(signal) = signal {
-                                    // Non-cancelling fork: when the mode
-                                    // wants a Steer, attempt the
-                                    // non-cancelling path first. On accept,
-                                    // withhold the queued event and spawn an
-                                    // ack watcher; the main loop's
-                                    // `PoolEvent::SteerAck` arm decides
-                                    // success/release/fallback. On reject
-                                    // (including agents that advertise no
-                                    // steer transport at all), fall through
-                                    // to the universal cancel+merge `Steer`
-                                    // signal so the event still reaches the
-                                    // agent.
-                                    let native_attempted = matches!(signal, ControlSignal::Steer)
-                                        && try_native_steer(
-                                            &mut pool,
-                                            &mut queue,
-                                            inbound_conversation_id,
-                                            buzz_event.channel_id,
-                                            event_for_steer,
-                                            prompt_tag_for_steer,
-                                            &steer_ack_tx,
-                                        );
-                                    if !native_attempted {
-                                        signal_in_flight_task(
-                                            &mut pool,
-                                            inbound_conversation_id,
-                                            buzz_event.channel_id,
-                                            signal,
-                                        );
-                                    }
-                                }
-                            }
+                                && is_owner_or_sibling(&author_hex, &owner_cache, &ctx.rest_client).await;
+                            let Some(ingress) = AuthorizedNormalListenerEvent(authorized_event)
+                                .match_subscription(&rules, &pubkey_hex).await else { continue; };
+                            let queued = ingress.push(&mut queue, hold_exempt);
+                            queued.mark_seen(&ctx.rest_client);
+                            queued.steer_or_interrupt(
+                                config.multiple_event_handling,
+                                owner_cache.get(),
+                                &mut pool,
+                                &mut queue,
+                                &steer_ack_tx,
+                            );
                             if pool_ready {
                                 for (channel_id, thread_tags) in
                                     dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
@@ -4184,7 +4129,7 @@ fn try_native_steer(
     // channel context and the actor's profile in the original prompt,
     // duplicating it here would defeat the point of non-cancelling
     // steering (which is to inject only what's new).
-    let (header, closing) = queue::native_steer_framing();
+    let (tag, closing) = queue::native_steer_framing();
     let event_id_hex = event.id.to_hex();
     let be = queue::BatchEvent {
         event,
@@ -4193,7 +4138,13 @@ fn try_native_steer(
         edited_content: None,
     };
     let event_block = queue::format_event_block(routing_channel_id, None, &be, None);
-    let body = format!("{header}\n\n[Buzz event: {prompt_tag}]\n{event_block}\n\n{closing}");
+    let new_message = prompt_framing::semantic_section(tag, "");
+    let event_section = prompt_framing::semantic_section_with_attributes(
+        "buzz-event",
+        &[("type", prompt_tag.as_str())],
+        &event_block,
+    );
+    let body = format!("{new_message}\n\n{event_section}\n\n{closing}");
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<pool::SteerAck>();
     let request = pool::SteerRequest {
@@ -4273,6 +4224,7 @@ struct SteerAckDisposition {
 /// addition: `ExpectedRunIdMissing` no longer fires the cancel+merge
 /// fallback (see its own arm below for why).
 ///
+/// ```text
 ///   Success
 ///     The agent received the steer via the non-cancelling path. Drop the
 ///     withheld event so normal dispatch never redelivers it.
@@ -4344,6 +4296,7 @@ struct SteerAckDisposition {
 ///     Should not happen — the read loop drains `pending_steer` on every
 ///     return path. If it does, treat as `PromptCompletedNeutral` to avoid
 ///     leaking the withheld event in `withheld_native_steer`.
+/// ```
 fn steer_ack_disposition(
     ack: &std::result::Result<pool::SteerAck, tokio::sync::oneshot::error::RecvError>,
 ) -> SteerAckDisposition {
@@ -4817,6 +4770,7 @@ fn handle_prompt_result(
                     }
                     PromptOutcome::AgentExited => "the agent process exited".to_string(),
                     PromptOutcome::Error(e) => format!("{e}"),
+                    PromptOutcome::ProjectContextIndeterminate(reason) => reason.clone(),
                     _ => "repeated failures".to_string(),
                 };
                 let content = format!(
@@ -4864,6 +4818,7 @@ fn handle_prompt_result(
     let outcome_label = match &result.outcome {
         PromptOutcome::Ok(_) => "ok",
         PromptOutcome::Error(_) => "error",
+        PromptOutcome::ProjectContextIndeterminate(_) => "project_context_indeterminate",
         PromptOutcome::Timeout(TimeoutKind::Idle) => "idle_timeout",
         PromptOutcome::Timeout(TimeoutKind::Hard { .. }) => "hard_timeout",
         PromptOutcome::AgentExited => "exited",
@@ -5041,6 +4996,16 @@ fn handle_prompt_result(
                 pid = harness_pid,
                 "agent_returned (cancelled)"
             );
+            pool.return_agent(result.agent);
+        }
+        PromptOutcome::ProjectContextIndeterminate(reason) => {
+            tracing::warn!(
+                agent = agent_index,
+                outcome = outcome_label,
+                reason,
+                "agent_returned (local project context indeterminate — pipe intact)"
+            );
+            emit_turn_error(&reason, None);
             pool.return_agent(result.agent);
         }
         PromptOutcome::Error(ref e) => {
@@ -5354,7 +5319,7 @@ mod agent_draft_prompt_tests {
              --channel <current-channel-uuid> --display-name <name> \
              --system-prompt <instructions>`"
         ));
-        assert!(section.contains("using the UUID from `[Context]`"));
+        assert!(section.contains("using the UUID from `<context>`"));
         assert!(section.contains("Never claim the agent exists until the owner saves it"));
         assert!(section.contains("use `buzz agents draft-update --help`"));
         // Verbose pre-#6340 phrasings are gone.
@@ -6016,10 +5981,7 @@ async fn run_models(args: ModelsArgs) -> Result<()> {
     use acp::{extract_model_config_options, extract_model_state};
 
     let agent_args = config::normalize_agent_args(&args.agent.agent_command, args.agent.agent_args);
-    let cwd = std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("/"))
-        .to_string_lossy()
-        .to_string();
+    let cwd = current_working_directory()?;
 
     // Spawn outside the timeout so we always own the child for cleanup.
     // `models` subcommand doesn't use persona packs — no extra env, no codex config.
@@ -6227,8 +6189,8 @@ mod heartbeat_base_prompt_tests {
     use super::*;
 
     // Pins the heartbeat dispatch path (dispatch_heartbeat, ~line 2359): a
-    // legacy agent WITH a base_prompt must get [Base] prepended to the
-    // heartbeat user message, composed as `[Base]\n{bp}\n\n{prompt}`. This is
+    // legacy agent WITH a base_prompt must get <base> prepended to the
+    // heartbeat user message. This is
     // the second half of the round-2 regression (the first being initial_message).
 
     fn heartbeat_standing() -> queue::StandingContext<'static> {
@@ -6241,12 +6203,12 @@ mod heartbeat_base_prompt_tests {
     #[test]
     fn test_heartbeat_legacy_agent_gets_base_prepended() {
         // protocol_version 1 + Some(base_prompt): heartbeat prompt is prefixed
-        // with the [Base] section exactly as the legacy session/new path would.
+        // with the <base> section exactly as the legacy session/new path would.
         let prompt = "[System: Heartbeat]\nrun feed get";
         let composed = pool::prepend_standing_for_legacy(1, &heartbeat_standing(), prompt);
         assert_eq!(
             composed,
-            "[Base]\nyou are a helpful agent\n\n[System: Heartbeat]\nrun feed get"
+            "<base>\nyou are a helpful agent\n</base>\n\n[System: Heartbeat]\nrun feed get"
         );
     }
 
@@ -6990,6 +6952,12 @@ mod owner_cache_tests {
 }
 
 #[cfg(test)]
+mod workflow_owner_tests {
+    include!("workflow-author-tests/authenticated-mentions.rs");
+    include!("workflow-author-tests/invalid-provenance.rs");
+}
+
+#[cfg(test)]
 mod author_gate_tests {
     use super::*;
 
@@ -7019,12 +6987,19 @@ mod author_gate_tests {
         cache
     }
 
+    include!("workflow-author-tests/listener-fixtures.rs");
+    include!("workflow-author-tests/listener-scenario.rs");
+    include!("workflow-author-tests/owner-and-dm-policy.rs");
+    include!("workflow-author-tests/listener-identity-discovery.rs");
+    include!("workflow-author-tests/startup-and-reconnect.rs");
+    include!("workflow-author-tests/generation-refresh.rs");
+    include!("workflow-author-tests/verified-author-policy.rs");
     #[tokio::test]
     async fn test_allowlist_accepts_sibling_not_in_allowlist() {
         let cache = cache_with_sibling();
         let allowlist = HashSet::from([EXTERNAL.to_string()]);
         assert!(
-            author_allowed(
+            inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 SIBLING,
@@ -7042,7 +7017,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         let allowlist = HashSet::from([EXTERNAL.to_string()]);
         assert!(
-            author_allowed(
+            inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 EXTERNAL,
@@ -7060,7 +7035,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         let allowlist = HashSet::from([EXTERNAL.to_string()]);
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 STRANGER,
@@ -7078,7 +7053,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         let allowlist = HashSet::new();
         assert!(
-            author_allowed(
+            inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 OWNER,
@@ -7099,7 +7074,7 @@ mod author_gate_tests {
     async fn test_owner_only_rejects_stranger_so_no_steer() {
         let cache = cache_with_sibling();
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::OwnerOnly,
                 &HashSet::new(),
                 STRANGER,
@@ -7117,7 +7092,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         for (who, label) in [(OWNER, "owner"), (SIBLING, "sibling")] {
             assert!(
-                author_allowed(
+                inbound_author_gate::test_author_allowed(
                     &RespondTo::OwnerOnly,
                     &HashSet::new(),
                     who,
@@ -7143,7 +7118,7 @@ mod author_gate_tests {
         let cache = cache_with_sibling();
         let allowlist = HashSet::from([EXTERNAL.to_string()]);
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 EXTERNAL,
@@ -7160,7 +7135,7 @@ mod author_gate_tests {
     async fn test_dm_rejects_stranger_under_anyone() {
         let cache = cache_with_sibling();
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::Anyone,
                 &HashSet::new(),
                 STRANGER,
@@ -7183,7 +7158,7 @@ mod author_gate_tests {
         ] {
             for (who, label) in [(OWNER, "owner"), (SIBLING, "sibling")] {
                 assert!(
-                    author_allowed(
+                    inbound_author_gate::test_author_allowed(
                         &mode,
                         &HashSet::new(),
                         who,
@@ -7202,7 +7177,7 @@ mod author_gate_tests {
     async fn test_dm_nobody_rejects_even_owner() {
         let cache = cache_with_sibling();
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::Nobody,
                 &HashSet::new(),
                 OWNER,
@@ -7326,7 +7301,7 @@ mod author_gate_tests {
         assert_eq!(
             requests.load(Ordering::SeqCst),
             1,
-            "second resolution uses cache"
+            "author-gate DM classification resolves and caches channel metadata only"
         );
         server.abort();
     }
@@ -7342,7 +7317,7 @@ mod author_gate_tests {
         let is_dm = is_dm_channel(id, &channel_info).await;
         assert!(is_dm, "unknown startup metadata must fail closed as DM");
         assert!(
-            !author_allowed(
+            !inbound_author_gate::test_author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 EXTERNAL,
@@ -8459,6 +8434,7 @@ mod build_mcp_servers_tests {
             has_generated_codex_config: false,
             relay_observer: false,
             exit_after_inactivity_secs: 0,
+            replay_floor_unix: None,
             lazy_pool: false,
             pool_idle_timeout_secs: 1800,
             agent_owner: None,
@@ -8704,6 +8680,7 @@ mod error_outcome_emission_tests {
             has_generated_codex_config: false,
             relay_observer: false,
             exit_after_inactivity_secs: 0,
+            replay_floor_unix: None,
             lazy_pool: false,
             pool_idle_timeout_secs: 1800,
             agent_owner: None,
@@ -10619,6 +10596,96 @@ mod error_outcome_emission_tests {
         assert_eq!(turn_errors_emitted_for(PromptOutcome::Error(app)).await, 1);
     }
 
+    #[tokio::test]
+    async fn indeterminate_project_context_requeues_without_poisoning_agent_or_circuit() {
+        let channel_id = Uuid::new_v4();
+        let event = EventBuilder::new(Kind::Custom(9), "project work")
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        let batch = FlushBatch {
+            channel_id,
+            events: vec![BatchEvent {
+                event,
+                prompt_tag: "test".into(),
+                received_at: std::time::Instant::now(),
+                edited_content: None,
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+
+        let mut agent = dummy_agent(0).await;
+        agent
+            .state
+            .sessions
+            .insert(channel_id, "healthy-session".into());
+        let mut pool = AgentPool::from_slots(vec![None]);
+        let task_id = pool.join_set.spawn(async {}).id();
+        pool.task_map_mut().insert(
+            task_id,
+            crate::pool::TaskMeta {
+                agent_index: 0,
+                channel_id: Some(channel_id),
+                routing_channel_id: Some(channel_id),
+                turn_id: "indeterminate-project".into(),
+                recoverable_batch: None,
+                control_tx: None,
+                steer_tx: None,
+                successful_steer_deliveries: HashSet::new(),
+            },
+        );
+        let mut queue = EventQueue::new(config::DedupMode::Queue);
+        let config = test_config();
+        let mut heartbeat_in_flight = false;
+        let removed_channels = HashSet::new();
+        let mut crash_history = vec![SlotCircuit {
+            crash_times: Vec::new(),
+            open_until: None,
+            respawn_in_flight: false,
+        }];
+        let (respawn_tx, _respawn_rx) = mpsc::channel(8);
+        let mut respawn_tasks = tokio::task::JoinSet::new();
+        let result = PromptResult {
+            agent,
+            source: PromptSource::Channel(channel_id),
+            turn_id: "indeterminate-project".into(),
+            outcome: PromptOutcome::ProjectContextIndeterminate(
+                "project context is indeterminate".into(),
+            ),
+            batch: Some(batch),
+        };
+
+        assert!(matches!(
+            handle_prompt_result(
+                &mut pool,
+                &mut queue,
+                &config,
+                result,
+                &mut heartbeat_in_flight,
+                &removed_channels,
+                &mut crash_history,
+                &respawn_tx,
+                &mut respawn_tasks,
+                None,
+                None,
+            ),
+            LoopAction::Continue
+        ));
+
+        let returned = pool.agents_mut()[0]
+            .as_ref()
+            .expect("healthy agent returns to its slot");
+        assert_eq!(
+            returned.state.sessions.get(&channel_id).map(String::as_str),
+            Some("healthy-session")
+        );
+        assert_eq!(queue.queued_event_count(&channel_id), 1);
+        assert!(crash_history[0].crash_times.is_empty());
+        assert!(crash_history[0].open_until.is_none());
+        assert!(!crash_history[0].respawn_in_flight);
+        assert!(respawn_tasks.is_empty());
+    }
+
     // ── is_auth_error classification ───────────────────────────────────────
 
     #[test]
@@ -11287,7 +11354,7 @@ mod observer_payload_trim_tests {
         // to 1).
         let sections = [
             "[Base]\nyou are a helpful agent".to_string(),
-            "[System]\npersona text".to_string(),
+            "[Agent Instructions]\npersona text".to_string(),
             "[Agent Memory — core]\nremember this".to_string(),
             "[Context]\nScope: thread".to_string(),
             // The triggering event body, oversized on its own.
@@ -11324,7 +11391,7 @@ mod observer_payload_trim_tests {
         let texts: Vec<&str> = blocks.iter().map(|b| b["text"].as_str().unwrap()).collect();
         for header in [
             "[Base]",
-            "[System]",
+            "[Agent Instructions]",
             "[Agent Memory — core]",
             "[Context]",
             "[Buzz event: @mention]",

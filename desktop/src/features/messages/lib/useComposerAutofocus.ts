@@ -21,7 +21,8 @@ import * as React from "react";
  *  - Skip if the composer is currently disabled (archived channel, no
  *    channel, or in-flight send at the moment of mount).
  *  - Skip if focus already lives in another text-entry surface (open
- *    dialog input, search box, etc.) so we don't yank focus from the user.
+ *    dialog input, search box, etc.) or an overlay control. Late editor
+ *    hydration must not dismiss a popover the user already opened.
  */
 export function useComposerAutofocus(
   focus: () => void,
@@ -44,7 +45,8 @@ export function useComposerAutofocus(
         tag === "INPUT" ||
         tag === "TEXTAREA" ||
         tag === "SELECT" ||
-        active.isContentEditable
+        active.isContentEditable ||
+        active.closest('[role="dialog"], [role="menu"], [role="listbox"]')
       ) {
         return;
       }

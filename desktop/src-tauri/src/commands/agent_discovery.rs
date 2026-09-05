@@ -1,13 +1,12 @@
-use tauri::State;
-
 use crate::{
     app_state::AppState,
     managed_agents::{
         command_availability, AcpRuntimeCatalogEntry, DiscoverManagedAgentPrereqsRequest,
-        InstallRuntimeResult, ManagedAgentPrereqsInfo, RelayAgentInfo, DEFAULT_ACP_COMMAND,
+        InstallRuntimeResult, ManagedAgentPrereqsInfo, DEFAULT_ACP_COMMAND,
     },
 };
-mod agent_discovery_ownership;
+mod relay_directory;
+pub use relay_directory::{list_relay_agents, revalidate_relay_agents};
 mod forced_single_flight;
 mod git_bash_prerequisite;
 mod install_capture;
@@ -17,7 +16,6 @@ mod install_runtime;
 mod managed_adapter_install;
 mod managed_node;
 mod post_install_verification;
-use agent_discovery_ownership::list_relay_agents_inner;
 pub use git_bash_prerequisite::discover_git_bash_prerequisite;
 use install_runtime::install_acp_runtime_blocking;
 /// Discover the ACP runtime catalog. `force: false` (the default) serves the
@@ -120,6 +118,7 @@ pub async fn save_custom_harness(
         model_env_var: None,
         provider_env_var: None,
         thinking_env_var: None,
+        effort_canonical_values: None,
         max_tokens_env_var: None,
         context_limit_env_var: None,
         max_rounds_env_var: None,
@@ -258,13 +257,10 @@ async fn restart_setup_mode_agents_after_install(
     app: &tauri::AppHandle,
     runtime_id: &str,
 ) -> (u32, u32) {
-    use crate::{
-        app_state::AppState,
-        managed_agents::{
-            agent_readiness, known_acp_runtime, load_global_agent_config, load_managed_agents,
-            load_personas, record_agent_command, resolve_effective_agent_env, AgentReadiness,
-            BackendKind,
-        },
+    use crate::managed_agents::{
+        agent_readiness, known_acp_runtime, load_global_agent_config, load_managed_agents,
+        load_personas, record_agent_command, resolve_effective_agent_env, AgentReadiness,
+        BackendKind,
     };
     use tauri::Manager;
 
@@ -349,14 +345,11 @@ async fn restart_single_agent_after_install(
     pubkey: &str,
     runtime_id: &str,
 ) -> InstallRestartOutcome {
-    use crate::{
-        app_state::AppState,
-        managed_agents::{
-            agent_readiness, current_instance_id, find_managed_agent_mut, known_acp_runtime,
-            load_global_agent_config, load_managed_agents, load_personas, record_agent_command,
-            resolve_effective_agent_env, save_managed_agents, stop_managed_agent_process,
-            sync_managed_agent_processes, AgentReadiness, BackendKind,
-        },
+    use crate::managed_agents::{
+        agent_readiness, current_instance_id, find_managed_agent_mut, known_acp_runtime,
+        load_global_agent_config, load_managed_agents, load_personas, record_agent_command,
+        resolve_effective_agent_env, save_managed_agents, stop_managed_agent_process,
+        sync_managed_agent_processes, AgentReadiness, BackendKind,
     };
     use tauri::Manager;
 
@@ -491,10 +484,7 @@ fn persist_last_error_on_install(
     pubkey: &str,
     error: &str,
 ) -> Result<(), String> {
-    use crate::{
-        app_state::AppState,
-        managed_agents::{find_managed_agent_mut, load_managed_agents, save_managed_agents},
-    };
+    use crate::managed_agents::{find_managed_agent_mut, load_managed_agents, save_managed_agents};
     use tauri::Manager;
     let state = app.state::<AppState>();
     let _store_guard = state
@@ -856,11 +846,6 @@ pub async fn discover_managed_agent_prereqs(
     })
     .await
     .map_err(|e| format!("spawn_blocking failed: {e}"))
-}
-
-#[tauri::command]
-pub async fn list_relay_agents(state: State<'_, AppState>) -> Result<Vec<RelayAgentInfo>, String> {
-    list_relay_agents_inner(&state).await
 }
 
 #[cfg(test)]

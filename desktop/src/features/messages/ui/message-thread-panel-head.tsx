@@ -6,7 +6,7 @@ import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { LiveJobDesk } from "@/features/workbench/ui/LiveJobDesk";
 import { cn } from "@/shared/lib/cn";
-import { MessageRow } from "./MessageRow";
+import { MessageThreadRow } from "./MessageThreadRow";
 import { SessionAgingBannerSlot } from "./SessionAgingBannerSlot";
 
 export function MessageThreadPanelHead({
@@ -25,6 +25,7 @@ export function MessageThreadPanelHead({
   onToggleReaction,
   onUnfollowThread,
   profiles,
+  searchQuery,
   shouldShowThreadBranchGuides,
   threadHead,
   videoReviewPresentation,
@@ -48,6 +49,7 @@ export function MessageThreadPanelHead({
   ) => Promise<void>;
   onUnfollowThread?: () => void;
   profiles?: UserProfileLookup;
+  searchQuery?: string;
   shouldShowThreadBranchGuides: boolean;
   threadHead: TimelineMessage;
   videoReviewPresentation?: VideoReviewPresentation;
@@ -72,7 +74,7 @@ export function MessageThreadPanelHead({
         data-testid="message-thread-head"
       >
         <div className="rounded-2xl">
-          <MessageRow
+          <MessageThreadRow
             actionBarPlacement="inside"
             channelId={channelId}
             currentPubkey={currentPubkey}
@@ -80,7 +82,6 @@ export function MessageThreadPanelHead({
             huddleMemberPubkeysPending={huddleMemberPubkeysPending}
             isFollowingThread={isFollowingThread}
             isUnread={isMessageUnreadById?.(threadHead.id)}
-            layoutVariant="thread-reply"
             message={threadHead}
             onDelete={
               onDelete &&
@@ -112,6 +113,7 @@ export function MessageThreadPanelHead({
               onUnfollowThread ? (_msg) => onUnfollowThread() : undefined
             }
             profiles={profiles}
+            searchQuery={searchQuery}
             showDepthGuides={shouldShowThreadBranchGuides}
             videoReviewCommentRootId={videoReviewCommentRootId}
             videoReviewContext={videoReviewContext}

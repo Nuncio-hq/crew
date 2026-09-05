@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
@@ -19,16 +19,13 @@ const MENU_RELAY_VIDEO_URL = `http://localhost:3000/media/${MENU_RELAY_VIDEO_SHA
 const MENU_OFF_RELAY_VIDEO_SHA = "f".repeat(64);
 const MENU_OFF_RELAY_VIDEO_URL = `https://cdn.example.com/media/${MENU_OFF_RELAY_VIDEO_SHA}.mp4`;
 const VIDEO_REVIEW_NEUTRAL_ACCENT = "neutral";
-const VIDEO_REVIEW_LIGHT_THEME = "catppuccin-latte";
-// The fresh-profile default is the Buzz theme, which pins the neutral accent
-// regardless of the stored accent color. Accent-driven review foreground
-// assertions must run on a non-Buzz theme for the seeded accent to apply.
-const VIDEO_REVIEW_ACCENT_THEME = "houston";
+const VIDEO_REVIEW_LIGHT_THEME = "crew-light";
+// Crew chrome pins its blue independently of legacy stored accent choices.
+const VIDEO_REVIEW_ACCENT_THEME = "crew-dark";
 const VIDEO_REVIEW_ACCENT = "#ec4899";
-const VIDEO_REVIEW_ACCENT_FOREGROUND_RGB = "rgb(240, 115, 177)";
+const VIDEO_REVIEW_ACCENT_FOREGROUND_RGB = "rgb(103, 158, 248)";
 const VIDEO_REVIEW_INDIGO_ACCENT = "#6366f1";
-const VIDEO_REVIEW_INDIGO_FOREGROUND_RGB = "rgb(141, 143, 245)";
-const VIDEO_REVIEW_NEUTRAL_DARK_RGB = "rgb(250, 250, 250)";
+const VIDEO_REVIEW_LIGHT_FOREGROUND_RGB = "rgb(104, 147, 241)";
 const POSTER_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNjAgODAiPjxyZWN0IHdpZHRoPSIxNjAiIGhlaWdodD0iODAiIGZpbGw9IiMyNjQ2NTMiLz48Y2lyY2xlIGN4PSI1NCIgY3k9IjQwIiByPSIyMiIgZmlsbD0iI2YyYzE0ZSIvPjxwYXRoIGQ9Ik05MiAyNGg0NHYzMkg5MnoiIGZpbGw9IiNmNzgxNTQiLz48L3N2Zz4=";
 
@@ -186,7 +183,9 @@ async function openReviewWithPostedTimecode(
 
   await page.getByRole("button", { name: "Attach file" }).click();
   await expect(
-    page.getByTestId("message-composer").getByAltText("Video attachment bbbb"),
+    page
+      .getByTestId("message-composer")
+      .getByRole("button", { name: "Video attachment bbbb", exact: true }),
   ).toBeVisible();
   await page.getByTestId("send-message").click();
   await expect(page.getByText("Sending")).toHaveCount(0);
@@ -242,8 +241,12 @@ test("video upload previews use poster frames and inline videos open review mode
   await page.getByRole("button", { name: "Attach file" }).click();
 
   const composer = page.getByTestId("message-composer");
-  const composerPoster = composer.getByAltText("Video attachment bbbb");
-  await expect(composerPoster).toBeVisible();
+  const composerTrigger = composer.getByRole("button", {
+    name: "Video attachment bbbb",
+    exact: true,
+  });
+  await expect(composerTrigger).toBeVisible();
+  const composerPoster = composerTrigger.locator("img");
   await expect(composerPoster).toHaveAttribute("src", POSTER_DATA_URL);
 
   const box = await composerPoster.boundingBox();
@@ -648,6 +651,11 @@ test("video upload previews use poster frames and inline videos open review mode
   // The speed menu itself must survive the same live timeline churn as the
   // review dialog. This exercises the interaction that used to detach the
   // Radix menu item while it was being clicked.
+  await reviewDialog.locator(".video-review-media-surface").hover();
+  await expect(reviewDialog.locator(".video-review-controls")).toHaveCSS(
+    "opacity",
+    "1",
+  );
   await reviewSpeedButton.click();
   const reviewSpeedMenu = page.getByTestId("video-review-speed-menu");
   await expect(reviewSpeedMenu).toBeVisible();
@@ -899,6 +907,67 @@ test("inline video hover reveals a timeline without a second play control", asyn
   await expect
     .poll(() => video.evaluate((element) => element.paused))
     .toBe(true);
+});
+
+test("expanded video controls fade with the video hover boundary", async ({
+  page,
+}) => {
+  await installVideoReviewHarness(page);
+
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await waitForMockLiveSubscription(page, "general");
+
+  await emitMockMessage(page, "general", `![video](${VIDEO_URL})`, {
+    extraTags: [
+      [
+        "imeta",
+        `url ${VIDEO_URL}`,
+        "m video/mp4",
+        `x ${VIDEO_SHA}`,
+        "size 987654",
+        "dim 160x80",
+        "duration 12.5",
+        `image ${POSTER_DATA_URL}`,
+        "filename launch-demo.mp4",
+      ],
+    ],
+  });
+
+  await page.getByRole("button", { name: "Open video review" }).last().click();
+
+  const dialog = page.getByTestId("video-review-dialog");
+  const mediaSurface = dialog.locator(".video-review-media-surface");
+  const controls = dialog.locator(".video-review-controls");
+  await expect(mediaSurface).toBeVisible();
+
+  await dialog.getByTestId("video-review-comments-panel").hover();
+  const restingControlsBox = await controls.boundingBox();
+  expect(restingControlsBox).not.toBeNull();
+  await expect(controls).toHaveCSS("opacity", "0");
+
+  await mediaSurface.hover();
+  await expect(controls).toHaveCSS("opacity", "1");
+  const hoveredControlsBox = await controls.boundingBox();
+  expect(hoveredControlsBox).not.toBeNull();
+  expect(
+    Math.abs((hoveredControlsBox?.y ?? 0) - (restingControlsBox?.y ?? 0)),
+  ).toBeLessThan(0.5);
+  await expect(controls).toHaveCSS("transition-property", "opacity");
+  await expect(controls).toHaveCSS("transition-duration", "0.15s");
+
+  const playButton = controls.getByRole("button", { name: /review video$/ });
+  await playButton.click();
+  await expect(playButton).toBeFocused();
+  await dialog.getByTestId("video-review-comments-panel").hover();
+  await expect(controls).toHaveCSS("opacity", "0");
+
+  await page.keyboard.press("Tab");
+  await expect(controls).toHaveCSS("opacity", "1");
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(controls).toHaveCSS("transition-property", "none");
 });
 
 test("video replies in threads open the review comments view", async ({
@@ -1196,7 +1265,62 @@ test("constrained landscape inline videos measure rendered width before showing 
   );
 });
 
-test("neutral accent uses the forced-dark review foreground", async ({
+async function expectReviewTimecodeContrast(timecode: Locator) {
+  await expect
+    .poll(async () =>
+      timecode.evaluate((element) => {
+        // A confirmed comment replaces its optimistic renderer; measure the
+        // current connected element rather than a detached locator resolution.
+        if (!element.isConnected) return 0;
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Color measurement unavailable");
+        const rgba = (value: string) => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = value;
+          context.fillRect(0, 0, 1, 1);
+          const [r, g, b, alpha] = context.getImageData(0, 0, 1, 1).data;
+          return [r, g, b, alpha / 255];
+        };
+        const surfaces: number[][] = [];
+        for (
+          let node: Element | null = element;
+          node;
+          node = node.parentElement
+        ) {
+          const color = rgba(getComputedStyle(node).backgroundColor);
+          surfaces.push(color);
+          if (color[3] === 1) break;
+        }
+        let background = [255, 255, 255];
+        for (const color of surfaces.reverse()) {
+          background = background.map(
+            (value, i) => color[i] * color[3] + value * (1 - color[3]),
+          );
+        }
+        const luminance = (rgb: number[]) =>
+          rgb
+            .slice(0, 3)
+            .map((value) => {
+              const channel = value / 255;
+              return channel <= 0.04045
+                ? channel / 12.92
+                : ((channel + 0.055) / 1.055) ** 2.4;
+            })
+            .reduce(
+              (sum, value, i) => sum + value * [0.2126, 0.7152, 0.0722][i],
+              0,
+            );
+        const fg = luminance(rgba(getComputedStyle(element).color));
+        const bg = luminance(background);
+        return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+      }),
+    )
+    .toBeGreaterThanOrEqual(4.5);
+}
+
+test("Crew Light keeps contrast-safe review blue with a stored neutral accent", async ({
   page,
 }) => {
   await installVideoReviewHarness(page, {
@@ -1208,13 +1332,22 @@ test("neutral accent uses the forced-dark review foreground", async ({
 
   await expect(
     reviewDialog.getByTestId("video-review-composer-timecode"),
-  ).toHaveCSS("color", VIDEO_REVIEW_NEUTRAL_DARK_RGB);
+  ).toHaveCSS("color", VIDEO_REVIEW_LIGHT_FOREGROUND_RGB);
   await expect(
     reviewDialog.getByTestId("video-review-comment-timecode").first(),
-  ).toHaveCSS("color", VIDEO_REVIEW_NEUTRAL_DARK_RGB);
+  ).toHaveCSS("color", VIDEO_REVIEW_LIGHT_FOREGROUND_RGB);
+  const commentTimecode = reviewDialog
+    .getByTestId("video-review-comment-timecode")
+    .first();
+  await expectReviewTimecodeContrast(commentTimecode);
+  await commentTimecode.hover();
+  await waitForAnimations(page);
+  await expectReviewTimecodeContrast(commentTimecode);
 });
 
-test("dark accent uses a contrast-safe review foreground", async ({ page }) => {
+test("Crew Dark keeps contrast-safe review blue with a stored indigo accent", async ({
+  page,
+}) => {
   await installVideoReviewHarness(page, {
     accentColor: VIDEO_REVIEW_INDIGO_ACCENT,
     themeName: VIDEO_REVIEW_ACCENT_THEME,
@@ -1227,10 +1360,17 @@ test("dark accent uses a contrast-safe review foreground", async ({ page }) => {
 
   await expect(
     reviewDialog.getByTestId("video-review-composer-timecode"),
-  ).toHaveCSS("color", VIDEO_REVIEW_INDIGO_FOREGROUND_RGB);
+  ).toHaveCSS("color", VIDEO_REVIEW_ACCENT_FOREGROUND_RGB);
   await expect(
     reviewDialog.getByTestId("video-review-comment-timecode").first(),
-  ).toHaveCSS("color", VIDEO_REVIEW_INDIGO_FOREGROUND_RGB);
+  ).toHaveCSS("color", VIDEO_REVIEW_ACCENT_FOREGROUND_RGB);
+  const commentTimecode = reviewDialog
+    .getByTestId("video-review-comment-timecode")
+    .first();
+  await expectReviewTimecodeContrast(commentTimecode);
+  await commentTimecode.hover();
+  await waitForAnimations(page);
+  await expectReviewTimecodeContrast(commentTimecode);
 });
 
 // Emit a video message with the imeta the renderer needs to pick the video

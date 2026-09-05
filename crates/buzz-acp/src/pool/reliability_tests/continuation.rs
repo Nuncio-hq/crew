@@ -25,6 +25,9 @@ while IFS= read -r line; do :; done"#
         .expect("adapter");
     agent.state.sessions.insert(channel, "live-session".into());
     let mut ctx = make_prompt_context_no_owner();
+    let (metadata, _, _metadata_server) =
+        super::super::tests::counting_resolver(serde_json::json!([])).await;
+    ctx.channel_info = metadata;
     let event = EventBuilder::new(Kind::Custom(9), "make a plan and execute")
         .tag(nostr::Tag::public_key(ctx.agent_keys.public_key()))
         .sign_with_keys(&Keys::generate())
@@ -49,6 +52,7 @@ while IFS= read -r line; do :; done"#
             name: "test".into(),
             channel_type: "stream".into(),
             description: None,
+            project: None,
         },
     );
     let (publisher, mut published) = crate::relay::RelayEventPublisher::test_pair();

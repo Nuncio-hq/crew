@@ -64,7 +64,10 @@ test("relay-only agents still fail closed when relay discovery fails", async () 
 
 test("mixed evidence preserves only fresh managed agents and humans", async () => {
   const result = await revalidateAgentMentionPubkeys({
-    ...options(),
+    ...options(async () => ({
+      profiles: { [AGENT]: { ownerPubkey: CURRENT } },
+      missing: [LOCAL_AGENT],
+    })),
     pubkeys: [HUMAN, LOCAL_AGENT, AGENT],
     agentPubkeys: new Set([LOCAL_AGENT, AGENT]),
     refetchManagedAgents: async () => ({

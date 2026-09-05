@@ -10,7 +10,6 @@ import { toast } from "sonner";
 
 import { useAgentWorking } from "@/features/agents/agentWorkingSignal";
 import { useActiveAgentTurnControlTargets } from "@/features/agents/activeAgentTurnsStore";
-import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 import {
   mergeObserverEventWindows,
   observerEventScrollId,
@@ -26,8 +25,9 @@ import {
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 import { describeCancelTurnResult } from "@/features/agents/cancelTurnFeedback";
-import { subscribeControlResults } from "@/features/agents/observerRelayStore";
 import { cancelManagedAgentTurn } from "@/shared/api/agentControl";
+import { awaitCancelTurnOutcome } from "@/features/agents/lib/cancelTurnOutcome";
+import { subscribeControlResults } from "@/features/agents/observerRelayStore";
 import type { Channel } from "@/shared/api/types";
 import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
 import { useIsThreadPanelOverlay } from "@/shared/hooks/use-mobile";
@@ -99,7 +99,7 @@ export function AgentSessionThreadPanel({
   widthPx,
   transparentChrome = false,
 }: AgentSessionThreadPanelProps) {
-  const isLive = isManagedAgentActive(agent);
+  const isLive = agent.status === "running" || agent.status === "deployed";
   const isOverlay = useIsThreadPanelOverlay();
   const sessionChannelId = channelId ?? channel?.id ?? null;
   // Unified working signal, scoped to this panel's channel (or all channels
@@ -272,35 +272,27 @@ export function AgentSessionThreadPanel({
     }
 
     try {
-      const statusPromise = new Promise<string>((resolve) => {
-        const unsub = subscribeControlResults(agent.pubkey, (frame) => {
-          if (frame.type !== "cancel_turn") return;
-          if (
-            typeof frame.conversationId === "string" &&
-            frame.conversationId.length > 0 &&
-            frame.conversationId !== target.conversationId
-          ) {
-            return;
-          }
-          unsub();
-          clearTimeout(timer);
-          resolve(frame.status);
-        });
-        const timer = window.setTimeout(() => {
-          unsub();
-          resolve("unconfirmed");
-        }, 5_000);
+      const requestId = crypto.randomUUID();
+      const outcome = await awaitCancelTurnOutcome({
+        requestId,
+        channelId: target.channelId,
+        conversationId: target.conversationId,
+        subscribe: (listener) =>
+          subscribeControlResults(agent.pubkey, listener),
+        sendCancel: () =>
+          cancelManagedAgentTurn(
+            agent.pubkey,
+            target.channelId,
+            target.conversationId,
+            target.turnId,
+            requestId,
+          ),
+        scheduleTimeout: (onTimeout) => {
+          const timer = window.setTimeout(onTimeout, 8_000);
+          return () => window.clearTimeout(timer);
+        },
       });
-      await cancelManagedAgentTurn(
-        agent.pubkey,
-        target.channelId,
-        target.conversationId,
-        target.turnId,
-      );
-      const feedback = describeCancelTurnResult(
-        await statusPromise,
-        agent.name,
-      );
+      const feedback = describeCancelTurnResult(outcome, agent.name);
       if (feedback.tone === "success") toast.success(feedback.message);
       else if (feedback.tone === "info") toast.message(feedback.message);
       else toast.warning(feedback.message);
@@ -500,6 +492,7 @@ export function AgentSessionThreadPanel({
           avatarUrl={agentProfile?.avatarUrl ?? null}
           className="size-9"
           label={agentLabel}
+          shape="squircle"
           testId="agent-session-agent-avatar"
         />
         <div className="min-w-0 flex-1">

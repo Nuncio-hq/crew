@@ -88,6 +88,7 @@ export function ThreadFocusForgeSplit({
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-col border-l border-border/60 bg-background",
+            narrow && "flex-1",
             narrow && chatPane !== "tools" ? "hidden" : null,
           )}
           data-testid="thread-pr-hub"

@@ -14,6 +14,7 @@ export function handleSessionRelayClosed({
   isGenerationActive,
   sendReq,
   requestHistory,
+  closeSubscription,
 }: {
   subscriptions: Map<string, RelaySubscription>;
   subId: string;
@@ -21,6 +22,7 @@ export function handleSessionRelayClosed({
   generation: number;
   isGenerationActive: (generation: number) => boolean;
   sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
+  closeSubscription?: (subId: string) => Promise<void>;
   requestHistory: (filter: RelaySubscriptionFilter) => Promise<RelayEvent[]>;
 }) {
   handleRelayClosed({
@@ -28,6 +30,7 @@ export function handleSessionRelayClosed({
     subId,
     message,
     sendReq,
+    closeSubscription,
     isActive: () => isGenerationActive(generation),
     recoverHistory: async (activeSubId, subscription) => {
       return recoverLiveSubscriptionHistory({

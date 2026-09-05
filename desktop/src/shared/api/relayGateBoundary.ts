@@ -46,6 +46,7 @@ export async function requestHistoryGated(
       resolve,
       reject,
       timeout,
+      timeoutMs: historyTimeoutMs,
     });
 
     void sendRaw(["REQ", subId, filter]).catch((error) => {

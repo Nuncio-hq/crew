@@ -32,18 +32,24 @@ import {
   EmptyState,
   ProjectGridCard,
   ProjectListRow,
+  projectListSelectionItem,
 } from "@/features/projects/ui/ProjectCards";
 import { CreateProjectDialog } from "@/features/projects/ui/CreateProjectDialog";
 import { CreateProjectIssueDialog } from "@/features/projects/ui/CreateProjectIssueDialog";
 import { CreatePullRequestDialog } from "@/features/projects/ui/CreatePullRequestDialog";
 import { ProjectsCreateMenu } from "@/features/projects/ui/ProjectsCreateMenu";
+import { ProjectsChannelsList } from "@/features/projects/ui/ProjectsChannelsList";
 import { ProjectsIssuesList } from "@/features/projects/ui/ProjectsIssuesList";
 
 import { ProjectsPullRequestsList } from "@/features/projects/ui/ProjectsPullRequestsList";
 
 import { ProjectOutcomeLanding } from "@/features/projects/ui/ProjectOutcomeLanding";
 import { ProjectsWorkItemsLoadNotice } from "@/features/projects/ui/ProjectsWorkItemsLoadNotice";
-import { ProjectsToolbar } from "@/features/projects/ui/ProjectsToolbar";
+import { ProjectsSectionSearch } from "@/features/projects/ui/ProjectsSectionSearch";
+import {
+  matchesProjectSearch,
+  matchesProjectsSearch,
+} from "@/features/projects/lib/projectsSearch";
 import { ProjectsListHeaderBar } from "@/features/projects/ui/ProjectsListHeaderBar";
 import {
   hasLocalCheckout,
@@ -52,6 +58,7 @@ import {
 import {
   RepositoryGridCard,
   RepositoryListRow,
+  repositoryListSelectionItem,
 } from "@/features/projects/ui/RepositoryCards";
 import {
   getProjectUpdatedAt,
@@ -90,6 +97,8 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 import { Button } from "@/shared/ui/button";
 import { PageHeader } from "@/shared/ui/PageHeader";
+import { ProjectSelectionProvider } from "@/features/projects/lib/useProjectSelection";
+import { ProjectsOverviewSelectionActions } from "./ProjectsSelectionCountMenu";
 
 const MANY_PROJECTS_THRESHOLD = 12;
 
@@ -143,6 +152,12 @@ export function ProjectsView({
   const projectsQuery = useProjectsQuery();
   const identityQuery = useIdentityQuery();
   const projects = projectsQuery.data ?? [];
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const searchedProjects = React.useMemo(
+    () =>
+      projects.filter((project) => matchesProjectSearch(searchQuery, project)),
+    [projects, searchQuery],
+  );
   const localRepositoriesQuery = useProjectLocalRepositoriesQuery(
     activeCommunity?.reposDir,
   );
@@ -320,7 +335,7 @@ export function ProjectsView({
       return [];
     }
 
-    const sortedProjects = projects
+    const sortedProjects = searchedProjects
       .filter((project) => {
         const summary = activitySummariesQuery.data?.[project.id];
         const people = projectPeople(project, summary);
@@ -366,7 +381,7 @@ export function ProjectsView({
     filter,
     localRepoNames,
     profiles,
-    projects,
+    searchedProjects,
     relayOrigin,
     repositoryAccessInput,
     repositoryScope,
@@ -388,7 +403,15 @@ export function ProjectsView({
       ).values(),
     ];
     return repositories
-      .filter(({ repository }) => {
+      .filter(({ project, repository }) => {
+        if (
+          !matchesProjectsSearch(searchQuery, [
+            repository.name,
+            repository.description,
+            project.name,
+          ])
+        )
+          return false;
         if (repositoryScope === "accessible") {
           return isRepositoryAccessibleToViewer(
             repository,
@@ -445,6 +468,7 @@ export function ProjectsView({
     relayOrigin,
     repositoryAccessInput,
     repositoryActivitySummariesQuery.data,
+    searchQuery,
     repositoryScope,
     sort,
   ]);
@@ -459,16 +483,32 @@ export function ProjectsView({
               normalizePubkey(currentPubkey),
           )
         : pullRequests;
-    return [...scopedPullRequests].sort((left, right) => {
-      if (sort === "name") {
-        return left.pullRequest.title.localeCompare(right.pullRequest.title);
-      }
-      if (sort === "created") {
-        return right.pullRequest.createdAt - left.pullRequest.createdAt;
-      }
-      return right.pullRequest.updatedAt - left.pullRequest.updatedAt;
-    });
-  }, [currentPubkey, projectsWorkItemsQuery.data, pullRequestScope, sort]);
+    return scopedPullRequests
+      .filter(({ project, pullRequest, repository }) =>
+        matchesProjectsSearch(searchQuery, [
+          pullRequest.title,
+          pullRequest.content,
+          pullRequest.status,
+          project.name,
+          repository.name,
+        ]),
+      )
+      .sort((left, right) => {
+        if (sort === "name") {
+          return left.pullRequest.title.localeCompare(right.pullRequest.title);
+        }
+        if (sort === "created") {
+          return right.pullRequest.createdAt - left.pullRequest.createdAt;
+        }
+        return right.pullRequest.updatedAt - left.pullRequest.updatedAt;
+      });
+  }, [
+    currentPubkey,
+    projectsWorkItemsQuery.data,
+    pullRequestScope,
+    searchQuery,
+    sort,
+  ]);
 
   const visibleIssues = React.useMemo(() => {
     const issues = projectsWorkItemsQuery.data?.issues.items ?? [];
@@ -479,16 +519,32 @@ export function ProjectsView({
               normalizePubkey(issue.author) === normalizePubkey(currentPubkey),
           )
         : issues;
-    return [...scopedIssues].sort((left, right) => {
-      if (sort === "name") {
-        return left.issue.title.localeCompare(right.issue.title);
-      }
-      if (sort === "created") {
-        return right.issue.createdAt - left.issue.createdAt;
-      }
-      return right.issue.updatedAt - left.issue.updatedAt;
-    });
-  }, [currentPubkey, issueScope, projectsWorkItemsQuery.data, sort]);
+    return scopedIssues
+      .filter(({ issue, project, repository }) =>
+        matchesProjectsSearch(searchQuery, [
+          issue.title,
+          issue.content,
+          issue.status,
+          project.name,
+          repository.name,
+        ]),
+      )
+      .sort((left, right) => {
+        if (sort === "name") {
+          return left.issue.title.localeCompare(right.issue.title);
+        }
+        if (sort === "created") {
+          return right.issue.createdAt - left.issue.createdAt;
+        }
+        return right.issue.updatedAt - left.issue.updatedAt;
+      });
+  }, [
+    currentPubkey,
+    issueScope,
+    projectsWorkItemsQuery.data,
+    searchQuery,
+    sort,
+  ]);
 
   // Route by the canonical `owner:dtag` project ID — a bare dtag is
   // ambiguous across owners (forks can share the same dtag).
@@ -571,6 +627,15 @@ export function ProjectsView({
     [deleteProjectMutation],
   );
 
+  const projectRange = React.useMemo(
+    () => visibleProjects.map(projectListSelectionItem),
+    [visibleProjects],
+  );
+  const repositoryRange = React.useMemo(
+    () => visibleRepositories.map(repositoryListSelectionItem),
+    [visibleRepositories],
+  );
+
   if (projectsQuery.isLoading) {
     return <ViewLoadingFallback kind="projects" />;
   }
@@ -590,48 +655,28 @@ export function ProjectsView({
     );
   }
 
+  const ProjectItem = viewMode === "grid" ? ProjectGridCard : ProjectListRow;
   const projectItems =
     visibleProjects.length === 0 ? (
       <EmptyFilteredState />
-    ) : viewMode === "grid" ? (
-      <div
-        className={cn(
-          "grid gap-3 md:grid-cols-2",
-          filter !== "all" && "xl:grid-cols-3",
-        )}
-      >
-        {visibleProjects.map((project) => {
-          const summary = activitySummariesQuery.data?.[project.id];
-          return (
-            <ProjectGridCard
-              canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
-              canOpenTerminal={false}
-              deleteDisabled={deleteProjectMutation.isPending}
-              hasLocal={hasLocalCheckout(project, localRepoNames)}
-              key={project.id}
-              onDelete={handleDeleteProject}
-              onOpen={handleOpenProject}
-              onOpenTerminal={handleOpenTerminal}
-              people={projectPeople(project, summary)}
-              profiles={profiles}
-              project={project}
-              repositoryUnavailableReason={repositoryUnavailableReasonFor(
-                project,
-              )}
-              summary={summary}
-            />
-          );
-        })}
-      </div>
     ) : (
       <div
-        className="divide-y divide-border/60"
-        data-testid="projects-list-container"
+        className={
+          viewMode === "grid"
+            ? cn(
+                "grid gap-3 md:grid-cols-2",
+                filter !== "all" && "xl:grid-cols-3",
+              )
+            : "divide-y divide-border/60"
+        }
+        data-testid={
+          viewMode === "list" ? "projects-list-container" : undefined
+        }
       >
         {visibleProjects.map((project) => {
           const summary = activitySummariesQuery.data?.[project.id];
           return (
-            <ProjectListRow
+            <ProjectItem
               canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
               canOpenTerminal={false}
               deleteDisabled={deleteProjectMutation.isPending}
@@ -646,6 +691,7 @@ export function ProjectsView({
               repositoryUnavailableReason={repositoryUnavailableReasonFor(
                 project,
               )}
+              selectionRangeItems={projectRange}
               summary={summary}
             />
           );
@@ -677,6 +723,7 @@ export function ProjectsView({
       <div className="divide-y divide-border/60">
         {visibleRepositories.map(({ project, repository }) => (
           <RepositoryListRow
+            selectionRangeItems={repositoryRange}
             hasLocal={hasLocalRepositoryCheckout(repository, localRepoNames)}
             key={repository.repoAddress}
             onOpen={handleOpenRepository}
@@ -732,189 +779,212 @@ export function ProjectsView({
   );
 
   const projectsNavigation = (
-    <div className="flex h-[3.25rem] min-w-0 items-center">
-      <div className="h-full min-w-0 flex-1 overflow-hidden">
-        <ProjectsToolbar filter={filter} onFilterChange={handleFilterChange} />
-      </div>
+    <div
+      className="flex h-[3.25rem] min-w-0 items-center"
+      data-testid="projects-page-tabs"
+    >
+      <ProjectsSectionSearch
+        filter={filter}
+        onFilterChange={handleFilterChange}
+        onQueryChange={setSearchQuery}
+        onSortChange={handleSortChange}
+        sort={sort}
+      />
     </div>
   );
 
   return (
-    <div
-      className={cn(
-        "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-tl-xl",
-        topChromeInset.divider,
-      )}
+    <ProjectSelectionProvider
+      resetKey={`${filter}:${repositoryScope}:${issueScope}:${pullRequestScope}:${searchQuery}`}
     >
-      {/* Scroll indicator painted over the scrollbar gutter; only visible
-          while scrolling (native thumb is transparent). */}
       <div
-        aria-hidden="true"
-        className="pointer-events-none absolute right-[3px] top-0 z-50 w-1 rounded-full bg-border/80 opacity-0 transition-opacity duration-200"
-        ref={scrollIndicatorRef}
-      />
-      {/* Create button pinned to the pane's top-right corner: it never
+        className={cn(
+          "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-tl-xl",
+          topChromeInset.divider,
+        )}
+      >
+        {/* Scroll indicator painted over the scrollbar gutter; only visible
+          while scrolling (native thumb is transparent). */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-[3px] top-0 z-50 w-1 rounded-full bg-border/80 opacity-0 transition-opacity duration-200"
+          ref={scrollIndicatorRef}
+        />
+        {/* Create button pinned to the pane's top-right corner: it never
           scrolls with the page, it just stays put. */}
-      <div className="absolute right-4 top-4 z-40">{createMenu}</div>
-      <CreateProjectDialog
-        isCreating={createProjectMutation.isPending}
-        onCreate={async (input) => {
-          const result = await createProjectMutation.mutateAsync(input);
-          if (result.compatibilityWarning) {
-            toast.warning("Created as a standalone project", {
-              description: result.compatibilityWarning,
-            });
-          } else {
-            toast.success(`Project "${result.project.name}" created.`);
-          }
-          // Land on the complete project list after creation.
-          handleRepositoryScopeChange("all");
-          handleFilterChange("projects");
-        }}
-        onOpenChange={setCreateProjectOpen}
-        open={createProjectOpen}
-      />
-      {createPullRequestOpen ? (
-        <CreatePullRequestDialog
-          onCreated={async (
-            createdProject,
-            createdRepository,
-            pullRequestId,
-          ) => {
-            await goProject(createdProject.id, {
+        <div className="absolute right-4 top-4 z-40">{createMenu}</div>
+        <CreateProjectDialog
+          isCreating={createProjectMutation.isPending}
+          onCreate={async (input) => {
+            const result = await createProjectMutation.mutateAsync(input);
+            if (result.compatibilityWarning) {
+              toast.warning("Created as a standalone project", {
+                description: result.compatibilityWarning,
+              });
+            } else {
+              toast.success(`Project "${result.project.name}" created.`);
+            }
+            // Land on the complete project list after creation.
+            handleRepositoryScopeChange("all");
+            handleFilterChange("projects");
+          }}
+          onOpenChange={setCreateProjectOpen}
+          open={createProjectOpen}
+        />
+        {createPullRequestOpen ? (
+          <CreatePullRequestDialog
+            onCreated={async (
+              createdProject,
+              createdRepository,
               pullRequestId,
+            ) => {
+              await goProject(createdProject.id, {
+                pullRequestId,
+                repositoryId: createdRepository.id,
+              });
+            }}
+            onOpenChange={setCreatePullRequestOpen}
+            open
+            projects={projects}
+            reposDir={activeCommunity?.reposDir}
+          />
+        ) : null}
+        <CreateProjectIssueDialog
+          onCreated={async (createdProject, createdRepository, issueId) => {
+            await goProject(createdProject.id, {
+              issueId,
               repositoryId: createdRepository.id,
             });
           }}
-          onOpenChange={setCreatePullRequestOpen}
-          open
+          onOpenChange={setCreateIssueOpen}
+          open={createIssueOpen}
           projects={projects}
-          reposDir={activeCommunity?.reposDir}
         />
-      ) : null}
-      <CreateProjectIssueDialog
-        onCreated={async (createdProject, createdRepository, issueId) => {
-          await goProject(createdProject.id, {
-            issueId,
-            repositoryId: createdRepository.id,
-          });
-        }}
-        onOpenChange={setCreateIssueOpen}
-        open={createIssueOpen}
-        projects={projects}
-      />
-      <div
-        className="buzz-content-scrollbar min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-scroll"
-        onScroll={handleContentScroll}
-      >
-        <div className="px-4 pb-7 pt-7 sm:px-6 sm:pb-8 sm:pt-8">
-          <div className="mx-auto w-full max-w-6xl">{projectsHeader}</div>
-          <div className="sticky top-0 z-30 -mx-4 bg-background/80 backdrop-blur-xl supports-backdrop-filter:bg-background/65 dark:bg-background/75 dark:supports-backdrop-filter:bg-background/60 sm:-mx-6">
-            <div className="px-4 sm:px-6">
-              <div className="mx-auto w-full max-w-6xl">
-                {projectsNavigation}
+        <div
+          className="buzz-content-scrollbar min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-scroll"
+          onScroll={handleContentScroll}
+        >
+          <div className="px-4 pb-7 pt-7 sm:px-6 sm:pb-8 sm:pt-8">
+            <div className="mx-auto w-full max-w-6xl">{projectsHeader}</div>
+            <div className="sticky top-0 z-30 -mx-4 bg-background/80 backdrop-blur-xl supports-backdrop-filter:bg-background/65 dark:bg-background/75 dark:supports-backdrop-filter:bg-background/60 sm:-mx-6">
+              <div className="px-4 sm:px-6">
+                <div className="mx-auto w-full max-w-6xl">
+                  {projectsNavigation}
+                </div>
               </div>
             </div>
-          </div>
-          <div className="mx-auto w-full max-w-6xl">
-            <div className="w-full min-w-0 pb-4 pt-4">
-              {projects.length === 0 ? (
-                <EmptyState />
-              ) : filter === "all" ? (
-                <>
-                  <ProjectsWorkItemsLoadNotice
-                    error={projectsWorkItemsQuery.error}
-                    failedSections={[
-                      ...new Set([
-                        ...(projectsWorkItemsQuery.data?.issues
-                          .failedSections ?? []),
-                        ...(projectsWorkItemsQuery.data?.pullRequests
-                          .failedSections ?? []),
-                      ]),
-                    ]}
-                    isRetrying={
-                      projectsWorkItemsQuery.isFetching &&
-                      !projectsWorkItemsQuery.isLoading
-                    }
-                    onRetry={() => void projectsWorkItemsQuery.refetch()}
-                    subject="project activity"
-                  />
-                  <ProjectOutcomeLanding
-                    onOpen={handleOpenProject}
-                    projects={projects}
-                    pullRequests={
-                      projectsWorkItemsQuery.data?.pullRequests.items.map(
-                        ({ project, pullRequest }) => ({
-                          project,
-                          pullRequest,
-                        }),
-                      ) ?? []
+            <div className="mx-auto w-full max-w-6xl">
+              <div className="w-full min-w-0 pb-4 pt-4">
+                {projects.length === 0 ? (
+                  <EmptyState
+                    onCreateProject={() =>
+                      onCreateRepository
+                        ? onCreateRepository()
+                        : setCreateProjectOpen(true)
                     }
                   />
-                </>
-              ) : (
-                <section>
-                  {/* In list view the header is the table's first row inside
+                ) : filter === "all" ? (
+                  <>
+                    <ProjectsWorkItemsLoadNotice
+                      error={projectsWorkItemsQuery.error}
+                      failedSections={[
+                        ...new Set([
+                          ...(projectsWorkItemsQuery.data?.issues
+                            .failedSections ?? []),
+                          ...(projectsWorkItemsQuery.data?.pullRequests
+                            .failedSections ?? []),
+                        ]),
+                      ]}
+                      isRetrying={
+                        projectsWorkItemsQuery.isFetching &&
+                        !projectsWorkItemsQuery.isLoading
+                      }
+                      onRetry={() => void projectsWorkItemsQuery.refetch()}
+                      subject="project activity"
+                    />
+                    <ProjectOutcomeLanding
+                      onOpen={handleOpenProject}
+                      projects={searchedProjects}
+                      pullRequests={
+                        projectsWorkItemsQuery.data?.pullRequests.items.map(
+                          ({ project, pullRequest }) => ({
+                            project,
+                            pullRequest,
+                          }),
+                        ) ?? []
+                      }
+                    />
+                  </>
+                ) : (
+                  <section>
+                    <ProjectsOverviewSelectionActions filter={filter} />
+                    {/* In list view the header is the table's first row inside
                       the bordered container; in card view it is a standalone
                       bar with the cards flowing below. */}
-                  <div
-                    className={
-                      viewMode === "list"
-                        ? "overflow-hidden rounded-xl border border-border/60"
-                        : "space-y-3"
-                    }
-                  >
-                    {listHeaderBar}
-                    {filter === "prs" ? (
-                      <ProjectsPullRequestsList
-                        embedded={viewMode === "list"}
-                        error={projectsWorkItemsQuery.error}
-                        failedSections={
-                          projectsWorkItemsQuery.data?.pullRequests
-                            .failedSections ?? []
-                        }
-                        isLoading={projectsWorkItemsQuery.isLoading}
-                        isRetrying={
-                          projectsWorkItemsQuery.isFetching &&
-                          !projectsWorkItemsQuery.isLoading
-                        }
-                        onOpen={handleOpenPullRequest}
-                        onRetry={() => void projectsWorkItemsQuery.refetch()}
-                        profiles={profiles}
-                        pullRequests={visiblePullRequests}
-                        viewMode={viewMode}
-                      />
-                    ) : filter === "issues" ? (
-                      <ProjectsIssuesList
-                        embedded={viewMode === "list"}
-                        error={projectsWorkItemsQuery.error}
-                        failedSections={
-                          projectsWorkItemsQuery.data?.issues.failedSections ??
-                          []
-                        }
-                        isLoading={projectsWorkItemsQuery.isLoading}
-                        isRetrying={
-                          projectsWorkItemsQuery.isFetching &&
-                          !projectsWorkItemsQuery.isLoading
-                        }
-                        issues={visibleIssues}
-                        onOpen={handleOpenIssue}
-                        onRetry={() => void projectsWorkItemsQuery.refetch()}
-                        profiles={profiles}
-                        viewMode={viewMode}
-                      />
-                    ) : filter === "projects" ? (
-                      projectItems
-                    ) : (
-                      repositoryItems
-                    )}
-                  </div>
-                </section>
-              )}
+                    <div
+                      className={
+                        viewMode === "list"
+                          ? "overflow-hidden rounded-xl border border-border/60"
+                          : "space-y-3"
+                      }
+                    >
+                      {filter === "channels" ? null : listHeaderBar}
+                      {filter === "prs" ? (
+                        <ProjectsPullRequestsList
+                          embedded={viewMode === "list"}
+                          error={projectsWorkItemsQuery.error}
+                          failedSections={
+                            projectsWorkItemsQuery.data?.pullRequests
+                              .failedSections ?? []
+                          }
+                          isLoading={projectsWorkItemsQuery.isLoading}
+                          isRetrying={
+                            projectsWorkItemsQuery.isFetching &&
+                            !projectsWorkItemsQuery.isLoading
+                          }
+                          onOpen={handleOpenPullRequest}
+                          onRetry={() => void projectsWorkItemsQuery.refetch()}
+                          profiles={profiles}
+                          pullRequests={visiblePullRequests}
+                          viewMode={viewMode}
+                        />
+                      ) : filter === "issues" ? (
+                        <ProjectsIssuesList
+                          embedded={viewMode === "list"}
+                          error={projectsWorkItemsQuery.error}
+                          failedSections={
+                            projectsWorkItemsQuery.data?.issues
+                              .failedSections ?? []
+                          }
+                          isLoading={projectsWorkItemsQuery.isLoading}
+                          isRetrying={
+                            projectsWorkItemsQuery.isFetching &&
+                            !projectsWorkItemsQuery.isLoading
+                          }
+                          issues={visibleIssues}
+                          onOpen={handleOpenIssue}
+                          onRetry={() => void projectsWorkItemsQuery.refetch()}
+                          profiles={profiles}
+                          viewMode={viewMode}
+                        />
+                      ) : filter === "channels" ? (
+                        <ProjectsChannelsList
+                          projects={projects}
+                          searchQuery={searchQuery}
+                        />
+                      ) : filter === "projects" ? (
+                        projectItems
+                      ) : (
+                        repositoryItems
+                      )}
+                    </div>
+                  </section>
+                )}
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </ProjectSelectionProvider>
   );
 }

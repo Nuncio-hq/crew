@@ -276,6 +276,9 @@ test.describe("restart-diff screenshots", () => {
   });
 
   test("03-running-restart-action", async ({ page }) => {
+    await page.addInitScript(() =>
+      window.localStorage.setItem("buzz-theme", "crew-light"),
+    );
     await installMockBridge(page, {
       managedAgents: [RESTART_AGENT],
     });
@@ -290,8 +293,8 @@ test.describe("restart-diff screenshots", () => {
     await expect(restartAction).toHaveText("Restart");
     await expect(restartAction).toHaveAttribute("aria-label", "Restart Agent");
     await expect(restartAction).toHaveClass(/bg-transparent/);
-    await expect(restartAction).toHaveClass(/text-amber-800/);
-    await expect(restartAction).toHaveClass(/dark:text-amber-400/);
+    await expect(restartAction).toHaveClass(/text-attention/);
+    await expect(restartAction).toHaveClass(/dark:text-attention/);
     await expect(restartAction.locator("svg")).toHaveCount(0);
     await expect(restartAction).toHaveCSS("width", "72px");
     await expect(restartAction).toHaveCSS("height", "36px");

@@ -1,11 +1,10 @@
 import * as React from "react";
 import { ChevronDown, ChevronUp, Pencil } from "lucide-react";
 
+import { OtherSetupAgentMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
+import { useIsOtherSetupAgent } from "@/features/agents/useKnownAgentPubkeys";
 import { useAgentWorking } from "@/features/agents/agentWorkingSignal";
-import {
-  getManagedAgentPrimaryActionLabel,
-  isManagedAgentActive,
-} from "@/features/agents/lib/managedAgentControlActions";
+import { getManagedAgentPrimaryActionLabel } from "@/features/agents/lib/managedAgentControlActions";
 import { RestartDiffBadge } from "@/features/agents/ui/RestartDiffBadge";
 import { AgentConfigPanel } from "@/features/agents/ui/AgentConfigPanel";
 import { HermesProfileModelLifecycleNotice } from "@/features/agents/ui/HermesProfileModelLifecycleNotice";
@@ -40,12 +39,6 @@ import {
   ProfilePersonaPrimaryActions,
   ProfilePrimaryActions,
 } from "@/features/profile/ui/UserProfilePrimaryActions";
-import {
-  fillRuntimePreviewDiagnostics,
-  fillRuntimePreviewFields,
-  UserProfileConfigPreview,
-  UserProfileRuntimePreviewNotice,
-} from "@/features/profile/ui/UserProfileRuntimePreview";
 import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
 import { BotIdenticon } from "@/features/messages/ui/BotIdenticon";
 import type { ManagedAgent, RelayAgent } from "@/shared/api/types";
@@ -97,6 +90,7 @@ export type ProfileSummaryViewProps = {
   isOwner: boolean | undefined;
   isSelf: boolean;
   instances: ManagedAgent[];
+  archivedInstances?: ManagedAgent[];
   managedAgent: ManagedAgent | undefined;
   agentInfoFields: ProfileField[];
   archiveActions: IdentityArchiveActions;
@@ -172,6 +166,7 @@ export function ProfileSummaryView({
   isOwner,
   isSelf,
   instances,
+  archivedInstances = [],
   managedAgent,
   agentInfoFields,
   archiveActions,
@@ -195,14 +190,8 @@ export function ProfileSummaryView({
   unfollowMutation,
   userStatus,
 }: ProfileSummaryViewProps) {
+  const notManagedOnDevice = useIsOtherSetupAgent(pubkey, profile?.ownerPubkey);
   const activeTurns = useAgentWorking(isBot ? pubkey : null).channels;
-  const avatarStatus = isBot
-    ? managedAgent
-      ? isManagedAgentActive(managedAgent)
-        ? "online"
-        : "offline"
-      : (presenceStatus ?? "offline")
-    : presenceStatus;
   const stickyLayoutRef = React.useRef<HTMLDivElement>(null);
   const [primaryActionsConcealed, setPrimaryActionsConcealed] =
     React.useState(false);
@@ -230,11 +219,6 @@ export function ProfileSummaryView({
   const runtimeSettingsFields = agentSettingsFields.filter(
     (field) => !AGENT_DETAILS_FIELD_LABELS.has(field.label),
   );
-  const showRuntimePreview =
-    import.meta.env.DEV &&
-    isOwner === true &&
-    isBot &&
-    managedAgent === undefined;
   const showRuntimeTab =
     isOwner === true &&
     isBot &&
@@ -242,18 +226,14 @@ export function ProfileSummaryView({
       runtimeConfigurationFields.length > 0 ||
       runtimeSettingsFields.length > 0 ||
       instances.length > 0 ||
+      archivedInstances.length > 0 ||
       diagnosticsFields.length > 0 ||
-      canOpenAgentLogs ||
-      showRuntimePreview);
-  const displayedRuntimeFields = showRuntimePreview
-    ? fillRuntimePreviewFields([
-        ...runtimeConfigurationFields,
-        ...runtimeSettingsFields,
-      ])
-    : [...runtimeConfigurationFields, ...runtimeSettingsFields];
-  const displayedDiagnosticsFields = showRuntimePreview
-    ? fillRuntimePreviewDiagnostics(diagnosticsFields)
-    : diagnosticsFields;
+      canOpenAgentLogs);
+  const displayedRuntimeFields = [
+    ...runtimeConfigurationFields,
+    ...runtimeSettingsFields,
+  ];
+  const displayedDiagnosticsFields = diagnosticsFields;
   const showDiagnosticsIngress =
     diagnosticsFields.some((field) => field.label !== "Status") ||
     canOpenAgentLogs;
@@ -265,7 +245,6 @@ export function ProfileSummaryView({
     showActivityIngress ||
     showInstructionBlock ||
     managedAgent !== undefined ||
-    showRuntimePreview ||
     !showRuntimeTab;
 
   const diagnosticsErrorField = diagnosticsFields.find(
@@ -422,9 +401,10 @@ export function ProfileSummaryView({
       >
         <ProfileHero
           displayName={displayName}
+          notManagedOnDevice={notManagedOnDevice}
           isBot={isBot}
           onEditAgent={canEditAgent ? handleEditAgent : undefined}
-          presenceStatus={avatarStatus}
+          presenceStatus={presenceStatus}
           profile={profile}
           userStatus={userStatus}
         />
@@ -546,9 +526,6 @@ export function ProfileSummaryView({
             ) : null}
             {activeTab === "runtime" ? (
               <div className="space-y-4">
-                {showRuntimePreview ? (
-                  <UserProfileRuntimePreviewNotice />
-                ) : null}
                 {managedAgent?.hermesProfile?.trim() ? (
                   <HermesProfileModelLifecycleNotice
                     profileName={managedAgent.hermesProfile}
@@ -563,17 +540,13 @@ export function ProfileSummaryView({
                   diagnosticsSummary={diagnosticsTrailing}
                   configurationFields={displayedRuntimeFields}
                   instances={instances}
+                  archivedInstances={archivedInstances}
                   modelSettings={
                     isOwner === true && managedAgent !== undefined ? (
                       <AgentConfigPanel
                         advancedMode="flat"
                         onEdit={canEditAgent ? handleEditAgent : undefined}
                         pubkey={managedAgent.pubkey}
-                        sections={["model"]}
-                      />
-                    ) : showRuntimePreview ? (
-                      <UserProfileConfigPreview
-                        onEdit={canEditAgent ? handleEditAgent : undefined}
                         sections={["model"]}
                       />
                     ) : undefined
@@ -590,9 +563,6 @@ export function ProfileSummaryView({
                   onOpenDiagnostics={onOpenDiagnostics}
                   onOpenInstance={onOpenInstance}
                   showDiagnosticsIngress={showDiagnosticsIngress}
-                  showPreviewHarnessLog={
-                    showRuntimePreview && !showDiagnosticsIngress
-                  }
                 />
                 {isOwner === true && managedAgent !== undefined ? (
                   <AgentConfigPanel
@@ -600,9 +570,6 @@ export function ProfileSummaryView({
                     pubkey={managedAgent.pubkey}
                     sections={["mcp", "advanced"]}
                   />
-                ) : null}
-                {showRuntimePreview ? (
-                  <UserProfileConfigPreview sections={["mcp", "advanced"]} />
                 ) : null}
               </div>
             ) : null}
@@ -634,6 +601,7 @@ export function ProfileSummaryView({
 // ── Hero & metadata ──────────────────────────────────────────────────────────
 
 function ProfileHero({
+  notManagedOnDevice,
   displayName,
   isBot,
   onEditAgent,
@@ -642,6 +610,7 @@ function ProfileHero({
   userStatus,
 }: {
   displayName: string;
+  notManagedOnDevice?: boolean;
   isBot: boolean;
   onEditAgent?: () => void;
   presenceStatus: "online" | "away" | "offline" | undefined;
@@ -678,6 +647,7 @@ function ProfileHero({
         }
         badgeBox={PROFILE_HERO_PRESENCE_BADGE.shell}
         className="h-20 w-20"
+        cornerRadius={isBot ? 24 : undefined}
         curve={STATUS_DOT_MASK_CURVE}
         cutout={PROFILE_HERO_PRESENCE_BADGE.cutout}
         size={80}
@@ -688,6 +658,7 @@ function ProfileHero({
           iconClassName="h-8 w-8"
           label={displayName}
           plain
+          shape={isBot ? "squircle" : "circle"}
           testId="user-profile-avatar"
         />
       </MaskedAvatarBadgeFrame>
@@ -706,6 +677,7 @@ function ProfileHero({
                 {displayName}
               </span>
               {botIndicator}
+              {notManagedOnDevice ? <OtherSetupAgentMarker /> : null}
               <span
                 aria-hidden="true"
                 className="pointer-events-none absolute top-1/2 left-full ml-1 -translate-y-1/2 text-muted-foreground opacity-0 transition-[color,opacity] duration-150 ease-out group-hover:text-foreground group-hover:opacity-100 group-focus-visible:opacity-100"
@@ -722,6 +694,7 @@ function ProfileHero({
           >
             <span className="truncate">{displayName}</span>
             {botIndicator}
+            {notManagedOnDevice ? <OtherSetupAgentMarker /> : null}
           </h3>
         )}
 
@@ -736,7 +709,7 @@ function ProfileHero({
           <p className="text-sm text-muted-foreground">{profile.nip05Handle}</p>
         ) : null}
 
-        {userStatus ? (
+        {userStatus && (userStatus.text || userStatus.emoji) ? (
           <p className="text-sm text-muted-foreground">
             {userStatus.emoji ? (
               <StatusEmoji

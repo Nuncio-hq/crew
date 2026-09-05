@@ -366,6 +366,8 @@ mod tests {
     /// pubkey/nsec pair matters here.
     fn record_with_keys(pubkey: String, private_key_nsec: String) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            provider_policy_pending: false,
+            description: None,
             pubkey,
             name: "Locked Test".to_string(),
             persona_id: None,
@@ -421,6 +423,7 @@ mod tests {
             agent_command_override: None,
             persona_source_version: None,
             provider: None,
+            team_catalog_source: None,
         }
     }
 

@@ -1,3 +1,4 @@
+import type { UserStatusInput } from "@/features/user-status/types";
 import type { LeaveCommunityResult } from "@/features/communities/leaveCommunity";
 import type { Community } from "@/features/communities/types";
 import type { AddCommunityPrefillRequest } from "@/features/communities/addCommunityPrefill";
@@ -73,12 +74,12 @@ export type AppSidebarProps = {
   onSelectWorkflows: () => void;
   onSelectHome: () => void;
   onSelectChannel: (channelId: string) => void;
-  onOpenSearchResult: (hit: SearchHit) => void;
+  onOpenSearchResult: (hit: SearchHit, query: string) => void;
   searchChannels: Channel[];
   searchFocusRequests: readonly [global: number, channel: number];
   onSelectSettings: (section?: SettingsSection) => void;
   onSetPresenceStatus?: (status: "online" | "away" | "offline") => void;
-  onSetUserStatus: (text: string, emoji: string) => void;
+  onSetUserStatus: (status: UserStatusInput) => void;
   onClearUserStatus: () => void;
   onSwitchCommunity: (id: string) => void;
   selfUserStatus?: UserStatus;

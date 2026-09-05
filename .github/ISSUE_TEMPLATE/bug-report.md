@@ -4,6 +4,11 @@ about: Report a reproducible bug in Buzz
 labels: bug
 ---
 
+> [!IMPORTANT]
+> Do not include security vulnerabilities in a public issue. Read the
+> [Crew security reporting status](https://github.com/Nuncio-hq/crew/blob/main/SECURITY.md)
+> before submitting details; private reporting setup is currently pending.
+
 **Describe the bug**
 A clear and concise description of what the bug is.
 

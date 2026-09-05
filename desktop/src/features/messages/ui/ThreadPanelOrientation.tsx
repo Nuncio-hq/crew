@@ -4,7 +4,6 @@ import { buildThreadBreadcrumb } from "@/features/messages/lib/threadOrientation
 import type { MainTimelineEntry } from "@/features/messages/lib/threadPanel";
 import type { TimelineMessage } from "@/features/messages/types";
 import { cn } from "@/shared/lib/cn";
-import { AuxiliaryPanelTitle } from "@/shared/layout/AuxiliaryPanel";
 import { THREAD_PANEL_MESSAGE_GUTTER_CLASS } from "@/features/messages/lib/messageThreadPanelLayout";
 import { ThreadAncestryStrip } from "./ThreadAncestryStrip";
 import { ThreadBreadcrumb } from "./ThreadBreadcrumb";
@@ -60,7 +59,7 @@ export function ThreadPanelOrientationTitle({
   if (breadcrumb && navigate) {
     return <ThreadBreadcrumb breadcrumb={breadcrumb} onNavigate={navigate} />;
   }
-  return <AuxiliaryPanelTitle>Thread</AuxiliaryPanelTitle>;
+  return <>Thread</>;
 }
 
 /** Collapsed ancestor rows above a nested thread head. */

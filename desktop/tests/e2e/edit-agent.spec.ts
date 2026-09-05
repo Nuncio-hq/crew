@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { waitForAnimations } from "../helpers/animations";
+
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
 const BAKED_DEFAULTS = [
@@ -185,6 +187,14 @@ test.describe("edit agent dialog", () => {
       "Tyler Agent Renamed",
       { timeout: 10_000 },
     );
+    await page.mouse.move(0, 0);
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
+      timeout: 10_000,
+    });
+    await waitForAnimations(page);
+    await page.getByTestId("edit-agent-dialog").screenshot({
+      path: "test-results/crew-release-evidence/agent-save-persisted.png",
+    });
   });
 
   test("changes the model via custom entry and persists it", async ({
@@ -393,6 +403,10 @@ test.describe("edit agent dialog", () => {
 
     await expect(page.getByTestId("user-profile-panel")).toBeVisible({
       timeout: 10_000,
+    });
+    await waitForAnimations(page);
+    await page.getByTestId("user-profile-panel").screenshot({
+      path: "test-results/crew-release-evidence/agent-persona-profile.png",
     });
     await page.getByTestId("user-profile-edit-agent").click();
 

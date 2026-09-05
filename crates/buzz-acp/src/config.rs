@@ -20,11 +20,11 @@ use crate::filter::SubscriptionRule;
 ///
 /// Sized for slow turns where the agent may go silent on its outer ACP channel
 /// while running long sub-tools (e.g. a buzz-agent running another agent, or
-/// codex/claude doing multi-minute single tool calls). 900s gives 300s of
-/// breathing room above the 600s max shell timeout, so legitimate long-running
+/// codex/claude doing multi-minute single tool calls). 1500s gives 300s of
+/// breathing room above the 1200s max shell timeout, so legitimate long-running
 /// tool calls don't race the idle deadline.
 /// Override via `--idle-timeout` / `BUZZ_ACP_IDLE_TIMEOUT`.
-pub(crate) const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 900;
+pub(crate) const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 1_500;
 
 /// Maximum silence allowance from the start of a tracked tool call.
 pub(crate) const DEFAULT_TOOL_IDLE_TIMEOUT_SECS: u64 = 2400;
@@ -418,7 +418,7 @@ pub struct CliArgs {
     ///
     /// Memory injection is on by default. When enabled, the harness
     /// fetches the agent's per-session core engram and renders it as an
-    /// `[Agent Memory — core]` prompt section (or renders the onboarding nudge
+    /// `<core-memory>` prompt section (or renders the onboarding nudge
     /// when the relay confirms no core engram exists). The `buzz mem` CLI
     /// and the relay's acceptance of kind:30174 engrams are unaffected — this
     /// flag controls prompt-time injection in the ACP harness only.
@@ -437,8 +437,8 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_NO_MEMORY", conflicts_with = "memory")]
     pub no_memory: bool,
 
-    /// Disable the [Base] platform-context section prepended to every prompt.
-    /// When set, agents receive only the persona [System] prompt with no Buzz orientation.
+    /// Disable the `<base>` platform-context section prepended to every prompt.
+    /// When set, agents receive only the persona `<system>` prompt with no Buzz orientation.
     #[arg(long, env = "BUZZ_ACP_NO_BASE_PROMPT")]
     pub no_base_prompt: bool,
 
@@ -507,7 +507,7 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_ALLOWED_RESPOND_TO", value_delimiter = ',')]
     pub allowed_respond_to: Option<Vec<String>>,
 
-    /// Team-owned instructions layered after `[System]` and before agent memory.
+    /// Team-owned instructions layered after `<system>` and before agent memory.
     #[arg(long, env = "BUZZ_ACP_TEAM_INSTRUCTIONS")]
     pub team_instructions: Option<String>,
 
@@ -537,6 +537,10 @@ pub struct CliArgs {
     /// second timer — both names resolve to one `pool_idle_timeout_secs`.
     #[arg(long, env = "BUZZ_ACP_IDLE_POOL_SLEEP")]
     pub idle_pool_sleep: Option<u64>,
+
+    /// Earliest send timestamp to replay when this harness starts after publication.
+    #[arg(long, env = "BUZZ_ACP_REPLAY_FLOOR")]
+    pub replay_floor: Option<u64>,
 }
 
 /// Resolve the single idle-pool timeout from primary + optional upstream alias.
@@ -601,7 +605,7 @@ pub struct Config {
     pub typing_enabled: bool,
     /// Whether NIP-AE agent core memory injection is enabled. When false,
     /// the harness skips the per-session core engram fetch and renders no
-    /// `[Agent Memory — core]` section. On by default; disabled via the
+    /// `<core-memory>` section. On by default; disabled via the
     /// `--no-memory` / `BUZZ_ACP_NO_MEMORY` opt-out.
     pub memory_enabled: bool,
     /// Desired LLM model ID. Applied after every `session_new_full()`.
@@ -643,10 +647,12 @@ pub struct Config {
     /// `--pool-idle-timeout` / `BUZZ_ACP_POOL_IDLE_TIMEOUT` with optional
     /// `--idle-pool-sleep` / `BUZZ_ACP_IDLE_POOL_SLEEP` alias (one timer).
     pub pool_idle_timeout_secs: u64,
+    /// Optional startup replay floor, bounded to fifteen minutes when consumed.
+    pub replay_floor_unix: Option<u64>,
     /// Agent owner pubkey (hex). Used for `--respond-to=owner-only` gate.
     /// Replaces the old REST-based owner lookup.
     pub agent_owner: Option<String>,
-    /// Disable the [Base] platform-context section prepended to every prompt.
+    /// Disable the `<base>` platform-context section prepended to every prompt.
     pub no_base_prompt: bool,
     /// Resolved content from `--base-prompt-file`, read and validated in
     /// `from_cli()`. `None` when using the compiled-in default or when
@@ -1206,6 +1212,7 @@ impl Config {
             has_generated_codex_config,
             relay_observer: args.relay_observer,
             exit_after_inactivity_secs: args.exit_after_inactivity,
+            replay_floor_unix: args.replay_floor,
             lazy_pool: args.lazy_pool,
             pool_idle_timeout_secs: resolve_pool_idle_timeout_secs(
                 args.pool_idle_timeout,
@@ -1593,6 +1600,7 @@ mod tests {
             has_generated_codex_config: false,
             relay_observer: false,
             exit_after_inactivity_secs: 0,
+            replay_floor_unix: None,
             lazy_pool: false,
             pool_idle_timeout_secs: 1800,
             agent_owner: None,
@@ -2837,9 +2845,9 @@ channels = "ALL"
     // ── Idle timeout constant + guard (PR #935) ───────────────────────────────
 
     #[test]
-    fn default_idle_timeout_is_900_seconds() {
+    fn default_idle_timeout_is_1500_seconds() {
         // Lock the constant value so accidental changes are caught.
-        assert_eq!(DEFAULT_IDLE_TIMEOUT_SECS, 900);
+        assert_eq!(DEFAULT_IDLE_TIMEOUT_SECS, 1_500);
     }
 
     #[test]
@@ -2856,6 +2864,45 @@ channels = "ALL"
         // And the valid case (const assertion so clippy doesn't flag it):
         const {
             assert!(DEFAULT_IDLE_TIMEOUT_SECS < DEFAULT_MAX_TURN_DURATION_SECS);
+        }
+    }
+
+    #[test]
+    fn budget_ordering_invariant_shell_cap_plus_headroom_fits_within_idle_timeout() {
+        // The outer watchdog must leave time for tools to handle their own timeout:
+        //   buzz-dev-mcp MAX_TIMEOUT_MS (1 200 000 ms = 1 200s)
+        //   ≤ buzz-agent BUZZ_AGENT_TOOL_TIMEOUT_SECS default (1 260s)
+        //   < buzz-acp DEFAULT_IDLE_TIMEOUT_SECS (1 500s)
+        //
+        // The idle deadline must strictly outlast the agent tool timeout so a
+        // legitimately long-running tool call is killed by buzz-agent first (at
+        // 1 260s) rather than the ACP idle watchdog. The 240s gap gives the agent
+        // time to handle the timeout, emit a response, and reset the idle clock
+        // before the ACP connection dies.
+        //
+        // If any of these constants change the compiler catches the inversion here.
+        // Mirrored source constants: buzz-dev-mcp/src/shell.rs MAX_TIMEOUT_MS
+        // and buzz-agent/src/config.rs BUZZ_AGENT_TOOL_TIMEOUT_SECS default.
+        const SHELL_CAP_MS: u64 = 1_200_000; // buzz-dev-mcp MAX_TIMEOUT_MS
+        const SHELL_CAP_SECS: u64 = SHELL_CAP_MS / 1_000;
+        const AGENT_TOOL_TIMEOUT_SECS: u64 = 1_260; // buzz-agent BUZZ_AGENT_TOOL_TIMEOUT_SECS default
+
+        const {
+            // Shell cap must not exceed the agent's per-tool-call timeout.
+            assert!(
+                SHELL_CAP_SECS <= AGENT_TOOL_TIMEOUT_SECS,
+                "shell cap must be <= agent tool timeout"
+            );
+            // Agent tool timeout must be strictly less than the ACP idle deadline.
+            assert!(
+                AGENT_TOOL_TIMEOUT_SECS < DEFAULT_IDLE_TIMEOUT_SECS,
+                "agent tool timeout must be < ACP idle timeout"
+            );
+            // ACP idle timeout must remain below the max turn duration.
+            assert!(
+                DEFAULT_IDLE_TIMEOUT_SECS < DEFAULT_MAX_TURN_DURATION_SECS,
+                "ACP idle timeout must be < max turn duration"
+            );
         }
     }
 

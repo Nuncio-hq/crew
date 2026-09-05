@@ -6,8 +6,8 @@ type AgentDefinitionDialogFooterProps = {
   isPending: boolean;
   onCancel: () => void;
   publishesCatalogUpdates: boolean;
-  submitBlockReason: string | null;
   submitLabel: string;
+  submitBlockReason?: string | null;
 };
 
 export function AgentDefinitionDialogFooter({
@@ -16,16 +16,17 @@ export function AgentDefinitionDialogFooter({
   isPending,
   onCancel,
   publishesCatalogUpdates,
-  submitBlockReason,
   submitLabel,
+  submitBlockReason,
 }: AgentDefinitionDialogFooterProps) {
   return (
     <div className="flex w-full flex-wrap items-center justify-between gap-3">
       <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-3">
         {submitBlockReason ? (
           <p
-            className="text-2xs text-muted-foreground"
-            data-testid="persona-dialog-submit-reason"
+            className="max-w-sm text-xs text-destructive"
+            role="status"
+            data-testid="persona-dialog-submit-block-reason"
           >
             {submitBlockReason}
           </p>

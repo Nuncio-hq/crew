@@ -176,7 +176,7 @@ test.describe("Crew Wiki (#200)", () => {
 
     await page
       .getByTestId("wiki-markdown")
-      .getByRole("link", { name: /ProjectDetailScreen/ })
+      .getByRole("button", { name: /Open .*ProjectDetailScreen/ })
       .click();
     await expect(page).toHaveURL(/#\/projects\//);
     await expect(page.getByTestId("wiki-file-panel")).toBeVisible();
@@ -185,6 +185,32 @@ test.describe("Crew Wiki (#200)", () => {
     await page
       .getByTestId("wiki-file-panel")
       .screenshot({ path: `${SHOTS}/10-file-citation.png` });
+
+    const filePanel = page.getByTestId("wiki-file-panel");
+    await expect(
+      filePanel.locator('[data-testid="wiki-file-highlight"]'),
+    ).toHaveCount(3);
+    await page.evaluate(
+      (href) =>
+        window.__TAURI_INTERNALS__?.invoke?.("plugin:event|emit", {
+          event: "deep-link-entity",
+          payload: href,
+        }),
+      `buzz://file?owner=${OWNER}&d=buzz&path=desktop/src/features/projects/ui/ProjectDetailScreen.tsx&lines=2-3`,
+    );
+    await expect
+      .poll(() =>
+        filePanel
+          .getByTestId("wiki-file-highlight")
+          .evaluateAll((lines) =>
+            lines.map((line) => line.getAttribute("data-line")),
+          ),
+      )
+      .toEqual(["2", "3"]);
+    await expect(filePanel.locator('[data-line="1"]')).not.toHaveAttribute(
+      "data-testid",
+      "wiki-file-highlight",
+    );
 
     await page.getByTestId("project-wiki-tab").click();
     await expect(page.getByTestId("wiki-project-tab")).toBeVisible();

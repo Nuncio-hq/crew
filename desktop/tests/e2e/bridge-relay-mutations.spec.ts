@@ -40,14 +40,30 @@ async function publishEvent(
     },
     hexToBytes(identity.privateKey),
   );
-  const response = await fetch(`${RELAY_HTTP_URL}/events`, {
+  const url = `${RELAY_HTTP_URL}/events`;
+  const body = JSON.stringify(event);
+  // NIP-OA ownership backfill requires a verified authentication timestamp.
+  const auth = finalizeEvent(
+    {
+      kind: 27235,
+      created_at: Math.floor(Date.now() / 1000),
+      content: "",
+      tags: [
+        ["u", url],
+        ["method", "POST"],
+        ["payload", bytesToHex(sha256(new TextEncoder().encode(body)))],
+      ],
+    },
+    hexToBytes(identity.privateKey),
+  );
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Pubkey": event.pubkey,
+      Authorization: `Nostr ${Buffer.from(JSON.stringify(auth)).toString("base64")}`,
       ...extraHeaders,
     },
-    body: JSON.stringify(event),
+    body,
   });
   if (!response.ok) {
     throw new Error(
@@ -551,6 +567,8 @@ test("workflow create/update/trigger/delete publish real 30620 / 46020 / 5", asy
     yamlDefinition: createYaml,
   })) as {
     id?: string;
+    revision?: string;
+    created_at: number;
     name?: string;
     channel_id?: string;
     owner_pubkey?: string;
@@ -605,8 +623,14 @@ test("workflow create/update/trigger/delete publish real 30620 / 46020 / 5", asy
     "    duration: 1s",
   ].join("\n");
 
+  // Addressable events use second-resolution NIP-33 ordering. Exercise an
+  // ordered update instead of randomly winning a same-second event-id tie.
+  await expect
+    .poll(() => Math.floor(Date.now() / 1000))
+    .toBeGreaterThan(created.created_at);
   const updated = (await invokeBridgeCommand(page, "update_workflow", {
     workflowId,
+    expectedRevision: created.revision,
     yamlDefinition: updateYaml,
   })) as { id?: string; name?: string };
 

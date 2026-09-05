@@ -7,6 +7,7 @@ import remarkChannelDeepLinks from "@/features/messages/lib/remarkChannelDeepLin
 import remarkMessageLinks from "@/features/messages/lib/remarkMessageLinks";
 import remarkEntityLinks from "@/features/messages/lib/remarkEntityLinks";
 import rehypeImageGallery from "@/shared/lib/rehypeImageGallery";
+import rehypeLeadingInlineContent from "@/shared/lib/rehypeLeadingInlineContent";
 import rehypeSearchHighlight from "@/shared/lib/rehypeSearchHighlight";
 import remarkChannelLinks from "@/shared/lib/remarkChannelLinks";
 import remarkCustomEmoji, {
@@ -67,6 +68,10 @@ export type MarkdownParseInputs = {
   components: Components;
   content: string;
   customEmoji?: CustomEmoji[];
+  /** Omit or true for chat-style `<br>` on every newline. */
+  hardLineBreaks?: boolean;
+  /** Inserts the runtime-provided leading content marker during parsing. */
+  leadingInlineContent?: boolean;
   mentionNames?: string[];
   searchQuery?: string;
   variant: string;
@@ -86,7 +91,10 @@ function buildMarkdownElement(input: MarkdownParseInputs): React.ReactElement {
   markdownParseCount += 1;
   // biome-ignore lint/suspicious/noExplicitAny: PluggableList type not directly importable
   const rehypePlugins: any[] = [rehypeImageGallery];
-  if (input.searchQuery && input.searchQuery.trim().length >= 2) {
+  if (input.leadingInlineContent) {
+    rehypePlugins.push(rehypeLeadingInlineContent);
+  }
+  if (input.searchQuery && input.searchQuery.trim().length >= 1) {
     rehypePlugins.push([rehypeSearchHighlight, { query: input.searchQuery }]);
   }
   // Called as a plain function rather than rendered as <ReactMarkdown/>:
@@ -98,7 +106,7 @@ function buildMarkdownElement(input: MarkdownParseInputs): React.ReactElement {
     components: input.components,
     remarkPlugins: [
       remarkGfm,
-      remarkBreaks,
+      ...(input.hardLineBreaks === false ? [] : [remarkBreaks]),
       remarkSpoilers,
       remarkChannelDeepLinks,
       remarkMessageLinks,
@@ -123,7 +131,7 @@ export function renderCachedMarkdown(
   // than churn the cache with per-query variants. Oversized content parses
   // fresh too — see MARKDOWN_NODE_CACHE_MAX_CONTENT_LENGTH.
   if (
-    (input.searchQuery && input.searchQuery.trim().length >= 2) ||
+    (input.searchQuery && input.searchQuery.trim().length >= 1) ||
     input.content.length > MARKDOWN_NODE_CACHE_MAX_CONTENT_LENGTH
   ) {
     return buildMarkdownElement(input);
@@ -134,7 +142,9 @@ export function renderCachedMarkdown(
   // distinct input tuples. Content is last and needs no prefix: everything
   // before it is self-delimiting.
   const key =
+    segment(input.hardLineBreaks === false ? "soft" : "hard") +
     segment(input.variant) +
+    segment(input.leadingInlineContent ? "leading" : "") +
     listSegment(input.mentionNames) +
     listSegment(input.channelNames) +
     listSegment(

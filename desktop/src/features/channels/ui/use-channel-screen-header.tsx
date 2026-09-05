@@ -15,6 +15,7 @@ export function useChannelScreenHeader({
   activeDmPresenceStatus,
   channelHeaderChromeRef,
   currentPubkey,
+  headerEndActions,
   handleManageChannel,
   handleOpenThreadAndCloseAgentSession,
   handleToggleMembers,
@@ -34,6 +35,7 @@ export function useChannelScreenHeader({
   activeDmPresenceStatus: PresenceStatus | null;
   channelHeaderChromeRef: React.Ref<HTMLDivElement>;
   currentPubkey: string | undefined;
+  headerEndActions?: React.ReactNode;
   handleManageChannel: () => void;
   handleOpenThreadAndCloseAgentSession: (message: TimelineMessage) => void;
   handleToggleMembers: () => void;
@@ -60,6 +62,7 @@ export function useChannelScreenHeader({
         activeDmPresenceStatus={activeDmPresenceStatus}
         chromeWrapperRef={channelHeaderChromeRef}
         currentPubkey={currentPubkey}
+        headerEndActions={headerEndActions}
         isAddBotOpen={isAddBotOpen}
         isJoining={joinChannelMutation.isPending}
         onAddBotOpenChange={setIsAddBotOpen}
@@ -84,6 +87,7 @@ export function useChannelScreenHeader({
       activeDmPresenceStatus,
       channelHeaderChromeRef,
       currentPubkey,
+      headerEndActions,
       isAddBotOpen,
       joinChannelMutation.isPending,
       joinChannelMutation.mutateAsync,

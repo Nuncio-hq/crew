@@ -41,3 +41,31 @@ test("peek/consume match Repository.id against a 30617 pending open", () => {
   assert.equal(consumed?.path.endsWith("ProjectDetailScreen.tsx"), true);
   assert.equal(peekPendingWikiFileOpen(REPO_ID), null);
 });
+
+test("repository matching preserves d-tag case and embedded colons", () => {
+  assert.equal(
+    wikiFileOpenRepoId(`30617:${OWNER.toUpperCase()}:Crew:Docs`),
+    `${OWNER}:Crew:Docs`,
+  );
+  assert.equal(
+    wikiFileOpenMatchesProject(
+      `30617:${OWNER}:Crew:Docs`,
+      `${OWNER}:crew:Docs`,
+    ),
+    false,
+  );
+  assert.equal(
+    wikiFileOpenMatchesProject(
+      `30617:${OWNER}:Crew:Docs`,
+      `${OWNER}:Crew:docs`,
+    ),
+    false,
+  );
+  assert.equal(
+    wikiFileOpenMatchesProject(
+      `30617:${OWNER.toUpperCase()}:Crew:Docs`,
+      `${OWNER}:Crew:Docs`,
+    ),
+    true,
+  );
+});
