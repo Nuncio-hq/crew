@@ -32,7 +32,7 @@
       "recordedAt": "2026-08-23"
     },
     "src-tauri/src/managed_agents/readiness.rs": {
-      "lines": 1730,
+      "lines": 1700,
       "reason": "Upstream-owned Hermes readiness; tightened after Cursor Auto model extract (D-022).",
       "recordedAt": "2026-08-20"
     }

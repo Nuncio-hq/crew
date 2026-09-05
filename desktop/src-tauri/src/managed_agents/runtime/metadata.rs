@@ -74,6 +74,22 @@ pub(crate) fn resolve_session_title(display_name: Option<&str>, name: &str) -> O
         .find(|value| !value.is_empty())
 }
 
+pub(crate) fn apply_system_prompt_env(command: &mut std::process::Command, prompt: Option<&str>) {
+    if let Some(prompt) = prompt {
+        command.env("BUZZ_ACP_SYSTEM_PROMPT", prompt);
+    } else {
+        command.env_remove("BUZZ_ACP_SYSTEM_PROMPT");
+    }
+}
+
+pub(super) fn child_rust_log_filter() -> String {
+    match std::env::var("RUST_LOG") {
+        Ok(existing) if existing.contains("buzz_acp") => existing,
+        Ok(existing) if !existing.trim().is_empty() => format!("{existing},buzz_acp=info"),
+        _ => "buzz_acp=info".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_session_title;
