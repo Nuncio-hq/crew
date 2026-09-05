@@ -1,5 +1,31 @@
 # Crew State
 
+## Agent reliability — retained work and truthful completion
+
+Implemented in the reliability change (2026-09-05):
+
+- Ordinary follow-ups queue when native steering is unavailable. Busy checkout
+  requests retain their event IDs with backoff and deduplication (up to 10
+  retries, then an explicit failure); conversations
+  wait for their owning engine instead of silently moving to another engine.
+- Opening the last engine circuit keeps the listener and queue alive, with a
+  bounded recovery probe after cooldown.
+- Active tools receive a fixed, bounded silence allowance. Permission choices
+  use exact ACP kinds and valid IDs; only bypass mode grants `allow_once`,
+  never `allow_always`. Unknown or malformed choices cancel safely.
+- Plan continuation shares the prompt control/error lifecycle and remaining
+  execution budget. Stop works during the decision and continuation; a failed
+  continuation cannot inherit the first prompt's successful completion.
+- Desktop shows **Running · No channels** from membership observer state,
+  separately from process liveness and DM availability.
+
+Configuration and deadline semantics: [ACP configuration](../../crates/buzz-acp/README.md#turn-deadlines-and-permission-choices).
+ACP regressions, desktop tests, and a targeted membership UI scenario cover
+these boundaries; final CI evidence belongs to the pull request. No live
+long-running provider success is claimed. Hosted membership/
+auth remediation (#337) and relay deployment/registration/receipt compatibility
+(#338) remain operational work, not outcomes of these code changes.
+
 ## Issue #285 — Buzz desktop-v0.5.18 pin
 
 Pinned to `desktop-v0.5.18` /

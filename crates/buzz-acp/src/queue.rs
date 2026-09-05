@@ -165,9 +165,19 @@ pub struct EventQueue {
     in_flight_deadlines: HashMap<Uuid, Instant>,
     /// Number of events in each in-flight batch (for expiry logging).
     in_flight_batch_sizes: HashMap<Uuid, usize>,
+    /// Accepted event identities stay reserved until the dispatched batch completes.
+    in_flight_event_ids: HashMap<Uuid, HashSet<nostr::EventId>>,
     retry_after: HashMap<Uuid, Instant>,
     /// Per-channel retry attempt counter for exponential backoff / dead-lettering.
     retry_counts: HashMap<Uuid, u32>,
+    /// Channels for which a non-terminal "waiting" notice (currently: shared
+    /// checkout busy) has already been posted for the current retry cycle.
+    /// Tracked separately from `retry_counts` so an unrelated failure earlier
+    /// in the same cycle can never suppress the one notice a later caller
+    /// actually wants to send. Reset everywhere `retry_counts` resets:
+    /// `mark_complete` on success, `requeue`'s dead-letter branch, and
+    /// `drain_channel`.
+    busy_notice_sent: HashSet<Uuid>,
     dedup_mode: DedupMode,
     /// Events from cancelled batches, keyed by channel. Merged into the next
     /// `FlushBatch` for that channel as `cancelled_events` so `format_prompt()`
@@ -209,8 +219,10 @@ impl EventQueue {
             in_flight_channels: HashSet::new(),
             in_flight_deadlines: HashMap::new(),
             in_flight_batch_sizes: HashMap::new(),
+            in_flight_event_ids: HashMap::new(),
             retry_after: HashMap::new(),
             retry_counts: HashMap::new(),
+            busy_notice_sent: HashSet::new(),
             dedup_mode,
             cancelled_batches: HashMap::new(),
             cancel_reasons: HashMap::new(),
@@ -298,6 +310,9 @@ impl EventQueue {
     ///
     /// Returns `true` if the event was accepted, `false` if dropped.
     pub fn push(&mut self, event: QueuedEvent) -> bool {
+        if self.contains_event(event.channel_id, &event.event.id) {
+            return false;
+        }
         if matches!(self.dedup_mode, DedupMode::Drop)
             && self.in_flight_channels.contains(&event.channel_id)
         {
@@ -319,6 +334,25 @@ impl EventQueue {
         }
         queue.push_back(event);
         true
+    }
+
+    /// Whether a request is already queued, dispatched, or awaiting a steer ACK.
+    pub fn contains_event(&self, channel_id: Uuid, event_id: &nostr::EventId) -> bool {
+        self.queues
+            .get(&channel_id)
+            .is_some_and(|events| events.iter().any(|e| &e.event.id == event_id))
+            || self
+                .in_flight_event_ids
+                .get(&channel_id)
+                .is_some_and(|ids| ids.contains(event_id))
+            || self
+                .cancelled_batches
+                .get(&channel_id)
+                .is_some_and(|events| events.iter().any(|e| &e.event.id == event_id))
+            || self
+                .withheld_native_steer
+                .get(&channel_id)
+                .is_some_and(|events| events.iter().any(|e| &e.event.id == event_id))
     }
 
     /// Try to flush the next batch.
@@ -347,6 +381,7 @@ impl EventQueue {
                  auto-releasing; {lost_events} dispatched event(s) orphaned"
             );
             self.in_flight_channels.remove(&id);
+            self.in_flight_event_ids.remove(&id);
             self.in_flight_deadlines.remove(&id);
             // Recover any withheld goose-native steer events for the expired
             // channel back to the queue front so normal dispatch delivers
@@ -395,6 +430,8 @@ impl EventQueue {
                         self.in_flight_deadlines
                             .insert(id, now + self.in_flight_deadline);
                         self.in_flight_batch_sizes.insert(id, cancelled.len());
+                        self.in_flight_event_ids
+                            .insert(id, cancelled.iter().map(|e| e.event.id).collect());
                         return Some(FlushBatch {
                             channel_id: id,
                             events: cancelled,
@@ -447,6 +484,15 @@ impl EventQueue {
             self.cancel_reasons.remove(&channel_id)
         };
 
+        self.in_flight_event_ids.insert(
+            channel_id,
+            events
+                .iter()
+                .chain(&cancelled_events)
+                .map(|e| e.event.id)
+                .collect(),
+        );
+
         Some(FlushBatch {
             channel_id,
             events,
@@ -466,6 +512,7 @@ impl EventQueue {
     ///
     /// Also cleans up any already-expired `retry_after` entry.
     pub fn mark_complete(&mut self, channel_id: Uuid) {
+        self.in_flight_event_ids.remove(&channel_id);
         self.in_flight_channels.remove(&channel_id);
         self.in_flight_deadlines.remove(&channel_id);
         self.in_flight_batch_sizes.remove(&channel_id);
@@ -478,9 +525,11 @@ impl EventQueue {
             Some(_) => {
                 self.retry_after.remove(&channel_id);
                 self.retry_counts.remove(&channel_id);
+                self.busy_notice_sent.remove(&channel_id);
             }
             None => {
                 self.retry_counts.remove(&channel_id);
+                self.busy_notice_sent.remove(&channel_id);
             }
         }
     }
@@ -523,6 +572,7 @@ impl EventQueue {
             // Also clear retry_after so fresh traffic on this channel isn't
             // throttled by stale backoff from the discarded poison batch.
             self.retry_after.remove(&channel_id);
+            self.busy_notice_sent.remove(&channel_id);
             return Some(batch);
         }
 
@@ -574,6 +624,28 @@ impl EventQueue {
         }
         self.retry_after.insert(channel_id, Instant::now() + delay);
         None
+    }
+
+    /// Returns `true` the first time it is called for `channel_id` since the
+    /// channel's current retry cycle began, and records that a "waiting"
+    /// notice has now been sent — every later call in the same cycle returns
+    /// `false`.
+    ///
+    /// Callers use this to post a non-terminal notice (e.g. "shared checkout
+    /// busy") once per wait instead of once per backoff attempt. The cycle
+    /// resets on successful completion (`mark_complete`), dead-letter
+    /// (`requeue`'s retry-budget-exhausted branch), and an explicit drain
+    /// (`drain_channel`) — a fresh wait after any of those notifies again.
+    pub fn take_busy_notice_pending(&mut self, channel_id: Uuid) -> bool {
+        self.busy_notice_sent.insert(channel_id)
+    }
+
+    /// Test-only: peek whether the busy notice has already been sent for
+    /// `channel_id`, without consuming/mutating state the way
+    /// `take_busy_notice_pending` does.
+    #[cfg(test)]
+    pub fn busy_notice_already_sent_for_test(&self, channel_id: Uuid) -> bool {
+        self.busy_notice_sent.contains(&channel_id)
     }
 
     /// Re-queue a batch preserving original `received_at` timestamps.
@@ -663,6 +735,7 @@ impl EventQueue {
                  auto-releasing; {lost_events} dispatched event(s) orphaned"
             );
             self.in_flight_channels.remove(&id);
+            self.in_flight_event_ids.remove(&id);
             self.in_flight_deadlines.remove(&id);
             // Symmetric with the flush_next expiry block: recover withheld
             // goose-native steer events for the expired channel so they are
@@ -782,6 +855,7 @@ impl EventQueue {
             .unwrap_or_default();
         self.retry_after.remove(&channel_id);
         self.retry_counts.remove(&channel_id);
+        self.busy_notice_sent.remove(&channel_id);
         self.cancelled_batches.remove(&channel_id);
         self.cancel_reasons.remove(&channel_id);
         self.withheld_native_steer.remove(&channel_id);
@@ -2010,6 +2084,53 @@ mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Timestamp};
     use std::time::Duration;
+
+    #[test]
+    fn replay_and_manual_retry_do_not_duplicate_queued_or_running_events() {
+        let channel = Uuid::new_v4();
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let original = make_queued(channel, "one request");
+        assert!(queue.push(original.clone()));
+        assert!(
+            !queue.push(original.clone()),
+            "queued replay must be ignored"
+        );
+        let batch = queue.flush_next().unwrap();
+        assert_eq!(batch.events.len(), 1);
+        assert!(
+            !queue.push(original.clone()),
+            "running replay must be ignored"
+        );
+        assert!(queue.requeue(batch).is_none());
+        queue.mark_complete(channel);
+        queue.clear_retry_after(channel);
+        assert!(
+            !queue.push(original.clone()),
+            "manual Retry must reuse queued event"
+        );
+        assert_eq!(queue.flush_next().unwrap().events.len(), 1);
+        queue.mark_complete(channel);
+        assert!(
+            queue.push(original),
+            "a finished failed event can be explicitly retried"
+        );
+    }
+
+    #[test]
+    fn replay_during_native_steer_is_not_delivered_again() {
+        let channel = Uuid::new_v4();
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        let event = make_queued(channel, "follow-up");
+        let id = event.event.id.to_hex();
+        assert!(queue.push(event.clone()));
+        assert!(queue.mark_native_steer_pending(channel, &id));
+        assert!(
+            !queue.push(event),
+            "withheld native steer is already accepted"
+        );
+        queue.release_native_steer(channel, &id);
+        assert_eq!(queue.flush_next().unwrap().events.len(), 1);
+    }
 
     /// Build a test event with the given content and kind.
     fn make_event(content: &str) -> Event {
@@ -3390,6 +3511,89 @@ mod tests {
         // Retry state is cleared so fresh traffic isn't throttled.
         assert!(!q.retry_counts.contains_key(&ch));
         assert!(!q.retry_after.contains_key(&ch));
+    }
+
+    // ── take_busy_notice_pending: "notify once per waiting batch" ───────────
+
+    #[test]
+    fn take_busy_notice_pending_true_once_then_resets_after_success() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+
+        assert!(
+            q.take_busy_notice_pending(ch),
+            "first busy encounter in a cycle must be reported as pending"
+        );
+        assert!(
+            !q.take_busy_notice_pending(ch),
+            "a second busy encounter in the same cycle must not notify again"
+        );
+
+        // Drive a real successful dispatch cycle: push, flush, complete with
+        // no requeue in between — mirrors the eventual "lease freed, batch
+        // finally ran" outcome for a batch that was previously busy-waiting.
+        q.push(make_queued(ch, "msg"));
+        let batch = q.flush_next().expect("flush");
+        drop(batch); // never requeued — simulates a clean completion
+        q.mark_complete(ch);
+
+        assert!(
+            q.take_busy_notice_pending(ch),
+            "a fresh cycle after a clean completion must notify again"
+        );
+    }
+
+    #[test]
+    fn take_busy_notice_pending_resets_after_dead_letter() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        q.set_retry_count_for_test(ch, MAX_RETRIES);
+        assert!(q.take_busy_notice_pending(ch));
+
+        q.push(make_queued(ch, "poison"));
+        let batch = q.flush_next().expect("flush");
+        let dead = q
+            .requeue(batch)
+            .expect("primed retry count must dead-letter immediately");
+        assert_eq!(dead.channel_id, ch);
+        q.mark_complete(ch);
+
+        assert!(
+            q.take_busy_notice_pending(ch),
+            "a fresh cycle after dead-letter must notify again"
+        );
+    }
+
+    #[test]
+    fn take_busy_notice_pending_resets_on_drain_channel() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        assert!(q.take_busy_notice_pending(ch));
+        assert!(!q.take_busy_notice_pending(ch));
+
+        q.push(make_queued(ch, "msg"));
+        q.drain_channel(ch);
+
+        assert!(
+            q.take_busy_notice_pending(ch),
+            "an explicit drain (e.g. an owner cancel of a waiting thread) \
+             must clear the pending flag so a later wait notifies again"
+        );
+    }
+
+    #[test]
+    fn take_busy_notice_pending_is_independent_per_channel() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+
+        assert!(q.take_busy_notice_pending(a));
+        assert!(
+            q.take_busy_notice_pending(b),
+            "an unrelated channel's cycle must not be suppressed by another \
+             channel's already-sent notice"
+        );
+        assert!(!q.take_busy_notice_pending(a));
     }
 
     #[test]

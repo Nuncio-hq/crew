@@ -19,6 +19,11 @@
 //!
 //! `AcpClient` is NOT Clone — ownership moves out on claim and back on return.
 
+mod logical_prompt;
+#[cfg(test)]
+mod reliability_tests;
+use logical_prompt::run_logical_prompt;
+
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -384,6 +389,8 @@ pub struct AgentPool {
     /// Set when a channel turn found every live engine busy. Consumed by the
     /// harness to materialize one more slot in a lazy pool (see #295).
     fill_demand: bool,
+    /// Session inventory retained while an engine is checked out.
+    checked_out_sessions: HashMap<usize, HashSet<Uuid>>,
 }
 
 /// Result returned by a completed prompt task.
@@ -599,6 +606,10 @@ pub enum TimeoutKind {
 #[allow(dead_code)]
 pub enum PromptOutcome {
     Ok(StopReason),
+    /// Checkout is leased by another turn; retain the original batch for waiting.
+    WorkspaceBusy {
+        message: String,
+    },
     Error(AcpError),
     AgentExited,
     Timeout(TimeoutKind),
@@ -678,6 +689,8 @@ pub struct PromptContext {
     pub mcp_servers: Vec<McpServer>,
     pub initial_message: Option<String>,
     pub idle_timeout: Duration,
+    /// Finite silence budget while ACP reports active tools.
+    pub tool_idle_timeout: Duration,
     pub max_turn_duration: Duration,
     /// Interval between per-turn `turn_liveness` observer pings. `Duration::ZERO`
     /// disables emission. This is the desktop crash-backstop signal — distinct
@@ -759,6 +772,7 @@ impl AgentPool {
             join_set: JoinSet::new(),
             task_map: HashMap::new(),
             fill_demand: false,
+            checked_out_sessions: HashMap::new(),
         }
     }
 
@@ -769,6 +783,9 @@ impl AgentPool {
     ///
     /// Returns `None` if all agents are checked out.
     pub fn try_claim(&mut self, channel_id: Option<Uuid>) -> Option<OwnedAgent> {
+        if channel_id.is_some_and(|cid| self.session_owner_busy(cid)) {
+            return None;
+        }
         // Pass 1: prefer agent with existing session for this channel.
         if let Some(cid) = channel_id {
             let idx = self.agents.iter().position(|slot| {
@@ -777,14 +794,14 @@ impl AgentPool {
                     .unwrap_or(false)
             });
             if let Some(i) = idx {
-                return self.agents[i].take();
+                return self.take_slot(i);
             }
         }
 
         // Pass 2: first idle agent.
         let idx = self.agents.iter().position(|slot| slot.is_some());
         match idx {
-            Some(i) => self.agents[i].take(),
+            Some(i) => self.take_slot(i),
             None => {
                 // Only real channel work justifies growing the pool;
                 // heartbeats ride whatever engine is already live.
@@ -796,6 +813,26 @@ impl AgentPool {
         }
     }
 
+    fn take_slot(&mut self, index: usize) -> Option<OwnedAgent> {
+        let agent = self.agents[index].take()?;
+        self.checked_out_sessions
+            .insert(index, agent.state.sessions.keys().copied().collect());
+        Some(agent)
+    }
+
+    /// Whether this conversation belongs to a currently checked-out engine.
+    /// Dead slots are ignored so their sessions use the existing ledger recovery.
+    pub fn session_owner_busy(&self, channel_id: Uuid) -> bool {
+        self.checked_out_sessions.iter().any(|(index, sessions)| {
+            sessions.contains(&channel_id)
+                && self.agents.get(*index).is_some_and(Option::is_none)
+                && self
+                    .task_map
+                    .values()
+                    .any(|task| task.agent_index == *index)
+        })
+    }
+
     /// Take the pending "one more engine, please" signal raised by a starved
     /// channel turn. Returns `true` at most once per starvation event.
     pub fn take_fill_demand(&mut self) -> bool {
@@ -805,6 +842,7 @@ impl AgentPool {
     /// Return an agent to its slot after a task completes.
     pub fn return_agent(&mut self, agent: OwnedAgent) {
         let idx = agent.index;
+        self.checked_out_sessions.remove(&idx);
         if self.agents[idx].is_some() {
             // This is a bug: two tasks returned the same agent index. Log it
             // loudly so it shows up in production logs, then overwrite — the
@@ -1062,7 +1100,7 @@ const MODEL_SWITCH_TIMEOUT: Duration = Duration::from_secs(5);
 /// cleanup deadline, not the turn's configured max-turn wall clock — see
 /// [`AcpClient::cancel_with_cleanup_grace`] and
 /// [`classify_control_cancel_failure`].
-const CONTROL_CANCEL_GRACE: Duration = Duration::from_secs(5);
+pub const CONTROL_CANCEL_GRACE: Duration = Duration::from_secs(30);
 
 /// Timeout for permission-mode requests (`session/set_config_option` with `configId: "mode"`).
 const PERMISSION_MODE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -2273,6 +2311,10 @@ pub async fn run_prompt_task(
     control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
     turn_id: String,
 ) {
+    agent.acp.set_tool_idle_timeout(ctx.tool_idle_timeout);
+    agent
+        .acp
+        .set_permission_auto_approve(ctx.permission_mode == PermissionMode::BypassPermissions);
     // Is this a channel prompt or a heartbeat?
     let source = match &batch {
         Some(b) => PromptSource::Channel(b.channel_id),
@@ -2516,8 +2558,8 @@ pub async fn run_prompt_task(
                         &turn_id,
                         agent,
                         source,
-                        PromptOutcome::Ok(StopReason::Refusal),
-                        None,
+                        PromptOutcome::WorkspaceBusy { message },
+                        Some(batch.clone()),
                     );
                     return;
                 }
@@ -3500,27 +3542,26 @@ pub async fn run_prompt_task(
     // the main loop can cancel, interrupt, or rotate it. Heartbeats
     // (control_rx=None) take the simple await path — they are not controllable.
     //
+    let deciding_continuation = std::sync::atomic::AtomicBool::new(false);
     let prompt_result = match control_rx {
         None => {
             // Heartbeat / non-cancellable path.
             tokio::select! {
                 biased;
-                result = agent.acp.session_prompt_blocks_with_idle_timeout(
-                    &session_id,
-                    &prompt_blocks,
-                    ctx.idle_timeout,
-                    ctx.max_turn_duration,
+                result = run_logical_prompt(
+                    &mut agent.acp, &session_id, &prompt_blocks,
+                    ctx.idle_timeout, ctx.max_turn_duration,
+                    matches!(source, PromptSource::Channel(_)), &deciding_continuation,
                 ) => result,
             }
         }
         Some(rx) => {
             tokio::select! {
                 biased;
-                result = agent.acp.session_prompt_blocks_with_idle_timeout(
-                    &session_id,
-                    &prompt_blocks,
-                    ctx.idle_timeout,
-                    ctx.max_turn_duration,
+                result = run_logical_prompt(
+                    &mut agent.acp, &session_id, &prompt_blocks,
+                    ctx.idle_timeout, ctx.max_turn_duration,
+                    matches!(source, PromptSource::Channel(_)), &deciding_continuation,
                 ) => result,
                 mode = rx => {
                     let control_signal = mode.unwrap_or(ControlSignal::Cancel);
@@ -3610,6 +3651,15 @@ pub async fn run_prompt_task(
                                 return;
                             }
                         }
+                    } else if deciding_continuation.load(std::sync::atomic::Ordering::Relaxed) {
+                        // The provider ended its prompt, but the logical turn is still
+                        // waiting on the continuation decision. Stop must not commit it.
+                        agent.acp.cancel_pending_user_input().await;
+                        agent.state.invalidate(&source);
+                        let retry_batch = requeue_cancelled_batch(&ctx, control_signal, batch);
+                        send_prompt_result(&result_tx, &turn_id, agent, source,
+                            PromptOutcome::Cancelled, retry_batch);
+                        return;
                     } else {
                         // Race 1 resolution: turn completed naturally before cancel
                         // could fire. last_prompt_id is None — cleared by
@@ -3751,43 +3801,6 @@ pub async fn run_prompt_task(
                     "rotating session for {source:?} after {stop_reason:?}",
                 );
                 agent.state.invalidate(&source);
-            }
-
-            let mut stop_reason = stop_reason;
-            if matches!(stop_reason, StopReason::EndTurn)
-                && matches!(source, PromptSource::Channel(_))
-            {
-                match agent
-                    .acp
-                    .ask_founder_to_continue_after_plan(&session_id)
-                    .await
-                {
-                    crate::acp::PlanContinueDecision::Continue => {
-                        match agent
-                            .acp
-                            .session_prompt_blocks_with_idle_timeout(
-                                &session_id,
-                                &[crate::acp::PLAN_CONTINUE_PROMPT],
-                                ctx.idle_timeout,
-                                ctx.max_turn_duration,
-                            )
-                            .await
-                        {
-                            Ok(follow) => {
-                                log_stop_reason(&source, &follow);
-                                stop_reason = follow;
-                            }
-                            Err(error) => {
-                                tracing::warn!(
-                                    %error,
-                                    "plan-continue follow-up prompt failed; keeping original end_turn"
-                                );
-                            }
-                        }
-                    }
-                    crate::acp::PlanContinueDecision::Stop
-                    | crate::acp::PlanContinueDecision::Skip => {}
-                }
             }
 
             if should_publish_agent_receipt(&stop_reason) && batch.is_some() {
@@ -10638,6 +10651,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             PromptOutcome::Error(_) => "Error",
             PromptOutcome::Cancelled => "Cancelled",
             PromptOutcome::Ok(_) => "Ok",
+            PromptOutcome::WorkspaceBusy { .. } => "WorkspaceBusy",
         };
         assert_eq!(
             label, expected,
@@ -12031,12 +12045,12 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         );
     }
 
-    fn make_prompt_context_no_owner() -> PromptContext {
+    pub(super) fn make_prompt_context_no_owner() -> PromptContext {
         let agent_keys = nostr::Keys::generate();
         make_prompt_context_impl(&agent_keys, None)
     }
 
-    fn make_prompt_context_with_owner(
+    pub(super) fn make_prompt_context_with_owner(
         agent_keys: &nostr::Keys,
         owner_pubkey: nostr::PublicKey,
     ) -> PromptContext {
@@ -12052,6 +12066,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             mcp_servers: vec![],
             initial_message: None,
             idle_timeout: Duration::from_secs(60),
+            tool_idle_timeout: Duration::from_secs(2400),
             max_turn_duration: Duration::from_secs(120),
             turn_liveness_interval: Duration::ZERO,
             dedup_mode: DedupMode::Drop,
@@ -12104,7 +12119,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     /// fixture directory (so `.buzz-worktrees` created alongside it is
     /// cleaned up together). No network calls: `resolve_workspace_base` falls
     /// back to `LocalFallback` when `git fetch origin` has no remote to hit.
-    fn init_git_fixture() -> (PathBuf, PathBuf) {
+    pub(super) fn init_git_fixture() -> (PathBuf, PathBuf) {
         let fixture = std::env::temp_dir().join(format!("buzz-acp-pool-test-{}", Uuid::new_v4()));
         let repo = fixture.join("project");
         std::fs::create_dir_all(&repo).expect("fixture directory");
@@ -12152,7 +12167,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         owner_project_workspace_batch_with(channel_id, owner_keys, repo_path, &[])
     }
 
-    fn owner_project_workspace_batch_with(
+    pub(super) fn owner_project_workspace_batch_with(
         channel_id: Uuid,
         owner_keys: &Keys,
         repo_path: &Path,

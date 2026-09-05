@@ -1,3 +1,8 @@
+import {
+  deriveNoChannelMembershipBadge,
+  useNoChannelMembership,
+} from "../lib/channelMembershipState";
+import { AgentChannelMembershipBadge } from "./AgentChannelMembershipBadge";
 import * as React from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Moon } from "lucide-react";
 
@@ -310,7 +315,12 @@ function AgentPersonaCard({
     managedAgentRuntime,
     isActive,
   );
-  const hasStatusBadge = showSleepingBadge || Boolean(agent?.personaOrphaned);
+  const noChannels = deriveNoChannelMembershipBadge(
+    useNoChannelMembership(agent?.pubkey),
+    agent?.status ?? "stopped",
+  );
+  const hasStatusBadge =
+    noChannels || showSleepingBadge || Boolean(agent?.personaOrphaned);
   const defaultRuntimeId = resolveAgentDefaultRuntimeId({
     agentRuntime: agent?.runtime,
     personaRuntime: persona.runtime,
@@ -376,6 +386,7 @@ function AgentPersonaCard({
       statusBadge={
         hasStatusBadge ? (
           <>
+            {noChannels ? <AgentChannelMembershipBadge /> : null}
             {showSleepingBadge ? (
               <AgentSleepingStatusBadge
                 isActive={isActive}
@@ -437,7 +448,12 @@ function StandaloneAgentCard({
     managedAgentRuntime,
     isActive,
   );
+  const noChannels = deriveNoChannelMembershipBadge(
+    useNoChannelMembership(agent.pubkey),
+    agent.status,
+  );
   const hasStatusBadge =
+    noChannels ||
     Boolean(agent.profileReadiness) ||
     showSleepingBadge ||
     agent.personaOrphaned;
@@ -483,6 +499,7 @@ function StandaloneAgentCard({
       statusBadge={
         hasStatusBadge ? (
           <>
+            {noChannels ? <AgentChannelMembershipBadge /> : null}
             {agent.profileReadiness ? (
               <HermesProfileReadinessIndicator
                 readiness={agent.profileReadiness}

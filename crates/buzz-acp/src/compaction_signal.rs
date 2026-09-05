@@ -114,9 +114,7 @@ pub fn apply_compaction_signal(
 
 /// Mark the counter unavailable after adapter parse failure (fail loud).
 #[allow(dead_code)] // called from ledger + Codex transcript fail-loud path
-pub fn mark_compaction_unavailable(
-    current_count: u32,
-) -> (u32, CompactionSignalAvailability) {
+pub fn mark_compaction_unavailable(current_count: u32) -> (u32, CompactionSignalAvailability) {
     (current_count, CompactionSignalAvailability::Unavailable)
 }
 
@@ -250,22 +248,10 @@ mod tests {
 
     #[test]
     fn threshold_crossing_projects_aging_once_semantics() {
-        let below = project_session_aging(
-            2,
-            CompactionSignalAvailability::Known,
-            10,
-            3,
-            100,
-        );
+        let below = project_session_aging(2, CompactionSignalAvailability::Known, 10, 3, 100);
         assert!(!below.aging);
 
-        let at = project_session_aging(
-            3,
-            CompactionSignalAvailability::Known,
-            10,
-            3,
-            100,
-        );
+        let at = project_session_aging(3, CompactionSignalAvailability::Known, 10, 3, 100);
         assert!(at.aging);
         assert_eq!(at.reason, Some("compaction_threshold"));
         assert_eq!(at.compaction_count, 3);
@@ -273,13 +259,7 @@ mod tests {
 
     #[test]
     fn turn_count_net_for_signal_less_engine() {
-        let aging = project_session_aging(
-            0,
-            CompactionSignalAvailability::Unknown,
-            100,
-            3,
-            100,
-        );
+        let aging = project_session_aging(0, CompactionSignalAvailability::Unknown, 100, 3, 100);
         assert!(aging.aging);
         assert_eq!(aging.reason, Some("turn_count_net"));
         assert_eq!(aging.compaction_count, 0);
@@ -290,13 +270,8 @@ mod tests {
 
     #[test]
     fn reset_clears_aging_projection() {
-        let after_reset = project_session_aging(
-            0,
-            CompactionSignalAvailability::Unknown,
-            0,
-            3,
-            100,
-        );
+        let after_reset =
+            project_session_aging(0, CompactionSignalAvailability::Unknown, 0, 3, 100);
         assert!(!after_reset.aging);
         assert_eq!(after_reset.compaction_count, 0);
     }

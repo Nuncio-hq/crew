@@ -1,3 +1,4 @@
+import { applyChannelMembershipObserverFrame } from "./lib/channelMembershipState";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 
 import { prepareAgentSessionObservation } from "./activeAgentSessionGeneration";
@@ -84,7 +85,9 @@ export function applyCrewLiveFrameSideEffects(
   agentPubkey: string,
   parsed: ObserverEvent,
 ): void {
-  if (parsed.kind === "session_aging") {
+  if (parsed.kind === "channel_membership") {
+    applyChannelMembershipObserverFrame(agentPubkey, parsed);
+  } else if (parsed.kind === "session_aging") {
     applySessionAgingObserverPayload(agentPubkey, parsed.payload);
   } else if (parsed.kind === "control_result") {
     dispatchControlResult(agentPubkey, parsed.payload);

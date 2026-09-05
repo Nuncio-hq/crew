@@ -47,7 +47,8 @@ a second backend.
    create, update, start, and deploy; client-side controls are explanatory,
    not the authority.
 6. Full autonomy is intentional for this trusted owner-operated boundary.
-   ACP permission requests continue selecting `allow_once`; Crew has no
+   In the default `bypass-permissions` harness mode, ACP requests select a
+   valid advertised `allow_once`; Crew has no
    dangerous-command permission inbox. Clarification/elicitation requests are
    separate and may enter **Needs You**. Hermes' profile-owned
    `approvals.mode` still applies; Crew does not override it.
@@ -137,8 +138,10 @@ need them; new agents should not add more.
 - **Inspect what the agent knows:** `hermes -p scout` surfaces (sessions,
   memory, skills) — Crew holds none of it.
 - **Permissions:** no operator action is expected. `buzz-acp` deliberately
-  answers Hermes ACP permission requests with the advertised `allow_once`
-  option. Do not route these requests into Mission Inbox. A genuine Hermes
+  answers Hermes ACP permission requests with a valid advertised `allow_once`
+  option under the default `bypass-permissions` harness mode. Other modes
+  reject or cancel; persistent `allow_always` grants are never selected. See
+  [ACP permission choices](../../crates/buzz-acp/README.md#turn-deadlines-and-permission-choices). Do not route these requests into Mission Inbox. A genuine Hermes
   clarification is a different protocol flow and may become a **Needs You**
   item. The profile's Hermes approval policy remains authoritative. When the
   owner intentionally wants total profile-level bypass, use Hermes' canonical

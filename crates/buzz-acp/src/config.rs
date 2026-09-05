@@ -26,6 +26,9 @@ use crate::filter::SubscriptionRule;
 /// Override via `--idle-timeout` / `BUZZ_ACP_IDLE_TIMEOUT`.
 pub(crate) const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 900;
 
+/// Maximum silence allowance from the start of a tracked tool call.
+pub(crate) const DEFAULT_TOOL_IDLE_TIMEOUT_SECS: u64 = 2400;
+
 /// Default idle dispatch hold (ms). Human-authored events wait this long in
 /// the queue before flush when the channel is free. Zero disables.
 pub(crate) const DEFAULT_DISPATCH_HOLD_MS: u64 = 2000;
@@ -275,6 +278,11 @@ pub struct CliArgs {
     /// Resets on any agent stdout activity.
     #[arg(long, env = "BUZZ_ACP_IDLE_TIMEOUT")]
     pub idle_timeout: Option<u64>,
+
+    /// Tool silence budget from first start (seconds); defaults to max(2400, idle).
+    /// Does not extend the independent hard turn cap.
+    #[arg(long, env = "BUZZ_ACP_TOOL_IDLE_TIMEOUT")]
+    pub tool_idle_timeout: Option<u64>,
 
     /// Absolute wall-clock cap per turn (safety valve).
     #[arg(long, env = "BUZZ_ACP_MAX_TURN_DURATION", default_value_t = DEFAULT_MAX_TURN_DURATION_SECS)]
@@ -531,7 +539,6 @@ pub struct CliArgs {
     pub idle_pool_sleep: Option<u64>,
 }
 
-
 /// Resolve the single idle-pool timeout from primary + optional upstream alias.
 ///
 /// Both env names map to one runtime field so they cannot arm independent timers.
@@ -559,6 +566,8 @@ pub struct Config {
     pub agent_args: Vec<String>,
     pub mcp_command: String,
     pub idle_timeout_secs: u64,
+    /// Fixed tool lifetime allowance; the hard turn cap remains independent.
+    pub tool_idle_timeout_secs: u64,
     pub max_turn_duration_secs: u64,
     /// Idle dispatch hold in milliseconds. Zero disables.
     pub dispatch_hold_ms: u64,
@@ -1051,6 +1060,16 @@ impl Config {
             }
         };
 
+        let tool_idle_timeout_secs = args
+            .tool_idle_timeout
+            .unwrap_or(DEFAULT_TOOL_IDLE_TIMEOUT_SECS.max(idle_timeout_secs));
+        if tool_idle_timeout_secs < idle_timeout_secs {
+            return Err(ConfigError::ConfigFile(format!(
+                "tool_idle_timeout ({}s) must be at least idle_timeout ({}s)",
+                tool_idle_timeout_secs, idle_timeout_secs
+            )));
+        }
+
         let max_turn_duration_secs = {
             let raw = args.max_turn_duration;
             if raw == 0 {
@@ -1143,6 +1162,7 @@ impl Config {
             agent_args,
             mcp_command: args.mcp_command,
             idle_timeout_secs,
+            tool_idle_timeout_secs,
             max_turn_duration_secs,
             dispatch_hold_ms: args.dispatch_hold_ms,
             agents: args.agents,
@@ -1215,13 +1235,14 @@ impl Config {
             format!(" allowed_respond_to=[{}]", modes.join(","))
         };
         format!(
-            "relay={} pubkey={} agent_cmd={} {} mcp_cmd={} idle_timeout={}s max_turn={}s dispatch_hold={}ms agents={} heartbeat={}s subscribe={:?} dedup={:?} meh={:?} ignore_self={} context_limit={} max_turns_per_session={} presence={} typing={} memory={} receipts={} model={} permission_mode={} {}{}",
+            "relay={} pubkey={} agent_cmd={} {} mcp_cmd={} idle_timeout={}s tool_idle_timeout={}s max_turn={}s dispatch_hold={}ms agents={} heartbeat={}s subscribe={:?} dedup={:?} meh={:?} ignore_self={} context_limit={} max_turns_per_session={} presence={} typing={} memory={} receipts={} model={} permission_mode={} {}{}",
             self.relay_url,
             self.keys.public_key().to_hex(),
             self.agent_command,
             self.agent_args.join(" "),
             self.mcp_command,
             self.idle_timeout_secs,
+            self.tool_idle_timeout_secs,
             self.max_turn_duration_secs,
             self.dispatch_hold_ms,
             self.agents,
@@ -1536,6 +1557,7 @@ mod tests {
             agent_args: vec!["acp".into()],
             mcp_command: "".into(),
             idle_timeout_secs: DEFAULT_IDLE_TIMEOUT_SECS,
+            tool_idle_timeout_secs: DEFAULT_TOOL_IDLE_TIMEOUT_SECS,
             max_turn_duration_secs: DEFAULT_MAX_TURN_DURATION_SECS,
             dispatch_hold_ms: DEFAULT_DISPATCH_HOLD_MS,
             agents: 1,
