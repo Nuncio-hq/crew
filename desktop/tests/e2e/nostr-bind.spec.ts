@@ -55,15 +55,53 @@ async function openNostrBind(
   payload: NostrBindPayload = VALID_REQUEST,
   mock?: Parameters<typeof installMockBridge>[1],
 ) {
+  // IPC exists before React subscribes. Observe the real event registration
+  // so this consent-flow test never drops its request during app bootstrap.
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __TAURI_INTERNALS__?: Record<string, unknown>;
+      __NOSTR_BIND_LISTENER_READY__?: boolean;
+    };
+    type Invoke = (
+      command: string,
+      args: Record<string, unknown>,
+      options?: unknown,
+    ) => Promise<unknown>;
+    const internals = w.__TAURI_INTERNALS__ ?? {};
+    let invoke = internals.invoke as Invoke | undefined;
+    const listeners = new Set<unknown>();
+    Object.defineProperty(internals, "invoke", {
+      configurable: true,
+      get:
+        () =>
+        async (
+          command: string,
+          args: Record<string, unknown>,
+          options?: unknown,
+        ) => {
+          if (!invoke)
+            throw new Error("Tauri E2E invocation bridge is unavailable");
+          const result = await invoke(command, args, options);
+          if (args?.event === "deep-link-nostr-bind") {
+            if (command === "plugin:event|listen") listeners.add(result);
+            if (command === "plugin:event|unlisten")
+              listeners.delete(args.eventId);
+            w.__NOSTR_BIND_LISTENER_READY__ = listeners.size > 0;
+          }
+          return result;
+        },
+      set: (next: Invoke) => {
+        invoke = next;
+      },
+    });
+    w.__TAURI_INTERNALS__ = internals;
+  });
   await installMockBridge(page, mock);
   await page.goto("/");
   await page.waitForFunction(
     () =>
-      typeof (
-        window as Window & {
-          __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: unknown;
-        }
-      ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__ === "function",
+      (window as unknown as { __NOSTR_BIND_LISTENER_READY__?: boolean })
+        .__NOSTR_BIND_LISTENER_READY__ === true,
   );
   await emitNostrBind(page, payload);
   await expect(page.getByTestId("nostr-bind-page")).toBeVisible();
