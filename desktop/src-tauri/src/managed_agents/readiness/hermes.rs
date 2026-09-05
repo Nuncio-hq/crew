@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
 
-fn readiness_contract_names_all_states_and_keeps_auth_unknown_advisory() {
+    fn readiness_contract_names_all_states_and_keeps_auth_unknown_advisory() {
         let states = [
             HermesProfileReadiness::Ready,
             HermesProfileReadiness::Missing {
@@ -241,10 +241,7 @@ fn readiness_contract_names_all_states_and_keeps_auth_unknown_advisory() {
         ];
         assert_eq!(states.len(), 5);
         assert!(matches!(states[0], HermesProfileReadiness::Ready));
-        assert!(matches!(
-            states[1],
-            HermesProfileReadiness::Missing { .. }
-        ));
+        assert!(matches!(states[1], HermesProfileReadiness::Missing { .. }));
         assert!(matches!(
             states[2],
             HermesProfileReadiness::BrokenConfig { .. }

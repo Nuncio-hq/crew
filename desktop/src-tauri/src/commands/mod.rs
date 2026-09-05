@@ -129,9 +129,9 @@ pub use link_preview::*;
 pub use media::*;
 pub use media_download::*;
 pub use media_raw::*;
+pub use mention_authorization::*;
 #[cfg(feature = "mesh-llm")]
 pub use mesh_llm::*;
-pub use mention_authorization::*;
 pub use messages::*;
 pub use notifications::*;
 pub use observer_archive::*;

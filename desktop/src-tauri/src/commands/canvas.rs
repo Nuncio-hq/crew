@@ -49,8 +49,7 @@ pub(crate) fn update_canvas_crew_assignment(
             serde_yaml::Value::String(definition.to_string()),
         );
     }
-    let yaml =
-        serde_yaml::to_string(&document).map_err(|e| format!("serialize crew YAML: {e}"))?;
+    let yaml = serde_yaml::to_string(&document).map_err(|e| format!("serialize crew YAML: {e}"))?;
     let updated = format!("{prefix}```crew\n{yaml}```{suffix}");
     buzz_core_pkg::crew_role::parse_canvas_assignments(&updated).map_err(|e| e.to_string())?;
     Ok(updated)
@@ -58,8 +57,12 @@ pub(crate) fn update_canvas_crew_assignment(
 
 pub(crate) fn fenced_crew_block(content: &str) -> Option<(String, String, String)> {
     let start = content.find("```crew")?;
-    let body_start = content[start..].find('\n').map(|offset| start + offset + 1)?;
-    let end = content[body_start..].find("```").map(|offset| body_start + offset)?;
+    let body_start = content[start..]
+        .find('\n')
+        .map(|offset| start + offset + 1)?;
+    let end = content[body_start..]
+        .find("```")
+        .map(|offset| body_start + offset)?;
     Some((
         content[..start].to_string(),
         content[body_start..end].to_string(),
@@ -105,14 +108,11 @@ pub async fn get_canvas(
         .public_key()
         .to_hex();
     let crew_parse_error = crew_parse_error(&event.content);
-    let routing = buzz_core_pkg::crew_role::resolve_routing(
-        &event.content,
-        &event.pubkey.to_hex(),
-        &owner,
-    )
-    .ok()
-    .flatten()
-        .unwrap_or_default();
+    let routing =
+        buzz_core_pkg::crew_role::resolve_routing(&event.content, &event.pubkey.to_hex(), &owner)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
     let assignments = buzz_core_pkg::crew_role::resolve_canvas_assignments(
         &event.content,
         &event.pubkey.to_hex(),
@@ -129,7 +129,10 @@ pub async fn get_canvas(
     )
     .ok()
     .flatten()
-    .map(|keys| keys.iter().any(|key| key == buzz_core_pkg::crew_role::CAPABILITY_DEV_MCP));
+    .map(|keys| {
+        keys.iter()
+            .any(|key| key == buzz_core_pkg::crew_role::CAPABILITY_DEV_MCP)
+    });
 
     Ok(serde_json::json!({
         "content": event.content,
@@ -170,8 +173,7 @@ pub async fn set_canvas(
     {
         let announcement =
             "AGENT-WORKING-AGREEMENT: channel routing presets updated in the canvas.";
-        crate::commands::publish_assignment_announcement(&state, &channel_id, announcement)
-            .await?;
+        crate::commands::publish_assignment_announcement(&state, &channel_id, announcement).await?;
     }
 
     Ok(serde_json::json!({
@@ -204,12 +206,15 @@ pub async fn assign_channel_agent_role(
         .lock()
         .map_err(|_| "identity lock poisoned".to_string())?
         .public_key();
-    let discarded_foreign_canvas = events.first().is_some_and(|event| {
-        event.pubkey != signing_key
-    });
+    let discarded_foreign_canvas = events
+        .first()
+        .is_some_and(|event| event.pubkey != signing_key);
     if let Some(event) = events.first() {
         if !overwrite_foreign_canvas {
-            ensure_canvas_author(event.pubkey.to_hex().as_str(), signing_key.to_hex().as_str())?;
+            ensure_canvas_author(
+                event.pubkey.to_hex().as_str(),
+                signing_key.to_hex().as_str(),
+            )?;
         }
     }
     let current = events
@@ -217,8 +222,7 @@ pub async fn assign_channel_agent_role(
         .filter(|_| !discarded_foreign_canvas)
         .map(|event| event.content.as_str())
         .unwrap_or("");
-    let updated =
-        update_canvas_crew_assignment(current, &agent_pubkey, &label, &definition)?;
+    let updated = update_canvas_crew_assignment(current, &agent_pubkey, &label, &definition)?;
     let uuid = uuid::Uuid::parse_str(&channel_id)
         .map_err(|_| format!("invalid channel UUID: {channel_id}"))?;
     let canvas_result = submit_event(events::build_set_canvas(uuid, &updated)?, &state).await?;
@@ -237,7 +241,10 @@ pub async fn assign_channel_agent_role(
 }
 
 pub(crate) fn ensure_canvas_author(canvas_author: &str, signing_key: &str) -> Result<(), String> {
-    if canvas_author.trim().eq_ignore_ascii_case(signing_key.trim()) {
+    if canvas_author
+        .trim()
+        .eq_ignore_ascii_case(signing_key.trim())
+    {
         Ok(())
     } else {
         Err(format!(

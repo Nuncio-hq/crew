@@ -143,7 +143,12 @@ pub(crate) fn resolve_effective_harness_descriptor(
 
     // Args + Cursor `--model` pin when applicable.
     let args = crate::managed_agents::resolve_effective_agent_args(
-        &effective_command, record, harness_def.as_deref(), runtime_meta, personas, global,
+        &effective_command,
+        record,
+        harness_def.as_deref(),
+        runtime_meta,
+        personas,
+        global,
     );
 
     // Env: full layered resolution (same as resolve_effective_agent_env).
@@ -326,8 +331,13 @@ pub enum Requirement {
         command: String,
     },
     /// Bound Hermes profile directory missing on disk (orphan; C-03 repair).
-    HermesProfileDirectoryMissing { profile: String },
-    HermesProfileConfigInvalid { profile: String, diagnostic: String },
+    HermesProfileDirectoryMissing {
+        profile: String,
+    },
+    HermesProfileConfigInvalid {
+        profile: String,
+        diagnostic: String,
+    },
 }
 // ── AgentReadiness ────────────────────────────────────────────────────────────
 /// Whether a managed agent has all required configuration to start.

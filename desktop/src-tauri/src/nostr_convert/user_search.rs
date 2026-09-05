@@ -13,8 +13,7 @@ pub fn verified_agent_owners_from_profiles(events: &[Event]) -> HashMap<String, 
         .iter()
         .filter(|event| event.kind.as_u16() == 0)
         .filter_map(|event| {
-            profile_valid_oa_owner_pubkey(event)
-                .map(|owner| (event.pubkey.to_hex(), owner))
+            profile_valid_oa_owner_pubkey(event).map(|owner| (event.pubkey.to_hex(), owner))
         })
         .collect()
 }

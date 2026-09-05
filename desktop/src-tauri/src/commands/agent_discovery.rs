@@ -8,6 +8,7 @@ use crate::{
     },
 };
 mod agent_discovery_ownership;
+mod forced_single_flight;
 mod git_bash_prerequisite;
 mod install_capture;
 mod install_exec;
@@ -15,7 +16,6 @@ mod install_report;
 mod install_runtime;
 mod managed_adapter_install;
 mod managed_node;
-mod forced_single_flight;
 mod post_install_verification;
 use agent_discovery_ownership::list_relay_agents_inner;
 pub use git_bash_prerequisite::discover_git_bash_prerequisite;

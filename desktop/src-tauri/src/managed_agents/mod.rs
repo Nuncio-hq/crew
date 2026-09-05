@@ -11,14 +11,13 @@ pub(crate) use agent_env::{
 mod backend;
 pub(crate) mod claude_config;
 pub(crate) mod config_bridge;
+mod cursor_startup_model;
 pub(crate) mod custom_harnesses;
 mod definition_validation;
-mod cursor_startup_model;
 mod discovery;
 pub(crate) mod effective_config;
-pub(crate) use cursor_startup_model::{
-    resolve_buzz_acp_model_env, resolve_effective_agent_args,
-};
+pub(crate) use cursor_startup_model::{resolve_buzz_acp_model_env, resolve_effective_agent_args};
+mod cowork_history_env;
 mod env_vars;
 pub(crate) mod git_bash;
 pub(crate) mod global_config;
@@ -47,7 +46,6 @@ mod runtime;
 mod runtime_commands;
 mod runtime_types;
 mod session_aging_env;
-mod cowork_history_env;
 pub(crate) mod snapshot_avatar;
 pub(crate) mod spawn_snapshot;
 pub(crate) mod storage;
