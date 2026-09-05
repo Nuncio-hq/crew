@@ -15,6 +15,8 @@
 - Append released migrations after unchanged Crew 0033 and validate PostgreSQL
   regressions through the isolated Crew CI lane. Correct workflow/huddle query
   operation attribution without changing SQL or tenant boundaries.
+- Supply ephemeral signing keys to isolated CI relay launches so the released
+  mandatory-key startup contract is exercised by Project and desktop E2E tests.
 - Prepare the manual sync gate with Crew's Linux native dependencies, CMake
   compatibility and pinned nextest; all existing checks remain enabled.
 

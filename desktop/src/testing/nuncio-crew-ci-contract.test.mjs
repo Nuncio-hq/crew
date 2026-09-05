@@ -70,6 +70,27 @@ test("relay-native Project behavior remains an automatic conditional gate", () =
   assert.match(ci, /needs\.project-relay\.result/);
 });
 
+test("isolated CI relay launches provide an ephemeral signing key", () => {
+  const ci = workflow("nuncio-crew-ci.yml");
+  const integrationStart = ci.indexOf("      - name: Start relay");
+  assert.ok(integrationStart > 0);
+  const integration = ci.slice(
+    integrationStart,
+    ci.indexOf("      - name:", integrationStart + 1),
+  );
+  const project = readFileSync(
+    resolve(repoRoot, "scripts/run-nuncio-crew-project-relay-ci.sh"),
+    "utf8",
+  );
+  for (const source of [integration, project]) {
+    const launch = source.slice(
+      source.indexOf("nohup env"),
+      source.indexOf("./target/ci/buzz-relay >"),
+    );
+    assert.match(launch, /BUZZ_RELAY_PRIVATE_KEY="\$\(openssl rand -hex 32\)"/);
+  }
+});
+
 test("buzz-acp is path-gated and registered in the merge gate", () => {
   const ci = workflow("nuncio-crew-ci.yml");
   const acpStart = ci.indexOf("\n  buzz-acp:");
