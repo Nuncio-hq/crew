@@ -80,6 +80,11 @@ async function hasOutgoingEventWithContent(
           }>;
         }
       ).__BUZZ_E2E_COMMAND_LOG__?.some((entry) => {
+        if (entry.command === "send_channel_message") {
+          return (
+            (entry.payload as { content?: string }).content === expectedContent
+          );
+        }
         if (entry.command !== "plugin:websocket|send") {
           return false;
         }
@@ -1912,7 +1917,7 @@ test("empty channel shows intro actions", async ({ page }) => {
   await expect(
     page.getByTestId("channel-intro-action-create-channel"),
   ).toHaveCount(0);
-  const addAgentsAction = page.getByTestId("channel-intro-action-add-agent");
+  const addAgentsAction = page.getByTestId("channel-intro-action-create-agent");
   await expect(
     addAgentsAction.getByText("Add agent", { exact: true }),
   ).toBeVisible();
@@ -2044,7 +2049,7 @@ test("channel with messages shows content", async ({ page }) => {
   );
   await expect(page.getByTestId("message-timeline-day-divider")).toBeVisible();
   await expect(page.getByTestId("message-timeline")).toContainText(
-    "Welcome to #general",
+    "Welcome to general",
   );
 });
 
@@ -2579,7 +2584,7 @@ test("sidebar shows unread indicator for newly active channels", async ({
   await page.getByTestId("channel-random").click();
   await expect(page.getByTestId("chat-title")).toHaveText("random");
   await expect(page.getByTestId("message-timeline")).toContainText(
-    "Unread update for #random",
+    "Unread update for random",
   );
   await expect(page.getByTestId("channel-unread-random")).toHaveCount(0);
 });
@@ -2998,6 +3003,11 @@ test("channel settings only prompt editors to add an empty description", async (
   page,
 }) => {
   await page.goto("/");
+  await page.waitForFunction(
+    () =>
+      typeof window.__BUZZ_E2E_MUTATE_CHANNEL__ === "function" &&
+      typeof window.__BUZZ_E2E_INVALIDATE_CHANNELS__ === "function",
+  );
   await page.evaluate(
     async ({ generalChannelId, randomChannelId }) => {
       const bridge = window as Window & {

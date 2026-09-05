@@ -28,7 +28,7 @@ test("agent-style Buzz links stay chip-only with metadata tooltips", async ({
   page,
 }) => {
   await page.addInitScript(
-    ({ repoAddress, prId, alicePubkey, subject }) => {
+    ({ repoAddress, prId, alicePubkey, subject, issueId, issueSubject }) => {
       window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
         {
           id: prId,
@@ -36,12 +36,25 @@ test("agent-style Buzz links stay chip-only with metadata tooltips", async ({
           pubkey: alicePubkey,
           created_at: Math.floor(Date.now() / 1000) - 60,
           content: "PR body",
+          sig: "mocksig".repeat(20).slice(0, 128),
           tags: [
             ["a", repoAddress],
             ["subject", subject],
             ["c", "abc123".padEnd(40, "0")],
             ["branch-name", "fix/entity-cards"],
             ["clone", "https://github.com/block/relay-tools.git"],
+          ],
+        },
+        {
+          id: issueId,
+          kind: 1621,
+          pubkey: alicePubkey,
+          created_at: Math.floor(Date.now() / 1000) - 60,
+          content: "Issue body",
+          sig: "mocksig".repeat(20).slice(0, 128),
+          tags: [
+            ["a", repoAddress],
+            ["subject", issueSubject],
           ],
         },
       ];
@@ -51,6 +64,8 @@ test("agent-style Buzz links stay chip-only with metadata tooltips", async ({
       prId: PR_ID,
       alicePubkey: ALICE_PUBKEY,
       subject: PR_SUBJECT,
+      issueId: ISSUE_ID,
+      issueSubject: ISSUE_SUBJECT,
     },
   );
   await installMockBridge(page);
@@ -230,7 +245,7 @@ test("agent-style Buzz links stay chip-only with metadata tooltips", async ({
     cloneTooltip.locator('[data-buzz-tooltip-metadata-content=""]'),
   ).toContainText("Operator tooling and admin CLI for relay deployments.");
   await labeledClone.click();
-  await expect(page.locator("[data-project-detail-screen]")).toBeVisible();
+  await expect(page.getByTestId("project-detail-scroll")).toBeVisible();
   await page.getByTestId("channel-general").click();
 
   const missingRepoChip = row.getByRole("button", {
@@ -285,6 +300,7 @@ test("issue chip width is metadata-independent while the title loads", async ({
           pubkey: alicePubkey,
           created_at: Math.floor(Date.now() / 1000) - 60,
           content: "Issue body",
+          sig: "mocksig".repeat(20).slice(0, 128),
           tags: [
             ["a", repoAddress],
             ["subject", issueSubject],
@@ -487,7 +503,7 @@ test("composer classifies a same-relay clone URL as a repository chip, not a car
   // The chip navigates in-app, proving the clone URL resolved onto the
   // canonical buzz://repo target rather than being handed to the OS.
   await repoChip.click();
-  await expect(page.locator("[data-project-detail-screen]")).toBeVisible();
+  await expect(page.getByTestId("project-detail-scroll")).toBeVisible();
 });
 
 test("reopening the same entity link reapplies its workspace state", async ({
@@ -504,6 +520,7 @@ test("reopening the same entity link reapplies its workspace state", async ({
           pubkey: owner,
           created_at: createdAt,
           content: "PR body",
+          sig: "mocksig".repeat(20).slice(0, 128),
           tags: [
             ["a", repoAddress],
             ["subject", prSubject],
@@ -517,6 +534,7 @@ test("reopening the same entity link reapplies its workspace state", async ({
           pubkey: owner,
           created_at: createdAt,
           content: "Issue body",
+          sig: "mocksig".repeat(20).slice(0, 128),
           tags: [
             ["a", repoAddress],
             ["subject", issueSubject],
@@ -535,7 +553,7 @@ test("reopening the same entity link reapplies its workspace state", async ({
   );
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("open-projects-view")).toBeVisible();
+  await expect(page.getByTestId("channel-general")).toBeVisible();
   const repoLink = `buzz://repo?owner=${DEFAULT_MOCK_PUBKEY}&d=buzz&tab=prs`;
   const prLink = `buzz://pr?id=${PR_ID}&owner=${DEFAULT_MOCK_PUBKEY}&d=buzz`;
   const issueLink = `buzz://issue?id=${ISSUE_ID}&owner=${DEFAULT_MOCK_PUBKEY}&d=buzz`;
@@ -563,8 +581,8 @@ test("reopening the same entity link reapplies its workspace state", async ({
   const breadcrumb = page.getByRole("navigation", {
     name: "Project breadcrumb",
   });
-  await breadcrumb.getByRole("button").nth(1).click();
-  await expect(page.getByTestId("project-channel-home")).toBeVisible();
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   await emitEntityLink(repoLink);
   await expect(pullRequestsTab).toHaveAttribute("aria-selected", "true");
@@ -638,7 +656,7 @@ test("deleted reply links identify deletion and fall back to their thread root",
 
   await expect(page.getByTestId("chat-title")).toHaveText("random");
   await expect(page).toHaveURL(new RegExp(`thread=${threadRootId}`));
-  await expect(page.getByRole("heading", { name: "Thread" })).toBeVisible();
+  await expect(page.getByTestId("message-thread-panel")).toBeVisible();
 });
 
 test("deleted top-level message links identify deletion and fall back to channel navigation", async ({

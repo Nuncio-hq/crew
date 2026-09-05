@@ -72,6 +72,9 @@ test.describe("channel muting", () => {
   });
 
   test("02 — muted channel is dimmed with BellOff icon", async ({ page }) => {
+    await page.addInitScript(() =>
+      window.localStorage.setItem("buzz-theme", "crew-light"),
+    );
     await seedMuteState(page, ENGINEERING_CHANNEL_ID);
     await installMockBridge(page);
 

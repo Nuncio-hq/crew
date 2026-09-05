@@ -6,7 +6,8 @@
   admin, deployment charts and benchmarks. All 191 source dispositions are
   accounted for. Local `just ci`, dependency policy and integration gates passed;
   final clean-bundle browser smoke passed 3/3 with all 10,000 ids reachable.
-  Remote PR/manual gates remain pending. This is not a release.
+  PR #342 Gate/manual checks passed on 7b58b8d2; focused browser repairs passed.
+  Remote checks on the repair revision remain pending. This is not a release.
 - Preserve Crew channel-first navigation, thread UUID/resume-first sessions,
   Hermes profile ownership, text-only zoom, theme identity and 1000-line limits.
 - Fix the PR comment refresh loop, member provenance visibility on hover,
@@ -17,6 +18,16 @@
   operation attribution without changing SQL or tenant boundaries.
 - Supply ephemeral signing keys to isolated CI relay launches so the released
   mandatory-key startup contract is exercised by Project and desktop E2E tests.
+- Restore live appearance samples, Wiki/repository context routing, delayed-preview
+  composer clearing and progress, accessible model controls, compact header
+  sizing and profile contrast. Reconcile browser fixtures with these behaviors.
+- Restrict repository discussion fallback to linked channels with verified viewer
+  membership. Preserve channel drafts and repository tabs; unavailable membership
+  shows retry feedback without navigation or draft writes. Verify real relay
+  readiness through receiver EOSE and sender WebSocket acceptance.
+- Final local verification: desktop 7012 passed, one existing skip; huddle 24/24;
+  real-relay browser 17/17; full Projects 8/8; selection and mounted guard passed.
+  Final source-freeze checks, TypeScript and diff checks passed.
 - Prepare the manual sync gate with Crew's Linux native dependencies, CMake
   compatibility and pinned nextest; all existing checks remain enabled.
 

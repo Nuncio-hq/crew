@@ -2582,44 +2582,64 @@ test("selected relay agents revoked during send emit no p tag", async ({
     .not.toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
 });
 
-test("owner-only builds admit cross-owner relay agents authorized by allowlist", async ({
-  page,
-}) => {
-  await installMockBridge(page, {
-    ownerOnlyAccessBuild: true,
-    searchProfiles: [
-      {
-        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
-        displayName: "quinn",
-        ownerPubkey: TEST_IDENTITIES.outsider.pubkey,
-        isAgent: true,
-      },
-    ],
-    relayAgents: [
-      {
-        pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
-        name: "quinn",
-        respondTo: "allowlist",
-        respondToAllowlist: [MOCK_VIEWER_PUBKEY],
-        channelNames: ["general"],
-      },
-    ],
-  });
-  await page.goto("/");
-  await page.getByTestId("channel-general").click();
-  const input = page.getByTestId("message-input");
-  await input.fill("@quinn");
-  const quinnRow = autocomplete(page).locator("button", { hasText: "quinn" });
-  await expect(quinnRow).toBeVisible();
-  await quinnRow.click();
-  await page.keyboard.type("hello");
-  await page.getByTestId("send-message").click();
-  await page.getByRole("button", { name: "Invite", exact: true }).click();
+for (const ownerOnlyAccessBuild of [false, true]) {
+  test(
+    ownerOnlyAccessBuild
+      ? "owner-only builds exclude cross-owner allowlisted relay agents"
+      : "OSS builds admit cross-owner relay agents authorized by allowlist",
+    async ({ page }) => {
+      await installMockBridge(page, {
+        ownerOnlyAccessBuild,
+        searchProfiles: [
+          {
+            pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+            displayName: "quinn",
+            ownerPubkey: TEST_IDENTITIES.outsider.pubkey,
+            isAgent: true,
+          },
+        ],
+        relayAgents: [
+          {
+            pubkey: ALLOWLIST_RELAY_AGENT_PUBKEY,
+            name: "quinn",
+            respondTo: "allowlist",
+            respondToAllowlist: [MOCK_VIEWER_PUBKEY],
+            channelNames: ["general"],
+          },
+        ],
+      });
+      await page.goto("/");
+      await page.getByTestId("channel-general").click();
+      const input = page.getByTestId("message-input");
+      await input.fill("@quinn");
+      const quinnRow = autocomplete(page).locator("button", {
+        hasText: "quinn",
+      });
+      if (ownerOnlyAccessBuild) {
+        await expect(quinnRow).toHaveCount(0);
+        await input.fill("@quinn hello");
+        await page.getByTestId("send-message").click();
+        await expect
+          .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+          .not.toBeNull();
+        await expect
+          .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+          .not.toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
+        expect(await readCommandLog(page)).not.toContain("start_managed_agent");
+        return;
+      }
+      await expect(quinnRow).toBeVisible();
+      await quinnRow.click();
+      await page.keyboard.type("hello");
+      await page.getByTestId("send-message").click();
+      await page.getByRole("button", { name: "Invite", exact: true }).click();
 
-  await expect
-    .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
-    .toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
-});
+      await expect
+        .poll(() => readOutgoingMentionPubkeys(page, "@quinn hello"))
+        .toContain(ALLOWLIST_RELAY_AGENT_PUBKEY);
+    },
+  );
+}
 
 test("relay-only allowlisted agents stay hidden outside their channel", async ({
   page,

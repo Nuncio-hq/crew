@@ -7,6 +7,7 @@ import {
   nextProjectGroupSelection,
   nextProjectSelection,
   projectSelectionChannelCandidates,
+  projectDiscussionChannelId,
   projectSelectionChannelId,
   projectSelectionDiscussContent,
   projectSelectionPresentation,
@@ -158,5 +159,47 @@ test("discuss drafts append instead of replacing an existing composer draft", ()
       "Let's talk about this task:\n\nlink",
     ),
     "Let's talk about this task:\n\nlink",
+  );
+});
+
+test("discussion chooses the first accessible linked channel", () => {
+  const input = {
+    repositoryChannelId: "repository-channel",
+    projectChannelId: "project-channel",
+    items: [taskA, taskC],
+    memberChannelIds: [
+      "repository-channel",
+      "project-channel",
+      "channel-1",
+      "channel-2",
+    ],
+  };
+  assert.equal(projectDiscussionChannelId(input), "repository-channel");
+  assert.equal(
+    projectDiscussionChannelId({
+      ...input,
+      memberChannelIds: ["project-channel", "channel-1"],
+    }),
+    "project-channel",
+  );
+  assert.equal(
+    projectDiscussionChannelId({ ...input, memberChannelIds: ["channel-2"] }),
+    "channel-2",
+  );
+});
+
+test("discussion never falls back to an unrelated or inaccessible channel", () => {
+  assert.equal(
+    projectDiscussionChannelId({
+      repositoryChannelId: "missing-channel",
+      projectChannelId: "restricted-channel",
+      items: [taskA],
+      memberChannelIds: ["unrelated-channel"],
+    }),
+    null,
+  );
+  assert.equal(
+    projectDiscussionChannelId({ items: [taskA], memberChannelIds: [] }),
+    null,
   );
 });

@@ -9,6 +9,7 @@ import { Check, ChevronDown, Search } from "lucide-react";
 
 import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
+import { resolveModelLabel } from "../lib/formatAgentModelLabel";
 import { Input } from "@/shared/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import {
@@ -424,9 +425,12 @@ export function AgentModelField({
       isSharedCompute,
     }),
   };
-  const discoveredWithoutDefault = (discoveredModelOptions ?? []).filter(
-    (option) => option.id.trim() !== "",
-  );
+  const discoveredWithoutDefault = (discoveredModelOptions ?? [])
+    .filter((option) => option.id.trim() !== "")
+    .map((option) => ({
+      ...option,
+      label: resolveModelLabel(option.id, option.label, provider),
+    }));
   const baseModelOptions = isSharedCompute
     ? [defaultOption, ...discoveredWithoutDefault]
     : [
@@ -444,7 +448,13 @@ export function AgentModelField({
   const effectiveModelOptions =
     shouldShowPendingModelOption &&
     !baseModelOptions.some((option) => option.id === trimmedModel)
-      ? [...baseModelOptions, { id: trimmedModel, label: trimmedModel }]
+      ? [
+          ...baseModelOptions,
+          {
+            id: trimmedModel,
+            label: resolveModelLabel(trimmedModel, null, provider),
+          },
+        ]
       : baseModelOptions;
 
   // isModelCustom: true when the current model isn't in any known option set.

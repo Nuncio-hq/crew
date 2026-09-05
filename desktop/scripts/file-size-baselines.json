@@ -12,7 +12,7 @@
       "recordedAt": "2026-08-23"
     },
     "src/features/messages/ui/MessageComposer.tsx": {
-      "lines": 1026,
+      "lines": 1017,
       "reason": "Upstream-owned growth landed in desktop-v0.5.10 sync (imeta edit lifecycle + send-to-channel seams).",
       "recordedAt": "2026-08-12"
     },

@@ -1,8 +1,8 @@
 # Buzz Desktop 0.5.22 integration
 
 Status (2026-09-05): all 191 source dispositions accounted for; local `just ci`,
-dependency policy and required integration lanes passed. Final clean-bundle browser
-acceptance passed; remote PR/manual gates remain pending. Working-branch metadata names
+dependency policy and required integration lanes passed. The 10k clean-bundle browser
+acceptance passed; focused CI browser reconciliation passed. Working-branch metadata names
 the target below.
 This is not a merge, release, deployment, or hosted-provider acceptance record.
 
@@ -56,9 +56,9 @@ No post-0.5.22 behavior is claimed.
 `just ci` completed with exit 0 in `/tmp/crew-upgrade-just-ci-final-2.log`:
 formatting, checks, builds and tests passed. Its desktop selection passed 6991 tests
 with one skip; Tauri passed 3431 with 19 ignored, plus the remaining workspace
-targets; mobile passed 2086. The final desktop rerun includes the wheel-retry regressions: **6996 passed, one
-skipped, zero failures** out of 6997 tests in
-`/tmp/crew-upgrade-desktop-test-final.log`.
+targets; mobile passed 2086. The later browser-reconciliation desktop rerun passed **7012 tests, one
+skipped, zero failures** out of 7013 total in 98.6s, recorded in
+`/tmp/crew-final-js-gate-pool.log`. Final source-freeze checks (all guards), TypeScript and diff checks passed.
 
 `cargo-deny` passed advisories, bans, licenses and sources in
 `/tmp/crew-upgrade-cargo-deny.log`. Existing non-fatal warnings remain visible in
@@ -93,6 +93,22 @@ cleanup are documented there; no shared database or deployment was changed.
   bodies and tenant boundaries remain; final compile, metrics guards and database
   regressions passed in the integration report above.
 
+## Final browser repair verification
+
+The source-freeze follow-up passed 7012 desktop tests with one existing skip and
+zero failures. The full Projects suite passed **8/8 in 23.5s**. The full huddle suite passed
+**24/24 in 37.6s**; the broad Projects/huddle pair passed 2/2 in 12.9s.
+Membership-bound channel selection passed
+13 pure tests; independent guard review and four mounted regressions passed.
+The guard cannot navigate or write a draft while channel membership is unavailable.
+See [Projects integration](../../../plans/reports/260905-projects-release-integration.md).
+
+Real relay browser checks passed 17/17 in 22.4s using receiver EOSE readiness and
+sender WebSocket acceptance, recorded in `/tmp/crew-root-live-ws-readiness.log`.
+This fixes the test race without adding delivery sleeps or weakening assertions.
+These focused local results do not claim a passing full remote browser matrix.
+Final checks and evidence are recorded in the [CI reconciliation report](../../../plans/reports/tester-260905-release-ci-reconciliation.md). New-head remote gates remain pending.
+
 ## Additional subsystem evidence
 
 | Surface | Recorded evidence | Source |
@@ -109,14 +125,13 @@ development dependencies because the upstream lock registry was unavailable.
 No frozen-lock or deployment claim follows.
 
 The [source audit](../../../plans/reports/reviewer-260905-coverage-audit.md) records
-25 ported, 154 adapted and 12 retained Crew dispositions with zero pending rows.
-Its refreshed filesystem snapshot has 1428 target-exact, 350 adapted and 42
+24 ported, 155 adapted and 12 retained Crew dispositions with zero pending rows.
+Its refreshed filesystem snapshot has 1420 target-exact, 358 adapted and 42
 intentional Crew/mapped paths across 1820 unique paths.
 
 The [manual sync workflow](../../../plans/reports/reviewer-260905-manual-upstream-gate-readiness.md)
 now includes the existing Crew Linux native setup, CMake compatibility and pinned
-nextest. Independent review and 14 workflow contract tests passed; no remote run
-has occurred yet.
+nextest. Independent review and 14 workflow contract tests passed. [PR #342](https://github.com/Nuncio-hq/crew/pull/342) is open. The [NuncioCrew Gate job](https://github.com/Nuncio-hq/crew/actions/runs/33957899436/job/101285891754) and [manual sync workflow](https://github.com/Nuncio-hq/crew/actions/runs/33957896571) passed on `7b58b8d2d454e5506332f093946689db0247e99d`; the encompassing CI run was cancelled after browser failures. Subsequent browser repairs still require checks on their new head.
 
 ## Remaining acceptance
 
@@ -127,8 +142,7 @@ The final cursor is exhausted. No diagnostic probe or recovery nudge was present
 Four distinct visual evidence states and focused browser results are recorded in
 the [browser report](../../../plans/reports/tester-260905-desktop-release-browser-evidence.md).
 
-The PR has not been created; remote NuncioCrew Gate and manual upstream-sync
-execution remain pending. Root coordinator owns commit, push, PR and merge. No merge, release,
+Browser reconciliation covers delayed-preview sends with safe context ownership, live appearance samples, scoped Wiki paths, released entity-link behavior, accessible config actions, compact agent headers and contrast. Mounted regressions and focused browser runs are recorded in the linked reports. [PR #342](https://github.com/Nuncio-hq/crew/pull/342) is open. The [NuncioCrew Gate job](https://github.com/Nuncio-hq/crew/actions/runs/33957899436/job/101285891754) and [manual sync workflow](https://github.com/Nuncio-hq/crew/actions/runs/33957896571) passed on `7b58b8d2d454e5506332f093946689db0247e99d`; the encompassing CI run was cancelled after browser failures. Subsequent browser repairs still require checks on their new head. Root coordinator owns commit, push, PR and merge. No merge, release,
 deployment or hosted-provider acceptance is claimed. Hosted Hermes and receipt
 compatibility limits for issues #337/#338 remain recorded separately in
 [STATE.md](../STATE.md).

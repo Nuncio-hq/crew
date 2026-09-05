@@ -505,10 +505,7 @@ test.describe("inbox refactor screenshots", () => {
       );
     });
 
-    // Cmd +/- is a true zoom: the root rem scales, so conversation text AND
-    // the rem-based row padding / body gap grow together (4px → 4.4px,
-    // 2px → 2.2px). Text-only zoom with frozen spacing is the regression
-    // this guards against.
+    // Crew scales conversation text while preserving root rem and layout spacing.
     await expect
       .poll(async () => [
         await page.evaluate(
@@ -517,10 +514,10 @@ test.describe("inbox refactor screenshots", () => {
         ...(await readConversationMetrics()),
       ])
       .toEqual([
-        "17.6px",
+        "16px",
         { fontSize: "15.4px", lineHeight: "22px" },
-        { paddingBottom: "4.4px", paddingTop: "4.4px" },
-        2.2,
+        { paddingBottom: "4px", paddingTop: "4px" },
+        2,
         { fontSize: "15.4px", lineHeight: "17.6px" },
         { fontSize: "15.4px", lineHeight: "22px" },
         { fontSize: "13.2px", lineHeight: "17.6px" },

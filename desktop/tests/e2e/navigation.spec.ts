@@ -697,10 +697,15 @@ test("message links to visible root messages open the thread panel", async ({
         () =>
           (
             window as Window & {
-              __BUZZ_E2E_COMMAND_LOG__?: Array<{ command: string }>;
+              __BUZZ_E2E_COMMAND_LOG__?: Array<{
+                command: string;
+                payload?: { eventId?: string };
+              }>;
             }
           ).__BUZZ_E2E_COMMAND_LOG__?.filter(
-            ({ command }) => command === "get_event",
+            ({ command, payload }) =>
+              command === "get_event" &&
+              payload?.eventId === "mock-general-welcome",
           ).length ?? 0,
       ),
     )
@@ -754,10 +759,15 @@ test("message links to visible root messages open the thread panel", async ({
         () =>
           (
             window as Window & {
-              __BUZZ_E2E_COMMAND_LOG__?: Array<{ command: string }>;
+              __BUZZ_E2E_COMMAND_LOG__?: Array<{
+                command: string;
+                payload?: { eventId?: string };
+              }>;
             }
           ).__BUZZ_E2E_COMMAND_LOG__?.filter(
-            ({ command }) => command === "get_event",
+            ({ command, payload }) =>
+              command === "get_event" &&
+              payload?.eventId === "mock-general-welcome",
           ).length ?? 0,
       ),
     )
@@ -835,7 +845,7 @@ test("message links reopen a closed thread when the same messageId is already in
   const threadPanel = page.getByTestId("message-thread-panel");
   await expect(threadPanel).toBeVisible();
   await expect(threadPanel.getByTestId("message-thread-head")).toContainText(
-    "Welcome to #general",
+    "Welcome to general",
   );
 
   await threadPanel.getByRole("button", { name: "Close panel" }).click();
@@ -854,14 +864,14 @@ test("message links reopen a closed thread when the same messageId is already in
     .last();
   await expect(linkMessage).toBeVisible();
   const rootThreadLink = linkMessage.getByRole("button", {
-    name: "Open thread in general",
+    name: "Open message in channel general",
   });
-  await expect(rootThreadLink).toHaveText("#general");
+  await expect(rootThreadLink).toHaveText("general");
   await rootThreadLink.click();
 
   await expect(threadPanel).toBeVisible();
   await expect(threadPanel.getByTestId("message-thread-head")).toContainText(
-    "Welcome to #general",
+    "Welcome to general",
   );
 });
 

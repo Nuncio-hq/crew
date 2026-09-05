@@ -355,13 +355,27 @@ export function useMentionSendComplete({
               ),
             ]),
           );
+          // Plain sends have no remaining agent workspace preflight, so the
+          // composer can clear while the background preview finishes.
+          if (
+            clearAfterResolve &&
+            !composerCleared &&
+            draft.explicitAgentPubkeys.length === 0
+          ) {
+            clearComposerAfterPreflight([]);
+            // Accepted background sends survive composer navigation. The
+            // community store still owns cancellation across relay changes.
+            if (draft.preparedLinkPreviews) {
+              activePreparedLinkPreviews.delete(draft.preparedLinkPreviews);
+            }
+          }
           const finalOutgoingTags = await resolvePreviewTags(
             draft,
             mediaTags,
             outgoingTags,
           );
           if (!finalOutgoingTags || signal?.aborted || isSendCancelled())
-            return;
+            return restoreComposerAfterFailure();
           // The pass immediately before signing/publish is always fresh:
           // mention authorization is re-validated here unconditionally,
           // whatever did or did not separate it from the admission pass

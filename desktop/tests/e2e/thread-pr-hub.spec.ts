@@ -530,3 +530,68 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
       .screenshot({ path: `${SHOTS}/13-degraded-rate-limited.png` });
   });
 });
+
+test("submitted thread context stays compact until its disclosure opens", async ({
+  page,
+}) => {
+  const root = rootId("08");
+  const panel = await openProjectThread(page, root);
+  const input = panel.getByTestId("message-input");
+  await input.fill("@Reviewer");
+  await panel
+    .getByTestId("mention-autocomplete")
+    .getByText("Reviewer Agent", { exact: true })
+    .click();
+  await input.press("End");
+  await input.pressSequentially(" verify submitted view context");
+  await panel.getByTestId("send-message").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+          (entry) => entry.command === "send_channel_message",
+        ),
+      ),
+    )
+    .toHaveLength(1);
+  const content = await page.evaluate(
+    () =>
+      (
+        (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).find(
+          (entry) => entry.command === "send_channel_message",
+        )?.payload as { content?: string }
+      )?.content,
+  );
+  expect(content).toMatch(
+    /\[buzz-view-context-[0-9a-f-]{36}\]: <buzz:\/\/project-workspace-view\?scope=thread/,
+  );
+  expect(content).toContain("Current Crew thread view");
+  const row = panel
+    .getByTestId("message-row")
+    .filter({ hasText: "verify submitted view context" });
+  await expect(row).toHaveCount(1);
+  await expect(row).not.toContainText("Current Crew thread view");
+  const disclosure = panel.getByTestId("project-agent-sent-context").last();
+  await expect(
+    disclosure.getByRole("button", { name: "Show sent context" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    disclosure.getByTestId("project-agent-sent-context-payload"),
+  ).toHaveCount(0);
+  await waitForAnimations(page);
+  await panel.screenshot({
+    path: `${SHOTS}/14-submitted-context-collapsed.png`,
+  });
+  await disclosure.getByRole("button", { name: "Show sent context" }).click();
+  await expect(
+    disclosure.getByTestId("project-agent-sent-context-payload"),
+  ).toContainText("Current Crew thread view");
+  await waitForAnimations(page);
+  await disclosure.screenshot({
+    path: `${SHOTS}/15-submitted-context-expanded.png`,
+  });
+  await disclosure.getByRole("button", { name: "Hide sent context" }).click();
+  await expect(
+    disclosure.getByTestId("project-agent-sent-context-payload"),
+  ).toHaveCount(0);
+});

@@ -72,12 +72,27 @@ async function renderSend(options = {}) {
   const { useEnsureAgentMentionsReady } = await import(
     "./useEnsureAgentMentionsReady.ts"
   );
+  const { useActivePreparedLinkPreviews } = await import(
+    "./useActivePreparedLinkPreviews.ts"
+  );
+  const { useEffect } = await import("react");
   const events = [];
   const wakes = [];
   const errors = [];
+  const restored = [];
+  const persisted = [];
+  const contentRef = { current: "hello" };
+  const mounted = options.mounted ?? { current: true };
   const getAgents = async () => new Map([[AGENT, agent]]);
   const noop = () => {};
   const rendered = renderHook(() => {
+    const preparations = useActivePreparedLinkPreviews();
+    useEffect(() => {
+      if (options.preparation) preparations.add(options.preparation);
+      return () => {
+        mounted.current = false;
+      };
+    }, []);
     const ready = useEnsureAgentMentionsReady({
       getManagedAgentsByPubkey: getAgents,
       getPersonas: async () => [],
@@ -90,14 +105,17 @@ async function renderSend(options = {}) {
       },
     });
     return useMentionSendComplete({
-      activePreparedLinkPreviews: new Set(),
+      activePreparedLinkPreviews: preparations,
       channelIdRef: { current: channel },
-      clearComposer: () => events.push("clear"),
-      contentRef: { current: "hello" },
+      clearComposer: () => {
+        events.push("clear");
+        contentRef.current = "";
+      },
+      contentRef,
       drafts: {
         loadDraft: () => null,
         markDraftSent: noop,
-        persistDraft: noop,
+        persistDraft: (...args) => persisted.push(args),
       },
       ensureManagedAgentMentionsReady: ready,
       detachedStart: (target, floor) => {
@@ -108,7 +126,7 @@ async function renderSend(options = {}) {
       getManagedAgentsByPubkey: getAgents,
       hasUnsavedMedia: () => false,
       isCompleteSendPendingRef: { current: false },
-      isMountedRef: options.mounted ?? { current: true },
+      isMountedRef: mounted,
       mentions: {
         isAgentPubkey: () => true,
         restoreDraftMentionRefs: noop,
@@ -123,13 +141,13 @@ async function renderSend(options = {}) {
       },
       restoreQueuedAttachments: noop,
       richText: { setContent: noop },
-      setContent: noop,
+      setContent: (content) => restored.push(content),
       setIsCompleteSendPending: noop,
       setNonMemberPromptError: (error) => errors.push(error),
       setPendingImeta: noop,
     });
   });
-  return { rendered, act, events, wakes, errors };
+  return { rendered, act, events, wakes, errors, restored, persisted };
 }
 test("completion publishes before waking and does not await a cold launch", async () => {
   const publish = deferred();
@@ -276,6 +294,142 @@ test("preview preparation and relay acceptance both precede the queued wake", as
   assert.ok(send.events.indexOf("accepted") < send.events.indexOf("wake"));
   assert.equal(released, true);
   send.rendered.unmount();
+});
+
+test("plain send clears during preview preparation and rechecks authorization before publishing", async () => {
+  const preview = deferred();
+  const controller = new AbortController();
+  const checks = [];
+  let previewReady = false;
+  const send = await renderSend({
+    revalidate: async (keys) => {
+      checks.push(previewReady);
+      return keys;
+    },
+  });
+  let completion;
+  await send.act(async () => {
+    completion = send.rendered.result.current(
+      draft({
+        mentionPubkeys: [],
+        preparedLinkPreviews: {
+          promise: preview.promise,
+          signal: controller.signal,
+          release: () => {},
+        },
+      }),
+      [],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.deepEqual(send.events, ["clear"]);
+  assert.deepEqual(checks, [false]);
+  await send.act(async () => {
+    previewReady = true;
+    preview.resolve({ status: "ready", tags: [["link-preview", "none"]] });
+    await completion;
+  });
+  assert.deepEqual(checks, [false, true]);
+  assert.deepEqual(send.events, ["clear", "publish", "accepted"]);
+  assert.equal(send.wakes.length, 0);
+  send.rendered.unmount();
+});
+
+test("accepted preview survives navigation while preflight and community changes cancel safely", async () => {
+  const store = await import("../lib/linkPreviewPreparationStore.ts");
+  for (const scenario of ["navigation", "preflight", "community"]) {
+    const preview = deferred();
+    const admission = deferred();
+    const candidate = { href: `https://example.com/${scenario}` };
+    store.__linkPreviewPreparationTest.jobs.set(candidate.href, {
+      controller: new AbortController(),
+      promise: preview.promise,
+      fallbackTag: null,
+      resolvedTag: null,
+      settled: false,
+      settledAt: null,
+    });
+    const preparation = store.prepareBackgroundLinkPreviews([candidate]);
+    let published;
+    const send = await renderSend({
+      preparation,
+      revalidate: async (keys) => {
+        if (scenario === "preflight") await admission.promise;
+        return keys;
+      },
+      publish: (...args) => {
+        published = args;
+      },
+    });
+    let completion;
+    await send.act(async () => {
+      completion = send.rendered.result.current(
+        draft({
+          mentionPubkeys: [],
+          recoveryDraftKey: channel,
+          preparedLinkPreviews: preparation,
+        }),
+        [],
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.deepEqual(send.events, scenario === "preflight" ? [] : ["clear"]);
+    send.rendered.unmount();
+    assert.equal(preparation.signal.aborted, scenario === "preflight");
+    if (scenario === "community") store.resetLinkPreviewPreparations();
+    await send.act(async () => {
+      admission.resolve();
+      preview.resolve(["link-preview", "none"]);
+      await completion;
+    });
+    if (scenario === "navigation") {
+      assert.equal(published[3], channel);
+      assert.deepEqual(send.events, ["clear", "publish", "accepted"]);
+    } else {
+      assert.equal(published, undefined);
+      assert.equal(preparation.signal.aborted, true);
+    }
+    assert.deepEqual(send.persisted, []);
+    assert.deepEqual(send.restored, []);
+    store.__linkPreviewPreparationTest.reset();
+  }
+});
+
+test("cancelled plain preview restores a mounted draft without persisting into a switched community", async () => {
+  for (const unmounted of [false, true]) {
+    const preview = deferred();
+    const controller = new AbortController();
+    const mounted = { current: true };
+    const send = await renderSend({ mounted });
+    let completion;
+    await send.act(async () => {
+      completion = send.rendered.result.current(
+        draft({
+          mentionPubkeys: [],
+          recoveryDraftKey: channel,
+          preparedLinkPreviews: {
+            promise: preview.promise,
+            signal: controller.signal,
+            release: () => {},
+          },
+        }),
+        [],
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.deepEqual(send.events, ["clear"]);
+    await send.act(async () => {
+      mounted.current = !unmounted;
+      controller.abort();
+      preview.resolve({ status: "cancelled" });
+      await completion;
+    });
+    assert.deepEqual(send.events, ["clear"]);
+    assert.deepEqual(send.restored, unmounted ? [] : ["hello"]);
+    assert.deepEqual(send.persisted, []);
+    assert.equal(send.wakes.length, 0);
+    send.rendered.unmount();
+  }
 });
 
 test("cancelled preview preparation cannot publish or wake the agent", async () => {

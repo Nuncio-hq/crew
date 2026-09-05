@@ -37,6 +37,7 @@ import { CreateProjectDialog } from "@/features/projects/ui/CreateProjectDialog"
 import { CreateProjectIssueDialog } from "@/features/projects/ui/CreateProjectIssueDialog";
 import { CreatePullRequestDialog } from "@/features/projects/ui/CreatePullRequestDialog";
 import { ProjectsCreateMenu } from "@/features/projects/ui/ProjectsCreateMenu";
+import { ProjectsChannelsList } from "@/features/projects/ui/ProjectsChannelsList";
 import { ProjectsIssuesList } from "@/features/projects/ui/ProjectsIssuesList";
 
 import { ProjectsPullRequestsList } from "@/features/projects/ui/ProjectsPullRequestsList";
@@ -870,7 +871,7 @@ export function ProjectsView({
                         : "space-y-3"
                     }
                   >
-                    {listHeaderBar}
+                    {filter === "channels" ? null : listHeaderBar}
                     {filter === "prs" ? (
                       <ProjectsPullRequestsList
                         embedded={viewMode === "list"}
@@ -909,6 +910,8 @@ export function ProjectsView({
                         profiles={profiles}
                         viewMode={viewMode}
                       />
+                    ) : filter === "channels" ? (
+                      <ProjectsChannelsList projects={projects} />
                     ) : filter === "projects" ? (
                       projectItems
                     ) : (

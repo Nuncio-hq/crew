@@ -141,3 +141,8 @@ html[data-crew-chrome] {
 html[data-crew-chrome="crew-dark"] {
   --sidebar-row-subtle-active-surface: rgb(255 255 255 / 10%);
 }
+
+/* Tiny restart labels sit on the avatar cutout, which is darker than a card. */
+html[data-crew-chrome="crew-light"] .agent-runtime-restart-action {
+  color: color-mix(in srgb, hsl(var(--attention)) 94%, hsl(var(--foreground)));
+}

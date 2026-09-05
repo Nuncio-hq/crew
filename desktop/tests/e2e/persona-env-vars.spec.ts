@@ -322,8 +322,8 @@ test("persona model options follow the selected LLM provider", async ({
   await expect(provider).toContainText("Buzz Agent (default)");
   await expect(llmProvider).toBeVisible();
   await expect(model).toBeVisible();
-  // Custom mode requires a model selection until a provider is chosen.
-  await expect(model).toContainText("Choose a model");
+  // Until a provider is selected, the current default remains visible.
+  await expect(model).toContainText("Default model");
 
   await selectDropdownOption(page, llmProvider, "OpenAI");
   const dialog = page.getByRole("dialog");

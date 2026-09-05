@@ -134,10 +134,11 @@ async function joinChannel(
       throw new Error("Tauri invoke bridge is unavailable.");
     }
 
-    const payload = (await invoke("get_channels")) as {
-      channels: Array<{ id: string; name: string }> | null;
-    };
-    const channels = payload.channels ?? [];
+    // Joining discovers open channels outside the caller's current membership.
+    const channels = (await invoke("get_open_channel_directory")) as Array<{
+      id: string;
+      name: string;
+    }>;
     const channel = channels.find(({ name }) => name === targetChannelName);
     if (!channel) {
       throw new Error(`Channel not found: ${targetChannelName}`);
@@ -231,6 +232,75 @@ test("message delivery across users", async ({
   const contextTwo = await browser.newContext();
   const pageOne = await contextOne.newPage();
   const pageTwo = await contextTwo.newPage();
+  const channelId = "9f28288a-d724-587a-9709-92dc7f967110";
+  const readySubscriptions = new Set<string>();
+  let publishResult: { accepted: boolean; message: unknown } | null = null;
+  // Plain channel messages use relayClient.sendMessage: signed EVENT → OK.
+  pageOne.on("websocket", (socket) => {
+    const publishedIds = new Set<string>();
+    socket.on("framesent", ({ payload }) => {
+      const [type, event] = JSON.parse(payload.toString()) as [
+        string,
+        {
+          id?: string;
+          content?: string;
+          pubkey?: string;
+          tags?: string[][];
+        },
+      ];
+      if (
+        type === "EVENT" &&
+        event.id &&
+        event.content === message &&
+        event.pubkey === TEST_IDENTITIES.tyler.pubkey &&
+        event.tags?.some((tag) => tag[0] === "h" && tag[1] === channelId)
+      ) {
+        publishedIds.add(event.id);
+      }
+    });
+    socket.on("framereceived", ({ payload }) => {
+      const [type, id, accepted, reason] = JSON.parse(
+        payload.toString(),
+      ) as unknown[];
+      if (type === "OK" && typeof id === "string" && publishedIds.has(id)) {
+        publishResult = { accepted: accepted === true, message: reason };
+      }
+    });
+  });
+  // Match the real channel-window live filter, not a history or presence REQ.
+  // EOSE proves the relay installed the receiver before this delivery test sends.
+  pageTwo.on("websocket", (socket) => {
+    const channelSubscriptions = new Set<string>();
+    socket.on("framesent", ({ payload }) => {
+      const frame = JSON.parse(payload.toString()) as unknown[];
+      const [type, id, ...filters] = frame;
+      if (typeof id !== "string") return;
+      if (type === "CLOSE") {
+        channelSubscriptions.delete(id);
+        readySubscriptions.delete(id);
+      }
+      if (type !== "REQ" || !id.startsWith("live-")) return;
+      const channelLive = filters.some((filter) => {
+        if (!filter || typeof filter !== "object") return false;
+        const value = filter as { kinds?: number[]; "#h"?: string[] };
+        return (
+          value.kinds?.includes(9) &&
+          value.kinds.includes(39005) &&
+          value["#h"]?.includes(channelId)
+        );
+      });
+      if (channelLive) channelSubscriptions.add(id);
+    });
+    socket.on("framereceived", ({ payload }) => {
+      const [type, id] = JSON.parse(payload.toString()) as unknown[];
+      if (typeof id !== "string" || !channelSubscriptions.has(id)) return;
+      if (type === "EOSE") readySubscriptions.add(id);
+      if (type === "CLOSED") readySubscriptions.delete(id);
+    });
+    socket.on("close", () => {
+      for (const id of channelSubscriptions) readySubscriptions.delete(id);
+    });
+  });
 
   try {
     await installRelayBridge(pageOne, "tyler");
@@ -244,8 +314,16 @@ test("message delivery across users", async ({
     await expect(pageOne.getByTestId("chat-title")).toHaveText("general");
     await expect(pageTwo.getByTestId("chat-title")).toHaveText("general");
 
+    await expect.poll(() => readySubscriptions.size).toBeGreaterThan(0);
     await pageOne.getByTestId("message-input").fill(message);
     await pageOne.getByTestId("send-message").click();
+    await expect
+      .poll(() => publishResult, {
+        message: "Relay acknowledges the exact cross-user message EVENT",
+        timeout: 10_000,
+      })
+      .not.toBeNull();
+    expect(publishResult).toMatchObject({ accepted: true });
 
     await expect(pageTwo.getByTestId("message-timeline")).toContainText(
       message,

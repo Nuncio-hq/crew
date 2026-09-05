@@ -1,5 +1,8 @@
 import { ProjectFileContentPanel } from "./ProjectFileContentPanel";
-import { consumePendingWikiFileOpen } from "@/features/wiki/lib/wikiFileOpenStore";
+import {
+  consumePendingWikiFileOpen,
+  peekPendingWikiFileOpen,
+} from "@/features/wiki/lib/wikiFileOpenStore";
 import {
   Braces,
   ChevronRight,
@@ -533,6 +536,8 @@ function BreadcrumbButton({
 
 export function RepositoryFilesPanel({
   files,
+  fileOpenRequestKey,
+  projectId,
   fileContentSource,
   initialPath,
   snapshot,
@@ -546,6 +551,10 @@ export function RepositoryFilesPanel({
   unavailableMessage,
 }: {
   files: ProjectRepoFile[];
+  /** Entity-link activation key; repeats must reapply the requested line range. */
+  fileOpenRequestKey?: string;
+  /** Repository coordinate used to scope pending Wiki citations. */
+  projectId?: string;
   fileContentSource?: RepositoryFileContentSource;
   initialPath?: string;
   snapshot: ProjectRepoSnapshot | null | undefined;
@@ -616,16 +625,17 @@ export function RepositoryFilesPanel({
     start: number;
     end: number;
   } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: every entity-link activation must reapply an unchanged file's range.
   React.useEffect(() => {
-    if (files.length === 0) return;
-    const pending = consumePendingWikiFileOpen();
+    if (!projectId || files.length === 0) return;
+    const pending = peekPendingWikiFileOpen(projectId);
     if (!pending) return;
     const file = files.find((item) => item.path === pending.path);
-    if (file) {
-      setSelectedFile(file);
-      setLineHighlight({ start: pending.startLine, end: pending.endLine });
-    }
-  }, [files, setSelectedFile]);
+    if (!file) return;
+    consumePendingWikiFileOpen(projectId);
+    setSelectedFile(file);
+    setLineHighlight({ start: pending.startLine, end: pending.endLine });
+  }, [files, fileOpenRequestKey, projectId, setSelectedFile]);
   const pathSegments = currentPath ? currentPath.split("/") : [];
 
   // Loading/error/empty states keep the header controls visible — the

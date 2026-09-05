@@ -405,11 +405,10 @@ test("regular message bolds inactive channel without numeric badge", async ({
 test("top-level @mention shows an accent-colored numeric badge on its channel", async ({
   page,
 }) => {
-  // The badge must follow the user's accent selection, not a fixed red.
-  // slack-ochin maps the generic destructive pair to white-on-white, so it
-  // doubles as an adversarial theme: the badge still renders the accent.
+  // The badge follows the applied theme accent. Crew chrome pins its blue
+  // even when an older stored accent remains in local settings.
   await page.addInitScript(() => {
-    window.localStorage.setItem("buzz-theme", "slack-ochin");
+    window.localStorage.setItem("buzz-theme", "crew-light");
     window.localStorage.setItem("buzz-accent-color", "#22c55e");
   });
   await page.goto("/");
@@ -465,8 +464,8 @@ test("top-level @mention shows an accent-colored numeric badge on its channel", 
   });
   expect(accentMatch.badgeBg).toBe(accentMatch.accentBg);
   expect(accentMatch.badgeFg).toBe(accentMatch.accentFg);
-  // Selected accent (#22c55e) actually landed — the badge is green here, not red.
-  expect(accentMatch.badgeBg).toBe("rgb(34, 197, 94)");
+  // The pinned Crew light accent remains applied despite the stored green.
+  expect(accentMatch.badgeBg).toBe("rgb(37, 99, 235)");
   const badgeContrast = await mentionBadge.evaluate((element) => {
     const parseRgb = (value: string) =>
       (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);

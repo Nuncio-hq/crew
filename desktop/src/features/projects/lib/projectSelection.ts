@@ -184,6 +184,32 @@ export function projectSelectionChannelCandidates(
     );
 }
 
+/** Pick a linked discussion destination from the caller's member channels. */
+export function projectDiscussionChannelId({
+  repositoryChannelId,
+  projectChannelId,
+  items,
+  memberChannelIds,
+}: {
+  repositoryChannelId?: string | null;
+  projectChannelId?: string | null;
+  items: ProjectSelectionItem[];
+  memberChannelIds: readonly string[];
+}): string | null {
+  const members = new Set(memberChannelIds);
+  const candidates = [
+    repositoryChannelId,
+    projectChannelId,
+    ...projectSelectionChannelCandidates(items).map(
+      ({ channelId }) => channelId,
+    ),
+  ];
+  return (
+    candidates.find((id): id is string => Boolean(id && members.has(id))) ??
+    null
+  );
+}
+
 export function projectSelectionDiscussContent(items: ProjectSelectionItem[]) {
   if (items.length === 0) return "";
   const kind = items[0]?.kind;

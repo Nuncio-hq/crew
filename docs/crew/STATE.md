@@ -1,19 +1,26 @@
 # Crew State
 
-## Buzz Desktop 0.5.22 — local and browser gates passed, remote gates pending
+## Buzz Desktop 0.5.22 — PR open, local browser repairs verified, new-head checks pending
 
 The working branch integrates released source through `desktop-v0.5.22`
 (`9ceb1f79bbc21785a0a075c40aecb3c058b1ea15`). All 191 source dispositions are
 accounted for. Local `just ci`, dependency policy and required integration lanes
-passed. Final desktop rerun: 6996 passed, one skipped; Tauri: 3431 passed,
+passed. Latest desktop rerun: 7012 passed, one skipped; Tauri: 3431 passed,
 19 ignored; mobile: 2086 passed. Full integration: 126 DB, 379 isolated PostgreSQL and 314 workspace
 integration tests passed; counts overlap across lanes.
 
 Integration fixes include the PR comment refresh loop, member provenance visibility,
 narrow tool-pane sizing and hard-top wheel pagination. Final clean-bundle release
 smoke passed 3/3: all 10,000 ids with exact hash, 199 continuations, maximum 164
-mounted rows, zero duplicates/order errors/render-pending timeouts. The PR and
-remote NuncioCrew/manual-sync gates have not yet run; no merge, release, deployment or hosted-provider success is claimed.
+mounted rows, zero duplicates/order errors/render-pending timeouts. [PR #342](https://github.com/Nuncio-hq/crew/pull/342) is open. The [NuncioCrew Gate job](https://github.com/Nuncio-hq/crew/actions/runs/33957899436/job/101285891754) and [manual sync workflow](https://github.com/Nuncio-hq/crew/actions/runs/33957896571) passed on `7b58b8d2d454e5506332f093946689db0247e99d`; the encompassing CI run was cancelled after browser failures. Subsequent browser repairs still require checks on their new head. No merge, release, deployment or hosted-provider success is claimed.
+
+Final local repairs passed: huddle 24/24, real-relay browser 17/17 in 22.4s,
+full Projects 8/8 in 23.5s,
+channel selection 13 and mounted guard four. Channel membership must be known
+and accessible before discussion can navigate or write a draft. Real relay
+tests wait for receiver EOSE and sender WebSocket acceptance. New-head remote
+checks remain pending. Final source-freeze checks (all guards), TypeScript
+and diff checks passed.
 
 Crew keeps channel-first navigation, one agent across independent thread UUIDs,
 resume-first sessions, Hermes profile ownership, text-only zoom, theme identity,

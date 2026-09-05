@@ -102,7 +102,7 @@ for (const agentListDelayMs of [0, 6_000]) {
     await page.getByTestId("channel-members-trigger").click();
     const members = page.getByTestId("members-sidebar");
     const memberMarker = page.getByTestId(
-      `sidebar-member-agent-provenance-${REMOTE}`,
+      `sidebar-member-other-setup-${REMOTE}`,
     );
     await expect(memberMarker).toHaveAttribute("aria-label", LABEL);
     await expect(memberMarker.locator("svg.lucide-cloud")).toBeVisible();

@@ -1,3 +1,6 @@
+import { extractCrewSubmittedAgentContext } from "@/features/projects/lib/project-view-agent-context";
+import { ProjectAgentSubmittedContextPill } from "@/features/projects/ui/ProjectAgentSubmittedContextPill";
+import { normalizePubkey } from "@/shared/lib/pubkey";
 import { toast } from "sonner";
 
 import { editMessage } from "@/shared/api/tauri";
@@ -100,34 +103,49 @@ export function MessageRowDefaultBody({
     ? parseVideoReviewTimecode(message.body)
     : null;
 
+  const signedByCurrentUser =
+    Boolean(currentPubkey) &&
+    normalizePubkey(message.signerPubkey ?? message.pubkey ?? "") ===
+      normalizePubkey(currentPubkey ?? "");
+  const submittedContext = signedByCurrentUser
+    ? extractCrewSubmittedAgentContext(message.body)
+    : null;
   const markdown = (
-    <Markdown
-      channelNames={channelNames}
-      className={cn(
-        "max-w-full text-sm",
-        emojiOnly &&
-          "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
-      )}
-      configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
-        message,
-        isKnownAgentPubkey,
-      )}
-      content={reviewTimecode?.text ?? message.body}
-      messageId={message.id}
-      linkPreviewsSuppressed={linkPreviewsSuppressed}
-      linkPreviewTags={message.tags}
-      leadingInlineContent={leadingInlineContent}
-      onRemoveLinkPreviewsForEveryone={removeLinkPreviewsForEveryone}
-      customEmoji={customEmoji}
-      imetaByUrl={imetaByUrl}
-      agentMentionPubkeysByName={agentMentionPubkeysByName}
-      agentMentionAvatarsByName={agentMentionAvatarsByName}
-      mentionNames={mentionNames}
-      mentionPubkeysByName={mentionPubkeysByName}
-      searchQuery={searchQuery}
-      snapshotSharedBy={snapshotSharedBy}
-      videoReviewContext={videoReviewContext}
-    />
+    <>
+      {submittedContext ? (
+        <ProjectAgentSubmittedContextPill
+          className="pl-0"
+          payload={submittedContext}
+        />
+      ) : null}
+      <Markdown
+        channelNames={channelNames}
+        className={cn(
+          "max-w-full text-sm",
+          emojiOnly &&
+            "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
+        )}
+        configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
+          message,
+          isKnownAgentPubkey,
+        )}
+        content={reviewTimecode?.text ?? message.body}
+        messageId={message.id}
+        linkPreviewsSuppressed={linkPreviewsSuppressed}
+        linkPreviewTags={message.tags}
+        leadingInlineContent={leadingInlineContent}
+        onRemoveLinkPreviewsForEveryone={removeLinkPreviewsForEveryone}
+        customEmoji={customEmoji}
+        imetaByUrl={imetaByUrl}
+        agentMentionPubkeysByName={agentMentionPubkeysByName}
+        agentMentionAvatarsByName={agentMentionAvatarsByName}
+        mentionNames={mentionNames}
+        mentionPubkeysByName={mentionPubkeysByName}
+        searchQuery={searchQuery}
+        snapshotSharedBy={snapshotSharedBy}
+        videoReviewContext={videoReviewContext}
+      />
+    </>
   );
 
   // Dispatch order is a Crew/upstream seam: crew-evidence → handover →

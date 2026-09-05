@@ -8,6 +8,7 @@ import { appendProjectChannelAgentContext } from "./lib/project-channel-agent-co
 import {
   appendCrewViewAgentContext,
   boundedCrewViewSelection,
+  extractCrewSubmittedAgentContext,
   MAX_VIEW_CONTEXT_CHARS,
   MAX_VIEW_SELECTION_ITEMS,
 } from "./lib/project-view-agent-context.ts";
@@ -170,4 +171,78 @@ test("view context lines are ignored by the ACP thread label filter", () => {
     )
     .at(0);
   assert.equal(label, "@agent hi");
+});
+
+test("submitted context preserves exact generated workspace and view prefixes", () => {
+  const message = "@agent inspect the workspace\n\nKeep this paragraph.";
+  const workspace = appendProjectChannelAgentContext(message, {
+    status: "ready",
+    repoAddress: REPO_ADDRESS,
+    localPath: LOCAL_PATH,
+    workspaceMode: "git",
+  });
+  const viewOnly = appendCrewViewAgentContext(message, viewContext());
+  const combined = appendCrewViewAgentContext(workspace, viewContext());
+  for (const content of [workspace, viewOnly, combined]) {
+    const before = content;
+    const payload = extractCrewSubmittedAgentContext(content);
+    assert.equal(payload, content.slice(0, -message.length - 2));
+    assert.equal(`${payload}\n\n${message}`, before);
+    const visible = renderToStaticMarkup(
+      React.createElement(ReactMarkdown, null, content),
+    );
+    assert.doesNotMatch(
+      visible,
+      /Source workspace|Current Crew|untrusted workspace metadata/,
+    );
+    assert.match(visible, /Keep this paragraph/);
+  }
+});
+
+test("submitted context does not classify prose, fenced examples, or reference lookalikes", () => {
+  const generated = appendCrewViewAgentContext("@agent inspect", viewContext());
+  for (const content of [
+    "Ordinary user message",
+    `Documentation example:\n\n${generated}`,
+    `\`\`\`markdown\n${generated}\n\`\`\``,
+    `    ${generated}`,
+    generated.replace(/buzz-view-context-[^\]]+/, "reference"),
+    generated.replace(
+      /buzz-view-context-[^\]]+/,
+      "buzz-view-context-not-a-uuid",
+    ),
+    generated.replace("buzz://project-workspace-view?", "https://example.com?"),
+    generated.replace(
+      "buzz://project-workspace-view?",
+      "buzz://project-workspace?",
+    ),
+    generated.replace("scope=thread", "scope=unknown"),
+    generated.replace("\n\n", "\n"),
+  ]) {
+    assert.equal(extractCrewSubmittedAgentContext(content), null, content);
+  }
+});
+
+test("submitted context preserves escaped metadata and stops before user references", () => {
+  const message =
+    '[ordinary]: <https://example.com> "Reference"\n\n@agent inspect';
+  const generated = appendCrewViewAgentContext(
+    message,
+    viewContext({
+      view: 'Thread "quoted" \\ name',
+    }),
+  );
+  const payload = extractCrewSubmittedAgentContext(generated);
+  assert.equal(payload, generated.slice(0, -message.length - 2));
+  assert.ok(payload.includes('\\"quoted\\"'));
+  assert.ok(!payload.includes("[ordinary]"));
+});
+
+test("submitted context reads at most one definition of each generated kind", () => {
+  const original = appendCrewViewAgentContext("@agent inspect", viewContext());
+  const double = appendCrewViewAgentContext(original, viewContext());
+  assert.equal(
+    extractCrewSubmittedAgentContext(double),
+    double.split("\n\n")[0],
+  );
 });

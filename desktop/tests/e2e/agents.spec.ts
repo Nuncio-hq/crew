@@ -1,5 +1,5 @@
 import { hexToBytes } from "@noble/hashes/utils.js";
-import { finalizeEvent } from "nostr-tools/pure";
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { expect, test } from "@playwright/test";
 
 import type { RelayEvent } from "@/shared/api/types";
@@ -647,22 +647,30 @@ test("team cards use the thread-style overlapping avatar stack", async ({
       };
     }),
   );
+  const cardBackground = await stack.evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.className = "bg-card";
+    element.append(probe);
+    const color = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return color;
+  });
   expect(overlapStyles).toEqual([
     {
       maskImage: "none",
-      outlineBackground: "rgb(255, 255, 255)",
+      outlineBackground: cardBackground,
       outlineBorderRadius: "calc(30% + 2px)",
       outlineInset: "-2px",
     },
     {
       maskImage: "none",
-      outlineBackground: "rgb(255, 255, 255)",
+      outlineBackground: cardBackground,
       outlineBorderRadius: "calc(30% + 2px)",
       outlineInset: "-2px",
     },
     {
       maskImage: "none",
-      outlineBackground: "rgb(255, 255, 255)",
+      outlineBackground: cardBackground,
       outlineBorderRadius: "calc(30% + 2px)",
       outlineInset: "-2px",
     },
@@ -784,18 +792,24 @@ test("moves agent actions into an overflow menu in a narrow view", async ({
   await gotoApp(page);
   await page.getByTestId("open-agents-view").click();
   await page.getByTestId("agents-page-content").evaluate((element) => {
-    (element as HTMLElement).style.width = "650px";
+    (element as HTMLElement).style.width = "800px";
   });
 
   await expect(page.getByTestId("agent-defaults-button")).toBeVisible();
+  await expect(
+    page.getByTestId("hermes-profile-archives-button"),
+  ).toBeVisible();
   await expect(
     page.getByText("Set up and manage your agents.", { exact: true }),
   ).toHaveJSProperty("scrollHeight", 24);
 
   await page.getByTestId("agents-page-content").evaluate((element) => {
-    (element as HTMLElement).style.width = "600px";
+    (element as HTMLElement).style.width = "650px";
   });
   await expect(page.getByTestId("agent-defaults-button")).toBeHidden();
+  await expect(
+    page.getByText("Set up and manage your agents.", { exact: true }),
+  ).toHaveJSProperty("scrollHeight", 24);
   await page.getByTestId("agent-actions-menu-trigger").click();
   await expect(
     page.getByRole("menuitem", { name: "Set agent defaults" }),
@@ -804,13 +818,19 @@ test("moves agent actions into an overflow menu in a narrow view", async ({
     page.getByRole("menuitem", { name: "Stop running agents" }),
   ).toBeVisible();
 
+  await expect(
+    page.getByRole("menuitem", { name: "Archived Hermes profiles" }),
+  ).toBeVisible();
   await page.getByRole("menuitem", { name: "Set agent defaults" }).click();
   await expect(page.getByTestId("agent-ai-defaults-dialog")).toBeVisible();
 
   await page.getByTestId("agents-page-content").evaluate((element) => {
-    (element as HTMLElement).style.width = "650px";
+    (element as HTMLElement).style.width = "800px";
   });
   await expect(page.getByTestId("agent-defaults-button")).toBeVisible();
+  await expect(
+    page.getByTestId("hermes-profile-archives-button"),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("agent-ai-defaults-dialog")).toHaveCount(0);
   await expect(page.getByTestId("agent-defaults-button")).toBeFocused();
@@ -1635,7 +1655,9 @@ This deliberately long fenced-code example must not establish the minimum width 
       (element) => element.scrollWidth - element.clientWidth,
     ),
   ).toBeLessThanOrEqual(1);
-  const catalogInstruction = catalogDetailPane.locator(".message-markdown");
+  const catalogInstruction = catalogDetailPane.getByTestId(
+    "persona-catalog-exact-instructions",
+  );
   expect(
     await catalogInstruction.evaluate(
       (element) => element.scrollWidth - element.clientWidth,
@@ -1964,13 +1986,14 @@ test("catalog detail shows Community member when the publisher profile cannot be
 }) => {
   // A pubkey that is not in the mock profile registry — profile resolution
   // will fail and the detail pane must fall back gracefully.
-  const unknownPubkey =
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const unknownPrivateKey = "8".repeat(64);
+  const unknownPubkey = getPublicKey(hexToBytes(unknownPrivateKey));
   const personaId = "unresolvable-reviewer";
   await installMockBridge(page, {
     personaCatalogEvents: [
       createCatalogEvent({
         ownerPubkey: unknownPubkey,
+        ownerPrivateKey: unknownPrivateKey,
         sourcePersonaId: personaId,
         displayName: "Mystery Agent",
         systemPrompt: "Published by someone whose profile cannot be fetched.",
@@ -2700,7 +2723,7 @@ test("start pill morphs into the running dot without remounting the avatar", asy
     "Motion Auditor: Offline",
   );
   await expect(availabilityDot.locator("xpath=../..")).not.toHaveClass(
-    /bg-emerald-500/,
+    /bg-success/,
   );
   await expect
     .poll(() =>
@@ -2723,7 +2746,7 @@ test("start pill morphs into the running dot without remounting the avatar", asy
   );
   await expect(
     page.getByTestId(`agent-runtime-active-${pubkey}`).locator("xpath=../.."),
-  ).toHaveClass(/bg-emerald-500/);
+  ).toHaveClass(/bg-success/);
   expect(
     await initialAvatar?.evaluate(
       (before, after) => before === after,

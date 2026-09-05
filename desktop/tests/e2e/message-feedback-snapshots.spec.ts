@@ -94,22 +94,24 @@ test("pending continuation keeps Sending next to its timestamp", async ({
   await pendingRow.screenshot({ path: `${SHOTS}/pending-message-inline.png` });
 });
 
-test("profile hover uses the channel hover surface", async ({ page }) => {
+test("profile hover uses the sidebar action hover surface", async ({
+  page,
+}) => {
   await installMockBridge(page);
   await page.goto("/");
 
   const profile = page.getByTestId("sidebar-profile-card");
-  const channel = page.getByTestId("channel-random");
-  await channel.hover();
+  const sidebarAction = page.locator(".sidebar-section-action").first();
+  await sidebarAction.hover();
   // Wait for the CSS transition to settle before capturing the hover color so
   // a mid-transition sample does not produce a value the profile card (which
   // uses the same token) can never match.
   await waitForAnimations(page);
-  const channelHoverColor = await channel.evaluate(
+  const actionHoverColor = await sidebarAction.evaluate(
     (element) => getComputedStyle(element).backgroundColor,
   );
   await profile.hover();
-  await expect(profile).toHaveCSS("background-color", channelHoverColor);
+  await expect(profile).toHaveCSS("background-color", actionHoverColor);
 
   await waitForAnimations(page);
   await page

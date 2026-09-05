@@ -709,7 +709,7 @@ test("right-clicking selected composer text hides the selection formatter", asyn
   await expect(tray).toBeVisible();
 });
 
-test("Buzz theme uses the primary color for the selection formatter", async ({
+test("selection formatter uses the shared popover surface", async ({
   page,
 }) => {
   await openGeneral(page);
@@ -722,8 +722,8 @@ test("Buzz theme uses the primary color for the selection formatter", async ({
 
   const colors = await tray.evaluate((element) => {
     const probe = document.createElement("span");
-    probe.style.backgroundColor = "hsl(var(--primary))";
-    probe.style.color = "hsl(var(--primary-foreground))";
+    probe.style.backgroundColor = "hsl(var(--popover))";
+    probe.style.color = "hsl(var(--popover-foreground))";
     document.body.appendChild(probe);
     const probeStyles = getComputedStyle(probe);
     const trayStyles = getComputedStyle(element);

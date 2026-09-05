@@ -4,7 +4,7 @@
  * Exercises the two visible surfaces where friendly error copy appears:
  *   - Agent card avatar badge (CircleAlert icon + tooltip) for stopped agents
  *     with a lastError / lastErrorCode and explicit Offline presence.
- *   - Online/Away presence taking precedence over a stopped record's error.
+ *   - Online/Away presence from other workers preserving a stopped runtime error.
  *
  * ManagedAgentRow (StatusBlock text) is also exercised here even though it is
  * not yet wired into a reachable route in the main app — it will be connected
@@ -181,7 +181,9 @@ test.describe("agent error state screenshots", () => {
     });
   });
 
-  test("04-positive-presence-supersedes-stopped-errors", async ({ page }) => {
+  test("04-positive-presence-keeps-stopped-runtime-errors", async ({
+    page,
+  }) => {
     await installMockBridge(page, {
       managedAgents: [MODEL_NOT_FOUND_AGENT, GENERIC_ERROR_AGENT],
     });
@@ -193,23 +195,40 @@ test.describe("agent error state screenshots", () => {
       [MODEL_NOT_FOUND_AGENT, "Online"],
       [GENERIC_ERROR_AGENT, "Away"],
     ] as const) {
-      const presence = page.getByTestId(`agent-runtime-active-${agent.pubkey}`);
-      await expect(presence).toBeVisible();
-      await expect(presence).toHaveAttribute("role", "img");
-      await expect(presence).toHaveAttribute(
-        "aria-label",
-        `${agent.name}: ${label}`,
+      const directMessage = page.getByTestId(
+        agent === MODEL_NOT_FOUND_AGENT
+          ? "channel-alice-tyler"
+          : "channel-bob-tyler",
       );
       await expect(
-        page.getByTestId(`agent-runtime-error-${agent.pubkey}`),
+        directMessage.getByRole("img", { name: label, exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByTestId(`agent-runtime-active-${agent.pubkey}`),
       ).toHaveCount(0);
+      const error = page.getByTestId(`agent-runtime-error-${agent.pubkey}`);
+      await expect(error).toBeVisible();
+      await expect(error).toHaveAccessibleName(
+        `${agent.name} has a runtime error. Open runtime details.`,
+      );
+      await error.click();
+      const profile = page.getByTestId("user-profile-panel");
+      await expect(profile).toBeVisible();
+      await expect(profile).toContainText(agent.name);
+      await expect(
+        profile.getByRole("tab", { name: "Runtime", exact: true }),
+      ).toHaveAttribute("aria-selected", "true");
+      await profile
+        .getByRole("button", { name: "Close panel", exact: true })
+        .click();
+      await expect(profile).toBeHidden();
       await expect(
         page.getByTestId(`agent-runtime-start-${agent.pubkey}`),
       ).toHaveCount(0);
     }
     await waitForAnimations(page);
     await page.getByTestId("agents-library-personas").screenshot({
-      path: `${SHOTS}/04-positive-presence-supersedes-stopped-errors.png`,
+      path: `${SHOTS}/04-positive-presence-keeps-stopped-runtime-errors.png`,
     });
   });
 });

@@ -61,6 +61,7 @@ export function ProjectRightPanelControls({
   onExpand,
   onModeChange,
   terminalAvailable,
+  repositoryOnly = false,
 }: {
   collapsed: boolean;
   mode: ProjectRightPanelMode;
@@ -68,6 +69,7 @@ export function ProjectRightPanelControls({
   onExpand: () => void;
   onModeChange: (mode: ProjectRightPanelMode) => void;
   terminalAvailable: boolean;
+  repositoryOnly?: boolean;
 }) {
   const terminalPanel = useTerminalPanel();
   const terminalOpen = terminalPanel.mode !== "closed";
@@ -96,13 +98,15 @@ export function ProjectRightPanelControls({
           open={terminalOpen}
         />
       </Button>
-      <ProjectChatPanelControl
-        collapsed={collapsed}
-        mode={mode}
-        onCollapse={onCollapse}
-        onExpand={onExpand}
-        onModeChange={onModeChange}
-      />
+      {!repositoryOnly && (
+        <ProjectChatPanelControl
+          collapsed={collapsed}
+          mode={mode}
+          onCollapse={onCollapse}
+          onExpand={onExpand}
+          onModeChange={onModeChange}
+        />
+      )}
       <Button
         aria-label={
           repositoryOpen ? "Hide project context" : "Show project context"

@@ -184,6 +184,26 @@ async function waitForMockLiveSubscription(
     .toBe(true);
 }
 
+async function emitProfileMessage(page: Page, pubkey: string, content: string) {
+  await waitForMockLiveSubscription(page, "agents");
+  await page.evaluate(
+    ({ pubkey, content }) => {
+      const emit = (
+        window as Window & {
+          __BUZZ_E2E_EMIT_MOCK_MESSAGE__?: (input: {
+            channelName: string;
+            content: string;
+            pubkey: string;
+          }) => unknown;
+        }
+      ).__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+      if (!emit) throw new Error("Mock message emitter is unavailable.");
+      emit({ channelName: "agents", content, pubkey });
+    },
+    { pubkey, content },
+  );
+}
+
 test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
 });
@@ -1263,12 +1283,12 @@ test("renders agent profile ingress subviews from the Playwright mock bridge", a
     page
       .getByTestId("user-profile-public-key")
       .locator('[data-slot="profile-field-icon"]'),
-  ).toHaveCount(0);
+  ).toHaveCount(1);
   await expect(
     page
       .getByTestId("user-profile-managed-by")
       .locator('[data-slot="profile-field-icon"]'),
-  ).toHaveCount(0);
+  ).toHaveCount(1);
   const managedByRow = page.getByTestId("user-profile-managed-by");
   const managedByActionIndicator = page.getByTestId(
     "user-profile-managed-by-action-indicator",
@@ -1683,7 +1703,15 @@ test("an older agent message stays exact while persona navigation selects the li
   await page.getByTestId("user-profile-instances").click();
   await page.getByTestId(`user-profile-instance-${historicalPubkey}`).click();
   await expectHashSearchParam(page, "profile", historicalPubkey);
-  await expectHashSearchParam(page, "profileTab", "runtime");
+  await expectHashSearchParam(page, "profileTab", null);
+  await page.getByTestId("user-profile-tab-runtime").click();
+  if (
+    (await page
+      .getByTestId("user-profile-instances")
+      .getAttribute("aria-expanded")) !== "true"
+  ) {
+    await page.getByTestId("user-profile-instances").click();
+  }
   await expect(
     page.getByTestId("user-profile-agent-primary-action"),
   ).toHaveAttribute("aria-label", "Start agent");
@@ -1762,12 +1790,21 @@ test("restored Inbox deep link hides the back arrow", async ({ page }) => {
 test("declared owner sees runtime tab for a remote relay agent", async ({
   page,
 }) => {
+  const pubkey = "7".repeat(64);
   await installMockBridge(page, {
+    searchProfiles: [
+      {
+        pubkey,
+        displayName: "Remote owner agent",
+        isAgent: true,
+        ownerPubkey: "deadbeef".repeat(8),
+      },
+    ],
     relayAgents: [
       {
-        pubkey:
-          "a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00",
-        name: "nadia",
+        pubkey,
+        ownerPubkey: "deadbeef".repeat(8),
+        name: "Remote owner agent",
         agentType: "goose",
         capabilities: ["search", "summaries"],
         channelNames: ["agents"],
@@ -1780,8 +1817,9 @@ test("declared owner sees runtime tab for a remote relay agent", async ({
   await page.getByTestId("channel-agents").click();
   await expect(page.getByTestId("chat-title")).toHaveText("agents");
 
+  await emitProfileMessage(page, pubkey, "Remote owner fixture");
   const messageRow = page.getByTestId("message-row").filter({
-    has: page.getByText("Indexing remotely for my owner."),
+    has: page.getByText("Remote owner fixture"),
   });
   await expect(messageRow.first()).toBeVisible({ timeout: 5_000 });
   await messageRow.first().getByRole("button").first().click();
@@ -1817,8 +1855,13 @@ test("declared owner sees runtime tab without a relay-agent record", async ({
   await page.getByTestId("channel-agents").click();
   await expect(page.getByTestId("chat-title")).toHaveText("agents");
 
+  await emitProfileMessage(
+    page,
+    "8f83d6b7f3d74f7d933ae3a54dd8c6cc85c7f98e531c16e5a827b953441a8d67",
+    "Profile only owner fixture",
+  );
   const messageRow = page.getByTestId("message-row").filter({
-    has: page.getByText("Indexing remotely for my owner."),
+    has: page.getByText("Profile only owner fixture"),
   });
   await expect(messageRow.first()).toBeVisible({ timeout: 5_000 });
   await messageRow.first().getByRole("button").first().click();
@@ -2009,7 +2052,7 @@ test("notification settings drive the Inbox badge and desktop alerts", async ({
       pubkey:
         "bb22a5299220cad76ffd46190ccbeede8ab5dc260faa28b6e5a2cb31b9aff260",
       tags: [
-        ["e", "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9"],
+        ["h", "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9"],
         [
           "p",
           "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
@@ -2068,10 +2111,49 @@ test("notification settings drive the Inbox badge and desktop alerts", async ({
     "Please review the rollout checklist.",
   );
 
+  await expect(page.getByTestId("sidebar-home-count")).toHaveCount(0);
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await page.evaluate(() => {
+    const win = window as Window & {
+      __BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
+        category: "mention" | "needs_action" | "activity" | "agent_activity";
+        channel_id: string | null;
+        channel_name: string;
+        content: string;
+        created_at: number;
+        id: string;
+        kind: number;
+        pubkey: string;
+        tags: string[][];
+      }) => unknown;
+    };
+
+    win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?.({
+      category: "mention",
+      channel_id: "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9",
+      channel_name: "engineering",
+      content: "Another unread request for badge preferences.",
+      created_at: Math.floor(Date.now() / 1000) + 60,
+      id: `mock-feed-badge-preferences-${Date.now()}`,
+      kind: 9,
+      pubkey:
+        "bb22a5299220cad76ffd46190ccbeede8ab5dc260faa28b6e5a2cb31b9aff260",
+      tags: [
+        ["h", "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9"],
+        [
+          "p",
+          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        ],
+      ],
+    });
+  });
+  await expect(page.getByTestId("sidebar-home-count")).toHaveText("1");
+
   await openSettings(page, "notifications");
   await page.getByTestId("notifications-home-badge-toggle").click();
   await page.getByTestId("settings-back-to-app").click();
-  await expect(page.getByTestId("chat-title")).toHaveText("engineering");
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(page.getByTestId("sidebar-home-count")).toHaveCount(0);
   await expect.poll(getAppBadgeCount).toBe(baseline);
 
@@ -2246,6 +2328,11 @@ test("supports webview zoom keyboard shortcuts", async ({ page }) => {
 
   const getTextScaleState = () =>
     page.evaluate(() => ({
+      typeRemPx: Number.parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue(
+          "--buzz-type-rem",
+        ),
+      ),
       rootFontSize: getComputedStyle(document.documentElement).fontSize,
       storedScale: localStorage.getItem("buzz:text-scale"),
       webviewZoom: (window as Window & { __BUZZ_E2E_WEBVIEW_ZOOM__?: number })
@@ -2277,7 +2364,8 @@ test("supports webview zoom keyboard shortcuts", async ({ page }) => {
   await dispatchPrimaryShortcut("+", "Equal", true);
 
   await expect.poll(getTextScaleState).toEqual({
-    rootFontSize: "17.6px",
+    rootFontSize: "16px",
+    typeRemPx: 17.6,
     storedScale: "1.1",
     webviewZoom: 1,
   });
@@ -2286,6 +2374,7 @@ test("supports webview zoom keyboard shortcuts", async ({ page }) => {
 
   await expect.poll(getTextScaleState).toEqual({
     rootFontSize: "16px",
+    typeRemPx: 16,
     storedScale: null,
     webviewZoom: 1,
   });
@@ -2294,7 +2383,8 @@ test("supports webview zoom keyboard shortcuts", async ({ page }) => {
   await dispatchPrimaryShortcut("+", "Equal", true);
 
   await expect.poll(getTextScaleState).toEqual({
-    rootFontSize: "19.2px",
+    rootFontSize: "16px",
+    typeRemPx: 19.2,
     storedScale: "1.2",
     webviewZoom: 1,
   });
@@ -2303,6 +2393,7 @@ test("supports webview zoom keyboard shortcuts", async ({ page }) => {
 
   await expect.poll(getTextScaleState).toEqual({
     rootFontSize: "16px",
+    typeRemPx: 16,
     storedScale: null,
     webviewZoom: 1,
   });
@@ -2336,9 +2427,8 @@ test("storage clear resets composed font size and keyboard zoom across windows",
     await dispatchZoomIn();
   }
 
-  // Zoom scales the real root; the Font size preference layers a text-only
-  // multiplier on top. Resolve the composed type rem through a rendered probe
-  // so the CSS calc is actually evaluated (root px × 15/14 for "larger").
+  // Zoom and font preference compose in the virtual type rem while real rem
+  // layout stays fixed. Resolve the type size through a rendered probe.
   const readTypographyState = () =>
     page.evaluate(() => {
       const probe = document.createElement("span");
@@ -2358,7 +2448,7 @@ test("storage clear resets composed font size and keyboard zoom across windows",
 
   await expect.poll(readTypographyState).toEqual({
     fontSize: "larger",
-    rootFontSize: "24px",
+    rootFontSize: "16px",
     typeRemPx: 25.71,
     textScale: "1.5",
   });
@@ -2380,7 +2470,7 @@ test("storage clear resets composed font size and keyboard zoom across windows",
   );
   await expect.poll(readTypographyState).toEqual({
     fontSize: "default",
-    rootFontSize: "14.4px",
+    rootFontSize: "16px",
     typeRemPx: 14.4,
     textScale: "0.9",
   });
@@ -2405,8 +2495,11 @@ test("shows agent runtimes in agent settings", async ({ page }) => {
   ]) {
     const section = agentsPage.getByTestId(testId);
     await expect(section).toBeVisible();
-    await expect(section).toHaveCSS("border-radius", "12px");
-    await expect(section).toHaveCSS("border-top-width", "1px");
+    const surface = section
+      .locator('[data-slot="settings-section-card"]')
+      .first();
+    await expect(surface).toHaveCSS("border-radius", "12px");
+    await expect(surface).toHaveCSS("border-top-width", "1px");
   }
 
   await expect(
@@ -2432,10 +2525,8 @@ test("shows agent runtimes in agent settings", async ({ page }) => {
     .evaluate((element) => getComputedStyle(element).color);
   await page.getByTestId("settings-nav-appearance").click();
   const appearanceSecondaryColor = await page
-    .getByTestId("link-preview-style-trigger")
-    .locator("..")
-    .locator("p")
-    .nth(1)
+    .getByTestId("font-size-row")
+    .locator("[data-settings-subcopy]")
     .evaluate((element) => getComputedStyle(element).color);
   expect(agentsSecondaryColor).toBe(appearanceSecondaryColor);
 });

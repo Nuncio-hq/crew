@@ -760,6 +760,7 @@ type E2eConfig = {
 
     /** Override the repository access channel for project authorization states. */
     projectAccessChannelId?: string;
+    projectHomeChannelId?: string;
     /** Make remote project snapshots fail with this git-facing message. */
     projectRepoSnapshotError?: string;
     /** Delay remote repository snapshots so project loading UI is observable. */
@@ -4348,6 +4349,7 @@ function parseWorkflowDefinitionSoft(
 /** Build the WorkflowWire record Rust returns from create/update inputs. */
 function workflowWireRecord(args: {
   id: string;
+  revision: string;
   channelId: string | null;
   ownerPubkey: string;
   yamlDefinition: string;
@@ -4359,7 +4361,7 @@ function workflowWireRecord(args: {
     typeof definition.name === "string" ? definition.name.trim() : "";
   return {
     id: args.id,
-    revision: `mock-revision-${args.id}-${args.updatedAt}`,
+    revision: args.revision,
     name: nameCandidate.length > 0 ? nameCandidate : args.id,
     owner_pubkey: args.ownerPubkey,
     channel_id: args.channelId,
@@ -4434,6 +4436,7 @@ async function handleCreateWorkflow(
     const now = Math.floor(Date.now() / 1000);
     const workflow = workflowWireRecord({
       id: workflowId,
+      revision: result.event_id,
       channelId: args.channelId,
       ownerPubkey: identity.pubkey,
       yamlDefinition: args.yamlDefinition,
@@ -4502,21 +4505,28 @@ async function handleUpdateWorkflow(
     if (!priorEvent) {
       throw new Error("workflow not found");
     }
+    if (priorEvent.id !== args.expectedRevision) {
+      throw new Error(
+        "workflow changed since it was loaded; refresh and try again",
+      );
+    }
     const channelId = priorEvent.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channelId) {
       throw new Error("workflow not found");
     }
-    await submitSignedEvent(config, {
+    const result = await submitSignedEvent(config, {
       kind: KIND_WORKFLOW_DEFINITION,
       content: args.yamlDefinition,
       tags: [
         ["d", args.workflowId],
         ["h", channelId],
+        ["expected-revision", args.expectedRevision],
       ],
     });
     const updatedAt = Math.floor(Date.now() / 1000);
     const workflow = workflowWireRecord({
       id: args.workflowId,
+      revision: result.event_id,
       channelId,
       ownerPubkey: identity.pubkey,
       yamlDefinition: args.yamlDefinition,
@@ -6798,7 +6808,8 @@ function buildMockProjectEvents(): RelayEvent[] {
           ["a", `${KIND_REPO_ANNOUNCEMENT}:${ALICE_PUBKEY}:relay-tools`],
           [
             "buzz-channel",
-            getConfig()?.mock?.projectAccessChannelId ??
+            getConfig()?.mock?.projectHomeChannelId ??
+              getConfig()?.mock?.projectAccessChannelId ??
               STARTER_PROJECT_HOME_CHANNEL_ID,
           ],
           ["buzz-related-channel", "9dae0116-799b-5071-a0a8-fdd30a91a35d"],
@@ -14034,6 +14045,17 @@ export function maybeInstallE2eTauriMocks() {
       case "close_thread_pull_request":
         return { status: "completed", message: "Completed." };
       case "get_project_repo_snapshot":
+        if (activeConfig?.mock?.projectRepoSnapshotDelayMs) {
+          await new Promise((resolve) =>
+            window.setTimeout(
+              resolve,
+              activeConfig.mock?.projectRepoSnapshotDelayMs,
+            ),
+          );
+        }
+        if (activeConfig?.mock?.projectRepoSnapshotError) {
+          throw new Error(activeConfig.mock.projectRepoSnapshotError);
+        }
         return {
           latest_commit: {
             hash: "0123456789abcdef0123456789abcdef01234567",

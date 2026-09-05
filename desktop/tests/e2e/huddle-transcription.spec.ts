@@ -292,24 +292,29 @@ test("records silent huddle replies without broadcasting live summaries", async 
 
       const liveEvents: Array<{ id: string; kind: number }> = [];
       const socketId = (await invoke("plugin:websocket|connect", {
-        onMessage(message: unknown) {
-          if (
-            typeof message !== "object" ||
-            message === null ||
-            !("type" in message) ||
-            message.type !== "Text" ||
-            !("data" in message) ||
-            typeof message.data !== "string"
-          ) {
-            return;
-          }
-          const frame = JSON.parse(message.data) as [
-            string,
-            string,
-            { id: string; kind: number }?,
-          ];
-          if (frame[0] === "EVENT" && frame[2]) {
-            liveEvents.push({ id: frame[2].id, kind: frame[2].kind });
+        onMessage(batch: unknown) {
+          // Native websocket IPC delivers batches, including single-frame batches.
+          if (!Array.isArray(batch))
+            throw new Error("Expected a websocket frame batch.");
+          for (const message of batch) {
+            if (
+              typeof message !== "object" ||
+              message === null ||
+              !("type" in message) ||
+              message.type !== "Text" ||
+              !("data" in message) ||
+              typeof message.data !== "string"
+            ) {
+              continue;
+            }
+            const frame = JSON.parse(message.data) as [
+              string,
+              string,
+              { id: string; kind: number }?,
+            ];
+            if (frame[0] === "EVENT" && frame[2]) {
+              liveEvents.push({ id: frame[2].id, kind: frame[2].kind });
+            }
           }
         },
       })) as number;
@@ -833,9 +838,7 @@ test("assigns distinct agent voices and exposes compact per-agent controls", asy
 
   await page.getByRole("button", { name: "Voice settings for alice" }).click();
   await waitForAnimations(page);
-  const voiceMenu = page.locator(
-    '[data-testid="huddle-agent-voice-menu-content"][data-state="open"]',
-  );
+  const voiceMenu = page.getByTestId("huddle-agent-voice-menu-content");
   await expect(voiceMenu).toBeVisible();
   await expect(
     voiceMenu.getByText("Agent text-to-speech", { exact: true }),
@@ -1291,7 +1294,7 @@ test("keeps a starting huddle in the drawer after its companion closes", async (
   ).toBeVisible();
 });
 
-test("starts unmuted with Push to Talk while preserving manual microphone control", async ({
+test("starts muted with Push to Talk while preserving manual microphone control", async ({
   page,
 }) => {
   await installFakeHuddleMicrophone(page);
@@ -1303,7 +1306,17 @@ test("starts unmuted with Push to Talk while preserving manual microphone contro
   await page.getByTestId("channel-alice-tyler").click();
   await page.getByTestId("channel-start-huddle-trigger").click();
 
-  const muteButton = page.getByRole("button", { name: "Mute microphone" });
+  const muteButton = page.getByRole("button", {
+    name: "Mute microphone",
+    exact: true,
+  });
+  const unmuteButton = page.getByRole("button", {
+    name: "Unmute microphone",
+    exact: true,
+  });
+  await expect(unmuteButton).toBeVisible();
+  await expect(unmuteButton).toHaveClass(/bg-destructive\/15/);
+  await unmuteButton.click();
   await expect(muteButton).toBeVisible();
   await expect(muteButton).not.toHaveClass(/bg-destructive\/15/);
   await expect(
@@ -1311,9 +1324,7 @@ test("starts unmuted with Push to Talk while preserving manual microphone contro
   ).not.toHaveClass(/bg-destructive\/15/);
 
   await muteButton.click();
-  const unmuteButton = page.getByRole("button", {
-    name: "Unmute microphone",
-  });
+
   await expect(unmuteButton).toBeVisible();
   await expect(unmuteButton).toHaveClass(/bg-destructive\/15/);
   await expect(unmuteButton).toHaveClass(/text-destructive/);

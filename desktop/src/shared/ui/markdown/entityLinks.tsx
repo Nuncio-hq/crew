@@ -189,16 +189,21 @@ export function useOpenEntityLink(): (link: ParsedEntityLink) => void {
   return React.useCallback(
     (link: ParsedEntityLink) => {
       const projectId = entityLinkProjectRouteId(link);
+      const entityNavigationId = crypto.randomUUID();
       switch (link.type) {
         case "pr":
-          void goProject(projectId, { pullRequestId: link.id });
+          void goProject(projectId, {
+            entityNavigationId,
+            pullRequestId: link.id,
+          });
           return;
         case "issue":
-          void goProject(projectId, { issueId: link.id });
+          void goProject(projectId, { entityNavigationId, issueId: link.id });
           return;
         case "repo":
         case "project":
           void goProject(projectId, {
+            entityNavigationId,
             ...(link.tab ? { tab: link.tab } : {}),
             ...(link.type === "repo" && link.commitHash
               ? { commitHash: link.commitHash }
@@ -212,7 +217,11 @@ export function useOpenEntityLink(): (link: ParsedEntityLink) => void {
             startLine: link.startLine,
             endLine: link.endLine,
           });
-          void goProject(projectId);
+          void goProject(projectId, {
+            entityNavigationId,
+            tab: "files",
+            filePath: link.path,
+          });
           return;
         default: {
           const _exhaustive: never = link;

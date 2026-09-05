@@ -185,6 +185,8 @@ export function useAppNavigation() {
         issueId?: string;
         repositoryId?: string;
         tab?: string;
+        /** Reapply an entity selection even when its route is unchanged. */
+        entityNavigationId?: string;
       },
     ) =>
       commitNavigation(
@@ -207,8 +209,14 @@ export function useAppNavigation() {
               : {}),
             ...(behavior?.tab ? { tab: behavior.tab } : {}),
           },
+          state: behavior?.entityNavigationId
+            ? { entityNavigationId: behavior.entityNavigationId }
+            : undefined,
         },
-        behavior,
+        {
+          ...behavior,
+          force: behavior?.force || Boolean(behavior?.entityNavigationId),
+        },
       ),
     [commitNavigation],
   );

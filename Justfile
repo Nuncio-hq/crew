@@ -426,7 +426,7 @@ test-unit:
         # DB-free /probe route, and its Host/Origin gating is covered here by
         # disabled_mode_still_requires_the_correct_host / _a_matching_origin.
         cargo nextest run -p buzz-relay --lib \
-            -E 'test(/^api::admin::/) - test(=api::admin::tests::disabled_mode_allows_unauthenticated_requests_on_the_admin_host) - test(=api::admin::tests::nip98_mode_unrostered_signer_does_not_consume_a_replay_slot)'
+            -E 'test(/^api::admin::/) - test(=api::admin::postgres_tests::disabled_mode_allows_unauthenticated_requests_on_the_admin_host) - test(=api::admin::postgres_tests::nip98_mode_unrostered_signer_does_not_consume_a_replay_slot)'
         # ACP author-gate and queue tests protect the trust boundary between
         # relay events and agent prompts. They are infra-free; ignored lifecycle
         # tests remain excluded and run in their dedicated integration lanes.

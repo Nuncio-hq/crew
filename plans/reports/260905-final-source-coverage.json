@@ -4872,7 +4872,7 @@
     "target_differs_old": true
   },
   "desktop/src/features/agents/ui/agentConfigControls.tsx": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": true,
@@ -7721,7 +7721,7 @@
     "target_differs_old": true
   },
   "desktop/src/features/projects/ui/ProjectRightPanelControls.tsx": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": false,
@@ -9387,7 +9387,7 @@
     "target_differs_old": true
   },
   "desktop/tests/e2e/agent-availability.spec.ts": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": false,
@@ -9401,7 +9401,7 @@
     "target_differs_old": true
   },
   "desktop/tests/e2e/agent-error-state-screenshots.spec.ts": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": true,
@@ -9478,7 +9478,7 @@
     "target_differs_old": true
   },
   "desktop/tests/e2e/cloud-provenance.spec.ts": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": false,
@@ -9492,7 +9492,7 @@
     "target_differs_old": true
   },
   "desktop/tests/e2e/composer-selection-formatting.spec.ts": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": true,
@@ -9597,14 +9597,14 @@
     "target_differs_old": true
   },
   "desktop/tests/e2e/message-copy-link.spec.ts": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": false,
     "target_differs_old": true
   },
   "desktop/tests/e2e/message-feedback-snapshots.spec.ts": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": true,

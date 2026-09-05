@@ -113,10 +113,13 @@ export function projectShareLink(
     : null;
 }
 
-export function repositoryShareLink(repository: Repository): string | null {
+export function repositoryShareLink(
+  repository: Repository,
+  tab?: EntityLinkTab,
+): string | null {
   const coordinate = repositoryCoordinate(repository.repoAddress);
   return coordinate && isLinkableCoordinate(coordinate.owner, coordinate.dtag)
-    ? buildRepoLink(coordinate)
+    ? buildRepoLink({ ...coordinate, tab })
     : null;
 }
 

@@ -4,11 +4,20 @@ import * as React from "react";
 import { cn } from "@/shared/lib/cn";
 
 export const ProjectAgentSubmittedContextPill = React.memo(
-  function ProjectAgentSubmittedContextPill({ payload }: { payload: string }) {
+  function ProjectAgentSubmittedContextPill({
+    className,
+    payload,
+  }: {
+    className?: string;
+    payload: string;
+  }) {
     const [open, setOpen] = React.useState(false);
 
     return (
-      <div className="pb-1 pl-11 pr-2" data-testid="project-agent-sent-context">
+      <div
+        className={cn("pb-1 pl-11 pr-2", className)}
+        data-testid="project-agent-sent-context"
+      >
         <button
           aria-expanded={open}
           aria-label={open ? "Hide sent context" : "Show sent context"}

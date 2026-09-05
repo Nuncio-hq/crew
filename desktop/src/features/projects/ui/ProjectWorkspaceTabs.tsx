@@ -612,12 +612,14 @@ export function WorkspaceTabs({
                 error={displayedSnapshotError}
                 fallbackAuthorPubkey={project.owner}
                 fileContentSource={fileContentSource}
+                fileOpenRequestKey={initialTabRequestKey}
                 files={files}
                 initialPath={initialFilePath}
                 isLoading={displayedSnapshotLoading}
                 onContextChange={onFilesContextChange}
                 onOpenCommit={onSelectedCommitHashChange}
                 profiles={profiles}
+                projectId={project.id}
                 snapshot={displayedSnapshot}
                 unavailableMessage={
                   externalHost

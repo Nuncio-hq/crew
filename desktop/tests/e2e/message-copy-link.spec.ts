@@ -80,7 +80,7 @@ test("message action rail copies the same canonical thread link as More", async 
 
   const actionBar = replyRow.getByTestId(`message-action-bar-${replyId}`);
   const orderedActionNames = await actionBar
-    .getByRole("button")
+    .getByRole("button", { includeHidden: true })
     .evaluateAll((buttons) =>
       buttons.map((button) => button.getAttribute("aria-label")),
     );
@@ -100,20 +100,15 @@ test("message action rail copies the same canonical thread link as More", async 
   await expect(pickerButton.locator("svg")).toHaveClass(/lucide-smile-plus/);
 
   const divider = actionBar.getByTestId("message-action-divider");
-  await expect(divider).toBeVisible();
-  const [pickerBox, dividerBox, replyBox] = await Promise.all([
+  // The narrow thread rail hides quick reactions and their decorative divider.
+  await expect(divider).toBeHidden();
+  const [pickerBox, replyBox] = await Promise.all([
     actionBar.getByRole("button", { name: "Open reactions" }).boundingBox(),
-    divider.boundingBox(),
     actionBar.getByRole("button", { name: "Reply" }).boundingBox(),
   ]);
-  expect(pickerBox).not.toBeNull();
-  expect(dividerBox).not.toBeNull();
-  expect(replyBox).not.toBeNull();
-  if (!pickerBox || !dividerBox || !replyBox) {
+  if (!pickerBox || !replyBox)
     throw new Error("Message action order bounds missing.");
-  }
-  expect(pickerBox.x + pickerBox.width).toBeLessThan(dividerBox.x);
-  expect(dividerBox.x + dividerBox.width).toBeLessThan(replyBox.x);
+  expect(pickerBox.x + pickerBox.width).toBeLessThan(replyBox.x);
 
   const copyLink = actionBar.getByTestId(`copy-link-message-${replyId}`);
   await expect(copyLink).toHaveAccessibleName("Copy link");

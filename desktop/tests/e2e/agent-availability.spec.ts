@@ -24,7 +24,7 @@ test("saved deployment with offline presence is not shown as online", async ({
     "aria-label",
     "Offline deployment: Offline",
   );
-  await expect(dot.locator("xpath=../..")).not.toHaveClass(/bg-emerald-500/);
+  await expect(dot.locator("xpath=../..")).not.toHaveClass(/bg-success/);
   await page
     .getByRole("button", { name: "Offline deployment agent profile" })
     .click();
@@ -190,7 +190,7 @@ test("missing snapshot is offline but failed reads cannot reuse cached online", 
   }
 });
 
-test("stopped local with authored presence has a dot, not an invokable Start", async ({
+test("stopped local Start remains available while independent workers publish presence", async ({
   page,
 }, testInfo) => {
   await installMockBridge(page, {
@@ -219,29 +219,19 @@ test("stopped local with authored presence has a dot, not an invokable Start", a
       window.__BUZZ_E2E_EMIT_MOCK_PRESENCE__?.({ pubkey, status: "online" }),
     LOCAL,
   );
-  await expect(
-    page.getByTestId(`agent-runtime-active-${LOCAL}`),
-  ).toHaveAttribute("aria-label", "Present local: Online");
-  await expect(page.getByTestId(`agent-runtime-start-${LOCAL}`)).toHaveCount(0);
+  await expect(page.getByTestId(`agent-runtime-start-${LOCAL}`)).toBeVisible();
+  await expect(page.getByTestId(`agent-runtime-active-${LOCAL}`)).toHaveCount(
+    0,
+  );
   await page
     .getByRole("button", { name: "Present local agent profile" })
     .press("Enter");
   const action = page.getByTestId("user-profile-agent-primary-action");
-  await expect(action).toHaveAttribute("aria-label", "Start agent");
-  await expect(action).toBeDisabled();
-  await action.evaluate((button: HTMLButtonElement) => button.click());
-  await action.press("Enter");
-  await action.press("Space");
-  expect(
-    await page.evaluate(() =>
-      (window.__BUZZ_E2E_COMMANDS__ ?? []).filter((command) =>
-        ["start_managed_agent", "stop_managed_agent"].includes(command),
-      ),
-    ),
-  ).toEqual([]);
-  await expect(page.getByTestId("user-profile-agent-restart")).toHaveCount(0);
   const badge = page.getByTestId("user-profile-presence-badge");
+  await expect(action).toHaveAttribute("aria-label", "Start agent");
+  await expect(action).toBeEnabled();
   await expect(badge).toHaveAttribute("aria-label", "Online");
+  await expect(page.getByTestId("user-profile-agent-restart")).toHaveCount(0);
   await waitForAnimations(page);
   await page
     .getByTestId(`managed-agent-${LOCAL}`)
@@ -259,29 +249,28 @@ test("stopped local with authored presence has a dot, not an invokable Start", a
       "aria-label",
       status === "away" ? "Away" : "Offline",
     );
-    if (status === "away") {
-      await expect(
-        page.getByTestId(`agent-runtime-active-${LOCAL}`),
-      ).toHaveAttribute("aria-label", "Present local: Away");
-      await expect(action).toBeDisabled();
-    } else {
-      await expect(action).toBeEnabled();
-      await expect(
-        page.getByTestId(`agent-runtime-start-${LOCAL}`),
-      ).toBeVisible();
-    }
+    await expect(action).toBeEnabled();
+    await expect(
+      page.getByTestId(`agent-runtime-start-${LOCAL}`),
+    ).toBeVisible();
   }
-  // Keyboard activation is restored for the ordinary stopped/offline control.
-  // Runtime startup alone must still not manufacture authored availability.
+  // Starting the managed main process does not fabricate relay availability.
   await action.press("Enter");
   await expect(action).toHaveAttribute("aria-label", "Stop");
   await expect(badge).toHaveAttribute("aria-label", "Offline");
   await expect(
     page.getByTestId(`agent-runtime-active-${LOCAL}`),
   ).toHaveAttribute("aria-label", "Present local: Offline");
+  expect(
+    await page.evaluate(() =>
+      (window.__BUZZ_E2E_COMMANDS__ ?? []).filter(
+        (command) => command === "start_managed_agent",
+      ),
+    ),
+  ).toHaveLength(1);
 });
 
-test("member menu cannot start a present stopped local runtime", async ({
+test("member menu starts a stopped local main runtime while a thread worker is present", async ({
   page,
 }) => {
   await installMockBridge(page, {
@@ -320,23 +309,8 @@ test("member menu cannot start a present stopped local runtime", async ({
   await menu.press("Enter");
   const action = page.getByTestId(`sidebar-agent-action-${LOCAL}`);
   await expect(action).toContainText("Start");
-  await expect(action).toHaveAttribute("aria-disabled", "true");
-  await action.press("Enter");
-  await action.evaluate((node: HTMLElement) => node.click());
-  expect(
-    await page.evaluate(() =>
-      (window.__BUZZ_E2E_COMMANDS__ ?? []).filter((command) =>
-        /^(start|stop)_managed_agent/.test(command),
-      ),
-    ),
-  ).toEqual([]);
-  await page.evaluate(
-    (pubkey) =>
-      window.__BUZZ_E2E_EMIT_MOCK_PRESENCE__?.({ pubkey, status: "offline" }),
-    LOCAL,
-  );
   await expect(action).not.toHaveAttribute("aria-disabled", "true");
-  await action.click();
+  await action.press("Enter");
   await expect
     .poll(() =>
       page.evaluate(
@@ -347,6 +321,9 @@ test("member menu cannot start a present stopped local runtime", async ({
       ),
     )
     .toBe(1);
+  await expect(
+    page.getByTestId(`sidebar-member-presence-${LOCAL}`).locator("span"),
+  ).toHaveClass(/bg-attention/);
 });
 
 for (const surface of ["agents", "members"] as const) {
@@ -436,7 +413,7 @@ for (const surface of ["agents", "members"] as const) {
     } else {
       await expect(
         page.getByTestId(`sidebar-member-presence-${LOCAL}`).locator("span"),
-      ).toHaveClass(/bg-amber-500/);
+      ).toHaveClass(/bg-attention/);
       await expect(
         page.getByTestId(`sidebar-member-presence-${keys[1]}`).locator("span"),
       ).toHaveClass(/bg-muted-foreground/);
@@ -709,8 +686,10 @@ for (const scenario of [
       );
     await page.getByTestId("user-profile-delete-agent-row").click();
     const dialog = page.getByTestId("agent-delete-confirm-dialog");
-    await expect(dialog).toContainText("not its remote deployment");
-    await expect(dialog).toContainText("A failed request cancels deletion");
+    await expect(dialog).toContainText("Requests remote deletion");
+    await expect(dialog).toContainText(
+      "the remote process may keep running without local management",
+    );
     await expect(dialog).not.toContainText("This agent is offline");
     await page.getByTestId("agent-delete-confirm-action").click();
     const effects = () =>

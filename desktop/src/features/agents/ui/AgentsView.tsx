@@ -153,7 +153,7 @@ export function AgentsView() {
           <PageHeader
             action={
               <>
-                <div className="flex flex-wrap justify-end gap-2 [@container(max-width:40rem)]:hidden">
+                <div className="flex flex-wrap justify-end gap-2 [@container(max-width:48rem)]:hidden">
                   <Button
                     data-testid="agent-defaults-button"
                     ref={fullAiDefaultsTriggerRef}
@@ -193,7 +193,7 @@ export function AgentsView() {
                   <DropdownMenuTrigger asChild>
                     <Button
                       aria-label="Agent actions"
-                      className="hidden [@container(max-width:40rem)]:inline-flex"
+                      className="hidden [@container(max-width:48rem)]:inline-flex"
                       data-testid="agent-actions-menu-trigger"
                       ref={compactActionsTriggerRef}
                       size="icon"

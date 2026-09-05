@@ -20,10 +20,8 @@ import {
 } from "@/features/messages/lib/imetaMediaMarkdown";
 import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
 import {
-  cancelBackgroundMediaUploads,
   saveQueuedAttachmentsForDraft,
   takeQueuedAttachmentsForDraft,
-  useBackgroundMediaUpload,
 } from "@/features/messages/lib/backgroundMediaUploadStore";
 import { useComposerFocusOwnership } from "@/features/messages/lib/useComposerFocusOwnership";
 import { isMentionCodeContext } from "@/features/messages/lib/mentionCodeContext";
@@ -47,7 +45,7 @@ import { ComposerAttachments, DropZoneOverlay } from "./ComposerAttachments";
 import { focusMentionOptionsTrigger } from "./MentionAutocomplete";
 import { MessageComposerAutocompletes } from "./MessageComposerAutocompletes";
 import { ComposerDockToolbar } from "./ComposerDockToolbar";
-import { ComposerUploadProgressPill } from "./ComposerUploadProgressPill";
+import { ComposerUploadProgressOverlay } from "./ComposerUploadProgressOverlay";
 import { NonMemberMentionDialog } from "./NonMemberMentionDialog";
 import { useComposerVoiceNote } from "./useComposerVoiceNote";
 import { useMentionSendFlow } from "./useMentionSendFlow";
@@ -196,7 +194,6 @@ function MessageComposerImpl({
     media.pendingImetaRef.current.length === 0 &&
     media.queuedAttachmentsRef.current.length === 0;
   const ownsDropZone = mediaController === undefined;
-  const backgroundUpload = useBackgroundMediaUpload();
   const { trackAuthoredContent } = useDraftPersistLifecycle({
     effectiveDraftKey,
     channelId,
@@ -866,13 +863,7 @@ function MessageComposerImpl({
             onCancelReply={onCancelReply}
           />
           {showBackgroundUploadProgress ? (
-            <ComposerUploadProgressPill
-              canCancel={backgroundUpload.canCancel}
-              isUploading={backgroundUpload.isUploading}
-              onCancel={cancelBackgroundMediaUploads}
-              phase={backgroundUpload.phase}
-              percentage={backgroundUpload.percentage}
-            />
+            <ComposerUploadProgressOverlay />
           ) : null}
           <form
             className={cn(

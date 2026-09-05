@@ -61,7 +61,7 @@ async function openBuzzProject(page: import("@playwright/test").Page) {
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
   await projectEntry.click();
-  await page.getByTestId("project-home-context-repo-buzz").click();
+  await page.getByTestId("project-plumbing").locator("summary").click();
 }
 
 test("repository-only relays keep the Repositories section available", async ({
@@ -74,7 +74,9 @@ test("repository-only relays keep the Repositories section available", async ({
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.goto("/#/projects");
 
-  await expect(page.getByTestId("projects-page-tabs")).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "Project owner filter" }),
+  ).toBeVisible();
   await page.getByTestId("projects-section-repositories").click();
   await expect(
     page.locator(
@@ -90,63 +92,31 @@ test("projects activity overview screenshot", async ({ page }) => {
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.goto("/#/projects");
-  await expect(page.getByTestId("projects-page-tabs")).toBeVisible();
-  const activityHeader = page.getByTestId("projects-page-header");
-  await expect(activityHeader).toBeVisible();
-  await expect(page.getByTestId("projects-activity-relay-icon")).toHaveCount(0);
-  await expect(page.getByTestId("projects-activity-intro")).toHaveCSS(
-    "text-align",
-    "left",
-  );
-  await expect(page.getByTestId("projects-activity-search")).toBeVisible();
-  await expect(page.getByTestId("projects-activity-intro")).toContainText(
-    "Projects Activity",
-  );
   await expect(
-    page.getByTestId("projects-overview-context-panel"),
+    page.getByRole("group", { name: "Project owner filter" }),
   ).toBeVisible();
   await expect(
-    page.getByTestId("projects-overview-create-project"),
-  ).toHaveCount(0);
-  await expect(
-    page.getByTestId("projects-activity-group").first(),
+    page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
+  const landing = page.getByTestId("projects-outcome-landing");
+  await expect(
+    landing.getByRole("heading", { name: "What needs attention?" }),
+  ).toBeVisible();
+  await expect(landing).toContainText("Projects, organized by outcome.");
+  await expect(
+    landing.getByRole("button", { name: "Open project buzz", exact: true }),
+  ).toBeVisible();
+  await expect(
+    landing.getByRole("heading", { name: "buzz", exact: true }),
+  ).toBeVisible();
+  await expect(landing).toContainText("2 repositories");
+  await expect(page.getByTestId("channel-general")).toBeVisible();
+  await expect(page.getByTestId("projects-section-all")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await waitForAnimations(page);
   await page.screenshot({ path: `${SHOTS}/00-projects-pulse.png` });
-});
-
-test("submitted project context stays compact and expandable", async ({
-  page,
-}) => {
-  await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/#/projects");
-  await page.getByTestId("projects-section-prs").click();
-  await page.getByRole("button", { name: "List layout" }).click();
-  await page.getByTestId("projects-overview-chat-toggle").click();
-
-  const panel = page.getByTestId("project-agent-chat-panel");
-  await panel.getByTestId("message-input").fill("Summarize these reviews");
-  await panel.getByTestId("message-input").press("Enter");
-  const context = panel.getByTestId("project-agent-sent-context");
-  await expect(context).toBeVisible();
-  await expect(
-    panel.getByRole("button", { name: "Preview message context" }),
-  ).toBeVisible();
-
-  await waitForAnimations(page);
-  await panel.screenshot({
-    path: `${SHOTS}/08-agent-context-collapsed.png`,
-  });
-
-  await context.getByRole("button", { name: "Show sent context" }).click();
-  await expect(
-    context.getByTestId("project-agent-sent-context-payload"),
-  ).toBeVisible();
-  await waitForAnimations(page);
-  await panel.screenshot({
-    path: `${SHOTS}/09-agent-context-expanded.png`,
-  });
 });
 
 test("project discovery keeps the channel-first sidebar", async ({ page }) => {
@@ -224,12 +194,44 @@ test("restricted repositories keep event work visible and offer access help", as
   await expect(page.getByText("Repository access restricted")).toBeVisible();
   await page.getByRole("button", { name: "Ask for access" }).first().click();
 
-  const chatPanel = page.getByTestId("project-agent-chat-panel");
-  await expect(chatPanel).toBeVisible();
-  await expect(chatPanel.getByTestId("project-agent-context")).toContainText(
-    "Commits",
+  await expect(
+    page.getByTestId("project-repository-unavailable").first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No accessible channel is linked to this repository."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("This project's channel could not be found."),
+  ).toHaveCount(0);
+});
+
+test("restricted repository access help uses an accessible linked project channel", async ({
+  page,
+}) => {
+  await page.addInitScript((owner) => {
+    window.__BUZZ_E2E_PROJECT_OWNER_OVERRIDE__ = owner;
+  }, TEST_IDENTITIES.alice.pubkey);
+  await installMockBridge(page, {
+    projectAccessChannelId: "11111111-1111-4111-8111-111111111111",
+    projectHomeChannelId: "cf63feec-21bb-5bf0-a2f8-0e4c3de8ec73",
+    projectRepoSnapshotError: "remote: repository not found",
+  });
+  await openBuzzProject(page);
+  await page.getByRole("tab", { name: "Commits", exact: true }).click();
+  await expect(page.getByText("Repository access restricted")).toBeVisible();
+  await page.getByRole("button", { name: "Ask for access" }).first().click();
+  const accessComposer = page.getByTestId("message-input");
+  await expect(accessComposer).toBeVisible();
+  await expect(
+    accessComposer.locator('[data-composer-buzz-link=""]'),
+  ).toHaveAttribute("data-href", /[?&]tab=commits(?:&|$)/);
+  await expect(accessComposer).toContainText(
+    "Let's talk about this repository:",
   );
-  await expect(chatPanel.getByTestId("message-composer")).toBeVisible();
+  await waitForAnimations(page);
+  await page.getByTestId("message-composer").screenshot({
+    path: `${SHOTS}/08-access-help-channel-draft.png`,
+  });
 });
 
 test("repository pages show a centered Buzz loader while fetching", async ({
@@ -323,7 +325,13 @@ test("projects v3 workspace screenshot states", async ({ page }) => {
     tabMenu.boundingBox(),
   ]);
   expect(projectDetailScrollBounds).not.toBeNull();
-  expect(initialTabMenuBounds?.y).toBe(projectDetailScrollBounds?.y);
+  expect(initialTabMenuBounds?.y).toBeGreaterThan(
+    projectDetailScrollBounds?.y ?? 0,
+  );
+  await expect(page.getByTestId("project-plumbing")).toHaveAttribute(
+    "open",
+    "",
+  );
   expect(
     await filesTab.evaluate((element) =>
       Number.parseFloat(getComputedStyle(element).borderRadius),
@@ -461,336 +469,19 @@ test("projects v3 workspace screenshot states", async ({ page }) => {
   await expect(
     repositoryActionsPanel.getByTestId("project-right-panel-scope"),
   ).toHaveCount(0);
-  const sharedHeaderBackdrop = page.getByTestId(
-    "project-shared-header-backdrop",
-  );
-  await expect(sharedHeaderBackdrop).toBeVisible();
-  await expect
-    .poll(() =>
-      sharedHeaderBackdrop.evaluate(
-        (element) => getComputedStyle(element).backdropFilter,
-      ),
-    )
-    .not.toBe("none");
-  const projectPanelLayout = page.getByTestId("project-panel-layout");
-  const projectContentPod = page.getByTestId("project-content-pod");
-  const appContentSurface = page
-    .locator("[data-buzz-content-surface]")
-    .filter({ has: projectPanelLayout })
-    .first();
-  await expect(projectPanelLayout).toHaveAttribute("data-detached", "true");
-  await expect(appContentSurface).toHaveCSS(
-    "background-color",
-    "rgba(0, 0, 0, 0)",
-  );
-  await expect(appContentSurface).toHaveCSS("border-radius", "0px");
-  await expect(projectContentPod).toHaveCSS("border-radius", "16px");
-  await expect(projectContentPod).toHaveCSS("box-shadow", "none");
-  await expect(repositoryActionsPanel).toHaveCSS("border-radius", "0px");
-  await expect(repositoryActionsPanel).toHaveCSS(
-    "background-color",
-    "rgba(0, 0, 0, 0)",
-  );
-  await page.evaluate(() => document.documentElement.classList.add("dark"));
-  await expect(appContentSurface).toHaveCSS(
-    "background-color",
-    "rgba(0, 0, 0, 0)",
-  );
-  await expect(projectContentPod).toHaveCSS("border-radius", "16px");
-  await expect(projectContextCard).toHaveCSS("border-radius", "16px");
-  await page.evaluate(() => document.documentElement.classList.remove("dark"));
-  await expect(projectContextCard).toHaveCSS("border-radius", "16px");
-  await expect(projectContextCard).toHaveCSS("border-width", "0px");
-  await expect(projectContextCard).toHaveCSS("box-shadow", "none");
-  const [
-    projectContextCardBounds,
-    sharedHeaderBackdropBounds,
-    projectContentPodBounds,
-    repositoryActionsPanelBounds,
-  ] = await Promise.all([
-    projectContextCard.boundingBox(),
-    sharedHeaderBackdrop.boundingBox(),
-    projectContentPod.boundingBox(),
-    repositoryActionsPanel.boundingBox(),
-  ]);
-  expect(projectContextCardBounds).not.toBeNull();
-  expect(sharedHeaderBackdropBounds).not.toBeNull();
-  expect(projectContentPodBounds).not.toBeNull();
-  expect(repositoryActionsPanelBounds).not.toBeNull();
-  expect(Math.round(repositoryActionsPanelBounds?.width ?? 0)).toBe(280);
-  expect(
-    await projectContextCard.evaluate(
-      (element) => getComputedStyle(element).backgroundColor,
-    ),
-  ).toBe(
-    await projectContentPod.evaluate(
-      (element) => getComputedStyle(element).backgroundColor,
-    ),
-  );
-  expect(projectContextCardBounds?.height ?? 0).toBeLessThan(
-    repositoryActionsPanelBounds?.height ?? 0,
-  );
-  expect(projectContextCardBounds?.y).toBe(repositoryActionsPanelBounds?.y);
-  expect(
-    (sharedHeaderBackdropBounds?.x ?? 0) +
-      (sharedHeaderBackdropBounds?.width ?? 0),
-  ).toBeLessThanOrEqual(
-    (projectContentPodBounds?.x ?? 0) + (projectContentPodBounds?.width ?? 0),
-  );
-  expect(
-    (repositoryActionsPanelBounds?.x ?? 0) -
-      ((projectContentPodBounds?.x ?? 0) +
-        (projectContentPodBounds?.width ?? 0)),
-  ).toBe(8);
-  expect(
-    (sharedHeaderBackdropBounds?.x ?? 0) +
-      (sharedHeaderBackdropBounds?.width ?? 0),
-  ).toBeLessThan(repositoryActionsPanelBounds?.x ?? 0);
-  const contextRail = page.getByTestId("project-context-rail");
-  const resizeHandle = repositoryActionsPanel.getByTestId(
-    "right-auxiliary-pane-resize-handle",
-  );
-  const resizeHandleBounds = await resizeHandle.boundingBox();
-  expect(resizeHandleBounds).not.toBeNull();
-  const resizeStartX =
-    (resizeHandleBounds?.x ?? 0) + (resizeHandleBounds?.width ?? 0) / 2;
-  const resizeStartY =
-    (resizeHandleBounds?.y ?? 0) + (resizeHandleBounds?.height ?? 0) / 2;
-  await resizeHandle.dispatchEvent("pointerdown", {
-    button: 0,
-    clientX: resizeStartX,
-    clientY: resizeStartY,
-    pointerId: 1,
-    pointerType: "mouse",
-  });
-  await expect(contextRail).toHaveAttribute("data-resizing", "true");
-  await expect(contextRail).toHaveCSS("transition-duration", "0s");
-  await page.mouse.move(resizeStartX - 40, resizeStartY);
-  await expect
-    .poll(async () =>
-      repositoryActionsPanel.evaluate((element) =>
-        Math.round(element.getBoundingClientRect().width),
-      ),
-    )
-    .toBe(320);
-  await page.mouse.up();
-  await expect(contextRail).toHaveAttribute("data-resizing", "false");
-  await expect(contextRail).toHaveCSS("transition-duration", "0.2s");
-  await resizeHandle.dblclick();
-  await expect
-    .poll(async () =>
-      repositoryActionsPanel.evaluate((element) =>
-        Math.round(element.getBoundingClientRect().width),
-      ),
-    )
-    .toBe(280);
-  const repositoryPanelTab = page.getByTestId(
-    "project-right-panel-repository-tab",
-  );
-  const chatPanelTab = page.getByTestId("project-right-panel-chat-tab");
-  const terminalButton = page.getByTestId("project-terminal-toggle");
-  const terminalIcon = page.getByTestId("project-terminal-icon");
-  const repositoryContextIcon = page.getByTestId(
-    "project-right-panel-repository-icon",
-  );
-  await expect(repositoryPanelTab).toHaveAttribute("aria-pressed", "true");
-  await expect(repositoryPanelTab).toHaveAttribute(
-    "aria-label",
-    "Hide project context",
-  );
-  await expect(terminalIcon).toBeVisible();
-  await expect(repositoryPanelTab).toHaveCSS(
-    "background-color",
-    "rgba(0, 0, 0, 0)",
-  );
-  await expect(repositoryContextIcon).toHaveCSS("opacity", "1");
-  await expect(contextRail).toHaveCSS("width", "288px");
-  await expect(contextRail).toHaveCSS("transition-duration", "0.2s");
-  // The icon is an inline SVG drawn with currentColor, so it must inherit
-  // the toggle button's text color to stay tinted with button state.
-  expect(
-    await terminalIcon.evaluate((element) => ({
-      color: getComputedStyle(element).color,
-      strokesCurrentColor: Array.from(element.querySelectorAll("rect")).some(
-        (rect) =>
-          rect.getAttribute("stroke") === "currentColor" ||
-          rect.getAttribute("fill") === "currentColor",
-      ),
-      tagName: element.tagName.toLowerCase(),
-    })),
-  ).toMatchObject({
-    color: await terminalButton.evaluate(
-      (element) => getComputedStyle(element).color,
-    ),
-    strokesCurrentColor: true,
-    tagName: "svg",
-  });
-  const [repositoryTabBounds, chatTabBounds, terminalTabBounds] =
-    await Promise.all([
-      repositoryPanelTab.boundingBox(),
-      chatPanelTab.boundingBox(),
-      terminalButton.boundingBox(),
-    ]);
-  expect(repositoryTabBounds?.width).toBe(chatTabBounds?.width);
-  expect(terminalTabBounds?.x).toBeLessThan(chatTabBounds?.x ?? 0);
-  expect(chatTabBounds?.x).toBeLessThan(repositoryTabBounds?.x ?? 0);
-  await chatPanelTab.click();
-  const agentChatPanel = page.getByTestId("project-agent-chat-panel");
-  await expect(agentChatPanel).toBeVisible();
-  await expect(projectPanelLayout).toHaveAttribute("data-detached", "false");
-  await expect(projectContentPod).toHaveCount(0);
-  await expect(appContentSurface).toHaveCSS("border-radius", "16px");
-  await expect
-    .poll(() =>
-      appContentSurface.evaluate(
-        (element) => getComputedStyle(element).backgroundColor,
-      ),
-    )
-    .not.toBe("rgba(0, 0, 0, 0)");
-  await expect(agentChatPanel.getByTestId("message-composer")).toBeVisible();
-  const agentContext = agentChatPanel.getByTestId("project-agent-context");
-  await expect(agentContext).toBeVisible();
-  await expect(agentContext).toContainText("Files");
-  await expect(agentContext).not.toContainText("Buzz /");
-  // The context rail reveals the chat panel with a width transition; measure
-  // only after it settles or the panel's unclipped box overhangs the rail.
-  await waitForAnimations(page);
-  const [
-    attachedSharedHeaderBackdropBounds,
-    tabMenuHeaderBounds,
-    agentContextBounds,
-  ] = await Promise.all([
-    sharedHeaderBackdrop.boundingBox(),
-    tabMenu.boundingBox(),
-    agentContext.boundingBox(),
-  ]);
-  expect(attachedSharedHeaderBackdropBounds).not.toBeNull();
-  expect(tabMenuHeaderBounds).not.toBeNull();
-  expect(agentContextBounds).not.toBeNull();
-  expect(tabMenuHeaderBounds?.height).toBe(52);
-  expect(
-    Math.abs((tabMenuHeaderBounds?.y ?? 0) - (agentContextBounds?.y ?? 0)),
-  ).toBeLessThanOrEqual(1);
-  expect(
-    Math.abs(
-      (tabMenuHeaderBounds?.height ?? 0) - (agentContextBounds?.height ?? 0),
-    ),
-  ).toBeLessThanOrEqual(1);
-  expect(attachedSharedHeaderBackdropBounds?.x).toBeLessThanOrEqual(
-    tabMenuHeaderBounds?.x ?? 0,
-  );
-  expect(
-    (attachedSharedHeaderBackdropBounds?.x ?? 0) +
-      (attachedSharedHeaderBackdropBounds?.width ?? 0),
-  ).toBeGreaterThanOrEqual(
-    (agentContextBounds?.x ?? 0) + (agentContextBounds?.width ?? 0),
-  );
-  await expect
-    .poll(() =>
-      agentContext.evaluate((element) => getComputedStyle(element).position),
-    )
-    .toBe("absolute");
-  const agentConversationScroll = agentChatPanel.getByTestId(
-    "project-agent-conversation-scroll",
-  );
-  await expect
-    .poll(() =>
-      agentConversationScroll.evaluate((element) =>
-        Number.parseFloat(getComputedStyle(element).paddingTop),
-      ),
-    )
-    .toBeGreaterThanOrEqual(52);
-  await agentChatPanel
-    .getByTestId("message-input")
-    .fill("Summarize this repository.");
-  await agentChatPanel.getByTestId("send-message").click();
-  const projectAgentMessage = agentChatPanel
-    .locator("[data-message-id]")
-    .filter({ hasText: "Summarize this repository." });
-  await expect(projectAgentMessage).toBeVisible();
-  const projectAgentMessageId =
-    await projectAgentMessage.getAttribute("data-message-id");
-  expect(projectAgentMessageId).not.toBeNull();
-  const projectAgentChannelId = await agentChatPanel
-    .locator("[data-project-agent-channel-id]")
-    .getAttribute("data-project-agent-channel-id");
-  expect(projectAgentChannelId).not.toBeNull();
-  await page.evaluate(
-    async ({ channelId, parentEventId }) => {
-      if (!channelId)
-        throw new Error("Project agent DM channel was not recorded.");
-      await window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("send_channel_message", {
-        channelId,
-        content: "A persisted threaded agent response.",
-        parentEventId: parentEventId ?? undefined,
-      });
-    },
-    { channelId: projectAgentChannelId, parentEventId: projectAgentMessageId },
-  );
-  await expect(
-    agentChatPanel.getByText("A persisted threaded agent response."),
-  ).toBeVisible();
-  await chatPanelTab.click();
-  // The rail collapses but retains the panel so conversation state survives
-  // toggling; assert the collapsed rail instead of a full unmount.
-  await expect(contextRail).toHaveCSS("width", "0px");
-  await expect(contextRail).toHaveAttribute("aria-hidden", "true");
-  await expect(chatPanelTab).toHaveAttribute("aria-label", "Show project chat");
-  await chatPanelTab.click();
-  await expect(
-    agentChatPanel.getByText("A persisted threaded agent response."),
-  ).toBeVisible();
-  await expect(chatPanelTab).toHaveAttribute("aria-label", "Hide project chat");
-  await expect(repositoryActionsPanel).toHaveCount(0);
-  await page.getByTestId("project-right-panel-repository-tab").click();
+  // Crew places repository context beside the workspace inside its project
+  // outcome page. Verify the live surfaces fit without the old detached rail.
   await expect(repositoryActionsPanel).toBeVisible();
-  await expect(
-    page.getByTestId("project-repository-selection-row"),
-  ).toHaveCount(0);
-  await repositoryPanelTab.click();
-  await expect(contextRail).toHaveCSS("width", "0px");
-  await expect(repositoryPanelTab).toHaveAttribute("aria-pressed", "false");
-  await expect(repositoryPanelTab).toHaveAttribute(
-    "aria-label",
-    "Show project context",
-  );
-  const [attachedContentSurfaceBounds, collapsedMainPaneBounds] =
-    await Promise.all([
-      appContentSurface.boundingBox(),
-      workspacePanel.boundingBox(),
-    ]);
-  expect(attachedContentSurfaceBounds).not.toBeNull();
-  await expect(appContentSurface).toHaveCSS("box-shadow", "none");
-  // The detached pod fills the surface minus its hairline top/left inset and
-  // the 8px bottom gutter (ml-px mt-px mb-2 on the pod wrapper).
-  expect(
-    (projectContentPodBounds?.x ?? 0) - (attachedContentSurfaceBounds?.x ?? 0),
-  ).toBe(1);
-  expect(
-    (projectContentPodBounds?.y ?? 0) - (attachedContentSurfaceBounds?.y ?? 0),
-  ).toBe(1);
-  expect(
-    (attachedContentSurfaceBounds?.height ?? 0) -
-      (projectContentPodBounds?.height ?? 0),
-  ).toBe(9);
-  const viewportSize = page.viewportSize();
-  expect(collapsedMainPaneBounds).not.toBeNull();
-  expect(viewportSize).not.toBeNull();
-  expect(
-    Math.abs(
-      (collapsedMainPaneBounds?.x ?? 0) +
-        (collapsedMainPaneBounds?.width ?? 0) -
-        (viewportSize?.width ?? 0),
-    ),
-  ).toBeLessThanOrEqual(8);
-  await repositoryPanelTab.click();
-  await expect(contextRail).toHaveCSS("width", "288px");
-  await expect(repositoryPanelTab).toHaveAttribute("aria-pressed", "true");
-  await expect(repositoryActionsPanel).toBeVisible();
-  await expect(repositoryPanelTab).toHaveAttribute(
-    "aria-label",
-    "Hide project context",
-  );
+  await expect(workspacePanel).toBeVisible();
+  const viewport = page.viewportSize();
+  for (const surface of [workspacePanel, repositoryActionsPanel]) {
+    const bounds = await surface.boundingBox();
+    expect(bounds).not.toBeNull();
+    if (!bounds || !viewport)
+      throw new Error("Project layout was not measured.");
+    expect(bounds.width).toBeGreaterThan(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
+  }
   await expect(page.getByTestId("project-detail-copy-link")).toHaveCount(0);
   await expect(
     workspacePanel.getByTestId("project-workspace-tab-menu"),
@@ -829,7 +520,7 @@ test("projects v3 workspace screenshot states", async ({ page }) => {
   await expect(localSourceTrigger).toBeVisible();
   await expect(
     repositoryActionsPanel.getByTestId("project-repository-local-path"),
-  ).toHaveText("…/buzz/REPOS/buzz");
+  ).toHaveText("…/buzz/REPOS/mock-project");
   await expect(
     repositoryActionsPanel.getByRole("button", {
       name: "Open",
@@ -862,13 +553,6 @@ test("projects v3 workspace screenshot states", async ({ page }) => {
     .first();
   await expect(repositoryEntryCell).toHaveCSS("border-radius", "0px");
   await expect(repositoryEntryCell).toHaveCSS("border-bottom-width", "0px");
-  await chatPanelTab.click();
-  await expect(agentContext).toContainText("Files");
-  await expect(
-    agentChatPanel.getByText("A persisted threaded agent response."),
-  ).toBeVisible();
-  await repositoryPanelTab.click();
-  await expect(repositoryActionsPanel).toBeVisible();
   await expectInsetSection();
   await page.getByRole("tab", { name: "Commits" }).click();
   await expect(repositoryActionsPanel).toBeVisible();
@@ -1194,9 +878,11 @@ test("projects v3 work-item list metadata", async ({ page }) => {
   await page.goto("/#/projects");
 
   await page.getByTestId("projects-section-all").click();
-  await expectSinglePrimaryTextColumn(
-    page.getByTestId("projects-activity-card").first(),
-  );
+  const outcomeCard = page.getByTestId("project-outcome-card-buzz");
+  await expect(
+    outcomeCard.getByRole("heading", { name: "buzz", exact: true }),
+  ).toBeVisible();
+  await expect(outcomeCard).toContainText("2 repositories");
 
   await page.getByTestId("projects-section-projects").click();
   await expect(page.getByTestId("projects-list-header")).toHaveCSS(
