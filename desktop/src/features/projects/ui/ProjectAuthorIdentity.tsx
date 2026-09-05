@@ -7,11 +7,13 @@ import { UserAvatar } from "@/shared/ui/UserAvatar";
 /** Compact work-item author identity with a minimal hover summary. */
 export function ProjectAuthorIdentity({
   label,
+  labelClassName,
   profiles,
   pubkey,
   testId,
 }: {
   label: string;
+  labelClassName?: string;
   profiles?: UserProfileLookup;
   pubkey: string;
   testId?: string;
@@ -29,6 +31,7 @@ export function ProjectAuthorIdentity({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
+              aria-label={label}
               className="relative z-10 inline-flex items-center gap-1 rounded-sm hover:underline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
               data-testid={testId}
               type="button"
@@ -37,11 +40,15 @@ export function ProjectAuthorIdentity({
                 accent={profile?.isAgent === true}
                 avatarUrl={profile?.avatarUrl ?? null}
                 displayName={label}
+                shape={profile?.isAgent ? "squircle" : "circle"}
                 fallbackDelayMs={0}
                 size="xs"
                 testId={testId ? `${testId}-avatar` : undefined}
               />
-              <span data-testid={testId ? `${testId}-label` : undefined}>
+              <span
+                className={labelClassName}
+                data-testid={testId ? `${testId}-label` : undefined}
+              >
                 {label}
               </span>
             </button>
@@ -55,6 +62,7 @@ export function ProjectAuthorIdentity({
               accent={profile?.isAgent === true}
               avatarUrl={profile?.avatarUrl ?? null}
               displayName={label}
+              shape={profile?.isAgent ? "squircle" : "circle"}
               fallbackDelayMs={0}
               size="sm"
             />

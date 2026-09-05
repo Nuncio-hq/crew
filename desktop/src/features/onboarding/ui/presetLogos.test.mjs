@@ -30,10 +30,7 @@ const presetsRs = readFileSync(
 );
 
 const knownRuntimesRs = readFileSync(
-  path.join(
-    desktopRoot,
-    "src-tauri/src/managed_agents/discovery/known_runtimes.rs",
-  ),
+  path.join(desktopRoot, "src-tauri/src/managed_agents/discovery/catalog.rs"),
   "utf8",
 );
 

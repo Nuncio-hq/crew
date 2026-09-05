@@ -1,3 +1,11 @@
+import {
+  dispatchObserverRequests,
+  resetObserverRequestListeners,
+} from "./observer-request-listeners";
+export {
+  subscribeAgentManagementRequests,
+  subscribeProjectChannelRequests,
+} from "./observer-request-listeners";
 import * as React from "react";
 
 import { subscribeToAgentObserverFrames } from "@/shared/api/observerRelay";
@@ -12,10 +20,6 @@ import { putAgentSessionConfig } from "@/shared/api/tauri";
 import { putManagedAgentRuntimeLifecycle } from "@/shared/api/tauriManagedAgents";
 import { getIdentity } from "@/shared/api/tauriIdentity";
 import { decryptObserverEvent } from "@/shared/api/tauriObserver";
-import {
-  parseAgentManagementRequest,
-  type AgentManagementRequest,
-} from "./agentManagement";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   getLatestAuthorizedLiveSessionId,
@@ -170,10 +174,6 @@ export function getLatestLiveSessionId(
 ): string | null {
   return getLatestAuthorizedLiveSessionId(agentPubkey, channelId);
 }
-
-const agentManagementListeners = new Set<
-  (agentPubkey: string, request: AgentManagementRequest) => void
->();
 
 // Normalized pubkeys of agents we are actively managing. Only events whose
 // "agent" tag matches an entry here will be decrypted (defense-in-depth).
@@ -470,12 +470,7 @@ function processLiveObserverEvents(
   const addedEvents = appendAgentEvents(agentPubkey, acceptedEvents);
 
   for (const parsed of acceptedEvents) {
-    const managementRequest = parseAgentManagementRequest(parsed.payload);
-    if (managementRequest) {
-      for (const listener of agentManagementListeners) {
-        listener(agentPubkey, managementRequest);
-      }
-    }
+    dispatchObserverRequests(agentPubkey, parsed.payload);
     if (parsed.kind === "session_config_captured") {
       void putAgentSessionConfig(agentPubkey, parsed.payload);
       onSessionConfigCaptured?.(agentPubkey);
@@ -750,15 +745,6 @@ export function pruneIdleAgentObserverData(
  * Subscribe to agent-management request frames. Returns an unsubscribe
  * function.
  */
-export function subscribeAgentManagementRequests(
-  listener: (agentPubkey: string, request: AgentManagementRequest) => void,
-) {
-  agentManagementListeners.add(listener);
-  return () => {
-    agentManagementListeners.delete(listener);
-  };
-}
-
 export function getAgentObserverSnapshot(
   agentPubkey?: string | null,
   // `_enabled` only gates the relay subscription in useObserverEvents.
@@ -997,7 +983,7 @@ export function resetAgentObserverStore() {
   resetObserverDropLogger();
   resetLiveSessionAuthority();
   clearControlResultListeners();
-  agentManagementListeners.clear();
+  resetObserverRequestListeners();
   onSessionConfigCaptured = null;
   connectionState = "idle";
   errorMessage = null;

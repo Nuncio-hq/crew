@@ -55,7 +55,7 @@ export PGSCHEMA_PLAN_PASSWORD=buzz_dev
 ./bin/pgschema apply --file schema/schema.sql --auto-approve
 docker exec -i -e PGPASSWORD=buzz_dev buzz-postgres \
   psql -U buzz -d buzz -v ON_ERROR_STOP=1 \
-  < scripts/attach-schema-partitions.sql
+  < scripts/reconcile-schema-after-pgschema.sql
 docker exec -e PGPASSWORD=buzz_dev buzz-postgres \
   psql -U buzz -d buzz -v ON_ERROR_STOP=1 -c "
 INSERT INTO communities (id, host)

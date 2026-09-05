@@ -1,3 +1,4 @@
+import { updateChannelLastMessageAt } from "@/features/channels/lib/channelRecency";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -247,6 +248,11 @@ export function useLiveChannelUpdates(
       event.kind,
       isDmChannel,
     );
+
+    // Recency follows every real message, including self-authored and muted ones.
+    if (isUnreadTriggerKind) {
+      updateChannelLastMessageAt(queryClient, channelId, event.created_at);
+    }
 
     // Let the caller observe self-authored trigger events (e.g. to track
     // thread participation) before the author-exclusion guard filters them.

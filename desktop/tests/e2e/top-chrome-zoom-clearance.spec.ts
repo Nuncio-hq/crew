@@ -90,11 +90,11 @@ async function seedTextScale(
   }, scale);
 }
 
-// Cmd +/- scales the virtual typography rem, not the real root font size, so
-// text grows while rem-based layout geometry (including this nav row) holds.
-async function expectTypeScale(
+// Crew text zoom changes the typography token while layout rem stays 16px.
+// Assert both values so chrome geometry and readable text remain independent.
+async function expectTextRemSize(
   page: import("@playwright/test").Page,
-  typeRem: string,
+  fontSize: string,
 ) {
   await expect
     .poll(() =>
@@ -104,7 +104,7 @@ async function expectTypeScale(
           .trim(),
       ),
     )
-    .toBe(typeRem);
+    .toBe(fontSize);
   expect(
     await page.evaluate(
       () => getComputedStyle(document.documentElement).fontSize,
@@ -154,8 +154,8 @@ test.describe("top chrome macOS traffic-light clearance under text zoom", () => 
     await installMockBridge(page);
     await page.goto("/");
 
-    // Confirm the zoomed-out scale actually applied to the type scale.
-    await expectTypeScale(page, "12px");
+    // Confirm the zoomed-out typography token without resizing layout.
+    await expectTextRemSize(page, "12px");
 
     expect(await firstNavButtonX(page)).toBeGreaterThanOrEqual(
       TRAFFIC_LIGHT_RIGHT_EDGE,
@@ -172,7 +172,7 @@ test.describe("top chrome macOS traffic-light clearance under text zoom", () => 
     await installMockBridge(page);
     await page.goto("/");
 
-    await expectTypeScale(page, "24px");
+    await expectTextRemSize(page, "24px");
 
     expect(await firstNavButtonX(page)).toBeGreaterThanOrEqual(
       TRAFFIC_LIGHT_RIGHT_EDGE,

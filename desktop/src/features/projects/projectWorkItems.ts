@@ -62,6 +62,13 @@ export type ProjectsWorkItemsResult<TProject extends ProjectReference> = {
   };
 };
 
+/** Includes every repository-bearing read model, including repository-only ones. */
+export function projectsWithWorkItemRepositories<
+  TProject extends ProjectReference,
+>(projects: readonly TProject[]): TProject[] {
+  return projects.filter((project) => project.repositories.length > 0);
+}
+
 function groupByRepoAddress(events: RelayEvent[]): Map<string, RelayEvent[]> {
   const grouped = new Map<string, RelayEvent[]>();
   for (const event of events) {
@@ -82,6 +89,7 @@ export async function fetchProjectsWorkItems<TProject extends ProjectReference>(
   fetchEvents: (
     filter: FetchEventsInput,
   ) => Promise<RelayEvent[]> = relayClient.fetchEvents.bind(relayClient),
+  signal?: AbortSignal,
 ): Promise<ProjectsWorkItemsResult<TProject>> {
   const repoAddresses = [
     ...new Set(
@@ -118,20 +126,32 @@ export async function fetchProjectsWorkItems<TProject extends ProjectReference>(
         "#a": repoAddresses,
         limit: 2_000,
       }),
+      // Assignment state must reduce over the complete operation history —
+      // the 2,000-comment window above is shared across every loaded repo
+      // and can evict older assignment operations. Keyed by issue id (`#e`)
+      // because that is the only tag constraint the relay applies before its
+      // SQL LIMIT; see fetchAssignmentOperationEvents.
       rootPromise.then((rootEvents) =>
         fetchAssignmentOperationEvents(
           rootEvents
             .filter((event) => event.kind === KIND_GIT_ISSUE)
             .map((event) => event.id),
           fetchEvents,
+          signal,
         ),
       ),
     ]);
 
+  // The five eager queries above are single bounded REQs the relay client
+  // cannot abort mid-flight; only the assignment pagination is abort-aware.
+  // What cancellation CAN save here is the reduce work below and caching a
+  // result for a surface the user already left.
+  signal?.throwIfAborted();
+
   if (rootResult.status === "rejected") {
     throw rootResult.reason instanceof Error
       ? rootResult.reason
-      : new Error("Could not load project issues and pull requests.");
+      : new Error("Could not load project tasks and reviews.");
   }
 
   const updateEvents =

@@ -143,6 +143,7 @@ export function AgentDefinitionDialog({
 }: AgentDefinitionDialogProps) {
   const runtimesLoading = runtimeCatalogStatus === "loading";
   const [displayName, setDisplayName] = React.useState("");
+  const [descriptionDraft, setDescriptionDraft] = React.useState("");
   const [aiDefaultsOpen, setAiDefaultsOpen] = React.useState(false);
   const aiDefaultsTriggerRef = React.useRef<HTMLButtonElement>(null);
   const [avatarUrl, setAvatarUrl] = React.useState("");
@@ -209,6 +210,7 @@ export function AgentDefinitionDialog({
     }
 
     setDisplayName(initialValues.displayName);
+    setDescriptionDraft(initialValues.description ?? "");
     setAvatarUrl(initialValues.avatarUrl ?? "");
     setSystemPrompt(initialValues.systemPrompt);
     setRuntime(initialValues.runtime ?? "");
@@ -360,6 +362,8 @@ export function AgentDefinitionDialog({
           : undefined;
     const baseInput = {
       displayName: displayName.trim(),
+      // Empty string → null happens in the API wrapper (normalizeDescription).
+      description: descriptionDraft,
       avatarUrl: avatarUrl.trim() || undefined,
       systemPrompt: systemPrompt,
       runtime: runtimeForSubmit,
@@ -575,13 +579,13 @@ export function AgentDefinitionDialog({
     modelFieldVisible,
     provider: effectiveProvider,
   });
-  const { offerAutomaticModel, resolvedModelSelectValue, selectableAutoModel } =
-    resolveAutomaticModelUiState({
-      isRelayMesh,
-      model,
-      modelSelectValue,
-      runtime: selectedRuntime ?? { id: runtime, modelEnvVar: null },
-    });
+  const automaticModelUi = resolveAutomaticModelUiState({
+    isRelayMesh,
+    model,
+    modelSelectValue,
+    runtime: selectedRuntime ?? { id: runtime, modelEnvVar: null },
+  });
+  const { resolvedModelSelectValue, selectableAutoModel } = automaticModelUi;
   // On internal Block builds, BUZZ_AGENT_PROVIDER is baked in and a boot
   // migration rewrites any persisted Databricks v1 values → v2. Hide the v1
   // option there so it is not offered for new selections. OSS builds have no
@@ -630,7 +634,7 @@ export function AgentDefinitionDialog({
         loadingValue: MODEL_DISCOVERY_LOADING_VALUE,
         options: modelOptions,
       }),
-      { isRelayMesh, offerAutomaticModel, selectableAutoModel },
+      { isRelayMesh, ...automaticModelUi },
     );
   const previewLabel = displayName.trim() || "Agent name";
   const previewAvatarUrl = avatarUrl.trim() || null;
@@ -786,6 +790,8 @@ export function AgentDefinitionDialog({
       />
       <div className="space-y-5">
         <AgentDefinitionIdentityFields
+          description={descriptionDraft}
+          onDescriptionChange={setDescriptionDraft}
           displayName={displayName}
           isCreateMode={isCreateMode}
           isPending={isPending}
@@ -810,6 +816,7 @@ export function AgentDefinitionDialog({
         >
           {aiConfigurationMode === "custom" ? (
             <AgentHarnessField
+              catalogStatus={runtimeCatalogStatus}
               disabled={isPending || runtimesLoading}
               onValueChange={handleRuntimeDropdownChange}
               options={runtimeDropdownOptions}

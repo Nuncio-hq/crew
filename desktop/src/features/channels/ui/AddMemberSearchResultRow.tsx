@@ -1,3 +1,4 @@
+import { AgentManagementMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
 import { Bot } from "lucide-react";
 
 import type { UserSearchResult } from "@/shared/api/types";
@@ -5,7 +6,6 @@ import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
-import { OtherSetupAgentMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
 
 const MEMBER_ROW_INSET_DIVIDER_CLASS =
   "after:pointer-events-none after:absolute after:bottom-0 after:left-[3.75rem] after:right-0 after:h-px after:bg-border/60 after:content-[''] last:after:hidden";
@@ -22,7 +22,6 @@ export function AddMemberSearchResultRow({
   disabled,
   onSelect,
   ownerLabel,
-  showOtherSetupAgentMarker,
   user,
 }: {
   disabled: boolean;
@@ -50,6 +49,7 @@ export function AddMemberSearchResultRow({
         avatarUrl={user.avatarUrl}
         className="pointer-events-none relative z-10 h-8 w-8 text-xs shadow-none"
         displayName={formatAddCandidateName(user)}
+        shape={user.isAgent ? "squircle" : "circle"}
         size="sm"
       />
       <div className="pointer-events-none relative z-10 min-w-0 flex-1">
@@ -63,9 +63,9 @@ export function AddMemberSearchResultRow({
                 <Bot aria-hidden="true" className="h-4 w-4" />
                 agent
               </span>
-              <OtherSetupAgentMarker
-                show={showOtherSetupAgentMarker}
-                testId={`channel-user-search-other-setup-${user.pubkey}`}
+              <AgentManagementMarker
+                pubkey={user.pubkey}
+                ownerPubkey={user.ownerPubkey}
               />
             </div>
             <span className="block truncate font-mono text-2xs text-muted-foreground">

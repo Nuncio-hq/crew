@@ -460,6 +460,9 @@ mod tests {
 
     fn minimal_record(pubkey: &str, relay: &str) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            description: None,
+            provider_policy_pending: false,
+            team_catalog_source: None,
             pubkey: pubkey.into(),
             name: "agent".into(),
             persona_id: None,

@@ -181,8 +181,8 @@ lookup table or an id comparison in a component.
    place that resolves it for dialog surfaces and publishes it through
    `ui/AgentRunLocationContext.tsx`; the field reads that context and lets an
    explicit `runLocation` prop win. Do **not** thread the value as a prop
-   through `AgentDefinitionDialog` / `AgentInstanceEditDialog` — both are
-   already over the 1000-line ceiling, and neither uses the value itself.
+   through `AgentDefinitionDialog` / `AgentInstanceEditDialog` — neither uses
+   the value itself, and the shared context keeps the dialog boundary stable.
    Surfaces rendered outside `AgentDialog` (e.g. `EditRespondToDialog`) pass the
    prop directly. Local names "your
    computer, including files, accounts, and connected tools"; remote names "the
@@ -199,8 +199,78 @@ lookup table or an id comparison in a component.
    `getAgentAccessOwnerOnly()` is true, every managed agent's access control is
    locked to owner-only, including provider-backed agents. A provider backend
    does not prove remote execution and must never create a policy carve-out.
+12. **Shared instructions must be reviewable byte-for-byte.** Agent definitions
+   execute their `system_prompt` verbatim, so catalog and snapshot review
+   surfaces render the literal prompt, never the chat Markdown projection
+   (which can conceal spoilers, link destinations, and image sources). Reject
+   Unicode default-ignorable, bidirectional-formatting, and non-layout control
+   characters at both the untrusted catalog parser and the Rust persistence /
+   import boundary. Do not silently strip them: rejection keeps the reviewed
+   string identical to the executed string. New sharing paths must reuse the
+   same validation before they persist or activate a definition.
+13. **Profile runtime sections render only reported agent data.** Missing
+   runtime, model, status, command, MCP, advanced, or diagnostics values stay
+   absent in every build mode. Do not fill profile or agent-panel gaps with
+   development/staging examples, preview controls, or synthetic configuration;
+   those values can be mistaken for the viewed agent's real configuration.
+   Configuration rows show the effective value regardless of whether it came
+   from an explicit choice, global default, config file, or runtime override.
+   Do not add provenance lines, shadowed/struck-through values, pre-start
+   placeholders, or whole-section dimming; use an em dash for an unknown value.
+   Info, activity, agent-configuration, and model-setting rows use the same bare
+   16px leading-icon treatment as agent management actions. Keep semantic icons
+   visible in profile variants and do not wrap them in background shapes. An
+   owned agent profile is entry-point invariant: opening the same deployed
+   agent from Agents, a DM, or a channel must expose the same actions, tabs,
+   fields, and profile-wide activity selection. Caller context may control the
+   panel shell or return navigation, but must not filter or replace profile
+   content. Explicit public-key targets are always exact, including stopped,
+   archived, and relay-only identities. Only explicit persona navigation may
+   select a representative or offer persona Start; a relay persona link cannot
+   borrow a local sibling's management controls. See
+   [the identity contract](../../../../docs/agent-profile-identity.md).
+   Availability dots read relay presence, never a saved deployment
+   receipt or runtime status. Failed/disconnected reads are unknown; lifecycle
+   actions retain their separate routing. Presence does not grant Stop authority or constrain Crew
+   thread-worker parallelism; lifecycle controls retain their scoped ownership checks. Deletion also consumes that same exact-key availability reader:
+   unknown requests shutdown when a channel exists, request failure retains the
+   record, and only established Offline keeps the intentional no-request path.
+   Unqueried persona siblings are unknown. No presence state grants deletion or
+   Stop authority; native local stop-before-remove remains independent. See
+   [the availability contract](../../../../docs/agent-availability.md).
+   The shared cloud marker means “Not managed on this device” only
+   after ownership and successful local inventory are known. It does not imply
+   hosting location, availability, or permission. Keep all identity surfaces on
+   the shared provenance context, without per-row directory subscriptions. See
+   [the provenance contract](../../../../docs/agent-management-provenance.md).
+14. **Thinking effort has two surfaces: a local-only WRITE control and a
+   read-only two-facts DISPLAY.** The write control is `EffortPickerField`
+   (`ui/EffortPickerField.tsx`), a self-contained section component mounted in
+   `AgentInstanceEditDialog` beside the Model block. It is **Save-gated, not
+   direct-write**: the control is fully controlled by the parent dialog
+   (`value`/`onChange`) and owns no mutation. The dialog persists the selection
+   by embedding `effortLevel` in the locked `update_managed_agent` IPC call, so
+   the effort write is atomic with any access-policy change and can never race
+   or survive a Cancel or failed Save. There is no standalone
+   `persistAgentEffortLevel` setter. Its gating and option compute live in the
+   pure helper `ui/effortPicker.ts` (`effortPickerState`): the picker renders
+   only when `agent.backend.type === "local"` **AND** a `thought_level`
+   `effortConfigId` has been discovered from the running session (absent
+   pre-first-session and for runtimes/models without effort support). Local-only
+   is load-bearing, not cosmetic — the Rust command rejects non-local backends
+   because remote effort is set at deploy time via `policy_env`. Because the
+   control reads its inputs from the config surface the dialog already fetches
+   (`useAgentConfigSurface`), it integrates into the dialog's existing field
+   group without additional IPC. The read-only display is the `thinkingEffort`
+   normalized field rendered by `AgentConfigPanel` via `NormalizedRow`, which
+   already shows both facts — `field.value` (canonical, the effort the next
+   spawn will launch with) and, when a running ACP session differs,
+   `field.overriddenValue` struck through (the live session's current effort).
+   No component owns "configured vs current" logic; the reader's canonical tier
+   ordering feeds both facts. Do not add a second effort write path or restate
+   the two-facts logic in a component.
 
-12. **Owner-only builds discover only verified same-owner remote agents.**
+15. **Owner-only builds discover only verified same-owner remote agents.**
     The native `list_relay_agents` boundary authenticates ownership through the
     agent's NIP-OA profile, then retains only agents with verified ownership
     when the compiled owner-only capability is present. The frontend applies
@@ -210,13 +280,13 @@ lookup table or an id comparison in a component.
     events refresh only local persona/team/managed-agent caches; they must
     never invalidate the remote relay directory.
 
-13. **A hidden field never blocks Save, and a visible incomplete one explains
+16. **A hidden field never blocks Save, and a visible incomplete one explains
     itself.** `agentAiConfigurationSubmitBlockReason` derives the submit-block
     copy from the same visibility inputs the fields render from
     (`needsProviderSelection` / `needsModelSelection`), so a provider or model
     the runtime metadata hides can't silently disable the footer. Dialogs pass
     the reason to the footer instead of computing their own message.
-14. **Definition edits seed access from the instance being edited.** A
+17. **Definition edits seed access from the instance being edited.** A
     definition's stored `respondTo` / `respondToAllowlist` can lag behind the
     managed-agent instance enforcing it, so `editPersonaDialogState` takes the
     linked instance's access and prefers it — a definition edit must not
@@ -224,7 +294,7 @@ lookup table or an id comparison in a component.
     `personaManagedAgentUpdate` pushes a non-null definition policy down to its
     linked instances (allowlist only when the mode is `allowlist`); a null
     definition policy is "unspecified" and never overwrites instance access.
-15. **Archived identities are omitted from forward-looking discovery, not from
+18. **Archived identities are omitted from forward-looking discovery, not from
     the archive surfaces.** `buildUnifiedGroups` / `pickProfileAgent` take the
     `useIsArchivedPredicate()` predicate and drop archived standalone and
     unknown-definition instances, and skip archived instances when resolving a
@@ -233,6 +303,48 @@ lookup table or an id comparison in a component.
     instance list so the card still represents them, and the predicate's
     fail-open-while-loading and self-exempt behavior is load-bearing — don't
     reimplement archive checks locally.
+
+19. **The persona `description` is public display metadata.** It is optional,
+   capped at 280 characters, and validated through the shared visible-text
+   policy (`validate_agent_description_text` in `definition_validation.rs`)
+   on the raw authored bytes at create/update, snapshot import, publication,
+   inbound sync, and the untrusted catalog parser — rejected, never stripped.
+   It is deliberately EXCLUDED from `persona_content_hash`
+   (`description_change_does_not_change_content_hash`), so a description-only
+   edit never flips the restart badge on linked instances. Only the AUTHORED
+   description exists — there is deliberately no derived/generated fallback;
+   a blank description publishes an empty kind:0 `about`, exactly as before
+   the field existed. Agent and team snapshots carry the authored description
+   in the member profile's `about` and validate it before import. The trim/empty
+   resolution exists twice and must stay in
+   sync (port changes in the same PR): `lib/agentDescription.ts`
+   (`effectiveAgentDescription`) feeds display surfaces, and its Rust twin
+   (`managed_agents/agent_description.rs`, `effective_agent_description` /
+   `record_effective_description`) feeds the publish path, where
+   `profile_needs_sync` compares `about` (None == empty) so description edits
+   reconcile instead of being clobbered. Persona-linked instances do not own a
+   second description copy; snapshot export materializes the definition value
+   only into the portable snapshot, and a dangling link resolves no description
+   rather than reviving stale instance metadata. The agents-page card face shows the
+   authored description as its second line, falling back to the model label
+   when none exists (`UnifiedAgentsSection.tsx` composes it;
+   `AgentIdentityCard` takes a presentational `subtitle`). The community catalog
+   shows the same authored description before consent: a clamped two-line list
+   subtitle for scanning and the full safely wrapped value in persona detail.
+   The dialog field
+   lives in `ui/AgentDescriptionField.tsx` (`AgentIdentityFields`), not
+   inline in the over-1000-line dialogs.
+
+20. **Databricks model discovery has one shared catalog authority.** Desktop and ACP call the shared `buzz-agent` discovery library; Desktop passes the effective merged `DATABRICKS_MODEL_FILTER` explicitly, and the library applies it to raw workspace endpoint IDs and Unity Catalog model-service FQNs after the additive union. A successful filtered-empty catalog is authoritative: it stays empty, disables switching, and never falls through to configured or known-model fallback. UC FQNs are catalog data and always use the MLflow Chat Completions route, regardless of family-looking text in their components. Global Defaults preserves the discovered model ID as the selected value while its closed trigger renders the provider-scoped display label; do not force the raw persisted ID over that label.
+
+## Thread-scoped runtime controls
+
+Crew observer controls preserve `conversationId` and optional `turnId` so one
+logical agent can run multiple thread workers. Stop acknowledgements echo the
+optional `requestId`; match the control type, channel, conversation and request
+before claiming success. Relay delivery alone is not a confirmed cancellation.
+A queued conversation can be drained without an active turn. Do not replace
+these controls with channel-only routing or create a new session as a fallback.
 
 ## The tests that enforce this
 
@@ -269,6 +381,11 @@ lookup table or an id comparison in a component.
 - `desktop/tests/e2e/hermes-profile-binding.spec.ts` — create/edit binding
   field visibility, validation, profile-owned model row, duplicate-bind error,
   create-in-place button, delete keep/delete choice (defaults to keep).
+- `desktop/tests/e2e/agents.spec.ts` — community catalog descriptions remain
+  visible in the list and full detail before Add agent, including long
+  unbroken Unicode text without horizontal overflow.
+- `lib/agentDescription.test.mjs` — authored-description resolution: trim,
+  blank/missing → null.
 - Rust: `runtime_metadata_env_vars` tests pin spawn-time key application.
 - Rust: `hermes_profile_lifecycle` tests pin create/delete against a fake
   `hermes` + temp `HERMES_HOME` (including the spike 0011 exit-0-but-present

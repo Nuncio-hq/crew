@@ -18,6 +18,7 @@ export async function establishLiveSubscription({
   filter,
   onEvent,
   onStatus,
+  readinessTimeoutMs = LIVE_SUBSCRIPTION_READY_TIMEOUT_MS,
   recoveryFloorCreatedAt,
   sendRequest,
   closeSubscription,
@@ -27,6 +28,7 @@ export async function establishLiveSubscription({
   filter: RelaySubscriptionFilter;
   onEvent: (event: RelayEvent, context: RelayLiveEventContext) => void;
   onStatus?: (status: RelayLiveSubscriptionStatus) => void;
+  readinessTimeoutMs?: number;
   recoveryFloorCreatedAt: number;
   sendRequest: () => Promise<void>;
   closeSubscription: (subId: string) => Promise<void>;
@@ -57,10 +59,10 @@ export async function establishLiveSubscription({
     readinessTimedOut = true;
     rejectDeadline(
       new Error(
-        `Relay subscription readiness timed out after ${LIVE_SUBSCRIPTION_READY_TIMEOUT_MS}ms`,
+        `Relay subscription readiness timed out after ${readinessTimeoutMs}ms`,
       ),
     );
-  }, LIVE_SUBSCRIPTION_READY_TIMEOUT_MS);
+  }, readinessTimeoutMs);
   let request: Promise<void> | undefined;
   let requestSettled = false;
   try {

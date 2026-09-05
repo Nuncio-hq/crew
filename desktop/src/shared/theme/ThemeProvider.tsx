@@ -400,17 +400,20 @@ async function applyWindowGlass(enabled: boolean) {
   glassBackgroundPreferenceEnabled = enabled;
   const requestToken = ++glassVibrancyRequest;
 
+  if (!isTauri() || !isMacPlatform()) {
+    glassBackgroundPreferenceEnabled = false;
+    glassVibrancyEnabled = false;
+    glassVibrancyReady = false;
+    setGlassBackgroundActive(false);
+    return;
+  }
+
   if (enabled && glassVibrancyEnabled && glassVibrancyReady) {
     maybeEnableGlassBackground(requestToken);
     return;
   }
 
   glassVibrancyReady = false;
-
-  if (!isTauri()) {
-    setGlassBackgroundActive(false);
-    return;
-  }
 
   try {
     await invokeTauri<void>("set_window_vibrancy", {
@@ -521,7 +524,7 @@ export function ThemeProvider({
   });
   const [glassBackground, setGlassBackgroundState] = useState<boolean>(() => {
     const stored = getStorageItem(GLASS_BACKGROUND_STORAGE_KEY);
-    const enabled = stored === "true";
+    const enabled = isTauri() && isMacPlatform() && stored === "true";
     glassBackgroundPreferenceEnabled = enabled;
     return enabled;
   });
@@ -687,6 +690,12 @@ export function ThemeProvider({
   );
 
   const setGlassBackground = useCallback((enabled: boolean) => {
+    if (!isTauri() || !isMacPlatform()) {
+      glassBackgroundPreferenceEnabled = false;
+      setGlassBackgroundActive(false);
+      setGlassBackgroundState(false);
+      return;
+    }
     window.localStorage.setItem(
       GLASS_BACKGROUND_STORAGE_KEY,
       enabled ? "true" : "false",

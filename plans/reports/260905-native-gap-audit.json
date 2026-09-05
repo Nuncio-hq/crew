@@ -1,0 +1,162 @@
+[
+  {
+    "path": "crates/buzz-cli/README.md",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 198,
+    "local_lines": 199
+  },
+  {
+    "path": "crates/buzz-cli/TESTING.md",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 627,
+    "local_lines": 627
+  },
+  {
+    "path": "crates/buzz-cli/src/commands/messages.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 1891,
+    "local_lines": 1979
+  },
+  {
+    "path": "crates/buzz-cli/src/commands/mod.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 143,
+    "local_lines": 146
+  },
+  {
+    "path": "crates/buzz-cli/src/lib.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 2671,
+    "local_lines": 2811
+  },
+  {
+    "path": "crates/buzz-dev-mcp/src/lib.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 213,
+    "local_lines": 481
+  },
+  {
+    "path": "crates/buzz-relay/src/api/bridge.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 4241,
+    "local_lines": 4236
+  },
+  {
+    "path": "crates/buzz-relay/src/api/mod.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 385,
+    "local_lines": 441
+  },
+  {
+    "path": "crates/buzz-relay/src/handlers/auth.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 354,
+    "local_lines": 348
+  },
+  {
+    "path": "crates/buzz-relay/src/handlers/event.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 2496,
+    "local_lines": 2496
+  },
+  {
+    "path": "crates/buzz-relay/src/handlers/ingest.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 5540,
+    "local_lines": 6363
+  },
+  {
+    "path": "crates/buzz-relay/src/handlers/mod.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 66,
+    "local_lines": 70
+  },
+  {
+    "path": "crates/buzz-relay/src/handlers/push_lease.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": false,
+    "target_lines": 747,
+    "local_lines": 747
+  },
+  {
+    "path": "crates/buzz-relay/src/handlers/side_effects.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 3863,
+    "local_lines": 3863
+  },
+  {
+    "path": "crates/buzz-relay/src/main.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 2337,
+    "local_lines": 2337
+  },
+  {
+    "path": "crates/buzz-relay/src/router.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": false,
+    "target_lines": 1379,
+    "local_lines": 1387
+  },
+  {
+    "path": "crates/buzz-relay/src/workflow_sink.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": false,
+    "target_lines": 1404,
+    "local_lines": 1404
+  },
+  {
+    "path": "crates/buzz-sdk/src/builders.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 4973,
+    "local_lines": 5380
+  },
+  {
+    "path": "crates/buzz-sdk/src/lib.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": false,
+    "crew_delta": true,
+    "target_lines": 113,
+    "local_lines": 114
+  },
+  {
+    "path": "crates/buzz-test-client/tests/e2e_project.rs",
+    "missing": false,
+    "unchanged_from_old_upstream": true,
+    "crew_delta": false,
+    "target_lines": 603,
+    "local_lines": 491
+  }
+]

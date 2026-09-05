@@ -1,3 +1,4 @@
+import { setToolPaneTab } from "@/features/tool-pane/toolPaneStore";
 import type { MouseEvent } from "react";
 
 import { setThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
@@ -77,6 +78,7 @@ export function LinkPreviewAttachment({
       rootEventId: view?.rootEventId ?? null,
       source: "url",
     });
+    setToolPaneTab("pr");
     setThreadViewMode("focus");
   }
 

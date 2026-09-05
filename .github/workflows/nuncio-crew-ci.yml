@@ -61,12 +61,16 @@ jobs:
               - 'migrations/**'
               - 'schema/**'
               - 'docker-compose.yml'
-              - 'scripts/attach-schema-partitions.sql'
+              - 'scripts/reconcile-schema-after-pgschema.sql'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'Justfile'
               - '.github/workflows/nuncio-crew-ci.yml'
               - 'scripts/run-nuncio-crew-project-relay-ci.sh'
+              - '.config/nextest.toml'
+              - 'scripts/postgres-test-*.sh'
+              - 'scripts/check-postgres-test-discovery.py'
+              - 'scripts/test-postgres-test-*.sh'
             acp:
               - 'crates/buzz-acp/**'
               - 'crates/buzz-persona/**'
@@ -192,6 +196,61 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
             "$APP/Contents/Info.plist")" = "com.nuncio.crew"
           file "$APP/Contents/MacOS/$EXECUTABLE" | grep -q arm64
+
+  postgres:
+    name: PostgreSQL Tests
+    needs: changes
+    if: needs.changes.outputs.relay == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: buzz
+          POSTGRES_PASSWORD: buzz_dev
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U buzz -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: buzz
+      PGPASSWORD: buzz_dev
+      PG_BIN_DIR: /usr/bin
+      BUZZ_POSTGRES_ADMIN_URL: postgres://buzz:buzz_dev@localhost:5432/postgres
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@0fd46367812ee04360509b4169d9f659d6892bb2 # v2.79.15
+        with:
+          tool: cargo-nextest@0.9.136
+      - name: Verify PostgreSQL test discovery and isolation
+        run: |
+          bash scripts/test-postgres-test-discovery.sh
+          bash scripts/test-postgres-test-wrapper.sh
+      - name: Run isolated PostgreSQL tests
+        run: scripts/postgres-test-run.sh
 
   project-relay:
     name: Project Relay
@@ -437,7 +496,7 @@ jobs:
         run: |
           ./bin/pgschema apply --file schema/schema.sql --auto-approve
           docker exec -i -e PGPASSWORD=buzz_dev buzz-postgres \
-            psql -U buzz -d buzz -v ON_ERROR_STOP=1 < scripts/attach-schema-partitions.sql
+            psql -U buzz -d buzz -v ON_ERROR_STOP=1 < scripts/reconcile-schema-after-pgschema.sql
           docker exec -e PGPASSWORD=buzz_dev buzz-postgres \
             psql -U buzz -d buzz -qtA -c "
           INSERT INTO communities (id, host)
@@ -504,7 +563,7 @@ jobs:
   gate:
     name: NuncioCrew Gate
     if: ${{ always() }}
-    needs: [changes, desktop-fast, desktop-rust, macos-arm, project-relay, buzz-acp]
+    needs: [changes, desktop-fast, desktop-rust, macos-arm, project-relay, postgres, buzz-acp]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -514,4 +573,4 @@ jobs:
       - name: Require all relevant Crew checks
         run: |
           node desktop/scripts/check-nuncio-crew-ci-results.mjs \
-            '{"ci-policy":"${{ needs.changes.result }}","desktop":"${{ needs.changes.outputs.desktop }}","desktop-rust-changed":"${{ needs.changes.outputs.desktop-rust }}","relay":"${{ needs.changes.outputs.relay }}","acp":"${{ needs.changes.outputs.acp }}","desktop-fast":"${{ needs.desktop-fast.result }}","desktop-rust":"${{ needs.desktop-rust.result }}","macos-arm":"${{ needs.macos-arm.result }}","project-relay":"${{ needs.project-relay.result }}","buzz-acp":"${{ needs.buzz-acp.result }}"}'
+            '{"ci-policy":"${{ needs.changes.result }}","desktop":"${{ needs.changes.outputs.desktop }}","desktop-rust-changed":"${{ needs.changes.outputs.desktop-rust }}","relay":"${{ needs.changes.outputs.relay }}","acp":"${{ needs.changes.outputs.acp }}","desktop-fast":"${{ needs.desktop-fast.result }}","desktop-rust":"${{ needs.desktop-rust.result }}","macos-arm":"${{ needs.macos-arm.result }}","project-relay":"${{ needs.project-relay.result }}","postgres":"${{ needs.postgres.result }}","buzz-acp":"${{ needs.buzz-acp.result }}"}'

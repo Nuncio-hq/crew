@@ -2,7 +2,10 @@ import * as React from "react";
 
 import type { Editor } from "@tiptap/react";
 
-import { mentionHighlightKey } from "./mentionHighlightExtension";
+import {
+  assignMentionHighlightNames,
+  mentionHighlightKey,
+} from "./mentionHighlightExtension";
 
 type MentionHighlightStorage = {
   names: string[];
@@ -17,11 +20,13 @@ export function useRichTextEditorMentionHighlightSync(
   {
     agentAvatarUrlsByName,
     agentMentionNames,
+    addressedAgentMentionNames,
     channelNames,
     mentionNames,
   }: {
     agentAvatarUrlsByName?: Record<string, string>;
     agentMentionNames?: string[];
+    addressedAgentMentionNames?: readonly string[];
     channelNames?: string[];
     mentionNames?: string[];
   },
@@ -33,10 +38,26 @@ export function useRichTextEditorMentionHighlightSync(
       | MentionHighlightStorage
       | undefined;
     if (storage) {
-      storage.names = mentionNames ?? [];
-      storage.agentNames = agentMentionNames ?? [];
-      storage.agentAvatarsByName = agentAvatarUrlsByName ?? {};
-      storage.channelNames = channelNames ?? [];
+      const namesChanged = assignMentionHighlightNames(
+        storage,
+        mentionNames ?? [],
+        [
+          ...new Set([
+            ...(agentMentionNames ?? []),
+            ...(addressedAgentMentionNames ?? []),
+          ]),
+        ],
+        channelNames ?? [],
+      );
+      const avatars = agentAvatarUrlsByName ?? {};
+      const avatarsChanged =
+        Object.keys(avatars).length !==
+          Object.keys(storage.agentAvatarsByName).length ||
+        Object.entries(avatars).some(
+          ([name, url]) => storage.agentAvatarsByName[name] !== url,
+        );
+      if (!namesChanged && !avatarsChanged) return;
+      storage.agentAvatarsByName = avatars;
       const { tr } = editor.state;
       editor.view.dispatch(tr.setMeta(mentionHighlightKey, true));
     }
@@ -44,6 +65,7 @@ export function useRichTextEditorMentionHighlightSync(
     editor,
     mentionNames,
     agentMentionNames,
+    addressedAgentMentionNames,
     agentAvatarUrlsByName,
     channelNames,
   ]);

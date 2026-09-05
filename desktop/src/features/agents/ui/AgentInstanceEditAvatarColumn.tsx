@@ -2,6 +2,7 @@ import { Button } from "@/shared/ui/button";
 import { AgentCreationPreview } from "./AgentCreationPreview";
 
 type AgentInstanceEditAvatarColumnProps = {
+  disabled?: boolean;
   label: string;
   avatarUrl: string | null;
   onClearAvatar: () => void;
@@ -13,6 +14,7 @@ type AgentInstanceEditAvatarColumnProps = {
 };
 
 export function AgentInstanceEditAvatarColumn({
+  disabled = false,
   avatarUrl,
   label,
   onClearAvatar,
@@ -38,6 +40,7 @@ export function AgentInstanceEditAvatarColumn({
       {onEditLinkedPersona ? (
         <Button
           className="w-full"
+          disabled={disabled}
           onClick={() => {
             onClose();
             onEditLinkedPersona();

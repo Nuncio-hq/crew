@@ -1,5 +1,28 @@
 # Crew State
 
+## Buzz Desktop 0.5.22 — local and browser gates passed, remote gates pending
+
+The working branch integrates released source through `desktop-v0.5.22`
+(`9ceb1f79bbc21785a0a075c40aecb3c058b1ea15`). All 191 source dispositions are
+accounted for. Local `just ci`, dependency policy and required integration lanes
+passed. Final desktop rerun: 6996 passed, one skipped; Tauri: 3431 passed,
+19 ignored; mobile: 2086 passed. Full integration: 126 DB, 379 isolated PostgreSQL and 314 workspace
+integration tests passed; counts overlap across lanes.
+
+Integration fixes include the PR comment refresh loop, member provenance visibility,
+narrow tool-pane sizing and hard-top wheel pagination. Final clean-bundle release
+smoke passed 3/3: all 10,000 ids with exact hash, 199 continuations, maximum 164
+mounted rows, zero duplicates/order errors/render-pending timeouts. The PR and
+remote NuncioCrew/manual-sync gates have not yet run; no merge, release, deployment or hosted-provider success is claimed.
+
+Crew keeps channel-first navigation, one agent across independent thread UUIDs,
+resume-first sessions, Hermes profile ownership, text-only zoom, theme identity,
+and the 1000-line policy. See the
+[integration record](verification/upstream-0-5-22-integration.md) and its linked
+191-commit ledger for source evidence, deliberate exceptions and test limits.
+Working-branch pin metadata names the target; the historical 0.5.18 entry below
+records the previous completed sync.
+
 ## Issues #337 / #338 — channel recovery and receipt compatibility
 
 Recovery code updated (2026-09-05): the harness reads the relay background
@@ -54,14 +77,13 @@ these boundaries; final CI evidence belongs to the pull request. No live
 long-running provider success is claimed. Current hosted recovery evidence and
 remaining provider/relay blockers for #337 and #338 are recorded above.
 
-## Issue #285 — Buzz desktop-v0.5.18 pin
+## Issue #285 — prior Buzz desktop-v0.5.18 pin
 
-Pinned to `desktop-v0.5.18` /
+Previously pinned to `desktop-v0.5.18` /
 `39f8b46935736334cdd7045a4e4b5d7eb1a33888`. The 0.5.12–0.5.18 wave
 already landed through child issues on `main`; this parent records the
-pin without a second tag merge. Channel-first IA stays (#278). Settings
-shows `v0.5.18 · Local` from the desktop manifests. Machine-readable
-source: [`upstream-buzz.json`](upstream-buzz.json).
+pin without a second tag merge. Channel-first IA stays (#278). That sync recorded `v0.5.18 · Local`; current working-branch metadata is in
+[`upstream-buzz.json`](upstream-buzz.json).
 Last updated: 2026-08-23
 
 ## Issue #277 — Mobile UI upstream 0.5.12 → 0.5.18 parity

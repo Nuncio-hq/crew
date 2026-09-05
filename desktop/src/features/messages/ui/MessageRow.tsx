@@ -1,6 +1,5 @@
 import * as React from "react";
 import { AlertTriangle } from "lucide-react";
-
 import {
   depthGuideActionsEqual,
   numberArrayEqual,
@@ -16,6 +15,7 @@ import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { useEditAsUndoUiState } from "@/features/agents/useEditAsUndoState";
 import { HuddleAttachment } from "@/features/huddle/components/HuddleAttachment";
 import { MessageReactions } from "@/features/messages/ui/MessageReactions";
+import { MessageAuthorWithIndicators } from "@/features/messages/ui/MessageAuthorWithIndicators";
 import { useReactionHandler } from "@/features/messages/ui/useReactionHandler";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
@@ -50,23 +50,27 @@ import { FailureNoticeRetryButton } from "./FailureNoticeRetryButton";
 import { MessageActionBar } from "./MessageActionBar";
 import { MessageAgentOwner } from "./MessageAgentOwner";
 import { MessageRowDefaultBody } from "./MessageRowDefaultBody";
-import { MessageAuthorText, MessageHeaderRow } from "./MessageHeader";
+import {
+  MessageAuthorText,
+  MessageHeaderRow,
+  MessageMetaSegments,
+} from "./MessageHeader";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { SentFromThreadLine } from "./SentFromThreadLine";
 import { WaveMessageAttachment } from "./WaveMessageAttachment";
 import { AgentReceiptMessageBody } from "./AgentReceiptMessageBody";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-
+import { renderMessageStatusMetadata } from "./message-status-metadata";
+import { getAgentAddressMentionPubkeys } from "@/features/messages/lib/agentAddressMention.mjs";
+import { getVisibleAgentAddressPubkeys } from "@/features/messages/lib/getVisibleAgentAddressPubkeys";
+import { MessageAgentAddressPrefix } from "./MessageAgentAddressPrefix";
 const DiffMessage = React.lazy(() => import("./DiffMessage"));
 const DiffMessageExpanded = React.lazy(() => import("./DiffMessageExpanded"));
-
 export type ThreadDepthGuideAction = {
   active?: boolean;
   depth: number;
   label: string;
   message: TimelineMessage;
 };
-
 export const MessageRow = React.memo(
   function MessageRow({
     channelId = null,
@@ -237,6 +241,8 @@ export const MessageRow = React.memo(
       (message.pubkey && isKnownAgentPubkey(message.pubkey))
         ? "bot"
         : message.role;
+    const isAuthorAgent =
+      message.isAgent === true || profilePopoverRole === "bot";
     const { agentMentionPubkeysByName, agentMentionAvatarsByName } =
       React.useMemo(() => {
         if (!mentionPubkeysByName) {
@@ -271,6 +277,20 @@ export const MessageRow = React.memo(
       eventId: message.id,
     });
 
+    const addressedAgentPubkeys = React.useMemo(() => {
+      return getVisibleAgentAddressPubkeys(
+        message.body,
+        getAgentAddressMentionPubkeys(message.tags).filter(isKnownAgentPubkey),
+        mentionPubkeysByName,
+      );
+    }, [isKnownAgentPubkey, mentionPubkeysByName, message.body, message.tags]);
+    const agentAddressPrefix =
+      addressedAgentPubkeys.length > 0 ? (
+        <MessageAgentAddressPrefix
+          profiles={profiles}
+          pubkeys={addressedAgentPubkeys}
+        />
+      ) : undefined;
     const imetaByUrl = React.useMemo(
       () => (message.tags ? parseImetaTags(message.tags) : undefined),
       [message.tags],
@@ -404,6 +424,7 @@ export const MessageRow = React.memo(
                   setExpandedDiffId(message.id);
                 }}
                 repoUrl={getTag("repo")}
+                searchQuery={searchQuery}
                 truncated={getTag("truncated") === "true"}
               />
             </React.Suspense>
@@ -440,6 +461,7 @@ export const MessageRow = React.memo(
                 fallbackText={waveMessage.fallbackText}
                 huddleMemberPubkeys={huddleMemberPubkeys}
                 huddleMemberPubkeysPending={huddleMemberPubkeysPending}
+                searchQuery={searchQuery}
               />
             );
           }
@@ -453,6 +475,7 @@ export const MessageRow = React.memo(
               videoReviewContext={videoReviewContext}
               channelNames={channelNames}
               emojiOnly={emojiOnly}
+              leadingInlineContent={agentAddressPrefix}
               customEmoji={customEmoji}
               imetaByUrl={imetaByUrl}
               agentMentionPubkeysByName={agentMentionPubkeysByName}
@@ -477,7 +500,9 @@ export const MessageRow = React.memo(
 
     const isThreadReplyLayout = layoutVariant === "thread-reply";
     const guideBleedRem = isThreadReplyLayout ? 0.25 : 0;
-    const avatarButtonRadiusClass = "rounded-full";
+    const avatarButtonRadiusClass = isAuthorAgent
+      ? "rounded-[30%]"
+      : "rounded-full";
 
     const showRespondToIndicator =
       message.respondTo === "anyone" || message.respondTo === "allowlist";
@@ -489,6 +514,7 @@ export const MessageRow = React.memo(
           avatarUrl={message.avatarUrl ?? null}
           className="shrink-0"
           displayName={message.author}
+          shape={isAuthorAgent ? "squircle" : "circle"}
           testId="message-avatar"
         />
         {showRespondToIndicator &&
@@ -535,7 +561,6 @@ export const MessageRow = React.memo(
           className="opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
           createdAt={message.createdAt}
           hideDayPeriod
-          time={message.time}
         />
       </div>
     );
@@ -615,46 +640,15 @@ export const MessageRow = React.memo(
       </div>
     );
 
-    const editAsUndoInline =
-      editAsUndoState === "too-late"
-        ? "Agent already read the original"
-        : editAsUndoState === "withdrawn"
-          ? "Request withdrawn — agent never ran"
-          : null;
-
-    const statusMetadataNode =
-      message.pending || message.edited || editAsUndoInline ? (
-        <>
-          {message.pending ? (
-            <p
-              className="font-normal text-muted-foreground/70"
-              data-testid="message-send-status"
-            >
-              Sending…
-            </p>
-          ) : null}
-          {message.edited ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <p className="text-muted-foreground/70">(edited)</p>
-              </TooltipTrigger>
-              <TooltipContent>This message has been edited</TooltipContent>
-            </Tooltip>
-          ) : null}
-          {editAsUndoInline ? (
-            <p
-              className="font-normal text-muted-foreground/70"
-              data-testid="message-edit-as-undo-status"
-            >
-              {editAsUndoInline}
-            </p>
-          ) : null}
-        </>
-      ) : null;
+    const statusMetadataNode = renderMessageStatusMetadata({
+      pending: message.pending,
+      edited: message.edited,
+      editAsUndoState,
+    });
 
     const inlineMetadataNode = (
       <div className="flex shrink-0 items-baseline gap-2 text-xs">
-        <MessageTimestamp createdAt={message.createdAt} time={message.time} />
+        <MessageTimestamp createdAt={message.createdAt} />
         {statusMetadataNode}
       </div>
     );
@@ -669,29 +663,33 @@ export const MessageRow = React.memo(
     const headerNode = isDisplayedAsContinuation ? null : (
       <MessageHeaderRow>
         {message.pubkey ? (
-          <UserProfilePopover
+          <MessageAuthorWithIndicators
+            authorName={message.author}
+            ownerPubkey={message.ownerPubkey}
             pubkey={message.pubkey}
             role={profilePopoverRole}
-            botIdenticonValue={message.author}
           >
-            <button
-              className="truncate rounded leading-message-author focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-              type="button"
-            >
-              {authorNode}
-            </button>
-          </UserProfilePopover>
+            {authorNode}
+          </MessageAuthorWithIndicators>
         ) : (
           authorNode
         )}
-        {agentOwnerNode}
-        {inlineMetadataNode}
-        {message.personaDisplayName &&
-        message.personaDisplayName !== message.author ? (
-          <span className="text-xs text-muted-foreground">
-            {message.personaDisplayName}
-          </span>
-        ) : null}
+        <MessageMetaSegments
+          segments={[
+            { key: "owner", node: agentOwnerNode },
+            { key: "timestamp", node: inlineMetadataNode },
+            {
+              key: "persona",
+              node:
+                message.personaDisplayName &&
+                message.personaDisplayName !== message.author ? (
+                  <span className="text-xs text-muted-foreground">
+                    {message.personaDisplayName}
+                  </span>
+                ) : null,
+            },
+          ]}
+        />
       </MessageHeaderRow>
     );
     const bodyContainerClass = isDisplayedAsContinuation

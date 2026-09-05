@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — NuncioCrew 0.5.22 source integration
+
+- Integrate Buzz Desktop `desktop-v0.5.22` across backend, desktop, mobile, web,
+  admin, deployment charts and benchmarks. All 191 source dispositions are
+  accounted for. Local `just ci`, dependency policy and integration gates passed;
+  final clean-bundle browser smoke passed 3/3 with all 10,000 ids reachable.
+  Remote PR/manual gates remain pending. This is not a release.
+- Preserve Crew channel-first navigation, thread UUID/resume-first sessions,
+  Hermes profile ownership, text-only zoom, theme identity and 1000-line limits.
+- Fix the PR comment refresh loop, member provenance visibility on hover,
+  narrow tool-pane sizing and pagination retry when wheel input reaches the hard
+  top. Keep existing momentum and fetch guards; five focused retry tests passed.
+- Append released migrations after unchanged Crew 0033 and validate PostgreSQL
+  regressions through the isolated Crew CI lane. Correct workflow/huddle query
+  operation attribution without changing SQL or tenant boundaries.
+- Prepare the manual sync gate with Crew's Linux native dependencies, CMake
+  compatibility and pinned nextest; all existing checks remain enabled.
+
+Source boundaries, local test evidence and remaining acceptance gates:
+[integration record](docs/crew/verification/upstream-0-5-22-integration.md).
+
 ## v0.5.18
 
 ### NuncioCrew upstream pin

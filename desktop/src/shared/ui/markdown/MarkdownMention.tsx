@@ -1,3 +1,4 @@
+import { AgentManagementMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
 import type * as React from "react";
 
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
@@ -56,6 +57,7 @@ export function MarkdownMention({
       style={avatar.style}
     >
       {renderedMentionText}
+      {isAgentMention ? <AgentManagementMarker pubkey={pubkey} /> : null}
     </span>
   );
 

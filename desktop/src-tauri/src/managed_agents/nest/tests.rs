@@ -7,7 +7,7 @@ fn nest_dir_is_under_home() {
         // whether init_nest_dir was called before this test ran.
         let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
         assert!(
-            name == NEST_DIR_PROD || name == NEST_DIR_DEV,
+            name == NEST_DIR_PROD || name == crate::build_identity::nest_name(true),
             "nest_dir must end with .buzz or .buzz-dev, got {dir:?}"
         );
     }
@@ -23,22 +23,10 @@ fn init_nest_dir_prod_sets_buzz() {
     if let Some(d) = dir {
         let name = d.file_name().and_then(|n| n.to_str()).unwrap_or("");
         assert!(
-            name == NEST_DIR_PROD || name == NEST_DIR_DEV,
+            name == NEST_DIR_PROD || name == crate::build_identity::nest_name(true),
             "nest_dir suffix must be .buzz or .buzz-dev, got {d:?}"
         );
     }
-}
-
-#[test]
-fn nest_skill_contains_safe_mention_workflow() {
-    assert!(BUZZ_CLI_SKILL_MD.contains("--mention <hex-or-npub>"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("every presentation-only name that should notify"));
-    assert!(BUZZ_CLI_SKILL_MD
-        .contains("permits unresolved or ambiguous `@Name` text as presentation-only"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("signed event's `mention_pubkeys`"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("no follow-up verification command is needed"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("Add membership separately only when authorized"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("never changes membership automatically"));
 }
 
 #[test]
@@ -342,13 +330,19 @@ fn ensure_skill_symlinks_skip_dangling_symlink() {
 }
 
 #[test]
-fn cli_link_name_prod_is_buzz() {
-    assert_eq!(cli_link_name(false), "buzz");
+fn cli_link_name_prod_follows_build_identity() {
+    let expected = crate::build_identity::demo_slug()
+        .map(|slug| format!("buzz-demo-{slug}"))
+        .unwrap_or_else(|| "buzz".to_string());
+    assert_eq!(cli_link_name(false), expected);
 }
 
 #[test]
-fn cli_link_name_dev_is_buzz_dev() {
-    assert_eq!(cli_link_name(true), "buzz-dev");
+fn cli_link_name_dev_follows_build_identity() {
+    let expected = crate::build_identity::demo_slug()
+        .map(|slug| format!("buzz-demo-{slug}"))
+        .unwrap_or_else(|| "buzz-dev".to_string());
+    assert_eq!(cli_link_name(true), expected);
 }
 
 #[cfg(unix)]
@@ -380,8 +374,8 @@ fn ensure_cli_symlink_creates_symlink_dev() {
     let local_bin = tmp.path().join("local_bin");
     fs::create_dir_all(&local_bin).unwrap();
 
-    // Dev link must be "buzz-dev", never "buzz".
-    assert_eq!(cli_link_name(true), "buzz-dev");
+    // Dev and demo links must never overwrite production's "buzz".
+    assert_ne!(cli_link_name(true), "buzz");
 
     let link = local_bin.join(cli_link_name(true));
     std::os::unix::fs::symlink(exe_parent.join("buzz"), &link).unwrap();
@@ -424,6 +418,8 @@ fn ensure_cli_symlink_does_not_clobber_regular_file_dev() {
 
 fn make_persona(id: &str, display_name: &str) -> AgentDefinition {
     AgentDefinition {
+        description: None,
+        team_catalog_source: None,
         id: id.to_string(),
         display_name: display_name.to_string(),
         avatar_url: None,
@@ -449,6 +445,9 @@ fn make_persona(id: &str, display_name: &str) -> AgentDefinition {
 
 fn make_agent(name: &str, persona_id: Option<&str>) -> ManagedAgentRecord {
     ManagedAgentRecord {
+        description: None,
+        provider_policy_pending: false,
+        team_catalog_source: None,
         pubkey: String::new(),
         name: name.to_string(),
         persona_id: persona_id.map(|s| s.to_string()),
@@ -511,7 +510,12 @@ fn make_agent(name: &str, persona_id: Option<&str>) -> ManagedAgentRecord {
 fn test_render_dynamic_section_with_agents() {
     let personas = vec![make_persona("p1", "Builder")];
     let agents = vec![make_agent("Kit", Some("p1"))];
-    let output = render_dynamic_section(&personas, &agents, "ws://example.com:3000");
+    let output = render_dynamic_section(
+        &personas,
+        &agents,
+        &Default::default(),
+        "ws://example.com:3000",
+    );
     assert!(output.contains("| Kit | Builder | @Kit |"));
     assert!(output.contains("| Name | Persona | How to address |"));
     assert!(output.contains("## Workspace"));
@@ -519,7 +523,7 @@ fn test_render_dynamic_section_with_agents() {
 
 #[test]
 fn test_render_dynamic_section_empty() {
-    let output = render_dynamic_section(&[], &[], "ws://example.com:3000");
+    let output = render_dynamic_section(&[], &[], &Default::default(), "ws://example.com:3000");
     assert!(output.contains("No agents deployed yet"));
 }
 
@@ -527,7 +531,12 @@ fn test_render_dynamic_section_empty() {
 fn test_render_dynamic_section_agent_no_persona() {
     let personas = vec![make_persona("p1", "Builder")];
     let agents = vec![make_agent("Scout", Some("nonexistent"))];
-    let output = render_dynamic_section(&personas, &agents, "ws://example.com:3000");
+    let output = render_dynamic_section(
+        &personas,
+        &agents,
+        &Default::default(),
+        "ws://example.com:3000",
+    );
     assert!(output.contains("| Scout | — | @Scout |"));
 }
 
@@ -763,7 +772,12 @@ fn test_upsert_marker_in_code_block() {
 fn test_render_pipe_in_agent_name() {
     let personas = vec![make_persona("p1", "Builder")];
     let agents = vec![make_agent("Kit|Pro", Some("p1"))];
-    let output = render_dynamic_section(&personas, &agents, "ws://example.com:3000");
+    let output = render_dynamic_section(
+        &personas,
+        &agents,
+        &Default::default(),
+        "ws://example.com:3000",
+    );
 
     assert!(
         output.contains("Kit\\|Pro"),
@@ -792,7 +806,12 @@ fn test_render_pipe_in_agent_name() {
 fn test_render_newline_in_persona_name() {
     let personas = vec![make_persona("p1", "Builder\nExpert")];
     let agents = vec![make_agent("Scout", Some("p1"))];
-    let output = render_dynamic_section(&personas, &agents, "ws://example.com:3000");
+    let output = render_dynamic_section(
+        &personas,
+        &agents,
+        &Default::default(),
+        "ws://example.com:3000",
+    );
 
     assert!(
         output.contains("Builder Expert"),
@@ -839,6 +858,34 @@ fn refresh_agents_md_writes_version_file() {
     ensure_nest_at(&root).unwrap();
     let version = fs::read_to_string(root.join(".nest-agents-version")).unwrap();
     assert_eq!(version.trim(), NEST_AGENTS_VERSION.to_string());
+}
+
+#[test]
+fn refresh_agents_md_upgrades_attribution_and_preserves_owned_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join(".buzz");
+    ensure_nest_at(&root).unwrap();
+
+    let agents_md = root.join("AGENTS.md");
+    fs::write(
+        &agents_md,
+        "# Buzz Nest\n\n## Git Commit Identity\n\n\
+         - **Human sign-off (required):** every commit MUST include a `Signed-off-by`.\n\n\
+         <!-- BEGIN BUZZ MANAGED — regenerated automatically, do not edit below -->\n\
+         ## Active Agents\n\n| Name | Persona | How to address |\n\
+         |------|---------|----------------|\n| Kit | Builder | @Kit |\n\
+         <!-- END BUZZ MANAGED -->\n\n## Local Notes\n\nKeep me.\n",
+    )
+    .unwrap();
+    fs::write(root.join(".nest-agents-version"), "4\n").unwrap();
+
+    ensure_nest_at(&root).unwrap();
+
+    let content = fs::read_to_string(&agents_md).unwrap();
+    assert_eq!(content.matches("## Git Commit Attribution").count(), 1);
+    assert!(!content.contains("**Human sign-off (required):**"));
+    assert!(content.contains("| Kit | Builder | @Kit |"));
+    assert!(content.contains("## Local Notes\n\nKeep me."));
 }
 
 #[test]
@@ -925,3 +972,6 @@ fn refresh_skill_overwrites_on_version_bump() {
         "SKILL.md must be refreshed on version bump"
     );
 }
+
+#[path = "template-contract-tests.rs"]
+mod template_contract_tests;

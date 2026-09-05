@@ -1,3 +1,11 @@
+import { orderMentionPubkeysByText } from "@/features/messages/lib/orderMentionPubkeys";
+import { normalizePubkey } from "@/shared/lib/pubkey";
+import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
+import {
+  buildVideoReviewPresentationByMessageId,
+  hasRenderedVideoAttachment,
+} from "@/features/messages/lib/videoReviewContext";
+import { VideoReviewNavigationProvider } from "@/shared/ui/VideoReviewNavigation";
 import {
   AlertCircle,
   ArrowLeft,
@@ -19,7 +27,10 @@ import { ProjectInboxDetail } from "@/features/home/ui/ProjectInboxDetail";
 import { ChannelMembersBar } from "@/features/channels/ui/ChannelMembersBar";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { formatInboxTypeLabel } from "@/features/home/lib/inbox";
-import { hasInboxThreadContext } from "@/features/home/lib/inboxViewHelpers";
+import {
+  toTimelineMessage,
+  hasInboxThreadContext,
+} from "@/features/home/lib/inboxViewHelpers";
 import {
   type InboxDisplayMessage,
   InboxMessageRow,
@@ -31,18 +42,15 @@ import {
   isWithinGroupingWindow,
   startsNewMessageGroup,
 } from "@/features/messages/lib/messageGrouping";
-import { orderMentionPubkeysByText } from "@/features/messages/lib/orderMentionPubkeys";
 import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import { buildEditMentionState } from "@/features/messages/lib/draftMentionRefs";
 import { imetaMediaFromTags } from "@/features/messages/lib/imetaMediaMarkdown";
 import { getThreadReference } from "@/features/messages/lib/threading";
-import { normalizePubkey } from "@/shared/lib/pubkey";
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
 import { useComposerHeightPadding } from "@/features/messages/ui/useComposerHeightPadding";
 import { UpdateIndicator } from "@/features/settings/UpdateIndicator";
 import type { Channel, UserProfileSummary } from "@/shared/api/types";
-import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
 import { TopChromeInsetHeader } from "@/shared/layout/TopChromeInsetHeader";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
@@ -119,6 +127,10 @@ type InboxDetailPaneProps = {
     messageId: string,
     threadRootId?: string | null,
   ) => void;
+  /** True while the selected hidden DM is being reopened on the relay. */
+  reopenPending?: boolean;
+  /** True when the last reopen of the selected hidden DM failed. */
+  reopenErrored?: boolean;
   onSendReply: (input: {
     content: string;
     mediaTags?: string[][];
@@ -145,7 +157,11 @@ export function InboxDetailPane(props: InboxDetailPaneProps) {
     );
   }
 
-  return <InboxMessageDetailPane {...props} />;
+  return (
+    <VideoReviewNavigationProvider>
+      <InboxMessageDetailPane {...props} />
+    </VideoReviewNavigationProvider>
+  );
 }
 
 function InboxMessageDetailPane({
@@ -179,6 +195,8 @@ function InboxMessageDetailPane({
   onRequestEmptyEditDelete,
   onManageChannel,
   onOpenContext,
+  reopenPending = false,
+  reopenErrored = false,
   onSendReply,
   onToggleReaction,
 }: InboxDetailPaneProps) {
@@ -201,7 +219,6 @@ function InboxMessageDetailPane({
   // Build the plain, non-virtualized timeline the shared hook anchors against.
   // Live arrivals rerun its layout compensation without changing the target.
 
-  const selectedMessage = messages.find((message) => message.isSelected);
   // A latest reply can represent an Inbox conversation. Resolve the actual
   // root from loaded context or the complete feed group; never treat an
   // unresolved root/profile lookup as an authoritative empty audience.
@@ -236,34 +253,100 @@ function InboxMessageDetailPane({
         )
       : []
     : undefined;
-  const pendingReplyMessages: InboxDisplayMessage[] = replies.map((reply) => ({
-    ...reply,
-    depth: reply.depth ?? (selectedMessage?.depth ?? 0) + 1,
-    isSelected: false,
-    mentionNames: [],
-  }));
-  const displayMessages: InboxDisplayMessage[] =
-    messages.length > 0
-      ? [...messages, ...pendingReplyMessages]
-      : item
-        ? [
-            {
-              authorLabel: item.senderLabel,
-              authorPubkey: item.item.pubkey,
-              avatarUrl: item.avatarUrl,
-              content: item.preview,
-              createdAt: item.item.createdAt,
-              depth: 0,
-              fullTimestampLabel: item.fullTimestampLabel,
-              id: item.id,
-              isSelected: true,
-              mentionNames: item.mentionNames,
-              mentionPubkeysByName: item.mentionPubkeysByName,
-              timeLabel: formatTime(item.item.createdAt),
-            },
-            ...pendingReplyMessages,
-          ]
-        : pendingReplyMessages;
+  const displayMessages = React.useMemo<InboxDisplayMessage[]>(() => {
+    const selectedMessage = messages.find((message) => message.isSelected);
+    const pendingReplyMessages: InboxDisplayMessage[] = replies.map(
+      (reply) => ({
+        ...reply,
+        depth: reply.depth ?? (selectedMessage?.depth ?? 0) + 1,
+        isSelected: false,
+        mentionNames: [],
+      }),
+    );
+
+    if (messages.length > 0) {
+      return [...messages, ...pendingReplyMessages];
+    }
+    if (!item) return pendingReplyMessages;
+
+    const threadReference = getThreadReference(item.item.tags);
+    return [
+      {
+        authorLabel: item.senderLabel,
+        authorPubkey: item.item.pubkey,
+        avatarUrl: item.avatarUrl,
+        content: item.preview,
+        createdAt: item.item.createdAt,
+        depth: 0,
+        fullTimestampLabel: item.fullTimestampLabel,
+        id: item.id,
+        isSelected: true,
+        mentionNames: item.mentionNames,
+        mentionPubkeysByName: item.mentionPubkeysByName,
+        kind: item.item.kind,
+        parentId: threadReference.parentId,
+        rootId: threadReference.rootId,
+        tags: item.item.tags,
+        timeLabel: formatTime(item.item.createdAt),
+      },
+      ...pendingReplyMessages,
+    ];
+  }, [item, messages, replies]);
+  const videoReviewMessages = React.useMemo(
+    () => displayMessages.map(toTimelineMessage),
+    [displayMessages],
+  );
+  const videoReviewChannelType =
+    item?.item.channelType === "dm" ||
+    item?.item.channelType === "stream" ||
+    item?.item.channelType === "forum"
+      ? item.item.channelType
+      : null;
+  const handleSendVideoReviewComment = React.useCallback(
+    (
+      message: TimelineMessage,
+      content: string,
+      mentionPubkeys: string[],
+      mediaTags?: string[][],
+      parentEventId?: string,
+    ) =>
+      onSendReply({
+        content,
+        mediaTags,
+        mentionPubkeys,
+        parentEventId: parentEventId ?? message.id,
+      }),
+    [onSendReply],
+  );
+  const videoReviewPresentation = React.useMemo(
+    () =>
+      buildVideoReviewPresentationByMessageId(
+        {
+          channelId: item?.item.channelId,
+          channelName: contextChannelName ?? item?.channelLabel ?? undefined,
+          channelType: videoReviewChannelType,
+          isSendingVideoReviewComment: isSendingReply,
+          messages: videoReviewMessages,
+          onSendVideoReviewComment: canReply
+            ? handleSendVideoReviewComment
+            : undefined,
+          onToggleReaction,
+          profiles,
+        },
+        hasRenderedVideoAttachment,
+      ),
+    [
+      canReply,
+      contextChannelName,
+      handleSendVideoReviewComment,
+      isSendingReply,
+      item,
+      onToggleReaction,
+      profiles,
+      videoReviewChannelType,
+      videoReviewMessages,
+    ],
+  );
   const { onScroll } = useAnchoredScroll({
     channelId: conversationId,
     contentRef,
@@ -420,6 +503,7 @@ function InboxMessageDetailPane({
         author: editTarget.authorLabel,
         body: editTarget.content,
         id: editTarget.id,
+        isThreadReply: false,
         imetaMedia: imetaMediaFromTags(editTarget.tags),
         ...editMentionState,
       }
@@ -447,6 +531,10 @@ function InboxMessageDetailPane({
       : null;
   const isThreadContext =
     !isDirectMessage && hasInboxThreadContext(item, messages);
+  const threadRootTags = isThreadContext
+    ? (displayMessages.find((message) => message.id === item.conversationId)
+        ?.tags ?? [])
+    : [];
   const contextLabel = isThreadContext
     ? isDirectMessage
       ? `Thread with ${item.senderLabel}`
@@ -547,6 +635,47 @@ function InboxMessageDetailPane({
               <TooltipProvider>
                 <div className="flex shrink-0 items-center gap-1">
                   <UpdateIndicator />
+                  {reopenPending || reopenErrored ? (
+                    <div
+                      aria-live="polite"
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium",
+                        reopenErrored
+                          ? "bg-destructive/10 text-destructive"
+                          : "bg-muted/60 text-muted-foreground",
+                      )}
+                      data-testid="home-inbox-reopen-status"
+                      role="status"
+                    >
+                      {reopenPending ? (
+                        <>
+                          <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                          <span>Reopening…</span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                          <span>Couldn’t reopen</span>
+                          {contextChannelId ? (
+                            <button
+                              className="ml-0.5 rounded font-semibold underline underline-offset-2 hover:no-underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                              data-testid="home-inbox-reopen-retry"
+                              onClick={() =>
+                                onOpenContext(
+                                  contextChannelId,
+                                  sourceEventId,
+                                  contextThreadRootId,
+                                )
+                              }
+                              type="button"
+                            >
+                              Retry
+                            </button>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                  ) : null}
                   {canOpenChannel && contextChannelId ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -676,6 +805,12 @@ function InboxMessageDetailPane({
                   onSelectReplyTarget={handleSelectReplyTarget}
                   onToggleReaction={onToggleReaction}
                   showUnreadBoundary={hasUnreadBoundary}
+                  videoReviewCommentRootId={videoReviewPresentation.commentRootIdsByMessageId.get(
+                    message.id,
+                  )}
+                  videoReviewContext={videoReviewPresentation.contextsByMessageId.get(
+                    message.id,
+                  )}
                 />
               );
             })}
@@ -714,8 +849,9 @@ function InboxMessageDetailPane({
                   ? null
                   : {
                       type: "thread",
-                      threadRootId: item.conversationId,
+                      threadRootId: conversationId,
                       initialAgentPubkeys,
+                      rootTags: threadRootTags,
                     }
               }
               channelId={item.item.channelId}

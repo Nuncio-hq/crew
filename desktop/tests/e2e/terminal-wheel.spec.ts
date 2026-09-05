@@ -1,3 +1,4 @@
+import { expandProjectPlumbing } from "../helpers/projectPlumbing";
 import { expect, test, type Page } from "@playwright/test";
 import { installMockBridge } from "../helpers/bridge";
 
@@ -168,6 +169,34 @@ async function reveal(page: Page) {
     .poll(async () => page.locator(TERM).evaluate((el) => el.clientHeight))
     .toBeGreaterThanOrEqual(180);
 }
+
+test("project terminal button opens Buzz Term for the repository", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await installTerminalBackend(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+  await page.getByTestId("projects-section-projects").click();
+  const projectEntry = page
+    .locator(
+      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+    )
+    .first();
+  await expect(projectEntry).toBeVisible({ timeout: 10_000 });
+  await projectEntry.click();
+  await expandProjectPlumbing(page);
+
+  const terminalButton = page.getByTestId("project-terminal-toggle");
+  await expect(terminalButton).toBeEnabled();
+  await terminalButton.click();
+  await expect(page.locator(TERM)).toHaveAttribute(
+    "data-terminal-mode",
+    "docked",
+  );
+  await expect(page.locator(TERM)).toBeVisible();
+});
 
 test("scrollback: wheel over Buzz Term reaches terminal_scroll", async ({
   page,

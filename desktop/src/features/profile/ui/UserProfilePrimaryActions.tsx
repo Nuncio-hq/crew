@@ -216,6 +216,7 @@ function ProfileActionTile({
   label,
   onClick,
   testId,
+  title,
 }: {
   active?: boolean;
   disabled?: boolean;
@@ -224,6 +225,7 @@ function ProfileActionTile({
   label: string;
   onClick: () => void;
   testId?: string;
+  title?: string;
 }) {
   return (
     <button
@@ -234,6 +236,7 @@ function ProfileActionTile({
         active && "bg-foreground text-background hover:bg-foreground/90",
       )}
       data-testid={testId}
+      title={title}
       disabled={disabled}
       onClick={onClick}
       type="button"

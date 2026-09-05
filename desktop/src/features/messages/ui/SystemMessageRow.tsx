@@ -1,3 +1,4 @@
+import { AgentManagementMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
 import { SmilePlus } from "lucide-react";
 import * as React from "react";
 
@@ -287,6 +288,7 @@ function ProfileName({
       style={avatar.style}
     >
       {children}
+      <AgentManagementMarker pubkey={pubkey} />
     </InlineChip>
   ) : (
     <span
@@ -297,6 +299,7 @@ function ProfileName({
       )}
     >
       {children}
+      <AgentManagementMarker pubkey={pubkey} />
     </span>
   );
 
@@ -419,6 +422,12 @@ function MemberNamesInlineList({
                 {hiddenTargets.map((pubkey) => (
                   <div className="flex items-center gap-2" key={pubkey}>
                     <UserAvatar
+                      accent={isKnownAgentPubkey(
+                        pubkey,
+                        profiles,
+                        personaLookup,
+                        agentPubkeys,
+                      )}
                       avatarUrl={resolveAvatarUrl(pubkey, profiles)}
                       className="!h-5 !w-5 shrink-0 text-3xs"
                       displayName={resolveDisplayLabel(
@@ -426,6 +435,16 @@ function MemberNamesInlineList({
                         currentPubkey,
                         profiles,
                       )}
+                      shape={
+                        isKnownAgentPubkey(
+                          pubkey,
+                          profiles,
+                          personaLookup,
+                          agentPubkeys,
+                        )
+                          ? "squircle"
+                          : "circle"
+                      }
                     />
                     <span className="min-w-0 truncate">
                       {resolveDisplayLabel(pubkey, currentPubkey, profiles)}
@@ -875,7 +894,9 @@ export const SystemMessageRow = React.memo(function SystemMessageRow({
           <div className="flex justify-center">
             <div className="flex min-w-0 max-w-[min(40rem,80%)] items-center gap-2">
               <MembershipAvatarStack
+                agentPubkeys={agentPubkeys}
                 currentPubkey={currentPubkey}
+                personaLookup={personaLookup}
                 profiles={profiles}
                 pubkeys={membershipPubkeys}
               />
@@ -906,16 +927,17 @@ export const SystemMessageRow = React.memo(function SystemMessageRow({
               <MessageAuthorText as="div" className="text-foreground">
                 {description.title}
               </MessageAuthorText>
+              <AgentManagementMarker
+                pubkey={displayedIdentityPubkey}
+                ownerPubkey={displayedOwnerPubkey}
+              />
               {displayedIdentityIsAgent ? (
                 <MessageAgentOwner
                   ownerLabel={displayedOwnerLabel}
                   ownerPubkey={displayedOwnerPubkey}
                 />
               ) : null}
-              <MessageTimestamp
-                createdAt={message.createdAt}
-                time={message.time}
-              />
+              <MessageTimestamp createdAt={message.createdAt} />
             </MessageHeaderRow>
             <p className="-mt-0.5 text-sm leading-snug text-foreground">
               {description.action}

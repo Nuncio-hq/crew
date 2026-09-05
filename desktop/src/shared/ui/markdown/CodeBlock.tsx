@@ -1,3 +1,4 @@
+import { cn } from "@/shared/lib/cn";
 import * as React from "react";
 import { Copy } from "lucide-react";
 import { toast } from "sonner";
@@ -139,6 +140,7 @@ export function MarkdownCodeBlock({
 }
 
 export function SyntaxHighlightedCode({
+  className,
   code,
   language,
   highlightStart,
@@ -223,7 +225,7 @@ export function SyntaxHighlightedCode({
     }
   }, [code, language, shikiTheme, loadedKey]);
 
-  const codeClassName = CODE_BLOCK_CLASS;
+  const codeClassName = cn(CODE_BLOCK_CLASS, className);
 
   if (language === "mermaid") {
     return <MarkdownMermaid source={code} />;

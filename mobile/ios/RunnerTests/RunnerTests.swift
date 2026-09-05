@@ -1,108 +1,235 @@
 import AVFoundation
 import Flutter
 import UIKit
+import UserNotifications
 import XCTest
 
 @testable import Buzz
 
-private extension UIColor {
-  convenience init(hex: UInt32) {
-    self.init(
-      red: CGFloat((hex >> 16) & 0xFF) / 255,
-      green: CGFloat((hex >> 8) & 0xFF) / 255,
-      blue: CGFloat(hex & 0xFF) / 255,
-      alpha: 1
-    )
-  }
-}
-
 class RunnerTests: XCTestCase {
 
-  func testNavigationGlassButtonExpandsToConfiguredHitTarget() {
-    let button = NavigationGlassButton(frame: CGRect(x: 0, y: 0, width: 40, height: 40))
-    button.hitTargetInsets = UIEdgeInsets(top: 2, left: 18, bottom: 2, right: 0)
-
-    XCTAssertTrue(button.point(inside: CGPoint(x: -17, y: 20), with: nil))
-    XCTAssertTrue(button.point(inside: CGPoint(x: 20, y: -1), with: nil))
-    XCTAssertFalse(button.point(inside: CGPoint(x: -19, y: 20), with: nil))
-    XCTAssertFalse(button.point(inside: CGPoint(x: 20, y: -3), with: nil))
+  func testVoiceNotePackagingStagesHaveBoundedDeadlines() {
+    XCTAssertEqual(VoiceNotePackager.videoEnvelopeTimeout, 30)
+    XCTAssertEqual(VoiceNotePackager.exportTimeout, 30)
   }
 
-  func testNavigationGlassButtonRejectsExpandedHitsWhenDisabled() {
-    let button = NavigationGlassButton(frame: CGRect(x: 0, y: 0, width: 40, height: 40))
-    button.hitTargetInsets = UIEdgeInsets(top: 4, left: 4, bottom: 4, right: 4)
-    button.isEnabled = false
+  func testTimedOutVoiceNoteExportCleansLateOutputWithoutRedelivering() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let outputURL = directory.appendingPathComponent("output.mp4")
+    let videoURL = directory.appendingPathComponent("envelope.mp4")
+    try Data([1]).write(to: outputURL)
+    try Data([2]).write(to: videoURL)
+    let completion = VoiceNoteExportCompletion(
+      outputURL: outputURL,
+      videoURL: videoURL
+    )
+    var cancelCount = 0
+    var deliveryCount = 0
 
-    XCTAssertFalse(button.point(inside: CGPoint(x: -1, y: 20), with: nil))
+    completion.timeout(
+      cancel: { cancelCount += 1 },
+      deliver: { deliveryCount += 1 }
+    )
+    XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: videoURL.path))
+
+    // AVFoundation may recreate the destination while cancellation settles.
+    try Data([3]).write(to: outputURL)
+    completion.exportDidFinish(
+      succeeded: false,
+      deliver: { deliveryCount += 1 }
+    )
+
+    XCTAssertEqual(cancelCount, 1)
+    XCTAssertEqual(deliveryCount, 1)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: videoURL.path))
   }
 
-  func testNavigationGlassFallbackContrastsSupportedAccentsInLightMode() {
-    let accents: [(name: String, color: UIColor)] = [
-      ("Neutral", UIColor(hex: 0x000000)),
-      ("Blue", UIColor(hex: 0x3B82F6)),
-      ("Cyan", UIColor(hex: 0x06B6D4)),
-      ("Green", UIColor(hex: 0x22C55E)),
-      ("Orange", UIColor(hex: 0xF97316)),
-      ("Red", UIColor(hex: 0xEF4444)),
-      ("Pink", UIColor(hex: 0xEC4899)),
-      ("Lilac", UIColor(hex: 0xC0A2F1)),
-      ("Purple", UIColor(hex: 0xA855F7)),
-      ("Indigo", UIColor(hex: 0x6366F1)),
-      ("White", .white),
-    ]
+  func testSuccessfulVoiceNoteExportPreservesOutputForFlutter() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let outputURL = directory.appendingPathComponent("output.mp4")
+    let videoURL = directory.appendingPathComponent("envelope.mp4")
+    try Data([1]).write(to: outputURL)
+    try Data([2]).write(to: videoURL)
+    let completion = VoiceNoteExportCompletion(
+      outputURL: outputURL,
+      videoURL: videoURL
+    )
+    var deliveryCount = 0
 
-    for accent in accents {
-      let background = NavigationGlassButtonPlatformView.fallbackBackgroundColor(
-        foregroundColor: accent.color,
-        interfaceStyle: .light
-      )
-      var red: CGFloat = 0
-      var green: CGFloat = 0
-      var blue: CGFloat = 0
-      var alpha: CGFloat = 0
-      XCTAssertTrue(
-        background.getRed(&red, green: &green, blue: &blue, alpha: &alpha),
-        accent.name
-      )
-      XCTAssertEqual(alpha, 1, accuracy: 0.001, accent.name)
-      XCTAssertGreaterThanOrEqual(
-        NavigationGlassButtonPlatformView.contrastRatio(
-          foregroundColor: accent.color,
-          backgroundColor: background
-        ),
-        3,
-        accent.name
+    completion.exportDidFinish(
+      succeeded: true,
+      deliver: { deliveryCount += 1 }
+    )
+
+    XCTAssertEqual(deliveryCount, 1)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: videoURL.path))
+  }
+
+  func testPushAuthorizationStatusNamesCoverDisplayPermissionStates() {
+    XCTAssertEqual(AppDelegate.pushAuthorizationStatusName(.notDetermined), "notDetermined")
+    XCTAssertEqual(AppDelegate.pushAuthorizationStatusName(.denied), "denied")
+    XCTAssertEqual(AppDelegate.pushAuthorizationStatusName(.authorized), "authorized")
+    XCTAssertEqual(AppDelegate.pushAuthorizationStatusName(.provisional), "provisional")
+    XCTAssertEqual(AppDelegate.pushAuthorizationStatusName(.ephemeral), "ephemeral")
+  }
+
+  func testHuddleActiveTalkerSelectorBoundsAndReactivates() {
+    var selector = HuddleActiveTalkerSelector(capacity: 15)
+
+    for peer in 0..<15 {
+      XCTAssertEqual(
+        selector.activate(peerIndex: peer, levelDbov: -20),
+        HuddleTalkerSelection(accepted: true, evictedPeerIndex: nil)
       )
     }
+    let rejected = selector.activate(peerIndex: 15, levelDbov: -20)
+    XCTAssertEqual(
+      rejected,
+      HuddleTalkerSelection(accepted: false, evictedPeerIndex: nil)
+    )
+    var allocationCount = 0
+    XCTAssertNil(rejected.allocateIfAccepted {
+      allocationCount += 1
+      return NSObject()
+    })
+    XCTAssertEqual(allocationCount, 0)
+    XCTAssertEqual(Set(selector.active.keys), Set(0..<15))
+
+    selector.remove(7)
+    XCTAssertFalse(selector.active.keys.contains(7))
+    XCTAssertEqual(
+      selector.activate(peerIndex: 7, levelDbov: -10),
+      HuddleTalkerSelection(accepted: true, evictedPeerIndex: nil)
+    )
+    XCTAssertTrue(selector.active.keys.contains(7))
   }
 
-  func testNavigationGlassFallbackKeepsSystemSurfaceInDarkMode() {
-    let darkAccents = [
-      UIColor(hex: 0xE1E4E8),
-      UIColor(hex: 0x60A5FA),
-      UIColor(hex: 0x22D3EE),
-      UIColor(hex: 0x4ADE80),
-      UIColor(hex: 0xFB923C),
-      UIColor(hex: 0xF87171),
-      UIColor(hex: 0xF472B6),
-      UIColor(hex: 0xC0A2F1),
-      UIColor(hex: 0xC084FC),
-      UIColor(hex: 0x818CF8),
-    ]
+  func testHuddleActiveTalkerSelectorUsesRecentActivity() {
+    var selector = HuddleActiveTalkerSelector(capacity: 2)
 
-    for accent in darkAccents {
-      let background = NavigationGlassButtonPlatformView.fallbackBackgroundColor(
-        foregroundColor: accent,
-        interfaceStyle: .dark
-      )
-      XCTAssertGreaterThanOrEqual(
-        NavigationGlassButtonPlatformView.contrastRatio(
-          foregroundColor: accent,
-          backgroundColor: background
-        ),
-        3
-      )
+    XCTAssertEqual(
+      selector.activate(peerIndex: 4, levelDbov: -10),
+      HuddleTalkerSelection(accepted: true, evictedPeerIndex: nil)
+    )
+    XCTAssertEqual(
+      selector.activate(peerIndex: 2, levelDbov: -20),
+      HuddleTalkerSelection(accepted: true, evictedPeerIndex: nil)
+    )
+    XCTAssertEqual(
+      selector.activate(peerIndex: 4, levelDbov: -10),
+      HuddleTalkerSelection(accepted: true, evictedPeerIndex: nil)
+    )
+    XCTAssertEqual(
+      selector.activate(peerIndex: 9, levelDbov: -5),
+      HuddleTalkerSelection(accepted: true, evictedPeerIndex: 2)
+    )
+    XCTAssertEqual(Set(selector.active.keys), Set([4, 9]))
+  }
+
+  func testHuddleActiveTalkerSelectorDoesNotChurnAtEqualLevels() {
+    var selector = HuddleActiveTalkerSelector(capacity: 2)
+
+    XCTAssertEqual(
+      selector.activate(peerIndex: 4, levelDbov: -127),
+      HuddleTalkerSelection(accepted: true, evictedPeerIndex: nil)
+    )
+    XCTAssertEqual(
+      selector.activate(peerIndex: 2, levelDbov: -127),
+      HuddleTalkerSelection(accepted: true, evictedPeerIndex: nil)
+    )
+    let rejected = selector.activate(peerIndex: 9, levelDbov: -127)
+    XCTAssertEqual(
+      rejected,
+      HuddleTalkerSelection(accepted: false, evictedPeerIndex: nil)
+    )
+    XCTAssertNil(rejected.allocateIfAccepted { NSObject() })
+    XCTAssertNil(selector.active[9])
+    XCTAssertEqual(Set(selector.active.keys), Set([2, 4]))
+  }
+
+  func testHuddleActiveTalkerSelectorExpiresInactiveSlots() {
+    var now: TimeInterval = 0
+    var selector = HuddleActiveTalkerSelector(
+      capacity: 2,
+      now: { now },
+      inactivityTimeout: 1
+    )
+
+    _ = selector.activate(peerIndex: 4, levelDbov: -10)
+    now = 0.999
+    _ = selector.activate(peerIndex: 2, levelDbov: -5)
+    now = 1
+
+    XCTAssertEqual(
+      selector.activate(peerIndex: 9, levelDbov: -30),
+      HuddleTalkerSelection(accepted: true, evictedPeerIndex: 4)
+    )
+    XCTAssertEqual(Set(selector.active.keys), Set([2, 9]))
+  }
+
+  func testHuddlePacketJitterQueueReordersAndRejectsStaleDuplicates() {
+    var queue = HuddlePacketJitterQueue(capacity: 3, startPackets: 2)
+    queue.enqueue(remotePacket(sequence: 11))
+    queue.enqueue(remotePacket(sequence: 10))
+    XCTAssertEqual(queue.packets.map(\.sequence), [10, 11])
+    XCTAssertEqual(queue.drainOne()?.sequence, 10)
+    queue.enqueue(remotePacket(sequence: 10))
+    queue.enqueue(remotePacket(sequence: 12))
+    XCTAssertEqual(queue.packets.map(\.sequence), [11, 12])
+  }
+
+  private func remotePacket(sequence: Int) -> HuddleRemoteOpusPacket {
+    HuddleRemoteOpusPacket(
+      peerIndex: 1,
+      sequence: sequence,
+      timestamp48k: Int64(sequence * 960),
+      levelDbov: -20,
+      opus: Data([1])
+    )
+  }
+
+  func testHuddleOpusCodecRoundTripsFixedV2Frame() throws {
+    let encoder = try HuddleOpusEncoder()
+    let decoder = try HuddleOpusDecoder()
+    let samples = (0..<HuddleAudioFormats.frameSamples).map { index in
+      Float(sin(2 * .pi * 440 * Double(index) / HuddleAudioFormats.sampleRate))
     }
+
+    let packet = try encoder.encode(samples)
+    let decoded = try decoder.decode(packet)
+
+    XCTAssertFalse(packet.isEmpty)
+    XCTAssertLessThanOrEqual(packet.count, HuddleAudioFormats.maximumOpusPacketBytes)
+    XCTAssertGreaterThan(decoded.frameLength, 0)
+    XCTAssertLessThanOrEqual(
+      decoded.frameLength,
+      AVAudioFrameCount(HuddleAudioFormats.frameSamples)
+    )
+  }
+
+  func testHuddleAudioLevelsReportDbovWithoutPersistingAudio() {
+    let silence = Array(repeating: Float.zero, count: HuddleAudioFormats.frameSamples)
+    let halfScale = Array(repeating: Float(0.5), count: HuddleAudioFormats.frameSamples)
+
+    XCTAssertEqual(HuddleAudioLevels.rmsDbov(silence), -127)
+    XCTAssertEqual(HuddleAudioLevels.peakDbov(silence), -127)
+    XCTAssertEqual(HuddleAudioLevels.rmsDbov(halfScale), -6)
+    XCTAssertEqual(HuddleAudioLevels.peakDbov(halfScale), -6)
   }
 
   func testRelativeTrackInsertionTimesPreserveAudioDelay() {

@@ -94,13 +94,13 @@ export type SetCanvasResult = {
   ok: boolean;
   eventId: string;
 };
-
 export type AddChannelMembersInput = {
   channelId: string;
   pubkeys: string[];
   role?: Exclude<ChannelRole, "owner">;
+  expectedRelayUrl?: string;
+  expectedSignerPubkey?: string;
 };
-
 export type AddChannelMembersResult = {
   added: string[];
   errors: Array<{
@@ -171,8 +171,10 @@ export type UserStatus = {
   text: string;
   emoji: string;
   updatedAt: number;
+  /** NIP-01 tie-breaker for replacement events sharing `updatedAt`. */
+  eventId?: string;
+  expiresAt?: number;
 };
-
 export type UserStatusLookup = Record<string, UserStatus | null>;
 
 export type {
@@ -281,7 +283,8 @@ export type RelayAgent = {
   channels: string[];
   channelIds: string[];
   capabilities: string[];
-  status: "online" | "away" | "offline";
+  /** Policy-only discovery has no liveness evidence. */
+  status: "online" | "away" | "offline" | "unknown";
   respondTo: RespondToMode | null;
   respondToAllowlist: string[];
 };
@@ -453,7 +456,7 @@ export type CreateManagedAgentInput = {
   spawnAfterCreate?: boolean;
   startOnAppLaunch?: boolean;
   backend?: ManagedAgentBackend;
-  /** Inbound author gate mode. Omitted = `"owner-only"` (server default). */
+  /** Omitted uses the linked persona default, then `"owner-only"`. */
   respondTo?: RespondToMode;
   /**
    * Hex pubkeys to allow when `respondTo === "allowlist"`. Validated &
@@ -488,6 +491,7 @@ export type CancelManagedAgentTurnResult = {
 export type SwitchManagedAgentModelStatus =
   | "sent"
   | "turn_ending"
+  | "ambiguous_target"
   | "switched"
   | "unsupported_model"
   | "no_active_turn"
@@ -638,9 +642,9 @@ export type RuntimeConfigSurface = {
   sources: ConfigSourceReport;
   /** #3493: `true` when the surface was read from a user-set `CLAUDE_CONFIG_DIR` — drives the Keychain caveat note in the panel. */
   claudeConfigDirCustom?: boolean;
-  /** B5: the adapter-advertised `thought_level` configId, discovered from the running session. Present only for claude after the first session. Drives the effort picker. */
+  /** The adapter-advertised `thought_level` configId, discovered from the running session — present once a session advertises `thought_level` support (Claude today; any effort-capable ACP adapter in general). Drives the effort picker. */
   effortConfigId?: string;
-  /** B5/I-7: adapter-advertised option values for the `thought_level` option — the picker renders these instead of hardcoded values. */
+  /** Adapter-advertised option values for the `thought_level` option — the picker renders these instead of hardcoded values. */
   effortOptions?: AcpConfigOptionValue[];
 };
 
@@ -668,134 +672,32 @@ export type UpdateManagedAgentInput = {
   mcpCommand?: string;
   /** Absent = don't touch. Present = set the mode. */
   respondTo?: RespondToMode;
-  /**
-   * Absent = don't touch. Present = replace the allowlist with this list
-   * (validated & normalized server-side).
-   */
-  respondToAllowlist?: string[];
-  /**
-   * Absent = don't touch. `null` = clear. string = set (validated server-side).
-   */
+  /** Absent preserves the profile; null clears it. */
   hermesProfile?: string | null;
-};
-export type AgentPersona = {
-  id: string;
-  displayName: string;
-  avatarUrl: string | null;
-  systemPrompt: string;
-  /** Preferred ACP runtime ID (e.g. "goose", "claude"). */
-  runtime: string | null;
-  /** Opaque, harness-specific model identifier string. Buzz stores and passes through without interpretation. */
-  model: string | null;
-  /** LLM inference provider (e.g. "databricks", "anthropic"). Injected as the runtime's provider env var at spawn time. */
-  provider: string | null;
-  namePool: string[];
-  isBuiltIn: boolean;
-  isActive: boolean;
-  /** Whether this persona is discoverable in the active community catalog. */
-  shared: boolean;
-  /** Team ID if this persona was imported from a team directory. Team personas are non-editable. */
-  sourceTeam?: string | null;
-  /**
-   * Set only on a local copy of another owner's shared catalog entry. A copy
-   * carries a fresh local `id`, so this coordinate is the only thing that can
-   * answer "is this catalog entry already added" without minting a duplicate.
-   */
-  catalogSource?: CatalogSourceCoordinate | null;
-  /** Agent environment variables, layered after desktop parent and persona values. */
-  envVars: Record<string, string>;
-  /** NIP-AP behavioral defaults (wire shape). Null/empty = unset. */
-  respondTo: RespondToMode | null;
-  respondToAllowlist: string[];
-  parallelism: number | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-/**
- * A catalog publication's coordinate: the owner who published it and the
- * `d`-tag identifying the persona within that owner's catalog. Mirrors the
- * backend `CatalogSource`.
- */
-export type CatalogSourceCoordinate = {
-  ownerPubkey: string;
-  personaId: string;
-};
-
-/**
- * NIP-AP behavioral group for a definition: absent preserves the stored group
- * for legacy callers; present replaces it as a unit. Mirrors `PersonaBehaviorRequest`.
- */
-export type PersonaBehaviorInput = {
-  respondTo?: RespondToMode;
+  /** Absent = keep. Present = replace the allowlist (server-validated). */
   respondToAllowlist?: string[];
-  parallelism?: number;
+  /** Tri-state: absent = don't touch; `null` = clear; `string` = set. Persisted in the locked update so access-change restarts snapshot the new effort. Send only when `effortTouched`. */
+  effortLevel?: string | null;
 };
-
-export type CreatePersonaInput = {
-  displayName: string;
-  avatarUrl?: string;
-  systemPrompt: string;
-  runtime?: string;
-  model?: string;
-  provider?: string;
-  namePool?: string[];
-  envVars?: Record<string, string>;
-  behavior?: PersonaBehaviorInput;
-  /**
-   * Set when this persona is a copy of another owner's shared catalog entry,
-   * so the catalog can tell an already-added foreign entry from a new one.
-   */
-  catalogSource?: CatalogSourceCoordinate;
-};
-
-export type UpdatePersonaInput = {
-  id: string;
-  displayName: string;
-  avatarUrl?: string;
-  systemPrompt: string;
-  runtime?: string;
-  model?: string;
-  provider?: string;
-  namePool?: string[];
-  envVars?: Record<string, string>;
-  behavior?: PersonaBehaviorInput;
-};
+// Persona (agent definition) types live in a sibling module to keep this
+// file inside the repo-wide size ratchet; re-exported so import paths
+// (`@/shared/api/types`) are unchanged.
+export type {
+  AgentPersona,
+  CatalogSourceCoordinate,
+  CreatePersonaInput,
+  PersonaBehaviorInput,
+  UpdatePersonaInput,
+} from "./personaTypes";
 
 // ── Team types ────────────────────────────────────────────────────────────────
-export type AgentTeam = {
-  id: string;
-  name: string;
-  description: string | null;
-  instructions: string | null;
-  personaIds: string[];
-  isBuiltin: boolean;
-  /** Absolute path to the team's backing directory (if directory-backed). */
-  sourceDir: string | null;
-  /** Whether sourceDir is a symlink to an external directory. */
-  isSymlink: boolean;
-  /** Resolved symlink target path (for display). Only set when isSymlink is true. */
-  symlinkTarget: string | null;
-  /** Version from the team's plugin.json manifest. */
-  version: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
+export type {
+  AgentTeam,
+  CreateTeamInput,
+  TeamCatalogSourceCoordinate,
+  UpdateTeamInput,
+} from "./teamTypes";
 
-export type CreateTeamInput = {
-  name: string;
-  description?: string;
-  instructions?: string;
-  personaIds: string[];
-};
-
-export type UpdateTeamInput = {
-  id: string;
-  name: string;
-  description?: string;
-  instructions?: string;
-  personaIds: string[];
-};
 // ── Channel Template types ─────────────────────────────────────────────────────
 
 export type TemplateBackend =

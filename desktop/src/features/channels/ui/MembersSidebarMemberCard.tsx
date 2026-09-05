@@ -18,6 +18,7 @@ import {
   getManagedAgentPrimaryActionLabel,
   isManagedAgentActive,
 } from "@/features/agents/lib/managedAgentControlActions";
+import { AgentManagementMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
 import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import { PresenceDot } from "@/features/presence/ui/PresenceBadge";
 import {
@@ -44,7 +45,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { OtherSetupAgentMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
 
 type MembersSidebarMemberCardProps = {
   canChangeRole: boolean;
@@ -74,7 +74,7 @@ type MembersSidebarMemberCardProps = {
   onViewActivity?: (pubkey: string) => void;
   presenceStatus?: PresenceStatus | null;
   profileAvatarUrl?: string | null;
-  showOtherSetupAgentMarker: boolean;
+  profileOwnerPubkey?: string | null;
   viewerIsOwner: boolean;
 };
 
@@ -143,7 +143,7 @@ export function MembersSidebarMemberCard({
   onViewActivity,
   presenceStatus,
   profileAvatarUrl,
-  showOtherSetupAgentMarker,
+  profileOwnerPubkey,
   viewerIsOwner,
 }: MembersSidebarMemberCardProps) {
   const roleLabel = formatRoleLabel(member, memberIsBot);
@@ -168,6 +168,7 @@ export function MembersSidebarMemberCard({
           className="h-8 w-8 text-xs shadow-none"
           iconClassName="h-4 w-4"
           label={memberAvatarLabel}
+          shape={memberIsBot ? "squircle" : "circle"}
         />
         {presenceStatus ? (
           <span
@@ -180,26 +181,28 @@ export function MembersSidebarMemberCard({
       </div>
       <div className="min-w-0 flex-1">
         {memberIsBot ? (
-          <div className="relative min-w-0">
-            <div className="flex min-w-0 items-center gap-2 transition-opacity duration-150 ease-out group-hover/member:opacity-0 group-focus-within/member:opacity-0">
-              <span className="truncate text-sm font-medium tracking-tight">
-                {memberLabel}
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="relative min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2 transition-opacity duration-150 ease-out group-hover/member:opacity-0 group-focus-within/member:opacity-0">
+                <span className="truncate text-sm font-medium tracking-tight">
+                  {memberLabel}
+                </span>
+                <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                  <Bot aria-hidden="true" className="h-4 w-4" />
+                  {roleLabel}
+                </span>
+              </div>
+              <span className="absolute inset-0 flex items-center opacity-0 transition-opacity duration-150 ease-out group-hover/member:opacity-100 group-focus-within/member:opacity-100">
+                <span className="truncate font-mono text-sm text-muted-foreground">
+                  {truncatePubkey(member.pubkey)}
+                </span>
               </span>
-              <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                <Bot aria-hidden="true" className="h-4 w-4" />
-                {roleLabel}
-              </span>
-              {showOtherSetupAgentMarker ? (
-                <OtherSetupAgentMarker
-                  testId={`sidebar-member-other-setup-${member.pubkey}`}
-                />
-              ) : null}
             </div>
-            <span className="absolute inset-0 flex items-center opacity-0 transition-opacity duration-150 ease-out group-hover/member:opacity-100 group-focus-within/member:opacity-100">
-              <span className="truncate font-mono text-sm text-muted-foreground">
-                {truncatePubkey(member.pubkey)}
-              </span>
-            </span>
+            <AgentManagementMarker
+              pubkey={member.pubkey}
+              ownerPubkey={profileOwnerPubkey}
+              testId={`sidebar-member-other-setup-${member.pubkey}`}
+            />
           </div>
         ) : (
           <div className="flex min-w-0 items-center gap-2">
@@ -287,6 +290,7 @@ export function MembersSidebarMemberCard({
           onUntimeout={onUntimeout}
           onViewActivity={onViewActivity}
           pairAction={pairAction}
+          availability={presenceStatus ?? undefined}
         />
       ) : null}
     </div>
@@ -317,6 +321,7 @@ function MemberActionsMenu({
   pairAction,
 }: {
   canChangeRole: boolean;
+  availability: PresenceStatus | undefined;
   canModerateMember: boolean;
   canRemoveMember: boolean;
   canViewActivity: boolean;
@@ -371,7 +376,9 @@ function MemberActionsMenu({
             <DropdownMenuItem
               data-testid={`sidebar-agent-action-${member.pubkey}`}
               disabled={disabled}
-              onClick={() => onManagedAgentAction(managedAgent)}
+              onClick={() => {
+                onManagedAgentAction(managedAgent);
+              }}
             >
               {pairAction
                 ? getPairActionIcon(pairAction)

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   localWorkspaceSourceState,
   readExactLocalWorkspaceSnapshot,
+  readExactLocalWorkspaceFileContent,
   readProjectLocalRepoSnapshot,
 } from "./lib/project-exact-local-workspace.ts";
 
@@ -175,4 +176,57 @@ test("linked Local labels distinguish checking, ready, and unavailable", () => {
     }),
     { disabled: true, label: "Local unavailable" },
   );
+});
+
+test("lazy file content uses the verified workspace instead of a same-named managed checkout", async () => {
+  const harness = dependencies();
+  const reads = [];
+  const result = await readExactLocalWorkspaceFileContent(
+    {
+      localWorkspacePath: LOCAL_PATH,
+      projectDtag: "renamed-project",
+      path: "src/main.ts",
+    },
+    {
+      ...harness.dependencies,
+      getLocalFileContent: async (input) => {
+        reads.push(input);
+        return "linked content";
+      },
+    },
+  );
+  assert.equal(result, "linked content");
+  assert.deepEqual(reads, [
+    {
+      cloneUrl: null,
+      projectDtag: "Nùncio Crew",
+      reposDir: "/Users/oscar/Projects",
+      path: "src/main.ts",
+    },
+  ]);
+});
+
+test("lazy file content never reads after a linked workspace resolves elsewhere", async () => {
+  const harness = dependencies({
+    getLocalSnapshot: async () => snapshot("/different/workspace"),
+  });
+  let reads = 0;
+  await assert.rejects(
+    readExactLocalWorkspaceFileContent(
+      {
+        localWorkspacePath: LOCAL_PATH,
+        projectDtag: "renamed-project",
+        path: "src/main.ts",
+      },
+      {
+        ...harness.dependencies,
+        getLocalFileContent: async () => {
+          reads += 1;
+          return "unrelated content";
+        },
+      },
+    ),
+    /different folder/,
+  );
+  assert.equal(reads, 0);
 });

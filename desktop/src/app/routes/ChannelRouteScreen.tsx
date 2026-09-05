@@ -1,7 +1,11 @@
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
+import type { SearchHighlightNavigation } from "@/app/navigation/searchHighlightNavigation";
 import { getCachedSearchHitEvent } from "@/app/navigation/searchHitEventCache";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+import { useFeatureEnabled } from "@/shared/features";
+import { useOpenChannelDirectoryQuery } from "@/features/channels/openChannelDirectory";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { ChannelScreen } from "@/features/channels/ui/ChannelScreen";
 import { HuddleStartingView } from "@/features/huddle/components/HuddleStartingView";
@@ -11,6 +15,17 @@ import {
   isBroadcastReply,
 } from "@/features/messages/lib/threading";
 import { useProfileQuery } from "@/features/profile/hooks";
+import {
+  useProjectHomeForChannelQuery,
+  useProjectsQuery,
+} from "@/features/projects/hooks";
+import { findProjectHomeByChannelId } from "@/features/projects/lib/projectHomeChannel";
+import {
+  isProjectCollectionAuthoritative,
+  isProjectRelayValidated,
+  shouldUseScopedProjectHomeLookup,
+} from "@/features/projects/projectSnapshot";
+import { ProjectChannelHome } from "@/features/projects/ui/ProjectChannelHome";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { getEventById } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
@@ -19,6 +34,7 @@ import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
 type ChannelRouteScreenProps = {
   autoSendDraftKey: string | null;
   channelId: string;
+  searchHighlight: SearchHighlightNavigation | null | undefined;
   selectedPostId: string | null;
   targetMessageId: string | null;
   targetReplyId: string | null;
@@ -105,19 +121,49 @@ async function fetchRouteTargetEvents(
 export function ChannelRouteScreen({
   autoSendDraftKey,
   channelId,
+  searchHighlight,
   selectedPostId,
   targetMessageId,
   targetReplyId,
   targetThreadRootId,
 }: ChannelRouteScreenProps) {
   const isHuddleTranscript = huddleWindowChannelId() !== null;
+  const queryClient = useQueryClient();
   const { closeForumPost, goForumPost } = useAppNavigation();
   const channelsQuery = useChannelsQuery();
+  const projectsEnabled = useFeatureEnabled("projects");
+  const projectsQuery = useProjectsQuery(
+    projectsEnabled && !isHuddleTranscript,
+  );
   const identityQuery = useIdentityQuery();
   const profileQuery = useProfileQuery();
   const channels = channelsQuery.data ?? [];
-  const activeChannel =
+  const memberChannel =
     channels.find((channel) => channel.id === channelId) ?? null;
+  const openDirectoryQuery = useOpenChannelDirectoryQuery({
+    enabled: !memberChannel && channelsQuery.isSuccess && !isHuddleTranscript,
+  });
+  const activeChannel =
+    memberChannel ??
+    openDirectoryQuery.data?.find((channel) => channel.id === channelId) ??
+    null;
+  const enumeratedProjectHome = findProjectHomeByChannelId(
+    channelId,
+    projectsQuery.data ?? [],
+  );
+  const projectCollectionIsAuthoritative =
+    isProjectCollectionAuthoritative(queryClient);
+  const projectHomeLookupQuery = useProjectHomeForChannelQuery(
+    channelId,
+    projectsEnabled &&
+      shouldUseScopedProjectHomeLookup({
+        collectionIsAuthoritative: projectCollectionIsAuthoritative,
+        hasEnumeratedProjectHome: Boolean(enumeratedProjectHome),
+        isHuddleTranscript,
+      }),
+  );
+  const projectHome =
+    enumeratedProjectHome ?? projectHomeLookupQuery.data ?? null;
   const [targetMessageEvents, setTargetMessageEvents] = React.useState<
     RelayEvent[]
   >(() => {
@@ -137,22 +183,68 @@ export function ChannelRouteScreen({
     !selectedPostId &&
     resolvedRouteTargetKey !== routeTargetKey;
 
-  // Reset spliced target events when the channel context changes (channel
-  // switch or entering/leaving a forum post). Tied to channel identity rather
-  // than the route target so clearing the `messageId` param mid-channel keeps
-  // the deep-linked row in view. Seeded with the mount key so the initial
-  // cache-seeded events survive first commit; only a genuine channel change
-  // clears them. Declared before the fetch effect so a channel switch clears
-  // stale events before the new target is fetched.
-  const previousResetKeyRef = React.useRef<string>(
-    `${channelId}::${selectedPostId ?? ""}`,
+  const [activeSearchHighlight, setActiveSearchHighlight] =
+    React.useState<SearchHighlightNavigation | null>(searchHighlight ?? null);
+  const appliedSearchActivationIdRef = React.useRef<string | null>(
+    searchHighlight?.activationId ?? null,
   );
+
+  // Router state is transient and can be cleared by the target URL cleanup.
+  // Retain the applied activation locally until an ordinary route transition
+  // explicitly arrives without search state.
   React.useEffect(() => {
-    const resetKey = `${channelId}::${selectedPostId ?? ""}`;
+    if (searchHighlight === null) {
+      appliedSearchActivationIdRef.current = null;
+      setActiveSearchHighlight(null);
+      return;
+    }
+    if (!searchHighlight) {
+      const ordinaryTargetIds = [
+        selectedPostId,
+        targetMessageId,
+        targetReplyId,
+        targetThreadRootId,
+      ].filter((targetId): targetId is string => targetId !== null);
+      if (
+        ordinaryTargetIds.length > 0 &&
+        activeSearchHighlight &&
+        !ordinaryTargetIds.includes(activeSearchHighlight.messageId)
+      ) {
+        appliedSearchActivationIdRef.current = null;
+        setActiveSearchHighlight(null);
+      }
+      return;
+    }
+    if (appliedSearchActivationIdRef.current === searchHighlight.activationId) {
+      return;
+    }
+
+    appliedSearchActivationIdRef.current = searchHighlight.activationId;
+    setActiveSearchHighlight(searchHighlight);
+  }, [
+    activeSearchHighlight,
+    searchHighlight,
+    selectedPostId,
+    targetMessageId,
+    targetReplyId,
+    targetThreadRootId,
+  ]);
+
+  // Reset spliced target events when the channel changes. Tied to channel
+  // identity rather than the route target so clearing the `messageId` param
+  // mid-channel keeps the deep-linked row in view. Seeded with the mount key so
+  // the initial cache-seeded events survive first commit; only a genuine
+  // channel change clears them. Declared before the fetch effect so a channel
+  // switch clears stale events before the new target is fetched.
+  const resetKey = `${channelId}::${selectedPostId ?? ""}`;
+  const previousResetKeyRef = React.useRef<string>(resetKey);
+  React.useEffect(() => {
     if (previousResetKeyRef.current === resetKey) return;
     previousResetKeyRef.current = resetKey;
+    appliedSearchActivationIdRef.current = null;
     setTargetMessageEvents([]);
-  }, [channelId, selectedPostId]);
+    setActiveSearchHighlight(null);
+  }, [resetKey]);
 
   React.useEffect(() => {
     // Don't wipe already-spliced target events just because the route target
@@ -225,6 +317,21 @@ export function ChannelRouteScreen({
     );
   }
 
+  if (projectsEnabled && projectHome && !isHuddleTranscript) {
+    return (
+      <ProjectChannelHome
+        allowRepositoryHealing={isProjectRelayValidated(projectHome)}
+        autoSendDraftKey={autoSendDraftKey}
+        isRouteTargetResolving={isRouteTargetResolving}
+        targetThreadRootId={targetThreadRootId}
+        project={projectHome}
+        projects={projectsQuery.data ?? [projectHome]}
+        targetMessageEvents={targetMessageEvents}
+        targetMessageId={targetMessageId}
+      />
+    );
+  }
+
   return (
     <ChannelScreen
       activeChannel={activeChannel}
@@ -243,6 +350,8 @@ export function ChannelRouteScreen({
       targetMessageEvents={targetMessageEvents}
       targetMessageId={targetMessageId}
       targetThreadRootId={targetThreadRootId}
+      targetSearchMessageId={activeSearchHighlight?.messageId}
+      targetSearchQuery={activeSearchHighlight?.query}
     />
   );
 }

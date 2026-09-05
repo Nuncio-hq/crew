@@ -32,7 +32,7 @@ fn agent_secret_store() -> Option<&'static SecretStore> {
     }
 }
 
-pub fn managed_agents_base_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub fn managed_agents_base_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -42,7 +42,9 @@ pub fn managed_agents_base_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-pub(crate) fn managed_agents_store_path(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn managed_agents_store_path<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<PathBuf, String> {
     Ok(managed_agents_base_dir(app)?.join("managed-agents.json"))
 }
 
@@ -236,7 +238,9 @@ pub(crate) fn spawn_key_refusal(record: &ManagedAgentRecord) -> Option<String> {
 
 /// Read the raw unified store — keyed instances AND key-less definitions —
 /// with fail-loud parse handling. Internal seam; public readers filter.
-fn load_agent_store(app: &AppHandle) -> Result<Vec<ManagedAgentRecord>, String> {
+fn load_agent_store<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Vec<ManagedAgentRecord>, String> {
     let path = managed_agents_store_path(app)?;
     if !path.exists() {
         return Ok(Vec::new());
@@ -259,7 +263,9 @@ fn load_agent_store(app: &AppHandle) -> Result<Vec<ManagedAgentRecord>, String> 
 /// Load the keyed agent *instances*. Key-less definitions (former personas,
 /// folded into the same store) are filtered out so every pre-fold call site
 /// keeps seeing exactly the records it always did.
-pub fn load_managed_agents(app: &AppHandle) -> Result<Vec<ManagedAgentRecord>, String> {
+pub fn load_managed_agents<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Vec<ManagedAgentRecord>, String> {
     let mut records = load_agent_store(app)?;
     records.retain(|record| !record.pubkey.is_empty());
     hydrate_keys(&mut records);
@@ -269,7 +275,9 @@ pub fn load_managed_agents(app: &AppHandle) -> Result<Vec<ManagedAgentRecord>, S
 /// Load the key-less agent *definitions* (former personas) from the unified
 /// store. The persona compatibility shim (`load_personas`) presents these in
 /// the legacy shape via `to_definition_view`.
-pub(crate) fn load_agent_definitions(app: &AppHandle) -> Result<Vec<ManagedAgentRecord>, String> {
+pub(crate) fn load_agent_definitions<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Vec<ManagedAgentRecord>, String> {
     let mut records = load_agent_store(app)?;
     records.retain(|record| record.pubkey.is_empty());
     Ok(records)
@@ -360,7 +368,10 @@ fn hydrate_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) 
 /// [`load_managed_agents`], and this re-reads the definition half from disk
 /// before the wholesale rewrite so a definition is never dropped by an
 /// instance-side save (and vice versa via [`save_agent_definitions`]).
-pub fn save_managed_agents(app: &AppHandle, records: &[ManagedAgentRecord]) -> Result<(), String> {
+pub fn save_managed_agents<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    records: &[ManagedAgentRecord],
+) -> Result<(), String> {
     let definitions = load_agent_definitions(app).unwrap_or_default();
     let mut sorted = records.to_vec();
     // A caller-supplied key-less record would collide with the definition
@@ -383,8 +394,8 @@ pub fn save_managed_agents(app: &AppHandle, records: &[ManagedAgentRecord]) -> R
 
 /// Save the key-less agent *definitions*, preserving the keyed instances —
 /// the definition-side mirror of [`save_managed_agents`].
-pub(crate) fn save_agent_definitions(
-    app: &AppHandle,
+pub(crate) fn save_agent_definitions<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     definitions: &[ManagedAgentRecord],
 ) -> Result<(), String> {
     let mut instances = load_agent_store(app)?;
@@ -397,8 +408,8 @@ pub(crate) fn save_agent_definitions(
 /// Serialize definitions + instances into the single unified store file.
 /// Definitions sort first (by slug) for stable diffs; instances keep the
 /// name/pubkey order their save path established.
-fn write_agent_store(
-    app: &AppHandle,
+fn write_agent_store<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     mut definitions: Vec<ManagedAgentRecord>,
     instances: Vec<ManagedAgentRecord>,
 ) -> Result<(), String> {
@@ -634,6 +645,77 @@ pub(crate) fn atomic_write_json_restricted(path: &Path, payload: &[u8]) -> Resul
         .map_err(|e| format!("commit {}: {e}", resolved.display()))
 }
 
+// ── Two-store byte-level rollback ─────────────────────────────────────────
+//
+// Shared by `commands::teams::adopt::apply` (catalog adoption) and
+// `managed_agents::teams` (adopted-team deletion). Identical rollback policy
+// in both paths (I5 / I6).
+
+/// Raw pre-write snapshot of a JSON store file.
+///
+/// `None` means the file did not exist at snapshot time; restoring `None`
+/// removes the file (with `NotFound` treated as success — desired state
+/// already reached).
+pub(crate) type StoreSnapshot = Option<Vec<u8>>;
+
+/// Snapshot the raw bytes of `path`, or `None` if the file is absent.
+pub(crate) fn snapshot_store(path: &Path) -> Result<StoreSnapshot, String> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("failed to snapshot {}: {e}", path.display())),
+    }
+}
+
+/// Restore `path` from a [`StoreSnapshot`].
+///
+/// `NotFound` when restoring an absent snap is treated as success — the
+/// desired state is already reached (I5).
+pub(crate) fn restore_store(path: &Path, snap: StoreSnapshot) -> Result<(), String> {
+    match snap {
+        Some(bytes) => atomic_write_json_restricted(path, &bytes),
+        None => match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!(
+                "failed to remove {} during restore: {e}",
+                path.display()
+            )),
+        },
+    }
+}
+
+/// Write both stores via the supplied callbacks, rolling back both from
+/// caller-supplied snapshots on any failure.
+///
+/// Both restores are attempted independently, so a restore failure in one
+/// store does not prevent the other; errors from both are aggregated (I5).
+pub(crate) fn commit_stores_with_snapshots(
+    personas_path: &Path,
+    teams_path: &Path,
+    personas_snap: StoreSnapshot,
+    teams_snap: StoreSnapshot,
+    write_personas: impl FnOnce() -> Result<(), String>,
+    write_teams: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    if let Err(error) = write_personas().and_then(|()| write_teams()) {
+        let personas_err = restore_store(personas_path, personas_snap).err();
+        let teams_err = restore_store(teams_path, teams_snap).err();
+        let restore_errors: Vec<&str> = [personas_err.as_deref(), teams_err.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
+        if !restore_errors.is_empty() {
+            return Err(format!(
+                "{error} (and the local stores could not be restored: {})",
+                restore_errors.join("; ")
+            ));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// Maximum log file size before rotation (10 MB).
 const MAX_LOG_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
@@ -721,7 +803,7 @@ pub(crate) fn append_log_marker(path: &Path, message: &str) -> Result<(), String
     writeln!(file, "{message}").map_err(|error| format!("failed to write log marker: {error}"))
 }
 
-fn agent_pids_dir(app: &AppHandle) -> Result<PathBuf, String> {
+fn agent_pids_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = managed_agents_base_dir(app)?.join("agent-pids");
     fs::create_dir_all(&dir)
         .map_err(|error| format!("failed to create agent-pids dir: {error}"))?;
@@ -741,7 +823,10 @@ pub fn write_agent_runtime_receipt(
     atomic_write_json_restricted(&path, &payload)
 }
 
-pub fn remove_agent_runtime_receipt(app: &AppHandle, key: &ManagedAgentRuntimeKey) {
+pub fn remove_agent_runtime_receipt<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    key: &ManagedAgentRuntimeKey,
+) {
     if let Ok(dir) = agent_pids_dir(app) {
         let _ = fs::remove_file(dir.join(format!("{}.json", key.runtime_id())));
     }
@@ -774,7 +859,7 @@ pub fn read_all_agent_runtime_receipts(
 }
 
 /// Remove the PID file for an agent (e.g. on normal stop).
-pub fn remove_agent_pid_file(app: &AppHandle, pubkey: &str) {
+pub fn remove_agent_pid_file<R: tauri::Runtime>(app: &AppHandle<R>, pubkey: &str) {
     if let Ok(dir) = agent_pids_dir(app) {
         let _ = fs::remove_file(dir.join(format!("{pubkey}.pid")));
     }
@@ -855,80 +940,9 @@ fn bytecount_newlines(buf: &[u8]) -> usize {
     buf.iter().filter(|&&b| b == b'\n').count()
 }
 
-/// A meaningful error recovered from an exited agent's log tail.
-pub struct AgentLogError {
-    /// The full log line, wrapped as `Agent reported error…` for display.
-    pub message: String,
-    /// JSON-RPC error code parsed from the line's `(code N)` marker, or a
-    /// synthetic code for known bare prefixes. `None` for legacy-format
-    /// lines that carry no code (or when the code fails to parse as i64).
-    pub code: Option<i64>,
-}
-
-fn with_optional_dependency_repair_hint(message: String) -> String {
-    let lower = message.to_ascii_lowercase();
-    let matches = lower.contains("missing optional dependency")
-        && (lower.contains("@openai/codex-") || lower.contains("@anthropic-ai/claude-agent-sdk-"));
-    if !matches {
-        return message;
-    }
-    if message.contains("Settings → Agent runtimes") {
-        return message;
-    }
-    format!(
-        "{message}\n\nA managed ACP adapter is missing its native package for this architecture. Open Settings → Agent runtimes and click Install again so Buzz can repair its private Node tools directory."
-    )
-}
-
-pub fn meaningful_agent_error_from_log(path: &Path) -> Option<AgentLogError> {
-    let tail = read_log_tail(path, 200).ok()?;
-    tail.lines().rev().map(str::trim).find_map(|line| {
-        // New format: "Agent reported error (code -32002): ..."
-        if let Some(rest) = line.strip_prefix("Agent reported error (code ") {
-            if let Some(paren_end) = rest.find("): ") {
-                let code = rest[..paren_end].parse::<i64>().ok();
-                return Some(AgentLogError {
-                    message: with_optional_dependency_repair_hint(line.to_string()),
-                    code,
-                });
-            }
-        }
-        // Legacy format (older buzz-acp builds): "Agent reported error: ..."
-        if line.starts_with("Agent reported error:") {
-            return Some(AgentLogError {
-                message: with_optional_dependency_repair_hint(line.to_string()),
-                code: None,
-            });
-        }
-        // Bare prefixes emitted by older agent binaries whose Display still leaks
-        // unwrapped errors. Promote these so they surface instead of the generic
-        // "harness exited with status N" fallback.
-        if line.starts_with("llm auth:") {
-            return Some(AgentLogError {
-                message: format!("Agent reported error: {line}"),
-                code: Some(-32001),
-            });
-        }
-        if line.starts_with("llm model not found:") {
-            return Some(AgentLogError {
-                message: format!("Agent reported error: {line}"),
-                code: Some(-32002),
-            });
-        }
-        // Upstream Codex/Claude optional-dep crash text often appears as a bare
-        // multi-line stderr dump before any "Agent reported error" wrapper.
-        if line
-            .to_ascii_lowercase()
-            .contains("missing optional dependency")
-        {
-            return Some(AgentLogError {
-                message: with_optional_dependency_repair_hint(line.to_string()),
-                code: Some(1001),
-            });
-        }
-        None
-    })
-}
+#[path = "storage-log-errors.rs"]
+mod log_errors;
+pub use log_errors::{meaningful_agent_error_from_log, AgentLogError};
 
 #[cfg(test)]
 #[path = "storage_tests.rs"]

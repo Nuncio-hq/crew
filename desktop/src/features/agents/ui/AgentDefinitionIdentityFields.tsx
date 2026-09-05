@@ -1,13 +1,14 @@
-import { Input } from "@/shared/ui/input";
+import { AgentIdentityFields } from "./AgentDescriptionField";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
-import { RequiredFieldLabel } from "./agentConfigControls";
 import {
   PERSONA_FIELD_CONTROL_CLASS,
   PERSONA_FIELD_SHELL_CLASS,
 } from "./agentConfigOptions";
 
 export function AgentDefinitionIdentityFields({
+  description,
+  onDescriptionChange,
   displayName,
   isCreateMode,
   isPending,
@@ -17,6 +18,8 @@ export function AgentDefinitionIdentityFields({
   showStandaloneRuntimeWarning,
   systemPrompt,
 }: {
+  description: string;
+  onDescriptionChange: (next: string) => void;
   displayName: string;
   isCreateMode: boolean;
   isPending: boolean;
@@ -28,34 +31,14 @@ export function AgentDefinitionIdentityFields({
 }) {
   return (
     <>
-      <div className="space-y-1.5">
-        <RequiredFieldLabel
-          className="text-foreground"
-          htmlFor="persona-display-name"
-          isRequired={isCreateMode}
-        >
-          Agent name
-        </RequiredFieldLabel>
-        <div
-          className={cn(
-            "flex min-h-11 items-center px-3",
-            PERSONA_FIELD_SHELL_CLASS,
-          )}
-        >
-          <Input
-            autoCorrect="off"
-            className={cn(
-              "h-8 px-0 py-0 leading-6",
-              PERSONA_FIELD_CONTROL_CLASS,
-            )}
-            disabled={isPending}
-            id="persona-display-name"
-            onChange={(event) => onDisplayNameChange(event.target.value)}
-            placeholder="Fizz"
-            value={displayName}
-          />
-        </div>
-      </div>
+      <AgentIdentityFields
+        displayName={displayName}
+        onDisplayNameChange={onDisplayNameChange}
+        description={description}
+        onDescriptionChange={onDescriptionChange}
+        disabled={isPending}
+        nameRequired={isCreateMode}
+      />
 
       {showStandaloneRuntimeWarning ? (
         <p

@@ -1,9 +1,12 @@
+import type { ReactNode } from "react";
+
 import type {
   Channel,
   Identity,
   Profile,
   RelayEvent,
 } from "@/shared/api/types";
+import type { IdleAuxiliaryHeaderControls } from "./IdleAuxiliaryPanel";
 
 export type ChannelScreenProps = {
   activeChannel: Channel | null;
@@ -18,6 +21,13 @@ export type ChannelScreenProps = {
   currentProfile?: Profile;
   /** True while the events named by the route target are still being fetched. */
   isRouteTargetResolving: boolean;
+  idleAuxiliaryPanel?: ReactNode;
+  idleAuxiliaryHeaderActions?: IdleAuxiliaryHeaderControls;
+  idleAuxiliaryOverridesThread?: boolean;
+  idleAuxiliaryTitle?: string;
+  headerEndActions?: ReactNode;
+  onAddFiles?: () => void;
+  onCloseIdleAuxiliaryPanel?: () => void;
   onCloseForumPost: () => void;
   onSelectForumPost: (postId: string) => void;
   selectedForumPostId: string | null;
@@ -25,4 +35,8 @@ export type ChannelScreenProps = {
   targetMessageEvents: RelayEvent[];
   targetMessageId: string | null;
   targetThreadRootId: string | null;
+  /** Exact clicked result id, retained after route target cleanup. */
+  targetSearchMessageId?: string;
+  /** Search text to highlight within the opened result message. */
+  targetSearchQuery?: string;
 };

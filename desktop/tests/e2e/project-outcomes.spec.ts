@@ -76,7 +76,7 @@ test("project outcomes stay page-local while opening an in-place thread panel", 
       JSON.stringify({ projects: true }),
     );
   });
-  await installMockBridge(page);
+  await installMockBridge(page, { projectAccessChannelId: PROJECT_CHANNEL_ID });
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.waitForFunction(
@@ -106,7 +106,12 @@ test("project outcomes stay page-local while opening an in-place thread panel", 
       pubkey: TEST_IDENTITIES.alice.pubkey,
     },
   );
-  await page.goto("/projects");
+  await expect(page.getByTestId("app-sidebar")).toBeVisible();
+  await waitForAnimations(page);
+  await page
+    .getByTestId("app-sidebar")
+    .screenshot({ path: "test-results/project-outcomes/00-sidebar.png" });
+  await page.goto("/#/projects");
   await expect(page.getByTestId("projects-outcome-landing")).toBeVisible();
 
   const landing = page.getByTestId("projects-outcome-landing");

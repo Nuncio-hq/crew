@@ -1,0 +1,410 @@
+{
+  "target": "9ceb1f79bbc21785a0a075c40aecb3c058b1ea15",
+  "original_migration_sha256": {
+    "migrations/0027_channels_id_lookup_index.sql": "5338d6dd3c2adec2725be6d0810cf127a2d37fcefcc45c06abe8572c0e04a0d0",
+    "migrations/0012_push_leases.sql": "9ba5e433b5af5810af9e275049d67cc8a6de310f314f24afc84ab7509e7fb47f",
+    "migrations/0033_channel_roster_snapshot_fence.sql": "e0291a5fde08e7cfdd6e723009c896d8a0d1c381a943365d0227db3b423441e3",
+    "migrations/0009_nip_rs_database_guards.sql": "980f6c024d700ce12f98699ad4ee306295b5c6139e5a9171cf6cafdf97684646",
+    "migrations/0017_product_feedback.sql": "8a38f6f31b0a58e92418a8f2bb7be0fa800885389a57577b88a16690ec38e54f",
+    "migrations/0003_community_icon.sql": "06728e95689a18c5b501f1d35d0e7e98d5033b2cc08d82d68ed4e2158282da53",
+    "migrations/0008_fresh_install_search_allowlist.sql": "6dda9dedbb2255d0d2db3b2f761a599ee80415ef97c3b1a3d6971c5c5c071788",
+    "migrations/0031_wiki_fts_allowlist.sql": "4e99a77ad0c8bd3a61796f236c22d672e4bb0b07f58076ff598c575dfc8c670b",
+    "migrations/0032_workflow_run_error_codes.sql": "1b113cf222340208814e0b77f631fcc05e07a592952cf87bdabf701683824dc7",
+    "migrations/0016_community_archival.sql": "917c18dbaaf909be56a6c1d076e6925fa7dff34117b67c1dfb9bf89aed8fd5a8",
+    "migrations/0018_push_match_queue.sql": "7e069726d5dcd0de22eb0e8ad94ad1ba1576d3f15acc34c2d28b5e0f9f089ff4",
+    "migrations/0001_initial_schema.sql": "6acb496695f650e49c7e44404894899a04fc971d8c2c4f7862bd62797c23799d",
+    "migrations/0005_agent_turn_metric_fts.sql": "1ca2dbf526b604c6a413b693fd381177652f3c91ea0f376813a656f85af2046e",
+    "migrations/0024_event_ttl_refresh_shared_lock.sql": "bdba4330fdd39061cf3d10d34362a7b56c544453a0c129e5be08c4c478d0554b",
+    "migrations/0019_mesh_status_retention.sql": "63e025bf9469e0917fb7a3f6e29cc414c1467e3027737523a5bb9e0478d2dd49",
+    "migrations/0014_push_lease_fts.sql": "c7c091b85d66515b575ec66e794b73466ee06949f740167e37e6d4a5abc1af35",
+    "migrations/0030_community_deletion_recovery.sql": "afd099b6fd4d9afbbee09d960e12b6e72e9c5232bad74ef766f1fe93c4a67cf1",
+    "migrations/0022_event_ttl_refresh.sql": "7e2aa5de4b7bff03dae8184c6aef78ebb6b92c306fae8d97c1ce83752e1ba60f",
+    "migrations/0006_moderation.sql": "ba7d84d711d788c5786a8a11f7d6bb7d9fa00e290bb3abea4d5f70b22833ffdb",
+    "migrations/0025_relay_invites.sql": "62af2672cfc72c50ef619b96adbb64caeb21cec1c5db8f344973ab59fdc6ebbb",
+    "migrations/0026_replica_heartbeat.sql": "41c132ac6eb802c79d084518374214dc00c948d32b0d2b2de5d982741ba7d707",
+    "migrations/0023_push_match_gate.sql": "5a32c41759ee19ce7f304b17acce2d7d9551912aa7256bcc73340807e0d81e9b",
+    "migrations/0021_created_at_fence_floor.sql": "9116ae4090abe81800359204536bd5845d76c86101e1f1d894a6816834c86128",
+    "migrations/0011_nip_rs_exact_tag_cardinality.sql": "43e83b89ef20fb7ed34eaa9dcd31a1a8c8fa8b5591756dda1925a14408429189",
+    "migrations/0007_nip_rs_retention.sql": "6fab8f418f8e3c0c5bc7db6cfe0b1d4013de6cab1cdae80ea68f0fd2716f11f8",
+    "migrations/0029_community_deletion.sql": "eeb1eace076fe9764b5b00fcf77b140e1be5fe2b3d2ea0f20d366fed339b3348",
+    "migrations/0015_push_gateway_authority.sql": "0ff0f41d58ba21bf2d44cc7dba6c3a702058de3081afbff0e2bb7620f63b64b3",
+    "migrations/0010_nip_rs_exact_replay_guard.sql": "fff1c7856bb1b61b39816d77f0a9ccd7b9c7f39bf6753aee38c7a44247bd7f75",
+    "migrations/0004_events_tags_gin.sql": "75b22e3d30817c49a7832a58f70a893f7dcdf1316730cd5412ae5290970534f2",
+    "migrations/0013_push_endpoint_state.sql": "4ccb516e68116e0ea76719cc06adecbebbcb2078c14f8418bb825da31f5020c5",
+    "migrations/0028_long_reaction_payloads.sql": "7801606ad357301d6358f5fb8c5121b457b11626eb87af3a1d5bd249127dc084",
+    "migrations/0020_join_policy_acceptances.sql": "7dae44bc421cc3f8c1326d16674eedf0fff354890bab739140f3d6c493b5f5f7",
+    "migrations/0002_git_repo_names.sql": "372f91f3c3caf7e95594f7c077fa12a4aa68e06b5ecaaa43414b2db02fc8177a"
+  },
+  "mapping": [
+    {
+      "upstream": "migrations/0033_private_managed_agent_fts.sql",
+      "crew": "migrations/0034_private_managed_agent_fts.sql"
+    },
+    {
+      "upstream": "migrations/0034_replica_heartbeat_vacuum_truncate.sql",
+      "crew": "migrations/0035_replica_heartbeat_vacuum_truncate.sql"
+    },
+    {
+      "upstream": "migrations/0035_relay_operators.sql",
+      "crew": "migrations/0036_relay_operators.sql"
+    },
+    {
+      "upstream": "migrations/0036_relay_admin_actions.sql",
+      "crew": "migrations/0037_relay_admin_actions.sql"
+    },
+    {
+      "upstream": "migrations/0037_relay_admin_action_lease.sql",
+      "crew": "migrations/0038_relay_admin_action_lease.sql"
+    },
+    {
+      "upstream": "migrations/0038_relay_admin_outbox_claim_token.sql",
+      "crew": "migrations/0039_relay_admin_outbox_claim_token.sql"
+    },
+    {
+      "upstream": "migrations/0039_relay_operator_audit.sql",
+      "crew": "migrations/0040_relay_operator_audit.sql"
+    },
+    {
+      "upstream": "migrations/0040_push_message_kinds.sql",
+      "crew": "migrations/0041_push_message_kinds.sql"
+    },
+    {
+      "upstream": "migrations/0041_nip_fi_identity_foundation.sql",
+      "crew": "migrations/0042_nip_fi_identity_foundation.sql"
+    },
+    {
+      "upstream": "migrations/0042_nip_fi_authorization_foundation.sql",
+      "crew": "migrations/0043_nip_fi_authorization_foundation.sql"
+    },
+    {
+      "upstream": "migrations/0043_push_gateway_dogfood_profile.sql",
+      "crew": "migrations/0044_push_gateway_dogfood_profile.sql"
+    },
+    {
+      "upstream": "migrations/0044_drop_nip_fi_ledger.sql",
+      "crew": "migrations/0045_drop_nip_fi_ledger.sql"
+    }
+  ],
+  "changed_paths": [
+    {
+      "path": "crates/buzz-auth/Cargo.toml",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/lib.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip98.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/assertion.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/config.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/denial.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/discovery.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/jwks/mod.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/jwks/tests.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/mod.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/startup/mod.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/startup/tests.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/verifier.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/nip_fi/verifier/tests.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-auth/src/rate_limit.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/partition.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/migration.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/dm.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/push.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/deletion.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/moderation.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/replica_fence.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/admin_moderation.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/channel.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/workflow.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/feed.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/relay_invite.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/archived_identities.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/reaction.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/api_token.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/git_repo.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/relay_members.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/event.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/thread.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/usage.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/product_feedback.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/src/user.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-db/TESTING.md",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/error.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/lib.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/migration.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/mod.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/observability.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/replica_fence.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/tests.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/admin_moderation.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/allowlist.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/api_token.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/archived_identities.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/channel.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/channel_members.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/community.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/deletion.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/dm.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/event.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/feed.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/git_repo.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/mod.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/moderation.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/partition.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/product_feedback.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/push.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/reaction.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/relay_admin_actions.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/relay_invite.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/relay_members.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/relay_operators.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/reminder.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/replaceable.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/thread.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/usage.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/user.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/store/workflow.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/src/test_support.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-db/tests/observability_source.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-search/tests/fts_integration.rs",
+      "operation": "removed obsolete upstream path"
+    },
+    {
+      "path": "crates/buzz-search/Cargo.toml",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-search/tests/postgres_fts_integration.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "crates/buzz-core/src/network.rs",
+      "operation": "final upstream source"
+    },
+    {
+      "path": "schema/schema.sql",
+      "operation": "final upstream source"
+    }
+  ]
+}

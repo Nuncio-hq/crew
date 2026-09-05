@@ -1,3 +1,4 @@
+import type { Locator } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
@@ -22,7 +23,7 @@ async function enableProjectsFeature(page: import("@playwright/test").Page) {
 
 async function openBuzzProject(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/projects");
+  await page.goto("/#/projects");
   await page.getByTestId("projects-section-projects").click();
   const projectEntry = page
     .locator(
@@ -32,6 +33,19 @@ async function openBuzzProject(page: import("@playwright/test").Page) {
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
   await projectEntry.click();
   await expandProjectPlumbing(page);
+}
+
+async function expectLocalRepositoryOpenAction(
+  page: import("@playwright/test").Page,
+) {
+  const openButton = page.getByRole("button", { name: "Open", exact: true });
+  await expect(openButton).toHaveAttribute(
+    "title",
+    "Open local repository folder",
+  );
+  await expect(
+    page.getByRole("link", { name: "Open", exact: true }),
+  ).toHaveCount(0);
 }
 
 test("same-second request changes supersedes approval", async ({ page }) => {
@@ -780,7 +794,7 @@ test("project pull requests preserve partial results from batched queries", asyn
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/projects");
+  await page.goto("/#/projects");
   await page
     .getByRole("button", { name: "Pull Requests", exact: true })
     .click();
@@ -835,7 +849,7 @@ test("project pull request author rollover stays identity-only", async ({
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/projects");
+  await page.goto("/#/projects");
   await page
     .getByRole("button", { name: "Pull Requests", exact: true })
     .click();
@@ -868,7 +882,7 @@ test("project issue author rollover matches pull requests", async ({
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/projects");
+  await page.goto("/#/projects");
   await page.getByRole("button", { name: "Issues", exact: true }).click();
   await page.getByRole("button", { name: "List layout" }).click();
 
@@ -902,20 +916,20 @@ test("project pull requests report aggregate root query failures", async ({
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/projects");
+  await page.goto("/#/projects");
   await page
     .getByRole("button", { name: "Pull Requests", exact: true })
     .click();
 
-  await expect(page.getByText("Could not load pull requests.")).toBeVisible();
+  await expect(page.getByText("Could not load reviews")).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
-  await expect(page.getByText("No pull requests yet.")).toHaveCount(0);
+  await expect(page.getByText("No reviews yet")).toHaveCount(0);
 
   await page.evaluate(() => {
     window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ = [];
   });
   await page.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByText("Could not load pull requests.")).toHaveCount(0);
+  await expect(page.getByText("Could not load reviews")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: /^View / }).first(),
   ).toBeVisible();
@@ -930,7 +944,7 @@ test("project issues preserve partial results from aggregate queries", async ({
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/projects");
+  await page.goto("/#/projects");
   await page.getByRole("button", { name: "Issues", exact: true }).click();
 
   await expect(
@@ -960,7 +974,7 @@ test("project overview reports aggregate work-item failures", async ({
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/projects");
+  await page.goto("/#/projects");
 
   await expect(
     page.getByText("Could not load project activity."),
@@ -982,7 +996,7 @@ test("project overview does not paint a background behind its cards", async ({
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/projects");
+  await page.goto("/#/projects");
 
   const landing = page.getByTestId("projects-outcome-landing");
   await expect(landing).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
@@ -998,119 +1012,6 @@ test("project overview does not paint a background behind its cards", async ({
     );
     await expect(outcomeCards.nth(index)).toHaveCSS("border-style", "solid");
   }
-});
-
-test("repository rows identify their git host", async ({ page }) => {
-  await enableProjectsFeature(page);
-  await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/projects");
-  await page.getByRole("button", { name: "Repositories", exact: true }).click();
-  await page.getByRole("button", { name: "List layout" }).click();
-
-  const buzzHostIcon = page
-    .getByTestId("repository-row-buzz")
-    .getByTestId("repository-host-icon");
-  await expect(buzzHostIcon).toHaveAttribute(
-    "aria-label",
-    "Buzz-hosted repository",
-  );
-  await expect(
-    page
-      .getByTestId("repository-row-relay-tools")
-      .getByTestId("repository-host-icon"),
-  ).toHaveAttribute("aria-label", "Git data hosted on github.com");
-
-  await buzzHostIcon.hover();
-  await expect(
-    page.getByRole("tooltip", { name: "Buzz-hosted repository" }),
-  ).toBeVisible();
-});
-
-test("project subsections do not paint backgrounds behind list or grid items", async ({
-  page,
-}) => {
-  await enableProjectsFeature(page);
-  await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/projects");
-
-  for (const section of ["Repositories", "Pull Requests", "Issues"] as const) {
-    await page.getByRole("button", { name: section, exact: true }).click();
-    await page.getByRole("button", { name: "List layout" }).click();
-
-    const listItems = page.locator(
-      section === "Repositories"
-        ? '[data-testid^="repository-row-"]'
-        : section === "Pull Requests"
-          ? '[data-testid^="projects-pr-row-"]'
-          : '[data-testid^="projects-issue-row-"]',
-    );
-    await expect(listItems.first()).toBeVisible();
-    const listItemCount = await listItems.count();
-    for (let index = 0; index < listItemCount; index += 1) {
-      await expect(listItems.nth(index)).toHaveCSS(
-        "background-color",
-        "rgba(0, 0, 0, 0)",
-      );
-      await expect(listItems.nth(index)).toHaveCSS("border-style", "solid");
-    }
-
-    await page.getByRole("button", { name: "Grid layout" }).click();
-    const gridCards = page.locator(
-      section === "Repositories"
-        ? '[data-testid^="repository-card-"]'
-        : "[data-projects-grid-card]",
-    );
-    await expect(gridCards.first()).toBeVisible();
-    const gridCardCount = await gridCards.count();
-    for (let index = 0; index < gridCardCount; index += 1) {
-      await expect(gridCards.nth(index)).toHaveCSS(
-        "background-color",
-        "rgba(0, 0, 0, 0)",
-      );
-      await expect(gridCards.nth(index)).toHaveCSS("border-style", "solid");
-    }
-  }
-});
-
-test("project detail content areas do not paint background fills", async ({
-  page,
-}) => {
-  await enableProjectsFeature(page);
-  await installMockBridge(page);
-  await openBuzzProject(page);
-
-  const expectVisiblePanelsToBeTransparent = async () => {
-    const panels = page.locator("[data-project-detail-panel]:visible");
-    await expect(panels.first()).toBeVisible();
-    const panelCount = await panels.count();
-    for (let index = 0; index < panelCount; index += 1) {
-      await expect(panels.nth(index)).toHaveCSS(
-        "background-color",
-        "rgba(0, 0, 0, 0)",
-      );
-      await expect(panels.nth(index)).toHaveCSS("border-style", "solid");
-    }
-  };
-
-  for (const tab of [
-    "Overview",
-    "Files",
-    "Commits",
-    "Issues",
-    "Pull Request",
-    "Contributors",
-  ]) {
-    await page.getByRole("tab", { name: tab, exact: true }).click();
-    await expectVisiblePanelsToBeTransparent();
-  }
-
-  await page.getByRole("tab", { name: "Pull Request", exact: true }).click();
-  const pullRequest = page.getByTestId("project-pull-request-row").first();
-  await expect(pullRequest).toBeVisible();
-  await pullRequest.getByRole("button", { name: /^#/ }).click();
-  await expectVisiblePanelsToBeTransparent();
 });
 
 test("project without a checkout offers fetch feedback and dropdown cloning", async ({
@@ -1151,6 +1052,1442 @@ test("project without a checkout offers fetch feedback and dropdown cloning", as
     () => window.__BUZZ_E2E_COMMANDS__ ?? [],
   );
   expect(commands).toContain("clone_project_repository");
+});
+
+test("overview list titles share a row with controls and task groups align", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+
+  const rowSelectors = {
+    issues: '[data-testid^="projects-issue-row-"]',
+    projects: '[data-testid^="project-row-"]',
+    prs: '[data-testid^="projects-pr-row-"]',
+    repositories: '[data-testid^="repository-row-"]',
+  };
+  for (const section of [
+    "projects",
+    "repositories",
+    "issues",
+    "prs",
+  ] as const) {
+    await page.getByTestId(`projects-section-${section}`).click();
+    const header = page.getByTestId("projects-page-header");
+    const [headingBox, controlsBox] = await Promise.all([
+      header.getByRole("heading").boundingBox(),
+      header.getByTestId("projects-list-header").boundingBox(),
+    ]);
+    expect(headingBox).not.toBeNull();
+    expect(controlsBox).not.toBeNull();
+    const headingCenter = (headingBox?.y ?? 0) + (headingBox?.height ?? 0) / 2;
+    const controlsCenter =
+      (controlsBox?.y ?? 0) + (controlsBox?.height ?? 0) / 2;
+    expect(Math.abs(headingCenter - controlsCenter)).toBeLessThanOrEqual(2);
+
+    await header.getByRole("button", { name: "List layout" }).click();
+    const row = page.locator(rowSelectors[section]).first();
+    await expect(row).toBeVisible();
+    const [layoutButtonBox, rowMenuBox] = await Promise.all([
+      header.getByRole("button", { name: "List layout" }).boundingBox(),
+      row.getByRole("button", { name: /More options for/ }).boundingBox(),
+    ]);
+    expect(layoutButtonBox).not.toBeNull();
+    expect(rowMenuBox).not.toBeNull();
+    const layoutRight =
+      (layoutButtonBox?.x ?? 0) + (layoutButtonBox?.width ?? 0);
+    const rowMenuRight = (rowMenuBox?.x ?? 0) + (rowMenuBox?.width ?? 0);
+    expect(Math.abs(layoutRight - rowMenuRight)).toBeLessThanOrEqual(2);
+  }
+
+  for (const [section, groupTestId, groupLabelTestId, hasListLayout] of [
+    [
+      "issues",
+      "projects-issue-project-group-header",
+      "project-issue-project",
+      true,
+    ],
+    [
+      "prs",
+      "projects-review-project-group-header",
+      "project-review-project",
+      true,
+    ],
+    [
+      "channels",
+      "projects-channel-project-group-header",
+      "project-channel-project",
+      false,
+    ],
+  ] as const) {
+    await page.getByTestId(`projects-section-${section}`).click();
+    if (hasListLayout) {
+      await page.getByRole("button", { name: "List layout" }).click();
+    }
+    const [headerBox, headerTitleBox, groupBox, groupLabelBox] =
+      await Promise.all([
+        page.getByTestId("projects-page-header").boundingBox(),
+        page
+          .getByTestId("projects-page-header")
+          .getByRole("heading")
+          .boundingBox(),
+        page.getByTestId(groupTestId).first().boundingBox(),
+        page.getByTestId(groupLabelTestId).first().boundingBox(),
+      ]);
+    expect(headerBox).not.toBeNull();
+    expect(headerTitleBox).not.toBeNull();
+    expect(groupBox).not.toBeNull();
+    expect(groupLabelBox).not.toBeNull();
+    expect(
+      Math.abs((headerBox?.x ?? 0) - (groupBox?.x ?? 0)),
+    ).toBeLessThanOrEqual(1);
+    const headerRight = (headerBox?.x ?? 0) + (headerBox?.width ?? 0);
+    const groupRight = (groupBox?.x ?? 0) + (groupBox?.width ?? 0);
+    expect(Math.abs(headerRight - groupRight)).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs((headerTitleBox?.x ?? 0) - (groupLabelBox?.x ?? 0)),
+    ).toBeLessThanOrEqual(2);
+
+    if (section === "issues") {
+      const groupHeader = page.getByTestId(groupTestId).first();
+      const groupIcon = groupHeader.getByTestId("project-group-icon");
+      const groupCheckbox = groupHeader.getByTestId("projects-group-select");
+      await expect(groupIcon).toHaveCSS("opacity", "1");
+      await groupHeader.hover();
+      await expect(groupIcon).toHaveCSS("opacity", "0");
+      await expect(groupCheckbox.locator("..").locator("..")).toHaveCSS(
+        "opacity",
+        "1",
+      );
+      const [iconSlotBox, checkboxBox] = await Promise.all([
+        groupHeader.getByTestId("project-group-leading-icon").boundingBox(),
+        groupCheckbox.boundingBox(),
+      ]);
+      expect(iconSlotBox).not.toBeNull();
+      expect(checkboxBox).not.toBeNull();
+      const iconCenter = (iconSlotBox?.x ?? 0) + (iconSlotBox?.width ?? 0) / 2;
+      const checkboxCenter =
+        (checkboxBox?.x ?? 0) + (checkboxBox?.width ?? 0) / 2;
+      expect(Math.abs(iconCenter - checkboxCenter)).toBeLessThanOrEqual(1);
+    }
+  }
+});
+
+test("project overview presents collapsible context beside grouped activity", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+
+  await expect(page.getByTestId("projects-overview-panel")).toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  await expect(page.getByTestId("projects-overview-layout")).toHaveAttribute(
+    "data-project-context-detached",
+    "true",
+  );
+  const overviewLayout = page.getByTestId("projects-overview-layout");
+  const overviewContentPod = page.getByTestId("projects-overview-content-pod");
+  const appContentSurface = page
+    .locator("[data-buzz-content-surface]")
+    .filter({ has: overviewLayout })
+    .first();
+  await expect(appContentSurface).toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  await expect(appContentSurface).toHaveCSS("border-radius", "0px");
+  await expect(overviewContentPod).toHaveCSS("border-radius", "16px");
+  await expect(page.getByTestId("projects-workspace-chrome")).toContainText(
+    "Projects",
+  );
+  await expect(page.getByTestId("projects-workspace-chrome")).toContainText(
+    "Activity",
+  );
+  await expect(page.getByTestId("projects-page-tabs")).toBeVisible();
+  await expect(page.getByTestId("projects-page-header")).toContainText(
+    "Projects Activity",
+  );
+  await expect(page.getByTestId("projects-activity-search")).toBeVisible();
+  await expect(page.getByTestId("projects-activity-summary")).toContainText(
+    /^(This week:|Currently tracking)/,
+  );
+  await expect(
+    page.getByTestId("projects-activity-summary").locator("strong").first(),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("projects-overview-context-panel"),
+  ).toBeVisible();
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "Activity",
+  );
+  expect(
+    Math.round(
+      (await page.getByTestId("projects-overview-context-panel").boundingBox())
+        ?.width ?? 0,
+    ),
+  ).toBe(280);
+  await expect(
+    page.getByTestId("projects-overview-create-project"),
+  ).toHaveCount(0);
+  await expect(page.getByTestId("projects-overview-stats-pod")).toBeVisible();
+  await expect(
+    page
+      .getByTestId("projects-overview-context-panel")
+      .getByTestId("projects-overview-people"),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByTestId("projects-overview-stats-pod")
+      .getByTestId("projects-overview-people"),
+  ).toHaveCount(0);
+  await expect(
+    page
+      .getByTestId("projects-overview-context-panel")
+      .getByTestId("projects-overview-context-title"),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByTestId("projects-overview-context-panel")
+      .getByRole("heading", { name: "Details" }),
+  ).toHaveCount(0);
+  await expect(
+    page
+      .getByTestId("projects-overview-context-panel")
+      .getByRole("heading", { level: 3, name: "Activity" }),
+  ).toHaveCount(0);
+  await expect(
+    page
+      .getByTestId("projects-overview-context-panel")
+      .getByTestId("projects-overview-activity"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("projects-activity-group").first(),
+  ).toContainText(/This week|Last week|Earlier/);
+  const searchBox = await page
+    .getByTestId("projects-activity-search")
+    .boundingBox();
+  const tabMenuBox = await page.getByTestId("projects-page-tabs").boundingBox();
+  const firstTabBox = await page
+    .getByTestId("projects-section-all")
+    .boundingBox();
+  const introBox = await page
+    .getByTestId("projects-activity-intro")
+    .boundingBox();
+  const feedBox = await page
+    .getByTestId("projects-activity-group")
+    .first()
+    .boundingBox();
+  const contentPodBox = await overviewContentPod.boundingBox();
+  expect(searchBox).toBeTruthy();
+  expect(tabMenuBox).toBeTruthy();
+  expect(firstTabBox).toBeTruthy();
+  expect(introBox).toBeTruthy();
+  expect(feedBox).toBeTruthy();
+  expect(contentPodBox).toBeTruthy();
+  expect(searchBox?.x ?? 0).toBeLessThan(firstTabBox?.x ?? 0);
+  expect(Math.abs((searchBox?.y ?? 0) - (firstTabBox?.y ?? 0))).toBeLessThan(8);
+  expect(tabMenuBox?.y ?? 0).toBeLessThan(introBox?.y ?? 0);
+  expect(introBox?.y ?? 0).toBeLessThan(feedBox?.y ?? 0);
+  expect(feedBox?.width ?? 0).toBeGreaterThan(600);
+  expect(feedBox?.width ?? 0).toBeLessThan((contentPodBox?.width ?? 0) - 32);
+  const feedCenter = (feedBox?.x ?? 0) + (feedBox?.width ?? 0) / 2;
+  const contentCenter =
+    (contentPodBox?.x ?? 0) + (contentPodBox?.width ?? 0) / 2;
+  expect(Math.abs(feedCenter - contentCenter)).toBeLessThan(24);
+
+  const stats = page.getByTestId("projects-overview-stat");
+  await expect(stats).toHaveCount(5);
+  await expect(stats.nth(2)).toContainText("Channels");
+  const lastStatBox = await stats.last().boundingBox();
+  const peopleBox = await page
+    .getByTestId("projects-overview-people")
+    .boundingBox();
+  expect(lastStatBox).toBeTruthy();
+  expect(peopleBox).toBeTruthy();
+  expect(peopleBox?.y ?? 0).toBeGreaterThan(
+    (lastStatBox?.y ?? 0) + (lastStatBox?.height ?? 0) - 1,
+  );
+
+  const activityCards = page.getByTestId("projects-activity-card");
+  await expect(activityCards.first()).toBeVisible();
+  const activityCardCount = await activityCards.count();
+  for (let index = 0; index < activityCardCount; index += 1) {
+    await expect(activityCards.nth(index)).toHaveCSS(
+      "background-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    await expect(activityCards.nth(index)).toHaveCSS("border-style", "solid");
+  }
+
+  await page.getByTestId("projects-section-channels").click();
+  await expect(page.getByTestId("projects-page-header")).toContainText(
+    "Channels",
+  );
+  await expect(
+    page.getByTestId("projects-overview-context-panel"),
+  ).toBeVisible();
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "Channels",
+  );
+  await expect(page.getByTestId("projects-overview-add-channel")).toBeVisible();
+  await page.getByTestId("projects-overview-add-channel").click();
+  await expect(page.getByTestId("create-project-channel-dialog")).toBeVisible();
+  await expect(
+    page.getByTestId("create-project-channel-project"),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("projects-overview-people")).toHaveCount(0);
+  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
+  await expect(stats).toHaveCount(3);
+  await expect(stats.first()).toContainText("Channels");
+  await expect(page.getByTestId("projects-overview-layout")).toHaveAttribute(
+    "data-project-context-detached",
+    "true",
+  );
+  const channelRows = page.getByTestId("project-channel-row");
+  expect(await channelRows.count()).toBeGreaterThan(0);
+  await expect(channelRows.first()).toContainText("#buzz");
+  const channelsList = page.getByTestId("projects-channels-list");
+  await expect(channelsList).toContainText("buzz");
+  await expect(channelsList).toContainText("relay-tools");
+  await expect(channelsList).toContainText("design-system");
+  const channelCount = await channelRows.count();
+  const projectGroups = page.getByTestId("projects-channel-project-group");
+  expect(await projectGroups.count()).toBeGreaterThan(0);
+  expect(await projectGroups.count()).toBeLessThanOrEqual(channelCount);
+  for (const group of await projectGroups.all()) {
+    expect(
+      await group.getByTestId("project-channel-row").count(),
+    ).toBeGreaterThan(0);
+  }
+  await expect(page.getByTestId("project-channel-repository")).toHaveCount(
+    channelCount,
+  );
+  await expect(
+    page.getByTestId("project-channel-repository").first(),
+  ).toHaveCSS("text-align", "left");
+  const affiliationXs = (
+    await page
+      .getByTestId("project-channel-repository")
+      .evaluateAll((elements) =>
+        elements.map((element) => element.getBoundingClientRect().x),
+      )
+  ).filter((x) => Number.isFinite(x));
+  expect(
+    Math.max(...affiliationXs) - Math.min(...affiliationXs),
+  ).toBeLessThanOrEqual(2);
+  await page.getByTestId("projects-section-projects").click();
+  await expect(page.getByTestId("projects-page-header")).toContainText(
+    "Projects",
+  );
+  await expect(
+    page.getByTestId("projects-overview-context-panel"),
+  ).toBeVisible();
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "Projects",
+  );
+  await expect(
+    page.getByTestId("projects-overview-create-project"),
+  ).toBeVisible();
+  await expect(page.getByTestId("projects-overview-people")).toBeVisible();
+  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
+  await page.getByTestId("projects-section-repositories").click();
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "Repositories",
+  );
+  await expect(
+    page.getByTestId("projects-overview-add-repository"),
+  ).toBeVisible();
+  await page.getByTestId("projects-overview-add-repository").click();
+  await expect(page.getByTestId("add-project-repository-dialog")).toBeVisible();
+  await expect(
+    page.getByTestId("add-project-repository-project"),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(stats.nth(1)).toContainText("Active tasks");
+  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
+  await page.getByTestId("projects-section-issues").click();
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "Tasks",
+  );
+  await expect(
+    page.getByTestId("projects-overview-create-issue"),
+  ).toHaveAttribute("aria-label", "Create task");
+  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
+  await page.getByTestId("projects-section-prs").click();
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "Reviews",
+  );
+  await expect(
+    page.getByTestId("projects-overview-create-pull-request"),
+  ).toHaveAttribute("aria-label", "Create review");
+  await expect(page.getByTestId("projects-overview-people")).toBeVisible();
+  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
+  await page.getByTestId("projects-section-all").click();
+  await expect(
+    page.getByTestId("projects-overview-context-panel"),
+  ).toBeVisible();
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "Activity",
+  );
+  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
+
+  await page.getByTestId("projects-section-projects").click();
+  await page.getByTestId("projects-overview-create-project").click();
+  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("create-project-dialog")).toBeHidden();
+
+  await page.getByTestId("projects-overview-context-toggle").click();
+  await expect(
+    page.getByTestId("projects-overview-context-rail"),
+  ).toHaveAttribute("aria-hidden", "true");
+  await expect(page.getByTestId("projects-overview-context-rail")).toHaveCSS(
+    "width",
+    "0px",
+  );
+  await expect(page.getByTestId("projects-overview-layout")).toHaveAttribute(
+    "data-project-context-detached",
+    "true",
+  );
+  await expect(stats).toHaveCount(3);
+  await expect(activityCards).toHaveCount(0);
+});
+
+test("project overview chrome toggles a detached resizable agent chat", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+  await page.getByTestId("projects-section-prs").click();
+  await page.getByRole("button", { name: "List layout" }).click();
+  await expect(
+    page.locator('[data-testid^="projects-pr-row-"]').first(),
+  ).toBeVisible();
+
+  const overviewChat = page.getByTestId("projects-overview-chat-toggle");
+  await expect(overviewChat).toHaveAttribute(
+    "aria-label",
+    "Chat with an agent about Reviews",
+  );
+  await expect(overviewChat).toHaveAttribute("aria-pressed", "false");
+  const overviewInfo = page.getByTestId("projects-overview-context-toggle");
+  const [chatBox, infoBox] = await Promise.all([
+    overviewChat.boundingBox(),
+    overviewInfo.boundingBox(),
+  ]);
+  expect(chatBox).not.toBeNull();
+  expect(infoBox).not.toBeNull();
+  expect(
+    (infoBox?.x ?? 0) - ((chatBox?.x ?? 0) + (chatBox?.width ?? 0)),
+  ).toBeLessThanOrEqual(4);
+  const contextRail = page.getByTestId("projects-overview-context-rail");
+  await expect(overviewInfo).toHaveAttribute("aria-pressed", "true");
+  await overviewInfo.click();
+  await expect(overviewInfo).toHaveAttribute("aria-pressed", "false");
+  await expect(contextRail).toHaveCSS("width", "0px");
+  await overviewChat.click();
+  await expect(overviewChat).toHaveAttribute("aria-pressed", "true");
+  await expect(overviewInfo).toHaveAttribute("aria-pressed", "false");
+  await expect(contextRail).toHaveCSS("width", "0px");
+  await expect(overviewChat).toBeVisible();
+  const chatRail = page.getByTestId("projects-overview-agent-rail");
+  await expect(chatRail.getByTestId("project-agent-chat-panel")).toBeVisible();
+  await expect(
+    page
+      .getByTestId("projects-overview-content-pod")
+      .getByTestId("project-agent-chat-panel"),
+  ).toHaveCount(0);
+  await expect(
+    chatRail.getByTestId("projects-overview-agent-rail-panel"),
+  ).toHaveCSS("border-radius", "16px");
+  const agentHeader = page.getByTestId("project-agent-context");
+  await expect
+    .poll(() =>
+      agentHeader.evaluate(
+        (element) => getComputedStyle(element).backdropFilter,
+      ),
+    )
+    .not.toBe("none");
+  await expect(contextRail).toHaveAttribute("aria-hidden", "true");
+  await overviewInfo.click();
+  await expect(overviewInfo).toHaveAttribute("aria-pressed", "true");
+  await expect(contextRail).toHaveAttribute("aria-hidden", "false");
+  await expect(
+    page.getByTestId("projects-overview-context-panel"),
+  ).toBeVisible();
+  const chatPanel = page.getByTestId("project-agent-chat-panel");
+  const resizeHandle = chatPanel.getByTestId(
+    "right-auxiliary-pane-resize-handle",
+  );
+  const [initialPanelBox, resizeHandleBox] = await Promise.all([
+    chatPanel.boundingBox(),
+    resizeHandle.boundingBox(),
+  ]);
+  expect(initialPanelBox).not.toBeNull();
+  expect(resizeHandleBox).not.toBeNull();
+  const resizeStartX =
+    (resizeHandleBox?.x ?? 0) + (resizeHandleBox?.width ?? 0) / 2;
+  const resizeStartY =
+    (resizeHandleBox?.y ?? 0) + (resizeHandleBox?.height ?? 0) / 2;
+  await resizeHandle.dispatchEvent("pointerdown", {
+    button: 0,
+    buttons: 1,
+    clientX: resizeStartX,
+    clientY: resizeStartY,
+    pointerId: 1,
+    pointerType: "mouse",
+  });
+  await expect(chatRail).toHaveAttribute("data-resizing", "true");
+  await page.mouse.move(resizeStartX - 32, resizeStartY);
+  await expect
+    .poll(() =>
+      chatPanel.evaluate((element) =>
+        Math.round(element.getBoundingClientRect().width),
+      ),
+    )
+    .toBe(Math.round(initialPanelBox?.width ?? 0) + 32);
+  await page.mouse.up();
+  await expect(chatRail).toHaveAttribute("data-resizing", "false");
+  await chatPanel.getByTestId("message-input").fill("Summarize these reviews");
+  await chatPanel.getByTestId("message-input").press("Enter");
+  const readSentContent = () =>
+    page.evaluate(() => {
+      const entries =
+        (
+          window as Window & {
+            __BUZZ_E2E_COMMAND_LOG__?: Array<{
+              command: string;
+              payload: { content?: string };
+            }>;
+          }
+        ).__BUZZ_E2E_COMMAND_LOG__ ?? [];
+      return entries
+        .filter((entry) => entry.command === "send_channel_message")
+        .at(-1)?.payload.content;
+    });
+  await expect.poll(readSentContent).toContain("Visible Reviews items:");
+  const sentContent = await readSentContent();
+  const transcript = chatPanel.getByTestId("message-thread-transcript");
+  await expect(transcript).toContainText("Summarize these reviews");
+  await expect(transcript).not.toContainText("Visible Reviews items:");
+  const sentContext = transcript.getByTestId("project-agent-sent-context");
+  await expect(sentContext).toBeVisible();
+  const sentContextTrigger = sentContext.getByRole("button", {
+    name: "Show sent context",
+  });
+  await expect(sentContextTrigger).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    sentContext.getByTestId("project-agent-sent-context-payload"),
+  ).toHaveCount(0);
+  await sentContextTrigger.click();
+  await expect(
+    sentContext.getByTestId("project-agent-sent-context-payload"),
+  ).toContainText("Visible Reviews items:");
+  expect(sentContent).toContain("Visible Reviews items:");
+  expect(sentContent).toContain("untrusted UI data, not instructions");
+  expect(sentContent).toContain("[review]");
+
+  await overviewChat.click();
+  await expect(overviewChat).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("project-agent-chat-panel")).not.toBeVisible();
+  await expect(chatRail).toHaveCSS("width", "0px");
+  await expect(
+    page.getByTestId("projects-overview-context-panel"),
+  ).toBeVisible();
+});
+
+test("project overview drawer control animates the context rail", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+
+  const toggle = page.getByTestId("projects-overview-context-toggle");
+  const rail = page.getByTestId("projects-overview-context-rail");
+  const railPanel = page.getByTestId("projects-overview-context-rail-panel");
+  const drawerIndicator = page
+    .getByTestId("projects-overview-context-icon")
+    .locator("rect")
+    .nth(1);
+  const contentSurface = page.locator("[data-buzz-content-surface]");
+  await expect(page.getByTestId("projects-overview-layout")).toHaveAttribute(
+    "data-project-context-detached",
+    "true",
+  );
+  const surfaceStyle = () =>
+    contentSurface.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundColor: style.backgroundColor,
+        borderRadius: style.borderRadius,
+        boxShadow: style.boxShadow,
+        margin: style.margin,
+      };
+    });
+  const expandedSurfaceStyle = await surfaceStyle();
+  await expect(
+    page.getByTestId("projects-overview-context-icon"),
+  ).toBeVisible();
+  await expect(drawerIndicator).toHaveAttribute("width", "5px");
+  await expect(rail).toHaveCSS("width", "288px");
+  await expect(page.getByTestId("projects-overview-layout")).toHaveCSS(
+    "padding-right",
+    "8px",
+  );
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(rail).toHaveCSS("transition-duration", "0.2s");
+  await expect(rail).toHaveCSS("transition-timing-function", "linear");
+  await expect(railPanel).toHaveCSS("transform", "none");
+
+  await toggle.click();
+  await expect(rail).toHaveCSS("width", "0px");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(drawerIndicator).toHaveAttribute("width", "2px");
+  await expect(railPanel).toHaveCSS("transform", "none");
+  expect(await surfaceStyle()).toEqual(expandedSurfaceStyle);
+  await toggle.click();
+  await expect(rail).toHaveCSS("width", "288px");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+});
+
+test("Projects search replaces and restores the section tabs", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+  await page.getByTestId("projects-section-projects").click();
+
+  await expect(
+    page.getByTestId("projects-page-tabs").getByRole("combobox"),
+  ).toHaveCount(0);
+  await page.getByTestId("projects-activity-search").click();
+  const search = page.getByTestId("projects-section-search-input");
+  await expect(search).toBeFocused();
+  await expect(page.getByTestId("projects-section-projects")).toHaveCount(0);
+  await expect(
+    page.getByTestId("projects-page-tabs").getByRole("combobox"),
+  ).toHaveValue("updated");
+
+  await search.fill("buzz");
+  await expect(
+    page.locator(
+      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+    ),
+  ).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("projects-section-search")).toHaveCount(0);
+  await expect(page.getByTestId("projects-section-projects")).toBeVisible();
+
+  await page.getByTestId("projects-activity-search").click();
+  await page.getByTestId("projects-section-search-close").click();
+  await expect(page.getByTestId("projects-section-search")).toHaveCount(0);
+});
+
+test("selecting overview list rows switches the context pod to the cluster", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await page.getByRole("button", { name: "List layout" }).click();
+
+  const rows = page.locator('[data-testid^="projects-issue-row-"]');
+  await expect(rows.first()).toBeVisible();
+  const firstRowTitle = (
+    (await rows.first().getByTestId("project-entity-title").textContent()) ?? ""
+  ).trim();
+  const firstRowSelect = rows.first().getByRole("checkbox", {
+    name: `Select ${firstRowTitle}`,
+  });
+  await rows.first().getByRole("button").first().focus();
+  await page.keyboard.press("Tab");
+  await expect(firstRowSelect).toBeFocused();
+  await expect(firstRowSelect.locator("..").locator("..")).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await page.keyboard.press("Space");
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "1 task",
+  );
+  await expect(page.getByTestId("projects-selection-summary")).toContainText(
+    "1 task",
+  );
+  await expect(page.getByTestId("projects-selection-items")).toHaveCount(0);
+  await expect(page.getByTestId("projects-selection-clear")).toBeVisible();
+  await expect(page.getByTestId("projects-overview-stats-pod")).toHaveCount(0);
+  await expect(page.getByTestId("projects-overview-people")).toHaveCount(0);
+
+  const expectedSelectionCount = Math.min(5, await rows.count());
+  for (let index = 1; index < expectedSelectionCount; index += 1) {
+    await rows.nth(index).getByTestId("projects-row-select").click();
+  }
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    `${expectedSelectionCount} ${expectedSelectionCount === 1 ? "task" : "tasks"}`,
+  );
+  await page.getByTestId("projects-selection-discuss").click();
+  await expect(
+    page.getByTestId("projects-selection-channel-choices"),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("projects-selection-related-channel").first(),
+  ).toBeVisible();
+  await page.getByTestId("projects-selection-search-channels").click();
+  await expect(
+    page.getByPlaceholder("Search channels by name or description"),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("projects-selection-chat-agent").click();
+  await expect(page.getByTestId("project-agent-chat-panel")).toBeVisible();
+  await expect(page.getByTestId("project-agent-context")).toContainText(
+    "Agent chat",
+  );
+  await expect(page.getByTestId("projects-agent-selection-item")).toHaveCount(
+    Math.min(4, expectedSelectionCount),
+  );
+  await expect(page.getByTestId("projects-agent-selection-toggle")).toHaveText(
+    `${expectedSelectionCount} ${
+      expectedSelectionCount === 1 ? "element" : "elements"
+    } selected`,
+  );
+  if (expectedSelectionCount > 4) {
+    await page.getByTestId("projects-agent-selection-more").click();
+    await expect(
+      page.getByTestId("projects-agent-selection-overflow-item"),
+    ).toHaveCount(expectedSelectionCount - 4);
+    await page.keyboard.press("Escape");
+  }
+  await page.getByTestId("projects-agent-selection-toggle").click();
+  await expect(page.getByTestId("projects-agent-selection-item")).toHaveCount(
+    0,
+  );
+  await expect(page.getByTestId("projects-agent-selection-more")).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Close agent chat" }).click();
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "Tasks",
+  );
+  await expect(page.getByTestId("projects-overview-context-rail")).toHaveCSS(
+    "width",
+    "288px",
+  );
+});
+
+test("selection restores a previously collapsed Projects context drawer", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await page.getByRole("button", { name: "List layout" }).click();
+
+  const toggle = page.getByTestId("projects-overview-context-toggle");
+  const rail = page.getByTestId("projects-overview-context-rail");
+  await toggle.click();
+  await expect(rail).toHaveCSS("width", "0px");
+
+  const row = page.locator('[data-testid^="projects-issue-row-"]').first();
+  await row.hover();
+  await row.getByTestId("projects-row-select").click();
+  await expect(rail).toHaveCSS("width", "288px");
+  await expect(page.getByTestId("projects-selection-clear")).toBeVisible();
+
+  await page.getByTestId("projects-selection-clear").click();
+  await expect(rail).toHaveCSS("width", "0px");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+});
+
+test("repository changes discard captured selection context before agent sends", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await openBuzzProject(page);
+  await page.getByTestId("project-home-context-repo-buzz").click();
+  await page.getByRole("tab", { name: "Tasks", exact: true }).click();
+
+  const selectedRow = page.getByTestId("project-issue-row").first();
+  const selectedTitle = (
+    (await selectedRow
+      .locator('[data-projects-text-priority="primary"]')
+      .textContent()) ?? ""
+  ).trim();
+  await selectedRow
+    .getByRole("checkbox", { name: `Select ${selectedTitle}` })
+    .click();
+  await page.getByTestId("projects-selection-chat-agent").click();
+  const agentPanel = page.getByTestId("project-agent-chat-panel");
+  await expect(agentPanel).toBeVisible();
+  await expect(
+    agentPanel.getByText(selectedTitle, { exact: true }),
+  ).toBeVisible();
+
+  await page.getByTestId("project-workspace-back").click();
+  await page.getByTestId("project-home-context-repo-relay-tools").click();
+  await expect(page).toHaveURL(/repositoryId=.*relay-tools/);
+  await page.getByTestId("project-right-panel-chat-tab").click();
+  await expect(agentPanel).toBeVisible();
+  await expect(
+    agentPanel.getByTestId("projects-agent-selection-toggle"),
+  ).toHaveCount(0);
+
+  const prompt = "Explain the current repository.";
+  const composer = agentPanel.getByTestId("message-composer");
+  await composer.locator('[contenteditable="true"]').fill(prompt);
+  await composer.locator('[contenteditable="true"]').press("Enter");
+  await expect
+    .poll(() =>
+      page.evaluate((prefix) => {
+        const sent = window.__BUZZ_E2E_COMMAND_PAYLOADS__?.find(
+          (entry) =>
+            entry.command === "send_channel_message" &&
+            typeof entry.payload === "object" &&
+            entry.payload !== null &&
+            "content" in entry.payload &&
+            typeof entry.payload.content === "string" &&
+            entry.payload.content.startsWith(prefix),
+        );
+        return (sent?.payload as { content?: string } | undefined)?.content;
+      }, prompt),
+    )
+    .toContain('Repository: "relay-tools"');
+  const sentContent = await page.evaluate(
+    (prefix) =>
+      (
+        window.__BUZZ_E2E_COMMAND_PAYLOADS__?.find(
+          (entry) =>
+            entry.command === "send_channel_message" &&
+            typeof entry.payload === "object" &&
+            entry.payload !== null &&
+            "content" in entry.payload &&
+            typeof entry.payload.content === "string" &&
+            entry.payload.content.startsWith(prefix),
+        )?.payload as { content?: string } | undefined
+      )?.content ?? "",
+    prompt,
+  );
+  expect(sentContent).not.toContain(selectedTitle);
+});
+
+test("overview lists position identifying and generic icons consistently", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+
+  await page.getByTestId("projects-section-projects").click();
+  await page.getByRole("button", { name: "List layout" }).click();
+  const projectRow = page.locator('[data-testid^="project-row-"]').first();
+  const projectTitle = projectRow.getByTestId("project-entity-title");
+  const projectDescription = projectRow.getByTestId("projects-row-description");
+  const projectRepositoryCount = projectRow.getByTestId("projects-row-context");
+  await expect(projectDescription).toBeVisible();
+  await expect(projectRepositoryCount.locator("svg")).toBeVisible();
+  await expect(projectRepositoryCount).not.toContainText(/repositor/i);
+  await expect(projectRepositoryCount).toHaveAttribute(
+    "title",
+    /^\d+ repositor(?:y|ies)$/,
+  );
+  const [projectTitleBox, projectDescriptionBox] = await Promise.all([
+    projectTitle.boundingBox(),
+    projectDescription.boundingBox(),
+  ]);
+  expect(projectTitleBox).not.toBeNull();
+  expect(projectDescriptionBox).not.toBeNull();
+  expect(projectDescriptionBox?.x ?? 0).toBeGreaterThanOrEqual(
+    (projectTitleBox?.x ?? 0) + (projectTitleBox?.width ?? 0),
+  );
+  await expect(projectDescription).toHaveCSS(
+    "font-size",
+    await projectTitle.evaluate(
+      (element) => getComputedStyle(element).fontSize,
+    ),
+  );
+
+  for (const section of ["repositories", "issues", "prs"] as const) {
+    await page.getByTestId(`projects-section-${section}`).click();
+    await page.getByRole("button", { name: "List layout" }).click();
+    const rows = page.locator(
+      section === "repositories"
+        ? '[data-testid^="repository-row-"]'
+        : section === "issues"
+          ? '[data-testid^="projects-issue-row-"]'
+          : '[data-testid^="projects-pr-row-"]',
+    );
+    const row = rows.first();
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId("project-entity-description")).toHaveCount(0);
+    if (section === "repositories") {
+      const activityBar = row.getByTestId("repositories-row-activity-bar");
+      const date = row.getByTestId("repositories-row-date");
+      await expect(activityBar).toBeVisible();
+      const [barBox, dateBox] = await Promise.all([
+        activityBar.boundingBox(),
+        date.boundingBox(),
+      ]);
+      expect(barBox).not.toBeNull();
+      expect(dateBox).not.toBeNull();
+      expect(barBox?.width ?? 0).toBe(176);
+      expect((barBox?.x ?? 0) + (barBox?.width ?? 0)).toBeLessThanOrEqual(
+        dateBox?.x ?? 0,
+      );
+      const segment = activityBar
+        .getByTestId("project-activity-segment")
+        .first();
+      const segmentLabel = await segment.getAttribute("aria-label");
+      await segment.hover();
+      await expect(page.getByRole("tooltip")).toContainText(segmentLabel ?? "");
+    }
+    const title = row.getByTestId("project-entity-title");
+    const icon = row.getByTestId(
+      section === "repositories"
+        ? "project-entity-leading-icon"
+        : "project-entity-title-icon",
+    );
+    const [titleBox, iconBox] = await Promise.all([
+      title.boundingBox(),
+      icon.boundingBox(),
+    ]);
+    expect(titleBox).not.toBeNull();
+    expect(iconBox).not.toBeNull();
+    if (section === "repositories") {
+      expect((iconBox?.x ?? 0) + (iconBox?.width ?? 0)).toBeLessThanOrEqual(
+        titleBox?.x ?? 0,
+      );
+    } else {
+      expect(iconBox?.x ?? 0).toBeGreaterThanOrEqual(
+        (titleBox?.x ?? 0) + (titleBox?.width ?? 0),
+      );
+    }
+    const iconColumns = await rows
+      .getByTestId(
+        section === "repositories"
+          ? "project-entity-leading-icon"
+          : "project-entity-title-icon",
+      )
+      .evaluateAll((icons) =>
+        icons.slice(0, 5).map((icon) => icon.getBoundingClientRect().x),
+      );
+    expect(
+      Math.max(...iconColumns) - Math.min(...iconColumns),
+    ).toBeLessThanOrEqual(1);
+    await expect(title).toHaveCSS("text-overflow", "ellipsis");
+  }
+});
+
+test("repository drawer control animates the context rail from the far right", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await openBuzzProject(page);
+
+  const chat = page.getByTestId("project-right-panel-chat-tab");
+  const terminal = page.getByTestId("project-terminal-toggle");
+  const info = page.getByTestId("project-right-panel-repository-tab");
+  const contextIcon = page.getByTestId("project-right-panel-repository-icon");
+  const rail = page.getByTestId("project-context-rail");
+  const repositoryPanel = page.getByTestId("project-repository-actions-panel");
+  const layout = page.getByTestId("project-panel-layout");
+  const contentSurface = page.locator("[data-buzz-content-surface]");
+  const workspaceHeader = page.getByTestId("project-workspace-tab-menu");
+  await expect(
+    workspaceHeader.getByTestId("project-right-panel-chat-tab"),
+  ).toHaveCount(0);
+  await expect(
+    page
+      .getByTestId("project-detail-chrome")
+      .getByTestId("project-right-panel-chat-tab"),
+  ).toBeVisible();
+  await expect(layout).toHaveAttribute("data-project-context-detached", "true");
+  const expandedSurfaceStyle = await contentSurface.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderRadius: style.borderRadius,
+      boxShadow: style.boxShadow,
+      margin: style.margin,
+    };
+  });
+  const [chatBounds, terminalBounds, infoBounds] = await Promise.all([
+    chat.boundingBox(),
+    terminal.boundingBox(),
+    info.boundingBox(),
+  ]);
+  expect(terminalBounds?.x).toBeLessThan(chatBounds?.x ?? 0);
+  expect(chatBounds?.x).toBeLessThan(infoBounds?.x ?? 0);
+  await expect(info).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(contextIcon).toBeVisible();
+  await expect(info).toHaveAttribute("aria-pressed", "true");
+  await expect(rail).toHaveCSS("width", "288px");
+  await expect(layout).toHaveCSS("padding-right", "8px");
+  await expect(rail).toHaveCSS("transition-duration", "0.2s");
+  await expect(repositoryPanel).toBeVisible();
+
+  await info.click();
+  await expect(rail).toHaveCSS("width", "0px");
+  await expect(info).toHaveAttribute("aria-pressed", "false");
+  await expect(layout).toHaveAttribute("data-project-context-detached", "true");
+  expect(
+    await contentSurface.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundColor: style.backgroundColor,
+        borderRadius: style.borderRadius,
+        boxShadow: style.boxShadow,
+        margin: style.margin,
+      };
+    }),
+  ).toEqual(expandedSurfaceStyle);
+
+  await info.click();
+  await expect(rail).toHaveCSS("width", "288px");
+  await expect(info).toHaveAttribute("aria-pressed", "true");
+  await expect(repositoryPanel).toBeVisible();
+});
+
+test("selecting repository workspace rows switches the context pod to the cluster", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+  await page.getByTestId("projects-section-projects").click();
+  await page
+    .locator(
+      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+    )
+    .first()
+    .click();
+  await page.getByTestId("project-home-context-repo-buzz").click();
+
+  await page.getByRole("tab", { name: "Commits" }).click();
+  const commitRows = page.getByTestId("project-activity-feed-item");
+  await expect(commitRows.first()).toBeVisible({ timeout: 10_000 });
+  await expectSinglePrimaryTextColumn(commitRows.first());
+  await commitRows.first().getByTestId("projects-row-select").click();
+  await page.mouse.move(1, 1);
+  await expect(
+    commitRows
+      .first()
+      .getByTestId("projects-row-select")
+      .locator("..")
+      .locator(".."),
+  ).toHaveCSS("opacity", "1");
+  if ((await commitRows.count()) > 1) {
+    await expect(
+      commitRows
+        .nth(1)
+        .getByTestId("projects-row-select")
+        .locator("..")
+        .locator(".."),
+    ).toHaveCSS("opacity", "0");
+  }
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "1 commit",
+  );
+  await expect(
+    page.getByTestId("projects-selection-create-review"),
+  ).toBeVisible();
+  await page.getByTestId("projects-selection-clear").click();
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveCount(
+    0,
+  );
+
+  await page.getByRole("tab", { name: "Tasks" }).click();
+  const issueRows = page.getByTestId("project-issue-row");
+  await expect(issueRows.first()).toBeVisible();
+  await expectSinglePrimaryTextColumn(issueRows.first());
+  const taskGroup = page.getByTestId("project-work-item-group").first();
+  const taskGroupRows = taskGroup.getByTestId("project-issue-row");
+  const taskGroupRowCount = await taskGroupRows.count();
+  const taskGroupHeader = taskGroup.getByTestId(
+    "project-work-item-group-header",
+  );
+  await taskGroupHeader.getByRole("button").click();
+  await expect(taskGroupRows).toHaveCount(0);
+  await taskGroupHeader.getByRole("button").click();
+  await expect(taskGroupRows).toHaveCount(taskGroupRowCount);
+  await taskGroupHeader.hover();
+  await taskGroup.getByTestId("projects-group-select").click();
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    `${taskGroupRowCount} ${taskGroupRowCount === 1 ? "task" : "tasks"}`,
+  );
+  await page.getByTestId("projects-selection-clear").click();
+  await issueRows.first().getByTestId("projects-row-select").click();
+  await page.mouse.move(1, 1);
+  await expect(
+    issueRows
+      .first()
+      .getByTestId("projects-row-select")
+      .locator("..")
+      .locator(".."),
+  ).toHaveCSS("opacity", "1");
+  if ((await issueRows.count()) > 1) {
+    await expect(
+      issueRows
+        .nth(1)
+        .getByTestId("projects-row-select")
+        .locator("..")
+        .locator(".."),
+    ).toHaveCSS("opacity", "0");
+  }
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "1 task",
+  );
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("tab", { name: "Review" }).click();
+  const reviewRows = page.getByTestId("project-pull-request-row");
+  await expect(reviewRows.first()).toBeVisible();
+  await expectSinglePrimaryTextColumn(reviewRows.first());
+  const reviewRowOrder = await reviewRows.first().evaluate((row) => {
+    const left = (selector: string) =>
+      row.querySelector<HTMLElement>(selector)?.getBoundingClientRect().left ??
+      Number.NaN;
+    return {
+      checkbox: left('[data-testid="projects-row-select"]'),
+      identifier: left('[data-testid="project-work-item-identifier"]'),
+      status: left('[data-testid="project-work-item-status-icon"]'),
+      title: left('[data-projects-text-priority="primary"]'),
+    };
+  });
+  expect(
+    Math.abs(reviewRowOrder.checkbox - reviewRowOrder.status),
+  ).toBeLessThanOrEqual(1);
+  expect(reviewRowOrder.status).toBeLessThan(reviewRowOrder.title);
+  expect(reviewRowOrder.title).toBeLessThan(reviewRowOrder.identifier);
+  await reviewRows.first().getByTestId("projects-row-select").click();
+  await expect(
+    reviewRows.first().getByTestId("project-work-item-status-icon"),
+  ).toHaveCSS("opacity", "0");
+  await expect(
+    reviewRows
+      .first()
+      .getByTestId("projects-row-select")
+      .locator("..")
+      .locator(".."),
+  ).toHaveCSS("opacity", "1");
+  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
+    "1 review",
+  );
+});
+
+test("project detail chat resize tracks the pointer without easing", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await openBuzzProject(page);
+  await page.getByTestId("project-right-panel-chat-tab").click();
+
+  const chatPanel = page.getByTestId("project-agent-chat-panel");
+  const contextRail = page.getByTestId("project-context-rail");
+  const contextRailPanel = contextRail.getByTestId(
+    "project-context-rail-panel",
+  );
+  const resizeHandle = chatPanel.getByTestId(
+    "right-auxiliary-pane-resize-handle",
+  );
+  await expect(chatPanel).toBeVisible();
+  await expect(contextRailPanel).toHaveCSS("border-radius", "0px");
+  const agentHeader = chatPanel.getByTestId("project-agent-context");
+  await expect(agentHeader).toBeVisible();
+  await expect(agentHeader).toContainText("Overview");
+  await expect(
+    agentHeader.getByRole("button", { name: "Close agent chat" }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      agentHeader.evaluate(
+        (element) => getComputedStyle(element).backdropFilter,
+      ),
+    )
+    .not.toBe("none");
+  const [panelBox, handleBox] = await Promise.all([
+    chatPanel.boundingBox(),
+    resizeHandle.boundingBox(),
+  ]);
+  expect(panelBox).not.toBeNull();
+  expect(handleBox).not.toBeNull();
+  const startX = (handleBox?.x ?? 0) + (handleBox?.width ?? 0) / 2;
+  const startY = (handleBox?.y ?? 0) + (handleBox?.height ?? 0) / 2;
+
+  await resizeHandle.dispatchEvent("pointerdown", {
+    button: 0,
+    clientX: startX,
+    clientY: startY,
+    pointerId: 1,
+    pointerType: "mouse",
+  });
+  await expect(contextRail).toHaveAttribute("data-resizing", "true");
+  await expect(contextRail).toHaveCSS("transition-duration", "0s");
+  await page.mouse.move(startX - 40, startY);
+  await expect
+    .poll(async () =>
+      chatPanel.evaluate((element) =>
+        Math.round(element.getBoundingClientRect().width),
+      ),
+    )
+    .toBe(Math.round(panelBox?.width ?? 0) + 40);
+  await page.mouse.up();
+  await expect(contextRail).toHaveAttribute("data-resizing", "false");
+  await expect(contextRail).toHaveCSS("transition-duration", "0.2s");
+});
+
+test("repository rows identify their git host", async ({ page }) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+  await page.getByRole("button", { name: "Repositories", exact: true }).click();
+  await page.getByRole("button", { name: "List layout" }).click();
+
+  const buzzHostIcon = page
+    .getByTestId("repository-row-buzz")
+    .getByTestId("repository-host-icon");
+  await expect(buzzHostIcon).toHaveAttribute(
+    "aria-label",
+    "Buzz-hosted repository",
+  );
+  await expect(
+    page
+      .getByTestId("repository-row-relay-tools")
+      .getByTestId("repository-host-icon"),
+  ).toHaveAttribute("aria-label", "Git data hosted on github.com");
+});
+
+test("project subsections do not paint backgrounds behind list or grid items", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+
+  for (const section of ["Repositories", "Reviews", "Tasks"] as const) {
+    await page.getByRole("button", { name: section, exact: true }).click();
+    await page.getByRole("button", { name: "List layout" }).click();
+
+    const listItems = page.locator(
+      section === "Repositories"
+        ? '[data-testid^="repository-row-"]'
+        : section === "Reviews"
+          ? '[data-testid^="projects-pr-row-"]'
+          : '[data-testid^="projects-issue-row-"]',
+    );
+    await expect(listItems.first()).toBeVisible();
+    const listItemCount = await listItems.count();
+    for (let index = 0; index < listItemCount; index += 1) {
+      await expect(listItems.nth(index)).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
+    }
+
+    await page.getByRole("button", { name: "Grid layout" }).click();
+    const gridCards = page.locator(
+      section === "Repositories"
+        ? '[data-testid^="repository-card-"]'
+        : "[data-projects-grid-card]",
+    );
+    await expect(gridCards.first()).toBeVisible();
+    const gridCardCount = await gridCards.count();
+    for (let index = 0; index < gridCardCount; index += 1) {
+      await expect(gridCards.nth(index)).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
+      await expect(gridCards.nth(index)).toHaveCSS("border-style", "solid");
+    }
+  }
+});
+
+test("all project grid cards cap body copy at two lines", async ({ page }) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/projects");
+
+  for (const section of [
+    "projects",
+    "repositories",
+    "issues",
+    "prs",
+  ] as const) {
+    await page.getByTestId(`projects-section-${section}`).click();
+    await page.getByRole("button", { name: "Grid layout" }).click();
+    if (section === "projects") {
+      const projectNames = page.getByTestId("project-grid-card-name");
+      await expect(projectNames.first()).toBeVisible();
+      for (const name of await projectNames.all()) {
+        await expect(name).toHaveCSS("white-space", "normal");
+        await expect(name).toHaveCSS("overflow", "visible");
+      }
+    }
+    if (section === "issues" || section === "prs") {
+      const cards = page.locator("[data-projects-grid-card]");
+      const titles = page.getByTestId("projects-grid-card-title");
+      const indicators = page.getByTestId("projects-grid-card-indicator");
+      const cardCount = await cards.count();
+      await expect(titles).toHaveCount(cardCount);
+      await expect(indicators).toHaveCount(cardCount);
+      for (const title of await titles.all()) {
+        await expect(title).toHaveCSS("white-space", "nowrap");
+        await expect(title).toHaveCSS("overflow", "hidden");
+        await expect(title).toHaveCSS("text-overflow", "ellipsis");
+      }
+      for (const card of await cards.all()) {
+        await expect(card.getByRole("button")).toHaveCount(1);
+      }
+    }
+    const bodies = page.getByTestId("projects-grid-card-body");
+    await expect(bodies.first()).toBeVisible();
+    const measurements = await bodies.evaluateAll((elements) =>
+      elements.map((element) => {
+        const style = getComputedStyle(element);
+        return {
+          height: element.getBoundingClientRect().height,
+          lineClamp: style.webkitLineClamp,
+          lineHeight: Number.parseFloat(style.lineHeight),
+        };
+      }),
+    );
+    for (const measurement of measurements) {
+      expect(measurement.lineClamp).toBe("2");
+      expect(measurement.height).toBeLessThanOrEqual(
+        measurement.lineHeight * 2 + 1,
+      );
+    }
+  }
+});
+
+test("project detail content areas do not paint background fills", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await openBuzzProject(page);
+
+  const expectVisiblePanelsToBeTransparent = async ({
+    bordered = true,
+    required = false,
+  }: {
+    bordered?: boolean;
+    required?: boolean;
+  } = {}) => {
+    const panels = page.locator("[data-project-detail-panel]:visible");
+    const panelCount = await panels.count();
+    if (required) await expect(panels.first()).toBeVisible();
+    for (let index = 0; index < panelCount; index += 1) {
+      await expect(panels.nth(index)).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
+      if (bordered) {
+        await expect(panels.nth(index)).toHaveCSS("border-style", "solid");
+      } else {
+        await expect(panels.nth(index)).toHaveCSS("border-width", "0px");
+      }
+    }
+  };
+
+  for (const tab of [
+    "Overview",
+    "Files",
+    "Commits",
+    "Tasks",
+    "Review",
+    "Contributors",
+  ]) {
+    await page.getByRole("tab", { name: tab, exact: true }).click();
+    await expectVisiblePanelsToBeTransparent();
+  }
+
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
+  const pullRequest = page.getByTestId("project-pull-request-row").first();
+  await expect(pullRequest).toBeVisible();
+  await pullRequest.getByRole("button", { name: /^#/ }).click();
+  await expectVisiblePanelsToBeTransparent({
+    bordered: false,
+    required: true,
+  });
+});
+
+test("project without a checkout offers fetch feedback and cloning", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await openBuzzProject(page);
+
+  await expect(
+    page.getByRole("button", { name: "Remote", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Remote", exact: true }),
+  ).toHaveClass(/\bborder-input\/40\b/);
+  await expect(page.getByRole("button", { name: /main/ })).toHaveClass(
+    /\bborder-input\/40\b/,
+  );
+  await expect(
+    page.getByRole("button", { name: "Clone", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Fetch", exact: true }).click();
+  await expect(page.getByText("Remote state refreshed.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Remote", exact: true }).click();
+  const cloneItem = page.getByRole("menuitem", {
+    name: "Local missing Clone",
+  });
+  await expect(cloneItem.getByText("Local missing")).toHaveClass(
+    /text-muted-foreground/,
+  );
+  await expect(cloneItem.getByText("Clone", { exact: true })).toHaveClass(
+    /\bborder-input\/60\b/,
+  );
+  await cloneItem.click();
+  await expect(page.getByText("Cloned repository.")).toBeVisible();
+  const commands = await page.evaluate(
+    () => window.__BUZZ_E2E_COMMANDS__ ?? [],
+  );
+  expect(commands).toContain("clone_project_repository");
+  const openFolder = page.getByRole("button", { name: "Open", exact: true });
+  await expect(openFolder).toHaveAttribute(
+    "title",
+    "Open local repository folder",
+  );
+  await openFolder.click();
+  expect(
+    await page.evaluate(() => window.__BUZZ_E2E_COMMANDS__ ?? []),
+  ).toContain("open_project_repository_folder");
+  await expect(page.getByText("Couldn’t open repository folder")).toHaveCount(
+    0,
+  );
 });
 
 test("project branches can be created from the selected remote branch", async ({
@@ -1270,6 +2607,176 @@ test("project branches can be deleted but the default branch cannot", async ({
   expect(commands).toContain("delete_project_remote_branch");
 });
 
+test("external repositories stay on local source after a branch round trip", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await page.addInitScript(() => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const localBranch =
+      "wintermute/entity-link-recipient-cards-with-a-long-branch-name";
+    window.sessionStorage.setItem(
+      "buzz-e2e-project-branches",
+      JSON.stringify({ "relay-tools": { [localBranch]: commit } }),
+    );
+    window.__BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__ = {
+      local_path: "/tmp/buzz/REPOS/relay-tools",
+      local_branch: localBranch,
+      local_branches: ["main", localBranch],
+      local_head: commit,
+      local_short_head: commit.slice(0, 7),
+      remote_branch: localBranch,
+      remote_head: commit,
+      remote_short_head: commit.slice(0, 7),
+      merge_base: commit,
+      ahead_count: 0,
+      behind_count: 0,
+      has_uncommitted_changes: false,
+      has_untracked_files: false,
+      can_push: false,
+      push_block_reason: "Local branch is already pushed.",
+      can_pull: false,
+      pull_block_reason: "Local branch is up to date.",
+    };
+    window.__BUZZ_E2E_PROJECT_LOCAL_REPO_SNAPSHOT__ = {
+      path: "/tmp/buzz/REPOS/relay-tools",
+      snapshot: {
+        latest_commit: null,
+        commits: [],
+        contributors: [],
+        files: [
+          {
+            path: "README.md",
+            kind: "text",
+            size: 21,
+            preview_content: "# Local branch README",
+            last_changed_at: null,
+            latest_commit: null,
+          },
+        ],
+      },
+    };
+  });
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await openBuzzProject(page);
+  await page.getByTestId("project-home-context-repo-relay-tools").click();
+  await page.getByRole("button", { name: "github.com" }).click();
+  await page.getByRole("menuitemradio", { name: /^Local/ }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Local branch README" }),
+  ).toBeVisible();
+  await expectLocalRepositoryOpenAction(page);
+
+  await page.getByRole("button", { name: /main/ }).click();
+  await page
+    .getByRole("menuitemradio", {
+      name: "wintermute/entity-link-recipient-cards-with-a-long-branch-name",
+    })
+    .click();
+  const branchTrigger = page.getByTestId("project-repository-branch-trigger");
+  await expect(
+    page.getByRole("button", {
+      name: /wintermute\/entity-link-recipient-cards-with-a-long-branch-name/,
+    }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      branchTrigger.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      branchTrigger
+        .locator("span")
+        .evaluate((element) => element.scrollWidth > element.clientWidth),
+    )
+    .toBe(true);
+  await expectLocalRepositoryOpenAction(page);
+
+  await branchTrigger.click();
+  await page.getByRole("menuitemradio", { name: "main" }).click();
+
+  await expect(page.getByRole("button", { name: /main/ })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Local branch README" }),
+  ).toBeVisible();
+  await expectLocalRepositoryOpenAction(page);
+  await expect(page.getByText("Code hosted on github.com")).toHaveCount(0);
+});
+
+test("repository files beyond the eager preview limit load on demand", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await page.addInitScript(() => {
+    const deferredFiles = [
+      ...Array.from({ length: 250 }, (_, index) => ({
+        path: `.agents/generated-${String(index).padStart(3, "0")}.txt`,
+        kind: "blob",
+        size: 7,
+        preview_content: "preview",
+        last_changed_at: null,
+        latest_commit: null,
+      })),
+      {
+        path: "README.md",
+        kind: "blob",
+        size: 17,
+        preview_content: null,
+        last_changed_at: null,
+        latest_commit: null,
+      },
+      {
+        path: "src/application.rs",
+        kind: "blob",
+        size: 16,
+        preview_content: null,
+        last_changed_at: null,
+        latest_commit: null,
+      },
+    ];
+    window.__BUZZ_E2E_PROJECT_LOCAL_REPO_SNAPSHOT__ = {
+      path: "/tmp/buzz/REPOS/relay-tools",
+      snapshot: {
+        latest_commit: null,
+        commits: [],
+        contributors: [],
+        files: deferredFiles,
+      },
+    };
+    window.__BUZZ_E2E_PROJECT_REPO_FILE_CONTENTS__ = {
+      "README.md": "# Deferred README",
+      "src/application.rs": "fn deferred() {}",
+    };
+  });
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await openBuzzProject(page);
+  await page.getByTestId("project-home-context-repo-relay-tools").click();
+  await page.getByRole("button", { name: "github.com" }).click();
+  await page.getByRole("menuitemradio", { name: /^Local/ }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Deferred README" }),
+  ).toBeVisible();
+
+  await page.getByRole("tab", { name: "Files" }).click();
+  await page.getByRole("row", { name: "Open directory src" }).click();
+  await page.getByRole("row", { name: "Open file application.rs" }).click();
+  await expect(
+    page.getByText("fn deferred() {}", { exact: true }),
+  ).toBeVisible();
+
+  const commands = await page.evaluate(
+    () => window.__BUZZ_E2E_COMMANDS__ ?? [],
+  );
+  expect(commands).toContain("get_project_local_repo_file_content");
+});
+
 test("pushed local branch can open a pull request", async ({ page }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
@@ -1372,3 +2879,17 @@ test("project issue can be created from the issues header", async ({
     "Document the broken workflow",
   ]);
 });
+
+async function expectSinglePrimaryTextColumn(row: Locator) {
+  const primary = row.locator('[data-projects-text-priority="primary"]');
+  const secondary = row.locator('[data-projects-text-priority="secondary"]');
+  await expect(primary).toHaveCount(1);
+  expect(await secondary.count()).toBeGreaterThan(0);
+  const primaryColor = await primary.evaluate(
+    (element) => getComputedStyle(element).color,
+  );
+  const secondaryColors = await secondary.evaluateAll((elements) =>
+    elements.map((element) => getComputedStyle(element).color),
+  );
+  expect(secondaryColors.every((color) => color !== primaryColor)).toBe(true);
+}

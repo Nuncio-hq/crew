@@ -4,13 +4,34 @@ import type {
 } from "@/features/projects/hooks";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 
+export const PROJECT_REPOSITORY_SEARCH_KEYS = [
+  "repositoryId",
+  "issueId",
+  "pullRequestId",
+  "commitHash",
+  "filePath",
+] as const;
+
 export const PROJECT_TAB_CRUMB_LABELS: Record<string, string> = {
   files: "Files",
   wiki: "Wiki",
   activity: "Commits",
-  issues: "Issues",
-  prs: "Pull Request",
+  issues: "Tasks",
+  prs: "Review",
   contributors: "Contributors",
+  channels: "Channels",
+};
+
+export type ProjectDetailScreenProps = {
+  commitHash?: string;
+  entityNavigationId?: string;
+  filePath?: string;
+  projectId: string;
+  pullRequestId?: string;
+  issueId?: string;
+  repositoryId?: string;
+  /** Workspace tab requested by a share link (link vocabulary). */
+  tab?: string;
 };
 
 /** Tooltip for the push/pull sync buttons, e.g. "Pull 2 remote commits". */

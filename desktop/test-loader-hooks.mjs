@@ -89,6 +89,23 @@ export function resolve(specifier, context, nextResolve) {
     const resolved = path.join(repoRoot, "preview-features.json");
     return nextResolve(toFileSpecifier(resolved), context);
   }
+  if (specifier === "@model-capabilities-manifest") {
+    return nextResolve(
+      toFileSpecifier(path.join(repoRoot, "scripts/model-capabilities.json")),
+      context,
+    );
+  }
+  if (
+    specifier === "@protected-features" ||
+    specifier === "@protected-feature-components"
+  ) {
+    const filename =
+      specifier === "@protected-features" ? "public.ts" : "publicUi.ts";
+    return nextResolve(
+      toFileSpecifier(path.join(srcRoot, "protectedFeatures", filename)),
+      context,
+    );
+  }
   if (specifier.startsWith("@/")) {
     const stripped = specifier.slice(2);
     // Preserve explicit extensions (.mjs, .js, .json, .ts, etc.). The bundler

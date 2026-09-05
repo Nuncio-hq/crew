@@ -24,6 +24,7 @@ import test from "node:test";
 
 import {
   createOptimisticMessage,
+  resolveCachedReplyRootId,
   resolveEffectiveChannel,
   resolveSendChannel,
   resolveThreadReplyTarget,
@@ -321,4 +322,51 @@ test("resolveThreadReplyTarget_nullContext_noLiveRefs_returnsNull", () => {
   const result = resolveThreadReplyTarget(null, null, null);
 
   assert.strictEqual(result, null);
+});
+
+test("resolveCachedReplyRootId sends only roots proven by a cached parent", () => {
+  const rootId = "1".repeat(64);
+  const parentId = "2".repeat(64);
+  const parent = {
+    id: parentId,
+    pubkey: IDENTITY.pubkey,
+    kind: 9,
+    created_at: 1,
+    content: "parent",
+    tags: [
+      ["e", rootId, "", "root"],
+      ["e", rootId, "", "reply"],
+    ],
+    sig: "",
+  };
+
+  assert.equal(resolveCachedReplyRootId(parentId, [[], [parent]]), rootId);
+  assert.equal(resolveCachedReplyRootId(parentId, [[], []]), null);
+});
+
+test("optimistic replies retain the captured root when the parent is not cached", () => {
+  const reply = createOptimisticMessage(
+    "channel-a",
+    "reply",
+    IDENTITY,
+    [],
+    [],
+    "reply-parent",
+    [],
+    null,
+    null,
+    "captured-root",
+  );
+  assert.ok(
+    reply.tags.some(
+      (tag) =>
+        tag[0] === "e" && tag[1] === "captured-root" && tag[3] === "root",
+    ),
+  );
+  assert.ok(
+    reply.tags.some(
+      (tag) =>
+        tag[0] === "e" && tag[1] === "reply-parent" && tag[3] === "reply",
+    ),
+  );
 });

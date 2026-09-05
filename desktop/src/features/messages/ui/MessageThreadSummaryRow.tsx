@@ -40,6 +40,7 @@ function ParticipantAvatar({
   return (
     <div
       className={cn(
+        "relative",
         index > 0 ? "-ml-1" : "",
         // S: cap at 2 avatars; XS: cap at 1. Hidden avatars stay in the DOM
         // for screen readers via the row aria-label / title elsewhere.
@@ -49,17 +50,16 @@ function ParticipantAvatar({
       data-testid="message-thread-summary-participant"
       style={{
         zIndex: index + 1,
-        ...(index < participantCount - 1 && {
-          mask: "radial-gradient(circle 14px at calc(100% + 6px) 50%, transparent 99%, #fff 100%)",
-          WebkitMask:
-            "radial-gradient(circle 14px at calc(100% + 6px) 50%, transparent 99%, #fff 100%)",
-        }),
       }}
     >
       <UserAvatar
         avatarUrl={participant.avatarUrl}
-        className="h-6 w-6 text-2xs"
+        className={cn(
+          "h-6 w-6 text-2xs",
+          index < participantCount - 1 && "ring-2 ring-background",
+        )}
         displayName={participant.author}
+        shape={participant.isAgent ? "squircle" : "circle"}
         size="sm"
       />
     </div>

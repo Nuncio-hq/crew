@@ -188,13 +188,18 @@ async function openProjectThread(
     },
   );
 
+  await panel.getByRole("button", { name: "Workspace", exact: true }).click();
   await expect(panel.getByText("Ready", { exact: true })).toBeVisible({
     timeout: 15_000,
   });
+  await panel
+    .getByRole("button", { name: "Close details", exact: true })
+    .click();
   return panel;
 }
 
 test.describe("GitHub PR hub in thread focus (#193)", () => {
+  test.use({ viewport: { width: 1800, height: 1000 } });
   test("Tier-1 card states and click opens focus hub", async ({ page }) => {
     const root = rootId("01");
     const panel = await openProjectThread(page, root);
@@ -285,7 +290,9 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
 
     await card.click();
     await expect(page.getByTestId("focus-thread-drawer")).toBeVisible();
-    await expect(page.getByTestId("thread-pr-hub")).toBeVisible();
+    await expect(
+      page.getByTestId("channel-tool-pane").getByTestId("thread-pr-hub"),
+    ).toBeVisible();
     await expect(page.getByTestId("thread-pr-hub-changes")).toBeVisible();
   });
 
@@ -293,7 +300,9 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
     const root = rootId("02");
     const panel = await openProjectThread(page, root, { canvasHeld: true });
     await panel.getByTestId("thread-forge-summary-card").click();
-    const hub = page.getByTestId("thread-pr-hub");
+    const hub = page
+      .getByTestId("channel-tool-pane")
+      .getByTestId("thread-pr-hub");
     await expect(hub).toBeVisible();
 
     await hub.getByRole("tab", { name: /Description/ }).click();
@@ -303,7 +312,7 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
       .getByTestId("thread-pr-hub-description")
       .screenshot({ path: `${SHOTS}/05-tab-description.png` });
 
-    await hub.getByRole("tab", { name: /Discussion/ }).click();
+    await hub.getByRole("tab", { name: /Reviews/ }).click();
     await expect(page.getByTestId("thread-pr-hub-discussion")).toBeVisible();
     await page
       .getByTestId("thread-pr-hub-github-comment")
@@ -368,9 +377,20 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
     await page.setViewportSize({ width: 720, height: 720 });
     await expect(page.getByTestId("thread-forge-pane-toggle")).toBeVisible();
     await page.getByRole("button", { name: "Chat" }).click();
-    await expect(page.getByTestId("thread-pr-hub")).toBeHidden();
-    await page.getByRole("button", { name: "PR" }).click();
-    await expect(page.getByTestId("thread-pr-hub")).toBeVisible();
+    await expect(
+      page.getByTestId("channel-tool-pane").getByTestId("thread-pr-hub"),
+    ).toBeHidden();
+    await page
+      .getByTestId("thread-forge-pane-toggle")
+      .getByRole("button", { name: "PR" })
+      .click();
+    await expect(
+      page.getByTestId("channel-tool-pane").getByTestId("thread-pr-hub"),
+    ).toBeVisible();
+    await waitForAnimations(page);
+    await page
+      .getByTestId("channel-tool-pane")
+      .screenshot({ path: `${SHOTS}/14-narrow-pr-hub.png` });
   });
 
   test("Bugs tab resolves Reviewer or shows picker", async ({ page }) => {
@@ -378,19 +398,6 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
     const heldPanel = await openProjectThread(page, heldRoot, {
       canvasHeld: true,
     });
-    await heldPanel.getByTestId("thread-forge-summary-card").click();
-    const hub = page.getByTestId("thread-pr-hub");
-    await hub.getByRole("tab", { name: /Bugs/ }).click();
-    await expect(page.getByTestId("thread-pr-hub-reviewer")).toBeVisible();
-    await page.getByTestId("thread-pr-hub-run-analysis").click();
-    await expect(
-      page.getByTestId("message-thread-panel").getByText("please review"),
-    ).toBeVisible();
-    await waitForAnimations(page);
-    await page
-      .getByTestId("thread-pr-hub-bugs")
-      .screenshot({ path: `${SHOTS}/10-tab-bugs-held.png` });
-
     await page.evaluate(
       ({ pubkey, rootEventId }) =>
         window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
@@ -403,6 +410,21 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
         }),
       { pubkey: AGENT, rootEventId: heldRoot },
     );
+    await heldPanel.getByTestId("thread-forge-summary-card").click();
+    const hub = page
+      .getByTestId("channel-tool-pane")
+      .getByTestId("thread-pr-hub");
+    await hub.getByRole("tab", { name: /Bugs/ }).click();
+    await expect(page.getByTestId("thread-pr-hub-reviewer")).toBeVisible();
+    await page.getByTestId("thread-pr-hub-run-analysis").click();
+    await expect(
+      page.getByTestId("message-thread-panel").getByText("please review"),
+    ).toBeVisible();
+    await waitForAnimations(page);
+    await page
+      .getByTestId("thread-pr-hub-bugs")
+      .screenshot({ path: `${SHOTS}/10-tab-bugs-held.png` });
+
     await expect(page.getByTestId("thread-pr-hub-bugs")).toContainText(
       "hub.ts",
     );
@@ -411,8 +433,21 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
   test("Bugs picker when Reviewer is unheld", async ({ page }) => {
     const root = rootId("04");
     const panel = await openProjectThread(page, root, { canvasHeld: false });
+    await page.evaluate(
+      ({ pubkey, rootEventId }) =>
+        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+          channelName: "general",
+          content: "Null unwrap in hub.ts",
+          pubkey,
+          parentEventId: rootEventId,
+          extraTags: [["crew-finding", "error", "desktop/src/hub.ts", "12-14"]],
+          id: `${"d".repeat(62)}01`,
+        }),
+      { pubkey: AGENT, rootEventId: root },
+    );
     await panel.getByTestId("thread-forge-summary-card").click();
     await page
+      .getByTestId("channel-tool-pane")
       .getByTestId("thread-pr-hub")
       .getByRole("tab", { name: /Bugs/ })
       .click();
@@ -433,6 +468,21 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
         window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
           channelName: "general",
           content: "See https://github.com/Nuncio-hq/crew/pull/196",
+          extraTags: [
+            [
+              "link-preview",
+              "snapshot",
+              "1",
+              "https://github.com/Nuncio-hq/crew/pull/196",
+              "Review PR 196",
+              "GitHub",
+              "Pull request for review",
+              "",
+              "",
+              "",
+              "",
+            ],
+          ],
           parentEventId: rootEventId,
           id: `${"e".repeat(62)}01`,
         }),
@@ -442,7 +492,9 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
     await expect(openHub).toBeVisible();
     await openHub.click();
     await expect(page.getByTestId("focus-thread-drawer")).toBeVisible();
-    await expect(page.getByTestId("thread-pr-hub")).toBeVisible();
+    await expect(
+      page.getByTestId("channel-tool-pane").getByTestId("thread-pr-hub"),
+    ).toBeVisible();
   });
 
   test("degraded cli-missing and rate-limited states", async ({ page }) => {

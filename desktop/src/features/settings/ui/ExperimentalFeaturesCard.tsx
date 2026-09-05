@@ -1,4 +1,4 @@
-import { setAgentManagedProfiles } from "@/shared/api/tauri";
+import { setAgentManagedProfiles } from "@/shared/api/tauriWorkspace";
 import { desktopFeatures, useFeatureToggle } from "@/shared/features";
 import type { FeatureDefinition } from "@/shared/features";
 import { Switch } from "@/shared/ui/switch";
@@ -40,9 +40,11 @@ function FeatureRow({ feature }: { feature: FeatureDefinition }) {
 }
 
 export function ExperimentalFeaturesCard() {
-  // Manifest is preview-only by definition; every desktop entry is a preview
-  // feature.
-  const previewFeatures = desktopFeatures;
+  // Crew always isolates ACP sessions by thread; the upstream compatibility
+  // flag remains readable but is not a user-selectable experiment.
+  const previewFeatures = desktopFeatures.filter(
+    (feature) => feature.id !== "threadScopedAcpSessions",
+  );
 
   return (
     <section className="min-w-0" data-testid="settings-experimental">

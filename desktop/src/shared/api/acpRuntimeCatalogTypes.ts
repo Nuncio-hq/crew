@@ -33,6 +33,8 @@ export type AcpRuntimeCatalogEntry = {
   providerEnvVar: string | null;
   /** Environment variable used to apply thinking effort, when supported. */
   thinkingEnvVar: string | null;
+  /** Accepted static effort values, in display order; null uses adapter options. */
+  effortCanonicalValues: string[] | null;
   maxTokensEnvVar: string | null;
   contextLimitEnvVar: string | null;
   maxRoundsEnvVar: string | null;

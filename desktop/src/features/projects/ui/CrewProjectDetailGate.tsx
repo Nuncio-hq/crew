@@ -6,6 +6,8 @@ import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
 
 export function CrewProjectDetailGate({
   commitHash,
+  entityNavigationId,
+  filePath,
   issueId,
   projectId,
   pullRequestId,
@@ -14,6 +16,8 @@ export function CrewProjectDetailGate({
   thread,
 }: {
   commitHash?: string;
+  entityNavigationId?: string;
+  filePath?: string;
   issueId?: string;
   projectId: string;
   pullRequestId?: string;
@@ -31,6 +35,8 @@ export function CrewProjectDetailGate({
   return (
     <ProjectDetailScreen
       commitHash={commitHash}
+      entityNavigationId={entityNavigationId}
+      filePath={filePath}
       issueId={issueId}
       projectId={projectId}
       pullRequestId={pullRequestId}

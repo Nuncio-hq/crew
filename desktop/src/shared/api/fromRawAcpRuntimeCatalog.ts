@@ -21,6 +21,7 @@ export type RawAcpRuntimeCatalogEntry = {
   model_env_var?: string | null;
   provider_env_var?: string | null;
   thinking_env_var?: string | null;
+  effort_canonical_values?: string[] | null;
   max_tokens_env_var?: string | null;
   context_limit_env_var?: string | null;
   max_rounds_env_var?: string | null;
@@ -56,6 +57,7 @@ export function fromRawAcpRuntimeCatalogEntry(
     modelEnvVar: entry.model_env_var ?? null,
     providerEnvVar: entry.provider_env_var ?? null,
     thinkingEnvVar: entry.thinking_env_var ?? null,
+    effortCanonicalValues: entry.effort_canonical_values ?? null,
     maxTokensEnvVar: entry.max_tokens_env_var ?? null,
     contextLimitEnvVar: entry.context_limit_env_var ?? null,
     maxRoundsEnvVar: entry.max_rounds_env_var ?? null,

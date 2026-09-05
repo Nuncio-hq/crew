@@ -23,6 +23,7 @@ fn builder(batch: &FlushBatch, content: &str) -> Result<nostr::EventBuilder, buz
         &[],
         false,
         &[],
+        &[],
     )
 }
 

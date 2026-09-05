@@ -819,7 +819,13 @@ export function ProjectsView({
           <div className="mx-auto w-full max-w-6xl">
             <div className="w-full min-w-0 pb-4 pt-4">
               {projects.length === 0 ? (
-                <EmptyState />
+                <EmptyState
+                  onCreateProject={() =>
+                    onCreateRepository
+                      ? onCreateRepository()
+                      : setCreateProjectOpen(true)
+                  }
+                />
               ) : filter === "all" ? (
                 <>
                   <ProjectsWorkItemsLoadNotice

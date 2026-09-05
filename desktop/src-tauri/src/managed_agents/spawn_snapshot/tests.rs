@@ -5,6 +5,26 @@ use std::collections::BTreeMap;
 /// Canonical projection of a prospective snapshot — the exact value the drift
 /// comparison reads, so these tests assert on drift itself rather than on a
 /// proxy for it.
+fn snapshot_with_policy(
+    record: &ManagedAgentRecord,
+    personas: &[AgentDefinition],
+    teams: &[TeamRecord],
+    workspace_relay: &str,
+    global: &GlobalAgentConfig,
+    enforced_owner_only: bool,
+) -> serde_json::Value {
+    prospective_spawn_config_snapshot(
+        record,
+        personas,
+        teams,
+        workspace_relay,
+        global,
+        enforced_owner_only,
+        AcpSessionPolicy::Channel,
+    )
+    .canonical()
+}
+
 fn snapshot(
     record: &ManagedAgentRecord,
     personas: &[AgentDefinition],
@@ -12,7 +32,16 @@ fn snapshot(
     workspace_relay: &str,
     global: &GlobalAgentConfig,
 ) -> serde_json::Value {
-    prospective_spawn_config_snapshot(record, personas, teams, workspace_relay, global).canonical()
+    prospective_spawn_config_snapshot(
+        record,
+        personas,
+        teams,
+        workspace_relay,
+        global,
+        false,
+        crate::managed_agents::AcpSessionPolicy::Thread,
+    )
+    .canonical()
 }
 
 /// `snapshot` with the fixed no-persona/no-team/default-global shape the effort
@@ -23,6 +52,8 @@ fn snap(record: &ManagedAgentRecord) -> serde_json::Value {
 
 fn record() -> ManagedAgentRecord {
     ManagedAgentRecord {
+        provider_policy_pending: false,
+        description: None,
         pubkey: "p".repeat(64),
         name: "agent".into(),
         persona_id: None,
@@ -73,6 +104,7 @@ fn record() -> ManagedAgentRecord {
         source_team: None,
         source_team_persona_slug: None,
         catalog_source: None,
+        team_catalog_source: None,
         definition_respond_to: None,
         definition_respond_to_allowlist: Vec::new(),
         definition_parallelism: None,
@@ -83,6 +115,7 @@ fn record() -> ManagedAgentRecord {
 
 fn persona(id: &str, runtime: Option<&str>, prompt: &str) -> AgentDefinition {
     AgentDefinition {
+        description: None,
         id: id.into(),
         display_name: id.into(),
         avatar_url: None,
@@ -97,6 +130,7 @@ fn persona(id: &str, runtime: Option<&str>, prompt: &str) -> AgentDefinition {
         source_team: None,
         source_team_persona_slug: None,
         catalog_source: None,
+        team_catalog_source: None,
         env_vars: BTreeMap::new(),
         respond_to: None,
         respond_to_allowlist: Vec::new(),
@@ -927,3 +961,19 @@ fn openclaw_cap_crossing_parallelism_snapshots_differ() {
 #[cfg(test)]
 #[path = "tests_ext.rs"]
 mod ext;
+
+#[test]
+fn owner_only_snapshot_uses_effective_policy_without_mutating_portable_settings() {
+    let mut record = record();
+    record.respond_to = RespondTo::Anyone;
+    let value = snapshot_with_policy(
+        &record,
+        &[],
+        &[],
+        "wss://a.example",
+        &Default::default(),
+        true,
+    );
+    assert_eq!(value["respond_to"], "owner-only");
+    assert_eq!(record.respond_to, RespondTo::Anyone);
+}

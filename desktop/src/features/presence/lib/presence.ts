@@ -91,3 +91,16 @@ export function getPresenceChipClassName(status: PresenceStatus) {
       return "bg-muted-foreground/15 text-muted-foreground";
   }
 }
+
+export function activePresencePubkeys(
+  queries: Array<{ queryKey: readonly unknown[]; isActive: () => boolean }>,
+): string[] {
+  const pubkeys = new Set<string>();
+  for (const query of queries) {
+    if (!query.isActive() || query.queryKey[0] !== "presence") continue;
+    for (const value of query.queryKey.slice(1)) {
+      if (typeof value === "string" && value) pubkeys.add(value.toLowerCase());
+    }
+  }
+  return [...pubkeys].sort();
+}

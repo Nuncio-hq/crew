@@ -1,3 +1,7 @@
+import {
+  resetDetachedToastScope,
+  setDetachedToastScope,
+} from "@/features/messages/lib/detachedToastScope";
 import { resetChannelMembershipState } from "@/features/agents/lib/channelMembershipState";
 import { useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
@@ -6,10 +10,10 @@ import { isMacPlatform } from "@/shared/lib/platform";
 import { relayClient } from "@/shared/api/relayClient";
 import { resetRateLimitGate } from "@/shared/api/relayRateLimitGate";
 import {
-  applyCommunity,
   autoConnectDefaultRelayEnabled,
   getDefaultRelayUrl,
 } from "@/shared/api/tauri";
+import { applyCommunity } from "@/shared/api/tauriWorkspace";
 import { getIdentity } from "@/shared/api/tauriIdentity";
 import { clearTrayAgentActivity } from "@/shared/api/trayMenu";
 import { getOverrides } from "@/shared/features";
@@ -27,7 +31,10 @@ import { resetThreadForgePullRequestStore } from "@/features/messages/lib/thread
 import { resetThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
 import { resetProjectWorktreeDetailsStore } from "@/features/agents/projectWorktreeDetailsStore";
 import { resetProjectWorktreeRegistryStore } from "@/features/agents/projectWorktreeRegistryStore";
+import { resetAudioMediaLoadScheduler } from "@/features/messages/lib/audioMediaLoadScheduler";
 import { resetBackgroundMediaUploads } from "@/features/messages/lib/backgroundMediaUploadStore";
+import { resetLinkPreviewPreparations } from "@/features/messages/lib/linkPreviewPreparationStore";
+import { resetPersistentAgentAudienceStore } from "@/features/messages/lib/persistentAgentAudience";
 import {
   resetActiveAgentTurnsStore,
   saveActiveAgentTurnsForCommunity,
@@ -77,6 +84,7 @@ function resetCommunityState({
 }: {
   resetAvatarState: boolean;
 }): void {
+  resetDetachedToastScope();
   relayClient.disconnect();
   resetRateLimitGate();
   clearAllDrafts();
@@ -103,6 +111,7 @@ function resetCommunityState({
   resetMediaCaches();
   resetLinkPreviewMetadataCache();
   resetVideoPlayerState();
+  resetAudioMediaLoadScheduler();
   resetRenderScopedReactionHydration();
   resetProjectThreadGitHubStore();
   resetThreadForgePullRequestStore();
@@ -111,6 +120,16 @@ function resetCommunityState({
   resetProjectWorktreeRegistryStore();
   resetProjectWorktreeDetailsStore();
   resetBackgroundMediaUploads();
+  resetLinkPreviewPreparations();
+  resetPersistentAgentAudienceStore();
+  // Intentionally NOT reset: the in-flight detached agent-start map
+  // (`useDetachedAgentStart`). Its entries are keyed by the scope each start
+  // asserts (relay URL + signer + agent pubkey), so they cannot leak into the
+  // new community, and they self-clean when the start settles. Clearing them
+  // here is what permitted the A→B→A duplicate provider deploy: the backend's
+  // scope assertion is a current-state check, so a start held across a
+  // round-trip is valid again once A is re-applied — the map entry is its only
+  // duplicate guard.
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
   resetMessageLinkMetadataCache();
@@ -122,7 +141,12 @@ function resetCommunityState({
 }
 
 type CommunityInitResult =
-  | { isReady: true; needsSetup: false; appliedKey: string }
+  | {
+      isReady: true;
+      needsSetup: false;
+      appliedKey: string;
+      identityPubkey: string | null;
+    }
   | {
       isReady: false;
       needsSetup: true;
@@ -278,6 +302,7 @@ export function useCommunityInit(
           activeCommunity.token,
           activeCommunity.reposDir,
           getOverrides().agentManagedProfiles === true,
+          getOverrides().threadScopedAcpSessions === true,
         );
       } catch (error) {
         // A bad `repos_dir` no longer reaches here — `apply_workspace` treats
@@ -312,10 +337,16 @@ export function useCommunityInit(
         // and bypass the localhost proxy.
         resetMediaCaches();
 
+        let identityPubkey: string | null = null;
         try {
           const identity = await getIdentity();
+          identityPubkey = identity.pubkey;
           if (cancelled) return;
           initDraftStore(identity.pubkey, activeCommunity.relayUrl);
+          setDetachedToastScope({
+            relayUrl: activeCommunity.relayUrl,
+            signerPubkey: identity.pubkey,
+          });
         } catch (err) {
           if (cancelled) return;
           console.error(
@@ -334,6 +365,7 @@ export function useCommunityInit(
           isReady: true,
           needsSetup: false,
           appliedKey: communityKey,
+          identityPubkey,
         });
       }
     }

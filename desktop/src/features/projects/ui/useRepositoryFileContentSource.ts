@@ -1,3 +1,4 @@
+import { readExactLocalWorkspaceFileContent } from "@/features/projects/lib/project-exact-local-workspace";
 import * as React from "react";
 
 import type { ProjectPullRequest, Repository } from "@/features/projects/hooks";
@@ -27,7 +28,22 @@ export function useRepositoryFileContentSource({
   source,
 }: RepositoryFileContentSourceInput) {
   return React.useMemo<RepositoryFileContentSource | undefined>(() => {
-    if (!repository) return undefined;
+    if (!repository || repository.localWorkspaceStatus === "invalid")
+      return undefined;
+    if (repository.localWorkspacePath) {
+      if (selectedTag) return undefined;
+      const localWorkspacePath = repository.localWorkspacePath;
+      return {
+        cacheKey: [repository.id, "linked", localWorkspacePath, activeBranch],
+        load: (path) =>
+          readExactLocalWorkspaceFileContent({
+            defaultBranch: activeBranch ?? repository.defaultBranch,
+            localWorkspacePath,
+            projectDtag: repository.dtag,
+            path,
+          }),
+      };
+    }
     const effectiveSource = selectedTag ? "remote" : source;
 
     if (effectiveSource === "local") {

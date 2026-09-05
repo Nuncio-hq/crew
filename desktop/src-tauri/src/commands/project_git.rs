@@ -8,7 +8,8 @@ use super::project_repo_paths::{canonical_repos_roots, find_local_repo_dir};
 use crate::app_state::AppState;
 use serde::Serialize;
 use std::time::UNIX_EPOCH;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 const MAX_EAGER_FILE_PREVIEWS: usize = 250;
 
@@ -925,4 +926,24 @@ pub async fn pull_project_local_repository(
     })
     .await
     .map_err(|error| format!("repo pull task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn open_project_repository_folder(
+    repos_dir: Option<String>,
+    project_dtag: String,
+    clone_url: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    validate_workspace_clone_url(&clone_url, &state)?;
+    let repo_dir = tauri::async_runtime::spawn_blocking(move || {
+        find_local_repo_dir(repos_dir.as_deref(), &project_dtag, Some(&clone_url))?
+            .ok_or_else(|| "No local checkout found.".to_string())
+    })
+    .await
+    .map_err(|error| format!("local repo lookup task failed: {error}"))??;
+    app.opener()
+        .open_path(repo_dir.to_string_lossy(), None::<&str>)
+        .map_err(|error| format!("open local repository folder: {error}"))
 }

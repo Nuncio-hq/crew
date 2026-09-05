@@ -47,6 +47,7 @@ export type MentionCandidate = {
   crewRoleLabel?: string | null;
   ownerPubkey?: string | null;
   isAgent: boolean;
+  isActiveAgent?: boolean;
   isManagedAgent?: boolean;
   isGlobalSearchResult?: boolean;
 };

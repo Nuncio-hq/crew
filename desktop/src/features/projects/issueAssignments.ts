@@ -8,13 +8,35 @@ import {
 import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import { KIND_TEXT_NOTE } from "@/shared/constants/kinds";
-import type { Repository } from "./hooks";
+import type { Repository as Project } from "./hooks";
 import {
   ISSUE_ASSIGNMENT_LABEL,
   ISSUE_UNASSIGNMENT_LABEL,
   nextProjectIssueCommentCreatedAt,
   type ProjectIssue,
 } from "./projectIssues.mjs";
+
+function nextAssignmentOperationCreatedAt(
+  issue: ProjectIssue,
+  project: Project,
+  signAsManagedOwner: boolean,
+  signerPubkey: string,
+) {
+  const signer = signAsManagedOwner ? project.owner : signerPubkey;
+  return nextProjectIssueCommentCreatedAt(
+    issue,
+    Math.floor(Date.now() / 1_000),
+    signer,
+  );
+}
+
+function normalizedAssigneeLabel(label: string) {
+  const normalized = label.trim();
+  if (normalized.length === 0 || Array.from(normalized).length > 128) {
+    throw new Error("Assignee label must be between 1 and 128 characters.");
+  }
+  return normalized;
+}
 
 type IssueAssignmentOperation = "assign" | "unassign";
 type IssueAssignmentMutationInput = {
@@ -35,105 +57,119 @@ async function writeProjectIssueAssignment({
   signAsManagedOwner,
 }: IssueAssignmentMutationInput & {
   operation: IssueAssignmentOperation;
-  project: Repository;
+  project: Project;
 }): Promise<void> {
-  const normalizedAssignees = [
-    ...new Set(assignees.map((pubkey) => pubkey.toLowerCase())),
-  ];
-  if (normalizedAssignees.length === 0) {
+  if (assignees.length === 0) {
     throw new Error("Select at least one assignee.");
   }
+  const normalizedLabel = normalizedAssigneeLabel(assigneeLabel);
+  const assigneePubkeys = [
+    ...new Set(assignees.map((pubkey) => pubkey.toLowerCase())),
+  ];
   const normalizedSigner = signerPubkey.toLowerCase();
   const authorized =
     signAsManagedOwner ||
     normalizedSigner === issue.author.toLowerCase() ||
     normalizedSigner === project.owner.toLowerCase() ||
-    (normalizedAssignees.length === 1 &&
-      normalizedAssignees[0] === normalizedSigner);
+    (assigneePubkeys.length === 1 && assigneePubkeys[0] === normalizedSigner);
   if (!authorized) {
     throw new Error("You can only assign or unassign yourself.");
   }
-  const createdAt = nextProjectIssueCommentCreatedAt(
+  const createdAt = nextAssignmentOperationCreatedAt(
     issue,
-    Math.floor(Date.now() / 1_000),
-    signAsManagedOwner ? project.owner : normalizedSigner,
+    project,
+    signAsManagedOwner,
+    signerPubkey,
   );
-  const assignment = operation === "assign";
-  const normalizedLabel = assigneeLabel.trim();
-  if (
-    normalizedLabel.length === 0 ||
-    Array.from(normalizedLabel).length > 128
-  ) {
-    throw new Error("Assignee label must be between 1 and 128 characters.");
-  }
+  const isAssignment = operation === "assign";
+  const content = isAssignment
+    ? `Assigned this task to ${normalizedLabel}`
+    : `Unassigned ${normalizedLabel} from this task`;
+  const label = isAssignment
+    ? ISSUE_ASSIGNMENT_LABEL
+    : ISSUE_UNASSIGNMENT_LABEL;
   if (signAsManagedOwner) {
-    const signManagedOperation = assignment
+    const signManagedOperation = isAssignment
       ? signProjectIssueAssignment
       : signProjectIssueUnassignment;
     await signManagedOperation({
       targetOwner: project.owner,
       repoAddress: project.repoAddress,
       issueId: issue.id,
-      assignees: normalizedAssignees,
+      assignees: assigneePubkeys,
       assigneeLabel: normalizedLabel,
       createdAt,
     });
     return;
   }
   const prior =
-    normalizedAssignees.length === 1 &&
-    normalizedAssignees[0] === normalizedSigner
+    assigneePubkeys.length === 1 && assigneePubkeys[0] === normalizedSigner
       ? issue.assigneeOperationHeads[normalizedSigner]
       : undefined;
   const event = await signRelayEvent({
     kind: KIND_TEXT_NOTE,
-    content: assignment
-      ? `Assigned this issue to ${normalizedLabel}`
-      : `Unassigned ${normalizedLabel} from this issue`,
+    content,
     createdAt,
     tags: [
       ["e", issue.id, "", "root"],
       ["a", project.repoAddress],
-      ...normalizedAssignees.map((pubkey) => ["p", pubkey]),
-      ["t", assignment ? ISSUE_ASSIGNMENT_LABEL : ISSUE_UNASSIGNMENT_LABEL],
+      ...assigneePubkeys.map((pubkey) => ["p", pubkey]),
+      ["t", label],
       ...(prior ? [["prior", prior]] : []),
     ],
   });
+
   await relayClient.publishEvent(
     event,
-    `Timed out ${operation}ing issue.`,
-    `Failed to ${operation} issue.`,
+    `Timed out ${operation}ing task.`,
+    `Failed to ${operation} task.`,
   );
 }
 
-function useProjectIssueAssignmentMutation(
-  project: Repository,
-  operation: IssueAssignmentOperation,
+export function useProjectIssueWriteInvalidation(
+  project: Project | null | undefined,
 ) {
   const queryClient = useQueryClient();
-  const invalidate = React.useCallback(() => {
+  return React.useCallback(() => {
     void queryClient.invalidateQueries({
-      queryKey: ["project", project.id, "issues"],
+      queryKey: ["project", project?.id ?? "none", "issues"],
     });
     void queryClient.invalidateQueries({
       queryKey: ["projects", "work-items"],
     });
-  }, [project.id, queryClient]);
+    void queryClient.invalidateQueries({
+      queryKey: ["projects", "activity-summaries"],
+    });
+  }, [project?.id, queryClient]);
+}
+
+function useProjectIssueAssignmentMutation(
+  project: Project | null | undefined,
+  operation: IssueAssignmentOperation,
+) {
+  const invalidate = useProjectIssueWriteInvalidation(project);
+
   return useMutation({
-    mutationFn: (input: IssueAssignmentMutationInput) =>
-      writeProjectIssueAssignment({
+    mutationFn: (input: IssueAssignmentMutationInput) => {
+      if (!project) throw new Error("No project selected.");
+      return writeProjectIssueAssignment({
         ...input,
         operation,
         project,
-      }),
+      });
+    },
     onSuccess: invalidate,
   });
 }
 
-export function useAssignProjectIssueMutation(project: Repository) {
+export function useAssignProjectIssueMutation(
+  project: Project | null | undefined,
+) {
   return useProjectIssueAssignmentMutation(project, "assign");
 }
 
-export function useUnassignProjectIssueMutation(project: Repository) {
+export function useUnassignProjectIssueMutation(
+  project: Project | null | undefined,
+) {
   return useProjectIssueAssignmentMutation(project, "unassign");
 }

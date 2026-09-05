@@ -1,3 +1,4 @@
+import { setToolPaneTab } from "@/features/tool-pane/toolPaneStore";
 import { setThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 import { parseForgePullRequestUrl } from "@/features/messages/lib/parseForgePullRequestUrl";
 import { setThreadForgeHubSubject } from "@/features/messages/lib/threadForgeHubSubjectStore";
@@ -33,6 +34,7 @@ export function openThreadForgeHubFromPullRequest(input: {
       rootEventId: input.rootEventId,
       source: "thread",
     });
+    setToolPaneTab("pr");
   }
   setThreadViewMode("focus");
 }

@@ -43,7 +43,7 @@ test("WorkspaceTabs derives the badge only through getPullRequestFilesBadgeCount
 
   assert.match(
     source,
-    /filesCount=\{getPullRequestFilesBadgeCount\(/,
+    /filesCount=\{\s*getPullRequestFilesBadgeCount\(/,
     "the Files changed badge must come from getPullRequestFilesBadgeCount",
   );
   assert.doesNotMatch(

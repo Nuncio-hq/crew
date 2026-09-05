@@ -883,3 +883,84 @@ mod tests {
         assert!(event.verify().is_ok());
     }
 }
+
+/// A project or repository announcement signed by its direct or managed owner.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOwnerAnnouncementInput {
+    target_owner: String,
+    kind: u16,
+    content: String,
+    created_at: Option<u64>,
+    tags: Vec<Vec<String>>,
+}
+
+/// Signed announcement plus any relay publication failure for recovery.
+#[derive(Serialize)]
+pub struct ProjectOwnerAnnouncementResult {
+    /// Serialized signed Nostr event.
+    event: String,
+    /// Relay error when signing succeeded but publication did not.
+    publication_error: Option<String>,
+}
+
+fn validate_project_owner_announcement(
+    input: &ProjectOwnerAnnouncementInput,
+) -> Result<(), String> {
+    if !matches!(input.kind, 30_617 | 30_621) {
+        return Err("Only project and repository announcements can be signed here.".to_string());
+    }
+    let has_valid_d_tag = input.tags.iter().any(|tag| {
+        tag.first().is_some_and(|value| value == "d")
+            && tag.get(1).is_some_and(|value| !value.trim().is_empty())
+    });
+    if !has_valid_d_tag {
+        return Err("Project and repository announcements require a non-empty d tag.".to_string());
+    }
+    if let Some(created_at) = input.created_at {
+        // Mirror the ACP publish path (`build_project_owner_announcement_events`):
+        // these are addressable events where the latest created_at wins, so a
+        // far-future timestamp would wedge the head until that time. Reject
+        // anything more than 5 minutes ahead.
+        if created_at > Timestamp::now().as_secs().saturating_add(300) {
+            return Err("Announcement timestamp is too far in the future.".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Sign and publish an addressable project event as a direct or managed owner.
+#[tauri::command]
+pub async fn publish_project_owner_announcement(
+    input: ProjectOwnerAnnouncementInput,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ProjectOwnerAnnouncementResult, String> {
+    validate_project_owner_announcement(&input)?;
+    let target_owner = input.target_owner.trim().to_ascii_lowercase();
+    if normalize_event_id(&target_owner).is_none() {
+        return Err("Invalid project owner.".to_string());
+    }
+    let identity = project_owner_identity(&app, &state, &target_owner)?;
+    let nostr_tags = input
+        .tags
+        .into_iter()
+        .map(|tag| Tag::parse(tag).map_err(|error| format!("invalid tag: {error}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut builder = EventBuilder::new(Kind::Custom(input.kind), input.content).tags(nostr_tags);
+    if let Some(created_at) = input.created_at {
+        builder = builder.custom_created_at(Timestamp::from(created_at));
+    }
+    let event = builder
+        .sign_with_keys(&identity.keys)
+        .map_err(|error| format!("sign failed: {error}"))?;
+    let publication_error =
+        submit_signed_event_with_keys(&event, &state, &identity.keys, identity.auth_tag.as_deref())
+            .await
+            .err();
+
+    Ok(ProjectOwnerAnnouncementResult {
+        event: event.as_json(),
+        publication_error,
+    })
+}

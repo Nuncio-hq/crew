@@ -8,9 +8,19 @@ import type {
   ManagedAgentRuntimeStatus,
 } from "@/shared/api/types";
 
-export async function startManagedAgent(pubkey: string): Promise<ManagedAgent> {
+export type StartManagedAgentOptions = {
+  expectedRelayUrl?: string;
+  expectedSignerPubkey?: string;
+  replayFloorUnix?: number;
+};
+
+export async function startManagedAgent(
+  pubkey: string,
+  options?: StartManagedAgentOptions,
+): Promise<ManagedAgent> {
   const response = await invokeTauri<RawManagedAgent>("start_managed_agent", {
     pubkey,
+    ...options,
   });
   return fromRawManagedAgent(response);
 }
@@ -48,21 +58,6 @@ export async function setManagedAgentAutoRestart(
     },
   );
   return fromRawManagedAgent(response);
-}
-
-/**
- * B5: persist the canonical startup effort for a local managed agent. Applied
- * as `BUZZ_ACP_EFFORT_LEVEL` at the next spawn. Pass `null` to clear (reverts
- * to the adapter default). Rejects non-local agents.
- */
-export async function persistAgentEffortLevel(
-  pubkey: string,
-  effortLevel: string | null,
-): Promise<void> {
-  return invokeTauri<void>("persist_agent_effort_level", {
-    pubkey,
-    effortLevel,
-  });
 }
 
 export async function listManagedAgentRuntimes(): Promise<

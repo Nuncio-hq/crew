@@ -20,6 +20,7 @@ pub(crate) fn shut_down_app(app: &tauri::AppHandle, shutdown_done: &std::sync::a
     if !shutdown_done.swap(true, Ordering::SeqCst) {
         prevent_sleep::release(&app.state::<AppState>().prevent_sleep);
         crate::observed_unread::flush(app);
+        crate::channel_head_cache::flush(app);
         app.state::<crate::terminal_runtime::TerminalSessions>()
             .shutdown_all();
         crate::resource_governor::quit_governor(app);

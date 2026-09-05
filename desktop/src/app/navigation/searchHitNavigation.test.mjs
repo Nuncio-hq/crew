@@ -35,13 +35,57 @@ test("search-hit navigation preserves forced message routing", async () => {
   assert.deepEqual(calls, [
     {
       channelId: "channel",
-      options: { force: true, messageId: "message", threadRootId: "root" },
+      options: {
+        force: true,
+        messageId: "message",
+        searchHighlight: undefined,
+        threadRootId: "root",
+      },
     },
   ]);
   assert.equal(getCachedSearchHitEvent("message")?.id, "message");
 });
 
-test("cancelled search-hit navigation cannot route or cache", async () => {
+test("search-hit navigation carries trimmed highlight state and forces repeated activations", async () => {
+  clearSearchHitEventCache();
+  const calls = [];
+
+  await openSearchHitWithNavigation(message, {
+    goChannel: async (channelId, options) => {
+      calls.push({ channelId, options });
+      return true;
+    },
+    goForumPost: async () => false,
+    query: "  Mentions  ",
+  });
+
+  assert.equal(calls[0].options.force, true);
+  assert.equal(calls[0].options.searchHighlight.messageId, "message");
+  assert.equal(calls[0].options.searchHighlight.query, "Mentions");
+  assert.match(calls[0].options.searchHighlight.activationId, /.+/);
+});
+
+test("forum-post search navigation carries transient same-route activation state", async () => {
+  clearSearchHitEventCache();
+  const forumPost = { ...message, eventId: "post", kind: 45001 };
+  const calls = [];
+
+  await openSearchHitWithNavigation(forumPost, {
+    goChannel: async () => false,
+    goForumPost: async (channelId, postId, options) => {
+      calls.push({ channelId, postId, options });
+      return true;
+    },
+    query: "mentions",
+  });
+
+  assert.equal(calls[0].options.force, true);
+  assert.equal(calls[0].options.searchHighlight.messageId, "post");
+  assert.equal(calls[0].options.searchHighlight.query, "mentions");
+  assert.match(calls[0].options.searchHighlight.activationId, /.+/);
+});
+
+test("cancelled search-hit navigation cannot repopulate cache or route", async () => {
   clearSearchHitEventCache();
   let resolveDestination;
   const destination = new Promise((resolve) => {
@@ -100,7 +144,7 @@ test("forum comments resolve through the channel-first forum route", async () =>
     {
       channelId: "channel",
       postId: "post",
-      options: { force: true, replyId: "comment" },
+      options: { force: true, replyId: "comment", searchHighlight: undefined },
     },
   ]);
 });

@@ -359,9 +359,9 @@ test("release identity and updater manifest are Nuncio-owned", async () => {
 });
 
 const EXPECTED_UPSTREAM_PIN = {
-  buzzVersion: "0.5.18",
-  buzzTag: "desktop-v0.5.18",
-  buzzCommit: "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+  buzzVersion: "0.5.22",
+  buzzTag: "desktop-v0.5.22",
+  buzzCommit: "9ceb1f79bbc21785a0a075c40aecb3c058b1ea15",
 };
 
 test("Buzz manifests stay pinned and the exact upstream source is machine-readable", () => {
@@ -391,10 +391,10 @@ test("Buzz manifests stay pinned and the exact upstream source is machine-readab
   assert.deepEqual(upstreamPin, EXPECTED_UPSTREAM_PIN);
   assert.equal(packageJson.version, EXPECTED_UPSTREAM_PIN.buzzVersion);
   assert.equal(tauriConfig.version, EXPECTED_UPSTREAM_PIN.buzzVersion);
-  assert.match(cargoToml, /^\[package\][\s\S]*?^version = "0\.5\.18"$/m);
+  assert.match(cargoToml, /^\[package\][\s\S]*?^version = "0\.5\.22"$/m);
   assert.match(
     cargoLock,
-    /^\[\[package\]\]\nname = "buzz-desktop"\nversion = "0\.5\.18"$/m,
+    /^\[\[package\]\]\nname = "buzz-desktop"\nversion = "0\.5\.22"$/m,
   );
   assert.match(settingsView, /from "@tauri-apps\/api\/app"/);
   assert.match(settingsView, /void getVersion\(\)\.then\(setAppVersion\)/);

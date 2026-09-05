@@ -27,6 +27,7 @@ export function MessageRowDefaultBody({
   videoReviewContext,
   channelNames,
   emojiOnly,
+  leadingInlineContent,
   customEmoji,
   imetaByUrl,
   agentMentionPubkeysByName,
@@ -51,6 +52,7 @@ export function MessageRowDefaultBody({
   videoReviewContext?: VideoReviewContext;
   channelNames?: string[];
   emojiOnly: boolean;
+  leadingInlineContent?: import("react").ReactNode;
   customEmoji?: CustomEmoji[];
   imetaByUrl?: ImetaLookup;
   agentMentionPubkeysByName?: Record<string, string>;
@@ -114,6 +116,7 @@ export function MessageRowDefaultBody({
       messageId={message.id}
       linkPreviewsSuppressed={linkPreviewsSuppressed}
       linkPreviewTags={message.tags}
+      leadingInlineContent={leadingInlineContent}
       onRemoveLinkPreviewsForEveryone={removeLinkPreviewsForEveryone}
       customEmoji={customEmoji}
       imetaByUrl={imetaByUrl}

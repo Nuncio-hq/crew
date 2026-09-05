@@ -1,5 +1,11 @@
 import { sortEvents } from "../../shared/api/relayClientShared.ts";
+import { projectTaskCategoryFromLabels } from "./projectTaskCategories.ts";
 
+// Issue assignment mirrors PR review requests (projectPullRequests.mjs):
+// a kind:1 comment labeled with this `t` tag whose `p` tags are the
+// assignees. Labeled text notes stay readable for any client that treats
+// them as plain comments, and the `p` tags route the assignment into the
+// assignee's mention feed (inbox) for free.
 export const ISSUE_ASSIGNMENT_LABEL = "assignment";
 export const ISSUE_UNASSIGNMENT_LABEL = "unassignment";
 
@@ -78,6 +84,19 @@ function statusFromEvent(issue, statusEvent) {
   return PROJECT_ISSUE_STATUS.BACKLOG;
 }
 
+/**
+ * Assignment state is reduced from trusted kind:1 operations. `t: assignment`
+ * adds each `p` tag and `t: unassignment` removes it. The issue root's `p`
+ * tags are notification routing only.
+ *
+ * Trusted signers are the issue author and repo owner (who may change anyone),
+ * plus any community member whose operation names only themselves. Uncaused
+ * self-service operations are applied first, authoritative operations second,
+ * and self-service operations that causally reference the current per-assignee
+ * operation head last. This prevents signer-controlled timestamps from
+ * overriding authority while allowing a later observed owner/author decision
+ * to be superseded by the affected assignee.
+ */
 function assignmentStateForIssue(issue, issueCommentEvents) {
   const allowedActors = allowedActorsForRoot(issue);
   const assignees = new Set();
@@ -86,7 +105,11 @@ function assignmentStateForIssue(issue, issueCommentEvents) {
   const authoritativeOperations = [];
   const causalSelfServiceOperations = [];
   const events = sortEvents(
-    issueCommentEvents.filter((event) => event.kind === 1),
+    issueCommentEvents.filter(
+      (event) =>
+        event.kind === 1 &&
+        event.tags.some((tag) => tag[0] === "e" && tag[1] === issue.id),
+    ),
   );
   for (const event of events) {
     const labels = getAllTags(event, "t");
@@ -106,23 +129,23 @@ function assignmentStateForIssue(issue, issueCommentEvents) {
     };
     if (allowedActors.has(signer)) {
       authoritativeOperations.push(operation);
-      continue;
+    } else {
+      const priorTags = event.tags.filter((tag) => tag[0] === "prior");
+      if (priorTags.length === 0) {
+        uncausedSelfServiceOperations.push(operation);
+        continue;
+      }
+      if (
+        priorTags.length !== 1 ||
+        !/^[a-fA-F0-9]{64}$/.test(priorTags[0]?.[1] ?? "")
+      ) {
+        continue;
+      }
+      causalSelfServiceOperations.push({
+        ...operation,
+        prior: priorTags[0][1].toLowerCase(),
+      });
     }
-    const priorTags = event.tags.filter((tag) => tag[0] === "prior");
-    if (priorTags.length === 0) {
-      uncausedSelfServiceOperations.push(operation);
-      continue;
-    }
-    if (
-      priorTags.length !== 1 ||
-      !/^[a-fA-F0-9]{64}$/.test(priorTags[0][1] ?? "")
-    ) {
-      continue;
-    }
-    causalSelfServiceOperations.push({
-      ...operation,
-      prior: priorTags[0][1].toLowerCase(),
-    });
   }
   for (const { id, isAssignment, pubkeys, prior } of [
     ...uncausedSelfServiceOperations,
@@ -131,8 +154,11 @@ function assignmentStateForIssue(issue, issueCommentEvents) {
   ]) {
     if (prior && operationHeads.get(pubkeys[0]) !== prior) continue;
     for (const pubkey of pubkeys) {
-      if (isAssignment) assignees.add(pubkey);
-      else assignees.delete(pubkey);
+      if (isAssignment) {
+        assignees.add(pubkey);
+      } else {
+        assignees.delete(pubkey);
+      }
       operationHeads.set(pubkey, id);
     }
   }
@@ -142,8 +168,8 @@ function assignmentStateForIssue(issue, issueCommentEvents) {
   };
 }
 
-function commentsForIssue(commentEvents) {
-  return sortEvents(commentEvents).map((event) => ({
+function commentsForIssue(issueCommentEvents) {
+  return sortEvents(issueCommentEvents).map((event) => ({
     id: event.id,
     content: event.content,
     tags: getImetaTags(event),
@@ -165,10 +191,9 @@ export function eventToProjectIssue(
   );
   const comments = commentsForIssue(issueCommentEvents);
   const assignmentState = assignmentStateForIssue(issue, issueCommentEvents);
+  const labels = getAllTags(issue, "t");
   const title =
-    getTag(issue, "subject") ||
-    issue.content.split("\n")[0] ||
-    "Untitled issue";
+    getTag(issue, "subject") || issue.content.split("\n")[0] || "Untitled task";
 
   return {
     id: issue.id,
@@ -180,7 +205,8 @@ export function eventToProjectIssue(
     repoAddress: getTag(issue, "a") ?? null,
     channelId: getTag(issue, "h") ?? null,
     originAgentName: getTag(issue, "buzz-origin-agent") ?? null,
-    labels: getAllTags(issue, "t"),
+    labels,
+    category: projectTaskCategoryFromLabels(labels),
     recipients: getAllTags(issue, "p"),
     assignees: assignmentState.assignees,
     assigneeOperationHeads: assignmentState.heads,
@@ -224,17 +250,17 @@ export function buildGitIssueTags({
   labels = [],
 }) {
   if (!repoAddress.startsWith("30617:")) {
-    throw new Error("Issue repo address must reference a kind:30617 repo.");
+    throw new Error("Task repo address must reference a kind:30617 repo.");
   }
   if (!/^[a-fA-F0-9]{64}$/.test(repoOwner)) {
     throw new Error("Repo owner must be 64 hex characters.");
   }
   const subject = title.trim();
   if (!subject) {
-    throw new Error("Issue title is required.");
+    throw new Error("Task title is required.");
   }
   if (subject.length > 256) {
-    throw new Error("Issue title must be 256 characters or fewer.");
+    throw new Error("Task title must be 256 characters or fewer.");
   }
 
   const tags = [
@@ -253,7 +279,7 @@ export function buildGitIssueTags({
 
 export function buildGitStatusTags({ issueId, repoAddress, repoOwner }) {
   if (!/^[a-fA-F0-9]{64}$/.test(issueId)) {
-    throw new Error("Issue ID must be 64 hex characters.");
+    throw new Error("Task ID must be 64 hex characters.");
   }
   const tags = [["e", issueId, "", "root"]];
   if (repoAddress) tags.push(["a", repoAddress]);
