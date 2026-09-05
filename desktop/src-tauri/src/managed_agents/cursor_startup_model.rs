@@ -9,9 +9,7 @@
 
 use crate::managed_agents::custom_harnesses::HarnessDefinition;
 use crate::managed_agents::discovery::KnownAcpRuntime;
-use crate::managed_agents::effective_config::{
-    resolve_effective_config, EffectiveConfigResult,
-};
+use crate::managed_agents::effective_config::{resolve_effective_config, EffectiveConfigResult};
 use crate::managed_agents::normalize_command_identity;
 use crate::managed_agents::readiness::hermes::resolve_agent_args_with_profile;
 use crate::managed_agents::types::{AgentDefinition, ManagedAgentRecord};

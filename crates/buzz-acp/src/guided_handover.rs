@@ -22,13 +22,19 @@ use uuid::Uuid;
 use crate::observer;
 use crate::pool::AgentPool;
 use crate::relay::RestClient;
-use crate::session_ledger::{
-    declare_session_with_reason, SessionDeclareReason, SessionLedgerKey,
-};
+use crate::session_ledger::{declare_session_with_reason, SessionDeclareReason, SessionLedgerKey};
 
 const HANDOVER_TAG: &str = "crew-handover";
 const SUMMARIZER_TIMEOUT: Duration = Duration::from_secs(45);
 const THREAD_FETCH_LIMIT: usize = 40;
+
+/// Stable identity and storage scope used when an owner resets a session.
+pub(crate) struct SessionResetContext<'a> {
+    pub agent_pubkey_hex: &'a str,
+    pub relay_url: &'a str,
+    pub session_ledger_dir: &'a std::path::Path,
+    pub engine_identity: &'a str,
+}
 
 /// Handle `guided_handover` / `blind_session_reset` observer controls.
 pub(crate) async fn handle_guided_handover_control(
@@ -36,10 +42,7 @@ pub(crate) async fn handle_guided_handover_control(
     pool: &mut AgentPool,
     rest_client: Option<&RestClient>,
     observer: Option<&observer::ObserverHandle>,
-    agent_pubkey_hex: &str,
-    relay_url: &str,
-    session_ledger_dir: &std::path::Path,
-    engine_identity: &str,
+    reset_context: SessionResetContext<'_>,
 ) {
     let command = payload
         .get("type")
@@ -84,17 +87,7 @@ pub(crate) async fn handle_guided_handover_control(
         .filter(|s| !s.trim().is_empty());
 
     if command == "blind_session_reset" {
-        invalidate_for_owner_reset(
-            pool,
-            conversation_key,
-            channel_id,
-            rest_client,
-            session_ledger_dir,
-            relay_url,
-            agent_pubkey_hex,
-            engine_identity,
-        )
-        .await;
+        invalidate_for_owner_reset(pool, conversation_key, channel_id, &reset_context).await;
         emit_result(
             observer,
             Some(channel_id),
@@ -181,17 +174,7 @@ pub(crate) async fn handle_guided_handover_control(
         return;
     }
 
-    invalidate_for_owner_reset(
-        pool,
-        conversation_key,
-        channel_id,
-        Some(rest),
-        session_ledger_dir,
-        relay_url,
-        agent_pubkey_hex,
-        engine_identity,
-    )
-    .await;
+    invalidate_for_owner_reset(pool, conversation_key, channel_id, &reset_context).await;
 
     emit_result(
         observer,
@@ -208,11 +191,7 @@ async fn invalidate_for_owner_reset(
     pool: &mut AgentPool,
     conversation_key: Uuid,
     channel_id: Uuid,
-    rest_client: Option<&RestClient>,
-    session_ledger_dir: &std::path::Path,
-    relay_url: &str,
-    agent_pubkey_hex: &str,
-    engine_identity: &str,
+    context: &SessionResetContext<'_>,
 ) {
     let _ = pool.invalidate_channel_sessions(conversation_key);
     if conversation_key != channel_id {
@@ -221,13 +200,17 @@ async fn invalidate_for_owner_reset(
 
     // Seed an OwnerReset placeholder so aging clears immediately even before
     // the next session/new declare overwrites with a real ACP session id.
-    let key = SessionLedgerKey::new(relay_url, agent_pubkey_hex, conversation_key);
+    let key = SessionLedgerKey::new(
+        context.relay_url,
+        context.agent_pubkey_hex,
+        conversation_key,
+    );
     let placeholder = format!("owner-reset-{}", Uuid::new_v4());
     if let Err(error) = declare_session_with_reason(
-        session_ledger_dir,
+        context.session_ledger_dir,
         &key,
         &placeholder,
-        engine_identity,
+        context.engine_identity,
         0,
         None,
         SessionDeclareReason::OwnerReset,
@@ -236,7 +219,6 @@ async fn invalidate_for_owner_reset(
     {
         tracing::warn!(%error, "failed to declare OwnerReset ledger placeholder");
     }
-    let _ = rest_client; // reserved for future receipt/ack
 }
 
 async fn fetch_thread_history(
@@ -373,13 +355,11 @@ async fn publish_handover_note(
     model_id: &str,
 ) -> Result<(), String> {
     let mut builder = EventBuilder::new(Kind::Custom(9), content).tag(
-        Tag::parse(["h", &channel_id.to_string()])
-            .map_err(|e| format!("invalid h tag: {e}"))?,
+        Tag::parse(["h", &channel_id.to_string()]).map_err(|e| format!("invalid h tag: {e}"))?,
     );
     if let Some(root) = root_event_id {
-        builder = builder.tag(
-            Tag::parse(["e", root, "", "root"]).map_err(|e| format!("invalid e tag: {e}"))?,
-        );
+        builder = builder
+            .tag(Tag::parse(["e", root, "", "root"]).map_err(|e| format!("invalid e tag: {e}"))?);
     }
     builder = builder.tag(
         Tag::parse([HANDOVER_TAG, model_id]).map_err(|e| format!("invalid handover tag: {e}"))?,
@@ -407,8 +387,7 @@ fn emit_result(
     let Some(observer) = observer else {
         return;
     };
-    let context =
-        observer::context_for_conversation(channel_id, conversation_id, None, None);
+    let context = observer::context_for_conversation(channel_id, conversation_id, None, None);
     observer.emit(
         "control_result",
         None,

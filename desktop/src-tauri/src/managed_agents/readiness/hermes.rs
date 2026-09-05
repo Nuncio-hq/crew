@@ -106,16 +106,14 @@ mod tests {
 
     #[test]
     fn unbound_hermes_with_missing_binary_reports_both_requirements() {
-        let _path_guard = crate::managed_agents::lock_path_mutex();
         let temp = tempfile::tempdir().expect("tempdir");
-        let original_path = std::env::var("PATH").ok();
-        std::env::set_var("PATH", temp.path());
-        crate::managed_agents::clear_resolve_cache();
-
+        // Bare names also search the login shell and common installation paths.
+        // An absolute fixture path proves absence without consulting host Hermes.
+        let command = temp.path().join("hermes").to_string_lossy().into_owned();
         let env = EffectiveAgentEnv {
             env: BTreeMap::new(),
             config_file_path: None,
-            effective_command: "hermes".to_string(),
+            effective_command: command.clone(),
             hermes_profile: None,
         };
         let readiness = agent_readiness(&env);
@@ -123,15 +121,7 @@ mod tests {
         assert!(requirements.contains(&Requirement::NormalizedField {
             field: "hermesProfile".to_string(),
         }));
-        assert!(requirements.contains(&Requirement::MissingBinary {
-            command: "hermes".to_string(),
-        }));
-
-        match original_path {
-            Some(path) => std::env::set_var("PATH", path),
-            None => std::env::remove_var("PATH"),
-        }
-        crate::managed_agents::clear_resolve_cache();
+        assert!(requirements.contains(&Requirement::MissingBinary { command }));
     }
 
     #[test]
@@ -222,7 +212,7 @@ mod tests {
 
     #[test]
 
-fn readiness_contract_names_all_states_and_keeps_auth_unknown_advisory() {
+    fn readiness_contract_names_all_states_and_keeps_auth_unknown_advisory() {
         let states = [
             HermesProfileReadiness::Ready,
             HermesProfileReadiness::Missing {
@@ -241,10 +231,7 @@ fn readiness_contract_names_all_states_and_keeps_auth_unknown_advisory() {
         ];
         assert_eq!(states.len(), 5);
         assert!(matches!(states[0], HermesProfileReadiness::Ready));
-        assert!(matches!(
-            states[1],
-            HermesProfileReadiness::Missing { .. }
-        ));
+        assert!(matches!(states[1], HermesProfileReadiness::Missing { .. }));
         assert!(matches!(
             states[2],
             HermesProfileReadiness::BrokenConfig { .. }
@@ -390,36 +377,36 @@ fn readiness_contract_names_all_states_and_keeps_auth_unknown_advisory() {
             std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
                 .expect("executable");
         }
-        let original_home = std::env::var("HERMES_HOME").ok();
-        let original_path = std::env::var("PATH").ok();
+        let command = binary.to_string_lossy().into_owned();
+        struct RestoreHermesHome(Option<std::ffi::OsString>);
+        impl Drop for RestoreHermesHome {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("HERMES_HOME", value),
+                    None => std::env::remove_var("HERMES_HOME"),
+                }
+                crate::managed_agents::clear_resolve_cache();
+            }
+        }
+        let _restore_home = RestoreHermesHome(std::env::var_os("HERMES_HOME"));
         std::env::set_var("HERMES_HOME", &hermes_home);
-        std::env::set_var("PATH", temp.path());
         crate::managed_agents::clear_resolve_cache();
 
         assert!(matches!(
-            hermes_profile_readiness("hermes", Some("ghost")),
+            hermes_profile_readiness(&command, Some("ghost")),
             Some(HermesProfileReadiness::Missing { .. })
         ));
         assert!(matches!(
-            hermes_profile_readiness("hermes", Some("broken")),
+            hermes_profile_readiness(&command, Some("broken")),
             Some(HermesProfileReadiness::BrokenConfig { .. })
         ));
 
-        std::env::set_var("PATH", temp.path().join("missing"));
+        // Removing this exact fixture cannot fall back to a host installation.
+        std::fs::remove_file(&binary).expect("remove fixture binary");
         crate::managed_agents::clear_resolve_cache();
         assert!(matches!(
-            hermes_profile_readiness("hermes", Some("scout")),
+            hermes_profile_readiness(&command, Some("scout")),
             Some(HermesProfileReadiness::BinaryMissing { .. })
         ));
-
-        match original_home {
-            Some(value) => std::env::set_var("HERMES_HOME", value),
-            None => std::env::remove_var("HERMES_HOME"),
-        }
-        match original_path {
-            Some(value) => std::env::set_var("PATH", value),
-            None => std::env::remove_var("PATH"),
-        }
-        crate::managed_agents::clear_resolve_cache();
     }
 }

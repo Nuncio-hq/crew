@@ -8,6 +8,11 @@
 //! 4. [`AcpClient::session_prompt_with_idle_timeout`] — send prompt with idle/hard deadline, return stop reason
 //! 5. [`AcpClient::session_cancel`] / [`AcpClient::cancel_with_cleanup`] — cancel in-flight turn
 
+#[path = "acp/permission-options.rs"]
+mod permission_options;
+#[path = "acp/tool-progress.rs"]
+mod tool_progress;
+
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, ChildStdout};
@@ -177,6 +182,9 @@ pub struct AcpClient {
     /// Used by [`cancel_with_cleanup`](AcpClient::cancel_with_cleanup) to send
     /// a `cancelled` outcome before the agent returns from `session/prompt`.
     pending_permission_id: Option<serde_json::Value>,
+    tool_idle_timeout: std::time::Duration,
+    permission_auto_approve: bool,
+    remaining_prompt_budget: Option<std::time::Duration>,
     /// Whether we have already sent a response to the pending permission request.
     /// Guards against double-response if a timeout fires after the allow_once
     /// response was written but before `pending_permission_id` was cleared.
@@ -599,6 +607,11 @@ impl AcpClient {
             reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
             next_id: 0,
             pending_permission_id: None,
+            tool_idle_timeout: std::time::Duration::from_secs(
+                crate::config::DEFAULT_TOOL_IDLE_TIMEOUT_SECS,
+            ),
+            permission_auto_approve: false,
+            remaining_prompt_budget: None,
             permission_responded: false,
             last_prompt_id: None,
             current_hard_deadline: None,
@@ -862,6 +875,24 @@ impl AcpClient {
         self.send_request("session/set_mode", params).await
     }
 
+    /// Set the maximum lifetime of a tool's extra silence allowance.
+    /// The independent turn deadline still bounds every tool wait.
+    pub fn set_tool_idle_timeout(&mut self, timeout: std::time::Duration) {
+        self.tool_idle_timeout = timeout;
+    }
+
+    /// Control one-time permission grants; persistent grants are never selected.
+    pub(crate) fn set_permission_auto_approve(&mut self, enabled: bool) {
+        self.permission_auto_approve = enabled;
+    }
+
+    /// Remaining effective hard budget when the previous prompt completed.
+    /// Frozen while awaiting a human continuation decision; native steering
+    /// and elicitation renewals are captured from the active read loop.
+    pub(crate) fn remaining_prompt_budget(&self) -> Option<std::time::Duration> {
+        self.remaining_prompt_budget
+    }
+
     /// Send `session/prompt` with idle-based timeout instead of wall-clock.
     ///
     /// The idle deadline resets on any stdout activity from the agent. The hard
@@ -896,6 +927,7 @@ impl AcpClient {
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
         self.turn_summary.clear();
+        self.remaining_prompt_budget = None;
         let params = build_prompt_params(session_id, prompt_blocks);
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
@@ -938,6 +970,9 @@ impl AcpClient {
         // can inherit the remaining budget. Clear it on all other outcomes.
         match &result {
             Ok(_) => {
+                self.remaining_prompt_budget = self.current_hard_deadline.map(|deadline| {
+                    deadline.saturating_duration_since(tokio::time::Instant::now())
+                });
                 self.last_prompt_id = None;
                 self.current_hard_deadline = None;
             }
@@ -954,7 +989,7 @@ impl AcpClient {
         self.parse_prompt_response(session_id, &result?)
     }
 
-    async fn cancel_pending_user_input(&mut self) {
+    pub(crate) async fn cancel_pending_user_input(&mut self) {
         if let (Some(runtime), Some(event_id)) = (
             self.user_input_runtime.as_ref(),
             self.pending_user_input_event_id.as_deref(),
@@ -1131,10 +1166,7 @@ impl AcpClient {
     }
 
     fn note_post_compact_hook(&mut self, update: &serde_json::Value) {
-        let title = update
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let title = update.get("title").and_then(|v| v.as_str()).unwrap_or("");
         let name = update
             .get("name")
             .and_then(|v| v.as_str())
@@ -1707,13 +1739,20 @@ impl AcpClient {
         let mut hard_deadline = hard_deadline;
         let mut last_activity_at = now;
         let mut pending_elicitation: Option<crate::elicitation::PendingQuestion> = None;
+        let mut tools = tool_progress::ToolProgress::default();
 
         loop {
             // Determine which deadline fires first BEFORE sleeping — this is
             // the classification we'll use on timeout, immune to scheduler jitter.
-            let idle_fires_first = idle_deadline < hard_deadline;
+            let effective_idle_deadline = tools.deadline(idle_deadline);
+            let idle_budget = if effective_idle_deadline > idle_deadline {
+                self.tool_idle_timeout
+            } else {
+                idle_timeout
+            };
+            let idle_fires_first = effective_idle_deadline < hard_deadline;
             let next_deadline = if idle_fires_first {
-                idle_deadline
+                effective_idle_deadline
             } else {
                 hard_deadline
             };
@@ -1734,8 +1773,8 @@ impl AcpClient {
                     let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                 }
                 if idle_fires_first {
-                    tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
-                    return Err(AcpError::IdleTimeout(idle_timeout));
+                    tracing::warn!("idle timeout ({idle_budget:?}) — no agent activity");
+                    return Err(AcpError::IdleTimeout(idle_budget));
                 } else {
                     let silence = Instant::now().saturating_duration_since(last_activity_at);
                     tracing::warn!("hard turn timeout exceeded (silence {silence:?})");
@@ -1918,8 +1957,8 @@ impl AcpClient {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
                     if idle_fires_first {
-                        tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
-                        return Err(AcpError::IdleTimeout(idle_timeout));
+                        tracing::warn!("idle timeout ({idle_budget:?}) — no agent activity");
+                        return Err(AcpError::IdleTimeout(idle_budget));
                     } else {
                         let silence = Instant::now().saturating_duration_since(last_activity_at);
                         tracing::warn!("hard turn timeout exceeded (silence {silence:?})");
@@ -1985,6 +2024,12 @@ impl AcpClient {
                     self.observe("acp_read", msg.clone());
 
                     let activity_now = Instant::now();
+                    tools.observe(
+                        &msg,
+                        session_id,
+                        activity_now,
+                        self.tool_idle_timeout.min(max_duration),
+                    );
                     idle_deadline = activity_now + idle_timeout;
                     last_activity_at = activity_now;
 
@@ -2473,8 +2518,8 @@ impl AcpClient {
 
     /// Auto-approve a `session/request_permission` request from the agent.
     ///
-    /// Finds the option with `kind == "allow_once"` and responds with its `optionId`.
-    /// If no `allow_once` option exists, falls back to `reject_once`.
+    /// Selects standard allow-once only under bypass policy, otherwise rejection.
+    /// Unknown or malformed options receive a cancelled outcome.
     ///
     /// **Critical:** Never hardcode `optionId` — always find it dynamically by `kind`.
     ///
@@ -2492,48 +2537,14 @@ impl AcpClient {
         // Mark as not yet responded — guards against double-response race.
         self.permission_responded = false;
 
-        let options = msg["params"]["options"]
-            .as_array()
-            .ok_or_else(|| AcpError::Protocol("permission request missing options".into()))?;
-
-        tracing::debug!(
-            target: "acp::permission",
-            "session/request_permission id={id}, {} options",
-            options.len()
-        );
-
-        // Find allow_once by kind — NEVER hardcode optionId.
-        let allow_once = options
-            .iter()
-            .find(|opt| opt.get("kind").and_then(|k| k.as_str()) == Some("allow_once"));
-
-        let response = if let Some(opt) = allow_once {
-            let option_id = opt["optionId"]
-                .as_str()
-                .ok_or_else(|| AcpError::Protocol("allow_once option missing optionId".into()))?;
-            tracing::info!(
-                target: "acp::permission",
-                "auto-approving permission id={id} with allow_once optionId={option_id:?}"
-            );
-            permission_response_selected(&id, option_id)
-        } else {
-            // No allow_once — fall back to reject_once.
-            tracing::warn!(
-                target: "acp::permission",
-                "no allow_once option found in permission request id={id}, falling back to reject_once"
-            );
-            let reject = options
-                .iter()
-                .find(|opt| opt.get("kind").and_then(|k| k.as_str()) == Some("reject_once"));
-
-            if let Some(opt) = reject {
-                let option_id = opt["optionId"].as_str().unwrap_or("reject");
-                permission_response_selected(&id, option_id)
-            } else {
-                return Err(AcpError::Protocol(
-                    "no suitable permission option found (neither allow_once nor reject_once)"
-                        .into(),
-                ));
+        let response = match permission_options::selected_option(
+            &msg["params"]["options"],
+            self.permission_auto_approve,
+        ) {
+            Some(option_id) => permission_response_selected(&id, option_id),
+            None => {
+                tracing::warn!(target: "acp::permission", "no valid standard permission choice; cancelling request id={id}");
+                permission_response_cancelled(&id)
             }
         };
 
@@ -5909,3 +5920,7 @@ done
         );
     }
 }
+
+#[cfg(test)]
+#[path = "acp/reliability-tests.rs"]
+mod reliability_tests;

@@ -86,10 +86,7 @@ fn apply_heartbeat(ledger: &mut AliveLedgerFile, now: i64) {
             if gap > HEARTBEAT_GAP_CLOSE_SECS {
                 // Close previous interval at last stamp; open a new one at now.
                 if until > start {
-                    ledger.intervals.push(AliveInterval {
-                        start,
-                        end: until,
-                    });
+                    ledger.intervals.push(AliveInterval { start, end: until });
                 }
                 ledger.recent_absence_secs = gap;
                 ledger.open_start = Some(now);
@@ -246,10 +243,7 @@ mod tests {
     fn prune_drops_intervals_beyond_retention() {
         let mut ledger = AliveLedgerFile::default();
         let now = ALIVE_RETENTION_SECS + 10_000;
-        ledger.intervals.push(AliveInterval {
-            start: 0,
-            end: 100,
-        });
+        ledger.intervals.push(AliveInterval { start: 0, end: 100 });
         ledger.intervals.push(AliveInterval {
             start: now - 1_000,
             end: now - 500,

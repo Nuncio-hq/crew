@@ -148,9 +148,11 @@ mod tests {
 
     fn membership_event(channel_id: &str, members: &[(&str, &str)]) -> Event {
         let tags = std::iter::once(Tag::parse(["d", channel_id]).unwrap())
-            .chain(members.iter().map(|(pubkey, role)| {
-                Tag::parse(["p", pubkey, "", role]).unwrap()
-            }))
+            .chain(
+                members
+                    .iter()
+                    .map(|(pubkey, role)| Tag::parse(["p", pubkey, "", role]).unwrap()),
+            )
             .collect::<Vec<_>>();
         EventBuilder::new(Kind::Custom(39002), "")
             .tags(tags)

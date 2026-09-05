@@ -5,7 +5,6 @@ mod app_state;
 mod archive;
 mod builderlab;
 mod commands;
-mod wiki_worker;
 mod deep_link;
 mod egress_guard;
 mod event_sync;
@@ -47,14 +46,15 @@ mod secret_store;
 mod shutdown;
 mod templates;
 mod terminal_runtime;
-mod unread_catch_up;
 #[cfg_attr(not(test), allow(dead_code))]
 mod terminal_transport;
 #[cfg(target_os = "macos")]
 mod tray_menu;
+mod unread_catch_up;
 mod util;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
+mod wiki_worker;
 use agent_control::{
     agent_control_note_human, agent_control_origin_decision, agent_control_release,
     agent_control_status, agent_control_take_over,
@@ -304,356 +304,353 @@ pub fn run() {
     };
 
     let app = app_menu::install(builder)
-            .register_asynchronous_uri_scheme_protocol("buzz-media", |ctx, request, responder| {
-                let app = ctx.app_handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let response = media_proxy::handle_buzz_media(&app, &request).await;
-                    responder.respond(response);
-                });
-            })
-            .manage(build_app_state())
-            .manage(ClipboardState::new())
-            .manage(PendingCommunityDeepLinks::default())
-            .manage(BuilderlabSession::default())
-            .manage(BuilderlabLogin::default())
-            .manage(commands::pairing::PairingHandle::new())
-            .manage(terminal_runtime::TerminalSessions::default())
-            .manage(archive::sync::ArchiveSyncState::default())
-            .manage(native_relay_client::NativeRelayClient::default())
-            .manage(observed_unread::ObservedUnreadStore::default())
-            .manage(crate::resource_governor::ResourceGovernorHandle::new())
-            .manage(crate::resource_governor::MjpegFrames(Default::default()))
-            .manage(crate::agent_control::AgentControlHandle::new())
-            .setup(move |app| {
-                let app_handle = app.handle().clone();
-                #[cfg(target_os = "macos")]
-                {
-                    tray_menu::init(&app_handle)?;
-                    macos_notifications::init(&app_handle)?;
-                }
+        .register_asynchronous_uri_scheme_protocol("buzz-media", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let response = media_proxy::handle_buzz_media(&app, &request).await;
+                responder.respond(response);
+            });
+        })
+        .manage(build_app_state())
+        .manage(ClipboardState::new())
+        .manage(PendingCommunityDeepLinks::default())
+        .manage(BuilderlabSession::default())
+        .manage(BuilderlabLogin::default())
+        .manage(commands::pairing::PairingHandle::new())
+        .manage(terminal_runtime::TerminalSessions::default())
+        .manage(archive::sync::ArchiveSyncState::default())
+        .manage(native_relay_client::NativeRelayClient::default())
+        .manage(observed_unread::ObservedUnreadStore::default())
+        .manage(crate::resource_governor::ResourceGovernorHandle::new())
+        .manage(crate::resource_governor::MjpegFrames(Default::default()))
+        .manage(crate::agent_control::AgentControlHandle::new())
+        .setup(move |app| {
+            let app_handle = app.handle().clone();
+            #[cfg(target_os = "macos")]
+            {
+                tray_menu::init(&app_handle)?;
+                macos_notifications::init(&app_handle)?;
+            }
 
-                // Seed managed Node/npm product dir before any discovery/install/spawn.
-                // Uses productName when set; otherwise the last identifier segment.
-                // Falls back to "Buzz" inside the accessor when unset (tests/headless).
-                {
-                    let config = app_handle.config();
-                    let product_dir = crate::managed_agents::product_dir_from_tauri_config(
-                        config.product_name.as_deref(),
-                        &config.identifier,
-                    );
-                    crate::managed_agents::set_managed_product_dir(product_dir);
-                }
+            // Seed managed Node/npm product dir before any discovery/install/spawn.
+            // Uses productName when set; otherwise the last identifier segment.
+            // Falls back to "Buzz" inside the accessor when unset (tests/headless).
+            {
+                let config = app_handle.config();
+                let product_dir = crate::managed_agents::product_dir_from_tauri_config(
+                    config.product_name.as_deref(),
+                    &config.identifier,
+                );
+                crate::managed_agents::set_managed_product_dir(product_dir);
+            }
 
-                // ── Phase 2: boot-time sentinel wipe ──────────────────────────────
-                // Must run before migrations and identity resolution so the wipe
-                // completes atomically on crash recovery.
-                //
-                // init_nest_dir is called early here (normally it runs inside
-                // run_boot_migrations) so reset::run_boot_reset can call nest_dir().
-                let reset_outcome = if let Ok(data_dir) = app_handle.path().app_data_dir() {
-                    let is_dev_for_reset = data_dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(crate::migration::is_dev_data_dir_name)
-                        .unwrap_or(false);
-                    crate::managed_agents::init_nest_dir(is_dev_for_reset);
-                    crate::reset::run_boot_reset(&data_dir)
-                } else {
-                    crate::reset::ResetOutcome::default()
-                };
+            // ── Phase 2: boot-time sentinel wipe ──────────────────────────────
+            // Must run before migrations and identity resolution so the wipe
+            // completes atomically on crash recovery.
+            //
+            // init_nest_dir is called early here (normally it runs inside
+            // run_boot_migrations) so reset::run_boot_reset can call nest_dir().
+            let reset_outcome = if let Ok(data_dir) = app_handle.path().app_data_dir() {
+                let is_dev_for_reset = data_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(crate::migration::is_dev_data_dir_name)
+                    .unwrap_or(false);
+                crate::managed_agents::init_nest_dir(is_dev_for_reset);
+                crate::reset::run_boot_reset(&data_dir)
+            } else {
+                crate::reset::ResetOutcome::default()
+            };
 
-                if reset_outcome.failed {
-                    // Surface reset-failed state — skip identity resolution and
-                    // all side-effecting setup. The webview still loads so the
-                    // frontend can show the recovery screen via get_identity.
-                    let state = app_handle.state::<AppState>();
-                    state
-                        .reset_failed
-                        .store(true, std::sync::atomic::Ordering::Release);
-                    return Ok(());
-                }
-
-                // Run all pre-identity data migrations before state loads from disk.
-                if reset_outcome.completed {
-                    migration::run_boot_migrations_after_reset(&app_handle);
-                } else {
-                    migration::run_boot_migrations(&app_handle);
-                }
-
-                // Resolve persisted identity key (env var → file → generate+save).
-                // This is fatal — the app should not start with an ephemeral identity
-                // that will be lost on restart, as that silently breaks channel
-                // memberships, DMs, and relay identity.
+            if reset_outcome.failed {
+                // Surface reset-failed state — skip identity resolution and
+                // all side-effecting setup. The webview still loads so the
+                // frontend can show the recovery screen via get_identity.
                 let state = app_handle.state::<AppState>();
-                if let Err(e) = resolve_persisted_identity(&app_handle, &state) {
-                    eprintln!("buzz-desktop: fatal: identity resolution failed: {e}");
-                    std::process::exit(1);
-                }
+                state
+                    .reset_failed
+                    .store(true, std::sync::atomic::Ordering::Release);
+                return Ok(());
+            }
 
-                // When the identity is in recovery mode (lost = keyring empty after
-                // migration, or keyring-locked = keyring unreachable but marker
-                // present), all owner-keyed side effects (event sync, agent restore,
-                // relay publish) are skipped. The frontend shows a recovery screen;
-                // the user must relaunch after restoring the identity.
-                let identity_lost = state
-                    .identity_lost
-                    .load(std::sync::atomic::Ordering::Acquire);
-                let keyring_locked = state
-                    .keyring_locked
-                    .load(std::sync::atomic::Ordering::Acquire);
-                let recovery_mode = identity_lost || keyring_locked;
+            // Run all pre-identity data migrations before state loads from disk.
+            if reset_outcome.completed {
+                migration::run_boot_migrations_after_reset(&app_handle);
+            } else {
+                migration::run_boot_migrations(&app_handle);
+            }
 
-                // Backfill the pinned persona snapshot for any pre-existing agent
-                // that predates the record-authoritative-spawn cutover (persona_id
-                // set but no source_version). Must run before
-                // restore_managed_agents_on_launch so no agent spawns from an empty
-                // snapshot. Synchronous and best-effort — a failure here must not
-                // block launch, but a missing persona is logged loudly inside.
-                if let Err(e) = backfill_persona_snapshots(&app_handle) {
-                    eprintln!("buzz-desktop: persona-snapshot backfill failed: {e}");
-                }
+            // Resolve persisted identity key (env var → file → generate+save).
+            // This is fatal — the app should not start with an ephemeral identity
+            // that will be lost on restart, as that silently breaks channel
+            // memberships, DMs, and relay identity.
+            let state = app_handle.state::<AppState>();
+            if let Err(e) = resolve_persisted_identity(&app_handle, &state) {
+                eprintln!("buzz-desktop: fatal: identity resolution failed: {e}");
+                std::process::exit(1);
+            }
 
-                // Warm the loaded-harness registry BEFORE restore so cold-launch
-                // agent spawns can resolve custom/preset runtime ids without
-                // waiting for the frontend's discover_acp_providers call.  This is
-                // a pure directory scan — no PATH probing, no async work.
-                {
-                    let custom_dir = app_handle
-                        .path()
-                        .app_data_dir()
-                        .ok()
-                        .map(|d| d.join("custom_harnesses"));
-                    managed_agents::custom_harnesses::warm_harness_registry_from_dir(
-                        custom_dir.as_deref(),
-                    );
-                }
+            // When the identity is in recovery mode (lost = keyring empty after
+            // migration, or keyring-locked = keyring unreachable but marker
+            // present), all owner-keyed side effects (event sync, agent restore,
+            // relay publish) are skipped. The frontend shows a recovery screen;
+            // the user must relaunch after restoring the identity.
+            let identity_lost = state
+                .identity_lost
+                .load(std::sync::atomic::Ordering::Acquire);
+            let keyring_locked = state
+                .keyring_locked
+                .load(std::sync::atomic::Ordering::Acquire);
+            let recovery_mode = identity_lost || keyring_locked;
 
-                // Store the AppHandle so huddle commands can emit `huddle-state-changed`
-                // events via `huddle::emit_huddle_state` without threading the handle
-                // through every call site.
-                if let Ok(mut guard) = state.app_handle.lock() {
-                    *guard = Some(app_handle.clone());
-                }
+            // Backfill the pinned persona snapshot for any pre-existing agent
+            // that predates the record-authoritative-spawn cutover (persona_id
+            // set but no source_version). Must run before
+            // restore_managed_agents_on_launch so no agent spawns from an empty
+            // snapshot. Synchronous and best-effort — a failure here must not
+            // block launch, but a missing persona is logged loudly inside.
+            if let Err(e) = backfill_persona_snapshots(&app_handle) {
+                eprintln!("buzz-desktop: persona-snapshot backfill failed: {e}");
+            }
 
-                let (tts_settings, tts_settings_load_error) =
-                    huddle::tts_settings::load_for_app(&app_handle);
-                if let Ok(mut guard) = state.huddle_audio.tts.lock() {
-                    *guard = tts_settings.clone();
-                }
-                if let Ok(mut guard) = state.huddle_audio.tts_load_error.lock() {
-                    *guard = tts_settings_load_error;
-                }
-                if let Ok(mut huddle) = state.huddle_state.lock() {
-                    huddle.tts_enabled = tts_settings.agent_text_to_speech;
-                }
+            // Warm the loaded-harness registry BEFORE restore so cold-launch
+            // agent spawns can resolve custom/preset runtime ids without
+            // waiting for the frontend's discover_acp_providers call.  This is
+            // a pure directory scan — no PATH probing, no async work.
+            {
+                let custom_dir = app_handle
+                    .path()
+                    .app_data_dir()
+                    .ok()
+                    .map(|d| d.join("custom_harnesses"));
+                managed_agents::custom_harnesses::warm_harness_registry_from_dir(
+                    custom_dir.as_deref(),
+                );
+            }
 
-                // Bring up the runtime-owned shared-compute coordinator before
-                // saved agents are restored. Its lifetime is tied to the app, not
-                // a UI mount; it publishes discovery and reconciles membership for
-                // MeshLLM's native admission and transport.
-                #[cfg(feature = "mesh-llm")]
-                {
-                    // Route mesh-llm's download progress (model weights, runtime)
-                    // onto Tauri events so the UI can render real progress.
-                    crate::mesh_llm::install_progress_sink(&app_handle);
-                    let mesh_app = app_handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        crate::mesh_llm::start_coordinator(mesh_app).await;
-                    });
-                }
+            // Store the AppHandle so huddle commands can emit `huddle-state-changed`
+            // events via `huddle::emit_huddle_state` without threading the handle
+            // through every call site.
+            if let Ok(mut guard) = state.app_handle.lock() {
+                *guard = Some(app_handle.clone());
+            }
 
-                // Start the localhost media streaming proxy. Uses the shared HTTP
-                // client so VPN tunnelling applies. The port is stored in AppState
-                // and exposed to the frontend via the `get_media_proxy_port` command.
-                let proxy_client = state.http_client.clone();
-                let proxy_handle = app_handle.clone();
+            let (tts_settings, tts_settings_load_error) =
+                huddle::tts_settings::load_for_app(&app_handle);
+            if let Ok(mut guard) = state.huddle_audio.tts.lock() {
+                *guard = tts_settings.clone();
+            }
+            if let Ok(mut guard) = state.huddle_audio.tts_load_error.lock() {
+                *guard = tts_settings_load_error;
+            }
+            if let Ok(mut huddle) = state.huddle_state.lock() {
+                huddle.tts_enabled = tts_settings.agent_text_to_speech;
+            }
+
+            // Bring up the runtime-owned shared-compute coordinator before
+            // saved agents are restored. Its lifetime is tied to the app, not
+            // a UI mount; it publishes discovery and reconciles membership for
+            // MeshLLM's native admission and transport.
+            #[cfg(feature = "mesh-llm")]
+            {
+                // Route mesh-llm's download progress (model weights, runtime)
+                // onto Tauri events so the UI can render real progress.
+                crate::mesh_llm::install_progress_sink(&app_handle);
+                let mesh_app = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    let port =
-                        media_proxy::spawn_media_proxy(proxy_client, proxy_handle.clone()).await;
-                    let state = proxy_handle.state::<AppState>();
-                    state
-                        .media_proxy_port
-                        .store(port, std::sync::atomic::Ordering::Relaxed);
+                    crate::mesh_llm::start_coordinator(mesh_app).await;
                 });
+            }
 
-                // Bind agent-control before restore so spawn_agent_child can inject
-                // BUZZ_DESKTOP_CONTROL_URL. Live host attaches to #196 Governor.
-                let control = {
-                    let state = app_handle.state::<crate::agent_control::AgentControlHandle>();
-                    (*state).clone()
-                };
-                let prebound = control.bind_now();
-                control
-                    .runtime
-                    .attach_live(app_handle.clone(), control.port.clone());
-                tauri::async_runtime::spawn(async move {
-                    crate::agent_control::spawn_agent_control_on(control, prebound).await;
-                });
+            // Start the localhost media streaming proxy. Uses the shared HTTP
+            // client so VPN tunnelling applies. The port is stored in AppState
+            // and exposed to the frontend via the `get_media_proxy_port` command.
+            let proxy_client = state.http_client.clone();
+            let proxy_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let port = media_proxy::spawn_media_proxy(proxy_client, proxy_handle.clone()).await;
+                let state = proxy_handle.state::<AppState>();
+                state
+                    .media_proxy_port
+                    .store(port, std::sync::atomic::Ordering::Relaxed);
+            });
 
-                start_background(&app_handle);
+            // Bind agent-control before restore so spawn_agent_child can inject
+            // BUZZ_DESKTOP_CONTROL_URL. Live host attaches to #196 Governor.
+            let control = {
+                let state = app_handle.state::<crate::agent_control::AgentControlHandle>();
+                (*state).clone()
+            };
+            let prebound = control.bind_now();
+            control
+                .runtime
+                .attach_live(app_handle.clone(), control.port.clone());
+            tauri::async_runtime::spawn(async move {
+                crate::agent_control::spawn_agent_control_on(control, prebound).await;
+            });
 
-                // Create the Buzz nest (~/.buzz or ~/.buzz-dev for dev builds) before
-                // agents are restored, so default_agent_workdir() resolves to the
-                // nest directory. Non-fatal: agents fall back to $HOME if nest
-                // creation fails.
-                if let Err(error) = ensure_nest() {
-                    eprintln!("buzz-desktop: failed to create nest: {error}");
-                }
+            start_background(&app_handle);
 
-                // Resolve the REPOS symlink from the persisted repos_dir BEFORE
-                // agents are restored below, and decide whether restore is safe.
-                // The frontend's apply_workspace runs only after React mounts —
-                // later than the async agent restore — so without this an agent
-                // could clone into the empty real REPOS dir, and once REPOS is
-                // non-empty ensure_repos_symlink refuses forever. resolve_repos_at_boot
-                // fails closed: if a repos_dir was configured but its symlink could
-                // not be resolved (transiently unavailable external volume), it
-                // returns false so we skip restore this launch rather than let an
-                // agent clone into the wrong REPOS. See managed_agents::repos.
-                let restore_agents = match managed_agents::nest_dir() {
-                    Some(nest) => managed_agents::resolve_repos_at_boot(&nest),
-                    None => true,
-                };
+            // Create the Buzz nest (~/.buzz or ~/.buzz-dev for dev builds) before
+            // agents are restored, so default_agent_workdir() resolves to the
+            // nest directory. Non-fatal: agents fall back to $HOME if nest
+            // creation fails.
+            if let Err(error) = ensure_nest() {
+                eprintln!("buzz-desktop: failed to create nest: {error}");
+            }
 
-                // Carry the agent's knowledge from the legacy nest (~/.sprout) into
-                // the live nest after it exists. Must run after ensure_nest() so the
-                // destination is present. Non-fatal.
-                // On a real migration, emit a one-time hint so the user can delete
-                // the now-inert ~/.sprout; the frontend dedupes the toast.
-                // Suppressed when a reset completed this boot: the nest was wiped and
-                // a fresh ~/.sprout-less state is exactly what we want.
-                if !reset_outcome.completed && migration::migrate_legacy_nest() {
-                    let _ = app_handle.emit("legacy-nest-migrated", ());
-                }
+            // Resolve the REPOS symlink from the persisted repos_dir BEFORE
+            // agents are restored below, and decide whether restore is safe.
+            // The frontend's apply_workspace runs only after React mounts —
+            // later than the async agent restore — so without this an agent
+            // could clone into the empty real REPOS dir, and once REPOS is
+            // non-empty ensure_repos_symlink refuses forever. resolve_repos_at_boot
+            // fails closed: if a repos_dir was configured but its symlink could
+            // not be resolved (transiently unavailable external volume), it
+            // returns false so we skip restore this launch rather than let an
+            // agent clone into the wrong REPOS. See managed_agents::repos.
+            let restore_agents = match managed_agents::nest_dir() {
+                Some(nest) => managed_agents::resolve_repos_at_boot(&nest),
+                None => true,
+            };
 
-                // One-time migration for dev builds: copy accumulated knowledge
-                // from the shared ~/.buzz nest into the new dedicated ~/.buzz-dev
-                // nest so no work is lost when the nest is first namespaced.
-                // Runs only when nest_dir() resolved to ~/.buzz-dev (dev instance).
-                // Suppressed after a reset so re-importing ~/.buzz into ~/.buzz-dev
-                // doesn't re-populate what was just wiped.
-                let is_dev_nest = managed_agents::nest_dir()
-                    .and_then(|p| p.file_name().map(|n| n.to_os_string()))
-                    .is_some_and(|n| n == ".buzz-dev");
-                if !reset_outcome.completed && is_dev_nest {
-                    migration::migrate_dev_nest();
-                }
+            // Carry the agent's knowledge from the legacy nest (~/.sprout) into
+            // the live nest after it exists. Must run after ensure_nest() so the
+            // destination is present. Non-fatal.
+            // On a real migration, emit a one-time hint so the user can delete
+            // the now-inert ~/.sprout; the frontend dedupes the toast.
+            // Suppressed when a reset completed this boot: the nest was wiped and
+            // a fresh ~/.sprout-less state is exactly what we want.
+            if !reset_outcome.completed && migration::migrate_legacy_nest() {
+                let _ = app_handle.emit("legacy-nest-migrated", ());
+            }
 
-                // Create/update the local CLI symlink pointing to the
-                // bundled CLI binary. Non-fatal: agents find CLI via PATH.
-                if let Ok(exe) = std::env::current_exe() {
-                    if let Some(parent) = exe.parent() {
-                        if let Err(error) = managed_agents::ensure_cli_symlink(parent, is_dev_nest)
-                        {
-                            eprintln!("buzz-desktop: failed to create CLI symlink: {error}");
-                        }
+            // One-time migration for dev builds: copy accumulated knowledge
+            // from the shared ~/.buzz nest into the new dedicated ~/.buzz-dev
+            // nest so no work is lost when the nest is first namespaced.
+            // Runs only when nest_dir() resolved to ~/.buzz-dev (dev instance).
+            // Suppressed after a reset so re-importing ~/.buzz into ~/.buzz-dev
+            // doesn't re-populate what was just wiped.
+            let is_dev_nest = managed_agents::nest_dir()
+                .and_then(|p| p.file_name().map(|n| n.to_os_string()))
+                .is_some_and(|n| n == ".buzz-dev");
+            if !reset_outcome.completed && is_dev_nest {
+                migration::migrate_dev_nest();
+            }
+
+            // Create/update the local CLI symlink pointing to the
+            // bundled CLI binary. Non-fatal: agents find CLI via PATH.
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(parent) = exe.parent() {
+                    if let Err(error) = managed_agents::ensure_cli_symlink(parent, is_dev_nest) {
+                        eprintln!("buzz-desktop: failed to create CLI symlink: {error}");
                     }
                 }
+            }
 
-                try_regenerate_nest(&app_handle);
+            try_regenerate_nest(&app_handle);
 
-                if let Some(mgr) = huddle::models::global_model_manager() {
-                    mgr.start_stt_download(state.http_client.clone());
-                    mgr.start_tts_download(state.http_client.clone());
+            if let Some(mgr) = huddle::models::global_model_manager() {
+                mgr.start_stt_download(state.http_client.clone());
+                mgr.start_tts_download(state.http_client.clone());
+            }
+
+            // Handle deep link URLs received while the app is running (macOS)
+            // and on cold start. The single-instance plugin handles forwarding
+            // from duplicate launches on Windows/Linux.
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let dl_handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        handle_deep_link_url(&dl_handle, url.as_str());
+                    }
+                });
+            }
+
+            // Defer launch-time agent restoration until `apply_workspace` has
+            // installed the active workspace relay and identity. Starting here
+            // would race React initialization and send agents whose saved record
+            // has no relay override to the localhost fallback. Preserve the
+            // boot-time repos and identity recovery safety gates by only marking
+            // restoration pending when both allow it.
+            if restore_agents && !recovery_mode {
+                state
+                    .managed_agent_restore_pending
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+
+            // Periodic sweep: reap orphaned agents from dead instances every 60s.
+            // Catches agents that escaped both the Justfile trap and boot-time
+            // reaping (e.g. a `just staging` Ctrl+C leak that only gets collected
+            // by a different instance's periodic sweep).
+            let sweep_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use std::collections::HashSet;
+                use std::time::Duration;
+                use tauri::Manager;
+                let instance_id = managed_agents::current_instance_id(&sweep_handle);
+                let state = sweep_handle.state::<AppState>();
+                // Two-tick grace: only reap same-instance orphans seen on two
+                // consecutive sweeps. Prevents killing a legitimately-starting
+                // agent that spawned between the skip-list snapshot and the scan.
+                let mut prev_orphans: HashSet<u32> = HashSet::new();
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    // Collect PIDs of our own live agents to avoid killing them.
+                    let skip_pids: Vec<u32> = state
+                        .managed_agent_processes
+                        .lock()
+                        .map(|runtimes| runtimes.values().map(|rt| rt.child.id()).collect())
+                        .unwrap_or_default();
+                    let prev = prev_orphans.clone();
+                    let inst = instance_id.clone();
+                    // Run the blocking syscall work off the async executor.
+                    let new_orphans = tauri::async_runtime::spawn_blocking(move || {
+                        let orphans = managed_agents::sweep_system_agent_processes_with_grace(
+                            &inst, &skip_pids, &prev,
+                        );
+                        managed_agents::reap_dead_instance_agents(&inst, &skip_pids);
+                        orphans
+                    })
+                    .await
+                    .unwrap_or_default();
+                    prev_orphans = new_orphans;
                 }
+            });
 
-                // Handle deep link URLs received while the app is running (macOS)
-                // and on cold start. The single-instance plugin handles forwarding
-                // from duplicate launches on Windows/Linux.
-                #[cfg(desktop)]
-                {
-                    use tauri_plugin_deep_link::DeepLinkExt;
-                    let dl_handle = app.handle().clone();
-                    app.deep_link().on_open_url(move |event| {
-                        for url in event.urls() {
-                            handle_deep_link_url(&dl_handle, url.as_str());
-                        }
-                    });
-                }
-
-                // Defer launch-time agent restoration until `apply_workspace` has
-                // installed the active workspace relay and identity. Starting here
-                // would race React initialization and send agents whose saved record
-                // has no relay override to the localhost fallback. Preserve the
-                // boot-time repos and identity recovery safety gates by only marking
-                // restoration pending when both allow it.
-                if restore_agents && !recovery_mode {
-                    state
-                        .managed_agent_restore_pending
-                        .store(true, std::sync::atomic::Ordering::Release);
-                }
-
-                // Periodic sweep: reap orphaned agents from dead instances every 60s.
-                // Catches agents that escaped both the Justfile trap and boot-time
-                // reaping (e.g. a `just staging` Ctrl+C leak that only gets collected
-                // by a different instance's periodic sweep).
-                let sweep_handle = app.handle().clone();
+            // Drain events the retention store flagged `pending_sync` (UI
+            // create/edit, delete tombstones, launch reconcile) to the relay.
+            // One loop is the sole publisher for persona, team, and managed-
+            // agent writers; a relay-unreachable tick leaves rows pending for
+            // the next sweep.
+            // Skipped in recovery mode — flushing under an ephemeral key would
+            // publish events attributed to an identity the user doesn't own.
+            if !recovery_mode {
+                let flush_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    use std::collections::HashSet;
                     use std::time::Duration;
                     use tauri::Manager;
-                    let instance_id = managed_agents::current_instance_id(&sweep_handle);
-                    let state = sweep_handle.state::<AppState>();
-                    // Two-tick grace: only reap same-instance orphans seen on two
-                    // consecutive sweeps. Prevents killing a legitimately-starting
-                    // agent that spawned between the skip-list snapshot and the scan.
-                    let mut prev_orphans: HashSet<u32> = HashSet::new();
                     loop {
-                        tokio::time::sleep(Duration::from_secs(60)).await;
-                        // Collect PIDs of our own live agents to avoid killing them.
-                        let skip_pids: Vec<u32> = state
-                            .managed_agent_processes
-                            .lock()
-                            .map(|runtimes| runtimes.values().map(|rt| rt.child.id()).collect())
-                            .unwrap_or_default();
-                        let prev = prev_orphans.clone();
-                        let inst = instance_id.clone();
-                        // Run the blocking syscall work off the async executor.
-                        let new_orphans = tauri::async_runtime::spawn_blocking(move || {
-                            let orphans = managed_agents::sweep_system_agent_processes_with_grace(
-                                &inst, &skip_pids, &prev,
-                            );
-                            managed_agents::reap_dead_instance_agents(&inst, &skip_pids);
-                            orphans
-                        })
+                        let state = flush_handle.state::<AppState>();
+                        if let Err(e) = managed_agents::persona_events::flush_active_pending_events(
+                            &flush_handle,
+                            &state,
+                        )
                         .await
-                        .unwrap_or_default();
-                        prev_orphans = new_orphans;
+                        {
+                            eprintln!("buzz-desktop: event-flush: {e}");
+                        }
+                        tokio::time::sleep(Duration::from_secs(30)).await;
                     }
                 });
-
-                // Drain events the retention store flagged `pending_sync` (UI
-                // create/edit, delete tombstones, launch reconcile) to the relay.
-                // One loop is the sole publisher for persona, team, and managed-
-                // agent writers; a relay-unreachable tick leaves rows pending for
-                // the next sweep.
-                // Skipped in recovery mode — flushing under an ephemeral key would
-                // publish events attributed to an identity the user doesn't own.
-                if !recovery_mode {
-                    let flush_handle = app.handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        use std::time::Duration;
-                        use tauri::Manager;
-                        loop {
-                            let state = flush_handle.state::<AppState>();
-                            if let Err(e) =
-                                managed_agents::persona_events::flush_active_pending_events(
-                                    &flush_handle,
-                                    &state,
-                                )
-                                .await
-                            {
-                                eprintln!("buzz-desktop: event-flush: {e}");
-                            }
-                            tokio::time::sleep(Duration::from_secs(30)).await;
-                        }
-                    });
-                }
-                Ok(())
-            })
+            }
+            Ok(())
+        })
         .invoke_handler(crate::invoke::desktop_invoke_handler!())
         .build(tauri::generate_context!())
-    .expect("error while building tauri application");
+        .expect("error while building tauri application");
     let shutdown_done = Arc::new(AtomicBool::new(false));
 
     #[cfg(unix)]

@@ -696,7 +696,9 @@ mod tests {
     fn unique_dir(label: &str) -> PathBuf {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        std::env::temp_dir().join(format!(
+        // macOS temp paths contain /var, a symlink rejected by secure spool traversal.
+        // Resolve the trusted test root before appending the not-yet-created ledger.
+        std::env::temp_dir().canonicalize().unwrap().join(format!(
             "buzz-acp-session-ledger-{}-{}-{}",
             label,
             std::process::id(),

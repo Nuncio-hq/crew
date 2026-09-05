@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn idempotent_when_unchanged() {
         let page = draft("abc", "hello");
-        let publish = pages_to_publish(&[page.clone()], &[page]);
+        let publish = pages_to_publish(std::slice::from_ref(&page), std::slice::from_ref(&page));
         assert!(publish.is_empty());
     }
 

@@ -22,9 +22,10 @@ pub(crate) use path::{compose_path_entries, should_skip_claude_executable, shoul
 pub(crate) use super::access_policy::{build_respond_to_env_with_policy, RespondToEnv};
 
 mod metadata;
+use metadata::child_rust_log_filter;
 pub(crate) use metadata::{
-    apply_agent_display_env, resolve_session_title, runtime_metadata_env_vars,
-    DISPLAY_NAME_ENV_VAR, SESSION_TITLE_ENV_VAR,
+    apply_agent_display_env, apply_system_prompt_env, resolve_session_title,
+    runtime_metadata_env_vars, DISPLAY_NAME_ENV_VAR, SESSION_TITLE_ENV_VAR,
 };
 
 mod stop;
@@ -295,7 +296,14 @@ pub fn build_managed_agent_summary(
         .unwrap_or("")
         .to_string();
 
-    let (effective_model, effective_provider, model_source) = crate::managed_agents::hermes_profile::projected_crew_model_fields(record.hermes_profile.as_deref(), &descriptor.command, effective_model, effective_provider, model_source);
+    let (effective_model, effective_provider, model_source) =
+        crate::managed_agents::hermes_profile::projected_crew_model_fields(
+            record.hermes_profile.as_deref(),
+            &descriptor.command,
+            effective_model,
+            effective_provider,
+            model_source,
+        );
 
     Ok(ManagedAgentSummary {
         pubkey: record.pubkey.clone(),
@@ -896,22 +904,6 @@ pub fn spawn_agent_child(
         adapter_availability: spawned_adapter_availability,
         start_nonce,
     })
-}
-
-pub(crate) fn apply_system_prompt_env(command: &mut std::process::Command, prompt: Option<&str>) {
-    if let Some(prompt) = prompt {
-        command.env("BUZZ_ACP_SYSTEM_PROMPT", prompt);
-    } else {
-        command.env_remove("BUZZ_ACP_SYSTEM_PROMPT");
-    }
-}
-
-fn child_rust_log_filter() -> String {
-    match std::env::var("RUST_LOG") {
-        Ok(existing) if existing.contains("buzz_acp") => existing,
-        Ok(existing) if !existing.trim().is_empty() => format!("{existing},buzz_acp=info"),
-        _ => "buzz_acp=info".to_string(),
-    }
 }
 
 pub fn start_managed_agent_process(

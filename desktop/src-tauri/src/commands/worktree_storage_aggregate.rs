@@ -372,6 +372,8 @@ mod tests {
     const CHANNEL: &str = "11111111-1111-1111-1111-111111111111";
 
     struct Fixture {
+        // Exclude tests that temporarily replace PATH while git operations run.
+        _path_guard: std::sync::MutexGuard<'static, ()>,
         _temp: TempDir,
         repository: PathBuf,
         managed_worktree: PathBuf,
@@ -379,6 +381,7 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
+            let path_guard = crate::managed_agents::lock_path_mutex();
             let temp = TempDir::new().expect("temp");
             let root_dir = temp.path();
             let repository = root_dir.join("crew");
@@ -430,6 +433,7 @@ mod tests {
             )
             .expect("record");
             Self {
+                _path_guard: path_guard,
                 _temp: temp,
                 repository,
                 managed_worktree,

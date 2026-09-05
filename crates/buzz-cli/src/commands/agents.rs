@@ -226,7 +226,11 @@ fn resolve_call_target(
     }
 }
 
-fn format_call_content(used_agent_name: bool, target: &str, body: &str) -> Result<String, CliError> {
+fn format_call_content(
+    used_agent_name: bool,
+    target: &str,
+    body: &str,
+) -> Result<String, CliError> {
     let body = body.trim();
     if body.is_empty() {
         return Err(CliError::Usage("call message is empty".into()));

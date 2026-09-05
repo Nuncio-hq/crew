@@ -111,7 +111,8 @@ All configuration is via environment variables (or CLI flags — every env var h
 | `BUZZ_ACP_AGENT_COMMAND` | no | `goose` | Agent binary to spawn. |
 | `BUZZ_ACP_AGENT_ARGS` | no | `acp` | Agent arguments (comma-separated). |
 | `BUZZ_ACP_MCP_COMMAND` | no | `""` (empty) | Path to an optional MCP server binary to provide to the agent subprocess. |
-| `BUZZ_ACP_IDLE_TIMEOUT` | no | `620` | Idle timeout: max seconds of silence before cancelling a turn. Resets on any agent stdout activity. |
+| `BUZZ_ACP_IDLE_TIMEOUT` | no | `900` | Ordinary silence timeout in seconds; parseable ACP output resets it. |
+| `BUZZ_ACP_TOOL_IDLE_TIMEOUT` | no | `max(2400, idle timeout)` | Fixed silence allowance from each tracked tool start, in seconds. Does not extend the hard turn cap. |
 | `BUZZ_ACP_MAX_TURN_DURATION` | no | `7200` | Absolute wall-clock cap per turn (safety valve). |
 | `BUZZ_ACP_AGENT_RECEIPTS` | no | `false` | Publish a channel-scoped terminal receipt after successful turns that stream a result summary. |
 | `BUZZ_API_TOKEN` | no | — | API token (required if relay enforces token auth). |
@@ -119,6 +120,32 @@ All configuration is via environment variables (or CLI flags — every env var h
 **Note:** `BUZZ_ACP_AGENT_ARGS` splits on commas. For args with values, use: `-c,key="value"`.
 
 **Legacy env vars:** `BUZZ_ACP_PRIVATE_KEY`, `BUZZ_ACP_API_TOKEN`, and `BUZZ_ACP_TURN_TIMEOUT` (replaced by `BUZZ_ACP_IDLE_TIMEOUT`) are still accepted as fallbacks.
+
+### Turn deadlines and permission choices
+
+`--tool-idle-timeout` / `BUZZ_ACP_TOOL_IDLE_TIMEOUT` defaults to 2400 seconds,
+or the ordinary idle timeout if that is larger. An explicit value must be at
+least the ordinary idle timeout. It may exceed the hard cap; the hard cap still
+wins. Existing configurations with a larger idle timeout or shorter hard cap
+remain valid.
+
+Each tracked ACP tool ID has one fixed allowance from its first start.
+Completion/failure retires that ID for the prompt. Duplicate starts, progress,
+and unrelated output cannot renew the tool allowance; parallel tools keep
+independent deadlines. Without a terminal frame the allowance still expires,
+and normal idle handling applies. A tool timeout never disables the independent
+`--max-turn-duration` cap.
+
+A plan continuation uses the first prompt's remaining effective execution
+budget. Human decision waiting does not consume that budget; existing ACP
+elicitation pauses and accepted native steering renewals remain in effect.
+Errors and Stop apply to both prompts and the decision wait.
+
+In `bypass-permissions` mode, permission requests may select an advertised
+`allow_once` with a valid, nonblank `optionId`. Otherwise the harness selects a
+valid `reject_once`, then `reject_always`, or returns `cancelled`. It never
+selects `allow_always`, invents an ID, or infers consent from labels or
+substrings. These ACP choices do not rewrite the provider's own approval policy.
 
 ### Parallel Agents & Heartbeat
 

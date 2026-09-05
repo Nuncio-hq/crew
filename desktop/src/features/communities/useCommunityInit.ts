@@ -1,3 +1,4 @@
+import { resetChannelMembershipState } from "@/features/agents/lib/channelMembershipState";
 import { useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { isMacPlatform } from "@/shared/lib/platform";
@@ -80,6 +81,7 @@ function resetCommunityState({
   resetRateLimitGate();
   clearAllDrafts();
   resetAgentObserverStore();
+  resetChannelMembershipState();
   clearAllSessionAging();
   resetActiveAgentTurnsStore();
   resetThreadAgentActivityHeadlineCaches();

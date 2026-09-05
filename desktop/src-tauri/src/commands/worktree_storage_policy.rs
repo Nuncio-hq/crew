@@ -100,9 +100,7 @@ pub fn classify_reclaim_candidate(input: &PolicyInput<'_>) -> ReclaimClassificat
         Some(last) => observed_idle_secs(last, input.intervals, input.now),
         None => 0,
     };
-    let wall_idle_secs = input
-        .last_used_at
-        .map(|last| (input.now - last).max(0));
+    let wall_idle_secs = input.last_used_at.map(|last| (input.now - last).max(0));
 
     if input.busy {
         return ReclaimClassification {
@@ -223,10 +221,7 @@ pub fn classify_reclaim_candidate(input: &PolicyInput<'_>) -> ReclaimClassificat
             wall_idle_secs,
             read_only: input.dirty || input.eviction_refusal.is_some(),
             refusal_reason: if input.dirty {
-                Some(
-                    "dirty — uncommitted changes block eviction"
-                        .to_string(),
-                )
+                Some("dirty — uncommitted changes block eviction".to_string())
             } else {
                 input.eviction_refusal.map(str::to_string)
             },
@@ -371,8 +366,7 @@ mod tests {
             } else {
                 PrLinkState::None
             };
-            let class =
-                classify_reclaim_candidate(&base_input(Some(last), &alive, now + 10, pr));
+            let class = classify_reclaim_candidate(&base_input(Some(last), &alive, now + 10, pr));
             if class.candidate {
                 if matches!(pr, PrLinkState::Merged { .. }) {
                     merged += 1;
@@ -457,12 +451,7 @@ mod tests {
     #[test]
     fn dirty_blocks_hibernate_allows_lean() {
         let alive = intervals(&[(0, 100)]);
-        let mut input = base_input(
-            Some(0),
-            &alive,
-            100,
-            PrLinkState::Merged { number: 1 },
-        );
+        let mut input = base_input(Some(0), &alive, 100, PrLinkState::Merged { number: 1 });
         input.dirty = true;
         input.can_evict = false;
         input.eviction_refusal = Some("dirty");
@@ -498,7 +487,10 @@ mod tests {
             pr_link_state(&[(3, "CLOSED")]),
             PrLinkState::ClosedUnmerged { number: 3 }
         );
-        assert_eq!(pr_link_state(&[(4, "OPEN")]), PrLinkState::Open { number: 4 });
+        assert_eq!(
+            pr_link_state(&[(4, "OPEN")]),
+            PrLinkState::Open { number: 4 }
+        );
         assert_eq!(pr_link_state(&[]), PrLinkState::None);
     }
 }
