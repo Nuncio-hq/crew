@@ -14,6 +14,71 @@ const MOCK_PUBKEY = "deadbeef".repeat(8);
 const SECTION_TOP = { id: "sec-top", name: "Priority", order: 0 };
 const SECTION_BOTTOM = { id: "sec-bottom", name: "Archive", order: 1 };
 
+// This function runs in the browser. Observe delivered native input rather
+// than assuming CDP dispatch fits inside a fixed wall-clock sampling window.
+async function observeNativeWheelBurst(
+  scroller: HTMLElement,
+  {
+    direction,
+    count,
+    minimumMs,
+  }: { direction: number; count: number; minimumMs: number },
+) {
+  const startedAt = performance.now();
+  const startScrollTop = scroller.scrollTop;
+  let previousScrollTop = startScrollTop;
+  let lastMotionAt = startedAt;
+  let stableFrames = 0;
+  let deliveredWheels = 0;
+  let maxForwardTravel = 0;
+  let maxRollback = 0;
+  let minScrollTop = startScrollTop;
+  const markScroll = () => {
+    lastMotionAt = performance.now();
+  };
+  const markWheel = (event: Event) => {
+    const wheel = event as WheelEvent;
+    if (!wheel.ctrlKey && Math.sign(wheel.deltaY) === direction) {
+      deliveredWheels += 1;
+      lastMotionAt = performance.now();
+    }
+  };
+  scroller.addEventListener("scroll", markScroll, { passive: true });
+  scroller.addEventListener("wheel", markWheel, { passive: true });
+  try {
+    while (performance.now() - startedAt < 10_000) {
+      const top = scroller.scrollTop;
+      maxForwardTravel = Math.max(
+        maxForwardTravel,
+        (top - startScrollTop) * direction,
+      );
+      maxRollback = Math.max(
+        maxRollback,
+        (previousScrollTop - top) * direction,
+      );
+      minScrollTop = Math.min(minScrollTop, top);
+      stableFrames =
+        Math.abs(top - previousScrollTop) < 0.5 ? stableFrames + 1 : 0;
+      previousScrollTop = top;
+      if (
+        deliveredWheels >= count &&
+        stableFrames >= 3 &&
+        performance.now() - lastMotionAt >= 100 &&
+        performance.now() - startedAt >= minimumMs
+      ) {
+        return { maxForwardTravel, maxRollback, minScrollTop };
+      }
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    throw new Error(
+      `wheel burst did not settle after ${deliveredWheels}/${count} native events`,
+    );
+  } finally {
+    scroller.removeEventListener("scroll", markScroll);
+    scroller.removeEventListener("wheel", markWheel);
+  }
+}
+
 async function seedChannelSections(page: Page) {
   await page.addInitScript(
     ({ pubkey, sections }) => {
@@ -193,12 +258,11 @@ test.describe("list virtualization", () => {
     // reproduce Chromium/WebKit's native wheel → scroll callback ordering. The
     // old boundary rollback moved the viewport back down before the fetch
     // committed; keep that pre-prepend reversal below the same 5px frame bar.
-    // A 300ms relay delay leaves the input boundary and prepend commit as two
-    // distinct phases so this assertion cannot accidentally measure only the
-    // later anchor correction.
+    // Hold the real older-page response until wheel input settles so driver
+    // scheduling cannot move the prepend commit into the boundary probe. The
+    // boundary rollback and the later anchor correction are separate phases.
     await installMockBridge(page, {
       deepHistoryMessageCount: 1_800,
-      channelWindowDelayMs: 300,
     });
     await page.goto("/#/channels/feedf00d-0000-4000-8000-000000000007");
     const timeline = page.getByTestId("message-timeline");
@@ -206,6 +270,36 @@ test.describe("list virtualization", () => {
     // Initial bottom positioning can momentarily cross the start threshold. Let
     // any resulting page transaction settle before driving explicit crossings.
     await page.waitForTimeout(1_000);
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (
+            command: string,
+            payload: Record<string, unknown>,
+            options?: unknown,
+          ) => Promise<unknown>;
+        };
+        __RELEASE_OLDER_PAGE__?: () => void;
+      };
+      const original = w.__TAURI_INTERNALS__.invoke.bind(w.__TAURI_INTERNALS__);
+      w.__TAURI_INTERNALS__.invoke = async (command, payload, options) => {
+        const response = original(command, payload, options);
+        if (command !== "get_channel_window" || !payload.cursor)
+          return response;
+        const gate = new Promise<void>((resolve) => {
+          if (w.__RELEASE_OLDER_PAGE__) {
+            throw new Error("overlapping older-page request");
+          }
+          w.__RELEASE_OLDER_PAGE__ = () => {
+            delete w.__RELEASE_OLDER_PAGE__;
+            resolve();
+          };
+        });
+        const result = await response;
+        await gate;
+        return result;
+      };
+    });
 
     const sampleVisibleAnchor = (expectedId?: string) =>
       timeline.evaluate(async (scroller, anchorId) => {
@@ -275,22 +369,10 @@ test.describe("list virtualization", () => {
                 }),
             )
           : Promise.resolve(false);
-      const wheelTracePromise = timeline.evaluate(async (scroller) => {
-        const s = scroller as HTMLElement;
-        let previousScrollTop = s.scrollTop;
-        let maxBoundaryRollback = 0;
-        let minScrollTop = s.scrollTop;
-        const deadline = performance.now() + 120;
-        while (performance.now() < deadline) {
-          maxBoundaryRollback = Math.max(
-            maxBoundaryRollback,
-            s.scrollTop - previousScrollTop,
-          );
-          previousScrollTop = s.scrollTop;
-          minScrollTop = Math.min(minScrollTop, s.scrollTop);
-          await new Promise((resolve) => requestAnimationFrame(resolve));
-        }
-        return { maxBoundaryRollback, minScrollTop };
+      const wheelTracePromise = timeline.evaluate(observeNativeWheelBurst, {
+        direction: -1,
+        count: 4,
+        minimumMs: 120,
       });
       const box = await timeline.boundingBox();
       if (!box) throw new Error("timeline has no bounding box");
@@ -301,27 +383,20 @@ test.describe("list virtualization", () => {
       }
       const wheelTrace = await wheelTracePromise;
       expect(wheelTrace.minScrollTop).toBeLessThanOrEqual(350);
-      expect(wheelTrace.maxBoundaryRollback).toBeLessThan(5);
-      // Linux Chromium delivers CDP wheel input with more latency than macOS,
-      // so the burst's final delta can land AFTER the anchor baseline sample
-      // below. maxDrift then reports the reader's own last wheel event as
-      // anchor drift (measured exactly 15 = the -15 delta; changing the delta
-      // to -17 made the failure read 17). Gate the baseline on input settle:
-      // two consecutive frames with identical scrollTop. This tightens the
-      // assertion rather than diluting it — the baseline becomes honest and
-      // genuine post-prepend drift still reads as drift.
-      await timeline.evaluate(async (element) => {
-        let prior = element.scrollTop;
-        for (let frame = 0; frame < 30; frame += 1) {
-          await new Promise((resolve) => requestAnimationFrame(resolve));
-          if (element.scrollTop === prior) break;
-          prior = element.scrollTop;
-        }
-      });
+      expect(wheelTrace.maxRollback).toBeLessThan(5);
+      // Every native wheel event and its resulting scroll have now settled;
+      // the baseline cannot include the reader's own final delayed delta.
       const committedAnchor = await sampleVisibleAnchor(before.id);
       const motion = await timeline.evaluate(
         async (scroller, { anchorId, anchorTop, oldHeight }) => {
           const s = scroller as HTMLElement;
+          const w = window as unknown as {
+            __RELEASE_OLDER_PAGE__?: () => void;
+          };
+          if (!w.__RELEASE_OLDER_PAGE__) {
+            throw new Error("no older-page response waiting for release");
+          }
+          w.__RELEASE_OLDER_PAGE__();
           let maxDrift = 0;
           let sawPrepend = false;
           let sawAnchorAfterPrepend = false;
@@ -385,21 +460,10 @@ test.describe("list virtualization", () => {
       // That reader intent retires Virtua's active prepend reconciliation, so
       // later row measurements must not pull the viewport back toward the
       // completed prepend before the next upward load.
-      const exitTracePromise = timeline.evaluate(async (scroller) => {
-        const s = scroller as HTMLElement;
-        const startScrollTop = s.scrollTop;
-        let previousScrollTop = startScrollTop;
-        let maxForwardTravel = 0;
-        let maxRollback = 0;
-        const deadline = performance.now() + 400;
-        while (performance.now() < deadline) {
-          const travel = s.scrollTop - startScrollTop;
-          maxForwardTravel = Math.max(maxForwardTravel, travel);
-          maxRollback = Math.max(maxRollback, previousScrollTop - s.scrollTop);
-          previousScrollTop = s.scrollTop;
-          await new Promise((resolve) => requestAnimationFrame(resolve));
-        }
-        return { maxForwardTravel, maxRollback };
+      const exitTracePromise = timeline.evaluate(observeNativeWheelBurst, {
+        direction: 1,
+        count: 3,
+        minimumMs: 400,
       });
       const exitBox = await timeline.boundingBox();
       if (!exitBox) throw new Error("timeline has no bounding box");
