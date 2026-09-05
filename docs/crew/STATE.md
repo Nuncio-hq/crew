@@ -1,26 +1,40 @@
 # Crew State
 
-## Buzz Desktop 0.5.22 — PR open, local browser repairs verified, new-head checks pending
+## Buzz Desktop 0.5.22 — local integration candidate and merge gate
 
 The working branch integrates released source through `desktop-v0.5.22`
 (`9ceb1f79bbc21785a0a075c40aecb3c058b1ea15`). All 191 source dispositions are
 accounted for. Local `just ci`, dependency policy and required integration lanes
-passed. Latest desktop rerun: 7012 passed, one skipped; Tauri: 3431 passed,
+passed. Latest desktop rerun: 7031 passed, one existing skip (7032 total); Tauri: 3431 passed,
 19 ignored; mobile: 2086 passed. Full integration: 126 DB, 379 isolated PostgreSQL and 314 workspace
 integration tests passed; counts overlap across lanes.
 
 Integration fixes include the PR comment refresh loop, member provenance visibility,
 narrow tool-pane sizing and hard-top wheel pagination. Final clean-bundle release
 smoke passed 3/3: all 10,000 ids with exact hash, 199 continuations, maximum 164
-mounted rows, zero duplicates/order errors/render-pending timeouts. [PR #342](https://github.com/Nuncio-hq/crew/pull/342) is open. The [NuncioCrew Gate job](https://github.com/Nuncio-hq/crew/actions/runs/33957899436/job/101285891754) and [manual sync workflow](https://github.com/Nuncio-hq/crew/actions/runs/33957896571) passed on `7b58b8d2d454e5506332f093946689db0247e99d`; the encompassing CI run was cancelled after browser failures. Subsequent browser repairs still require checks on their new head. No merge, release, deployment or hosted-provider success is claimed.
+mounted rows, zero duplicates/order errors/render-pending timeouts. [PR #342](https://github.com/Nuncio-hq/crew/pull/342) records the integration. The [NuncioCrew Gate job](https://github.com/Nuncio-hq/crew/actions/runs/33960807141/job/101293603794) and [manual sync workflow](https://github.com/Nuncio-hq/crew/actions/runs/33960815111) passed on `0ef5491fc7faee1f19f109c0e4a5a7c7ae4b0890`. The encompassing [CI run](https://github.com/Nuncio-hq/crew/actions/runs/33960807141) was **cancelled after smoke shards 3/4 timed out with failures**. [PR #342 checks](https://github.com/Nuncio-hq/crew/pull/342/checks) are the canonical remote evidence. Merge requires full NuncioCrew CI (including every desktop smoke shard) and manual upstream compatibility to pass on the exact source head being merged. No merge, release, deployment or hosted-provider success is claimed.
 
-Final local repairs passed: huddle 24/24, real-relay browser 17/17 in 22.4s,
-full Projects 8/8 in 23.5s,
-channel selection 13 and mounted guard four. Channel membership must be known
-and accessible before discussion can navigate or write a draft. Real relay
-tests wait for receiver EOSE and sender WebSocket acceptance. New-head remote
-checks remain pending. Final source-freeze checks (all guards), TypeScript
-and diff checks passed.
+Final local repairs restore aging snapshot updates, repository selection, contextual
+thread reading and channel-home navigation; collapsed sidebars stop intercepting
+input, and search keeps its input visible within the short-window viewport.
+The native publication fixture preserves rejection and lost-ack readback behavior.
+Channel membership must be known and accessible before composing a discussion can
+navigate or write a scoped draft. Existing parallel-agent/thread identity remains.
+See the [final desktop review](../../plans/reports/reviewer-20260905-final-desktop-reconciliation.md)
+and [project browser report](../../plans/reports/tester-20260905-project-commit-reconciliation.md).
+Earlier huddle, relay and membership results remain in the integration record;
+local browser selections overlap.
+
+Global Projects search now filters every overview section; list selection supports
+keyboard/ranges and preserves selection when channel access is unavailable.
+Discussion browsing uses the existing open directory and awaits joined membership.
+These completed desktop repairs are recorded in local source commit `36410d3f6`;
+its 40-test project-review browser suite passed on macOS and Linux. The final
+Virtua correction preserves unacknowledged prepend scroll ownership through stale
+scroll-end timers, with manual-input exits and clamped no-op acknowledgment.
+The full virtualization suite passed 11/11 on both macOS and Linux, retries zero.
+Final source checkpoint `5d11998fe` includes all semantic repairs; the final unit
+run and official checks cover this candidate.
 
 Crew keeps channel-first navigation, one agent across independent thread UUIDs,
 resume-first sessions, Hermes profile ownership, text-only zoom, theme identity,

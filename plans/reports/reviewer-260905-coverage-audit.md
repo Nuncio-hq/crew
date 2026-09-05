@@ -10,7 +10,7 @@
 - Pre-integration Crew HEAD: `871eecb18d7a243d87ec56a2eb154fbf2099d7ce`.
 - Read each commit's touched-path inventory, group by final released source, and reconcile against subsystem implementation/review reports. Compare current filesystem bytes, including untracked additions, against target and Crew HEAD with `git cat-file --batch`. Comparing only `git diff` would incorrectly mark untracked imports as missing.
 - The [ledger](../260905-buzz-0-5-22-upgrade/coverage-ledger.csv) contains 191 unique SHAs: **24 ported, 155 adapted, 12 retained-Crew-divergence, zero pending**. No row was labeled already-equivalent without whole-row proof.
-- The [machine-readable source snapshot](260905-final-source-coverage.json) accounts for 1820 unique ledger paths: **1420 target-exact, 358 adapted, 42 unchanged Crew**. Target-exact includes paths deleted in both final target and Crew. Adapted is a byte comparison, not an independent correctness verdict; the ledger attaches subsystem evidence and concrete current paths.
+- The [machine-readable source snapshot](260905-final-source-coverage.json) accounts for 1820 unique ledger paths: **1410 target-exact, 368 adapted, 42 unchanged Crew**. Target-exact includes paths deleted in both final target and Crew. Adapted is a byte comparison, not an independent correctness verdict; the ledger attaches subsystem evidence and concrete current paths.
 - Final source takes precedence over intermediate commits that are superseded within the interval, including intermediate release versions and the NIP-FI authority ledger subsequently removed upstream.
 - Source inventory was extended beyond this interval where missing pre-pin dependencies were found. Supporting-source inventory covered 198 released files and imported 68 pre-pin benchmark dependencies; native and renderer inventories likewise checked final target bodies.
 
@@ -39,15 +39,37 @@ The [resolved gap report](reviewer-260905-coverage-gaps.md) records missing Admi
 
 Subsystem evidence is linked per ledger row. Key reports: [substrate](260905-substrate-integration.md), [native](implementer-260905-native-release-integration.md), [ACP](implementer-260905-acp-priority-ports.md), [messages/huddle](implementer-260905-desktop-message-notification-huddle-ports.md), [projects](260905-projects-release-integration.md), [supporting sources](implementer-260905-supporting-source-ports.md), [renderer review](reviewer-260905-renderer-integration.md), and [final integration review](reviewer-260905-final-integration-fixes.md).
 
-Final local evidence: `just ci` completed with exit 0 in `/tmp/crew-upgrade-just-ci-final-2.log`, including checks/builds, desktop 6991 passed with one skip, Tauri 3431 passed with 19 ignored plus other workspace targets, and mobile 2086 passed. The later browser-reconciliation desktop rerun passed 7012 tests with one skip and zero failures (`/tmp/crew-final-js-gate-pool.log`); final source-freeze checks (all guards), TypeScript and diff checks passed. `cargo-deny` reports advisories/bans/licenses/sources all OK in `/tmp/crew-upgrade-cargo-deny.log`. [Full integration](tester-260905-full-integration-gate.md) passed 126 DB, 379 PostgreSQL and 314 workspace integration tests; metrics attribution follow-ups passed too. Counts overlap by lane.
+Final local evidence: `just ci` completed with exit 0 in `/tmp/crew-upgrade-just-ci-final-2.log`, including checks/builds, desktop 6991 passed with one skip, Tauri 3431 passed with 19 ignored plus other workspace targets, and mobile 2086 passed. The independent final desktop rerun passed 7031 tests with one existing skip and zero failures (7032 total, 98.23s; `/tmp/crew-final-virtual-ack-desktop-tests.log`); final source-freeze checks (all guards), TypeScript and diff checks passed. `cargo-deny` reports advisories/bans/licenses/sources all OK in `/tmp/crew-upgrade-cargo-deny.log`. [Full integration](tester-260905-full-integration-gate.md) passed 126 DB, 379 PostgreSQL and 314 workspace integration tests; metrics attribution follow-ups passed too. Counts overlap by lane.
 
-The filesystem snapshot was rechecked after the frozen membership-guard changes; classifications remain unchanged. It was previously refreshed after browser reconciliation. Eight previously target-exact paths now carry reviewed adaptations: agent config controls, project panel controls, and six browser specs. The composer right-click formatting commit (#6683) moves from ported to adapted because its browser test now matches the integrated composer. Dispositions are 24/155/12 with zero pending; there are no unexplained missing target paths.
+The current filesystem census was recomputed with `git cat-file --batch` against
+the target and pre-integration Crew HEAD, reading current filesystem bytes for
+all 1820 ledger paths. Ten formerly target-exact paths are now reviewed
+adaptations: `useRetainedProjectGitViews.test.mjs`, `TopbarSearch.tsx`,
+`thread-head-stale-edit.spec.ts`, `workflow-local-controls.spec.ts`, its Darwin
+and Linux autocomplete snapshots, `workflows.spec.ts`, `projectsSearch.ts`,
+`ProjectsSelectionCountMenu.tsx`, and `RepositoryCards.tsx`. Result: **1410 exact,
+368 adapted, 42 intentional Crew/mapped paths**. Every existing ported commit
+still has whole-row exactness; all 191 dispositions remain **24/155/12**, zero
+pending. Per-row byte counts in the CSV were recomputed; no missing target path
+was silently reclassified as a completed port.
 
-[PR refresh/provenance/narrow-width review](debugger-260905-pr-hub-comment-refresh-loop.md) and [wheel retry review](reviewer-260905-timeline-wheel-retry.md) record the browser-discovered integration corrections. Final clean-bundle release smoke passed 3/3: exact 10,000-id hash, 199 continuations, maximum 164 mounted rows, no duplicate/order/render-pending errors; see [browser report](tester-260905-desktop-release-browser-evidence.md). [PR #342](https://github.com/Nuncio-hq/crew/pull/342) is open. The [NuncioCrew Gate job](https://github.com/Nuncio-hq/crew/actions/runs/33957899436/job/101285891754) and [manual sync workflow](https://github.com/Nuncio-hq/crew/actions/runs/33957896571) passed on `7b58b8d2d454e5506332f093946689db0247e99d`; the encompassing CI run was cancelled after browser failures. Subsequent browser repairs still require checks on their new head. No merge/release/hosted acceptance is claimed.
+Late corrections preserve the existing Crew seams: immutable aging projections,
+repository selector, matched-discussion auxiliary panel and channel-home routing;
+new discussion drafts still use accessible linked channels. Sidebar animation
+visibility and search viewport layout retain current geometry and thread behavior.
+The owner-publication mock validates the native contract, including rejection and
+lost-ack readback. See [project reconciliation](tester-20260905-project-commit-reconciliation.md)
+and [independent late review](reviewer-20260905-final-desktop-reconciliation.md).
+
+[PR refresh/provenance/narrow-width review](debugger-260905-pr-hub-comment-refresh-loop.md) and [wheel retry review](reviewer-260905-timeline-wheel-retry.md) record the browser-discovered integration corrections. Final clean-bundle release smoke passed 3/3: exact 10,000-id hash, 199 continuations, maximum 164 mounted rows, no duplicate/order/render-pending errors; see [browser report](tester-260905-desktop-release-browser-evidence.md). [PR #342](https://github.com/Nuncio-hq/crew/pull/342) is open. The [NuncioCrew Gate job](https://github.com/Nuncio-hq/crew/actions/runs/33960807141/job/101293603794) and [manual sync workflow](https://github.com/Nuncio-hq/crew/actions/runs/33960815111) passed on `0ef5491fc7faee1f19f109c0e4a5a7c7ae4b0890`. The encompassing [CI run](https://github.com/Nuncio-hq/crew/actions/runs/33960807141) was **cancelled after smoke shards 3/4 timed out with failures**. [PR #342 checks](https://github.com/Nuncio-hq/crew/pull/342/checks) are the canonical remote evidence. Merge requires full NuncioCrew CI (including every desktop smoke shard) and manual upstream compatibility to pass on the exact source head being merged. No merge/release/hosted acceptance is claimed.
 
 Later browser repairs are documented in [messaging](debugger-260905-messaging-preview-ci-reconciliation.md), [agent integration](debugger-260905-agent-integration-ci-reconciliation.md), [navigation/contrast review](reviewer-260905-pending-navigation-and-contrast.md), and [profile/config reconciliation](debugger-260905-profile-config-ci-reconciliation.md).
 
-Final local follow-up: desktop 7012 passed + one existing skip (7013 total, 98.6s); huddle 24/24; real-relay browser 17/17 (22.4s). Full Projects 8/8 passed (23.5s); membership selection 13 and mounted guard four passed. New-head remote checks remain pending.
+Final local follow-up: desktop **7031 passed, one existing skip, zero failures**
+(7032 total, 98.23s). Browser evidence remains in the linked per-selection
+reports; selections overlap and do not establish a green whole remote matrix.
+Gate/manual success on `0ef5491f` remains distinct from that revision's cancelled
+CI workflow. [PR #342 checks](https://github.com/Nuncio-hq/crew/pull/342/checks) are the canonical remote evidence. Merge requires full NuncioCrew CI (including every desktop smoke shard) and manual upstream compatibility to pass on the exact source head being merged.
 
 Docs impact: minor integration documentation and restored released operational/protocol docs. No external settings, personal configuration, commits, index changes or pushes were performed by this audit.
 

@@ -2,6 +2,65 @@
 
 Work context: `/Users/a1241968/Desktop/Oscar/crew-wt/upstream-0522`; PR #342.
 
+## Latest source-freeze status
+
+Independent final desktop unit run: **7031 passed, one existing skip, zero failures**
+(7032 total, 98.23s), `/tmp/crew-final-virtual-ack-desktop-tests.log`. Latest late-fix
+review: [independent desktop reconciliation](reviewer-20260905-final-desktop-reconciliation.md).
+Repository selection, contextual thread reading and actual channel-home navigation,
+plus faithful native publication and folder-first Save coverage, are recorded in
+[project reconciliation](tester-20260905-project-commit-reconciliation.md).
+
+Root's final seven-spec browser selection passed **91/91, retries zero, 4.5m**
+(`/tmp/crew-root-final-seven.log`): aging, onboarding, relay, smoke, thread-head,
+Nostr, and overscroll coverage. Counts overlap earlier focused selections.
+The official source TypeScript check and six source-guard commands pass.
+Full official `pnpm check` passed on the final candidate including the Virtua
+acknowledgment patch, formatted tests, native fixtures and channel directory: 3190 files, all six guards, three
+existing warnings and five infos; `/tmp/crew-root-final-ack-desktop-check.log`. Supplemental ad-hoc
+E2E TypeScript compilation is outside the configured source gate and is not
+claimed clean; the repository's test files are excluded from its source tsconfig.
+
+The final Projects review selection passed **40/40 in 1.5m** on local source
+checkpoint `36410d3f6` (`/tmp/crew-pr-review-final40.log`). It includes search,
+keyboard/range selection, safe drafts, unavailable membership, immediate join
+and pending-membership recovery. The restored native local-snapshot/lazy-read
+pair passed **2/2 in 5.7s** (`/tmp/crew-pr-review-native-final2.log`); these cases
+also appear in the 40-test suite. See [test-intent review](reviewer-20260905-project-review-test-intent.md).
+The final full unit run includes the open-directory production follow-up, restored
+native test fixtures and Virtua acknowledgment patch. Independent source reviews
+and focused browser results also cover these changes. Linux smoke shard 3 completed **329 total: 324 passed, four existing skips and
+one Nostr startup flake in 14.2m** (`/tmp/crew-pool-linux-shard3.log`). All 40
+Projects review cases passed on their first attempt. The test-only consent event
+listener readiness fix then passed the complete Nostr spec **11/11, retries zero,
+19.5s** on Linux (`/tmp/crew-pool-linux-nostr-ready.log`), plus the original
+failing case repeated three times **3/3 in 7.3s**, retries zero
+(`/tmp/crew-pool-linux-nostr-ready-repeat.log`), and 33/33 across three
+macOS repeats (`/tmp/crew-root-nostr-listener.log`). This focused verification does
+not relabel the original 329-case run as clean. The Linux container is Ubuntu
+Noble arm64 with Playwright 1.60; GitHub runner architecture differs.
+The test-only readiness follow-up is local commit `3d46956e1`.
+The final virtualization correction passed the complete 11-case browser suite
+on macOS (40.2s) and Linux (53.7s), retries zero, no initial failures or skips.
+Logs: `/tmp/crew-pool-final-virtualization-mac.log` and
+`/tmp/crew-pool-final-virtualization-linux.log`. Both used the uninstrumented
+`/tmp/crew-planner-virtua-ack-final-dist`. The two focused Linux cascade/reader
+cases repeated three times passed 6/6 in 1.7m with no retries. Final source
+checkpoint: `5d11998fe`. See [virtualization parity](tester-260905-final-virtualization-parity.md)
+and [cascade investigation](debugger-260905-virtualization-cascade-linux.md).
+
+Gate/manual workflows passed on `0ef5491fc7faee1f19f109c0e4a5a7c7ae4b0890`.
+The whole CI run was cancelled after smoke shards 3/4 timed out with failures.
+Later repairs are locally verified. [PR #342 checks](https://github.com/Nuncio-hq/crew/pull/342/checks) are the canonical remote evidence. Merge requires full NuncioCrew CI (including every desktop smoke shard) and manual upstream compatibility to pass on the exact source head being merged.
+The detailed selections below are historical evidence, not a cumulative final total.
+
+Projects selection and filtered-search screenshots were published through the
+required screenshot helper after distinct-hash review:
+[PR screenshot evidence](https://github.com/Nuncio-hq/crew/pull/342#issuecomment-5551722821),
+immutable image commit `800d5feafbb8c9194a53b192a779d0bd73a7e82e`.
+This publishes only screenshot assets; it does not establish a new source revision
+or a passing remote check for a source revision.
+
 ## Verified fixes and fixture reconciliation
 
 - Badge + muted-light-channel: pin explicit `crew-light` fixture; ThemeProvider intentionally migrates legacy themes and pins Crew accent blue. Badge still checks exact applied primary, count and contrast; mute still tests exact 0.5 light opacity, dark companion retained. Three focused cases pass.
@@ -34,7 +93,7 @@ Work context: `/Users/a1241968/Desktop/Oscar/crew-wt/upstream-0522`; PR #342.
 - Projects restored ACP production repository action panel, Channels list, create-task/PR dialogs. Broad screenshot case passes12.9s batch with huddle early click. Preserved clone/source/fetch layout, issue/PR comments and metadata, list row density, contributors, Channels, existing create dialogs. Removed obsolete upstream detached pod/resizable embedded agent chat geometry because Crew uses outcome page plus ordinary channel discussion. Original context-send contract has a separate real explicit Reviewer mention/send test in thread-pr-hub, preserving raw UUID context and collapsed/expanded transcript.
 - Eight Projects screenshot artifacts have distinct SHA256 hashes. Inspected workspace overview and issue detail images; actual Crew outcome, repository action controls, comments and details rendered.
 - Restricted access fixture preserves hidden repo and owner invite copy. ACP production guard prevents discussion navigation into inaccessible linked channels and selects only accessible repository/project/selection candidates. Added independently configured projectHomeChannelId fixture for valid accessible project fallback while repo binding stays inaccessible. Hidden case and accessible fallback now under final browser validation.
-- Final desktop JS gate:7013 tests,7012 passed,0 failed,1 existing skipped in98.6s (/tmp/crew-final-js-gate-pool.log). Final full Projects8/8 passed23.5s (/tmp/crew-ci-projects-complete.log). All desktop check guards, tsc --noEmit and git diff --check passed. Immutable build /tmp/crew-release-e2e-dist-access-guard. No worker commits/index/push/CI reruns.
+- Final desktop JS gate:7031 tests,7012 passed,0 failed,1 existing skipped in98.6s (/tmp/crew-final-js-gate-pool.log). Final full Projects8/8 passed23.5s (/tmp/crew-ci-projects-complete.log). All desktop check guards, tsc --noEmit and git diff --check passed. Immutable build /tmp/crew-release-e2e-dist-access-guard. No worker commits/index/push/CI reruns.
 
 Docs impact: minor; source-backed fixes and semantic test updates recorded here. No unresolved questions.
 

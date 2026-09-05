@@ -6,8 +6,10 @@
   admin, deployment charts and benchmarks. All 191 source dispositions are
   accounted for. Local `just ci`, dependency policy and integration gates passed;
   final clean-bundle browser smoke passed 3/3 with all 10,000 ids reachable.
-  PR #342 Gate/manual checks passed on 7b58b8d2; focused browser repairs passed.
-  Remote checks on the repair revision remain pending. This is not a release.
+  PR #342 Gate/manual checks passed on 0ef5491f, but the encompassing CI run
+  was cancelled after smoke shards 3/4 timed out with failures. Later repairs
+  passed local checks. Merge requires full NuncioCrew CI (all desktop smoke shards) and manual upstream
+  compatibility on the exact source head; the PR checks page is canonical. This is not a release.
 - Preserve Crew channel-first navigation, thread UUID/resume-first sessions,
   Hermes profile ownership, text-only zoom, theme identity and 1000-line limits.
 - Fix the PR comment refresh loop, member provenance visibility on hover,
@@ -25,9 +27,28 @@
   membership. Preserve channel drafts and repository tabs; unavailable membership
   shows retry feedback without navigation or draft writes. Verify real relay
   readiness through receiver EOSE and sender WebSocket acceptance.
-- Final local verification: desktop 7012 passed, one existing skip; huddle 24/24;
-  real-relay browser 17/17; full Projects 8/8; selection and mounted guard passed.
-  Final source-freeze checks, TypeScript and diff checks passed.
+- Fix stale session-aging UI by publishing immutable external-store snapshots.
+  Restore repository selection, in-context discussion reading and actual channel-home
+  navigation; new discussion drafts retain the existing accessible-channel behavior.
+- Hide collapsed sidebars after their slide transition. Bound search height in
+  short windows, keeping its input fixed while results scroll. Stabilize concurrent
+  install coverage with independent IPC completion gates.
+- Match native owner-announcement test behavior to rejected writes and lost-ack
+  readback; exercise actual folder-first Save and duplicate-name rejection.
+- Restore global Projects search across outcomes, projects, repositories, tasks,
+  reviews and channels. Restore list selection, keyboard/range controls and
+  discussion drafts while retaining selection when membership is unavailable.
+  Channel discovery reuses the existing open directory and waits for joined
+  membership before preparing a draft.
+- Restore released local repository snapshot and lazy file-read test fixtures;
+  verify local-source branch round trips and deferred previews through actual IPC.
+- Keep prepend scroll compensation active until its native acknowledgment, so a
+  stale scroll-end timer cannot discard a later resize correction. Preserve manual
+  input exits and acknowledge fitting/clamped/rounded no-op writes. Verify both
+  installed module formats and complete macOS/Linux virtualization suites.
+- Final independent desktop unit verification: 7031 passed, one existing skip,
+  zero failures (7032 total). Source checks, TypeScript and diff checks passed.
+  Browser selections and their limits are linked in the integration record.
 - Prepare the manual sync gate with Crew's Linux native dependencies, CMake
   compatibility and pinned nextest; all existing checks remain enabled.
 
@@ -845,7 +866,7 @@ Children already on `main`: #279–#284, #275, #274, #270, #273, #272, #276, #27
 - fix(desktop): stabilize agent identity restore ([#1831](https://github.com/block/buzz/pull/1831)) ([`3370cd083`](https://github.com/block/buzz/commit/3370cd0836e458f519cf90fe6299279cde6c7463))
 - fix(observer): align scroll-anchor ids with transcript display-block keys ([#1849](https://github.com/block/buzz/pull/1849)) ([`1df4a4e77`](https://github.com/block/buzz/commit/1df4a4e77da732cadad91738bc0271a926c22040))
 - [codex] Add view activity label to agent popover ([#1748](https://github.com/block/buzz/pull/1748)) ([`458c7f915`](https://github.com/block/buzz/commit/458c7f9154fc9580a766117cad0e3e378ffe5ac0))
-- ci(desktop): surface flaky E2E tests instead of retry-masking them ([#1838](https://github.com/block/buzz/pull/1838)) ([`a65340630`](https://github.com/block/buzz/commit/a653406309aa6dab8122cf3e84ddeca0c87013be))
+- ci(desktop): surface flaky E2E tests instead of retry-masking them ([#1838](https://github.com/block/buzz/pull/1838)) ([`a65340630`](https://github.com/block/buzz/commit/a653406309aa6dab8122cf3e84ddeca0c87031be))
 - fix(desktop): treat channel creator as member before 39002 provisioning ([#1830](https://github.com/block/buzz/pull/1830)) ([`7e62a25af`](https://github.com/block/buzz/commit/7e62a25af0bc71df17de806673ed02514e556e6e))
 
 

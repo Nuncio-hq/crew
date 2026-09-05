@@ -7294,7 +7294,7 @@
     "target_differs_old": true
   },
   "desktop/src/features/projects/lib/projectsSearch.ts": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": false,
@@ -7854,7 +7854,7 @@
     "target_differs_old": true
   },
   "desktop/src/features/projects/ui/ProjectsSelectionCountMenu.tsx": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": false,
@@ -7889,7 +7889,7 @@
     "target_differs_old": true
   },
   "desktop/src/features/projects/ui/RepositoryCards.tsx": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": true,
@@ -7952,7 +7952,7 @@
     "target_differs_old": true
   },
   "desktop/src/features/projects/ui/useRetainedProjectGitViews.test.mjs": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": false,
@@ -8099,7 +8099,7 @@
     "target_differs_old": true
   },
   "desktop/src/features/search/ui/TopbarSearch.tsx": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": true,
@@ -9765,7 +9765,7 @@
     "target_differs_old": true
   },
   "desktop/tests/e2e/thread-head-stale-edit.spec.ts": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": false,
@@ -9821,21 +9821,21 @@
     "target_differs_old": true
   },
   "desktop/tests/e2e/workflow-local-controls.spec.ts": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": true,
     "target_differs_old": true
   },
   "desktop/tests/e2e/workflow-local-controls.spec.ts-snapshots/workflow-template-variable-autocomplete-smoke-darwin.png": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": false,
     "target_differs_old": true
   },
   "desktop/tests/e2e/workflow-local-controls.spec.ts-snapshots/workflow-template-variable-autocomplete-smoke-linux.png": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": false,
@@ -9856,7 +9856,7 @@
     "target_differs_old": true
   },
   "desktop/tests/e2e/workflows.spec.ts": {
-    "state": "target-exact",
+    "state": "adapted",
     "present": true,
     "target_present": true,
     "old_present": true,
