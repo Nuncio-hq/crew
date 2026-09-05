@@ -67,10 +67,8 @@ test("thread head reflects the channel-window edit even before thread aux loads"
   const EDITED = "can i get a review on these PRs? (pr 6706, pr 6701, pr 6503)";
 
   // 1. Post a top-level message, then edit it — both land in the channel window.
-  //    The message MUST be authored by the active identity (tyler): an edit is
-  //    only overlaid onto a message when the edit's signer matches the target's
-  //    author (formatTimelineMessages authorization), and the mock `edit_message`
-  //    command signs with the active identity.
+  //    Use the same signer for root and edit: formatTimelineMessages only
+  //    overlays an edit when its signer matches the target message author.
   const root = await page.evaluate(
     ({ channelName, content, pubkey }) =>
       (window as MockMessageWindow).__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
@@ -113,10 +111,10 @@ test("thread head reflects the channel-window edit even before thread aux loads"
   const timelineRow = page.locator(
     `[data-testid="message-row"][data-message-id="${rootId}"]`,
   );
-  await expect(timelineRow.getByTestId("message-body")).toContainText(
+  await expect(timelineRow.locator(".message-markdown")).toContainText(
     "these PRs?",
   );
-  await expect(timelineRow.getByTestId("message-body")).not.toContainText(
+  await expect(timelineRow.locator(".message-markdown")).not.toContainText(
     "these two PRs?",
   );
 
@@ -132,7 +130,7 @@ test("thread head reflects the channel-window edit even before thread aux loads"
   //    is held (not merely delayed) no backfill can arrive to heal it.
   const headBody = threadPanel
     .locator(`[data-testid="message-row"][data-message-id="${rootId}"]`)
-    .getByTestId("message-body");
+    .locator(".message-markdown");
   await expect(headBody).toContainText("these PRs?");
   await expect(headBody).not.toContainText("these two PRs?");
 

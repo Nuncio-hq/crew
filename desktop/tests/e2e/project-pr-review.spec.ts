@@ -56,17 +56,17 @@ test("same-second request changes supersedes approval", async ({ page }) => {
   await installMockBridge(page);
   await openBuzzProject(page);
 
-  await page.getByRole("tab", { name: "Pull Request" }).click();
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
   const aliceRow = page
     .getByTestId("project-pull-request-row")
-    .filter({ hasText: "alice" })
+    .filter({ has: page.getByRole("button", { name: "alice", exact: true }) })
     .first();
   await expect(aliceRow).toBeVisible({ timeout: 10_000 });
   await aliceRow.getByRole("button", { name: /^#/ }).click();
 
   await page.getByRole("button", { name: "Approve", exact: true }).click();
   const approveDialog = page.getByRole("dialog", {
-    name: "Approve pull request",
+    name: "Approve review",
   });
   await approveDialog
     .getByRole("textbox", { name: "Approval summary" })
@@ -74,7 +74,7 @@ test("same-second request changes supersedes approval", async ({ page }) => {
   await approveDialog
     .getByRole("button", { name: "Approve", exact: true })
     .click();
-  await expect(page.getByText("Pull request approved.")).toBeVisible();
+  await expect(page.getByText("Review approved.")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Approve", exact: true }),
   ).toHaveCount(0);
@@ -122,13 +122,15 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
   await installMockBridge(page);
   await openBuzzProject(page);
 
-  await page.getByRole("tab", { name: "Pull Request" }).click();
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
   const prRows = page.getByTestId("project-pull-request-row");
   await expect(prRows.first()).toBeVisible({ timeout: 10_000 });
 
   // Pick a PR authored by alice: the viewer is not the author, so the
   // Approve button must be available alongside the owner status controls.
-  const aliceRow = prRows.filter({ hasText: "alice" }).first();
+  const aliceRow = prRows
+    .filter({ has: page.getByRole("button", { name: "alice", exact: true }) })
+    .first();
   await expect(aliceRow).toBeVisible();
   await aliceRow.getByRole("button", { name: /^#/ }).click();
 
@@ -142,7 +144,7 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
 
   // Owner viewing an open PR: draft toggle and both review decisions are offered.
   const morePullRequestActions = page.getByRole("button", {
-    name: "More pull request actions",
+    name: "More review actions",
   });
   const approve = page.getByRole("button", { name: "Approve", exact: true });
   const commentComposer = page.getByTestId(
@@ -157,7 +159,10 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
   await expect(reviewMode).toBeVisible();
 
   // Request a review from bob via the centered reviewer dialog.
-  await page.getByRole("button", { name: "Add Reviewer", exact: true }).click();
+  await page
+    .getByTestId("project-reviewers-content")
+    .getByRole("button", { name: "Add Reviewer", exact: true })
+    .click();
   await expect(
     page.getByRole("dialog").getByRole("heading", { name: "Add reviewer" }),
   ).toBeVisible();
@@ -289,7 +294,7 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
   // remain tied to the current commit and their timestamps preserve order.
   await approve.click();
   const approveDialog = page.getByRole("dialog", {
-    name: "Approve pull request",
+    name: "Approve review",
   });
   await approveDialog
     .getByRole("textbox", { name: "Approval summary" })
@@ -297,7 +302,7 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
   await approveDialog
     .getByRole("button", { name: "Approve", exact: true })
     .click();
-  await expect(page.getByText("Pull request approved.")).toBeVisible();
+  await expect(page.getByText("Review approved.")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Approve", exact: true }),
   ).toHaveCount(0);
@@ -382,18 +387,18 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
   // Closing is reversible, unlike merging: a closed PR can be reopened.
   await morePullRequestActions.click();
   const closePullRequest = page.getByRole("menuitem", {
-    name: "Close pull request",
+    name: "Close review",
   });
   await closePullRequest.click();
-  await expect(page.getByText("Pull request closed.")).toBeVisible();
+  await expect(page.getByText("Review closed.")).toBeVisible();
   const reopenPullRequest = page.getByRole("button", {
-    name: "Reopen pull request",
+    name: "Reopen review",
   });
   await expect(reopenPullRequest).toBeVisible({ timeout: 10_000 });
   await expect(closePullRequest).toHaveCount(0);
 
   await reopenPullRequest.click();
-  await expect(page.getByText("Pull request reopened.")).toBeVisible();
+  await expect(page.getByText("Review reopened.")).toBeVisible();
   await expect(morePullRequestActions).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole("button", { name: "Merge", exact: true }).click();
@@ -422,9 +427,7 @@ test("PR creator/owner can toggle draft, request reviews, and approve", async ({
       exact: true,
     })
     .click();
-  await expect(
-    page.getByText("Published merged pull request status."),
-  ).toBeVisible();
+  await expect(page.getByText("Published merged review status.")).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(
@@ -486,10 +489,10 @@ test("merge conflicts offer persistent terminal recovery", async ({ page }) => {
     };
   });
 
-  await page.getByRole("tab", { name: "Pull Request" }).click();
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
   const aliceRow = page
     .getByTestId("project-pull-request-row")
-    .filter({ hasText: "alice" })
+    .filter({ has: page.getByRole("button", { name: "alice", exact: true }) })
     .first();
   await aliceRow.getByRole("button", { name: /^#/ }).click();
   await page.getByRole("button", { name: "Merge", exact: true }).click();
@@ -549,13 +552,16 @@ test("reviewer can leave a commit-scoped inline diff comment", async ({
   await installMockBridge(page);
   await openBuzzProject(page);
 
-  await page.getByRole("tab", { name: "Pull Request" }).click();
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
   const aliceRow = page
     .getByTestId("project-pull-request-row")
-    .filter({ hasText: "alice" })
+    .filter({ has: page.getByRole("button", { name: "alice", exact: true }) })
     .first();
   await aliceRow.getByRole("button", { name: /^#/ }).click();
-  await page.getByRole("tab", { name: /Files changed/ }).click();
+  await page
+    .getByTestId("project-detail-section-files")
+    .getByRole("button", { name: /^Files changed/ })
+    .click();
 
   const diffLine = page
     .getByTestId("project-diff-line")
@@ -600,7 +606,11 @@ test("reviewer can leave a commit-scoped inline diff comment", async ({
     "Please add a type for this parameter.",
   );
 
-  await page.getByRole("tab", { name: "Conversation" }).click();
+  // Collapsing the diff returns focus to the review activity below it.
+  await page
+    .getByTestId("project-detail-section-files")
+    .getByRole("button", { name: /^Files changed/ })
+    .click();
   await expect(
     page.getByTestId("project-pull-request-review-history-toggle"),
   ).toHaveAttribute("aria-expanded", "true");
@@ -622,8 +632,8 @@ test("reviewer can leave a commit-scoped inline diff comment", async ({
     })
     .click();
   await expect(
-    page.getByRole("tab", { name: /Files changed/ }),
-  ).toHaveAttribute("data-state", "active");
+    page.getByTestId("project-detail-section-files"),
+  ).toHaveAttribute("data-open", "true");
   const focusedLine = page.getByTestId("project-diff-focused-line");
   await expect(focusedLine).toBeVisible();
   await expect(focusedLine).toHaveAttribute(
@@ -655,14 +665,17 @@ test("managed agent repository owner can merge", async ({ page }) => {
   });
   await openBuzzProject(page);
 
-  await page.getByRole("tab", { name: "Pull Request" }).click();
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
   const agentRow = page
     .getByTestId("project-pull-request-row")
-    .filter({ hasText: "Brain" })
+    .filter({ has: page.getByRole("button", { name: "Brain", exact: true }) })
     .first();
   await expect(agentRow).toBeVisible({ timeout: 10_000 });
   await agentRow.getByRole("button", { name: /^#/ }).click();
-  await page.getByRole("button", { name: "Add Reviewer", exact: true }).click();
+  await page
+    .getByTestId("project-reviewers-content")
+    .getByRole("button", { name: "Add Reviewer", exact: true })
+    .click();
   await page.getByTestId("project-reviewer-search").fill("Reviewer Bot");
   await page
     .getByTestId(`project-reviewer-result-${REVIEWER_AGENT_PUBKEY}`)
@@ -679,15 +692,15 @@ test("managed agent repository owner can merge", async ({ page }) => {
       targetOwner: TEST_IDENTITIES.alice.pubkey,
     },
   });
-  await page.getByRole("button", { name: "More pull request actions" }).click();
+  await page.getByRole("button", { name: "More review actions" }).click();
   const closePullRequest = page.getByRole("menuitem", {
-    name: "Close pull request",
+    name: "Close review",
   });
   await expect(closePullRequest).toBeVisible();
   await closePullRequest.click();
-  await expect(page.getByText("Pull request closed.")).toBeVisible();
-  await page.getByRole("button", { name: "Reopen pull request" }).click();
-  await expect(page.getByText("Pull request reopened.")).toBeVisible();
+  await expect(page.getByText("Review closed.")).toBeVisible();
+  await page.getByRole("button", { name: "Reopen review" }).click();
+  await expect(page.getByText("Review reopened.")).toBeVisible();
   const statusPayloads = await page.evaluate(() =>
     window.__BUZZ_E2E_COMMAND_PAYLOADS__?.filter(
       (entry) => entry.command === "sign_project_pull_request_status",
@@ -742,7 +755,7 @@ test("viewer without repository ownership cannot merge", async ({ page }) => {
   });
   await openBuzzProject(page);
 
-  await page.getByRole("tab", { name: "Pull Request" }).click();
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
   const prRow = page.getByTestId("project-pull-request-row").first();
   await expect(prRow).toBeVisible({ timeout: 10_000 });
   await prRow.getByRole("button", { name: /^#/ }).click();
@@ -795,15 +808,13 @@ test("project pull requests preserve partial results from batched queries", asyn
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.goto("/#/projects");
-  await page
-    .getByRole("button", { name: "Pull Requests", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Reviews", exact: true }).click();
 
   await expect(
     page.getByRole("button", { name: /^View / }).first(),
   ).toBeVisible();
   await expect(
-    page.getByText(/Some pull request details could not be loaded/),
+    page.getByText(/Some review details could not be loaded/),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 
@@ -839,7 +850,7 @@ test("project pull requests preserve partial results from batched queries", asyn
   });
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(
-    page.getByText(/Some pull request details could not be loaded/),
+    page.getByText(/Some review details could not be loaded/),
   ).toHaveCount(0);
 });
 
@@ -850,9 +861,7 @@ test("project pull request author rollover stays identity-only", async ({
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.goto("/#/projects");
-  await page
-    .getByRole("button", { name: "Pull Requests", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Reviews", exact: true }).click();
   await page.getByRole("button", { name: "List layout" }).click();
 
   const row = page.locator('[data-testid^="projects-pr-row-"]').first();
@@ -883,7 +892,7 @@ test("project issue author rollover matches pull requests", async ({
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.goto("/#/projects");
-  await page.getByRole("button", { name: "Issues", exact: true }).click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await page.getByRole("button", { name: "List layout" }).click();
 
   const row = page.locator('[data-testid^="projects-issue-row-"]').first();
@@ -917,9 +926,7 @@ test("project pull requests report aggregate root query failures", async ({
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.goto("/#/projects");
-  await page
-    .getByRole("button", { name: "Pull Requests", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Reviews", exact: true }).click();
 
   await expect(page.getByText("Could not load reviews")).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
@@ -945,13 +952,13 @@ test("project issues preserve partial results from aggregate queries", async ({
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.goto("/#/projects");
-  await page.getByRole("button", { name: "Issues", exact: true }).click();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
 
   await expect(
     page.getByRole("button", { name: /^View / }).first(),
   ).toBeVisible();
   await expect(
-    page.getByText("Some issue details could not be loaded."),
+    page.getByText("Some task details could not be loaded."),
   ).toBeVisible();
   await expect(page.getByText(/Missing comments\./)).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
@@ -961,7 +968,7 @@ test("project issues preserve partial results from aggregate queries", async ({
   });
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(
-    page.getByText("Some issue details could not be loaded."),
+    page.getByText("Some task details could not be loaded."),
   ).toHaveCount(0);
 });
 
@@ -1014,7 +1021,7 @@ test("project overview does not paint a background behind its cards", async ({
   }
 });
 
-test("project without a checkout offers fetch feedback and dropdown cloning", async ({
+test("project without a checkout can clone from repository actions", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
@@ -1022,31 +1029,21 @@ test("project without a checkout offers fetch feedback and dropdown cloning", as
   await openBuzzProject(page);
 
   await expect(
-    page.getByRole("button", { name: "Buzz", exact: true }),
+    page.getByRole("button", { name: "Remote", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Buzz", exact: true }),
+    page.getByRole("button", { name: "Remote", exact: true }),
   ).toHaveClass(/\bborder-input\/40\b/);
   await expect(page.getByRole("button", { name: /main/ })).toHaveClass(
     /\bborder-input\/40\b/,
   );
   await expect(
     page.getByRole("button", { name: "Clone", exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   await page.getByRole("button", { name: "Fetch", exact: true }).click();
   await expect(page.getByText("Remote state refreshed.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Buzz", exact: true }).click();
-  const cloneItem = page.getByRole("menuitem", {
-    name: "Local missing Clone",
-  });
-  await expect(cloneItem.getByText("Local missing")).toHaveClass(
-    /text-muted-foreground/,
-  );
-  await expect(cloneItem.getByText("Clone", { exact: true })).toHaveClass(
-    /\bborder-input\/60\b/,
-  );
-  await cloneItem.click();
+  await page.getByRole("button", { name: "Clone", exact: true }).click();
   await expect(page.getByText("Cloned repository.")).toBeVisible();
   const commands = await page.evaluate(
     () => window.__BUZZ_E2E_COMMANDS__ ?? [],
@@ -1054,20 +1051,12 @@ test("project without a checkout offers fetch feedback and dropdown cloning", as
   expect(commands).toContain("clone_project_repository");
 });
 
-test("overview list titles share a row with controls and task groups align", async ({
+test("overview scope controls align with list actions and selectable groups", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.goto("/#/projects");
-
-  const rowSelectors = {
-    issues: '[data-testid^="projects-issue-row-"]',
-    projects: '[data-testid^="project-row-"]',
-    prs: '[data-testid^="projects-pr-row-"]',
-    repositories: '[data-testid^="repository-row-"]',
-  };
   for (const section of [
     "projects",
     "repositories",
@@ -1075,819 +1064,336 @@ test("overview list titles share a row with controls and task groups align", asy
     "prs",
   ] as const) {
     await page.getByTestId(`projects-section-${section}`).click();
-    const header = page.getByTestId("projects-page-header");
-    const [headingBox, controlsBox] = await Promise.all([
-      header.getByRole("heading").boundingBox(),
-      header.getByTestId("projects-list-header").boundingBox(),
-    ]);
-    expect(headingBox).not.toBeNull();
-    expect(controlsBox).not.toBeNull();
-    const headingCenter = (headingBox?.y ?? 0) + (headingBox?.height ?? 0) / 2;
-    const controlsCenter =
-      (controlsBox?.y ?? 0) + (controlsBox?.height ?? 0) / 2;
-    expect(Math.abs(headingCenter - controlsCenter)).toBeLessThanOrEqual(2);
-
+    const header = page.getByTestId("projects-list-header");
     await header.getByRole("button", { name: "List layout" }).click();
-    const row = page.locator(rowSelectors[section]).first();
+    const scope = header.getByRole("button", { name: /^Filter / });
+    const layout = header.getByRole("button", { name: "List layout" });
+    const scopeBox = await requiredBox(scope);
+    const layoutBox = await requiredBox(layout);
+    expect(scopeBox).not.toBeNull();
+    expect(layoutBox).not.toBeNull();
+    expect(
+      Math.abs(
+        scopeBox.y + scopeBox.height / 2 - (layoutBox.y + layoutBox.height / 2),
+      ),
+    ).toBeLessThanOrEqual(2);
+    expect(scopeBox.x + scopeBox.width).toBeLessThan(layoutBox.x);
+    const rowSelector = {
+      projects: '[data-testid^="project-row-"]',
+      repositories: '[data-testid^="repository-row-"]',
+      issues: '[data-testid^="projects-issue-row-"]',
+      prs: '[data-testid^="projects-pr-row-"]',
+    }[section];
+    const row = page.locator(rowSelector).first();
     await expect(row).toBeVisible();
-    const [layoutButtonBox, rowMenuBox] = await Promise.all([
-      header.getByRole("button", { name: "List layout" }).boundingBox(),
-      row.getByRole("button", { name: /More options for/ }).boundingBox(),
-    ]);
-    expect(layoutButtonBox).not.toBeNull();
-    expect(rowMenuBox).not.toBeNull();
-    const layoutRight =
-      (layoutButtonBox?.x ?? 0) + (layoutButtonBox?.width ?? 0);
-    const rowMenuRight = (rowMenuBox?.x ?? 0) + (rowMenuBox?.width ?? 0);
-    expect(Math.abs(layoutRight - rowMenuRight)).toBeLessThanOrEqual(2);
+    const rowBox = await requiredBox(row);
+    const headerBox = await requiredBox(header);
+    expect(Math.abs(rowBox.x - headerBox.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(rowBox.width - headerBox.width)).toBeLessThanOrEqual(2);
   }
+  await page.getByTestId("projects-section-issues").click();
+  const group = page.getByTestId("projects-issue-project-group-header").first();
+  await page.mouse.move(1, 1);
+  const icon = group.getByTestId("project-group-icon");
+  const checkbox = group.getByTestId("projects-group-select");
+  await expect(icon).toHaveCSS("opacity", "1");
+  await group.hover();
+  await expect(icon).toHaveCSS("opacity", "0");
+  const iconBox = await requiredBox(
+    group.getByTestId("project-group-leading-icon"),
+  );
+  const checkboxBox = await requiredBox(checkbox);
+  expect(
+    Math.abs(
+      iconBox.x + iconBox.width / 2 - (checkboxBox.x + checkboxBox.width / 2),
+    ),
+  ).toBeLessThanOrEqual(1);
+  await checkbox.click();
+  await expect(page.getByTestId("projects-selection-summary")).toContainText(
+    /tasks?/,
+  );
+  await expect(checkbox).toBeChecked();
+});
 
-  for (const [section, groupTestId, groupLabelTestId, hasListLayout] of [
-    [
-      "issues",
-      "projects-issue-project-group-header",
-      "project-issue-project",
-      true,
-    ],
-    [
-      "prs",
-      "projects-review-project-group-header",
-      "project-review-project",
-      true,
-    ],
-    [
-      "channels",
-      "projects-channel-project-group-header",
-      "project-channel-project",
-      false,
-    ],
+test("project outcomes remain the default and channel groups preserve navigation", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/#/projects");
+  const landing = page.getByTestId("projects-outcome-landing");
+  await expect(
+    landing.getByRole("heading", { name: "What needs attention?" }),
+  ).toBeVisible();
+  const cards = landing.locator('[data-testid^="project-outcome-card-"]');
+  await expect(cards.first()).toBeVisible();
+  await expect(
+    landing.getByRole("button", { name: "Open project buzz", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId("projects-section-all")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.getByTestId("projects-section-channels").click();
+  const groups = page.getByTestId("projects-channel-project-group");
+  const rows = page.getByTestId("project-channel-row");
+  await expect(groups.first()).toBeVisible();
+  await expect(rows.first()).toBeVisible();
+  expect(await groups.count()).toBeLessThanOrEqual(await rows.count());
+  await expect(page.getByTestId("projects-channels-list")).toContainText(
+    "buzz",
+  );
+  await expect(page.getByTestId("projects-channels-list")).toContainText(
+    "relay-tools",
+  );
+  await expect(page.getByTestId("projects-channels-list")).toContainText(
+    "design-system",
+  );
+  await page.getByTestId("projects-section-all").click();
+  await landing
+    .getByRole("button", { name: "Open project buzz", exact: true })
+    .click();
+  await expect(page.getByTestId("project-repository-picker")).toContainText(
+    "buzz",
+  );
+  await expandProjectPlumbing(page);
+  await expect(
+    page.getByRole("tab", { name: "Review", exact: true }),
+  ).toBeVisible();
+});
+
+test("selected review discussion preserves the channel draft and deduplicates links", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page, {
+    projectAccessChannelId: "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50",
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  const composer = page.getByTestId("message-input");
+  await composer.fill("Existing review notes.");
+  for (let round = 0; round < 2; round += 1) {
+    await page.goto("/#/projects");
+    await page.getByTestId("projects-section-prs").click();
+    await page.getByRole("button", { name: "List layout" }).click();
+    const row = page.locator('[data-testid^="projects-pr-row-"]').first();
+    await row.getByTestId("projects-row-select").click();
+    await page.getByTestId("projects-selection-chat-agent").click();
+    await expect(page.getByTestId("chat-title")).toHaveText("general");
+    await expect(composer).toContainText("Existing review notes.");
+    await expect(composer).toContainText("Let's talk about this review:");
+    const draft = await composer.innerText();
+    expect(draft.match(/Let's talk about this review:/g)).toHaveLength(1);
+    expect(await composer.locator("[data-composer-buzz-link]").count()).toBe(1);
+  }
+  const commands = await page.evaluate(
+    () => window.__BUZZ_E2E_COMMANDS__ ?? [],
+  );
+  expect(commands).not.toContain("send_channel_message");
+});
+
+test("overview selection actions clear without changing the list width", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/#/projects");
+  await page.getByTestId("projects-section-issues").click();
+  await page.getByRole("button", { name: "List layout" }).click();
+  const rows = page.locator('[data-testid^="projects-issue-row-"]');
+  const width = (await requiredBox(rows.first())).width;
+  await rows.first().getByTestId("projects-row-select").click();
+  const actions = page.getByTestId("projects-selection-actions");
+  await expect(actions).toBeVisible();
+  await expect(actions.getByTestId("projects-selection-copy")).toBeVisible();
+  await actions.getByTestId("projects-selection-discuss").click();
+  await expect(
+    page.getByTestId("projects-selection-channel-choices"),
+  ).toBeVisible();
+  await expect
+    .poll(async () => (await requiredBox(rows.first())).width)
+    .toBe(width);
+  await waitForAnimations(page);
+  await actions
+    .locator("..")
+    .screenshot({ path: `${SHOTS}/05-overview-selection-actions.png` });
+  await page.getByTestId("projects-selection-clear").click();
+  await expect(actions).toHaveCount(0);
+  await expect(rows.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  expect((await requiredBox(rows.first())).width).toBe(width);
+});
+
+test("Projects search replaces section tabs and filters every overview section", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/#/projects");
+  for (const [section, selector, needle] of [
+    ["all", '[data-testid^="project-outcome-card-"]', "buzz"],
+    ["projects", '[data-testid^="project-row-"]', "buzz"],
+    ["repositories", '[data-testid^="repository-row-"]', "relay-tools"],
+    ["issues", '[data-testid^="projects-issue-row-"]', "onboarding"],
+    ["prs", '[data-testid^="projects-pr-row-"]', "filter"],
+    ["channels", '[data-testid="project-channel-row"]', "buzz"],
   ] as const) {
     await page.getByTestId(`projects-section-${section}`).click();
-    if (hasListLayout) {
+    if (section !== "all" && section !== "channels")
       await page.getByRole("button", { name: "List layout" }).click();
-    }
-    const [headerBox, headerTitleBox, groupBox, groupLabelBox] =
-      await Promise.all([
-        page.getByTestId("projects-page-header").boundingBox(),
-        page
-          .getByTestId("projects-page-header")
-          .getByRole("heading")
-          .boundingBox(),
-        page.getByTestId(groupTestId).first().boundingBox(),
-        page.getByTestId(groupLabelTestId).first().boundingBox(),
-      ]);
-    expect(headerBox).not.toBeNull();
-    expect(headerTitleBox).not.toBeNull();
-    expect(groupBox).not.toBeNull();
-    expect(groupLabelBox).not.toBeNull();
-    expect(
-      Math.abs((headerBox?.x ?? 0) - (groupBox?.x ?? 0)),
-    ).toBeLessThanOrEqual(1);
-    const headerRight = (headerBox?.x ?? 0) + (headerBox?.width ?? 0);
-    const groupRight = (groupBox?.x ?? 0) + (groupBox?.width ?? 0);
-    expect(Math.abs(headerRight - groupRight)).toBeLessThanOrEqual(2);
-    expect(
-      Math.abs((headerTitleBox?.x ?? 0) - (groupLabelBox?.x ?? 0)),
-    ).toBeLessThanOrEqual(2);
-
-    if (section === "issues") {
-      const groupHeader = page.getByTestId(groupTestId).first();
-      const groupIcon = groupHeader.getByTestId("project-group-icon");
-      const groupCheckbox = groupHeader.getByTestId("projects-group-select");
-      await expect(groupIcon).toHaveCSS("opacity", "1");
-      await groupHeader.hover();
-      await expect(groupIcon).toHaveCSS("opacity", "0");
-      await expect(groupCheckbox.locator("..").locator("..")).toHaveCSS(
-        "opacity",
-        "1",
-      );
-      const [iconSlotBox, checkboxBox] = await Promise.all([
-        groupHeader.getByTestId("project-group-leading-icon").boundingBox(),
-        groupCheckbox.boundingBox(),
-      ]);
-      expect(iconSlotBox).not.toBeNull();
-      expect(checkboxBox).not.toBeNull();
-      const iconCenter = (iconSlotBox?.x ?? 0) + (iconSlotBox?.width ?? 0) / 2;
-      const checkboxCenter =
-        (checkboxBox?.x ?? 0) + (checkboxBox?.width ?? 0) / 2;
-      expect(Math.abs(iconCenter - checkboxCenter)).toBeLessThanOrEqual(1);
-    }
-  }
-});
-
-test("project overview presents collapsible context beside grouped activity", async ({
-  page,
-}) => {
-  await enableProjectsFeature(page);
-  await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/#/projects");
-
-  await expect(page.getByTestId("projects-overview-panel")).toHaveCSS(
-    "background-color",
-    "rgba(0, 0, 0, 0)",
-  );
-  await expect(page.getByTestId("projects-overview-layout")).toHaveAttribute(
-    "data-project-context-detached",
-    "true",
-  );
-  const overviewLayout = page.getByTestId("projects-overview-layout");
-  const overviewContentPod = page.getByTestId("projects-overview-content-pod");
-  const appContentSurface = page
-    .locator("[data-buzz-content-surface]")
-    .filter({ has: overviewLayout })
-    .first();
-  await expect(appContentSurface).toHaveCSS(
-    "background-color",
-    "rgba(0, 0, 0, 0)",
-  );
-  await expect(appContentSurface).toHaveCSS("border-radius", "0px");
-  await expect(overviewContentPod).toHaveCSS("border-radius", "16px");
-  await expect(page.getByTestId("projects-workspace-chrome")).toContainText(
-    "Projects",
-  );
-  await expect(page.getByTestId("projects-workspace-chrome")).toContainText(
-    "Activity",
-  );
-  await expect(page.getByTestId("projects-page-tabs")).toBeVisible();
-  await expect(page.getByTestId("projects-page-header")).toContainText(
-    "Projects Activity",
-  );
-  await expect(page.getByTestId("projects-activity-search")).toBeVisible();
-  await expect(page.getByTestId("projects-activity-summary")).toContainText(
-    /^(This week:|Currently tracking)/,
-  );
-  await expect(
-    page.getByTestId("projects-activity-summary").locator("strong").first(),
-  ).toBeVisible();
-  await expect(
-    page.getByTestId("projects-overview-context-panel"),
-  ).toBeVisible();
-  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
-    "Activity",
-  );
-  expect(
-    Math.round(
-      (await page.getByTestId("projects-overview-context-panel").boundingBox())
-        ?.width ?? 0,
-    ),
-  ).toBe(280);
-  await expect(
-    page.getByTestId("projects-overview-create-project"),
-  ).toHaveCount(0);
-  await expect(page.getByTestId("projects-overview-stats-pod")).toBeVisible();
-  await expect(
-    page
-      .getByTestId("projects-overview-context-panel")
-      .getByTestId("projects-overview-people"),
-  ).toBeVisible();
-  await expect(
-    page
-      .getByTestId("projects-overview-stats-pod")
-      .getByTestId("projects-overview-people"),
-  ).toHaveCount(0);
-  await expect(
-    page
-      .getByTestId("projects-overview-context-panel")
-      .getByTestId("projects-overview-context-title"),
-  ).toBeVisible();
-  await expect(
-    page
-      .getByTestId("projects-overview-context-panel")
-      .getByRole("heading", { name: "Details" }),
-  ).toHaveCount(0);
-  await expect(
-    page
-      .getByTestId("projects-overview-context-panel")
-      .getByRole("heading", { level: 3, name: "Activity" }),
-  ).toHaveCount(0);
-  await expect(
-    page
-      .getByTestId("projects-overview-context-panel")
-      .getByTestId("projects-overview-activity"),
-  ).toHaveCount(0);
-  await expect(
-    page.getByTestId("projects-activity-group").first(),
-  ).toContainText(/This week|Last week|Earlier/);
-  const searchBox = await page
-    .getByTestId("projects-activity-search")
-    .boundingBox();
-  const tabMenuBox = await page.getByTestId("projects-page-tabs").boundingBox();
-  const firstTabBox = await page
-    .getByTestId("projects-section-all")
-    .boundingBox();
-  const introBox = await page
-    .getByTestId("projects-activity-intro")
-    .boundingBox();
-  const feedBox = await page
-    .getByTestId("projects-activity-group")
-    .first()
-    .boundingBox();
-  const contentPodBox = await overviewContentPod.boundingBox();
-  expect(searchBox).toBeTruthy();
-  expect(tabMenuBox).toBeTruthy();
-  expect(firstTabBox).toBeTruthy();
-  expect(introBox).toBeTruthy();
-  expect(feedBox).toBeTruthy();
-  expect(contentPodBox).toBeTruthy();
-  expect(searchBox?.x ?? 0).toBeLessThan(firstTabBox?.x ?? 0);
-  expect(Math.abs((searchBox?.y ?? 0) - (firstTabBox?.y ?? 0))).toBeLessThan(8);
-  expect(tabMenuBox?.y ?? 0).toBeLessThan(introBox?.y ?? 0);
-  expect(introBox?.y ?? 0).toBeLessThan(feedBox?.y ?? 0);
-  expect(feedBox?.width ?? 0).toBeGreaterThan(600);
-  expect(feedBox?.width ?? 0).toBeLessThan((contentPodBox?.width ?? 0) - 32);
-  const feedCenter = (feedBox?.x ?? 0) + (feedBox?.width ?? 0) / 2;
-  const contentCenter =
-    (contentPodBox?.x ?? 0) + (contentPodBox?.width ?? 0) / 2;
-  expect(Math.abs(feedCenter - contentCenter)).toBeLessThan(24);
-
-  const stats = page.getByTestId("projects-overview-stat");
-  await expect(stats).toHaveCount(5);
-  await expect(stats.nth(2)).toContainText("Channels");
-  const lastStatBox = await stats.last().boundingBox();
-  const peopleBox = await page
-    .getByTestId("projects-overview-people")
-    .boundingBox();
-  expect(lastStatBox).toBeTruthy();
-  expect(peopleBox).toBeTruthy();
-  expect(peopleBox?.y ?? 0).toBeGreaterThan(
-    (lastStatBox?.y ?? 0) + (lastStatBox?.height ?? 0) - 1,
-  );
-
-  const activityCards = page.getByTestId("projects-activity-card");
-  await expect(activityCards.first()).toBeVisible();
-  const activityCardCount = await activityCards.count();
-  for (let index = 0; index < activityCardCount; index += 1) {
-    await expect(activityCards.nth(index)).toHaveCSS(
-      "background-color",
-      "rgba(0, 0, 0, 0)",
+    const rows = page.locator(selector);
+    await expect(rows.first()).toBeVisible();
+    const count = await rows.count();
+    await page.getByTestId("projects-activity-search").click();
+    const input = page.getByTestId("projects-section-search-input");
+    await expect(input).toBeFocused();
+    await expect(page.getByTestId(`projects-section-${section}`)).toHaveCount(
+      0,
     );
-    await expect(activityCards.nth(index)).toHaveCSS("border-style", "solid");
+    if (section !== "all" && section !== "channels") {
+      await expect(
+        page.getByTestId("projects-page-tabs").getByRole("combobox"),
+      ).toBeVisible();
+    }
+    await input.fill("no-such-project-result-38219");
+    await expect(rows).toHaveCount(0);
+    await input.fill(needle);
+    await expect(rows.first()).toBeVisible();
+    expect(await rows.count()).toBeLessThanOrEqual(count);
+    if (section === "repositories") {
+      await expect(
+        page.getByTestId("repository-row-relay-tools"),
+      ).toBeVisible();
+      await expect(page.getByTestId("repository-row-buzz")).toHaveCount(0);
+      await waitForAnimations(page);
+      await page
+        .locator("[data-buzz-content-surface]")
+        .screenshot({ path: `${SHOTS}/06-overview-filtered-search.png` });
+    }
+    await input.press("Escape");
+    await expect(page.getByTestId("projects-section-search")).toHaveCount(0);
+    await expect(page.getByTestId(`projects-section-${section}`)).toBeVisible();
+    await expect(rows).toHaveCount(count);
   }
-
-  await page.getByTestId("projects-section-channels").click();
-  await expect(page.getByTestId("projects-page-header")).toContainText(
-    "Channels",
-  );
-  await expect(
-    page.getByTestId("projects-overview-context-panel"),
-  ).toBeVisible();
-  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
-    "Channels",
-  );
-  await expect(page.getByTestId("projects-overview-add-channel")).toBeVisible();
-  await page.getByTestId("projects-overview-add-channel").click();
-  await expect(page.getByTestId("create-project-channel-dialog")).toBeVisible();
-  await expect(
-    page.getByTestId("create-project-channel-project"),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("projects-overview-people")).toHaveCount(0);
-  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
-  await expect(stats).toHaveCount(3);
-  await expect(stats.first()).toContainText("Channels");
-  await expect(page.getByTestId("projects-overview-layout")).toHaveAttribute(
-    "data-project-context-detached",
-    "true",
-  );
-  const channelRows = page.getByTestId("project-channel-row");
-  expect(await channelRows.count()).toBeGreaterThan(0);
-  await expect(channelRows.first()).toContainText("#buzz");
-  const channelsList = page.getByTestId("projects-channels-list");
-  await expect(channelsList).toContainText("buzz");
-  await expect(channelsList).toContainText("relay-tools");
-  await expect(channelsList).toContainText("design-system");
-  const channelCount = await channelRows.count();
-  const projectGroups = page.getByTestId("projects-channel-project-group");
-  expect(await projectGroups.count()).toBeGreaterThan(0);
-  expect(await projectGroups.count()).toBeLessThanOrEqual(channelCount);
-  for (const group of await projectGroups.all()) {
-    expect(
-      await group.getByTestId("project-channel-row").count(),
-    ).toBeGreaterThan(0);
-  }
-  await expect(page.getByTestId("project-channel-repository")).toHaveCount(
-    channelCount,
-  );
-  await expect(
-    page.getByTestId("project-channel-repository").first(),
-  ).toHaveCSS("text-align", "left");
-  const affiliationXs = (
-    await page
-      .getByTestId("project-channel-repository")
-      .evaluateAll((elements) =>
-        elements.map((element) => element.getBoundingClientRect().x),
-      )
-  ).filter((x) => Number.isFinite(x));
-  expect(
-    Math.max(...affiliationXs) - Math.min(...affiliationXs),
-  ).toBeLessThanOrEqual(2);
-  await page.getByTestId("projects-section-projects").click();
-  await expect(page.getByTestId("projects-page-header")).toContainText(
-    "Projects",
-  );
-  await expect(
-    page.getByTestId("projects-overview-context-panel"),
-  ).toBeVisible();
-  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
-    "Projects",
-  );
-  await expect(
-    page.getByTestId("projects-overview-create-project"),
-  ).toBeVisible();
-  await expect(page.getByTestId("projects-overview-people")).toBeVisible();
-  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
-  await page.getByTestId("projects-section-repositories").click();
-  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
-    "Repositories",
-  );
-  await expect(
-    page.getByTestId("projects-overview-add-repository"),
-  ).toBeVisible();
-  await page.getByTestId("projects-overview-add-repository").click();
-  await expect(page.getByTestId("add-project-repository-dialog")).toBeVisible();
-  await expect(
-    page.getByTestId("add-project-repository-project"),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(stats.nth(1)).toContainText("Active tasks");
-  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
-  await page.getByTestId("projects-section-issues").click();
-  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
-    "Tasks",
-  );
-  await expect(
-    page.getByTestId("projects-overview-create-issue"),
-  ).toHaveAttribute("aria-label", "Create task");
-  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
-  await page.getByTestId("projects-section-prs").click();
-  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
-    "Reviews",
-  );
-  await expect(
-    page.getByTestId("projects-overview-create-pull-request"),
-  ).toHaveAttribute("aria-label", "Create review");
-  await expect(page.getByTestId("projects-overview-people")).toBeVisible();
-  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
-  await page.getByTestId("projects-section-all").click();
-  await expect(
-    page.getByTestId("projects-overview-context-panel"),
-  ).toBeVisible();
-  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
-    "Activity",
-  );
-  await expect(page.getByTestId("projects-overview-activity")).toHaveCount(0);
-
-  await page.getByTestId("projects-section-projects").click();
-  await page.getByTestId("projects-overview-create-project").click();
-  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("create-project-dialog")).toBeHidden();
-
-  await page.getByTestId("projects-overview-context-toggle").click();
-  await expect(
-    page.getByTestId("projects-overview-context-rail"),
-  ).toHaveAttribute("aria-hidden", "true");
-  await expect(page.getByTestId("projects-overview-context-rail")).toHaveCSS(
-    "width",
-    "0px",
-  );
-  await expect(page.getByTestId("projects-overview-layout")).toHaveAttribute(
-    "data-project-context-detached",
-    "true",
-  );
-  await expect(stats).toHaveCount(3);
-  await expect(activityCards).toHaveCount(0);
-});
-
-test("project overview chrome toggles a detached resizable agent chat", async ({
-  page,
-}) => {
-  await enableProjectsFeature(page);
-  await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/#/projects");
-  await page.getByTestId("projects-section-prs").click();
-  await page.getByRole("button", { name: "List layout" }).click();
-  await expect(
-    page.locator('[data-testid^="projects-pr-row-"]').first(),
-  ).toBeVisible();
-
-  const overviewChat = page.getByTestId("projects-overview-chat-toggle");
-  await expect(overviewChat).toHaveAttribute(
-    "aria-label",
-    "Chat with an agent about Reviews",
-  );
-  await expect(overviewChat).toHaveAttribute("aria-pressed", "false");
-  const overviewInfo = page.getByTestId("projects-overview-context-toggle");
-  const [chatBox, infoBox] = await Promise.all([
-    overviewChat.boundingBox(),
-    overviewInfo.boundingBox(),
-  ]);
-  expect(chatBox).not.toBeNull();
-  expect(infoBox).not.toBeNull();
-  expect(
-    (infoBox?.x ?? 0) - ((chatBox?.x ?? 0) + (chatBox?.width ?? 0)),
-  ).toBeLessThanOrEqual(4);
-  const contextRail = page.getByTestId("projects-overview-context-rail");
-  await expect(overviewInfo).toHaveAttribute("aria-pressed", "true");
-  await overviewInfo.click();
-  await expect(overviewInfo).toHaveAttribute("aria-pressed", "false");
-  await expect(contextRail).toHaveCSS("width", "0px");
-  await overviewChat.click();
-  await expect(overviewChat).toHaveAttribute("aria-pressed", "true");
-  await expect(overviewInfo).toHaveAttribute("aria-pressed", "false");
-  await expect(contextRail).toHaveCSS("width", "0px");
-  await expect(overviewChat).toBeVisible();
-  const chatRail = page.getByTestId("projects-overview-agent-rail");
-  await expect(chatRail.getByTestId("project-agent-chat-panel")).toBeVisible();
-  await expect(
-    page
-      .getByTestId("projects-overview-content-pod")
-      .getByTestId("project-agent-chat-panel"),
-  ).toHaveCount(0);
-  await expect(
-    chatRail.getByTestId("projects-overview-agent-rail-panel"),
-  ).toHaveCSS("border-radius", "16px");
-  const agentHeader = page.getByTestId("project-agent-context");
-  await expect
-    .poll(() =>
-      agentHeader.evaluate(
-        (element) => getComputedStyle(element).backdropFilter,
-      ),
-    )
-    .not.toBe("none");
-  await expect(contextRail).toHaveAttribute("aria-hidden", "true");
-  await overviewInfo.click();
-  await expect(overviewInfo).toHaveAttribute("aria-pressed", "true");
-  await expect(contextRail).toHaveAttribute("aria-hidden", "false");
-  await expect(
-    page.getByTestId("projects-overview-context-panel"),
-  ).toBeVisible();
-  const chatPanel = page.getByTestId("project-agent-chat-panel");
-  const resizeHandle = chatPanel.getByTestId(
-    "right-auxiliary-pane-resize-handle",
-  );
-  const [initialPanelBox, resizeHandleBox] = await Promise.all([
-    chatPanel.boundingBox(),
-    resizeHandle.boundingBox(),
-  ]);
-  expect(initialPanelBox).not.toBeNull();
-  expect(resizeHandleBox).not.toBeNull();
-  const resizeStartX =
-    (resizeHandleBox?.x ?? 0) + (resizeHandleBox?.width ?? 0) / 2;
-  const resizeStartY =
-    (resizeHandleBox?.y ?? 0) + (resizeHandleBox?.height ?? 0) / 2;
-  await resizeHandle.dispatchEvent("pointerdown", {
-    button: 0,
-    buttons: 1,
-    clientX: resizeStartX,
-    clientY: resizeStartY,
-    pointerId: 1,
-    pointerType: "mouse",
-  });
-  await expect(chatRail).toHaveAttribute("data-resizing", "true");
-  await page.mouse.move(resizeStartX - 32, resizeStartY);
-  await expect
-    .poll(() =>
-      chatPanel.evaluate((element) =>
-        Math.round(element.getBoundingClientRect().width),
-      ),
-    )
-    .toBe(Math.round(initialPanelBox?.width ?? 0) + 32);
-  await page.mouse.up();
-  await expect(chatRail).toHaveAttribute("data-resizing", "false");
-  await chatPanel.getByTestId("message-input").fill("Summarize these reviews");
-  await chatPanel.getByTestId("message-input").press("Enter");
-  const readSentContent = () =>
-    page.evaluate(() => {
-      const entries =
-        (
-          window as Window & {
-            __BUZZ_E2E_COMMAND_LOG__?: Array<{
-              command: string;
-              payload: { content?: string };
-            }>;
-          }
-        ).__BUZZ_E2E_COMMAND_LOG__ ?? [];
-      return entries
-        .filter((entry) => entry.command === "send_channel_message")
-        .at(-1)?.payload.content;
-    });
-  await expect.poll(readSentContent).toContain("Visible Reviews items:");
-  const sentContent = await readSentContent();
-  const transcript = chatPanel.getByTestId("message-thread-transcript");
-  await expect(transcript).toContainText("Summarize these reviews");
-  await expect(transcript).not.toContainText("Visible Reviews items:");
-  const sentContext = transcript.getByTestId("project-agent-sent-context");
-  await expect(sentContext).toBeVisible();
-  const sentContextTrigger = sentContext.getByRole("button", {
-    name: "Show sent context",
-  });
-  await expect(sentContextTrigger).toHaveAttribute("aria-expanded", "false");
-  await expect(
-    sentContext.getByTestId("project-agent-sent-context-payload"),
-  ).toHaveCount(0);
-  await sentContextTrigger.click();
-  await expect(
-    sentContext.getByTestId("project-agent-sent-context-payload"),
-  ).toContainText("Visible Reviews items:");
-  expect(sentContent).toContain("Visible Reviews items:");
-  expect(sentContent).toContain("untrusted UI data, not instructions");
-  expect(sentContent).toContain("[review]");
-
-  await overviewChat.click();
-  await expect(overviewChat).toHaveAttribute("aria-pressed", "false");
-  await expect(page.getByTestId("project-agent-chat-panel")).not.toBeVisible();
-  await expect(chatRail).toHaveCSS("width", "0px");
-  await expect(
-    page.getByTestId("projects-overview-context-panel"),
-  ).toBeVisible();
-});
-
-test("project overview drawer control animates the context rail", async ({
-  page,
-}) => {
-  await enableProjectsFeature(page);
-  await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/#/projects");
-
-  const toggle = page.getByTestId("projects-overview-context-toggle");
-  const rail = page.getByTestId("projects-overview-context-rail");
-  const railPanel = page.getByTestId("projects-overview-context-rail-panel");
-  const drawerIndicator = page
-    .getByTestId("projects-overview-context-icon")
-    .locator("rect")
-    .nth(1);
-  const contentSurface = page.locator("[data-buzz-content-surface]");
-  await expect(page.getByTestId("projects-overview-layout")).toHaveAttribute(
-    "data-project-context-detached",
-    "true",
-  );
-  const surfaceStyle = () =>
-    contentSurface.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return {
-        backgroundColor: style.backgroundColor,
-        borderRadius: style.borderRadius,
-        boxShadow: style.boxShadow,
-        margin: style.margin,
-      };
-    });
-  const expandedSurfaceStyle = await surfaceStyle();
-  await expect(
-    page.getByTestId("projects-overview-context-icon"),
-  ).toBeVisible();
-  await expect(drawerIndicator).toHaveAttribute("width", "5px");
-  await expect(rail).toHaveCSS("width", "288px");
-  await expect(page.getByTestId("projects-overview-layout")).toHaveCSS(
-    "padding-right",
-    "8px",
-  );
-  await expect(toggle).toHaveAttribute("aria-pressed", "true");
-  await expect(rail).toHaveCSS("transition-duration", "0.2s");
-  await expect(rail).toHaveCSS("transition-timing-function", "linear");
-  await expect(railPanel).toHaveCSS("transform", "none");
-
-  await toggle.click();
-  await expect(rail).toHaveCSS("width", "0px");
-  await expect(toggle).toHaveAttribute("aria-pressed", "false");
-  await expect(drawerIndicator).toHaveAttribute("width", "2px");
-  await expect(railPanel).toHaveCSS("transform", "none");
-  expect(await surfaceStyle()).toEqual(expandedSurfaceStyle);
-  await toggle.click();
-  await expect(rail).toHaveCSS("width", "288px");
-  await expect(toggle).toHaveAttribute("aria-pressed", "true");
-});
-
-test("Projects search replaces and restores the section tabs", async ({
-  page,
-}) => {
-  await enableProjectsFeature(page);
-  await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/#/projects");
-  await page.getByTestId("projects-section-projects").click();
-
-  await expect(
-    page.getByTestId("projects-page-tabs").getByRole("combobox"),
-  ).toHaveCount(0);
-  await page.getByTestId("projects-activity-search").click();
-  const search = page.getByTestId("projects-section-search-input");
-  await expect(search).toBeFocused();
-  await expect(page.getByTestId("projects-section-projects")).toHaveCount(0);
-  await expect(
-    page.getByTestId("projects-page-tabs").getByRole("combobox"),
-  ).toHaveValue("updated");
-
-  await search.fill("buzz");
-  await expect(
-    page.locator(
-      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
-    ),
-  ).toBeVisible();
-
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("projects-section-search")).toHaveCount(0);
-  await expect(page.getByTestId("projects-section-projects")).toBeVisible();
-
   await page.getByTestId("projects-activity-search").click();
   await page.getByTestId("projects-section-search-close").click();
   await expect(page.getByTestId("projects-section-search")).toHaveCount(0);
 });
 
-test("selecting overview list rows switches the context pod to the cluster", async ({
+test("overview list selection supports keyboard, ranges and channel choices", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.goto("/#/projects");
-  await page.getByRole("button", { name: "Tasks", exact: true }).click();
-  await page.getByRole("button", { name: "List layout" }).click();
+  for (const [section, prefix, noun] of [
+    ["projects", "project-row-", "project"],
+    ["repositories", "repository-row-", "repository"],
+    ["issues", "projects-issue-row-", "task"],
+    ["prs", "projects-pr-row-", "review"],
+  ] as const) {
+    await page.getByTestId(`projects-section-${section}`).click();
+    await page.getByRole("button", { name: "List layout" }).click();
+    const rows = page.locator(`[data-testid^="${prefix}"]`);
+    const first = rows.first().getByTestId("projects-row-select");
+    await rows.first().getByRole("button").first().focus();
+    await page.keyboard.press("Tab");
+    await expect(first).toBeFocused();
+    await page.keyboard.press("Space");
+    await expect(first).toBeChecked();
+    await expect(page.getByTestId("projects-selection-summary")).toContainText(
+      `1 ${noun}`,
+    );
+    const count = Math.min(3, await rows.count());
+    expect(count).toBeGreaterThan(1);
+    await rows
+      .nth(count - 1)
+      .getByTestId("projects-row-select")
+      .click({ modifiers: ["Shift"] });
+    await expect(rows.getByRole("checkbox", { checked: true })).toHaveCount(
+      count,
+    );
+    await expect(page.getByTestId("projects-selection-summary")).toContainText(
+      String(count),
+    );
+    await page.getByTestId("projects-selection-discuss").click();
+    await expect(
+      page.getByTestId("projects-selection-related-channel").first(),
+    ).toBeVisible();
+    await page.getByTestId("projects-selection-search-channels").click();
+    await expect(page.getByTestId("channel-browser-search")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("projects-selection-summary")).toBeVisible();
+    await page.getByTestId("projects-selection-clear").click();
+    await expect(rows.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  }
+});
 
+test("overview selection resets when its section or search scope changes", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await page.goto("/#/projects");
+  await page.getByTestId("projects-section-issues").click();
+  await page.getByRole("button", { name: "List layout" }).click();
   const rows = page.locator('[data-testid^="projects-issue-row-"]');
+  await rows.first().getByTestId("projects-row-select").click();
+  await expect(page.getByTestId("projects-selection-summary")).toBeVisible();
+  await page.getByTestId("projects-section-prs").click();
+  await expect(page.getByTestId("projects-selection-summary")).toHaveCount(0);
+  await page.getByTestId("projects-section-issues").click();
+  await expect(rows.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  await rows.first().getByTestId("projects-row-select").click();
+  await page.getByTestId("projects-activity-search").click();
+  await page
+    .getByTestId("projects-section-search-input")
+    .fill("no-such-selected-task-9281");
+  await expect(rows).toHaveCount(0);
+  await expect(page.getByTestId("projects-selection-summary")).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await expect(rows.first()).toBeVisible();
-  const firstRowTitle = (
-    (await rows.first().getByTestId("project-entity-title").textContent()) ?? ""
+  await expect(rows.getByRole("checkbox", { checked: true })).toHaveCount(0);
+});
+
+test("repository changes discard selection before preparing channel discussion", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page);
+  await openBuzzProject(page);
+  await page.getByRole("tab", { name: "Tasks", exact: true }).click();
+  const row = page.getByTestId("project-issue-row").first();
+  const selectedTitle = (
+    await row.locator('[data-projects-text-priority="primary"]').innerText()
   ).trim();
-  const firstRowSelect = rows.first().getByRole("checkbox", {
-    name: `Select ${firstRowTitle}`,
-  });
-  await rows.first().getByRole("button").first().focus();
-  await page.keyboard.press("Tab");
-  await expect(firstRowSelect).toBeFocused();
-  await expect(firstRowSelect.locator("..").locator("..")).toHaveCSS(
-    "opacity",
-    "1",
-  );
-  await page.keyboard.press("Space");
-  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
-    "1 task",
-  );
+  await row.getByTestId("projects-row-select").click();
   await expect(page.getByTestId("projects-selection-summary")).toContainText(
     "1 task",
   );
-  await expect(page.getByTestId("projects-selection-items")).toHaveCount(0);
-  await expect(page.getByTestId("projects-selection-clear")).toBeVisible();
-  await expect(page.getByTestId("projects-overview-stats-pod")).toHaveCount(0);
-  await expect(page.getByTestId("projects-overview-people")).toHaveCount(0);
-
-  const expectedSelectionCount = Math.min(5, await rows.count());
-  for (let index = 1; index < expectedSelectionCount; index += 1) {
-    await rows.nth(index).getByTestId("projects-row-select").click();
-  }
-  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
-    `${expectedSelectionCount} ${expectedSelectionCount === 1 ? "task" : "tasks"}`,
+  await page.getByTestId("project-repository-picker").click();
+  await page.getByTestId("project-repository-relay-tools").click();
+  await expect(page.getByTestId("project-repository-picker")).toContainText(
+    "relay-tools",
   );
-  await page.getByTestId("projects-selection-discuss").click();
-  await expect(
-    page.getByTestId("projects-selection-channel-choices"),
-  ).toBeVisible();
-  await expect(
-    page.getByTestId("projects-selection-related-channel").first(),
-  ).toBeVisible();
-  await page.getByTestId("projects-selection-search-channels").click();
-  await expect(
-    page.getByPlaceholder("Search channels by name or description"),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-
-  await page.getByTestId("projects-selection-chat-agent").click();
-  await expect(page.getByTestId("project-agent-chat-panel")).toBeVisible();
-  await expect(page.getByTestId("project-agent-context")).toContainText(
-    "Agent chat",
-  );
-  await expect(page.getByTestId("projects-agent-selection-item")).toHaveCount(
-    Math.min(4, expectedSelectionCount),
-  );
-  await expect(page.getByTestId("projects-agent-selection-toggle")).toHaveText(
-    `${expectedSelectionCount} ${
-      expectedSelectionCount === 1 ? "element" : "elements"
-    } selected`,
-  );
-  if (expectedSelectionCount > 4) {
-    await page.getByTestId("projects-agent-selection-more").click();
-    await expect(
-      page.getByTestId("projects-agent-selection-overflow-item"),
-    ).toHaveCount(expectedSelectionCount - 4);
-    await page.keyboard.press("Escape");
-  }
-  await page.getByTestId("projects-agent-selection-toggle").click();
-  await expect(page.getByTestId("projects-agent-selection-item")).toHaveCount(
-    0,
-  );
-  await expect(page.getByTestId("projects-agent-selection-more")).toHaveCount(
-    0,
-  );
-  await page.getByRole("button", { name: "Close agent chat" }).click();
-  await expect(page.getByTestId("projects-overview-context-title")).toHaveText(
-    "Tasks",
-  );
-  await expect(page.getByTestId("projects-overview-context-rail")).toHaveCSS(
-    "width",
-    "288px",
-  );
-});
-
-test("selection restores a previously collapsed Projects context drawer", async ({
-  page,
-}) => {
-  await enableProjectsFeature(page);
-  await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.goto("/#/projects");
-  await page.getByRole("button", { name: "Tasks", exact: true }).click();
-  await page.getByRole("button", { name: "List layout" }).click();
-
-  const toggle = page.getByTestId("projects-overview-context-toggle");
-  const rail = page.getByTestId("projects-overview-context-rail");
-  await toggle.click();
-  await expect(rail).toHaveCSS("width", "0px");
-
-  const row = page.locator('[data-testid^="projects-issue-row-"]').first();
-  await row.hover();
-  await row.getByTestId("projects-row-select").click();
-  await expect(rail).toHaveCSS("width", "288px");
-  await expect(page.getByTestId("projects-selection-clear")).toBeVisible();
-
-  await page.getByTestId("projects-selection-clear").click();
-  await expect(rail).toHaveCSS("width", "0px");
-  await expect(toggle).toHaveAttribute("aria-pressed", "false");
-});
-
-test("repository changes discard captured selection context before agent sends", async ({
-  page,
-}) => {
-  await enableProjectsFeature(page);
-  await installMockBridge(page);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await openBuzzProject(page);
-  await page.getByTestId("project-home-context-repo-buzz").click();
+  await expect(page.getByTestId("projects-selection-summary")).toHaveCount(0);
   await page.getByRole("tab", { name: "Tasks", exact: true }).click();
-
-  const selectedRow = page.getByTestId("project-issue-row").first();
-  const selectedTitle = (
-    (await selectedRow
-      .locator('[data-projects-text-priority="primary"]')
-      .textContent()) ?? ""
-  ).trim();
-  await selectedRow
-    .getByRole("checkbox", { name: `Select ${selectedTitle}` })
+  await page
+    .getByTestId("project-issue-row")
+    .first()
+    .getByTestId("projects-row-select")
     .click();
   await page.getByTestId("projects-selection-chat-agent").click();
-  const agentPanel = page.getByTestId("project-agent-chat-panel");
-  await expect(agentPanel).toBeVisible();
-  await expect(
-    agentPanel.getByText(selectedTitle, { exact: true }),
-  ).toBeVisible();
-
-  await page.getByTestId("project-workspace-back").click();
-  await page.getByTestId("project-home-context-repo-relay-tools").click();
-  await expect(page).toHaveURL(/repositoryId=.*relay-tools/);
-  await page.getByTestId("project-right-panel-chat-tab").click();
-  await expect(agentPanel).toBeVisible();
-  await expect(
-    agentPanel.getByTestId("projects-agent-selection-toggle"),
-  ).toHaveCount(0);
-
-  const prompt = "Explain the current repository.";
-  const composer = agentPanel.getByTestId("message-composer");
-  await composer.locator('[contenteditable="true"]').fill(prompt);
-  await composer.locator('[contenteditable="true"]').press("Enter");
-  await expect
-    .poll(() =>
-      page.evaluate((prefix) => {
-        const sent = window.__BUZZ_E2E_COMMAND_PAYLOADS__?.find(
-          (entry) =>
-            entry.command === "send_channel_message" &&
-            typeof entry.payload === "object" &&
-            entry.payload !== null &&
-            "content" in entry.payload &&
-            typeof entry.payload.content === "string" &&
-            entry.payload.content.startsWith(prefix),
-        );
-        return (sent?.payload as { content?: string } | undefined)?.content;
-      }, prompt),
-    )
-    .toContain('Repository: "relay-tools"');
-  const sentContent = await page.evaluate(
-    (prefix) =>
-      (
-        window.__BUZZ_E2E_COMMAND_PAYLOADS__?.find(
-          (entry) =>
-            entry.command === "send_channel_message" &&
-            typeof entry.payload === "object" &&
-            entry.payload !== null &&
-            "content" in entry.payload &&
-            typeof entry.payload.content === "string" &&
-            entry.payload.content.startsWith(prefix),
-        )?.payload as { content?: string } | undefined
-      )?.content ?? "",
-    prompt,
+  const draft = page.getByTestId("message-input");
+  await expect(draft).toContainText("Let's talk about this task:");
+  await expect(draft).not.toContainText(selectedTitle);
+  await expect(draft.locator("[data-composer-buzz-link]")).toHaveAttribute(
+    "data-href",
+    /relay-tools/,
   );
-  expect(sentContent).not.toContain(selectedTitle);
+  expect(
+    await page.evaluate(() => window.__BUZZ_E2E_COMMANDS__ ?? []),
+  ).not.toContain("send_channel_message");
 });
 
 test("overview lists position identifying and generic icons consistently", async ({
@@ -1998,75 +1504,37 @@ test("overview lists position identifying and generic icons consistently", async
   }
 });
 
-test("repository drawer control animates the context rail from the far right", async ({
+test("repository context control collapses its panel without covering the workspace", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await openBuzzProject(page);
-
-  const chat = page.getByTestId("project-right-panel-chat-tab");
-  const terminal = page.getByTestId("project-terminal-toggle");
   const info = page.getByTestId("project-right-panel-repository-tab");
-  const contextIcon = page.getByTestId("project-right-panel-repository-icon");
-  const rail = page.getByTestId("project-context-rail");
-  const repositoryPanel = page.getByTestId("project-repository-actions-panel");
-  const layout = page.getByTestId("project-panel-layout");
-  const contentSurface = page.locator("[data-buzz-content-surface]");
-  const workspaceHeader = page.getByTestId("project-workspace-tab-menu");
+  const panel = page.getByTestId("project-repository-actions-panel");
+  const workspace = page.getByTestId("project-detail-scroll");
+  await expect(info).toHaveAttribute("aria-pressed", "true");
+  await expect(panel).toBeVisible();
+  const panelBox = await requiredBox(panel);
+  const workspaceBox = await requiredBox(workspace);
+  expect(workspaceBox.x + workspaceBox.width).toBeLessThanOrEqual(
+    panelBox.x + 1,
+  );
+  await page.getByTestId("project-repository-branch-trigger").click();
   await expect(
-    workspaceHeader.getByTestId("project-right-panel-chat-tab"),
-  ).toHaveCount(0);
-  await expect(
-    page
-      .getByTestId("project-detail-chrome")
-      .getByTestId("project-right-panel-chat-tab"),
+    page.getByRole("menuitemradio", { name: "main", exact: true }),
   ).toBeVisible();
-  await expect(layout).toHaveAttribute("data-project-context-detached", "true");
-  const expandedSurfaceStyle = await contentSurface.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      backgroundColor: style.backgroundColor,
-      borderRadius: style.borderRadius,
-      boxShadow: style.boxShadow,
-      margin: style.margin,
-    };
-  });
-  const [chatBounds, terminalBounds, infoBounds] = await Promise.all([
-    chat.boundingBox(),
-    terminal.boundingBox(),
-    info.boundingBox(),
-  ]);
-  expect(terminalBounds?.x).toBeLessThan(chatBounds?.x ?? 0);
-  expect(chatBounds?.x).toBeLessThan(infoBounds?.x ?? 0);
-  await expect(info).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(contextIcon).toBeVisible();
-  await expect(info).toHaveAttribute("aria-pressed", "true");
-  await expect(rail).toHaveCSS("width", "288px");
-  await expect(layout).toHaveCSS("padding-right", "8px");
-  await expect(rail).toHaveCSS("transition-duration", "0.2s");
-  await expect(repositoryPanel).toBeVisible();
-
+  await page.keyboard.press("Escape");
   await info.click();
-  await expect(rail).toHaveCSS("width", "0px");
   await expect(info).toHaveAttribute("aria-pressed", "false");
-  await expect(layout).toHaveAttribute("data-project-context-detached", "true");
-  expect(
-    await contentSurface.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return {
-        backgroundColor: style.backgroundColor,
-        borderRadius: style.borderRadius,
-        boxShadow: style.boxShadow,
-        margin: style.margin,
-      };
-    }),
-  ).toEqual(expandedSurfaceStyle);
-
+  await expect(panel).toHaveCount(0);
+  await expect
+    .poll(async () => (await requiredBox(workspace)).width)
+    .toBeGreaterThan(workspaceBox.width);
   await info.click();
-  await expect(rail).toHaveCSS("width", "288px");
-  await expect(info).toHaveAttribute("aria-pressed", "true");
-  await expect(repositoryPanel).toBeVisible();
+  await expect(panel).toBeVisible();
+  expect((await requiredBox(panel)).width).toBe(panelBox.width);
+  expect((await requiredBox(workspace)).width).toBe(workspaceBox.width);
 });
 
 test("selecting repository workspace rows switches the context pod to the cluster", async ({
@@ -2083,7 +1551,10 @@ test("selecting repository workspace rows switches the context pod to the cluste
     )
     .first()
     .click();
-  await page.getByTestId("project-home-context-repo-buzz").click();
+  await expandProjectPlumbing(page);
+  await expect(page.getByTestId("project-repository-picker")).toContainText(
+    "buzz",
+  );
 
   await page.getByRole("tab", { name: "Commits" }).click();
   const commitRows = page.getByTestId("project-activity-feed-item");
@@ -2197,66 +1668,41 @@ test("selecting repository workspace rows switches the context pod to the cluste
   );
 });
 
-test("project detail chat resize tracks the pointer without easing", async ({
+test("repository context resize tracks the pointer and resets its width", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await openBuzzProject(page);
-  await page.getByTestId("project-right-panel-chat-tab").click();
-
-  const chatPanel = page.getByTestId("project-agent-chat-panel");
-  const contextRail = page.getByTestId("project-context-rail");
-  const contextRailPanel = contextRail.getByTestId(
-    "project-context-rail-panel",
-  );
-  const resizeHandle = chatPanel.getByTestId(
-    "right-auxiliary-pane-resize-handle",
-  );
-  await expect(chatPanel).toBeVisible();
-  await expect(contextRailPanel).toHaveCSS("border-radius", "0px");
-  const agentHeader = chatPanel.getByTestId("project-agent-context");
-  await expect(agentHeader).toBeVisible();
-  await expect(agentHeader).toContainText("Overview");
-  await expect(
-    agentHeader.getByRole("button", { name: "Close agent chat" }),
-  ).toBeVisible();
-  await expect
-    .poll(() =>
-      agentHeader.evaluate(
-        (element) => getComputedStyle(element).backdropFilter,
-      ),
-    )
-    .not.toBe("none");
-  const [panelBox, handleBox] = await Promise.all([
-    chatPanel.boundingBox(),
-    resizeHandle.boundingBox(),
-  ]);
-  expect(panelBox).not.toBeNull();
-  expect(handleBox).not.toBeNull();
-  const startX = (handleBox?.x ?? 0) + (handleBox?.width ?? 0) / 2;
-  const startY = (handleBox?.y ?? 0) + (handleBox?.height ?? 0) / 2;
-
-  await resizeHandle.dispatchEvent("pointerdown", {
+  const panel = page.getByTestId("project-repository-actions-panel");
+  const handle = panel.getByTestId("right-auxiliary-pane-resize-handle");
+  await expect(panel).toBeVisible();
+  const initial = await requiredBox(panel);
+  const box = await requiredBox(handle);
+  const startX = box.x + box.width / 2;
+  const startY = box.y + box.height / 2;
+  await handle.dispatchEvent("pointerdown", {
     button: 0,
+    buttons: 1,
     clientX: startX,
     clientY: startY,
     pointerId: 1,
     pointerType: "mouse",
   });
-  await expect(contextRail).toHaveAttribute("data-resizing", "true");
-  await expect(contextRail).toHaveCSS("transition-duration", "0s");
   await page.mouse.move(startX - 40, startY);
   await expect
-    .poll(async () =>
-      chatPanel.evaluate((element) =>
-        Math.round(element.getBoundingClientRect().width),
-      ),
-    )
-    .toBe(Math.round(panelBox?.width ?? 0) + 40);
+    .poll(async () => Math.round((await requiredBox(panel)).width))
+    .toBe(Math.round(initial.width) + 40);
+  await expect(panel).toHaveCSS("transition-duration", "0s");
   await page.mouse.up();
-  await expect(contextRail).toHaveAttribute("data-resizing", "false");
-  await expect(contextRail).toHaveCSS("transition-duration", "0.2s");
+  await expect(handle).toHaveAttribute(
+    "title",
+    "Drag to resize. Double-click to reset width.",
+  );
+  await handle.dblclick();
+  await expect
+    .poll(async () => Math.round((await requiredBox(panel)).width))
+    .toBe(Math.round(initial.width));
 });
 
 test("repository rows identify their git host", async ({ page }) => {
@@ -2554,7 +2000,7 @@ test("repository tags can be browsed as immutable remote snapshots", async ({
 
   await expect(page.getByRole("button", { name: /v1\.0\.0/ })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Buzz", exact: true }),
+    page.getByRole("button", { name: "Remote", exact: true }),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -2660,9 +2106,10 @@ test("external repositories stay on local source after a branch round trip", asy
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await openBuzzProject(page);
-  await page.getByTestId("project-home-context-repo-relay-tools").click();
-  await page.getByRole("button", { name: "github.com" }).click();
-  await page.getByRole("menuitemradio", { name: /^Local/ }).click();
+  await page.getByTestId("project-repository-picker").click();
+  await page.getByTestId("project-repository-relay-tools").click();
+  // An existing checkout is selected automatically for an external host.
+  await expect(page.getByRole("button", { name: /^Local / })).toBeVisible();
 
   await expect(
     page.getByRole("heading", { name: "Local branch README" }),
@@ -2756,9 +2203,10 @@ test("repository files beyond the eager preview limit load on demand", async ({
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await openBuzzProject(page);
-  await page.getByTestId("project-home-context-repo-relay-tools").click();
-  await page.getByRole("button", { name: "github.com" }).click();
-  await page.getByRole("menuitemradio", { name: /^Local/ }).click();
+  await page.getByTestId("project-repository-picker").click();
+  await page.getByTestId("project-repository-relay-tools").click();
+  // An existing checkout is selected automatically for an external host.
+  await expect(page.getByRole("button", { name: /^Local / })).toBeVisible();
 
   await expect(
     page.getByRole("heading", { name: "Deferred README" }),
@@ -2811,8 +2259,11 @@ test("pushed local branch can open a pull request", async ({ page }) => {
   await page
     .getByRole("menuitemradio", { name: "feature/projects-workflow" })
     .click();
-  await page.getByRole("tab", { name: "Pull Request", exact: true }).click();
-  await page.getByRole("button", { name: "Pull Request", exact: true }).click();
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
+  await page
+    .getByTestId("project-section-header")
+    .getByRole("button", { name: "Create review", exact: true })
+    .click();
   await expect(page.getByTestId("create-pull-request-repository")).toHaveValue(
     /:buzz$/,
   );
@@ -2832,7 +2283,7 @@ test("pushed local branch can open a pull request", async ({ page }) => {
     button.click();
     button.click();
   });
-  await expect(page.getByText("Pull request created.")).toBeVisible();
+  await expect(page.getByText("Review created.")).toBeVisible();
 
   const createdEvents = await page.evaluate(
     () =>
@@ -2860,8 +2311,11 @@ test("project issue can be created from the issues header", async ({
   await installMockBridge(page);
   await openBuzzProject(page);
 
-  await page.getByRole("tab", { name: "Issues", exact: true }).click();
-  await page.getByRole("button", { name: "Issues", exact: true }).click();
+  await page.getByRole("tab", { name: "Tasks", exact: true }).click();
+  await page
+    .getByTestId("project-section-header")
+    .getByRole("button", { name: "Create task", exact: true })
+    .click();
   await page
     .getByTestId("create-issue-title")
     .fill("Document the broken workflow");
@@ -2869,7 +2323,7 @@ test("project issue can be created from the issues header", async ({
     .getByTestId("create-issue-body")
     .fill("The project workflow needs a clear repair path.");
   await page.getByTestId("create-issue-submit").click();
-  await expect(page.getByText("Issue created.")).toBeVisible();
+  await expect(page.getByText("Task created.")).toBeVisible();
 
   const createdEvent = await page.evaluate(() =>
     window.__BUZZ_E2E_SIGNED_EVENTS__?.find((event) => event.kind === 1621),
@@ -2879,6 +2333,137 @@ test("project issue can be created from the issues header", async ({
     "Document the broken workflow",
   ]);
 });
+
+test("selection survives unavailable channel access and can discuss after joining", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  const generalId = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
+  await installMockBridge(page, { projectAccessChannelId: generalId });
+  await page.goto("/#/projects");
+  await page.getByTestId("projects-section-prs").click();
+  await page.getByRole("button", { name: "List layout" }).click();
+  await page
+    .locator('[data-testid^="projects-pr-row-"]')
+    .first()
+    .getByTestId("projects-row-select")
+    .click();
+  await page.evaluate(
+    async ({ channelId, pubkey }) => {
+      window.__BUZZ_E2E_MUTATE_CHANNEL__?.({
+        channelId,
+        removeMemberPubkey: pubkey,
+      });
+      await window.__BUZZ_E2E_INVALIDATE_CHANNELS__?.();
+    },
+    { channelId: generalId, pubkey: DEFAULT_MOCK_PUBKEY },
+  );
+  const draftsBefore = await page.evaluate(() =>
+    Object.entries(localStorage).filter(([key]) =>
+      key.startsWith("buzz-drafts."),
+    ),
+  );
+  await page.getByTestId("projects-selection-chat-agent").click();
+  await expect(
+    page.getByText("No accessible channel is linked to this repository."),
+  ).toBeVisible();
+  await expect(page.getByTestId("projects-selection-summary")).toContainText(
+    "1 review",
+  );
+  await expect(page).toHaveURL(/#\/projects$/);
+  await page.getByTestId("projects-selection-discuss").click();
+  await expect(
+    page.getByTestId("projects-selection-related-channel"),
+  ).toBeDisabled();
+  expect(
+    await page.evaluate(() =>
+      Object.entries(localStorage).filter(([key]) =>
+        key.startsWith("buzz-drafts."),
+      ),
+    ),
+  ).toEqual(draftsBefore);
+  await page.getByTestId("projects-selection-search-channels").click();
+  await page.getByTestId("channel-browser-search").fill("general");
+  const channel = page.getByTestId("browse-channel-general");
+  await expect(channel).toBeVisible();
+  // Choosing an unjoined directory result must fail before any draft write.
+  await channel.getByRole("button").first().click();
+  await expect(page.getByTestId("projects-selection-summary")).toContainText(
+    "1 review",
+  );
+  await expect(page).toHaveURL(/#\/projects$/);
+  expect(
+    await page.evaluate(() =>
+      Object.entries(localStorage).filter(([key]) =>
+        key.startsWith("buzz-drafts."),
+      ),
+    ),
+  ).toEqual(draftsBefore);
+  await page.getByTestId("projects-selection-search-channels").click();
+  await page.getByTestId("channel-browser-search").fill("general");
+  await channel.hover();
+  await channel.getByRole("button", { name: "Join", exact: true }).click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await expect(page.getByTestId("message-input")).toContainText(
+    "Let's talk about this review:",
+  );
+  const commands = await page.evaluate(
+    () => window.__BUZZ_E2E_COMMANDS__ ?? [],
+  );
+  expect(commands).toContain("join_channel");
+  expect(commands).not.toContain("send_channel_message");
+});
+
+test("selection remains available while channel membership is loading", async ({
+  page,
+}) => {
+  await enableProjectsFeature(page);
+  await installMockBridge(page, {
+    projectAccessChannelId: "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50",
+    channelsReadDelayMs: 8_000,
+  });
+  await page.goto("/#/projects");
+  await page.getByTestId("projects-section-prs").click();
+  await page.getByRole("button", { name: "List layout" }).click();
+  await page
+    .locator('[data-testid^="projects-pr-row-"]')
+    .first()
+    .getByTestId("projects-row-select")
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.__BUZZ_E2E_QUERY_CLIENT__?.getQueryState(["channels"])?.status,
+      ),
+    )
+    .toBe("pending");
+  await page.getByTestId("projects-selection-chat-agent").click();
+  await expect(
+    page.getByText("Channels are still loading. Try again shortly."),
+  ).toBeVisible();
+  await expect(page.getByTestId("projects-selection-summary")).toContainText(
+    "1 review",
+  );
+  await page.getByTestId("projects-selection-discuss").click();
+  await expect(
+    page.getByTestId("projects-selection-related-channel"),
+  ).toBeDisabled();
+  await expect(
+    page.getByTestId("projects-selection-related-channel"),
+  ).toBeEnabled({ timeout: 12_000 });
+  await page.getByTestId("projects-selection-chat-agent").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await expect(page.getByTestId("message-input")).toContainText(
+    "Let's talk about this review:",
+  );
+});
+
+async function requiredBox(locator: Locator) {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error(`Expected rendered bounds for ${locator}`);
+  return box;
+}
 
 async function expectSinglePrimaryTextColumn(row: Locator) {
   const primary = row.locator('[data-projects-text-priority="primary"]');

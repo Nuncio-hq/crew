@@ -921,7 +921,7 @@ test("replaces the channel pane when switching channels", async ({ page }) => {
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(page.getByTestId("message-timeline")).toContainText(
-    "Welcome to #general",
+    "Welcome to general",
   );
 
   await page.getByTestId("channel-random").click();
@@ -931,7 +931,7 @@ test("replaces the channel pane when switching channels", async ({ page }) => {
     "This is the beginning of the regular channel.",
   );
   await expect(page.getByTestId("message-timeline")).not.toContainText(
-    "Welcome to #general",
+    "Welcome to general",
   );
   await expect(page.getByTestId("message-timeline")).toHaveCount(1);
   await expect(page.getByTestId("message-timeline-day-divider")).toHaveCount(0);

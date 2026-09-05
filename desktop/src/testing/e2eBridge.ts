@@ -1521,6 +1521,10 @@ declare global {
     __BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__?: number[];
     /** Captured aggregate project-history filters for request-count assertions. */
     __BUZZ_E2E_PROJECT_QUERY_FILTERS__?: MockFilter[];
+    /** Optional local repository snapshot returned for project branch tests. */
+    __BUZZ_E2E_PROJECT_LOCAL_REPO_SNAPSHOT__?: unknown;
+    /** Optional bounded file contents returned by repository content reads. */
+    __BUZZ_E2E_PROJECT_REPO_FILE_CONTENTS__?: Record<string, string | null>;
     __BUZZ_E2E_PROJECT_GIT_PROBE__?: {
       isGit: boolean;
       defaultBranch: string | null;
@@ -14158,7 +14162,14 @@ export function maybeInstallE2eTauriMocks() {
           ],
         };
       case "get_project_local_repo_snapshot":
-        return null;
+        return window.__BUZZ_E2E_PROJECT_LOCAL_REPO_SNAPSHOT__ ?? null;
+      case "get_project_repo_file_content":
+      case "get_project_local_repo_file_content": {
+        const path = (payload as { path?: string } | undefined)?.path;
+        return path
+          ? (window.__BUZZ_E2E_PROJECT_REPO_FILE_CONTENTS__?.[path] ?? null)
+          : null;
+      }
       case "get_project_repo_diff":
         return {
           additions: 27,
@@ -14366,6 +14377,94 @@ export function maybeInstallE2eTauriMocks() {
           branch: input.branch,
           commit: input.expectedCommit,
           message: `Deleted branch ${input.branch}.`,
+        };
+      }
+      case "publish_project_owner_announcement": {
+        const { input } = payload as {
+          input: {
+            targetOwner: string;
+            kind: number;
+            content: string;
+            createdAt?: number;
+            tags: string[][];
+          };
+        };
+        if (![30617, 30621].includes(input.kind))
+          throw new Error(
+            "Only project and repository announcements can be signed here.",
+          );
+        if (!input.tags.some((tag) => tag[0] === "d" && tag[1]?.trim()))
+          throw new Error(
+            "Project and repository announcements require a non-empty d tag.",
+          );
+        if (
+          input.createdAt !== undefined &&
+          input.createdAt > Math.floor(Date.now() / 1000) + 300
+        )
+          throw new Error("Announcement timestamp is too far in the future.");
+        const owner = input.targetOwner.trim().toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(owner))
+          throw new Error("Invalid project owner.");
+        if (
+          owner !== (identity?.pubkey ?? MOCK_IDENTITY_PUBKEY).toLowerCase() &&
+          !mockManagedAgents.some(
+            (agent) => agent.pubkey.toLowerCase() === owner,
+          )
+        )
+          throw new Error(
+            "Only the project owner or owner of its managed agent can publish announcements.",
+          );
+        const event = createMockEvent(
+          input.kind,
+          input.content,
+          input.tags,
+          owner,
+          input.createdAt,
+        );
+        window.__BUZZ_E2E_SIGNED_EVENTS__?.push({
+          content: event.content,
+          kind: event.kind,
+          tags: event.tags,
+        });
+        let publicationError: string | null = null;
+        const rejectionIndex =
+          window.__BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__?.indexOf(event.kind) ??
+          -1;
+        if (
+          event.kind === KIND_PROJECT_ANNOUNCEMENT &&
+          window.__BUZZ_E2E_UNSUPPORTED_PROJECT_ANNOUNCEMENTS__
+        ) {
+          publicationError = "restricted: unknown event kind";
+        } else if (rejectionIndex >= 0) {
+          window.__BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__?.splice(
+            rejectionIndex,
+            1,
+          );
+          publicationError = "mock project event rejection";
+        } else {
+          getMockProjectEventStore().push(event);
+          const accepted = window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__ ?? [];
+          accepted.push({
+            content: event.content,
+            kind: event.kind,
+            tags: event.tags,
+          });
+          window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__ = accepted;
+          const failedAckIndex =
+            window.__BUZZ_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__?.indexOf(
+              event.kind,
+            ) ?? -1;
+          if (failedAckIndex >= 0) {
+            window.__BUZZ_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__?.splice(
+              failedAckIndex,
+              1,
+            );
+            publicationError = "mock lost project acknowledgement";
+          }
+        }
+        return {
+          event: JSON.stringify(event),
+          publication_error: publicationError,
         };
       }
       case "sign_project_pull_request_status": {

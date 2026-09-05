@@ -260,6 +260,23 @@ export const RepositoryGridCard = React.memo(function RepositoryGridCard(
   );
 });
 
+/** Build the same selection identity for a row and its visible shift range. */
+export function repositoryListSelectionItem({
+  project,
+  repository,
+}: {
+  project: Project;
+  repository: Repository;
+}) {
+  return selectionItemFromRepository({
+    channelId: repository.channelId ?? project.projectChannelId,
+    id: repository.id,
+    owner: repository.owner,
+    shareLink: repositoryShareLink(repository),
+    title: repository.name,
+  });
+}
+
 export const RepositoryListRow = React.memo(function RepositoryListRow(
   props: RepositoryItemProps,
 ) {
@@ -274,13 +291,7 @@ export const RepositoryListRow = React.memo(function RepositoryListRow(
     summary,
   } = props;
   const updatedAt = summary?.updatedAt || repository.createdAt;
-  const selectionItem = selectionItemFromRepository({
-    channelId: repository.channelId ?? project.projectChannelId,
-    id: repository.id,
-    owner: repository.owner,
-    shareLink: repositoryShareLink(repository),
-    title: repository.name,
-  });
+  const selectionItem = repositoryListSelectionItem({ project, repository });
   return (
     <ProjectEntityListRow
       beforeDate={

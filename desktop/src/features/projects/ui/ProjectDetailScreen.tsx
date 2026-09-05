@@ -1,3 +1,4 @@
+import { ProjectDetailConversationLayout } from "./ProjectConversationPanelContext";
 import { firstCloneUrl } from "@/features/projects/lib/projectCloneUrl";
 import { ProjectDetailRepositoryHeader } from "./project-detail-navigation";
 import { Button } from "@/shared/ui/button";
@@ -91,7 +92,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     repositoryId,
     tab,
   } = props;
-  const { goProject, goProjects } = useAppNavigation();
+  const { goChannel, goProject, goProjects } = useAppNavigation();
   const { activeCommunity } = useCommunities();
   const projectQuery = useProjectQuery(projectId);
   const projectsQuery = useProjectsQuery();
@@ -739,41 +740,30 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     pullRequest: selectedPullRequest,
     repository,
   });
-  const { activeTabCrumb, activeWorkItemCrumb, handleGoToProjectHome } =
-    buildProjectDetailCrumbs({
-      activeTab,
-      commit: selectedCommit,
-      issue: selectedIssue,
-      pullRequest: selectedPullRequest,
-      setRequestedTab,
-      setSelectedCommitHash,
-      setSelectedIssueId,
-      setSelectedPullRequestId,
-      setTabsResetKey,
-    });
-  const goChannelHome = () => {
-    if (project.projectChannelId) {
-      void goProject(project.id);
-      return;
-    }
-    handleGoToProjectHome();
-  };
+  const {
+    activeTabCrumb,
+    activeWorkItemCrumb,
+    handleGoToProjectHome,
+    handleRepositoryChange,
+  } = buildProjectDetailCrumbs({
+    activeTab,
+    applyRepositorySearch,
+    setRepoSource,
+    commit: selectedCommit,
+    issue: selectedIssue,
+    pullRequest: selectedPullRequest,
+    setRequestedTab,
+    setSelectedCommitHash,
+    setSelectedIssueId,
+    setSelectedPullRequestId,
+    setTabsResetKey,
+  });
+  const goChannelHome = () =>
+    project.projectChannelId
+      ? void goChannel(project.projectChannelId)
+      : handleGoToProjectHome();
   const sharedHeaderBackdrop =
     !selectedPullRequestId && !selectedIssueId && !selectedCommitHash;
-  const handleRepositoryChange = (nextRepositoryId: string) => {
-    applyRepositorySearch({
-      repositoryId: nextRepositoryId,
-      issueId: null,
-      pullRequestId: null,
-      commitHash: null,
-    });
-    setSelectedPullRequestId(null);
-    setSelectedIssueId(null);
-    setSelectedCommitHash(null);
-    setRequestedTab(undefined);
-    setRepoSource("remote");
-    setTabsResetKey((key) => key + 1);
-  };
   return (
     <ProjectSelectionProvider
       onSelect={repositoryPanel.expand}
@@ -786,7 +776,70 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
           activeBranchCommit={activeBranchCommit}
           existingBranches={branchOptionsWithLocal}
         />
-        <div className="flex min-h-0 min-w-0 flex-1 flex-row overflow-hidden">
+        <ProjectDetailConversationLayout
+          closeWhen={Boolean(profilePanelPubkey) || !repositoryPanel.collapsed}
+          onOpenConversation={repositoryPanel.collapse}
+          onCloseProfile={handleCloseProfilePanel}
+          resetKey={`${project.id}:${repository.id}`}
+          width={threadPanelWidth}
+          fallbackWidth={activeRightPanelWidth.widthPx}
+          fallbackPanel={
+            profilePanelPubkey ? (
+              <UserProfilePanel
+                canResetWidth={threadPanelWidth.canReset}
+                currentPubkey={identityPubkey}
+                onClose={handleCloseProfilePanel}
+                onOpenDm={handleOpenDm}
+                onOpenProfile={handleOpenProfilePanel}
+                onResetWidth={threadPanelWidth.onResetWidth}
+                onResizeStart={threadPanelWidth.onResizeStart}
+                onTabChange={handleProfilePanelTabChange}
+                onViewChange={handleProfilePanelViewChange}
+                pubkey={profilePanelPubkey}
+                tab={profilePanelTab}
+                transparentChrome={sharedHeaderBackdrop}
+                view={profilePanelView}
+                widthPx={threadPanelWidth.widthPx}
+              />
+            ) : !repositoryPanel.collapsed ? (
+              <ProjectRepositoryActionsPanel
+                activeTab={activeTab}
+                canResetWidth={activeRightPanelWidth.canReset}
+                contributors={
+                  displayedRepositorySnapshot?.contributors ?? repoContributors
+                }
+                contextItem={contextItem}
+                createIssuePending={createIssueMutation.isPending}
+                files={displayedRepositorySnapshot?.files ?? []}
+                identityPubkey={identityPubkey}
+                issues={issuesQuery.data ?? []}
+                onChatWithAgent={discussRepository}
+                onCreateTask={() => setCreateIssueRequestKey((key) => key + 1)}
+                onCreatePullRequest={
+                  isLinkedWorkspace
+                    ? undefined
+                    : () => setCreatePullRequestRequestKey((key) => key + 1)
+                }
+                onOpenLocalRepository={() => void handleOpenLocalRepository()}
+                onOpenTerminal={() => void handleOpenTerminal()}
+                onRepositoryChange={handleRepositoryChange}
+                onResetWidth={activeRightPanelWidth.onResetWidth}
+                onResizeStart={activeRightPanelWidth.onResizeStart}
+                profiles={profiles}
+                pullRequests={pullRequestsQuery.data ?? []}
+                project={project}
+                projects={projectsQuery.data ?? [project]}
+                repository={repository}
+                selectedIssue={selectedIssue}
+                selectedPullRequest={selectedPullRequest}
+                snapshot={displayedRepositorySnapshot}
+                sourceControls={filesSourceControls}
+                terminalTitle={projectTerminalLabel(hasLocalCheckout)}
+                widthPx={activeRightPanelWidth.widthPx}
+              />
+            ) : null
+          }
+        >
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [container-type:inline-size]">
             <ProjectDetailChrome
               actions={
@@ -938,61 +991,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
               </div>
             </div>
           </div>
-          {profilePanelPubkey ? (
-            <UserProfilePanel
-              canResetWidth={threadPanelWidth.canReset}
-              currentPubkey={identityPubkey}
-              onClose={handleCloseProfilePanel}
-              onOpenDm={handleOpenDm}
-              onOpenProfile={handleOpenProfilePanel}
-              onResetWidth={threadPanelWidth.onResetWidth}
-              onResizeStart={threadPanelWidth.onResizeStart}
-              onTabChange={handleProfilePanelTabChange}
-              onViewChange={handleProfilePanelViewChange}
-              pubkey={profilePanelPubkey}
-              tab={profilePanelTab}
-              transparentChrome={sharedHeaderBackdrop}
-              view={profilePanelView}
-              widthPx={threadPanelWidth.widthPx}
-            />
-          ) : !repositoryPanel.collapsed ? (
-            <ProjectRepositoryActionsPanel
-              activeTab={activeTab}
-              canResetWidth={activeRightPanelWidth.canReset}
-              contributors={
-                displayedRepositorySnapshot?.contributors ?? repoContributors
-              }
-              contextItem={contextItem}
-              createIssuePending={createIssueMutation.isPending}
-              files={displayedRepositorySnapshot?.files ?? []}
-              identityPubkey={identityPubkey}
-              issues={issuesQuery.data ?? []}
-              onChatWithAgent={discussRepository}
-              onCreateTask={() => setCreateIssueRequestKey((key) => key + 1)}
-              onCreatePullRequest={
-                isLinkedWorkspace
-                  ? undefined
-                  : () => setCreatePullRequestRequestKey((key) => key + 1)
-              }
-              onOpenLocalRepository={() => void handleOpenLocalRepository()}
-              onOpenTerminal={() => void handleOpenTerminal()}
-              onRepositoryChange={handleRepositoryChange}
-              onResetWidth={activeRightPanelWidth.onResetWidth}
-              onResizeStart={activeRightPanelWidth.onResizeStart}
-              profiles={profiles}
-              pullRequests={pullRequestsQuery.data ?? []}
-              project={project}
-              projects={projectsQuery.data ?? [project]}
-              repository={repository}
-              selectedIssue={selectedIssue}
-              selectedPullRequest={selectedPullRequest}
-              snapshot={displayedRepositorySnapshot}
-              sourceControls={filesSourceControls}
-              terminalTitle={projectTerminalLabel(hasLocalCheckout)}
-              widthPx={activeRightPanelWidth.widthPx}
-            />
-          ) : null}
-        </div>
+        </ProjectDetailConversationLayout>
       </ProfilePanelProvider>
     </ProjectSelectionProvider>
   );

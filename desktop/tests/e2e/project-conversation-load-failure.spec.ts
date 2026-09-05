@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { expandProjectPlumbing } from "../helpers/projectPlumbing";
 
 /**
  * End-to-end guard for the false-empty thread-load bug on the SECOND producer
@@ -148,7 +149,7 @@ test.describe("project conversation load failure", () => {
       .first();
     await expect(projectEntry).toBeVisible({ timeout: 10_000 });
     await projectEntry.click();
-    await page.getByTestId("project-home-context-repo-buzz").click();
+    await expandProjectPlumbing(page);
     await page.getByRole("tab", { name: "Channels", exact: true }).click();
     const channelRow = page
       .getByTestId("project-channel-row")

@@ -361,7 +361,7 @@ const Sidebar = React.forwardRef<
         />
         <div
           className={cn(
-            "absolute inset-y-0 z-10 hidden h-full w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
+            "absolute inset-y-0 z-10 hidden h-full w-(--sidebar-width) transition-[left,right,width,visibility] duration-200 ease-linear md:flex",
             "group-data-[resizing=true]:transition-none",
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
@@ -370,7 +370,7 @@ const Sidebar = React.forwardRef<
               ? "p-[8px] group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_18px)]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
             className,
-            "group-data-[collapsible=offcanvas]:pointer-events-none",
+            "group-data-[collapsible=offcanvas]:invisible group-data-[collapsible=offcanvas]:pointer-events-none",
           )}
           {...props}
         >

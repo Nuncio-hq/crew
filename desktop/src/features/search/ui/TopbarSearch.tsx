@@ -964,7 +964,7 @@ export function TopbarSearch({
         </button>
         <DialogContent
           aria-busy={isSearchLoading && visibleSearchableResults.length === 0}
-          className="mt-[18vh] max-w-2xl self-start gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl"
+          className="mt-[18vh] max-h-[calc(82dvh-2rem)] max-w-2xl grid-rows-[auto_minmax(0,1fr)] self-start gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl"
           data-testid="search-results"
           onOpenAutoFocus={(event) => {
             event.preventDefault();

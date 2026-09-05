@@ -9,8 +9,8 @@ test("settings sections share the Appearance rhythm", async ({ page }) => {
   await openSettings(page, "appearance");
 
   const appearanceList = page
-    .getByTestId("settings-theme")
-    .locator('[data-slot="settings-section-list"]');
+    .getByTestId("appearance-theme-card")
+    .locator("..");
   const [referenceGap] = await appearanceList
     .locator(":scope > *")
     .evaluateAll((elements) =>

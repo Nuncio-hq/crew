@@ -990,6 +990,7 @@ test("card click opens the animated trigger inspector, triggers a run, and hides
 
   await navigateToWorkflows(page);
   await createWorkflow(page, workflowName);
+  await expect(page.getByTestId("workflow-node-inspector")).toHaveCount(0);
 
   const inspectorEntryAnimation = page.evaluate(
     () =>
@@ -1013,17 +1014,23 @@ test("card click opens the animated trigger inspector, triggers a run, and hides
             transform: initialStyles.transform,
             width: initialRect.width,
           };
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              const nextRect = inspector.getBoundingClientRect();
-              const nextStyles = getComputedStyle(inspector);
-              resolve(
-                nextRect.width !== initial.width ||
-                  nextStyles.opacity !== initial.opacity ||
-                  nextStyles.transform !== initial.transform,
-              );
-            });
-          });
+          const deadline = performance.now() + 500;
+          const sample = () => {
+            const nextRect = inspector.getBoundingClientRect();
+            const nextStyles = getComputedStyle(inspector);
+            if (
+              nextRect.width !== initial.width ||
+              nextStyles.opacity !== initial.opacity ||
+              nextStyles.transform !== initial.transform
+            ) {
+              resolve(true);
+            } else if (performance.now() >= deadline) {
+              resolve(false);
+            } else {
+              requestAnimationFrame(sample);
+            }
+          };
+          requestAnimationFrame(sample);
         });
         observer.observe(document.body, { childList: true, subtree: true });
       }),

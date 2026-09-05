@@ -63,7 +63,10 @@ async function addMessageStep(
 ) {
   await dialog.getByRole("button", { name: "Add step", exact: true }).click();
   await page.getByRole("menuitem", { name: "Send Message" }).click();
-  await dialog.getByLabel("Message text").fill("Workflow notification");
+  await dialog
+    .locator("textarea")
+    .and(dialog.getByLabel("Message text"))
+    .fill("Workflow notification");
 }
 
 async function createEnabled(
@@ -152,15 +155,43 @@ test("inserts template variables with keyboard control and restores the caret", 
   await dialog.getByRole("button", { name: "Add step", exact: true }).click();
   await page.getByRole("menuitem", { name: "Send Message" }).click();
 
-  const textarea = dialog.getByLabel("Message text");
+  const textarea = dialog
+    .locator("textarea")
+    .and(dialog.getByLabel("Message text"));
   const listbox = page.getByRole("listbox");
   await textarea.fill("Hello {{trig");
   await expect(listbox).toBeVisible();
   await expect(listbox.getByRole("option")).toHaveCount(5);
   await waitForAnimations(page);
-  expect(await page.locator("body").screenshot()).toMatchSnapshot(
-    "workflow-template-variable-autocomplete.png",
-  );
+  const popup = listbox.locator("..");
+  const [textareaBox, popupBox] = await Promise.all([
+    textarea.boundingBox(),
+    popup.boundingBox(),
+  ]);
+  expect(textareaBox).not.toBeNull();
+  expect(popupBox).not.toBeNull();
+  if (!textareaBox || !popupBox)
+    throw new Error("Autocomplete geometry is unavailable");
+  expect(Math.abs(textareaBox.x - popupBox.x)).toBeLessThanOrEqual(1);
+  const x = Math.floor(Math.min(textareaBox.x, popupBox.x)) - 4;
+  const y = Math.floor(Math.min(textareaBox.y, popupBox.y)) - 4;
+  const right =
+    Math.ceil(
+      Math.max(textareaBox.x + textareaBox.width, popupBox.x + popupBox.width),
+    ) + 4;
+  const bottom =
+    Math.ceil(
+      Math.max(
+        textareaBox.y + textareaBox.height,
+        popupBox.y + popupBox.height,
+      ),
+    ) + 4;
+  expect(
+    await page.screenshot({
+      clip: { x, y, width: right - x, height: bottom - y },
+      caret: "hide",
+    }),
+  ).toMatchSnapshot("workflow-template-variable-autocomplete.png");
 
   await textarea.press("ArrowUp");
   await expect(textarea).toHaveAttribute(
@@ -278,7 +309,10 @@ test("round-trips and reopens structured message-text conditions", async ({
       name: "ends with",
     })
     .click();
-  await dialog.getByLabel("Message text").fill(text);
+  await dialog
+    .locator("input")
+    .and(dialog.getByLabel("Message text"))
+    .fill(text);
   await dialog.getByRole("tab", { name: "YAML" }).click();
   const yamlEditor = dialog.getByRole("textbox", { name: "Workflow YAML" });
   const definition = parseYaml(await yamlEditor.inputValue());
@@ -288,6 +322,7 @@ test("round-trips and reopens structured message-text conditions", async ({
   await openTriggerInspector(dialog);
   const matchControls = dialog.getByRole("group", { name: "Match" });
   const operatorButtons = matchControls.getByRole("button");
+  await waitForAnimations(page);
   const firstOperatorBox = await operatorButtons.nth(0).boundingBox();
   const secondOperatorBox = await operatorButtons.nth(1).boundingBox();
   const thirdOperatorBox = await operatorButtons.nth(2).boundingBox();
@@ -306,7 +341,9 @@ test("round-trips and reopens structured message-text conditions", async ({
   await expect(
     matchControls.getByRole("button", { name: "ends with" }),
   ).toHaveAttribute("aria-pressed", "true");
-  await expect(dialog.getByLabel("Message text")).toHaveValue(text);
+  await expect(
+    dialog.locator("input").and(dialog.getByLabel("Message text")),
+  ).toHaveValue(text);
   await dialog.getByRole("tab", { name: "Advanced" }).click();
   await expect(dialog.getByLabel("Advanced expression")).toHaveValue(
     expression,
@@ -359,7 +396,10 @@ test("renders deterministic trigger, step, and workflow-card summaries", async (
   }, name);
   const dialog = await openCreateWorkflow(page, name);
 
-  await dialog.getByLabel("Message text").fill("deploy");
+  await dialog
+    .locator("input")
+    .and(dialog.getByLabel("Message text"))
+    .fill("deploy");
   const triggerNode = dialog.getByRole("button", {
     name: "Trigger: Message contains “deploy”",
   });

@@ -98,6 +98,8 @@ function assertRetainedReviewDetail(screen) {
 
 function productionConsumers({ activeRepoPullRequest, selectedPullRequest }) {
   const crumbs = buildProjectDetailCrumbs({
+    applyRepositorySearch: noop,
+    setRepoSource: noop,
     activeTab: "prs",
     commit: null,
     issue: null,

@@ -946,12 +946,10 @@ test("concurrent installs each keep their own state — one fails, one succeeds"
     page,
     {
       acpRuntimesCatalog: [claudeNotInstalled, codexNotInstalled],
-      // Claude: long delay then failure with multiline stderr + hint.
-      // Codex: short delay then success.
-      // Per-runtime config lets both be in flight simultaneously.
+      // Responses are released independently below so both installs remain
+      // in flight until their pending UI has been asserted.
       installAcpRuntimeByRuntime: {
         claude: {
-          delayMs: 600,
           result: {
             success: false,
             steps: [
@@ -967,7 +965,6 @@ test("concurrent installs each keep their own state — one fails, one succeeds"
           },
         },
         codex: {
-          delayMs: 200,
           result: {
             success: true,
             steps: [
@@ -996,6 +993,44 @@ test("concurrent installs each keep their own state — one fails, one succeeds"
   const claudeInstall = page.getByTestId("onboarding-runtime-install-claude");
   const codexInstall = page.getByTestId("onboarding-runtime-install-codex");
 
+  // Hold IPC completion rather than racing short wall-clock delays on CI.
+  await page.evaluate(() => {
+    const w = window as typeof window & {
+      __TAURI_INTERNALS__: {
+        invoke: (
+          command: string,
+          payload: unknown,
+          options: unknown,
+        ) => Promise<unknown>;
+      };
+      __RELEASE_INSTALL__?: (runtimeId: string) => void;
+    };
+    const pending = new Map<string, () => void>();
+    const original = w.__TAURI_INTERNALS__.invoke.bind(w.__TAURI_INTERNALS__);
+    w.__TAURI_INTERNALS__.invoke = async (command, payload, options) => {
+      if (command === "install_acp_runtime") {
+        const { runtimeId } = payload as { runtimeId: string };
+        await new Promise<void>((resolve) => pending.set(runtimeId, resolve));
+      }
+      return original(command, payload, options);
+    };
+    w.__RELEASE_INSTALL__ = (runtimeId) => {
+      const release = pending.get(runtimeId);
+      if (!release) throw new Error(`No pending install for ${runtimeId}`);
+      pending.delete(runtimeId);
+      release();
+    };
+  });
+  const releaseInstall = (runtimeId: string) =>
+    page.evaluate((id) => {
+      const w = window as typeof window & {
+        __RELEASE_INSTALL__?: (id: string) => void;
+      };
+      if (!w.__RELEASE_INSTALL__)
+        throw new Error("Install gate is unavailable");
+      w.__RELEASE_INSTALL__(id);
+    }, runtimeId);
+
   // Start both installs before either settles.
   await claudeInstall.click();
   await codexInstall.click();
@@ -1004,7 +1039,8 @@ test("concurrent installs each keep their own state — one fails, one succeeds"
   await expect(claudeInstall).toHaveCount(0);
   await expect(codexInstall).toHaveCount(0);
 
-  // Codex settles first (shorter delay): success indicator, no error.
+  // Codex settles first: success indicator, no error.
+  await releaseInstall("codex");
   await expect(page.getByTestId("onboarding-runtime-ready-codex")).toBeVisible({
     timeout: 3_000,
   });
@@ -1016,6 +1052,7 @@ test("concurrent installs each keep their own state — one fails, one succeeds"
   await expect(claudeInstall).toHaveCount(0);
 
   // Claude settles: failure error visible; codex still shows ready (not reset).
+  await releaseInstall("claude");
   const claudeError = page.getByTestId("onboarding-runtime-error-claude");
   await expect(claudeError).toBeVisible({ timeout: 3_000 });
   await expect(

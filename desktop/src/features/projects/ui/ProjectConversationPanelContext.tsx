@@ -40,6 +40,7 @@ export function ProjectConversationPanelController({
   closeWhen,
   detachFallbackPanel = false,
   fallbackPanel,
+  wrapFallbackPanel = true,
   fallbackPanelOpen = false,
   fallbackPanelResizing = false,
   fallbackPanelWidthPx,
@@ -55,6 +56,7 @@ export function ProjectConversationPanelController({
   closeWhen: boolean;
   detachFallbackPanel?: boolean;
   fallbackPanel?: React.ReactNode;
+  wrapFallbackPanel?: boolean;
   fallbackPanelOpen?: boolean;
   fallbackPanelResizing?: boolean;
   fallbackPanelWidthPx: number;
@@ -131,6 +133,8 @@ export function ProjectConversationPanelController({
             sharedHeaderBackdrop={sharedHeaderBackdrop}
             widthPx={widthPx}
           />
+        ) : !wrapFallbackPanel ? (
+          fallbackPanel
         ) : (
           <ProjectContextRail
             open={fallbackVisible}
@@ -149,4 +153,51 @@ export function ProjectConversationPanelController({
 /** Returns null outside project detail, where normal channel navigation remains. */
 export function useProjectConversationPanel() {
   return React.useContext(ProjectConversationPanelContext);
+}
+
+/** Connects repository detail conversations to the existing resizable panel. */
+export function ProjectDetailConversationLayout({
+  children,
+  closeWhen,
+  fallbackPanel,
+  fallbackWidth,
+  onOpenConversation,
+  onCloseProfile,
+  resetKey,
+  width,
+}: {
+  children: React.ReactNode;
+  closeWhen: boolean;
+  fallbackPanel: React.ReactNode;
+  fallbackWidth: number;
+  onOpenConversation: () => void;
+  onCloseProfile: () => void;
+  resetKey: string;
+  width: {
+    canReset: boolean;
+    onResetWidth: () => void;
+    onResizeStart: (event: React.PointerEvent<HTMLButtonElement>) => void;
+    widthPx: number;
+  };
+}) {
+  return (
+    <ProjectConversationPanelController
+      canResetWidth={width.canReset}
+      closeWhen={closeWhen}
+      fallbackPanel={fallbackPanel}
+      fallbackPanelOpen={Boolean(fallbackPanel)}
+      fallbackPanelWidthPx={fallbackWidth}
+      onOpenConversation={() => {
+        onCloseProfile();
+        onOpenConversation();
+      }}
+      wrapFallbackPanel={false}
+      onResetWidth={width.onResetWidth}
+      onResizeStart={width.onResizeStart}
+      resetKey={resetKey}
+      widthPx={width.widthPx}
+    >
+      {children}
+    </ProjectConversationPanelController>
+  );
 }

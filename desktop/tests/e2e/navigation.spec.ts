@@ -39,7 +39,12 @@ async function createWorkflow(
 
   await dialog.getByRole("button", { name: "Add step", exact: true }).click();
   await page.getByRole("menuitem", { name: "Send Message" }).click();
-  await dialog.getByLabel("Message text").fill("Workflow notification");
+  // The outgoing Trigger inspector also labels an input "Message text".
+  // Wait for the new step textarea so the draft belongs to the step.
+  await dialog
+    .locator("textarea")
+    .and(dialog.getByLabel("Message text"))
+    .fill("Workflow notification");
   await dialog.getByRole("button", { name: "Create" }).click();
   const activationConfirmation = page.getByRole("alertdialog", {
     name: "This workflow may run often",
@@ -556,9 +561,13 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
     name: "Open repository relaytoolsobservabilityconsole-main",
   });
   await expect(sentChip).toBeVisible();
-  await sentChip.evaluate((element) => {
-    const container = element.parentElement;
-    if (container) container.style.width = "220px";
+  const sentRow = page.getByTestId("message-row").last();
+  await expect(sentRow).not.toHaveAttribute("data-message-id", /^optimistic-/);
+  const sentId = await sentRow.getAttribute("data-message-id");
+  if (!sentId) throw new Error("Sent message id is unavailable");
+  // Keep the wrapping fixture applied across recipient markdown hydration.
+  await page.addStyleTag({
+    content: `[data-message-id="${sentId}"] .message-markdown { width: 220px; }`,
   });
   const fragmentRects = await sentChip.evaluate((element) =>
     Array.from(element.getClientRects(), (rect) => ({

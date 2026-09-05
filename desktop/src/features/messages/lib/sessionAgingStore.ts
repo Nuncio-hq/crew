@@ -27,6 +27,7 @@ export type SessionAgingEntry = {
 type AgingKey = string;
 
 const entries = new Map<AgingKey, SessionAgingEntry>();
+let snapshot: ReadonlyMap<AgingKey, SessionAgingEntry> = new Map();
 const listeners = new Set<() => void>();
 
 function agingKey(agentPubkey: string, conversationId: string): AgingKey {
@@ -34,6 +35,8 @@ function agingKey(agentPubkey: string, conversationId: string): AgingKey {
 }
 
 function emit() {
+  // React compares external-store snapshots by identity; preserve older reads.
+  snapshot = new Map(entries);
   for (const listener of listeners) {
     listener();
   }
@@ -107,7 +110,7 @@ export function getSessionAgingSnapshot(): ReadonlyMap<
   AgingKey,
   SessionAgingEntry
 > {
-  return entries;
+  return snapshot;
 }
 
 /** Parse a harness `session_aging` observer payload. */

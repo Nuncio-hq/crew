@@ -14,19 +14,6 @@ async function enableProjectsFeature(page: import("@playwright/test").Page) {
   });
 }
 
-async function addProjectToSidebar(
-  page: import("@playwright/test").Page,
-  dtag: string,
-) {
-  await page.getByTestId("sidebar-projects-section-label").hover();
-  await page.getByTestId("sidebar-projects-create").click();
-  const browser = page.getByTestId("project-browser-dialog");
-  await browser.getByRole("searchbox", { name: "Search projects" }).fill(dtag);
-  await browser.getByTestId(`project-browser-result-${dtag}`).click();
-  await expect(browser).toBeHidden();
-  await expect(page.getByTestId(`sidebar-project-${dtag}`)).toBeVisible();
-}
-
 test("first-time project empty state opens project creation", async ({
   page,
 }) => {
@@ -41,8 +28,24 @@ test("first-time project empty state opens project creation", async ({
   await expect(
     page.getByRole("main").getByText("No projects yet"),
   ).toBeVisible();
+  await page.evaluate(() => {
+    const bridge = window.__TAURI_INTERNALS__;
+    if (!bridge) throw new Error("Native mock bridge unavailable");
+    const invoke = bridge.invoke;
+    bridge.invoke = async (command, args, options) => {
+      if (command === "plugin:dialog|open") return "/tmp/first-project";
+      return invoke(command, args, options);
+    };
+  });
   await page.getByRole("button", { name: "Create project" }).click();
-  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("/tmp/first-project");
+  await expect(page.getByLabel("Repository name", { exact: true })).toHaveValue(
+    "first-project",
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Add Repository", exact: true }),
+  ).toBeEnabled();
 });
 
 test("project home context aligns with the channel header", async ({
@@ -51,7 +54,9 @@ test("project home context aligns with the channel header", async ({
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await addProjectToSidebar(page, "buzz");
+  await page.getByTestId("channel-buzz").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("buzz");
+  await expect(page.getByTestId("project-home-context-tasks")).toBeVisible();
   await waitForAnimations(page);
 
   const [headerTitleBox, tasksBox] = await Promise.all([

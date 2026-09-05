@@ -13,6 +13,7 @@ import {
 import * as React from "react";
 
 import {
+  projectSelectionPresentation,
   projectSelectionShareLinks,
   type ProjectSelectionAction,
   type ProjectSelectionItem,
@@ -22,7 +23,36 @@ import { useProjectSelection } from "@/features/projects/lib/useProjectSelection
 import { copyTextToClipboard } from "@/shared/lib/clipboard";
 import { Button } from "@/shared/ui/button";
 import { ProjectSelectionDiscussAction } from "./ProjectSelectionDiscussAction";
-import { useProjectDiscussInChannel } from "./useProjectDiscussInChannel";
+import {
+  useProjectDiscussInChannel,
+  useProjectRepositoryDiscussion,
+} from "./useProjectDiscussInChannel";
+
+/** Keep overview selections on the existing channel discussion lifecycle. */
+export function ProjectsOverviewSelectionActions({
+  filter,
+}: {
+  filter: string;
+}) {
+  const selection = useProjectSelection();
+  const discuss = useProjectRepositoryDiscussion({
+    repository: null,
+    project: null,
+    activeTab: filter,
+  });
+  const presentation = projectSelectionPresentation(selection?.items ?? []);
+  if (!selection || !presentation) return null;
+  return (
+    <div className="mb-3 rounded-xl border border-border/60 p-3">
+      <ProjectsSelectionCountMenu
+        compact
+        onChatWithAgent={discuss}
+        presentation={presentation}
+        selectionItems={selection.items}
+      />
+    </div>
+  );
+}
 
 function selectionActionIcon(id: ProjectSelectionAction["id"]) {
   if (id === "chat-agent") return Bot;
@@ -42,12 +72,16 @@ function selectionKindIcon(kind: ProjectSelectionItem["kind"] | undefined) {
 
 /** Inline actions for the current Projects selection. */
 export function ProjectsSelectionCountMenu({
+  compact = false,
   onChatWithAgent,
   onCreatePullRequest,
   presentation,
   selectionItems,
 }: {
-  onChatWithAgent: (items: ProjectSelectionItem[]) => void;
+  compact?: boolean;
+  onChatWithAgent:
+    | ((items: ProjectSelectionItem[]) => boolean)
+    | ((items: ProjectSelectionItem[]) => void);
   onCreatePullRequest?: () => void;
   presentation: ProjectSelectionPresentation;
   selectionItems: ProjectSelectionItem[];
@@ -59,8 +93,7 @@ export function ProjectsSelectionCountMenu({
 
   const discussInChannel = React.useCallback(
     (channelId: string) => {
-      openChannelWithDraft(channelId);
-      selection?.clear();
+      if (openChannelWithDraft(channelId) !== false) selection?.clear();
     },
     [openChannelWithDraft, selection],
   );
@@ -68,8 +101,7 @@ export function ProjectsSelectionCountMenu({
   const handleAction = React.useCallback(
     (actionId: ProjectSelectionAction["id"]) => {
       if (actionId === "chat-agent") {
-        onChatWithAgent(selectionItems);
-        selection?.clear();
+        if (onChatWithAgent(selectionItems) !== false) selection?.clear();
         return;
       }
       if (actionId === "copy") {
@@ -89,7 +121,10 @@ export function ProjectsSelectionCountMenu({
   );
 
   return (
-    <div className="w-full" data-testid="projects-selection-actions">
+    <div
+      className={compact ? "flex w-full flex-wrap items-start gap-3" : "w-full"}
+      data-testid="projects-selection-actions"
+    >
       <div
         className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/60 bg-muted/35 px-2.5 py-1.5"
         data-testid="projects-selection-summary"
@@ -109,7 +144,13 @@ export function ProjectsSelectionCountMenu({
           {presentation.title}
         </h2>
       </div>
-      <div className="space-y-2.5 pt-3">
+      <div
+        className={
+          compact
+            ? "flex flex-1 flex-wrap items-center gap-2 [&>button]:mx-0 [&>button]:w-auto"
+            : "space-y-2.5 pt-3"
+        }
+      >
         {presentation.actions
           .filter(
             (action) =>

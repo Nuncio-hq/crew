@@ -6,6 +6,8 @@ import { PROJECT_TAB_CRUMB_LABELS } from "./projectDetailHelpers";
 
 export function buildProjectDetailCrumbs({
   activeTab,
+  applyRepositorySearch,
+  setRepoSource,
   commit,
   issue,
   pullRequest,
@@ -16,6 +18,8 @@ export function buildProjectDetailCrumbs({
   setTabsResetKey,
 }: {
   activeTab: string;
+  applyRepositorySearch: (patch: Record<string, string | null>) => void;
+  setRepoSource: (source: "remote") => void;
   commit: { hash: string; subject?: string | null } | null;
   issue: { id: string; title: string } | null;
   pullRequest: { id: string; title: string } | null;
@@ -54,5 +58,20 @@ export function buildProjectDetailCrumbs({
     setRequestedTab(undefined);
     setTabsResetKey((key) => key + 1);
   };
-  return { activeTabCrumb, activeWorkItemCrumb, handleGoToProjectHome };
+  const handleRepositoryChange = (repositoryId: string) => {
+    applyRepositorySearch({
+      repositoryId,
+      issueId: null,
+      pullRequestId: null,
+      commitHash: null,
+    });
+    handleGoToProjectHome();
+    setRepoSource("remote");
+  };
+  return {
+    activeTabCrumb,
+    activeWorkItemCrumb,
+    handleGoToProjectHome,
+    handleRepositoryChange,
+  };
 }

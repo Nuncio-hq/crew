@@ -2,6 +2,10 @@ import { ChevronDown, Hash, MessageSquare, Search } from "lucide-react";
 import * as React from "react";
 
 import { useChannelsQuery } from "@/features/channels/hooks";
+import {
+  mergeOpenChannelDirectory,
+  useOpenChannelDirectoryQuery,
+} from "@/features/channels/openChannelDirectory";
 import { ChannelBrowserDialog } from "@/features/channels/ui/ChannelBrowserDialog";
 import type { ProjectSelectionItem } from "@/features/projects/lib/projectSelection";
 import { projectSelectionChannelCandidates } from "@/features/projects/lib/projectSelection";
@@ -23,7 +27,13 @@ export function ProjectSelectionDiscussAction({
 }) {
   const [expanded, setExpanded] = React.useState(false);
   const [browserOpen, setBrowserOpen] = React.useState(false);
-  const channels = useChannelsQuery().data ?? [];
+  const channelsQuery = useChannelsQuery();
+  const channels = channelsQuery.data ?? [];
+  const directoryQuery = useOpenChannelDirectoryQuery({ enabled: browserOpen });
+  const browserChannels = React.useMemo(
+    () => mergeOpenChannelDirectory(channels, directoryQuery.data),
+    [channels, directoryQuery.data],
+  );
   const channelsById = new Map(
     channels.map((channel) => [channel.id, channel]),
   );
@@ -61,6 +71,14 @@ export function ProjectSelectionDiscussAction({
               <Button
                 className="h-7 w-full justify-start gap-2 px-2 text-left text-xs font-normal"
                 data-testid={`${testIdPrefix}-related-channel`}
+                disabled={!channel}
+                title={
+                  !channel
+                    ? channelsQuery.isPending
+                      ? "Channels are loading"
+                      : "Channel unavailable"
+                    : undefined
+                }
                 key={channelId}
                 onClick={() => onSelectChannel(channelId)}
                 size="sm"
@@ -91,9 +109,12 @@ export function ProjectSelectionDiscussAction({
         </div>
       ) : null}
       <ChannelBrowserDialog
-        channels={channels}
+        channels={browserChannels}
         channelTypeFilter="stream"
-        onJoinChannel={joinChannel}
+        onJoinChannel={async (channelId) => {
+          await joinChannel(channelId);
+          await channelsQuery.refetch({ throwOnError: true });
+        }}
         onOpenChange={setBrowserOpen}
         onSelectChannel={onSelectChannel}
         open={browserOpen}

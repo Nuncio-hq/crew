@@ -565,6 +565,17 @@ export const ProjectGridCard = React.memo(function ProjectGridCard({
   );
 });
 
+/** Build the same selection identity for a row and its visible shift range. */
+export function projectListSelectionItem(project: Project) {
+  return selectionItemFromProject({
+    channelId: project.projectChannelId,
+    id: project.id,
+    owner: project.owner,
+    shareLink: projectShareLink(project),
+    title: project.name,
+  });
+}
+
 export const ProjectListRow = React.memo(function ProjectListRow({
   project,
   people,
@@ -581,13 +592,7 @@ export const ProjectListRow = React.memo(function ProjectListRow({
   onOpenTerminal,
 }: ProjectItemProps) {
   const repositoryCount = project.repositoryAddresses.length;
-  const selectionItem = selectionItemFromProject({
-    channelId: project.projectChannelId,
-    id: project.id,
-    owner: project.owner,
-    shareLink: projectShareLink(project),
-    title: project.name,
-  });
+  const selectionItem = projectListSelectionItem(project);
   return (
     <ProjectEntityListRow
       affiliation={

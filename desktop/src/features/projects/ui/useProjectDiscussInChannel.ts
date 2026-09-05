@@ -1,6 +1,8 @@
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useChannelsQuery } from "@/features/channels/hooks";
+import { channelsQueryKey, useChannelsQuery } from "@/features/channels/hooks";
+import type { Channel } from "@/shared/api/types";
 import type { Project, Repository } from "@/features/projects/hooks";
 import {
   repositoryShareLink,
@@ -22,9 +24,24 @@ import {
 
 export function useProjectDiscussInChannel(items: ProjectSelectionItem[]) {
   const { goChannel } = useAppNavigation();
+  const queryClient = useQueryClient();
+  useChannelsQuery();
 
   return React.useCallback(
     (channelId: string, selectedItems = items) => {
+      // Read the cache at click time: joining a channel can finish before React
+      // commits a new callback with the refreshed membership list.
+      const channels = queryClient.getQueryData<Channel[]>(channelsQueryKey);
+      if (!channels) {
+        toast.error("Channels are still loading. Try again shortly.");
+        return false;
+      }
+      if (!channels.some((channel) => channel.id === channelId)) {
+        toast.error(
+          "This channel is unavailable. Choose a channel you have joined.",
+        );
+        return false;
+      }
       const now = new Date().toISOString();
       const existing = loadDraftEntry(channelId);
       const content = mergeSelectionDiscussDraft(
@@ -44,8 +61,9 @@ export function useProjectDiscussInChannel(items: ProjectSelectionItem[]) {
         updatedAt: now,
       });
       void goChannel(channelId);
+      return true;
     },
-    [goChannel, items],
+    [goChannel, items, queryClient],
   );
 }
 
@@ -69,7 +87,7 @@ export function useProjectRepositoryDiscussion({
             ? "Couldn’t load your channels. Try again."
             : "Channels are still loading. Try again shortly.",
         );
-        return;
+        return false;
       }
       const channelId = projectDiscussionChannelId({
         repositoryChannelId: repository?.channelId,
@@ -79,7 +97,7 @@ export function useProjectRepositoryDiscussion({
       });
       if (!channelId) {
         toast.error("No accessible channel is linked to this repository.");
-        return;
+        return false;
       }
       const context =
         items.length > 0 || !repository
@@ -96,7 +114,7 @@ export function useProjectRepositoryDiscussion({
                 title: `${repository.name} / ${activeTab === "activity" ? "Commits" : activeTab}`,
               }),
             ];
-      discuss(channelId, context);
+      return discuss(channelId, context);
     },
     [
       activeTab,

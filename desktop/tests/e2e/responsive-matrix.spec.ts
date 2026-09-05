@@ -122,6 +122,26 @@ async function injectPlan(page: Page, rootId: string) {
   );
 }
 
+async function assertSidebarContentResponsive(page: Page) {
+  // The resize rail deliberately straddles the edge; content must still fit.
+  const sidebar = page.getByTestId("app-sidebar");
+  await assertPaneResponsive(page, sidebar.locator('[data-sidebar="sidebar"]'));
+  const rail = sidebar.locator('[data-sidebar="rail"]');
+  await expect(rail).toBeVisible();
+  const [sidebarBox, railBox] = await Promise.all([
+    sidebar.boundingBox(),
+    rail.boundingBox(),
+  ]);
+  expect(sidebarBox).not.toBeNull();
+  expect(railBox).not.toBeNull();
+  if (!sidebarBox || !railBox)
+    throw new Error("Sidebar geometry is unavailable");
+  expect(railBox.width).toBe(16);
+  expect(
+    Math.abs(railBox.x + railBox.width / 2 - sidebarBox.x - sidebarBox.width),
+  ).toBeLessThanOrEqual(1);
+}
+
 test.describe("responsive matrix #205", () => {
   test.describe.configure({ timeout: 90_000 });
 
@@ -185,7 +205,11 @@ test.describe("responsive matrix #205", () => {
         mustNotOverlap: [["auxiliary-panel-header", "declared-plans-rail"]],
       });
       if (width <= 340) {
-        await expect(page.getByTestId("composer-overflow-menu")).toBeVisible();
+        await expect(
+          page
+            .getByTestId("thread-composer-overlay")
+            .getByTestId("composer-overflow-menu"),
+        ).toBeVisible();
       }
     });
   }
@@ -214,7 +238,7 @@ test.describe("responsive matrix #205", () => {
     await installMockBridge(page);
     await page.goto("/");
     await expect(page.getByTestId("app-sidebar")).toBeVisible();
-    await assertPaneResponsive(page, "app-sidebar");
+    await assertSidebarContentResponsive(page);
 
     const routes: Array<{ path: string; testId?: string }> = [
       { path: "/", testId: "app-sidebar" },
@@ -226,7 +250,7 @@ test.describe("responsive matrix #205", () => {
       { path: "/workbench" },
     ];
     for (const route of routes) {
-      await page.goto(route.path);
+      await page.goto(`/#${route.path}`);
       await waitForAnimations(page);
       const root = page.locator("#root");
       await expect(root).toBeVisible();
@@ -299,30 +323,67 @@ test.describe("responsive matrix #205", () => {
     await page.getByTestId("channel-general").click({ button: "right" });
     const channelMenu = page.locator("[data-radix-menu-content]").first();
     await expect(channelMenu).toBeVisible();
+    await waitForAnimations(page);
     await assertOverlayInsideWindow(channelMenu, page);
     await page.keyboard.press("Escape");
 
     await page.getByTestId("open-search").click();
-    const search = page
-      .locator("[data-radix-dialog-content], [role='dialog']")
-      .first();
-    if (await search.isVisible()) {
-      await assertOverlayInsideWindow(search, page);
-      await page.keyboard.press("Escape");
-    }
+    const search = page.getByTestId("search-results");
+    await expect(search).toBeVisible();
+    await waitForAnimations(page);
+    await assertOverlayInsideWindow(search, page);
+    const lastSearchResult = search.getByRole("option").last();
+    await lastSearchResult.scrollIntoViewIfNeeded();
+    await assertOverlayInsideWindow(lastSearchResult, page);
+    const resultsScroll = await search
+      .getByRole("listbox")
+      .evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        scrollTop: element.scrollTop,
+      }));
+    expect(resultsScroll.scrollHeight).toBeGreaterThan(
+      resultsScroll.clientHeight,
+    );
+    expect(resultsScroll.scrollTop).toBeGreaterThan(0);
+    const searchInput = page.getByTestId("search-dialog-input-row");
+    await expect(searchInput).toHaveCSS("height", "48px");
+    const headerPosition = await search.evaluate((element) => {
+      const header = element.querySelector(
+        '[data-testid="search-dialog-input-row"]',
+      );
+      if (!header) throw new Error("Search input is missing");
+      return {
+        topOffset:
+          header.getBoundingClientRect().top -
+          element.getBoundingClientRect().top,
+        scrollTop: element.scrollTop,
+      };
+    });
+    expect(headerPosition.topOffset).toBe(0);
+    expect(headerPosition.scrollTop).toBe(0);
+    await search.screenshot({
+      path: path.join(SHOTS, "search-window-floor-800x500.png"),
+    });
+    await page.keyboard.press("Escape");
+    await expect(search).toBeHidden();
 
     await page.getByTestId("composer-emoji-button").click();
     const emoji = page.locator("[data-radix-popper-content-wrapper]").last();
     await expect(emoji).toBeVisible();
+    await waitForAnimations(page);
     await assertOverlayInsideWindow(emoji, page);
     await page.keyboard.press("Escape");
 
     const row = page.getByTestId("message-row").first();
-    await row.click({ button: "right" });
-    const msgMenu = page.locator("[data-radix-menu-content]").first();
-    if (await msgMenu.isVisible()) {
-      await assertOverlayInsideWindow(msgMenu, page);
-    }
+    await row.hover();
+    await row
+      .getByRole("button", { name: "More actions", exact: true })
+      .click();
+    const msgMenu = page.getByRole("menu");
+    await expect(msgMenu).toBeVisible();
+    await waitForAnimations(page);
+    await assertOverlayInsideWindow(msgMenu, page);
   });
 
   test("message-embedded cards fit a 300px thread pane", async ({ page }) => {
@@ -397,7 +458,7 @@ test.describe("responsive matrix #205", () => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await installMockBridge(page);
     await page.goto("/");
-    await assertPaneResponsive(page, "app-sidebar");
+    await assertSidebarContentResponsive(page);
     await waitForAnimations(page);
     await mkdir(SHOTS, { recursive: true });
     await page
