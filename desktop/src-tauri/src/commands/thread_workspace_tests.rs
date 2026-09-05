@@ -5,6 +5,8 @@ use tempfile::TempDir;
 use super::{delete_thread_branch, remove_thread_worktree, ThreadWorkspaceActionStatus};
 
 struct Fixture {
+    // Exclude tests that temporarily replace PATH while git operations run.
+    _path_guard: std::sync::MutexGuard<'static, ()>,
     _temp: TempDir,
     repository: PathBuf,
     worktree: PathBuf,
@@ -14,6 +16,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        let path_guard = crate::managed_agents::lock_path_mutex();
         let temp = tempfile::tempdir().expect("temp dir");
         let repository = temp.path().join("project");
         let worktree = temp.path().join("project-thread");
@@ -51,6 +54,7 @@ impl Fixture {
         fs::create_dir_all(&claims).expect("claim dir");
         fs::write(claims.join("aaaaaaaaaaaa.root"), format!("{root}\n")).expect("root claim");
         Self {
+            _path_guard: path_guard,
             _temp: temp,
             repository,
             worktree,
