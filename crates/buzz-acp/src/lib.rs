@@ -2,6 +2,8 @@
 
 mod acp;
 mod channel_membership_signal;
+#[path = "channel-subscription-updates.rs"]
+mod channel_subscription_updates;
 mod compaction_signal;
 mod config;
 mod conversation;
@@ -2220,12 +2222,14 @@ async fn tokio_main() -> Result<()> {
     if channel_filters.is_empty() {
         tracing::warn!("no channel subscriptions resolved — agent will sit idle");
     }
-    let mut subscribed_channel_ids = HashSet::with_capacity(channel_filters.len());
+    let mut subscription_snapshots = relay.subscription_snapshots();
+    let mut subscription_snapshots_open = true;
+    let mut initial_subscription_count = 0;
     for (channel_id, filter) in &channel_filters {
         if let Err(e) = relay.subscribe_channel(*channel_id, filter.clone()).await {
             tracing::warn!("failed to subscribe to channel {channel_id}: {e}");
         } else {
-            subscribed_channel_ids.insert(*channel_id);
+            initial_subscription_count += 1;
             tracing::info!("subscribed to channel {channel_id}");
         }
     }
@@ -2244,7 +2248,7 @@ async fn tokio_main() -> Result<()> {
     }
 
     let mut membership_signal = channel_membership_signal::ChannelMembershipSignal::new();
-    membership_signal.report(observer.as_ref(), subscribed_channel_ids.len());
+    membership_signal.report(observer.as_ref(), initial_subscription_count);
 
     let runtime_start_nonce = std::env::var("BUZZ_MANAGED_AGENT_START_NONCE").unwrap_or_default();
     let dedup_mode = config.dedup_mode;
@@ -2710,6 +2714,17 @@ async fn tokio_main() -> Result<()> {
                 Some(Err(e)) = join_set.join_next(), if !join_set.is_empty() => {
                     Some(PoolEvent::Panic(e))
                 }
+                changed = subscription_snapshots.changed(), if subscription_snapshots_open => {
+                    if changed.is_ok() {
+                        let count = subscription_snapshots.borrow_and_update().len();
+                        membership_signal.report(observer.as_ref(), count);
+                    } else {
+                        // The relay event path handles background-task shutdown.
+                        // Do not mistake a closed watch for zero memberships.
+                        subscription_snapshots_open = false;
+                    }
+                    None
+                }
                 // Goose-native steer ack from a watcher task. Outcomes drive
                 // queue side-effects (drop / release withheld event) and
                 // optionally the cancel+merge fallback signal. See the
@@ -2878,24 +2893,24 @@ async fn tokio_main() -> Result<()> {
                                 membership_newest_ts.insert(ch, ts);
 
                                 if kind_u32 == KIND_MEMBER_ADDED_NOTIFICATION {
-                                    // Clear removal tracking so sessions are not
-                                    // stripped for a legitimately re-added channel.
-                                    removed_channels.remove(&ch);
-
-                                    if subscribed_channel_ids.contains(&ch) {
+                                    // Consult current authority without waiting for its watch
+                                    // notification, while honoring queued removal ordering.
+                                    let needs_subscription = channel_subscription_updates::membership_add_needs_subscribe(
+                                        ch,
+                                        &subscription_snapshots.borrow(),
+                                        &mut removed_channels,
+                                    );
+                                    if !needs_subscription {
                                         tracing::debug!(channel_id = %ch, "membership notification: channel already subscribed");
                                     } else if let Some(filter) = config::resolve_dynamic_channel_filter(&config, ch, &rules) {
                                         tracing::info!(channel_id = %ch, "membership notification: subscribing to new channel");
                                         if let Err(e) = relay.subscribe_channel_from(ch, filter, Some(ts)).await {
                                             tracing::warn!("failed to subscribe to new channel {ch}: {e}");
-                                        } else {
-                                            subscribed_channel_ids.insert(ch);
                                         }
                                     } else {
                                         tracing::debug!(channel_id = %ch, "membership notification: no matching rules — skipping");
                                     }
                                 } else {
-                                    subscribed_channel_ids.remove(&ch);
                                     tracing::info!(channel_id = %ch, "membership notification: unsubscribing from channel");
                                     if let Err(e) = relay.unsubscribe_channel(ch).await {
                                         tracing::warn!("failed to unsubscribe from channel {ch}: {e}");
@@ -2940,7 +2955,6 @@ async fn tokio_main() -> Result<()> {
                                         );
                                     }
                                 }
-                                membership_signal.report(observer.as_ref(), subscribed_channel_ids.len());
                                 continue;
                             }
 

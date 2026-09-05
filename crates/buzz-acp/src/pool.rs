@@ -21,6 +21,8 @@
 
 mod logical_prompt;
 #[cfg(test)]
+mod receipt_recovery_tests;
+#[cfg(test)]
 mod reliability_tests;
 use logical_prompt::run_logical_prompt;
 

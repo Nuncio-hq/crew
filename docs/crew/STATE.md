@@ -1,5 +1,34 @@
 # Crew State
 
+## Issues #337 / #338 — channel recovery and receipt compatibility
+
+Recovery code updated (2026-09-05): the harness reads the relay background
+subscription snapshot, so a channel access denial clears readiness and a later
+membership add can subscribe again without restarting the socket. HTTP error
+previews truncate at UTF-8 boundaries; a multibyte rejection cannot panic the
+receipt worker. Transient failures retain the exact signed receipt for retry;
+permanent 400/403 rejections stay rejected.
+
+Real-process checks against an isolated relay pass on the rebuilt harness:
+zero channels → live add → turn; reconnect during an active prompt and
+`session/new`; reconnect during explicit cancel-drain followed by a healthy
+turn. Three forced resets produced no duplicate prompts or extra cancels.
+Successful triggers had one accepted receipt each; the cancelled trigger had
+none. Reproduce with [`hosted-recovery-e2e.py`](../../scripts/testing/hosted-recovery-e2e.py).
+
+Hosted acceptance remains **incomplete**. On 2026-09-05, Hermes was added to
+channel `9fcd2dc3-5f3e-4f7e-9cb3-3409f33ba7fa` (accepted membership event
+`1591e8c4986bb48d99ed2d9c11b1a80d8d64e0716d2d40f0e3d6c12b6895367c`)
+and its existing harness subscribed without restart. Actual trigger
+`8734c0ad74552a6c978fa5c1b817592b6fbbc2eed813e7df53f1f6a3c1a67d55`
+reached Hermes, but its configured model endpoint `http://127.0.0.1:8080/v1`
+refused connections through three retries. Receipt
+`8684452aa133d47bc42a0ba32b5abdfaab30337157e0e3aefb4c7ba9f4b99e35`
+was permanently rejected with HTTP 400, unknown kind. Hosted NIP-11 reports
+version `0.2.1`; receipt compatibility and reset-rate acceptance are unresolved.
+No credentials or persistent model settings changed. Neither issue is closed
+by these local code checks.
+
 ## Agent reliability — retained work and truthful completion
 
 Implemented in the reliability change (2026-09-05):
@@ -22,9 +51,8 @@ Implemented in the reliability change (2026-09-05):
 Configuration and deadline semantics: [ACP configuration](../../crates/buzz-acp/README.md#turn-deadlines-and-permission-choices).
 ACP regressions, desktop tests, and a targeted membership UI scenario cover
 these boundaries; final CI evidence belongs to the pull request. No live
-long-running provider success is claimed. Hosted membership/
-auth remediation (#337) and relay deployment/registration/receipt compatibility
-(#338) remain operational work, not outcomes of these code changes.
+long-running provider success is claimed. Current hosted recovery evidence and
+remaining provider/relay blockers for #337 and #338 are recorded above.
 
 ## Issue #285 — Buzz desktop-v0.5.18 pin
 
