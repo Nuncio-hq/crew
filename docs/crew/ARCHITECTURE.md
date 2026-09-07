@@ -9,13 +9,14 @@ harness. Crew adds a manager-facing orchestration layer.
 Manager
   |
   v
-Crew board and card detail (new React/TypeScript)
+Crew office surfaces: channels/threads, Focus (Workbench), Tool Pane,
+Projects/worktrees, Hermes hire (React/TypeScript on the Buzz shell)
   |
   v
 Buzz relay (signed events; shared state)
   |
   +--> channels and card conversations
-  +--> project and board events
+  +--> project, worktree, receipt and evidence events
   +--> agent mentions
   |
   v
@@ -31,12 +32,12 @@ The relay is the shared coordination log. It is not the source-code store.
 
 | Data                                 | Authority         | May leave the machine through |
 | ------------------------------------ | ----------------- | ----------------------------- |
-| Board, messages, status, assignments | Local Buzz relay  | Relay WebSocket               |
+| Messages, receipts, evidence, plans, roles | Local Buzz relay  | Relay WebSocket               |
 | Working directory and source code    | Local filesystem  | Nothing by default            |
 | Images, video, and large artifacts   | Local media store | Uploaded media URL            |
 
 Do not put source trees into relay events or media uploads. Do not make React
-state authoritative for board state.
+state authoritative for relay-backed state (D-003 / D-010).
 
 ## Project identity and location
 
@@ -172,9 +173,9 @@ Escalation paths:
 3. A Rust change requires evidence that context plus absolute paths is
    insufficient and explicit approval of its upstream maintenance cost.
 
-## Board event model
+## Relay event model (formerly "board", superseded by D-037)
 
-Board state must be reconstructible from relay events after restart or on a
+Crew state must be reconstructible from relay events after restart or on a
 second client. React may cache a projection but cannot own state.
 
 Minimum event semantics to spike:

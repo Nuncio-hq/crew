@@ -5,9 +5,12 @@
 > [`block/buzz`](https://github.com/block/buzz). Product name: **NuncioCrew**
 > (also called Crew). Most of this file is upstream Buzz contributor guidance
 > and still applies to the shared codebase. For fork identity, naming
-> (Buzz vs NuncioCrew), remotes, CI, and data dirs, read
-> [`docs/crew/IDENTITY.md`](docs/crew/IDENTITY.md) and the
-> [`docs/crew/`](docs/crew/README.md) index **before** planning or opening PRs.
+> (Buzz vs NuncioCrew), remotes, CI, sync, and the fork-delta record, read
+> [`docs/crew/FORK.md`](docs/crew/FORK.md); for the product,
+> [`docs/crew/PRODUCT.md`](docs/crew/PRODUCT.md). The index is
+> [`docs/crew/README.md`](docs/crew/README.md) — read those three **before**
+> planning or opening PRs. Durable docs are the seven living files listed
+> there; do not create new top-level documents in `docs/crew/`.
 > Do not treat issues/PRs as belonging to `block/buzz`.
 >
 > **All PRs target Nuncio-hq/crew — never block/buzz (D-020).** Even for
@@ -29,8 +32,9 @@ code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
 feature integrates *on top of* an existing Buzz model, type, event kind, or
 extension point. This is the rule that decides design arguments; the thin-fork
 file-edit budget in
-[`docs/crew/UPSTREAM-SYNC.md`](docs/crew/UPSTREAM-SYNC.md) is a separate,
-narrower constraint about *how many upstream files you touch*.
+[`docs/crew/FORK.md`](docs/crew/FORK.md) is a separate, narrower constraint
+about *how many upstream files you touch* — every upstream-owned file Crew
+edits must match an area in `docs/crew/fork-delta.json` (CI-checked).
 
 What this means in practice:
 
@@ -62,8 +66,8 @@ one — that is a decision worth recording in `docs/crew/DECISIONS.md`.
 
 Before planning or reviewing a non-trivial change:
 
-1. Read [Crew founder product guidance](docs/crew/FOUNDER-PRODUCT.md) and
-   [Crew decisions](docs/crew/DECISIONS.md), then [VISION.md](VISION.md).
+1. Read [Crew product](docs/crew/PRODUCT.md) and
+   [Crew decisions](docs/crew/DECISIONS.md), then upstream [VISION.md](VISION.md).
    Crew decisions govern intentional fork differences.
 2. Read the `VISION_*.md` documents relevant to the affected product surface.
 3. Read the applicable guidance in [TESTING.md](TESTING.md) and any
@@ -84,7 +88,7 @@ and runtime evidence answer different questions.
 Buzz spans five repos. Upstream (`block/buzz`) is the OSS source for the relay,
 desktop, mobile, and CLI. **This repository is the NuncioCrew fork**
 (`Nuncio-hq/crew`); sync from upstream per
-[`docs/crew/UPSTREAM-SYNC.md`](docs/crew/UPSTREAM-SYNC.md). The other repos
+[`docs/crew/FORK.md`](docs/crew/FORK.md). The other repos
 below are Block-internal and usually irrelevant to Crew feature work:
 
 | Repo | Purpose |

@@ -5378,7 +5378,7 @@ mod agent_draft_prompt_tests {
     }
 
     /// The Crew office sections must survive the upstream compose, and stay
-    /// placed after upstream's Communication Patterns (UPSTREAM-SYNC.md).
+    /// placed after upstream's Communication Patterns (docs/crew/FORK.md).
     #[test]
     fn shared_base_prompt_keeps_crew_office_sections_after_communication_patterns() {
         let prompt = include_str!("base_prompt.md");

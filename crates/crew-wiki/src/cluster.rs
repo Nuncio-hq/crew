@@ -325,7 +325,7 @@ mod tests {
                 "desktop/package.json".into(),
                 "mobile/lib/main.dart".into(),
                 "mobile/lib/shared/relay/nostr_models.dart".into(),
-                "docs/crew/IDENTITY.md".into(),
+                "docs/crew/FORK.md".into(),
                 "docs/crew/DECISIONS.md".into(),
                 "migrations/0001_initial_schema.sql".into(),
                 "target/debug/buzz".into(),

@@ -1,86 +1,67 @@
-# Crew Documentation
+# Crew documentation
 
-**This repository is [Nuncio-hq/crew](https://github.com/Nuncio-hq/crew), not
-[block/buzz](https://github.com/block/buzz).** Crew (product name **NuncioCrew**)
-is Nuncio's thin fork of Buzz. It turns Buzz into mission control for a manager
-coordinating a team of long-running coding agents.
+This repository is [Nuncio-hq/crew](https://github.com/Nuncio-hq/crew)
+(product name **NuncioCrew**, "Crew"), a fork of
+[block/buzz](https://github.com/block/buzz). Upstream docs elsewhere in the
+tree stay as they are; Crew's own rules live only in this directory.
 
-Start with [`IDENTITY.md`](IDENTITY.md) if you are unsure when to say "Buzz"
-versus "NuncioCrew" / "Crew".
+## Read these, in this order, before working on Crew
 
-This directory contains Crew-specific product rules and engineering decisions.
-Upstream documentation remains intact so updates from `block/buzz` stay easy to
-review and merge. Leaving "Buzz" in upstream docs is intentional — do not mass
-rename those files.
+1. Root [`AGENTS.md`](../../AGENTS.md) — how to work in this codebase
+   (upstream conventions + the Crew banner at the top).
+2. [`PRODUCT.md`](PRODUCT.md) — what Crew is and where it is going.
+3. [`FORK.md`](FORK.md) — identity, how we sync upstream, the fork-delta
+   record and its CI check.
 
-## Authority and reading order
+That is the whole reading list. Everything else below is looked up when
+needed, not read up front.
 
-Before researching, planning, or changing Crew, an agent must read:
+## The seven living documents
 
-1. [`IDENTITY.md`](IDENTITY.md) — fork vs upstream naming (read first).
-2. [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md) — founder north star (Hermes-first,
-   Buzz contracts, mobile, what “company” means in plain language).
-3. [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md) — how to explain,
-   refuse mis-assignment, and stay honest with this founder.
-4. Upstream [`AGENTS.md`](../../AGENTS.md) and [`CLAUDE.md`](../../CLAUDE.md)
-   (Buzz codebase conventions; this checkout is still the Buzz tree).
-5. This file.
-6. [`VISION.md`](VISION.md) — older mission-control framing; if it conflicts
-   with `FOUNDER-PRODUCT.md`, surface the conflict (do not silently pick).
-7. [`ARCHITECTURE.md`](ARCHITECTURE.md).
-8. [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md).
-9. [`TESTING.md`](TESTING.md).
-10. [`STATE.md`](STATE.md) and [`DECISIONS.md`](DECISIONS.md).
-11. The relevant spike and feature plan.
+Agents may **edit** these. Agents may **not** create new top-level documents
+in `docs/crew/`; a new `.md` here fails review. If something durable does not
+fit one of these seven, that is a signal to change one of them, not to add
+an eighth.
 
-Upstream rules govern the Buzz codebase. Crew rules add stricter fork,
-product, and delivery constraints. If they conflict, stop and surface the
-conflict instead of silently choosing one.
+| File | Answers | Update style |
+| --- | --- | --- |
+| [`PRODUCT.md`](PRODUCT.md) | What / why / direction | rewrite in place when direction changes |
+| [`FORK.md`](FORK.md) | Buzz vs Crew, sync, delta | rewrite in place |
+| [`fork-delta.json`](fork-delta.json) | Which upstream files Crew edits and how to resolve them | edit areas; CI-checked |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Crew boundaries and data flow | rewrite in place |
+| [`DECISIONS.md`](DECISIONS.md) | Why (durable, numbered) | **append only** |
+| [`STATE.md`](STATE.md) | Where things stand right now, ≤ ~60 lines | rewrite the sentence that is no longer true |
+| [`HERMES.md`](HERMES.md) | Hermes hire / bind / offboard runbook | rewrite in place |
 
-## Non-negotiable workflow
+Supporting runbooks that are also living but narrow:
+[`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md),
+[`TESTING.md`](TESTING.md), [`LOCAL-BUILD.md`](LOCAL-BUILD.md),
+[`RELEASING.md`](RELEASING.md), [`GUIDES/`](GUIDES/),
+[`templates/`](templates/).
 
-Every behavior change follows this sequence:
+## Records (append-only directories)
 
-```text
-question
-  -> feasibility spike
-  -> evidence and verdict
-  -> failing contract tests
-  -> edge-case tests
-  -> approved implementation plan
-  -> smallest implementation
-  -> refactor while green
-  -> full verification
-```
+Dated evidence. Agents create new files here freely; nobody has to keep
+them current, and they are never the source of truth. If a record reaches
+a durable conclusion, copy the conclusion into one of the seven above.
 
-No production implementation begins before the spike is conclusive, the test
-contract is visible, and the manager approves the plan.
+| Directory | What goes there |
+| --- | --- |
+| [`spikes/`](spikes/) | Feasibility evidence, one file per spike |
+| [`verification/`](verification/) | Reproducible evidence for a delivered slice |
+| [`features/`](features/) | Feature plans (stories + slices) |
+| [`upstream-proposals/`](upstream-proposals/) | Things Crew would like upstream to absorb |
+| [`archive/`](archive/) | Superseded living documents, kept for history |
+| `../../plans/` | Agent working plans and reports; frozen, not read |
 
-## Documentation map
+## The rule, in one line
 
-| Document                                             | Purpose                            | Update style                 |
-| ---------------------------------------------------- | ---------------------------------- | ---------------------------- |
-| [`IDENTITY.md`](IDENTITY.md)                         | Fork vs Buzz naming for agents     | When identity/CI/paths change |
-| [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md)           | Founder north star; Hermes + Buzz  | When product direction locks |
-| [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md) | Plain-language agent collaboration | When communication rules change |
-| [`VISION.md`](VISION.md)                             | Mission-control intent (legacy framing) | Rarely; reconcile with founder product |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)                 | Crew boundaries and data flow      | When architecture changes    |
-| [`HERMES.md`](HERMES.md)                             | Hermes hire/spawn runbook          | When Hermes ops change       |
-| [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md) | Mandatory delivery gates           | Rarely                       |
-| [`TESTING.md`](TESTING.md)                           | TDD and edge-case strategy         | As test surfaces evolve      |
-| [`LOCAL-BUILD.md`](LOCAL-BUILD.md)                   | Build and test NuncioCrew locally  | When packaging changes       |
-| [`CI.md`](CI.md)                                     | Lean merge and upstream-sync gates | When CI scope changes         |
-| [`RELEASING.md`](RELEASING.md)                       | Manual dev/stable release runbook  | When distribution changes    |
-| [`UPSTREAM-SYNC.md`](UPSTREAM-SYNC.md)               | Thin-fork and sync runbook         | When Git workflow changes    |
-| [`STATE.md`](STATE.md)                               | Short, current project state       | Frequently; rewrite in place |
-| [`DECISIONS.md`](DECISIONS.md)                       | Durable rationale                  | Append only                  |
-| [`features/`](features/README.md)                    | Feature plans (stories + slices)   | One document per initiative  |
-| [`spikes/`](spikes/README.md)                        | Feasibility evidence               | One record per spike         |
-| [`verification/`](verification/README.md)            | Reproducible feature evidence      | One record per delivered slice |
-| [`templates/`](templates/)                           | Required work artifacts            | When workflow changes        |
+**Durable → edit one of the seven. Evidence for today → add a record.
+There is no third option.**
 
-## Current scope
+## Workflow
 
-The first product slice makes a NIP-34 Project record point to a local
-workspace folder without changing repository identity and without changing
-`session/new.cwd`. See [`STATE.md`](STATE.md) for the exact boundary.
+Every behavior change: spike → contract tests → smallest implementation →
+verification → update the affected living document in the same PR.
+Details in [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md). The founder
+is the client; CI green is not Accept (D-070).

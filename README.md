@@ -4,7 +4,7 @@
   <strong>NuncioCrew</strong> — thin fork of Buzz at
   <a href="https://github.com/Nuncio-hq/crew">Nuncio-hq/crew</a>
   (upstream <a href="https://github.com/block/buzz">block/buzz</a>).
-  Agents: start at <a href="docs/crew/IDENTITY.md"><code>docs/crew/IDENTITY.md</code></a>.
+  Agents: start at <a href="docs/crew/README.md"><code>docs/crew/README.md</code></a>.
 </p>
 
 <p align="center">

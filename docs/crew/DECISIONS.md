@@ -420,7 +420,7 @@ named-profile requirement remains unchanged.
 
 - **Status:** Accepted
 - **Date:** 2026-08-10
-- **Product doc:** [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md)
+- **Product doc:** [`FOUNDER-PRODUCT.md`](PRODUCT.md)
 
 Crew keeps the Buzz backend (relay, Nostr identity, channels/threads, ACP
 harness) and continues to fetch/sync upstream. Product work builds **on top**
@@ -443,7 +443,7 @@ out of scope unless a later decision supersedes this.
 
 - **Status:** Accepted
 - **Date:** 2026-08-10
-- **Product doc:** [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md)
+- **Product doc:** [`FOUNDER-PRODUCT.md`](PRODUCT.md)
 
 Desktop is the main office. The mobile app continues the same workspace
 (Need you, read threads, keep work moving). Do not split planning into
@@ -459,7 +459,7 @@ decision supersedes this.
 
 - **Status:** Accepted
 - **Date:** 2026-08-10
-- **Working agreement:** [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md)
+- **Working agreement:** [`AGENT-WORKING-AGREEMENT.md`](PRODUCT.md#how-agents-work-with-the-founder-d-027)
 
 The founder is not a practiced company manager. Agents and implementers must
 explain simply, label uncertainty about “real company” practice, refuse silent
@@ -516,7 +516,7 @@ when Slice 2 lands.
 
 - **Status:** Accepted
 - **Date:** 2026-08-10
-- **Working agreement:** [`AGENT-WORKING-AGREEMENT.md`](AGENT-WORKING-AGREEMENT.md)
+- **Working agreement:** [`AGENT-WORKING-AGREEMENT.md`](PRODUCT.md#how-agents-work-with-the-founder-d-027)
 
 When a release is published, a slice merges, or the gate changes, update
 `STATE.md` in the same PR. Repeated drift is costly because agents sequence
@@ -634,13 +634,13 @@ The reserved `default` profile and the `~/.hermes` root remain untouchable.
 
 - **Status:** Accepted
 - **Date:** 2026-08-10
-- **Product doc:** [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md)
+- **Product doc:** [`FOUNDER-PRODUCT.md`](PRODUCT.md)
 
 1. **Channel-first stands.** Channels and threads are the main surface and
    where work happens. Board-as-home — columns as authoritative state, slot
    caps, and card-move-as-transition — is not current direction. This
    supersedes VISION.md § "Board as orchestrator" as a product commitment.
-   [`FOUNDER-PRODUCT.md`](FOUNDER-PRODUCT.md) remains the locked north star.
+   [`FOUNDER-PRODUCT.md`](PRODUCT.md) remains the locked north star.
 2. **Board schema stays deferred.** No board event kind or board tag schema is
    defined until a board-like surface is actually prioritized. This closes
    STATE.md's open decision "final board event kind and tag schema".
@@ -1688,3 +1688,81 @@ must not create, archive, or delete that home profile. Named-profile
 create-in-place remains the happy path. Spike 0056 PASS: spawn uses
 `hermes -p default acp`. Bare `hermes acp` also initializes ACP here but
 follows a later sticky `active_profile`, so Crew injects `-p default`.
+
+## D-074 — Seven living documents; records are append-only; no new top-level docs
+
+- **Status:** Accepted
+- **Date:** 2026-09-07
+- **Founder session:** CompanyOS brainstorm (archived as
+  `archive/COMPANY-OS-brainstorm-2026-09-07.md`)
+
+Crew docs had grown to ~350 Crew-owned Markdown files, an 11-step reading
+order, an 871-line `STATE.md` written as a log, and a hand-maintained
+fork-delta table covering ~14% of the real delta. Agents could not "update
+docs correctly" because there were too many places to write; the reliable
+default became creating a new file (this session's own `COMPANY-OS.md`
+included). Upstream Buzz keeps ~30 short topic docs, no state/decision
+journals, and auto-generated history — and stays correct with no gate.
+
+1. **Seven living documents** in `docs/crew/`: `PRODUCT.md`, `FORK.md`,
+   `fork-delta.json`, `ARCHITECTURE.md`, `DECISIONS.md`, `STATE.md`,
+   `HERMES.md` (plus narrow runbooks `DEVELOPMENT-WORKFLOW`, `TESTING`,
+   `LOCAL-BUILD`, `RELEASING`, `GUIDES/`, `templates/`). Agents edit these.
+   **Agents do not create new top-level `.md` files in `docs/crew/`.**
+2. **Records** (`spikes/`, `verification/`, `features/`,
+   `upstream-proposals/`, `archive/`, `plans/`) are append-only evidence.
+   Nobody keeps them current; a durable conclusion is copied into a living
+   document.
+3. **Reading order is three files:** root `AGENTS.md`, `PRODUCT.md`,
+   `FORK.md`.
+4. **`STATE.md` is state, not history.** One section per surface, ≤ ~60
+   lines, rewrite the sentence that is no longer true. History is `git
+   log`, merged PRs, and `archive/`.
+5. **Merged:** `IDENTITY` + `UPSTREAM-SYNC` + `CI` → `FORK.md`;
+   `FOUNDER-PRODUCT` + `VISION` + `AGENT-WORKING-AGREEMENT` + the CompanyOS
+   brainstorm → `PRODUCT.md`. Originals moved to `archive/`, not deleted.
+6. **The one enforced thing** is the fork delta (D-075); prose is not
+   gated. Decisions D-025/D-026/D-027/D-070 remain in force; their text is
+   now in `PRODUCT.md`.
+
+## D-075 — Real merge ancestry; fork delta recorded by area and CI-checked
+
+- **Status:** Accepted
+- **Date:** 2026-09-07
+- **Branch:** `sync/upstream-2026-09-07`
+
+Crew's `main` had no merge ancestry to upstream since 2026-08-12
+(merge-base `4749bc7be`); the 0.5.22 "upgrade" (#342) was a 2285-file squash
+copy. `git diff upstream...HEAD` therefore could not describe the fork,
+`UPSTREAM-SYNC.md`'s file table listed 97 of 678 modified upstream files,
+and #342 had silently rewritten parts of the mention send flow and dropped
+upstream's `session_owners` model from `buzz-acp`.
+
+1. **Every upstream sync is a real `git merge <tag>`** (two parents). The
+   2026-09-07 merge of `desktop-v0.5.23` restores ancestry; the next sync is
+   a one-release delta.
+2. **Resolution policy:** upstream wins unless a decision or issue names the
+   Crew behavior; then the smallest hook is re-applied and logic lives in a
+   Crew file (D-022). Whole-file add/add conflicts are 3-way merged against
+   the previous tag. Files unchanged between the two upstream tags keep
+   Crew's version; files Crew never touched take upstream's.
+3. **Fork delta is recorded by area** in `docs/crew/fork-delta.json`
+   (glob + why + resolve, with per-file hints where they still hold).
+   `scripts/check-fork-delta.py` runs in the `CI Policy` job and fails when
+   an upstream-owned file changes and matches no area. 675 files / 41 areas
+   at record time.
+4. **`crates/buzz-acp` is Crew-ahead.** Upstream commits are cherry-picked
+   onto Crew (`#7332`, `#7335` done); upstream's thread-per-session model
+   (`#6732` `SessionPolicy`/`session_owners`, `#7337` busy-owner hold) is
+   **not adopted**. Adopting it is a product/runtime decision (touches
+   resume-first, worktree leases, receipt recovery), not a merge chore.
+5. **Migrations keep Crew numbering** (Crew inserted `0031`; upstream
+   `0031+` shift by one). Incoming migrations are renamed; both copies are
+   never kept.
+6. **Accepted upstream-file edit:** `crates/buzz-acp/src/lib.rs` observer
+   pacer (`OBSERVER_PUBLISH_TICK`) may be changed to add a priority lane for
+   lifecycle frames (`turn_started/completed/error`, permission,
+   user-input) so "done" reaches the desktop within one tick regardless of
+   chunk backlog. Constraints: keep the 120/min quota ceiling, the byte
+   budget and drop accounting; add a falsifiable test; docs only until the
+   Focus-grain work picks it up (see `PRODUCT.md`, "Watching agents work").
