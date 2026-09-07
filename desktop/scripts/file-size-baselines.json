@@ -17,7 +17,7 @@
       "recordedAt": "2026-09-07"
     },
     "src/features/messages/ui/MessageRow.tsx": {
-      "lines": 1004,
+      "lines": 1008,
       "reason": "Upstream desktop-v0.5.23 is 987 lines; Crew evidence pass-through, agent receipt body, status metadata and mention-avatar map remain additive (+17).",
       "recordedAt": "2026-09-07"
     },

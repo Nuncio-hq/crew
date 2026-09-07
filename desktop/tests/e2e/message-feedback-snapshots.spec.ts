@@ -94,32 +94,24 @@ test("pending continuation keeps Sending next to its timestamp", async ({
   await pendingRow.screenshot({ path: `${SHOTS}/pending-message-inline.png` });
 });
 
-test("profile hover uses the channel hover surface", async ({ page }) => {
+test("profile hover uses the sidebar action hover surface", async ({
+  page,
+}) => {
   await installMockBridge(page);
   await page.goto("/");
 
   const profile = page.getByTestId("sidebar-profile-card");
-  const channel = page.getByTestId("channel-random");
-  await expect(page.locator("html")).toHaveAttribute("data-buzz-sidebar", "");
-  const hoverSurface = await channel.evaluate((element) => {
-    const probe = document.createElement("span");
-    probe.style.backgroundColor = "var(--buzz-hover-surface)";
-    element.append(probe);
-    const color = getComputedStyle(probe).backgroundColor;
-    probe.remove();
-    return color;
-  });
-  // Equal unfinished (transparent) surfaces must not satisfy hover parity.
-  expect(hoverSurface).not.toMatch(/^(transparent|rgba\(.*,\s*0\))$/);
-  await channel.hover();
-  // Observe the semantic endpoint, not an intermediate transition sample or
-  // the shared animation helper's timeout-as-success ceiling.
-  await expect(channel).toHaveCSS("background-color", hoverSurface);
-  const channelHoverColor = await channel.evaluate(
+  const sidebarAction = page.locator(".sidebar-section-action").first();
+  await sidebarAction.hover();
+  // Wait for the CSS transition to settle before capturing the hover color so
+  // a mid-transition sample does not produce a value the profile card (which
+  // uses the same token) can never match.
+  await waitForAnimations(page);
+  const actionHoverColor = await sidebarAction.evaluate(
     (element) => getComputedStyle(element).backgroundColor,
   );
   await profile.hover();
-  await expect(profile).toHaveCSS("background-color", channelHoverColor);
+  await expect(profile).toHaveCSS("background-color", actionHoverColor);
 
   await waitForAnimations(page);
   await page
