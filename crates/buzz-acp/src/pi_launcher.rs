@@ -281,8 +281,9 @@ mod tests {
 
     #[test]
     fn pi_adapter_moves_buzz_base_out_of_ordinary_acp_delivery() {
-        let base = crate::scope::SessionPolicy::Thread
-            .append_session_model(include_str!("base_prompt.md"));
+        // Crew: the base prompt already carries the channel session model
+        // (no `scope::SessionPolicy` wiring; see docs/crew/FORK.md).
+        let base = include_str!("base_prompt.md").to_string();
         let (prepared, remaining) = PiLaunchOverride::prepare(
             "/opt/bin/pi-acp",
             Some(base.clone()),
@@ -297,7 +298,7 @@ mod tests {
             fs::read_to_string(prepared.directory.join("SYSTEM.md")).expect("read prompt"),
             base
         );
-        assert!(base.contains("each thread gets its own"));
+        assert!(base.contains("## Session Model"));
 
         #[cfg(unix)]
         assert!(fs::read_to_string(prepared.launcher_path())
