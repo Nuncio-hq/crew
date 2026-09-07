@@ -106,7 +106,8 @@ Focus must show everything the ACP session emits — thinking and tool
 activity both — and must feel as live as a native agent CLI. The data
 already streams (observer frames, kind 24200) and the Workbench route
 exists; what is missing is a door into it, the Tool Pane docked beside it,
-and latency (see D-075 item 6).
+and latency (see D-075 item 6). Tracked in
+[#344](https://github.com/Nuncio-hq/crew/issues/344).
 
 ### Agents as colleagues
 

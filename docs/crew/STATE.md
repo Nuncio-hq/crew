@@ -24,8 +24,9 @@ thread-per-session and #7337 busy-owner hold are **not** adopted
 ## Desktop
 
 Channel-first IA (Inbox + channels + DMs; no Projects/Workbench/Org nav).
-Thread Workbench route exists but has no door (D-055 follow-up pending, see
-PRODUCT.md "Focus"). Tool Pane (PR · Browser · Sim) in thread focus. Crew
+Thread Workbench route exists but has no door — Focus grain work is
+[#344](https://github.com/Nuncio-hq/crew/issues/344) (S1 doors → S2
+sub-second done → S3 Tool Pane → S4 reconcile). Tool Pane (PR · Browser · Sim) in thread focus. Crew
 Dark theme, text-only zoom, 1000-line ratchet. Mention send flow follows
 upstream's composer-revision security model with Crew context in
 `crewSendContext.ts`. Desktop unit suite: 7358 tests passing.
@@ -50,5 +51,5 @@ Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
 - Hosted-relay acceptance for #337/#338 incomplete (receipt kind unknown to
   hosted relay 0.2.1).
 - Desktop Smoke / Integration E2E lanes are advisory only (D-032, D-047).
-- Observer "turn done" latency 5–10 s under load (pacer, see PRODUCT.md
-  Focus, D-075 item 6).
+- Observer "turn done" latency 5–10 s under load (pacer; #344 S2, D-075
+  item 6).
