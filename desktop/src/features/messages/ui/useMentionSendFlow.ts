@@ -1,4 +1,5 @@
 import * as React from "react";
+import { claimDraftSend } from "@/features/messages/lib/useDrafts";
 import { toast } from "sonner";
 import {
   type CreateChannelManagedAgentInput,
@@ -12,30 +13,49 @@ import {
 import { resolvePersonaRuntime } from "@/features/agents/lib/resolvePersonaRuntime";
 import { useAddChannelMembersMutation } from "@/features/channels/hooks";
 import { useCanAddChannelMembers } from "@/features/channels/useCanAddChannelMembers";
-import { PRIVATE_CHANNEL_ADD_DENIED_MESSAGE } from "@/features/channels/lib/channelMemberAdmission";
+import { useNonMemberInvite } from "./useNonMemberInvite";
 import { dmThreadAgentMentionError } from "@/features/messages/lib/dmThreadAgentMentionError";
+import {
+  prepareBackgroundMediaUpload,
+  saveQueuedAttachmentsForDraft,
+} from "@/features/messages/lib/backgroundMediaUploadStore";
+import {
+  buildOutgoingMessage,
+  type ImetaMedia,
+} from "@/features/messages/lib/imetaMediaMarkdown";
 import { useActivePreparedLinkPreviews } from "./useActivePreparedLinkPreviews";
 import { useDetachedAgentStart } from "./useDetachedAgentStart";
 import { useEnsureAgentMentionsReady } from "./useEnsureAgentMentionsReady";
+import { invokeTauri } from "@/shared/api/tauri";
 import type { AcpRuntime, ManagedAgent } from "@/shared/api/types";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { buildCustomEmojiTags } from "@/shared/lib/customEmojiTags";
 import {
+  dedupeQueuedAgentWakes,
   enqueueAgentWake,
+  formatMessageSendError,
   getErrorMessage,
-  mergeMentionRecipients,
-  MENTION_REFERENCE_TAG,
+  mentionRevalidationOptions,
   mergeOutgoingTagsWithReferenceMentions,
+  withoutInvitingRecipients,
+  mergeMentionRecipients,
   type PendingNonMemberMentionSend,
   type QueuedAgentWake,
   type SendMessageWithMentionFlowInput,
+  resolvePreviewTags,
   uniqueNormalizedPubkeys,
 } from "./useMentionSendFlow.helpers";
-import { useMentionSendComplete } from "./useMentionSendComplete";
+import { buildAgentAddressMentionTags } from "@/features/messages/lib/agentAddressMention.mjs";
+import { AgentMentionAuthorizationError } from "@/features/messages/lib/agentMentionRevalidation";
 import type { UseMentionSendFlowOptions } from "./useMentionSendFlow.types";
+// Crew (D-022): workspace / visible-page context + Project-thread routing.
+import { applyCrewSendContext, useCrewSendContext } from "./crewSendContext";
 
 export function useMentionSendFlow({
   channelId,
+  effectiveDraftKey,
+  getComposerRevision,
+  runComposerUpdate,
   channelLinks,
   channelType,
   contentRef,
@@ -47,8 +67,6 @@ export function useMentionSendFlow({
   onAddressedAgentsComposerCleared,
   onAddressedAgentsSendFailed,
   onAddressedAgentsSendSucceeded,
-  onSuccessfulExplicitAgentAudience,
-  resolvePostSendContent,
   onSendRef,
   richText,
   setContent,
@@ -65,15 +83,26 @@ export function useMentionSendFlow({
     string | null
   >(null);
   const [isMentionSendPending, setIsMentionSendPending] = React.useState(false);
-  const [isCompleteSendPending, setIsCompleteSendPending] =
-    React.useState(false);
+  // Persistence identity is independent of the host component and destination
+  // channel. A -> B -> A must not revive A's previous invitation or recovery.
+  const sourceOwner = React.useMemo(
+    () => ({ channelId, draftKey: effectiveDraftKey, getComposerRevision }),
+    [channelId, effectiveDraftKey, getComposerRevision],
+  );
+  const sourceOwnerRef = React.useRef(sourceOwner);
+  sourceOwnerRef.current = sourceOwner;
+  const [completeSendOwner, setCompleteSendOwner] = React.useState<
+    typeof sourceOwner | null
+  >(null);
+  const isCompleteSendPending = completeSendOwner === sourceOwner;
   const isMentionSendPendingRef = React.useRef(false);
-  const isCompleteSendPendingRef = React.useRef(false);
+  const crewSend = useCrewSendContext();
+  const completeSendRef = React.useRef<PendingNonMemberMentionSend | null>(
+    null,
+  );
   const isMountedRef = React.useRef(false);
   const activePreparedLinkPreviews = useActivePreparedLinkPreviews();
-  const previousChannelIdRef = React.useRef(channelId);
-  const channelIdRef = React.useRef(channelId);
-  channelIdRef.current = channelId;
+
   React.useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -136,14 +165,17 @@ export function useMentionSendFlow({
     memberPubkeys: mentions.memberPubkeys,
   });
   const createMentionedPersonaAgents = React.useCallback(
-    async (trimmed: string, capturedChannelId: string) => {
-      const personaMentions = mentions.extractMentionPersonas(trimmed);
+    async (
+      personaMentions: ReturnType<typeof mentions.extractMentionPersonas>,
+      capturedChannelId: string,
+    ) => {
       if (!capturedChannelId || personaMentions.length === 0) {
         return {
           errors: [] as string[],
           agents: [] as ManagedAgent[],
           pubkeys: [] as string[],
           agentsToWake: [] as QueuedAgentWake[],
+          mentionRefs: [] as PendingNonMemberMentionSend["savedMentionRefs"],
         };
       }
       const runtimes = await getAvailableRuntimes();
@@ -155,6 +187,7 @@ export function useMentionSendFlow({
       // after the publish succeeds, so a persona created for a send the
       // non-member prompt later cancels never wakes at all.
       const agentsToWake: QueuedAgentWake[] = [];
+      const mentionRefs: PendingNonMemberMentionSend["savedMentionRefs"] = [];
       const seenPersonaIds = new Set<string>();
       const shouldProvisionForDm =
         channelType === "dm" && Boolean(onPrepareSendChannel);
@@ -194,9 +227,7 @@ export function useMentionSendFlow({
           const pubkey = normalizePubkey(result.agent.pubkey);
           agents.push(result.agent);
           pubkeys.push(pubkey);
-          mentions.registerMentionPubkey(displayName, pubkey, {
-            isAgent: true,
-          });
+          mentionRefs.push({ displayName, pubkey, isAgent: true });
         } catch (error) {
           errors.push(
             `${displayName}: ${getErrorMessage(
@@ -211,90 +242,510 @@ export function useMentionSendFlow({
         errors,
         pubkeys: uniqueNormalizedPubkeys(pubkeys),
         agentsToWake,
+        mentionRefs,
       };
     },
     [
       createPersonaAgentMutation,
       channelType,
       getAvailableRuntimes,
-      mentions.extractMentionPersonas,
-      mentions.registerMentionPubkey,
       onPrepareSendChannel,
       provisionPersonaAgentMutation,
     ],
   );
-  const clearComposer = React.useCallback(
-    (postSendContent = "") => {
-      setPendingNonMemberSend(null);
-      setNonMemberPromptError(null);
-      setContent(postSendContent);
-      contentRef.current = postSendContent;
-      if (postSendContent) richText.setContent(postSendContent);
-      else richText.clearContent();
-      setPendingImeta([]);
-      clearQueuedAttachments();
-      setSpoileredAttachmentUrls?.(new Set());
-      mentions.clearMentions();
-      channelLinks.clearChannels();
-      emojiAutocomplete.clearEmojis();
-      setIsEmojiPickerOpen(false);
-    },
-    [
-      channelLinks.clearChannels,
-      contentRef,
-      emojiAutocomplete.clearEmojis,
-      mentions.clearMentions,
-      richText.clearContent,
-      richText.setContent,
-      setContent,
-      setIsEmojiPickerOpen,
-      setPendingImeta,
-      clearQueuedAttachments,
-      setSpoileredAttachmentUrls,
-    ],
-  );
-  React.useEffect(() => {
-    if (previousChannelIdRef.current === channelId) {
-      return;
-    }
-    previousChannelIdRef.current = channelId;
+  const clearComposer = React.useCallback(() => {
     setPendingNonMemberSend(null);
     setNonMemberPromptError(null);
-  }, [channelId]);
-  const completeSend = useMentionSendComplete({
-    channelIdRef,
-    clearComposer,
+    setContent("");
+    contentRef.current = "";
+    richText.clearContent();
+    setPendingImeta([]);
+    clearQueuedAttachments();
+    setSpoileredAttachmentUrls?.(new Set());
+    mentions.clearMentions();
+    channelLinks.clearChannels();
+    emojiAutocomplete.clearEmojis();
+    setIsEmojiPickerOpen(false);
+  }, [
+    channelLinks.clearChannels,
     contentRef,
-    drafts,
-    ensureManagedAgentMentionsReady,
-    detachedStart: startAgentDetached,
-    activePreparedLinkPreviews,
-    onAddressedAgentsComposerCleared,
-    onAddressedAgentsSendFailed,
-    onAddressedAgentsSendSucceeded,
-    getManagedAgentsByPubkey,
-    hasUnsavedMedia,
-    isCompleteSendPendingRef,
-    isMountedRef,
-    mentions,
-    onPrepareSendChannel,
-    onSendRef,
-    onSuccessfulExplicitAgentAudience,
-    resolvePostSendContent,
-    restoreQueuedAttachments,
-    richText,
+    emojiAutocomplete.clearEmojis,
+    mentions.clearMentions,
+    richText.clearContent,
     setContent,
-    setIsCompleteSendPending,
-    setNonMemberPromptError,
+    setIsEmojiPickerOpen,
     setPendingImeta,
+    clearQueuedAttachments,
     setSpoileredAttachmentUrls,
-  });
-
+  ]);
+  React.useLayoutEffect(() => {
+    setPendingNonMemberSend((draft) =>
+      draft?.sourceOwner === sourceOwner ? draft : null,
+    );
+    setNonMemberPromptError(null);
+  }, [sourceOwner]);
+  const completeSend = React.useCallback(
+    async (
+      draft: PendingNonMemberMentionSend,
+      mentionPubkeys: string[],
+      outgoingTags = draft.outgoingTags,
+    ) => {
+      const pending = completeSendRef.current;
+      if (
+        pending?.sourceOwner === draft.sourceOwner &&
+        !pending.invitationSignal?.aborted
+      )
+        return;
+      const ownsComposer = () => sourceOwnerRef.current === draft.sourceOwner;
+      const sendSignal = draft.preparedLinkPreviews?.signal;
+      const isSendCancelled = () =>
+        sendSignal?.aborted === true ||
+        draft.invitationSignal?.aborted === true;
+      if (isSendCancelled()) return draft.preparedLinkPreviews?.release();
+      completeSendRef.current = draft;
+      setCompleteSendOwner(draft.sourceOwner);
+      const preparedUpload =
+        draft.queuedAttachments.length > 0
+          ? prepareBackgroundMediaUpload(draft.queuedAttachments)
+          : null;
+      const persistRecoverableDraft = () => {
+        // Invitation cancellation still owes the captured draft recovery. Link
+        // preview cancellation retains its existing independent recovery owner.
+        if (
+          sendSignal?.aborted ||
+          !draft.recoveryDraftKey ||
+          draft.sourceOwner.getComposerRevision() !== draft.composerRevision
+        )
+          return false;
+        const existing = drafts.loadDraft(draft.recoveryDraftKey);
+        if (
+          existing &&
+          (existing.content !== draft.savedContent ||
+            existing.channelId !==
+              (draft.capturedChannelId ?? draft.recoveryDraftKey) ||
+            JSON.stringify(existing.pendingImeta) !==
+              JSON.stringify(draft.savedImeta) ||
+            JSON.stringify(existing.spoileredAttachmentUrls) !==
+              JSON.stringify([...draft.savedSpoileredAttachmentUrls]) ||
+            JSON.stringify(existing.mentionRefs ?? []) !==
+              JSON.stringify(draft.savedMentionRefs))
+        ) {
+          return false;
+        }
+        drafts.persistDraft(
+          draft.recoveryDraftKey,
+          draft.savedContent,
+          draft.capturedChannelId ?? draft.recoveryDraftKey,
+          draft.savedImeta,
+          [...draft.savedSpoileredAttachmentUrls],
+          draft.savedMentionRefs,
+        );
+        return true;
+      };
+      const persistPreflightDraft = () => {
+        if (
+          !draft.recoveryDraftKey ||
+          isSendCancelled() ||
+          !persistRecoverableDraft()
+        )
+          return;
+        saveQueuedAttachmentsForDraft(
+          draft.recoveryDraftKey,
+          draft.queuedAttachments,
+        );
+      };
+      let composerCleared = false;
+      let optimisticComposerContent = "";
+      let clearedRevision = -1;
+      const restoreComposerAfterFailure = () => {
+        if (!composerCleared) return;
+        composerCleared = false;
+        // An authored edit (even edit -> clear) ends optimistic recovery's
+        // authority over this key, including its persisted record and files.
+        if (draft.sourceOwner.getComposerRevision() !== clearedRevision) return;
+        const persisted = persistRecoverableDraft();
+        const canAnimateCurrentComposer =
+          isMountedRef.current && ownsComposer();
+        if (
+          canAnimateCurrentComposer &&
+          draft.addressedAgentPubkeys.length > 0
+        ) {
+          onAddressedAgentsSendFailed?.(draft.addressedAgentPubkeys);
+        }
+        const canRestoreCurrentComposer =
+          canAnimateCurrentComposer &&
+          getComposerRevision() === clearedRevision &&
+          contentRef.current.trim() === optimisticComposerContent.trim() &&
+          !hasUnsavedMedia();
+        if (!canRestoreCurrentComposer && persisted && draft.recoveryDraftKey) {
+          saveQueuedAttachmentsForDraft(
+            draft.recoveryDraftKey,
+            draft.queuedAttachments,
+          );
+        }
+        if (!canRestoreCurrentComposer) {
+          return;
+        }
+        runComposerUpdate(() => {
+          setContent(draft.savedContent);
+          contentRef.current = draft.savedContent;
+          richText.setContent(draft.savedContent);
+          setPendingImeta(draft.savedImeta);
+          restoreQueuedAttachments(draft.queuedAttachments);
+          mentions.restoreDraftMentionRefs(draft.savedMentionRefs);
+          setSpoileredAttachmentUrls?.(
+            new Set(draft.savedSpoileredAttachmentUrls),
+          );
+        });
+      };
+      if (ownsComposer() && getComposerRevision() === draft.composerRevision) {
+        runComposerUpdate(() => {
+          clearComposer();
+          if (draft.addressedAgentPubkeys.length > 0) {
+            optimisticComposerContent =
+              onAddressedAgentsComposerCleared?.(draft.addressedAgentPubkeys) ??
+              "";
+            contentRef.current = optimisticComposerContent;
+          }
+        });
+        composerCleared = true;
+        clearedRevision = getComposerRevision();
+      }
+      // Recover on invalidation, not when an arbitrary external await settles.
+      // In particular a later visit to A must load recovery before it can edit
+      // or clear A again. The async continuation only observes cancellation.
+      const cancelSend = () => {
+        restoreComposerAfterFailure();
+        if (completeSendRef.current === draft) {
+          completeSendRef.current = null;
+          if (isMountedRef.current) setCompleteSendOwner(null);
+        }
+      };
+      draft.invitationSignal?.addEventListener("abort", cancelSend, {
+        once: true,
+      });
+      let uploadStarted = false;
+      try {
+        const admittedMentionPubkeys = uniqueNormalizedPubkeys(
+          await mentions.revalidateMentionPubkeys(
+            mentionPubkeys,
+            draft.capturedChannelId,
+            mentionRevalidationOptions(draft, "prepare"),
+          ),
+        );
+        if (isSendCancelled()) return restoreComposerAfterFailure();
+        if (!isMountedRef.current) return persistPreflightDraft();
+        const admittedMentionPubkeySet = new Set(admittedMentionPubkeys);
+        const readyAgentPubkeys = new Set(
+          uniqueNormalizedPubkeys(draft.readyAgentPubkeys ?? []).filter(
+            (pubkey) => admittedMentionPubkeySet.has(pubkey),
+          ),
+        );
+        const managedAgentsByPubkey = await getManagedAgentsByPubkey().catch(
+          () => new Map<string, ManagedAgent>(),
+        );
+        if (isSendCancelled()) return restoreComposerAfterFailure();
+        if (!isMountedRef.current) {
+          persistPreflightDraft();
+          return;
+        }
+        for (const agent of draft.preparedManagedAgents ?? []) {
+          managedAgentsByPubkey.set(normalizePubkey(agent.pubkey), agent);
+        }
+        const normalizedMentionPubkeys = admittedMentionPubkeys;
+        const managedMentionPubkeys = normalizedMentionPubkeys.filter(
+          (pubkey) => managedAgentsByPubkey.has(pubkey),
+        );
+        const agentMentionPubkeys = uniqueNormalizedPubkeys([
+          ...managedMentionPubkeys,
+          ...normalizedMentionPubkeys.filter(mentions.isAgentPubkey),
+        ]);
+        const preparedAgentPubkeys = uniqueNormalizedPubkeys([
+          ...readyAgentPubkeys,
+          ...agentMentionPubkeys,
+        ]);
+        let sendChannelId = draft.capturedChannelId;
+        if (preparedAgentPubkeys.length > 0 && onPrepareSendChannel) {
+          sendChannelId = await onPrepareSendChannel(preparedAgentPubkeys);
+          if (isSendCancelled()) return restoreComposerAfterFailure();
+          if (!sendChannelId) {
+            return restoreComposerAfterFailure();
+          }
+          if (!isMountedRef.current) {
+            persistPreflightDraft();
+            return;
+          }
+        }
+        const agentReadiness = await ensureManagedAgentMentionsReady(
+          managedMentionPubkeys.filter(
+            (pubkey) => !readyAgentPubkeys.has(normalizePubkey(pubkey)),
+          ),
+          sendChannelId ?? "",
+          onPrepareSendChannel ? preparedAgentPubkeys : [],
+          [...managedAgentsByPubkey.values()],
+          isSendCancelled,
+        );
+        // Every wake this send queued: persona creates carried on the draft
+        // (enqueued before the non-member prompt could defer us here), then
+        // the readiness pass's. Flushed only after the relay accepts the
+        // publish — every abort path between here and there just drops them,
+        // so no wake (or "your message was sent" failure toast) can exist for
+        // a message that never landed. First entry wins the dedupe because it
+        // carries the earliest replay floor, and the floor is a lower bound.
+        const agentsToWake = dedupeQueuedAgentWakes([
+          ...(draft.queuedAgentWakes ?? []),
+          ...agentReadiness.agentsToWake,
+        ]);
+        if (isSendCancelled()) return restoreComposerAfterFailure();
+        if (!isMountedRef.current) {
+          persistPreflightDraft();
+          return;
+        }
+        if (agentReadiness.errors.length > 0) {
+          const message =
+            agentReadiness.errors.length === 1
+              ? `Could not prepare agent mention: ${agentReadiness.errors[0]}`
+              : `Could not prepare agent mentions: ${agentReadiness.errors.join(
+                  "; ",
+                )}`;
+          setNonMemberPromptError(message);
+          toast.error(message);
+          return restoreComposerAfterFailure();
+        }
+        if (preparedAgentPubkeys.length > 0 && sendChannelId) {
+          try {
+            await invokeTauri("sync_agents_to_active_huddle", {
+              channelId: sendChannelId,
+              agentPubkeys: preparedAgentPubkeys,
+            });
+            if (isSendCancelled()) return restoreComposerAfterFailure();
+          } catch (error) {
+            if (isSendCancelled()) return restoreComposerAfterFailure();
+            const message = `Could not add mentioned agent to the Huddle: ${getErrorMessage(
+              error,
+              "Huddle enrollment failed.",
+            )}`;
+            setNonMemberPromptError(message);
+            toast.error(message);
+            return restoreComposerAfterFailure();
+          }
+        }
+        const send = onSendRef.current;
+        const finishSend = async (
+          uploaded: ImetaMedia[],
+          signal?: AbortSignal,
+        ) => {
+          const { content: finalContent, mediaTags } = buildOutgoingMessage(
+            draft.trimmed,
+            [...draft.savedImeta, ...uploaded],
+            new Set([
+              ...draft.savedSpoileredAttachmentUrls,
+              ...draft.queuedAttachments.flatMap((attachment, index) =>
+                attachment.spoilered && uploaded[index]
+                  ? [uploaded[index].url]
+                  : [],
+              ),
+            ]),
+          );
+          const finalOutgoingTags = await resolvePreviewTags(
+            draft,
+            mediaTags,
+            outgoingTags,
+          );
+          if (!finalOutgoingTags || signal?.aborted || isSendCancelled())
+            return restoreComposerAfterFailure();
+          // The pass immediately before signing/publish is always fresh:
+          // mention authorization is re-validated here unconditionally,
+          // whatever did or did not separate it from the admission pass
+          // above (#5681).
+          const revalidatedMentionPubkeys =
+            await mentions.revalidateMentionPubkeys(
+              mentionPubkeys,
+              sendChannelId,
+              mentionRevalidationOptions(
+                draft,
+                "publish",
+                preparedAgentPubkeys,
+              ),
+            );
+          if (signal?.aborted || isSendCancelled())
+            return restoreComposerAfterFailure();
+          // Crew: workspace + visible-page context, Project-thread routing.
+          const crew = await applyCrewSendContext(crewSend, {
+            content: finalContent,
+            channelId: sendChannelId ?? draft.capturedChannelId ?? "",
+            draft,
+            revalidatedMentionPubkeys,
+            reportError: setNonMemberPromptError,
+          });
+          if (signal?.aborted || isSendCancelled())
+            return restoreComposerAfterFailure();
+          const crewContent = crew.content;
+          const finalTagsWithAgentAddress = [
+            ...finalOutgoingTags,
+            ...buildAgentAddressMentionTags(
+              draft.addressedAgentPubkeys,
+              crew.mentionPubkeys,
+            ),
+          ];
+          await send(
+            crewContent,
+            crew.mentionPubkeys,
+            mergeOutgoingTagsWithReferenceMentions(
+              finalTagsWithAgentAddress,
+              crew.referencePubkeys,
+            ) ?? finalTagsWithAgentAddress,
+            sendChannelId,
+            draft.capturedThreadContext,
+            draft.preparedLinkPreviews != null,
+          );
+          // The relay accepted the publish: flush the queued wakes now,
+          // before the post-send cancellation check — a cancellation racing
+          // a successful publish must not drop the wake for a message that
+          // did land. Fire-and-forget: the send awaits nothing here, and
+          // each wake carries its enqueue-time replay floor so the spawned
+          // harness replays back past this message however late the flush.
+          const notified = new Set(crew.mentionPubkeys.map(normalizePubkey));
+          for (const wake of agentsToWake) {
+            if (notified.has(normalizePubkey(wake.agent.pubkey)))
+              startAgentDetached(wake.agent, wake.replayFloorUnix);
+          }
+          if (signal?.aborted || isSendCancelled()) return;
+          const sentMentionPubkeys = new Set(
+            revalidatedMentionPubkeys.map(normalizePubkey),
+          );
+          const newlyPinnedPubkeys = draft.inlineAgentMentionPubkeys.filter(
+            (pubkey) => sentMentionPubkeys.has(normalizePubkey(pubkey)),
+          );
+          if (
+            ownsComposer() &&
+            getComposerRevision() === draft.composerRevision
+          ) {
+            onAddressedAgentsSendSucceeded?.(
+              [
+                ...new Set([
+                  ...draft.addressedAgentPubkeys,
+                  ...newlyPinnedPubkeys,
+                ]),
+              ],
+              newlyPinnedPubkeys,
+            );
+          }
+          if (
+            draft.sentDraftKey &&
+            draft.sourceOwner.getComposerRevision() ===
+              draft.composerRevision &&
+            JSON.stringify(
+              drafts.loadDraft(draft.sentDraftKey)?.mentionRefs ?? [],
+            ) === JSON.stringify(draft.savedMentionRefs)
+          ) {
+            drafts.markDraftSent(
+              draft.sentDraftKey,
+              draft.savedContent,
+              draft.capturedChannelId ?? draft.sentDraftKey,
+              draft.savedImeta,
+              [...draft.savedSpoileredAttachmentUrls],
+            );
+          }
+        };
+        if (preparedUpload) {
+          let settleUpload!: () => void;
+          const uploadSettled = new Promise<void>((resolve) => {
+            settleUpload = resolve;
+          });
+          uploadStarted = preparedUpload.start({
+            onComplete: async (uploaded, signal) => {
+              try {
+                await finishSend(uploaded, signal);
+              } catch (error) {
+                restoreComposerAfterFailure();
+                toast.error(
+                  error instanceof AgentMentionAuthorizationError
+                    ? error.message
+                    : formatMessageSendError(error),
+                );
+              } finally {
+                settleUpload();
+              }
+            },
+            onError: (error) => {
+              restoreComposerAfterFailure();
+              toast.error(
+                `Upload failed: ${getErrorMessage(error, "Unknown error")}`,
+              );
+              settleUpload();
+            },
+            onCancel: () => {
+              restoreComposerAfterFailure();
+              settleUpload();
+            },
+          });
+          if (!uploadStarted) {
+            settleUpload();
+            return restoreComposerAfterFailure();
+          }
+          await uploadSettled;
+        }
+        if (!preparedUpload) {
+          try {
+            await finishSend([]);
+          } catch (error) {
+            restoreComposerAfterFailure();
+            toast.error(
+              error instanceof AgentMentionAuthorizationError
+                ? error.message
+                : formatMessageSendError(error),
+            );
+          }
+        }
+      } catch (error) {
+        restoreComposerAfterFailure();
+        toast.error(
+          getErrorMessage(error, "Could not send message. Please retry."),
+        );
+      } finally {
+        if (draft.preparedLinkPreviews) {
+          activePreparedLinkPreviews.delete(draft.preparedLinkPreviews);
+        }
+        draft.preparedLinkPreviews?.release();
+        if (!uploadStarted) preparedUpload?.cancel();
+        draft.invitationSignal?.removeEventListener("abort", cancelSend);
+        if (completeSendRef.current === draft) {
+          completeSendRef.current = null;
+          if (isMountedRef.current) setCompleteSendOwner(null);
+        }
+      }
+    },
+    [
+      clearComposer,
+      getComposerRevision,
+      runComposerUpdate,
+      contentRef,
+      drafts,
+      ensureManagedAgentMentionsReady,
+      getManagedAgentsByPubkey,
+      mentions.isAgentPubkey,
+      mentions.revalidateMentionPubkeys,
+      onAddressedAgentsComposerCleared,
+      onAddressedAgentsSendFailed,
+      onAddressedAgentsSendSucceeded,
+      onPrepareSendChannel,
+      onSendRef,
+      richText.setContent,
+      setContent,
+      startAgentDetached,
+      setPendingImeta,
+      restoreQueuedAttachments,
+      setSpoileredAttachmentUrls,
+      hasUnsavedMedia,
+      mentions.restoreDraftMentionRefs,
+      activePreparedLinkPreviews,
+      crewSend,
+    ],
+  );
   const sendMessageWithMentionFlow = React.useCallback(
     async ({
       addressedAgentPubkeys = [],
-      audienceGeneration = 0,
-      audienceRevision = null,
       capturedChannelId,
       capturedThreadContext = null,
       pendingImeta,
@@ -311,6 +762,9 @@ export function useMentionSendFlow({
       }
       isMentionSendPendingRef.current = true;
       setIsMentionSendPending(true);
+      // Bind settlement to this authored visit before reading its recipients.
+      claimDraftSend(effectiveDraftKey);
+      const composerRevision = getComposerRevision();
       const isSendCancelled = () =>
         preparedLinkPreviews?.signal.aborted === true;
       let sendPromoted = false;
@@ -319,6 +773,24 @@ export function useMentionSendFlow({
       }
       try {
         if (isSendCancelled()) return;
+        // Every extraction below reads the mention map, and a pasted identity
+        // can still be verifying — the relay round trip for a non-member is
+        // exactly the case this feature exists for. Sending first would
+        // publish a readable `@Label` with no `p` tag. Bounded inside, so a
+        // lookup that never answers delays the send rather than blocking it.
+        await mentions.settlePendingMentionBindings();
+        // Settlement may outlive an edit or A → B → A navigation. In that
+        // case the live mention maps no longer belong to this send.
+        if (
+          isSendCancelled() ||
+          !isMountedRef.current ||
+          sourceOwnerRef.current !== sourceOwner ||
+          getComposerRevision() !== composerRevision
+        )
+          return;
+        const savedMentionRefs = mentions.getDraftMentionRefs(trimmed).slice();
+        const selectedMentionPubkeys = mentions.extractMentionPubkeys(trimmed);
+        const selectedPersonas = mentions.extractMentionPersonas(trimmed);
         const dmThreadAgentMentionErrorMessage = dmThreadAgentMentionError({
           trimmed,
           isThreadReply: capturedThreadContext != null,
@@ -347,7 +819,7 @@ export function useMentionSendFlow({
           }
         }
         const personaMentionResult = await createMentionedPersonaAgents(
-          trimmed,
+          selectedPersonas,
           effectiveChannelId ?? "",
         );
         if (isSendCancelled()) return;
@@ -366,8 +838,19 @@ export function useMentionSendFlow({
         const createdPersonaAgentPubkeySet = new Set(
           createdPersonaAgentPubkeys.map(normalizePubkey),
         );
+        savedMentionRefs.push(...personaMentionResult.mentionRefs);
+        // Preparation resolves the captured persona, never the editor's new
+        // selection. Only this unchanged visit may receive its resolved binding.
+        if (
+          isMountedRef.current &&
+          sourceOwnerRef.current === sourceOwner &&
+          getComposerRevision() === composerRevision
+        ) {
+          for (const ref of personaMentionResult.mentionRefs)
+            mentions.registerMentionPubkey(ref.displayName, ref.pubkey, ref);
+        }
         const explicitMentionPubkeys = uniqueNormalizedPubkeys([
-          ...mentions.extractMentionPubkeys(trimmed),
+          ...selectedMentionPubkeys,
           ...createdPersonaAgentPubkeys,
         ]);
         const pubkeys = mergeMentionRecipients(
@@ -400,15 +883,9 @@ export function useMentionSendFlow({
             );
           } catch {}
         }
-        const savedMentionRefs = mentions.getDraftMentionRefs(trimmed);
         const pendingDraft: PendingNonMemberMentionSend = {
-          audienceGeneration,
-          audienceRevision,
-          explicitAgentPubkeys: pubkeys.filter(
-            (pubkey) =>
-              mentions.isAgentPubkey(pubkey) ||
-              createdPersonaAgentPubkeySet.has(pubkey),
-          ),
+          sourceOwner,
+          composerRevision,
           addressedAgentPubkeys: uniqueNormalizedPubkeys(addressedAgentPubkeys),
           inlineAgentMentionPubkeys: uniqueNormalizedPubkeys(
             savedMentionRefs
@@ -423,7 +900,7 @@ export function useMentionSendFlow({
           outgoingTags,
           preparedLinkPreviews,
           preparedManagedAgents: personaMentionResult.agents,
-          agentsToWake: personaMentionResult.agentsToWake,
+          queuedAgentWakes: personaMentionResult.agentsToWake,
           readyAgentPubkeys:
             channelType === "dm" && onPrepareSendChannel
               ? []
@@ -437,12 +914,17 @@ export function useMentionSendFlow({
           savedMentionRefs,
         };
         if (promptNonMemberPubkeys.length > 0) {
+          if (sourceOwnerRef.current !== sourceOwner) return;
           setNonMemberPromptError(null);
           setPendingNonMemberSend(pendingDraft);
           return;
         }
         sendPromoted = true;
         await completeSend(pendingDraft, pubkeys);
+      } catch (error) {
+        toast.error(
+          getErrorMessage(error, "Could not prepare mentions. Please retry."),
+        );
       } finally {
         if (!sendPromoted) {
           if (preparedLinkPreviews) {
@@ -456,6 +938,9 @@ export function useMentionSendFlow({
     },
     [
       completeSend,
+      effectiveDraftKey,
+      sourceOwner,
+      getComposerRevision,
       channelType,
       createMentionedPersonaAgents,
       customEmoji,
@@ -467,6 +952,8 @@ export function useMentionSendFlow({
       mentions.isManagedAgentPubkey,
       mentions.memberPubkeys,
       mentions.getDraftMentionRefs,
+      mentions.settlePendingMentionBindings,
+      mentions.registerMentionPubkey,
       onPrepareSendChannel,
       activePreparedLinkPreviews,
     ],
@@ -478,115 +965,35 @@ export function useMentionSendFlow({
         mentions.getMentionDisplayName(pubkey) ?? truncatePubkey(pubkey),
     );
   }, [mentions.getMentionDisplayName, pendingNonMemberSend]);
+  const invitation = useNonMemberInvite({
+    sourceOwner,
+    draft: pendingNonMemberSend,
+    canInvite: canInviteNonMembers,
+    revalidate: mentions.revalidateMentionPubkeys,
+    getManagedAgentsByPubkey,
+    isAgentPubkey: mentions.isAgentPubkey,
+    addMembers: addMembersMutation.mutateAsync,
+    completeSend,
+    setError: setNonMemberPromptError,
+  });
   const handleSendWithoutInviting = React.useCallback(() => {
     if (!pendingNonMemberSend) return;
-    const nonMemberPubkeys = new Set(
-      pendingNonMemberSend.nonMemberPubkeys.map((pubkey) =>
-        normalizePubkey(pubkey),
-      ),
-    );
-    const mentionPubkeys = pendingNonMemberSend.mentionPubkeys.filter(
-      (pubkey) => !nonMemberPubkeys.has(normalizePubkey(pubkey)),
-    );
-    const outgoingTags = mergeOutgoingTagsWithReferenceMentions(
-      pendingNonMemberSend.outgoingTags,
-      nonMemberPubkeys,
-    );
+    invitation.cancel();
+    const { mentionPubkeys, outgoingTags } =
+      withoutInvitingRecipients(pendingNonMemberSend);
     void completeSend(pendingNonMemberSend, mentionPubkeys, outgoingTags);
-  }, [completeSend, pendingNonMemberSend]);
-  const handleInviteNonMembers = React.useCallback(() => {
-    if (!pendingNonMemberSend) return;
-    if (!canInviteNonMembers) {
-      setNonMemberPromptError(PRIVATE_CHANNEL_ADD_DENIED_MESSAGE);
-      return;
-    }
-    setNonMemberPromptError(null);
-    void (async () => {
-      const mentionPubkeys = uniqueNormalizedPubkeys(
-        await mentions.revalidateMentionPubkeys([
-          ...pendingNonMemberSend.mentionPubkeys,
-          ...pendingNonMemberSend.nonMemberPubkeys,
-        ]),
-      );
-      const admittedMentionPubkeys = new Set(mentionPubkeys);
-      const originalNonMemberPubkeys = new Set(
-        pendingNonMemberSend.nonMemberPubkeys.map(normalizePubkey),
-      );
-      const nonMemberPubkeys = [...originalNonMemberPubkeys].filter(
-        admittedMentionPubkeys.has.bind(admittedMentionPubkeys),
-      );
-      const outgoingTags = (pendingNonMemberSend.outgoingTags ?? []).filter(
-        (tag) =>
-          tag[0] !== MENTION_REFERENCE_TAG ||
-          !originalNonMemberPubkeys.has(normalizePubkey(tag[1] ?? "")),
-      );
-      const managedAgentsByPubkey = await getManagedAgentsByPubkey();
-      if (!isMountedRef.current) return;
-      const peoplePubkeys: string[] = [];
-      const relayAgentPubkeys: string[] = [];
-      for (const pubkey of nonMemberPubkeys) {
-        if (managedAgentsByPubkey.has(pubkey)) {
-          continue;
-        }
-        if (mentions.isAgentPubkey(pubkey)) {
-          relayAgentPubkeys.push(pubkey);
-        } else {
-          peoplePubkeys.push(pubkey);
-        }
-      }
-      const errors: string[] = [];
-      if (peoplePubkeys.length > 0) {
-        const result = await addMembersMutation.mutateAsync({
-          channelId: pendingNonMemberSend.capturedChannelId ?? undefined,
-          pubkeys: peoplePubkeys,
-          role: "member",
-        });
-        errors.push(...result.errors.map((error) => error.error));
-      }
-      if (relayAgentPubkeys.length > 0) {
-        const result = await addMembersMutation.mutateAsync({
-          channelId: pendingNonMemberSend.capturedChannelId ?? undefined,
-          pubkeys: relayAgentPubkeys,
-          role: "bot",
-        });
-        errors.push(...result.errors.map((error) => error.error));
-      }
-      if (errors.length > 0) {
-        setNonMemberPromptError(errors.join("; "));
-        return;
-      }
-      await completeSend(
-        {
-          ...pendingNonMemberSend,
-          mentionPubkeys,
-          outgoingTags,
-        },
-        mentionPubkeys,
-        outgoingTags,
-      );
-    })().catch((error) => {
-      setNonMemberPromptError(
-        error instanceof Error ? error.message : "Could not invite members.",
-      );
-    });
-  }, [
-    addMembersMutation,
-    canInviteNonMembers,
-    completeSend,
-    getManagedAgentsByPubkey,
-    mentions.isAgentPubkey,
-    mentions.revalidateMentionPubkeys,
-    pendingNonMemberSend,
-  ]);
+  }, [completeSend, pendingNonMemberSend, invitation.cancel]);
   const dismissNonMemberPrompt = React.useCallback(() => {
+    invitation.cancel();
     setPendingNonMemberSend(null);
     setNonMemberPromptError(null);
-  }, []);
+  }, [invitation.cancel]);
   return {
     // Agent starts are detached (publish-first), so useDetachedAgentStart's
     // in-flight state deliberately does not gate the composer — a background
     // start must not block the next send.
     isPreparingMentionSend:
+      invitation.isPending ||
       isMentionSendPending ||
       isCompleteSendPending ||
       attachAgentMutation.isPending ||
@@ -595,15 +1002,15 @@ export function useMentionSendFlow({
       canInvite: canInviteNonMembers,
       error: nonMemberPromptError,
       isInvitePending:
+        invitation.isPending ||
         isMentionSendPending ||
         isCompleteSendPending ||
-        addMembersMutation.isPending ||
         attachAgentMutation.isPending ||
         createPersonaAgentMutation.isPending,
       names: pendingNonMemberNames,
       onDismiss: dismissNonMemberPrompt,
       onDoNothing: handleSendWithoutInviting,
-      onInvite: handleInviteNonMembers,
+      onInvite: invitation.invite,
       open: pendingNonMemberSend !== null,
     },
     sendMessageWithMentionFlow,

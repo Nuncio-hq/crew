@@ -18,6 +18,10 @@ import { MessageComposer } from "@/features/messages/ui/MessageComposer";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { ChannelType } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
+import {
+  setVideoPlaybackSpeed,
+  useVideoPlaybackSpeed,
+} from "@/shared/lib/videoPlaybackSpeedPreference";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
 import { MODAL_BACKDROP_BLUR_CLASS } from "@/shared/ui/modalBackdrop";
@@ -112,9 +116,7 @@ type TimecodedComment = {
   text: string;
 };
 const QUICK_REACTIONS = ["😂", "😍", "😮", "🙌", "👍", "👎"];
-const DEFAULT_PLAYBACK_SPEED = 1;
 const INLINE_SPEED_CONTROL_MIN_WIDTH = 220;
-const PLAYBACK_SPEEDS = [2, 1.75, 1.5, 1.25, 1, 0.75, 0.5, 0.25];
 
 /**
  * Frosted-glass backing layer for floating media controls. The parent must
@@ -174,10 +176,6 @@ function formatCommentTimecode(seconds: number): string {
     fractionalDigits: 1,
     trimZeroFraction: true,
   });
-}
-
-function isPlaybackSpeedOption(speed: number): boolean {
-  return PLAYBACK_SPEEDS.some((option) => option === speed);
 }
 
 function parseTimecodedComment(comment: VideoReviewComment): TimecodedComment {
@@ -617,9 +615,9 @@ export const VideoPlayer = React.memo(function VideoPlayer({
   const [duration, setDuration] = React.useState(durationSeconds ?? 0);
   const [volume, setVolume] = React.useState(1);
   const [muted, setMuted] = React.useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = React.useState(
-    DEFAULT_PLAYBACK_SPEED,
-  );
+  // Device-level preference, not per-player state: a speed chosen here is the
+  // speed every later video starts at.
+  const playbackSpeed = useVideoPlaybackSpeed();
   // Cache-seeded so a row evicted by the virtualized timeline remounts at the
   // ratio learned on first metadata load, not the 16/9 fallback.
   const [naturalAspectRatio, learnNaturalAspectRatio] =
@@ -658,7 +656,6 @@ export const VideoPlayer = React.memo(function VideoPlayer({
     setIsPlaying(false);
     setIsBuffering(false);
     setHasError(false);
-    setPlaybackSpeed(DEFAULT_PLAYBACK_SPEED);
     setReviewOpenState(isVideoReviewOpen(persistedReviewKey));
     setReviewCurrentTimeState(
       getReviewPlaybackPosition(persistedReviewKey) ?? 0,
@@ -749,9 +746,7 @@ export const VideoPlayer = React.memo(function VideoPlayer({
     return () => observer.disconnect();
   }, []);
   const handlePlaybackSpeedChange = React.useCallback((speed: number) => {
-    if (isPlaybackSpeedOption(speed)) {
-      setPlaybackSpeed(speed);
-    }
+    setVideoPlaybackSpeed(speed);
   }, []);
 
   useSmoothPlaybackTime(videoRef, isPlaying && !reviewOpen, setCurrentTime);

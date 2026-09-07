@@ -946,3 +946,8 @@ counts lag the code — do not chase them as env breakage:
 `buzz-cli` `command_inventory_is_stable` (expects 23 command groups, code has
 24) and `buzz-db` `embedded_migrator_contains_consolidated_initial_schema`
 (expects 30 statements, code has 31). Everything else passes.
+Selected mention labels bind exact keys, including same-name teammates and
+persistent automatic addresses. Use the returned label from registration for
+insert/restore/remove. Ambiguous manually typed names must fail visibly without
+clearing the draft in chat, edit, and standalone forum consumers; never fan out
+silently to all identities sharing a name. See `docs/mention-editor.md`.

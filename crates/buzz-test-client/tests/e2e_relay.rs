@@ -72,8 +72,9 @@ fn nip98_post_header(keys: &Keys, url: &str, body: &str) -> String {
 }
 
 async fn e2e_db_pool() -> sqlx::Pool<sqlx::Postgres> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string());
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string() // sadscan:disable np.postgres.1
+    });
     sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(&database_url)
@@ -717,6 +718,81 @@ async fn test_stored_events_returned_before_eose() {
         found,
         "Stored event not returned before EOSE. Got: {events:?}"
     );
+
+    client.disconnect().await.expect("disconnect");
+}
+
+/// An explicit `#h` branch that cannot match must not cancel a valid OR sibling.
+/// The valid channel remains usable for historical delivery and live fan-out;
+/// malformed-only requests still close because no authorized UUID survives.
+#[tokio::test]
+#[ignore]
+async fn test_valid_channel_survives_malformed_or_empty_h_sibling() {
+    let url = relay_url();
+    let kind: u16 = 9;
+    let keys = Keys::generate();
+    let channel = create_test_channel(&keys).await;
+    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+
+    for (label, sibling) in [
+        (
+            "malformed",
+            serde_json::json!({"kinds": [kind], "#h": ["not-a-uuid"]}),
+        ),
+        ("empty", serde_json::json!({"kinds": [kind], "#h": []})),
+    ] {
+        let historical = format!("{label}-historical-{}", Uuid::new_v4());
+        let ok = client
+            .send_text_message(&keys, &channel, &historical, kind)
+            .await
+            .expect("send historical event");
+        assert!(ok.accepted, "historical event rejected: {}", ok.message);
+
+        let valid = Filter::new()
+            .kind(Kind::Custom(kind))
+            .custom_tags(SingleLetterTag::lowercase(Alphabet::H), [channel.as_str()]);
+        let sibling: Filter = serde_json::from_value(sibling).expect("parse sibling filter");
+        let sid = sub_id(label);
+        client
+            .subscribe(&sid, vec![valid, sibling])
+            .await
+            .expect("subscribe");
+
+        let events = client
+            .collect_until_eose(&sid, Duration::from_secs(5))
+            .await
+            .expect("valid sibling history followed by EOSE");
+        assert!(
+            events.iter().any(|event| event.content == historical),
+            "valid sibling history missing for {label} #h branch: {events:?}",
+        );
+
+        let live = format!("{label}-live-{}", Uuid::new_v4());
+        let ok = client
+            .send_text_message(&keys, &channel, &live, kind)
+            .await
+            .expect("send live event");
+        assert!(ok.accepted, "live event rejected: {}", ok.message);
+        let message = client
+            .recv_event(Duration::from_secs(5))
+            .await
+            .expect("receive post-EOSE live event");
+        match message {
+            RelayMessage::Event {
+                subscription_id,
+                event,
+            } => {
+                assert_eq!(subscription_id, sid);
+                assert_eq!(event.content, live);
+            }
+            other => panic!("expected live EVENT for {label} sibling, got {other:?}"),
+        }
+
+        client
+            .close_subscription(&sid)
+            .await
+            .expect("close subscription");
+    }
 
     client.disconnect().await.expect("disconnect");
 }
@@ -2267,6 +2343,154 @@ async fn add_member_with_role_ws(
         .await
         .expect("send PUT_USER event with role");
     (ok.accepted, ok.message)
+}
+
+/// Submit a self-targeted NIP-29 departure and return the relay's exact OK
+/// frame payload. kind:9001 carries a self `p` tag; kind:9022 does not.
+async fn self_departure_ws(url: &str, channel_id: &str, actor: &Keys, kind: u16) -> (bool, String) {
+    let h_tag = Tag::parse(["h", channel_id]).unwrap();
+    let event = match kind {
+        9001 => EventBuilder::new(Kind::Custom(kind), "")
+            .allow_self_tagging()
+            .tags([
+                h_tag,
+                Tag::parse(["p", &actor.public_key().to_hex()]).unwrap(),
+            ])
+            .sign_with_keys(actor)
+            .expect("sign kind:9001 self-removal"),
+        9022 => EventBuilder::new(Kind::Custom(kind), "")
+            .tags([h_tag])
+            .sign_with_keys(actor)
+            .expect("sign kind:9022 leave request"),
+        _ => panic!("unsupported self-departure kind: {kind}"),
+    };
+
+    let mut client = BuzzTestClient::connect(url, actor)
+        .await
+        .expect("connect departure actor");
+    let ok = client.send_event(event).await.expect("send self-departure");
+    client.disconnect().await.ok();
+    (ok.accepted, ok.message)
+}
+
+async fn promote_co_owner(url: &str, channel_id: &str, owner: &Keys, co_owner: &Keys) {
+    let mut client = BuzzTestClient::connect(url, owner)
+        .await
+        .expect("connect channel owner");
+    let result = add_member_with_role_ws(
+        &mut client,
+        channel_id,
+        &co_owner.public_key().to_hex(),
+        "owner",
+        owner,
+    )
+    .await;
+    client.disconnect().await.ok();
+    assert_eq!(result, (true, String::new()), "promote co-owner OK frame");
+    assert_eq!(
+        member_role(url, owner, channel_id, &co_owner.public_key().to_hex())
+            .await
+            .as_deref(),
+        Some("owner"),
+        "the setup must leave a second active owner"
+    );
+}
+
+/// Binds kind:9001's production `validate_admin_event` call to the WebSocket
+/// OK frame. The DB applier has a different rejection message, so this exact
+/// historical result can only come from the pre-storage relay validator.
+#[tokio::test]
+#[ignore]
+async fn test_nip29_departure_wire_kind_9001_sole_owner_rejected() {
+    let url = relay_url();
+    let owner = Keys::generate();
+    let channel_id = create_test_channel(&owner).await;
+
+    let result = self_departure_ws(&url, &channel_id, &owner, 9001).await;
+
+    assert_eq!(
+        result,
+        (false, "invalid: cannot remove the last owner".to_string())
+    );
+}
+
+/// An open channel lets the nonmember event reach the per-kind validator; a
+/// private channel would be rejected earlier by the generic membership gate.
+#[tokio::test]
+#[ignore]
+async fn test_nip29_departure_wire_kind_9001_nonmember_rejected() {
+    let url = relay_url();
+    let owner = Keys::generate();
+    let nonmember = Keys::generate();
+    let channel_id = create_test_channel(&owner).await;
+
+    let result = self_departure_ws(&url, &channel_id, &nonmember, 9001).await;
+
+    assert_eq!(
+        result,
+        (false, "invalid: actor is not an active member".to_string())
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_nip29_departure_wire_kind_9001_co_owner_allowed() {
+    let url = relay_url();
+    let owner = Keys::generate();
+    let co_owner = Keys::generate();
+    let channel_id = create_test_channel(&owner).await;
+    promote_co_owner(&url, &channel_id, &owner, &co_owner).await;
+
+    let result = self_departure_ws(&url, &channel_id, &co_owner, 9001).await;
+
+    assert_eq!(result, (true, String::new()));
+}
+
+/// Binds kind:9022's distinct production `validate_admin_event` call to the
+/// same historical WebSocket rejection contract as self-removal.
+#[tokio::test]
+#[ignore]
+async fn test_nip29_departure_wire_kind_9022_sole_owner_rejected() {
+    let url = relay_url();
+    let owner = Keys::generate();
+    let channel_id = create_test_channel(&owner).await;
+
+    let result = self_departure_ws(&url, &channel_id, &owner, 9022).await;
+
+    assert_eq!(
+        result,
+        (false, "invalid: cannot remove the last owner".to_string())
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_nip29_departure_wire_kind_9022_nonmember_rejected() {
+    let url = relay_url();
+    let owner = Keys::generate();
+    let nonmember = Keys::generate();
+    let channel_id = create_test_channel(&owner).await;
+
+    let result = self_departure_ws(&url, &channel_id, &nonmember, 9022).await;
+
+    assert_eq!(
+        result,
+        (false, "invalid: actor is not an active member".to_string())
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_nip29_departure_wire_kind_9022_co_owner_allowed() {
+    let url = relay_url();
+    let owner = Keys::generate();
+    let co_owner = Keys::generate();
+    let channel_id = create_test_channel(&owner).await;
+    promote_co_owner(&url, &channel_id, &owner, &co_owner).await;
+
+    let result = self_departure_ws(&url, &channel_id, &co_owner, 9022).await;
+
+    assert_eq!(result, (true, String::new()));
 }
 
 /// Any active member can add any ordinary role to a private channel.

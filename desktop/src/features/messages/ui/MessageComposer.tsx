@@ -194,33 +194,34 @@ function MessageComposerImpl({
     media.pendingImetaRef.current.length === 0 &&
     media.queuedAttachmentsRef.current.length === 0;
   const ownsDropZone = mediaController === undefined;
-  const { trackAuthoredContent } = useDraftPersistLifecycle({
-    effectiveDraftKey,
-    channelId,
-    loadDraft: drafts.loadDraft,
-    persistDraft: drafts.persistDraft,
-    getMentionRefs: mentions.getDraftMentionRefs,
-    restoreMentionRefs: mentions.restoreDraftMentionRefs,
-    livePendingImeta: media.pendingImeta,
-    setPendingImeta: media.setPendingImeta,
-    getQueuedAttachments: () => media.queuedAttachmentsRef.current,
-    saveQueuedAttachmentsForDraft,
-    clearQueuedAttachments: media.clearQueuedAttachments,
-    restoreQueuedAttachments: media.restoreQueuedAttachments,
-    takeQueuedAttachmentsForDraft,
-    setContent: (content) => {
-      setComposerContent(content);
-      richText.setContent(content);
-    },
-    clearContent: () => {
-      setComposerContent("");
-      richText.clearContent();
-    },
-    setSpoileredAttachmentUrls,
-    spoileredAttachmentUrlsRef,
-    syncComposerContentFromEditor,
-    getImplicitAgentMentionPrefix: implicitAgentMentionProvenance.getPrefix,
-  });
+  const { trackAuthoredContent, getComposerRevision, runComposerUpdate } =
+    useDraftPersistLifecycle({
+      effectiveDraftKey,
+      channelId,
+      loadDraft: drafts.loadDraft,
+      persistDraft: drafts.persistDraft,
+      getMentionRefs: mentions.getDraftMentionRefs,
+      restoreMentionRefs: mentions.restoreDraftMentionRefs,
+      livePendingImeta: media.pendingImeta,
+      setPendingImeta: media.setPendingImeta,
+      getQueuedAttachments: () => media.queuedAttachmentsRef.current,
+      saveQueuedAttachmentsForDraft,
+      clearQueuedAttachments: media.clearQueuedAttachments,
+      restoreQueuedAttachments: media.restoreQueuedAttachments,
+      takeQueuedAttachmentsForDraft,
+      setContent: (content) => {
+        setComposerContent(content);
+        richText.setContent(content);
+      },
+      clearContent: () => {
+        setComposerContent("");
+        richText.clearContent();
+      },
+      setSpoileredAttachmentUrls,
+      spoileredAttachmentUrlsRef,
+      syncComposerContentFromEditor,
+      getImplicitAgentMentionPrefix: implicitAgentMentionProvenance.getPrefix,
+    });
   // biome-ignore lint/correctness/useExhaustiveDependencies: effectiveDraftKey is the sole trigger
   React.useEffect(() => {
     media.setUploadState({ status: "idle" });
@@ -287,6 +288,7 @@ function MessageComposerImpl({
     channelNames: channelLinks.knownChannelNames,
     messageLinkChannels: channelLinks.channels,
     customEmoji,
+    getMentionIdentities: mentions.getMentionIdentities,
     onSubmit: () => submitMessageRef.current(),
     onEditLastOwnMessage: () => {
       if (editTargetRef.current) return false;
@@ -354,7 +356,10 @@ function MessageComposerImpl({
     enabled: keepMentionedAgentsPinned,
   });
   const mentionSendFlow = useMentionSendFlow({
+    getComposerRevision,
+    runComposerUpdate,
     channelId,
+    effectiveDraftKey,
     channelLinks,
     channelType,
     contentRef,
@@ -563,6 +568,9 @@ function MessageComposerImpl({
       if (isEditSubmissionLocked || voiceNote.statusRef.current !== "idle") {
         return;
       }
+      // An edit extracts from the same mention map a pasted identity binds
+      // into, so wait on any check still deciding. Bounded internally.
+      await mentions.settlePendingMentionBindings();
       // Empty edits delete the message through handleEditSave.
       await submitMessageEdit({
         content: trimmed,
@@ -703,6 +711,7 @@ function MessageComposerImpl({
     mentions.getDraftMentionRefs,
     mentions.restoreDraftMentionRefs,
     mentions.revalidateMentionPubkeys,
+    mentions.settlePendingMentionBindings,
     voiceNote.statusRef,
   ]);
   submitMessageRef.current = submitMessage;
@@ -823,6 +832,7 @@ function MessageComposerImpl({
   );
   useComposerPasteHandler({
     editor: richText.editor,
+    bindMentionIdentities: mentions.bindPastedMentionIdentities,
     scrollToBottom: scrollComposerToBottom,
     setPendingImeta: voiceNote.setPendingImetaWhenIdle,
     uploadFile: voiceNote.uploadFileWhenIdle,
@@ -1008,7 +1018,19 @@ function MessageComposerImpl({
           </form>
         </div>
       </footer>
-      <NonMemberMentionDialog {...mentionSendFlow.nonMemberPromptProps} />
+      <NonMemberMentionDialog
+        {...mentionSendFlow.nonMemberPromptProps}
+        onRestoreFocus={() => {
+          if (
+            effectiveDraftKeyRef.current === effectiveDraftKey &&
+            richText.editor &&
+            !richText.editor.isDestroyed &&
+            richText.editor.view.dom.isConnected
+          ) {
+            richText.focus();
+          }
+        }}
+      />
       {linkEditor.card}
       {linkEditor.dialog}
     </>

@@ -335,7 +335,37 @@ lookup table or an id comparison in a component.
    lives in `ui/AgentDescriptionField.tsx` (`AgentIdentityFields`), not
    inline in the over-1000-line dialogs.
 
-20. **Databricks model discovery has one shared catalog authority.** Desktop and ACP call the shared `buzz-agent` discovery library; Desktop passes the effective merged `DATABRICKS_MODEL_FILTER` explicitly, and the library applies it to raw workspace endpoint IDs and Unity Catalog model-service FQNs after the additive union. A successful filtered-empty catalog is authoritative: it stays empty, disables switching, and never falls through to configured or known-model fallback. UC FQNs are catalog data and always use the MLflow Chat Completions route, regardless of family-looking text in their components. Global Defaults preserves the discovered model ID as the selected value while its closed trigger renders the provider-scoped display label; do not force the raw persisted ID over that label.
+20. **Owner-only builds constrain managed runtimes, not relay-agent mentions.**
+    The compiled owner-only capability applies when Desktop starts or deploys a
+    managed agent. Independently operated relay agents with NIP-OA ownership
+    remain eligible in every build when their verified owner's signed
+    `respond_to` policy admits the viewer and relay membership includes the
+    target channel at publication. Owned nonmembers may be offered for preparation
+    and Invite; this is not permission to publish. Final authorization refreshes
+    the exact destination and retains captured selected identities across uploads
+    and edits. Denial preserves the draft, never silently removes a selected key.
+    See `docs/remote-mention-routing.md`. Marked builds require that verified owner coordinate but do
+    not require it to equal the viewer; OSS builds retain compatibility with
+    self-authored legacy directory records. Keep native discovery and send-time
+    revalidation fail closed on invalid ownership or managed policy evidence,
+    and on missing membership or directory evidence; do not add a cross-owner
+    clamp to either mention path. Local `agents-data-changed` events
+    refresh only local persona/team/managed-agent caches; they must never
+    invalidate the remote relay directory.
+
+21. **Databricks model discovery has one shared catalog authority.** Desktop and ACP call the shared `buzz-agent` discovery library; Desktop passes the effective merged `DATABRICKS_MODEL_FILTER` explicitly, and the library applies it to raw workspace endpoint IDs and Unity Catalog model-service FQNs after the additive union. A successful filtered-empty catalog is authoritative: it stays empty, disables switching, and never falls through to configured or known-model fallback. UC FQNs are catalog data and always use the MLflow Chat Completions route, regardless of family-looking text in their components. Global Defaults preserves the discovered model ID as the selected value while its closed trigger renders the provider-scoped display label; do not force the raw persisted ID over that label.
+
+## Channel-only runtime controls
+
+Desktop observer controls identify a channel, not a thread session. The harness
+rejects `cancel_turn` and `switch_model` with `ambiguous_target` when that channel
+has multiple known session scopes, including retained idle scopes. Do not treat
+that result as success or a deferred model switch. Stop feedback waits for the
+harness result matching the control type, channel, and request ID; relay delivery
+alone does not prove that a turn was signalled. A missing result is unconfirmed,
+not success. The activity pane must use its resolved `sessionChannelId` for
+both the outgoing control and result correlation, even without a loaded
+`Channel` object. Stop is unavailable in an unscoped all-channel pane.
 
 ## Thread-scoped runtime controls
 

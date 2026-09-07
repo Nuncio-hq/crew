@@ -10,14 +10,12 @@ import type { UseRichTextEditorResult } from "@/features/messages/lib/useRichTex
 import type { UseDraftsResult } from "@/features/messages/lib/useDrafts";
 
 export type UseMentionSendFlowOptions = {
-  onSuccessfulExplicitAgentAudience?: (audience: {
-    channelId: string;
-    expectedGeneration: number;
-    expectedRevision: number | null;
-    explicitAgentPubkeys: string[];
-  }) => void;
-  resolvePostSendContent?: (effectiveExplicitAgentPubkeys: string[]) => string;
+  /** Visit-bound accessor reading shared source-key intent, even after exit. */
+  getComposerRevision: () => number;
+  runComposerUpdate: (update: () => void) => void;
   channelId: string | null;
+  /** The actual persistence key, including same-channel thread identity. */
+  effectiveDraftKey: string | null | undefined;
   channelLinks: Pick<UseChannelLinksResult, "clearChannels">;
   channelType: ChannelType | null;
   contentRef: React.MutableRefObject<string>;

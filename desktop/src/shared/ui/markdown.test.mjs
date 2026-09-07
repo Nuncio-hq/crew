@@ -1393,9 +1393,14 @@ test("resolved human mentions preserve the Crew at-sign treatment", () => {
   );
 
   assert.match(html, /data-mention=""/);
-  assert.match(html, /mention-chip-prefix/);
-  assert.match(html.replace(/<[^>]+>/g, ""), /@alice/);
-  assert.doesNotMatch(html, /inline-chip-icon-human/);
+  assert.match(
+    html,
+    /inline-chip-leading-fragment[^>]*inline-chip-icon-human[^>]*>alice<\/span>/,
+  );
+  assert.match(html, /aria-label="alice"/);
+  assert.doesNotMatch(html, /aria-hidden="true"[^>]*>alice</);
+  assert.match(html, />alice</);
+  assert.doesNotMatch(html, />@alice</);
 });
 
 test("agent mentions retain the bot treatment instead of the human icon", () => {
@@ -1425,7 +1430,12 @@ test("agent mentions retain the bot treatment instead of the human icon", () => 
 
   assert.match(html, /data-mention=""/);
   assert.match(html, /agent-mention-highlight/);
-  assert.match(html, /agent-mention-highlight/);
+  assert.match(
+    html,
+    /inline-chip-leading-fragment[^>]*inline-chip-icon-agent[^>]*>alice<\/span>/,
+  );
+  assert.match(html, /aria-label="alice"/);
+  assert.doesNotMatch(html, /aria-hidden="true"[^>]*>alice</);
   assert.match(html, />alice</);
   assert.doesNotMatch(html, />@alice</);
 });
@@ -1466,4 +1476,54 @@ test("renderEntityLinkAnchor keeps chip styling when interaction is disabled", (
   assert.match(html, /<span/);
   assert.match(html, /class="mention-chip\s/);
   assert.doesNotMatch(html, /<button/);
+});
+
+test("ambiguous longer aliases stay literal rather than rendering a shorter tagged chip", async () => {
+  const { resolveMentionProps } = await import("../lib/resolveMentionNames.ts");
+  const a = "a".repeat(64),
+    b = "b".repeat(64),
+    c = "c".repeat(64);
+  for (const includeShorter of [false, true]) {
+    const content = `@Scout Jones hello${includeShorter ? " @Scout!" : ""}`;
+    const props = resolveMentionProps(
+      [
+        ["p", a],
+        ["p", b],
+        ["p", c],
+      ],
+      {
+        [a]: { displayName: "Scout" },
+        [b]: { displayName: "Scout Jones" },
+        [c]: { displayName: "Scout Jones" },
+      },
+      content,
+    );
+    const markdown = renderCachedMarkdown({
+      components: createMarkdownComponents(false, false),
+      content,
+      mentionNames: props.mentionNames,
+      variant: "ambiguous-prefix-test",
+    });
+    const html = renderToStaticMarkup(
+      React.createElement(
+        MarkdownRuntimeContext.Provider,
+        {
+          value: {
+            channels: [],
+            mentionPubkeysByName: props.mentionPubkeysByName,
+            onOpenChannel() {},
+            onOpenEntityLink() {},
+            onOpenMessageLink() {},
+            relayOrigin: null,
+          },
+        },
+        markdown,
+      ),
+    );
+    assert.match(html, /@Scout Jones hello/);
+    assert.equal(
+      (html.match(/data-mention=""/g) ?? []).length,
+      includeShorter ? 1 : 0,
+    );
+  }
 });

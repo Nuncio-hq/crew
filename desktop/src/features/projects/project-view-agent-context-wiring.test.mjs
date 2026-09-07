@@ -7,7 +7,7 @@ async function source(relativePath) {
 }
 
 test("the send path appends visible-page context after workspace context", async () => {
-  const hook = await source("../messages/ui/useMentionSendComplete.ts");
+  const hook = await source("../messages/ui/crewSendContext.ts");
   const resolverIndex = hook.indexOf(
     "await resolveCurrentProjectChannelAgentMessage",
   );
@@ -17,16 +17,17 @@ test("the send path appends visible-page context after workspace context", async
     viewIndex > resolverIndex,
     "visible-page context must be appended after the workspace context resolve",
   );
-  const sendIndex = hook.indexOf("await send(", viewIndex);
-  assert.ok(sendIndex > viewIndex, "context must be applied before send");
-
-  // Hidden context is agent-only: it must live inside the explicit-agent guard.
+  // Hidden context is agent-only: both steps sit inside the explicit-agent guard.
   const guardIndex = hook.lastIndexOf(
-    "if (revalidatedExplicitAgentPubkeys.length > 0) {",
+    "if (explicitAgentPubkeys.length > 0) {",
     viewIndex,
   );
-  assert.ok(guardIndex >= 0 && guardIndex < viewIndex);
-  assert.ok(hook.includes("useComposerViewContext()"));
+  assert.ok(guardIndex >= 0 && guardIndex < resolverIndex);
+  // A resolve failure must throw before any content/recipient result exists.
+  const throwIndex = hook.indexOf("throw new Error(message", resolverIndex);
+  assert.ok(throwIndex > resolverIndex && throwIndex < viewIndex);
+  const flow = await source("../messages/ui/useMentionSendFlow.ts");
+  assert.ok(flow.includes("useCrewSendContext()"));
 });
 
 test("Crew mounts the visible-page provider in its own thread chrome", async () => {

@@ -872,10 +872,17 @@ function addMatchesForPatterns(
     while (match !== null) {
       const from = position + match.index;
       const to = from + match[0].length;
+      const outsideEnd = { inclusiveEnd: false };
+      // Presentation only: a full-key label needs zero cloned inline padding
+      // when it fragments. This does not establish a recipient binding.
+      const literalClass = / \([0-9a-f]{64}\)(?: \d+)?$/i.test(match[0])
+        ? " mention-literal-key"
+        : "";
+      // Crew: agent chips may carry an avatar (class suffix + inline style).
       const attrs = options?.resolveAttrs?.(match[0]) ?? {};
-      const resolvedClass = `${className}${attrs.classSuffix ?? ""}`;
+      const chipClass = `${className}${literalClass}${attrs.classSuffix ?? ""}`;
       const chipAttrs: { class: string; spellcheck: string; style?: string } = {
-        class: resolvedClass,
+        class: chipClass,
         spellcheck: "false",
       };
       if (attrs.style) {
@@ -885,14 +892,21 @@ function addMatchesForPatterns(
         options?.hidePrefix === true || options?.hideMentionPrefix === true;
       if (hidePrefix && /^[@#]/.test(match[0])) {
         decorations.push(
-          Decoration.inline(from, from + 1, {
-            class: "mention-prefix-hidden",
-            spellcheck: "false",
-          }),
+          Decoration.inline(
+            from,
+            from + 1,
+            {
+              class: `mention-prefix-hidden${literalClass}`,
+              spellcheck: "false",
+            },
+            outsideEnd,
+          ),
         );
-        decorations.push(Decoration.inline(from + 1, to, chipAttrs));
+        decorations.push(
+          Decoration.inline(from + 1, to, chipAttrs, outsideEnd),
+        );
       } else {
-        decorations.push(Decoration.inline(from, to, chipAttrs));
+        decorations.push(Decoration.inline(from, to, chipAttrs, outsideEnd));
       }
       match = pattern.exec(text);
     }
