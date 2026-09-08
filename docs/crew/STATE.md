@@ -50,6 +50,9 @@ Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
 
 - Hosted-relay acceptance for #337/#338 incomplete (receipt kind unknown to
   hosted relay 0.2.1).
-- Desktop Smoke / Integration E2E lanes are advisory only (D-032, D-047).
+- Desktop Smoke / Integration E2E lanes are advisory only (D-032, D-047);
+  post-0.5.23 drift tracked in
+  [#346](https://github.com/Nuncio-hq/crew/issues/346) (mention-recipients
+  composer case first — likely a real bug).
 - Observer "turn done" latency 5–10 s under load (pacer; #344 S2, D-075
   item 6).
