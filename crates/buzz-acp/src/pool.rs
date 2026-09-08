@@ -2089,7 +2089,7 @@ pub(crate) fn prepend_standing_for_legacy(
 /// The static base remains first for prompt-prefix caching. When a base is
 /// present, the dynamic workspace anchor follows it and precedes the user-owned
 /// agent instructions. A persona-only agent still yields
-/// `<system>…</system>` rather than an unlabeled blob that would be mistaken
+/// `<agent-instructions>…</agent-instructions>` rather than an unlabeled blob that would be mistaken
 /// for `<base>`.
 fn framed_system_prompt(
     cwd: &str,
@@ -2120,14 +2120,17 @@ fn framed_system_prompt_with_notice(
             "{}\n\n{}\n\n{}",
             crate::queue::base_section(bp),
             workspace,
-            crate::prompt_framing::semantic_section("system", sp),
+            crate::prompt_framing::semantic_section("agent-instructions", sp),
         )),
         (Some(bp), None) => Some(format!(
             "{}\n\n{}",
             crate::queue::base_section(bp),
             workspace
         )),
-        (None, Some(sp)) => Some(crate::prompt_framing::semantic_section("system", sp)),
+        (None, Some(sp)) => Some(crate::prompt_framing::semantic_section(
+            "agent-instructions",
+            sp,
+        )),
         (None, None) => None,
     }
 }
@@ -2139,7 +2142,7 @@ fn workspace_section(cwd: &str) -> String {
     )
 }
 
-/// Append the team-owned instruction section after `<system>` and before core memory.
+/// Append the team-owned instruction section after `<agent-instructions>` and before core memory.
 fn with_team(prompt: Option<String>, instructions: Option<&str>) -> Option<String> {
     let instructions = instructions
         .map(str::trim)
@@ -2822,7 +2825,7 @@ pub async fn run_prompt_task(
 
     //
     // Core memory is delivered inside the system prompt the harness already
-    // builds (system role for protocol >= 2, the `<system>` user-message
+    // builds (system role for protocol >= 2, the `<agent-instructions>` user-message
     // section for legacy agents). To put it on the wire at `session/new` for
     // modern agents, the fetch must run *before* the session is created — so
     // we do it here and cache the rendered section in `state.core_sections`.
@@ -8487,7 +8490,7 @@ mod tests {
         let composed = prepend_standing_for_legacy(1, &full_standing(), "do the thing");
         let positions: Vec<usize> = [
             "<base>",
-            "<system>",
+            "<agent-instructions>",
             "<team-instructions>",
             "<core-memory>",
             "<channel-canvas>",
@@ -8546,7 +8549,7 @@ mod tests {
             .expect("both present yields Some");
         assert_eq!(
             framed,
-            "<base>\nbase text\n</base>\n\n<workspace>\nCurrent working directory: /workspace\n</workspace>\n\n<system>\npersona text\n</system>"
+            "<base>\nbase text\n</base>\n\n<workspace>\nCurrent working directory: /workspace\n</workspace>\n\n<agent-instructions>\npersona text\n</agent-instructions>"
         );
     }
 
@@ -8563,18 +8566,24 @@ mod tests {
     #[test]
     fn test_framed_system_prompt_persona_only_labels_agent_instructions() {
         // A bare persona would be mislabeled "Base" downstream — it must carry
-        // its own <system> boundary even when no base prompt exists.
+        // its own <agent-instructions> boundary even when no base prompt exists.
         let framed = framed_system_prompt("/workspace", None, Some("persona text"))
             .expect("persona yields Some");
-        assert_eq!(framed, "<system>\npersona text\n</system>");
+        assert_eq!(
+            framed,
+            "<agent-instructions>\npersona text\n</agent-instructions>"
+        );
     }
 
     #[test]
     fn test_framed_system_prompt_preserves_persona_bytes_verbatim() {
-        let persona = "literal </system>, <T>, &quot;, & <policy>";
+        let persona = "literal </agent-instructions>, <T>, &quot;, & <policy>";
         let framed =
             framed_system_prompt("/workspace", None, Some(persona)).expect("persona yields Some");
-        assert_eq!(framed, format!("<system>\n{persona}\n</system>"));
+        assert_eq!(
+            framed,
+            format!("<agent-instructions>\n{persona}\n</agent-instructions>")
+        );
     }
 
     #[test]

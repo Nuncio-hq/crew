@@ -1,0 +1,622 @@
+{
+  "$comment": "Upstream (block/buzz) files Crew modifies, recorded by AREA. Every upstream-owned file that differs from the pinned upstream tag must match one area glob; scripts/check-fork-delta.sh enforces this. `fileHints` are per-file conflict-resolution notes carried from earlier syncs (keep them when still true, drop when upstream absorbed the change). Additive Crew-only files are never listed.",
+  "upstreamPin": "upstream-buzz.json",
+  "recordedAt": "2026-09-07",
+  "areas": [
+    {
+      "area": "crates/buzz-acp/**",
+      "why": "Crew's agent kernel: session ledger + resume-first (#169/#180), thread worktree leases + Cowork (#187/#188), elicitation, receipts + recovery (#91/#339/#340), governor/desktop-control env (#196/#197), lazy slot fill (#302), roles (#116/#148), Crew prompt sections. Crew has NOT adopted upstream #6732 thread-per-session (`session_owners`/`SessionPolicy`); scope.rs + session_model_*.md are present but unwired.",
+      "resolve": "Crew is ahead here: cherry-pick upstream commits onto Crew (do not rebase Crew onto upstream). Keep one idle reaper, additive Crew modules, `Option<&'static str>` base prompt. A change that touches session ownership needs a decision first.",
+      "filesAtRecord": 13,
+      "fileHints": [
+        {
+          "path": "crates/buzz-acp/src/acp.rs",
+          "why": "ACP v1 `session/load` client (#169); Hermes/Codex rotation signal capture (#180); `_PostCompact` hook count (#173); upstream standard usage tracker (#4950); #190 retain latest `sessionUpdate: plan`",
+          "resolve": "retain Crew elicitation/rotation/hooks/plan snapshot **and** upstream `standard_usage` field sets; do not fold usage into compaction or invent a second plan protocol"
+        },
+        {
+          "path": "crates/buzz-acp/src/base_prompt.md",
+          "why": "office-level behavioral rule belongs in the office-level prompt",
+          "resolve": "self-contained Markdown section — on conflict, keep it and re-place it after Communication Patterns"
+        },
+        {
+          "path": "crates/buzz-acp/src/config.rs",
+          "why": "single idle policy: `--pool-idle-timeout` / `BUZZ_ACP_POOL_IDLE_TIMEOUT` default 1800; alias `--idle-pool-sleep` / `BUZZ_ACP_IDLE_POOL_SLEEP` (#189)",
+          "resolve": "one resolved `pool_idle_timeout_secs`; aliases must not arm a second timer; primary wins when both set"
+        },
+        {
+          "path": "crates/buzz-acp/src/lib.rs",
+          "why": "machine-check the shared prompt contract; **one** idle reaper (#189 compose of #5682 + #169) feeding Ready → Draining → Listening | idle pool + observer controls; guided_handover / blind_session_reset (#173) | #196 `governor_env` module | #198 roster cache on PromptContext + inbound handoff gate | #197 `desktop_control` + MCP env forward",
+          "resolve": "retain prompt assertions; keep a single `idle_pool_sleep_reaper` that calls `enter_draining` — never a second top-of-loop timer or sync teardown path | retain prompt assertions; keep control arms additive | retain `mod governor_env`; injection stays in `pool.rs` | keep `mod org_roster`; gate after `author_allowed` | retain `mod desktop_control`; no worktree I/O"
+        },
+        {
+          "path": "crates/buzz-acp/src/pool.rs",
+          "why": "resume-first session acquire + ledger declare-at-birth (#169); post-load lineage check + live rotation persist (#180); #187 path leases + Busy refusal + checkout notice; #188 `CoworkTurnGuard` on Folder checkout | persist rotation (#180) + compaction/turn aging emit (#173) after turns | #196 per-session `BUZZ_SIMULATOR_UDID` / `BUZZ_DEV_SERVER_URL` | #198 roster cache hooks; **#233** ORG-CHECK/budget inert (D-069) | #197 lease.release on turn end; thread-root MCP env",
+          "resolve": "keep resume/rebuild inside the channel session block; path exclusive lease before ensure; Busy is `PromptOutcome::Ok(Refusal)`; Folder arm begins shadow checkpoints after the path lease | keep additive persist/emit helpers; do not invent parallel session maps | bind `channel_key` before `env_for_channel`; extras go on every MCP server | must not hold a worktree lease; do not revive Org teaching | keep next to `TurnCompletionGuard` / `mcp_servers_with_git_origin`"
+        },
+        {
+          "path": "crates/buzz-acp/src/pool_lifecycle.rs",
+          "why": "Ready → Draining → Listening reverse transition (#169)",
+          "resolve": "merge drain helpers; preserve forward wake/retry contract tests"
+        }
+      ]
+    },
+    {
+      "area": "crates/buzz-core/**",
+      "why": "Crew kinds: KIND_ORG_ROSTER 30680 (inert, D-069), KIND_REPO_WIKI_PAGE 30623 (#200), KIND_AGENT_INSTRUMENT_OVERLAY 24201 (#197); observer context fields.",
+      "resolve": "keep constants in ALL_KINDS / P_GATED_KINDS / parameterized asserts.",
+      "filesAtRecord": 4,
+      "fileHints": [
+        {
+          "path": "crates/buzz-core/src/kind.rs",
+          "why": "#198 `KIND_ORG_ROSTER` = 30680 | #197 `KIND_AGENT_INSTRUMENT_OVERLAY` = 24201 | #200 `KIND_REPO_WIKI_PAGE` = 30623",
+          "resolve": "keep the constant + ALL_KINDS + parameterized-replaceable assert | keep in `ALL_KINDS` + `P_GATED_KINDS`"
+        },
+        {
+          "path": "crates/buzz-core/src/lib.rs",
+          "why": "#198 `pub mod org_roster` | #200 `pub mod wiki_page`",
+          "resolve": "retain the module line"
+        }
+      ]
+    },
+    {
+      "area": "crates/buzz-relay/**",
+      "why": "ingest validate for org roster + wiki page (#198/#200); receipt kind range 46040..=46043 in event handler; workflow sink attribution.",
+      "resolve": "keep next to existing kind arms; do not invent post-insert side effects.",
+      "filesAtRecord": 10,
+      "fileHints": [
+        {
+          "path": "crates/buzz-relay/src/handlers/ingest.rs",
+          "why": "#198 UsersWrite + global-only + pre-storage validate | #200 ReposWrite + `validate_roster_or_wiki`",
+          "resolve": "keep next to `KIND_PROJECT`; do not invent a post-insert side effect | keep next to git kinds; wiki validate stays extracted (D-022)"
+        },
+        {
+          "path": "crates/buzz-relay/src/handlers/mod.rs",
+          "why": "#198 `pub mod org_roster` | #200 `pub mod wiki_page`",
+          "resolve": "retain the module line"
+        }
+      ]
+    },
+    {
+      "area": "crates/buzz-db/**",
+      "why": "Crew migration numbering (0031_wiki_fts_allowlist inserted → upstream 0031+ shift by one); migrator tests count Crew files.",
+      "resolve": "on sync, rename incoming upstream migrations to Crew numbering (N+1) and never keep both copies; update migrator counts.",
+      "filesAtRecord": 10
+    },
+    {
+      "area": "crates/buzz-cli/**",
+      "why": "`--evidence` on messages send (#121); `agents call` (#230); org/handoff commands error with migration hint (#233); file links (#200).",
+      "resolve": "retain additive clap fields and module declarations; do not revive chart CLI.",
+      "filesAtRecord": 6,
+      "fileHints": [
+        {
+          "path": "crates/buzz-cli/TESTING.md",
+          "why": "document the additive evidence flag in the CLI test inventory",
+          "resolve": "retain the one-row flag inventory update; do not rewrite unrelated runbook steps"
+        },
+        {
+          "path": "crates/buzz-cli/src/commands/messages.rs",
+          "why": "CLI contract tests pin the existing message-build seam | #233 `--handoff` / `--goal` hidden + Usage error",
+          "resolve": "keep tests local to the command module; preserve upstream send behavior | do not restore crew-handoff teaching"
+        },
+        {
+          "path": "crates/buzz-cli/src/commands/mod.rs",
+          "why": "register the Crew-owned evidence kind module | #198 `pub mod org`",
+          "resolve": "retain the module declaration; do not move validation into upstream command code | retain the module line"
+        },
+        {
+          "path": "crates/buzz-cli/src/lib.rs",
+          "why": "expose the Crew evidence flag on `messages send` | #198 `org` subcommand; **#233** Show/Tree/Publish + `--handoff` error",
+          "resolve": "retain the additive clap field; preserve upstream command variants and help text | Portfolio/Steward ok; do not revive chart CLI"
+        }
+      ]
+    },
+    {
+      "area": "crates/buzz-dev-mcp/**",
+      "why": "wiki `#[tool]`s + `crew-wiki` argv0 (#200); desktop browser_*/sim_* tools (#197).",
+      "resolve": "wrappers only in lib.rs; impl lives in Crew files.",
+      "filesAtRecord": 5,
+      "fileHints": [
+        {
+          "path": "crates/buzz-dev-mcp/src/lib.rs",
+          "why": "#197 14 `#[tool]` methods | #200 wiki `#[tool]` + argv0 `crew-wiki`",
+          "resolve": "wrappers only; impl lives in `desktop_tools.rs` | wrappers only; impl lives in `wiki_tools.rs`"
+        },
+        {
+          "path": "crates/buzz-dev-mcp/src/shim.rs",
+          "why": "#200 `crew-wiki` multicall name",
+          "resolve": "keep next to `rg`/`tree`/`buzz`"
+        }
+      ]
+    },
+    {
+      "area": "crates/buzz-sdk/**",
+      "why": "Crew event builders for receipts/evidence.",
+      "resolve": "additive.",
+      "filesAtRecord": 2
+    },
+    {
+      "area": "crates/buzz-search/**",
+      "why": "wiki kinds on search allowlist (#200).",
+      "resolve": "keep 30023 + 30623 on allowlist.",
+      "filesAtRecord": 1
+    },
+    {
+      "area": "crates/buzz-workflow/**",
+      "why": "reply in-thread from send_message action (#6178 port).",
+      "resolve": "additive.",
+      "filesAtRecord": 1
+    },
+    {
+      "area": "migrations/**",
+      "why": "Crew numbering shift (see crates/buzz-db).",
+      "resolve": "rename incoming; never duplicate.",
+      "filesAtRecord": 1,
+      "fileHints": [
+        {
+          "path": "migrations/0008_fresh_install_search_allowlist.sql",
+          "why": "#200 30023 + 30623 on fresh-install allowlist",
+          "resolve": "do not add 30623 to the privacy exclusion CASE"
+        }
+      ]
+    },
+    {
+      "area": "schema/**",
+      "why": "Crew allowlist rows (30023/30623).",
+      "resolve": "keep rows; exclusion CASE untouched.",
+      "filesAtRecord": 1
+    },
+    {
+      "area": "desktop/src/features/agents/**",
+      "why": "Hermes tier-1 runtime + profile binding/offboarding (#104/#149, D-020/D-024); needs-you store + attention recovery (#108/#113/#114); declared plans (#190); observer retention/archive (#286/#287/#293); receipt store; evidence cards (#121); Crew roles UI (#116).",
+      "resolve": "Crew variants live in *Crew.ts / lib/ files (D-022); one notifyListeners per envelope; do not re-add Org.",
+      "filesAtRecord": 84,
+      "fileHints": [
+        {
+          "path": "desktop/src/features/agents/observerRelayStore.ts",
+          "why": "upstream envelope batching (#5680) + Crew identity/session_aging/control_result",
+          "resolve": "one `notifyListeners` per envelope; Crew variants live in `observerRelayStoreCrew.ts` under D-022"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/features/messages/**",
+      "why": "evidence + receipt + handover cards (#121/#173); declared-plans rail mount (#190); Crew send context (workspace + visible-page + Project-thread routing) via crewSendContext.ts; removedMentionPubkeys on edit; agent avatar in mention chips (#25/#331); thread composer view context.",
+      "resolve": "keep pass-throughs tiny; card/logic in Crew-owned files; upstream mention-security model (#7124/#7133/#7338) wins.",
+      "filesAtRecord": 65,
+      "fileHints": [
+        {
+          "path": "desktop/src/features/messages/hooks.ts",
+          "why": "#198 optional `extraTags` on send",
+          "resolve": "extraTags use `relayClient.sendMessage`; do not grow Tauri `messages.rs`"
+        },
+        {
+          "path": "desktop/src/features/messages/ui/MessageRow.tsx",
+          "why": "pass evidence-card review props through the existing default-body seam (987 lines)",
+          "resolve": "retain the seven-line prop pass-through only; keep evidence logic out of this upstream-derived file"
+        },
+        {
+          "path": "desktop/src/features/messages/ui/MessageThreadPanel.tsx",
+          "why": "#190 declared-plans rail mount via Crew `ThreadPanelDeclaredPlansBody`",
+          "resolve": "keep the one wrapper component; rail implementation stays in Crew-owned files"
+        },
+        {
+          "path": "desktop/src/features/messages/ui/UnreadDivider.tsx",
+          "why": "optional `label` for workbench catch-up copy (#186)",
+          "resolve": "default remains `\"New\"`; leftover workbench helpers may still pass `\"NEW since you were here\"`"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/features/projects/**",
+      "why": "Project local workspace (D-003/D-010, spikes 0001-0006); folder-first add; Cowork non-git (#188); worktree selector (#187); PR hub (#193); wiki tab (#200); global Projects search.",
+      "resolve": "keep (pubkey,d) identity; Cowork/worktree screens are Crew-owned.",
+      "filesAtRecord": 53,
+      "fileHints": [
+        {
+          "path": "desktop/src/features/projects/ui/ProjectRepositoryPanel.tsx",
+          "why": "#200 consume pending wiki file open",
+          "resolve": "do not reset selection when `filesKey` is unchanged"
+        },
+        {
+          "path": "desktop/src/features/projects/ui/ProjectWorkspaceTabList.tsx",
+          "why": "#200 Wiki tab",
+          "resolve": "one tab next to Files"
+        },
+        {
+          "path": "desktop/src/features/projects/ui/ProjectWorkspaceTabs.tsx",
+          "why": "#200 wiki `TabsContent` + pending file-open",
+          "resolve": "tab body lives in Crew `WikiProjectTab`"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/features/channels/**",
+      "why": "Tool Pane mount + Tools header button (#196); origin prompt (#197); composer workspace selector + Relink chip (#187/#242); channel-first IA (no Projects/Workbench nav, #278).",
+      "resolve": "provider + toolbarExtraActions only; no onSelectProjects.",
+      "filesAtRecord": 29,
+      "fileHints": [
+        {
+          "path": "desktop/src/features/channels/ui/ChannelPane.tsx",
+          "why": "composer workspace selector wiring (#187); Relink folder chip sibling (#242) | #196 Tool Pane mount when tools open and not in focus drawer | **#233** HandoffAssignControl removed | #197 origin prompt when pane closed",
+          "resolve": "retain provider + `toolbarExtraActions` only; selector and chip live in Crew-owned files | pane lives in Crew-owned `features/tool-pane` | do not revive | keep `ChannelOriginPrompt` next to user-input stack"
+        },
+        {
+          "path": "desktop/src/features/channels/ui/ChannelScreenHeader.tsx",
+          "why": "#196 Tools header button next to Term",
+          "resolve": "one component; not on DMs"
+        },
+        {
+          "path": "desktop/src/features/channels/ui/FocusThreadDrawer.tsx",
+          "why": "#196 `channelId` / `threadRootId` pass-through",
+          "resolve": "props only; tabs live in `ChannelToolPane`"
+        },
+        {
+          "path": "desktop/src/features/channels/useChannelPaneHandlers.ts",
+          "why": "**#233** pending handoff consume removed",
+          "resolve": "do not revive"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/features/sidebar/**",
+      "why": "Inbox + channels + DMs only (D-066); NeedsYou badge + resource dots on rows; no Org/Workbench/Projects nav (#219/#223/#233).",
+      "resolve": "keep the union compact; stream list uses sidebarRailContract.",
+      "filesAtRecord": 6,
+      "fileHints": [
+        {
+          "path": "desktop/src/features/sidebar/ui/AppSidebar.tsx",
+          "why": "no `onSelectWorkbench` (#219); no `onSelectProjects` / project-folder filter (#223) | **#233** no Org nav | #200 `onSelectWiki` prop",
+          "resolve": "keep the union compact (D-022); stream list uses `sidebarRailContract` | do not revive | keep the union compact (D-022); props live in `AppSidebarProps.ts`"
+        },
+        {
+          "path": "desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx",
+          "why": "no Workbench nav (#219); no Projects nav (#223) | **#233** Org menu item removed | #200 Wiki nav item after Org",
+          "resolve": "do not restyle neighboring entries | do not revive | one `SidebarMenuItem`"
+        },
+        {
+          "path": "desktop/src/features/sidebar/ui/SidebarSection.tsx",
+          "why": "#196 resource dots on channel rows",
+          "resolve": "`SidebarResourceDots`; no numbers, no motion"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/features/home/**",
+      "why": "Mission Inbox opens channel session (#219); no roster hops (#233).",
+      "resolve": "do not navigate on unverified channelId.",
+      "filesAtRecord": 11,
+      "fileHints": [
+        {
+          "path": "desktop/src/features/home/ui/HomeView.tsx",
+          "why": "Mission Inbox opens the channel session (#219)",
+          "resolve": "do not navigate on unverified `row.channelId`"
+        },
+        {
+          "path": "desktop/src/features/home/ui/InboxListPane.tsx",
+          "why": "no workbench hammer pass-through (#219)",
+          "resolve": "Inbox still picks via existing row / channel door"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/features/settings/**",
+      "why": "Storage (#174) + Devices & Preview (#196) sections.",
+      "resolve": "one nav entry + one panel arm each; cards are Crew modules.",
+      "filesAtRecord": 15,
+      "fileHints": [
+        {
+          "path": "desktop/src/features/settings/ui/SettingsPanels.tsx",
+          "why": "Settings → Storage section registration (#174) | #196 `\"devices-preview\"` arm",
+          "resolve": "keep `\"storage\"` arm + nav descriptor; card lives in Crew-owned feature module | card lives in Crew-owned feature module"
+        },
+        {
+          "path": "desktop/src/features/settings/ui/SettingsView.tsx",
+          "why": "Personal nav entry for Storage (#174) | #196 Devices & Preview nav",
+          "resolve": "retain one-line `\"storage\"` nav add next to local-archive | one Personal nav entry"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/features/profile/**",
+      "why": "Hermes profile edit/offboard in profile panel; runtime avatars.",
+      "resolve": "additive tabs.",
+      "filesAtRecord": 12
+    },
+    {
+      "area": "desktop/src/features/notifications/**",
+      "why": "Crew notification targets for receipts / needs-you.",
+      "resolve": "additive.",
+      "filesAtRecord": 8
+    },
+    {
+      "area": "desktop/src/features/presence/**",
+      "why": "theme tokens (bg-success/bg-attention) instead of raw palette (D-063).",
+      "resolve": "keep tokens.",
+      "filesAtRecord": 2
+    },
+    {
+      "area": "desktop/src/features/**",
+      "why": "Other Crew feature hooks (huddle profile control, onboarding Hermes gate, workflows, forum, pulse, search, reminders…).",
+      "resolve": "inspect per file; keep hooks tiny.",
+      "filesAtRecord": 24,
+      "fileHints": [
+        {
+          "path": "desktop/src/features/communities/useCommunityInit.ts",
+          "why": "**#233** `resetOrgRosterProjection` removed | #196 reset governor + tool pane stores; #197 reset agent-control store | #200 `resetWikiStore`",
+          "resolve": "do not revive Org store | add next to other community-scoped resets | one call in `resetCommunityState`"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/shared/**",
+      "why": "relay reconnect/closed recovery + AUTH buffer (#6415/#3320 ports, #337/#338); agentControl API (#197); entityLink `buzz://file` (#200); font-size/zoom (text-only zoom); Crew keyboard shortcuts (⇧⌘B/⇧⌘M); types for Crew kinds; markdown mention avatar; mentionChip prefix/avatar classes.",
+      "resolve": "additive; markdown.tsx uses createMarkdownMention from upstream.",
+      "filesAtRecord": 78,
+      "fileHints": [
+        {
+          "path": "desktop/src/shared/constants/kinds.ts",
+          "why": "#198 `KIND_ORG_ROSTER` | #197 overlay kind 24201 | #200 `KIND_LONG_FORM` + `KIND_REPO_WIKI_PAGE`",
+          "resolve": "keep next to project kinds | keep next to other NIP-AO kinds | keep next to git kinds"
+        },
+        {
+          "path": "desktop/src/shared/lib/entityLink.ts",
+          "why": "#200 `buzz://file` host",
+          "resolve": "keep next to pr/issue/repo; file is inline, not a preview card"
+        },
+        {
+          "path": "desktop/src/shared/lib/keyboard-shortcuts.ts",
+          "why": "#196 ⇧⌘B Browser / ⇧⌘M Simulator",
+          "resolve": "additive shortcut entries"
+        },
+        {
+          "path": "desktop/src/shared/ui/markdown/CodeBlock.tsx",
+          "why": "#200 mermaid fence → `MarkdownMermaid`",
+          "resolve": "keep the language arm; renderer lives in Crew file"
+        },
+        {
+          "path": "desktop/src/shared/ui/markdown/entityLinks.tsx",
+          "why": "#200 `file` case opens file panel",
+          "resolve": "exhaustive switch"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/app/**",
+      "why": "route registrations (/workbench redirect, /wiki, /org redirect), AppShell hooks (tool pane shortcuts, agent-control reset), navigation helpers.",
+      "resolve": "one route line + one nav hook each; regenerate routeTree.gen.ts on build.",
+      "filesAtRecord": 16,
+      "fileHints": [
+        {
+          "path": "desktop/src/app/AppShell.helpers.ts",
+          "why": "`/workbench` maps to Inbox or the channel session (#219) | **#233** no `\"org\"` AppView | #200 `AppView` + `deriveShellRoute` include `\"wiki\"`",
+          "resolve": "do not restore `selectedView: \"workbench\"` | do not re-add Org view | one union member + one pathname arm"
+        },
+        {
+          "path": "desktop/src/app/AppShell.tsx",
+          "why": "no `onSelectProjects` (#223); work-tree thread click opens the channel session (#219) | #196 `useToolPaneShortcuts` | **#233** `onSelectOrg` removed | #200 `onSelectWiki`",
+          "resolve": "no sidebar Projects or Workbench destination | one hook call next to other shortcut mounts | do not revive | one callback pass-through"
+        },
+        {
+          "path": "desktop/src/app/navigation/useAppNavigation.ts",
+          "why": "`goWorkbench` opens the channel session or Inbox (#219) | **#233** `goOrg` removed | #200 `goWiki`",
+          "resolve": "keep next to `goProjects`; never navigate to a picker place | do not revive | keep next to `goOrg`"
+        },
+        {
+          "path": "desktop/src/app/routeTree.gen.ts",
+          "why": "TanStack generated tree for the workbench redirect routes (#186/#219) | #198 generated `/org` | #200 generated `/wiki`",
+          "resolve": "regenerate on desktop build; do not hand-edit on sync unless the generator is skipped | regenerate on desktop build"
+        },
+        {
+          "path": "desktop/src/app/routes.ts",
+          "why": "keep `/workbench` + `/workbench/$channelId/$threadRootId` (#186/#219) | #198 `/org` route kept for redirect | #200 `/wiki`",
+          "resolve": "routes redirect; do not restore a picker screen | **#233** `org.tsx` redirects to `/` — do not revive OrgScreen | one `route()` line next to org"
+        },
+        {
+          "path": "desktop/src/app/routes/projects.$projectId.tsx",
+          "why": "#188 `thread` search + Cowork Versions gate",
+          "resolve": "keep GitHub ProjectDetailScreen for git; Cowork screen is Crew-owned"
+        },
+        {
+          "path": "desktop/src/app/useAppShellLifecycleEffects.ts",
+          "why": "upstream foreground-ready scheduler (#5696) + #164 workspace snapshot refresh + #174 alive heartbeat",
+          "resolve": "attach Crew hooks beside `useForegroundQueryRefresh`; do not turn app absence into observed idle"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/main.tsx",
+      "why": "defaultTheme=\"crew-dark\" (D-063).",
+      "resolve": "keep.",
+      "filesAtRecord": 1
+    },
+    {
+      "area": "desktop/src/testing/**",
+      "why": "E2E mock bridge extensions (Crew commands delegated to e2e*.ts) + release contract pin.",
+      "resolve": "keep isXCommand delegates; do not grow the switch.",
+      "filesAtRecord": 1,
+      "fileHints": [
+        {
+          "path": "desktop/src/testing/e2eBridge.ts",
+          "why": "mock storage snapshot + reclaim (#174); `__BUZZ_E2E_SET_THREAD_GITHUB_BY_BRANCH__` (#175); #187 `probe_project_git_workspace` + extra project events; #188 Cowork Versions commands via `e2eCoworkVersions.ts` | #196 Tool Pane commands via `e2eToolPane.ts` | **#233** e2eOrgRoster hooks removed | #197 `__BUZZ_E2E_SET_AGENT_CONTROL__` | #200 wiki mock via `e2eWiki.ts`",
+          "resolve": "keep additive cases; default fixture is self-contained | keep `isToolPaneCommand` delegate; do not grow the switch | do not revive chart mocks | keep next to governor seed; logic in `e2eToolPane.ts` | keep additive REQ/EVENT + window hooks"
+        }
+      ]
+    },
+    {
+      "area": "desktop/src/protectedFeatures/**",
+      "why": "Bestie menu Crew entries.",
+      "resolve": "additive.",
+      "filesAtRecord": 1
+    },
+    {
+      "area": "desktop/src-tauri/**",
+      "why": "managed_agents: Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json.",
+      "resolve": "register module + invoke entries only; impl in Crew files; keep `manage(ResourceGovernorHandle)`.",
+      "filesAtRecord": 88,
+      "fileHints": [
+        {
+          "path": "desktop/src-tauri/Cargo.toml",
+          "why": "#196 `tauri` `unstable` for child webview | #200 `crew-wiki` path dep",
+          "resolve": "keep the feature; fallback window does not need it | keep the path dep"
+        },
+        {
+          "path": "desktop/src-tauri/capabilities/default.json",
+          "why": "#196 `crew-browser-*` / `tool-pane-*` window labels",
+          "resolve": "additive labels only"
+        },
+        {
+          "path": "desktop/src-tauri/src/commands/canvas.rs",
+          "why": "#196 `pub(crate)` on `fenced_crew_block` / `ensure_canvas_author`",
+          "resolve": "visibility only; do not move YAML parse here"
+        },
+        {
+          "path": "desktop/src-tauri/src/commands/channels.rs",
+          "why": "#196 archive=erase / delete=`simctl delete` via governor",
+          "resolve": "keep the two `try_state` hooks next to existing channel mutations"
+        },
+        {
+          "path": "desktop/src-tauri/src/commands/mod.rs",
+          "why": "register #174 storage commands + #187 `probe_project_git_workspace` + #188 Cowork Versions commands | #196 `canvas_tooling` module",
+          "resolve": "retain module + invoke_handler entries only | retain `mod` + `pub use`; commands live in the Crew file"
+        },
+        {
+          "path": "desktop/src-tauri/src/egress_guard_tests.rs",
+          "why": "#196 invoke table moved to `invoke.rs`",
+          "resolve": "keep `invoke.rs` on the ncryptsec filename allowlist next to `lib.rs`"
+        },
+        {
+          "path": "desktop/src-tauri/src/lib.rs",
+          "why": "#196 Tool Pane: `start_background` + `invoke::desktop_invoke_handler!()` (command table extracted so this file stays ≤1000; macro expands at crate root for Tauri `__cmd__*` macros); restore `tauri::Listener` for macOS `.once` | #197 `agent_control` module + localhost server spawn | #200 `mod wiki_worker` + `wiki_generate` import",
+          "resolve": "keep `manage(ResourceGovernorHandle)` + `start_background`; do not move `generate_handler!` into a submodule | keep next to media proxy / governor `start_background` | keep next to other command modules"
+        },
+        {
+          "path": "desktop/src-tauri/src/managed_agents/global_config/mod.rs",
+          "why": "per-app handover summarizer + aging thresholds (#173)",
+          "resolve": "retain additive serde fields with defaults"
+        },
+        {
+          "path": "desktop/src-tauri/src/managed_agents/reserved_env_keys.rs",
+          "why": "reserve both idle env names + handover/aging keys from persona/user override (#169/#189); #188 `BUZZ_ACP_COWORK_HISTORY_DIR` | reserve pool idle timeout (#169) + handover/aging keys (#173) | #196 `BUZZ_SIMULATOR_UDID` / `BUZZ_DEV_SERVER_URL` / snapshot path | #197 `BUZZ_DESKTOP_CONTROL_*` / thread root",
+          "resolve": "keep both idle keys in the reserved list; they alias one harness field | keep keys in the shared reserved list | keep in the reserved list"
+        },
+        {
+          "path": "desktop/src-tauri/src/managed_agents/runtime.rs",
+          "why": "desktop injects the same 1800s value for both idle env names on lazy pairs (#169/#189); #188 `BUZZ_ACP_COWORK_HISTORY_DIR`; #196 snapshot path via cowork helper | desktop passes pool idle timeout (#169); #173 aging env delegated to `session_aging_env.rs` | #197 inject control URL/token at spawn",
+          "resolve": "inject identical values next to `BUZZ_ACP_LAZY_POOL`; keep `apply_session_aging_env` + `apply_cowork_history_env` | keep one-line `apply_session_aging_env` call next to `BUZZ_ACP_LAZY_POOL` | keep next to cowork/snapshot env; must not take worktree leases"
+        },
+        {
+          "path": "desktop/src-tauri/src/shutdown.rs",
+          "why": "#196 `quit_governor` on app quit and signals",
+          "resolve": "keep next to `TerminalSessions::shutdown_all`"
+        }
+      ]
+    },
+    {
+      "area": "desktop/tests/**",
+      "why": "Crew Playwright specs + test-match globs; Crew snapshot images.",
+      "resolve": "retain narrow additions to playwright.config.ts; do not reorder.",
+      "filesAtRecord": 62,
+      "fileHints": [
+        {
+          "path": "desktop/tests/helpers/settings.ts",
+          "why": "#196 `\"devices-preview\"` section id",
+          "resolve": "keep in the settings helper union"
+        }
+      ]
+    },
+    {
+      "area": "desktop/scripts/**",
+      "why": "file-size ratchet baselines (D-022) + px-text guard.",
+      "resolve": "update exact wc -l in the same sync PR for upstream growth; extract Crew growth.",
+      "filesAtRecord": 2
+    },
+    {
+      "area": "desktop/*",
+      "why": "package.json name/version, index.html title, tailwind tokens, playwright configs, .gitignore.",
+      "resolve": "keep Crew identity; version tracks upstream.",
+      "filesAtRecord": 7,
+      "fileHints": [
+        {
+          "path": "desktop/playwright.config.ts",
+          "why": "register Crew evidence contracts + #174 worktree-storage smoke + #175 cross-check + #187 selector spec + #188 Cowork Versions spec + #186 workbench spec + #203 work-tree sidebar | #196 `tool-pane.spec.ts` smoke match | **#233** `org-removed.spec.ts` (not org-hierarchy) | #197 `agent-desktop-tools.spec.ts` smoke match | #200 `crew-wiki.spec.ts` smoke match",
+          "resolve": "retain the narrow test-match additions; do not reorder unrelated entries | retain the glob; do not reorder unrelated entries | retain the removal smoke | retain the glob"
+        }
+      ]
+    },
+    {
+      "area": "mobile/**",
+      "why": "kinds mirror (org roster, wiki, overlay); observer models; relay session recovery; file-size policy 1000.",
+      "resolve": "mirror desktop kinds; no mobile org/wiki UI.",
+      "filesAtRecord": 13,
+      "fileHints": [
+        {
+          "path": "mobile/lib/shared/relay/nostr_models.dart",
+          "why": "#198 `orgRoster = 30680` | #197 `agentInstrumentOverlay` | #200 `longForm` / `repoWikiPage`",
+          "resolve": "mirror desktop; no mobile org UI | keep kinds in sync | mirror desktop; no mobile wiki UI in this PR"
+        }
+      ]
+    },
+    {
+      "area": ".github/**",
+      "why": "Crew CI (NuncioCrew CI/Gate/Release/Upstream Sync) + inherited workflows disabled at repo level; PR/issue templates.",
+      "resolve": "inherited workflow files are byte-identical in spirit — disable, do not edit; Crew workflows are additive.",
+      "filesAtRecord": 10
+    },
+    {
+      "area": "scripts/**",
+      "why": "isolated test relay with ephemeral keys; screenshot posting to Nuncio-hq/crew; file-size core; fork-delta check.",
+      "resolve": "additive.",
+      "filesAtRecord": 9,
+      "fileHints": [
+        {
+          "path": "scripts/maintenance/nip_rs_search_allowlist.sql",
+          "why": "#200 30023 + 30623",
+          "resolve": "same allowlist; exclusion CASE untouched"
+        }
+      ]
+    },
+    {
+      "area": "docs/**",
+      "why": "small upstream doc touch-ups carried from earlier syncs.",
+      "resolve": "prefer upstream text; Crew docs live in docs/crew only.",
+      "filesAtRecord": 3
+    },
+    {
+      "area": "*",
+      "why": "root: AGENTS.md (Crew banner + Cursor Cloud notes), README/CONTRIBUTING/RELEASING/SECURITY/ARCHITECTURE/CHANGELOG Crew sections, Justfile Crew recipes, Cargo workspace members (crew-wiki, buzz-worktree, buzz-cowork…), .env.example, lefthook, renovate, deploy chart README.",
+      "resolve": "Crew sections are self-contained blocks; on conflict keep upstream body and re-place the Crew block.",
+      "filesAtRecord": 15
+    },
+    {
+      "area": "admin-web/**",
+      "why": "admin-web test route fixtures (image hash) carried from an earlier sync.",
+      "resolve": "prefer upstream; drop when identical.",
+      "filesAtRecord": 0
+    },
+    {
+      "area": "deploy/**",
+      "why": "chart README references Crew migration numbering (0033).",
+      "resolve": "keep Crew number.",
+      "filesAtRecord": 0
+    },
+    {
+      "area": "desktop/public/**",
+      "why": "harness logo credits for Crew-added marks.",
+      "resolve": "additive rows.",
+      "filesAtRecord": 0
+    },
+    {
+      "area": "patches/**",
+      "why": "virtua prepend-scroll compensation patch (0.5.22 integration, Virtua correction).",
+      "resolve": "keep until upstream ships the fix; re-verify on each sync.",
+      "filesAtRecord": 0
+    },
+    {
+      "area": "web/**",
+      "why": "web `check` runs file-size guard.",
+      "resolve": "keep the script line.",
+      "filesAtRecord": 0
+    }
+  ]
+}

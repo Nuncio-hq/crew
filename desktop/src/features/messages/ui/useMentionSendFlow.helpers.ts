@@ -1,3 +1,4 @@
+import type { MentionRevalidationOptions } from "@/features/messages/lib/agentMentionRevalidation";
 import type { ManagedAgent } from "@/shared/api/types";
 import {
   type ImetaMedia,
@@ -56,10 +57,18 @@ export function dedupeQueuedAgentWakes(
   });
 }
 
+/** A single visit to a source draft; returning to the same key is a new owner. */
+export type ComposerDraftOwner = {
+  channelId: string | null;
+  draftKey: string | null | undefined;
+  /** Read shared source-key intent, never another visible draft key. */
+  getComposerRevision: () => number;
+};
+
 export type PendingNonMemberMentionSend = {
-  audienceGeneration: number;
-  audienceRevision: number | null;
-  explicitAgentPubkeys: string[];
+  sourceOwner: ComposerDraftOwner;
+  composerRevision: number;
+  invitationSignal?: AbortSignal;
   addressedAgentPubkeys: string[];
   inlineAgentMentionPubkeys: string[];
   capturedChannelId: string | null;
@@ -79,6 +88,11 @@ export type PendingNonMemberMentionSend = {
    * pass's queue after the publish succeeds — a dismissed prompt drops them.
    */
   agentsToWake?: QueuedAgentWake[];
+  /**
+   * Agents whose wake was deferred by the non-member prompt: flushed from this
+   * pass's queue after the publish succeeds — a dismissed prompt drops them.
+   */
+  queuedAgentWakes?: QueuedAgentWake[];
   readyAgentPubkeys?: string[];
   savedContent: string;
   savedImeta: ImetaMedia[];
@@ -174,4 +188,37 @@ export function isManagedAgentRunning(agent: ManagedAgent) {
 
 export function isProviderBackedAgent(agent: ManagedAgent) {
   return agent.backend.type === "provider";
+}
+
+/** Carry captured recipient identity through composer clearing and uploads. */
+export function mentionRevalidationOptions(
+  draft: Pick<
+    PendingNonMemberMentionSend,
+    "inlineAgentMentionPubkeys" | "addressedAgentPubkeys"
+  >,
+  phase: "prepare" | "publish",
+  preparedAgentPubkeys: readonly string[] = [],
+): MentionRevalidationOptions {
+  return {
+    phase,
+    intendedAgentPubkeys: uniqueNormalizedPubkeys([
+      ...draft.inlineAgentMentionPubkeys,
+      ...draft.addressedAgentPubkeys,
+      ...preparedAgentPubkeys,
+    ]),
+  };
+}
+
+/** Explicit Send without inviting retains nonmembers only as reference tags. */
+export function withoutInvitingRecipients(draft: PendingNonMemberMentionSend) {
+  const nonMemberPubkeys = new Set(draft.nonMemberPubkeys.map(normalizePubkey));
+  return {
+    mentionPubkeys: draft.mentionPubkeys.filter(
+      (pubkey) => !nonMemberPubkeys.has(normalizePubkey(pubkey)),
+    ),
+    outgoingTags: mergeOutgoingTagsWithReferenceMentions(
+      draft.outgoingTags,
+      nonMemberPubkeys,
+    ),
+  };
 }

@@ -3,7 +3,7 @@
 > **NuncioCrew fork.** This checkout is
 > [`Nuncio-hq/crew`](https://github.com/Nuncio-hq/crew) (thin fork of
 > [`block/buzz`](https://github.com/block/buzz)). Agents: read
-> [`docs/crew/IDENTITY.md`](docs/crew/IDENTITY.md) first. Open issues and PRs
+> [`docs/crew/FORK.md`](docs/crew/FORK.md) first. Open issues and PRs
 > against **Nuncio-hq/crew**, not `block/buzz`. Upstream contribution flow for
 > stock Buzz remains documented below where noted.
 
@@ -467,7 +467,7 @@ and infrastructure deployment and are usually irrelevant to Crew feature work.
 
 See [AGENTS.md § Ecosystem](AGENTS.md#ecosystem) for the full repo table and
 dependency diagram. Crew release/CI: [`docs/crew/RELEASING.md`](docs/crew/RELEASING.md),
-[`docs/crew/CI.md`](docs/crew/CI.md).
+[`docs/crew/FORK.md`](docs/crew/FORK.md#ci).
 
 **External contributors to this fork:** Fork `Nuncio-hq/crew`, open a PR, and
 Crew CI (`NuncioCrew Gate`) runs automatically. No special access is required.

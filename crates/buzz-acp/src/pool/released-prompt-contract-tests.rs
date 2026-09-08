@@ -20,5 +20,5 @@ fn checkout_notice_stays_inside_workspace_between_base_and_persona() {
     )
     .expect("standing prompt");
     assert_eq!(prompt,
-        format!("<base>\nstatic base\n</base>\n\n<workspace>\nCurrent working directory: /work/tree\n\n[Checkout]\n{notice}\n</workspace>\n\n<system>\npersona\n</system>"));
+        format!("<base>\nstatic base\n</base>\n\n<workspace>\nCurrent working directory: /work/tree\n\n[Checkout]\n{notice}\n</workspace>\n\n<agent-instructions>\npersona\n</agent-instructions>"));
 }

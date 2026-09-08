@@ -223,29 +223,14 @@ test("assigns from an agent profile, reopens, drags, and offers the message acti
   await expect(page.getByTestId("bestie-activity-dot").last()).toBeVisible();
   await page.getByRole("button", { name: "Close Bestie" }).click();
   await waitForAnimations(page);
-  const collapsedAvatar = floatingAvatar.getByTestId("bestie-trigger-avatar");
-  // Motion's shared-layout spring runs in animation frames beyond CSS waits.
-  // Measure drag only after the closed avatar stops moving.
-  let previousAvatarY: number | undefined;
-  let stableSamples = 0;
-  await expect
-    .poll(
-      async () => {
-        const box = await collapsedAvatar.boundingBox();
-        const y = box?.y;
-        stableSamples =
-          y !== undefined &&
-          previousAvatarY !== undefined &&
-          Math.abs(y - previousAvatarY) < 0.1
-            ? stableSamples + 1
-            : 0;
-        previousAvatarY = y;
-        return stableSamples;
-      },
-      { intervals: [100] },
-    )
-    .toBeGreaterThanOrEqual(3);
+  // The Motion close morph can outlive the CSS/Web animations above. Wait for
+  // the closed, untranslated shell before measuring the drag's starting point.
+  const closedBloom = floatingAvatar.getByTestId("bestie-bloom-container");
+  await expect(closedBloom).toHaveCSS("width", "48px");
+  await expect(closedBloom).toHaveCSS("height", "48px");
+  await expect(closedBloom).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
   const beforeDrag = await floatingAvatar.boundingBox();
+  const collapsedAvatar = floatingAvatar.getByTestId("bestie-trigger-avatar");
   const collapsedAvatarBeforeDrag = await collapsedAvatar.boundingBox();
   expect(beforeDrag).not.toBeNull();
   await page.mouse.move(
@@ -259,7 +244,6 @@ test("assigns from an agent profile, reopens, drags, and offers the message acti
     { steps: 8 },
   );
   await page.mouse.up();
-  await waitForAnimations(page);
   const afterDrag = await floatingAvatar.boundingBox();
   const collapsedAvatarAfterDrag = await collapsedAvatar.boundingBox();
   expect(afterDrag?.x).toBeLessThan(beforeDrag?.x ?? 0);

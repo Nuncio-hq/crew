@@ -3,10 +3,11 @@ import { Check } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "@/shared/lib/cn";
+import { VIDEO_PLAYBACK_SPEEDS } from "@/shared/lib/videoPlaybackSpeedPreference";
 
 import { isSpeedMenuOpen, setSpeedMenuOpen } from "./videoPlayerState";
 
-export const PLAYBACK_SPEEDS = [2, 1.75, 1.5, 1.25, 1, 0.75, 0.5, 0.25];
+export const PLAYBACK_SPEEDS: readonly number[] = VIDEO_PLAYBACK_SPEEDS;
 
 export function formatPlaybackSpeed(speed: number): string {
   return `${speed}x`;

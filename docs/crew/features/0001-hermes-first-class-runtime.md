@@ -515,7 +515,7 @@ Records: [`spikes/0009`](../spikes/0009-profile-bound-hermes-acp-spawn.md),
 - Content: PR to `block/buzz` per §7.2 (entry + default args + env
   relocation + preset removal + logo continuity + tests per the BYOH
   contributor guide). After it lands, receive via
-  [`UPSTREAM-SYNC.md`](../UPSTREAM-SYNC.md); retire any Slice 2 shims that
+  [`FORK.md`](../FORK.md); retire any Slice 2 shims that
   the tier-1 entry obsoletes (C-16).
 
 ### Slice 4 — Lifecycle completion
