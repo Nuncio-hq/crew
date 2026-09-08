@@ -28,6 +28,14 @@ buzz-acp -> provider ACP adapter -> coding agent
 
 The relay is the shared coordination log. It is not the source-code store.
 
+**Deployment (2026-09):** one relay, self-hosted by the founder on a
+dev-server reachable over Tailscale (`ws://100.86.143.13:3000`), built from
+this repository's `crates/buzz-relay`. Desktop, mobile and every agent
+harness point at it. There is no hosted/third-party relay in the loop; the
+earlier `lilgroup.communities.buzz.xyz` community is deprecated. Because the
+relay is ours, relay-side fixes (kinds, auth, limits) ship with the fork —
+"relay version too old" is never an accepted explanation.
+
 ## Three data planes
 
 | Data                                 | Authority         | May leave the machine through |

@@ -43,13 +43,29 @@ mirror desktop. No org/wiki UI. 1000-line policy.
 
 ## Relay / DB
 
+**Primary relay: the founder's dev-server over Tailscale,
+`ws://100.86.143.13:3000`** (Buzz Relay 0.2.1, this repo's build; knows
+kind 46043). The hosted `wss://lilgroup.communities.buzz.xyz` is
+**deprecated** — no longer a target for acceptance; remove it from agents
+and the community list once the dev-server relay is confirmed healthy.
+
+Status 2026-09-08: the dev-server relay answers NIP-11 and completes the
+WebSocket handshake, then **closes the socket right after sending the
+`AUTH` challenge**. No harness has connected since 2026-09-01 04:05 UTC;
+15 `buzz-acp` processes started 2026-09-01 are still retrying (566 failed
+reconnects on 09-04, 192 on 09-07, 2,328 on 09-08, zero successes).
+Founder is checking the relay on the dev-server (identity / auth config
+change after 09-01 is the leading suspect). Tracked in
+[#338](https://github.com/Nuncio-hq/crew/issues/338).
+
 Stock Buzz relay with Crew kinds (30680 inert, 30623 wiki, 24201 overlay).
 Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
 
 ## Known gaps
 
-- Hosted-relay acceptance for #337/#338 incomplete (receipt kind unknown to
-  hosted relay 0.2.1).
+- Dev-server relay rejects harness AUTH since 09-04 (#338); Hermes has not
+  been re-verified on it (#337). The harness reconnect loop has no
+  terminal state (2k+ attempts/day) — bug, see #338.
 - Desktop Smoke / Integration E2E lanes are advisory only (D-032, D-047);
   post-0.5.23 drift tracked in
   [#346](https://github.com/Nuncio-hq/crew/issues/346) (mention-recipients

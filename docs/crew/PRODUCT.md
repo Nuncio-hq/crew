@@ -48,6 +48,7 @@ Avoid consultant vocabulary and process diagrams the founder did not ask for.
 | Choice | Detail |
 | --- | --- |
 | Keep Buzz backend | Relay, Nostr identity, channels, ACP harness, event log |
+| One self-hosted relay | The founder's dev-server over Tailscale is the company's relay; no hosted community |
 | Thin fork | Prefer additive Crew files; keep syncing upstream ([`FORK.md`](FORK.md)) |
 | Build on top | Every Crew feature attaches to an existing Buzz kind, type, command, or extension point |
 | Until | A deliberate platform change is recorded as a new decision |
