@@ -57,9 +57,9 @@ pub(super) fn link_channel_tags(
         .tags
         .iter()
         .filter(|tag| {
-            !tag.as_slice()
+            tag.as_slice()
                 .first()
-                .is_some_and(|name| name == "expected-revision")
+                .is_none_or(|name| name != "expected-revision")
         })
         .cloned()
         .collect();
@@ -190,10 +190,10 @@ pub(super) fn unlink_repository_tags(
         .filter(|tag| tag.as_slice().first().is_some_and(|name| name == "d"))
         .collect();
     if d_tags.len() != 1
-        || !d_tags[0]
+        || d_tags[0]
             .as_slice()
             .get(1)
-            .is_some_and(|value| value == identifier)
+            .is_none_or(|value| value != identifier)
     {
         return Err("Repository head does not match the selected coordinate.".into());
     }
@@ -281,10 +281,10 @@ pub(super) fn link_repository_tags(
         .filter(|tag| tag.as_slice().first().is_some_and(|name| name == "d"))
         .collect();
     if d_tags.len() != 1
-        || !d_tags[0]
+        || d_tags[0]
             .as_slice()
             .get(1)
-            .is_some_and(|value| value == identifier)
+            .is_none_or(|value| value != identifier)
     {
         return Err("Repository head does not match the selected coordinate.".into());
     }
@@ -296,7 +296,7 @@ pub(super) fn link_repository_tags(
     if local_path.is_empty()
         || local_path.len() > 4096
         || !local_path.starts_with('/')
-        || local_path.as_bytes().iter().any(|byte| *byte == 0)
+        || local_path.as_bytes().contains(&0)
         || local_path
             .chars()
             .any(|character| character == '\r' || character == '\n')
