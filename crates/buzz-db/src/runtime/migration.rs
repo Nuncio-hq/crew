@@ -702,7 +702,7 @@ mod postgres_tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 45);
+        assert_eq!(migrations.len(), 46);
         // Crew's existing wiki allowlist keeps its applied migration identity.
         assert_eq!(migrations[30].version, 31);
         assert!(migrations[30].sql.as_str().contains("30023, 30623"));
@@ -1290,6 +1290,26 @@ mod postgres_tests {
             desired_schema.contains("'rate_limit_violations'\n    ]::TEXT[])"),
             "schema.sql exclusion list must match the pre-0042 body after ledger removal"
         );
+        // Contact retention foundation (0046) is intentionally storage-only:
+        // old writers receive suppressed kind-9 classification, signed
+        // original identity cannot move or be hard-deleted, and route evidence
+        // gets a server-owned immutable age anchor. Routing/proof kinds and
+        // purge inventory remain separate reviewed work.
+        assert_eq!(migrations[45].version, 46);
+        let contact = migrations[45].sql.as_str();
+        assert!(contact.contains("ALTER TABLE events ADD COLUMN contact_class SMALLINT"));
+        assert!(contact.contains("CREATE FUNCTION contact_classify_original_v1()"));
+        assert!(contact.contains("CREATE FUNCTION contact_guard_original_v1()"));
+        assert!(contact.contains("ordinary hard deletion of kind-9 originals is forbidden"));
+        assert!(contact.contains("CREATE TABLE contact_routes"));
+        assert!(
+            contact.contains("decided_at          TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()")
+        );
+        assert!(contact.contains("NEW.decided_at := clock_timestamp()"));
+        assert!(contact.contains("CREATE TABLE contact_quota"));
+        assert!(desired_schema.contains("CREATE TABLE contact_routes"));
+        assert!(desired_schema.contains("CREATE TABLE contact_quota"));
+        assert!(desired_schema.contains("CREATE FUNCTION contact_guard_original_v1()"));
     }
 
     #[test]
@@ -1825,8 +1845,15 @@ mod postgres_tests {
         let mut expected_fences = migration.fence_attachments.clone();
         expected_fences.remove("product_feedback");
         expected_fences.remove("rate_limit_violations");
+        // #355 adds these tenant-scoped storage relations after immutable
+        // migration 0029. They intentionally cannot appear in 0029's parsed
+        // surface, so compare the post-0029 desired schema without treating
+        // their additive fence attachments as deletion-surface drift.
+        let mut schema_fences = schema.fence_attachments.clone();
+        schema_fences.remove("contact_routes");
+        schema_fences.remove("contact_quota");
         assert_eq!(
-            expected_fences, schema.fence_attachments,
+            expected_fences, schema_fences,
             "write-fence attachment targets differ after recovery policy"
         );
 
@@ -2791,10 +2818,179 @@ mod postgres_tests {
             "all NIP-FI tables must be absent after migration 0045: {present:?}"
         );
 
-        // The deletion catalog must validate with ledger relations gone.
+        // Migration 0045 predates the contact-retention tables that are part of
+        // the current deletion manifest. Advance through that additive
+        // migration before validating the head catalog; validating at 0045
+        // would correctly report those not-yet-created relations as drift.
+        MIGRATOR
+            .run_to(46, &pool)
+            .await
+            .expect("migration 0046 must apply after ledger removal");
+
+        // The deletion catalog must validate with ledger relations gone and
+        // the current contact-retention surface present.
         crate::deletion::DeletionStore::new(pool.clone())
             .validate_catalog()
             .await
-            .expect("deletion catalog validates after migration 0045");
+            .expect("deletion catalog validates after migration 0046");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn contact_retention_production_guards() {
+        let pool = connect_test_pool().await;
+        reset_public_schema(&pool).await;
+        MIGRATOR
+            .run_to(45, &pool)
+            .await
+            .expect("apply migrations before contact retention foundation");
+
+        let community_id = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+            .bind(community_id)
+            .bind(format!(
+                "contact-production-{}.example",
+                community_id.simple()
+            ))
+            .execute(&pool)
+            .await
+            .expect("seed contact community");
+
+        let legacy_id = vec![0x11_u8; 32];
+        sqlx::query(
+            "INSERT INTO events (community_id,id,pubkey,created_at,kind,tags,content,sig) \
+             VALUES ($1,$2,$3,clock_timestamp(),9,'[]'::jsonb,'legacy',$4)",
+        )
+        .bind(community_id)
+        .bind(&legacy_id)
+        .bind(vec![0x22_u8; 32])
+        .bind(vec![0x33_u8; 64])
+        .execute(&pool)
+        .await
+        .expect("seed legacy original before migration 0046");
+
+        MIGRATOR
+            .run_to(46, &pool)
+            .await
+            .expect("apply contact retention foundation");
+
+        let legacy_class: Option<i16> =
+            sqlx::query_scalar("SELECT contact_class FROM events WHERE community_id=$1 AND id=$2")
+                .bind(community_id)
+                .bind(&legacy_id)
+                .fetch_one(&pool)
+                .await
+                .expect("read legacy classification");
+        assert!(
+            legacy_class.is_none(),
+            "migration must not backfill legacy rows"
+        );
+
+        let mut identity_tx = pool.begin().await.expect("begin legacy identity rewrite");
+        let identity_error =
+            sqlx::query("UPDATE events SET kind=10 WHERE community_id=$1 AND id=$2")
+                .bind(community_id)
+                .bind(&legacy_id)
+                .execute(&mut *identity_tx)
+                .await
+                .expect_err("legacy kind-9 identity rewrite must reject");
+        assert_eq!(
+            identity_error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("23514")
+        );
+        identity_tx
+            .rollback()
+            .await
+            .expect("rollback rejected identity rewrite");
+
+        let mut delete_tx = pool.begin().await.expect("begin raw original delete");
+        let delete_error = sqlx::query("DELETE FROM events WHERE community_id=$1 AND id=$2")
+            .bind(community_id)
+            .bind(&legacy_id)
+            .execute(&mut *delete_tx)
+            .await
+            .expect_err("ordinary raw kind-9 deletion must reject");
+        assert_eq!(
+            delete_error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("23514")
+        );
+        delete_tx
+            .rollback()
+            .await
+            .expect("rollback rejected original delete");
+
+        let new_id = vec![0x44_u8; 32];
+        sqlx::query(
+            "INSERT INTO events (community_id,id,pubkey,created_at,kind,tags,content,sig) \
+             VALUES ($1,$2,$3,clock_timestamp(),9,'[]'::jsonb,'suppressed',$4)",
+        )
+        .bind(community_id)
+        .bind(&new_id)
+        .bind(vec![0x55_u8; 32])
+        .bind(vec![0x66_u8; 64])
+        .execute(&pool)
+        .await
+        .expect("new old-writer kind-9 insert");
+        let new_class: i16 =
+            sqlx::query_scalar("SELECT contact_class FROM events WHERE community_id=$1 AND id=$2")
+                .bind(community_id)
+                .bind(&new_id)
+                .fetch_one(&pool)
+                .await
+                .expect("read suppressed classification");
+        assert_eq!(new_class, 0);
+
+        let before: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&pool)
+            .await
+            .expect("read decision clock");
+        sqlx::query(
+            "INSERT INTO contact_routes \
+             (community_id,original_id,original_created_at,channel_id,contact_pubkey,relay_pubkey,decision_id,decision_created_at,stripe,decided_at) \
+             VALUES ($1,$2,clock_timestamp(),$3,$4,$5,$6,clock_timestamp(),0,'2000-01-01 00:00:00+00')",
+        )
+        .bind(community_id)
+        .bind(&new_id)
+        .bind(uuid::Uuid::new_v4())
+        .bind(vec![0x77_u8; 32])
+        .bind(vec![0x88_u8; 32])
+        .bind(vec![0x99_u8; 32])
+        .execute(&pool)
+        .await
+        .expect("insert route evidence with stale supplied anchor");
+        let decided_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+            "SELECT decided_at FROM contact_routes WHERE community_id=$1 AND original_id=$2",
+        )
+        .bind(community_id)
+        .bind(&new_id)
+        .fetch_one(&pool)
+        .await
+        .expect("read server decision anchor");
+        assert!(
+            decided_at >= before,
+            "decision age anchor must be server-stamped"
+        );
+
+        let update_error = sqlx::query(
+            "UPDATE contact_routes SET decided_at='2000-01-01 00:00:00+00' WHERE community_id=$1 AND original_id=$2",
+        )
+        .bind(community_id)
+        .bind(&new_id)
+        .execute(&pool)
+        .await
+        .expect_err("decision anchor must not be backdatable");
+        assert_eq!(
+            update_error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("23514")
+        );
     }
 }

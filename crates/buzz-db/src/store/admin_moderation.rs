@@ -492,7 +492,7 @@ mod postgres_tests {
             r#"
             INSERT INTO events (
                 community_id, id, pubkey, created_at, kind, tags, content, sig, deleted_at
-            ) VALUES ($1, $2, $3, $4, 9, '[]'::jsonb, $5, $6, $7)
+            ) VALUES ($1, $2, $3, $4, 1, '[]'::jsonb, $5, $6, $7)
             "#,
         )
         .bind(community_id)

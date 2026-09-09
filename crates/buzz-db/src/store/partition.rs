@@ -198,3 +198,15 @@ mod tests {
         assert!(!PARTITIONED_TABLES.contains(&"users"));
     }
 }
+
+// Exercise the real connection-bound DDL inside a fixture-owned transaction.
+// This does not alter the normal partition manager or install contact guards.
+#[cfg(test)]
+pub(crate) async fn contact_proof_ensure_partition_tx(
+    connection: &mut sqlx::PgConnection,
+    start: &str,
+    end: &str,
+    suffix: &str,
+) -> Result<()> {
+    ensure_partition(connection, "events", start, end, suffix).await
+}

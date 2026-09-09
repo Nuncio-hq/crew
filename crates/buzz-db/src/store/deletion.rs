@@ -61,6 +61,8 @@ pub const EXPECTED_SCOPED_TABLES: &[&str] = &[
     "channel_members",
     "channels",
     "community_bans",
+    "contact_quota",
+    "contact_routes",
     "delivery_log",
     "event_mentions",
     "events",
@@ -96,6 +98,8 @@ pub const PURGE_SCOPED_TABLES: &[&str] = &[
     "subscriptions",
     "api_tokens",
     "channel_members",
+    "contact_routes",
+    "contact_quota",
     "thread_metadata",
     "moderation_actions",
     "workflows",
@@ -4393,6 +4397,41 @@ mod postgres_tests {
         .execute(&db.pool)
         .await
         .expect("insert guarded NIP-RS row");
+        // Keep a signed kind-9 original in the real purge fixture so the
+        // contact guard's fenced whole-community exception is exercised.
+        sqlx::query(
+            "INSERT INTO events \
+             (community_id, id, pubkey, created_at, kind, tags, content, sig) \
+             VALUES ($1, $2, $3, now(), 9, $4, 'contact-original', $5)",
+        )
+        .bind(request.community_id.as_uuid())
+        .bind(vec![21_u8; 32])
+        .bind(vec![22_u8; 32])
+        .bind(serde_json::json!([]))
+        .bind(vec![23_u8; 64])
+        .execute(&db.pool)
+        .await
+        .expect("insert fenced kind-9 original row");
+        sqlx::query("INSERT INTO contact_quota (community_id, stripe, used) VALUES ($1, 0, 1)")
+            .bind(request.community_id.as_uuid())
+            .execute(&db.pool)
+            .await
+            .expect("insert contact quota row");
+        sqlx::query(
+            "INSERT INTO contact_routes \
+             (community_id, original_id, original_created_at, channel_id, contact_pubkey, \
+              relay_pubkey, decision_id, decision_created_at, stripe) \
+             VALUES ($1, $2, now(), $3, $4, $5, $6, now(), 0)",
+        )
+        .bind(request.community_id.as_uuid())
+        .bind(vec![11_u8; 32])
+        .bind(request.community_id.as_uuid())
+        .bind(vec![12_u8; 32])
+        .bind(vec![13_u8; 32])
+        .bind(vec![14_u8; 32])
+        .execute(&db.pool)
+        .await
+        .expect("insert contact route row");
         store
             .approve(request.id, "approver", None)
             .await
@@ -4459,6 +4498,9 @@ mod postgres_tests {
             .expect("bindings");
         let first = store.purge_postgres(&token).await.expect("purge postgres");
         assert_eq!(first.len(), EXPECTED_SCOPED_TABLES.len());
+        assert_eq!(first.get("events"), Some(&2));
+        assert_eq!(first.get("contact_quota"), Some(&1));
+        assert_eq!(first.get("contact_routes"), Some(&1));
         assert!(
             store.purge_postgres(&token).await.is_err(),
             "completed stage cannot be replayed under stale checkpoint state"

@@ -5602,7 +5602,7 @@ mod postgres_tests {
         // The stored event: its `pubkey` is the author the enforcement must target.
         sqlx::query(
             r#"INSERT INTO events (community_id, id, pubkey, created_at, kind, tags, content, sig, received_at, channel_id)
-               VALUES ($1, $2, $3, now(), 9, '[]', 'offending message', $4, now(), $5)"#,
+               VALUES ($1, $2, $3, now(), 1, '[]', 'offending message', $4, now(), $5)"#,
         )
         .bind(community_id)
         .bind(target_event_id.as_slice())
@@ -7376,6 +7376,87 @@ mod postgres_tests {
 
     // ── 10. reporter notice overlap: concurrent deliveries persist exactly one ─
 
+    async fn e2e_reporter_notice_action(
+        pool: &sqlx::PgPool,
+        community_id: uuid::Uuid,
+        target: &[u8],
+        actor: &[u8],
+    ) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+        let cid = buzz_core::CommunityId::from_uuid(community_id);
+        let report_id = e2e_report_pubkey(pool, community_id, target).await;
+        let action_id = match buzz_db::relay_admin_actions::claim_report(
+            pool,
+            cid,
+            report_id,
+            uuid::Uuid::new_v4(),
+            actor,
+            "operator",
+            "ban",
+            None,
+            None,
+            "resolve:ban",
+            "relay_operator",
+            Some(target),
+            None,
+            None,
+        )
+        .await
+        .expect("claim")
+        {
+            buzz_db::relay_admin_actions::ClaimResult::Claimed(a) => a.id,
+            other => panic!("expected Claimed, got {other:?}"),
+        };
+        let _ = buzz_db::relay_admin_actions::begin_enforcing(pool, action_id)
+            .await
+            .expect("begin_enforcing");
+        let lease_token = match buzz_db::relay_admin_actions::acquire_action_lease(
+            pool,
+            action_id,
+            chrono::Utc::now() + chrono::Duration::seconds(60),
+        )
+        .await
+        .expect("lease")
+        {
+            buzz_db::relay_admin_actions::LeaseResult::Acquired(token) => token,
+            other => panic!("{other:?}"),
+        };
+        let _ = buzz_db::relay_admin_actions::execute_ban_with_marker(
+            pool,
+            action_id,
+            lease_token,
+            cid,
+            target,
+            actor,
+            None,
+        )
+        .await
+        .expect("execute_ban");
+        let _ = buzz_db::relay_admin_actions::finalize_success(
+            pool,
+            action_id,
+            cid,
+            report_id,
+            "resolved",
+            actor,
+            "ban",
+            Some(target),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("finalize");
+        let notice_outbox_id: uuid::Uuid = sqlx::query_scalar(
+            "SELECT id FROM relay_admin_outbox WHERE action_id = $1 AND task_type = 'reporter_notice'",
+        )
+        .bind(action_id)
+        .fetch_one(pool)
+        .await
+        .expect("reporter_notice outbox row");
+        (report_id, action_id, notice_outbox_id)
+    }
+
     #[tokio::test]
     #[ignore = "requires Postgres — reporter notice idempotency under concurrent delivery"]
     async fn reporter_notice_duplicate_delivery_persists_exactly_one() {
@@ -7390,86 +7471,16 @@ mod postgres_tests {
         let (community_id, _host) = e2e_community(&pool, "notice-overlap").await;
         let target = vec![31u8; 32];
         let actor = vec![32u8; 32];
-        let cid = buzz_core::CommunityId::from_uuid(community_id);
-
-        // Insert a report using the standard helper (handles correct column names
-        // and types for `moderation_reports`).
-        let report_id = e2e_report_pubkey(&pool, community_id, &target).await;
-
-        // Finalize an action so we have an action_id.
-        let action_id = match buzz_db::relay_admin_actions::claim_report(
-            &pool,
-            cid,
-            report_id,
-            uuid::Uuid::new_v4(),
-            &actor,
-            "operator",
-            "ban",
-            None,
-            None,
-            "resolve:ban",
-            "relay_operator",
-            Some(&target),
-            None,
-            None,
-        )
-        .await
-        .expect("claim")
-        {
-            buzz_db::relay_admin_actions::ClaimResult::Claimed(a) => a.id,
-            other => panic!("expected Claimed, got {other:?}"),
-        };
-        let _ = buzz_db::relay_admin_actions::begin_enforcing(&pool, action_id)
-            .await
-            .expect("begin_enforcing");
-        let lt = match buzz_db::relay_admin_actions::acquire_action_lease(
-            &pool,
-            action_id,
-            chrono::Utc::now() + chrono::Duration::seconds(60),
-        )
-        .await
-        .expect("lease")
-        {
-            buzz_db::relay_admin_actions::LeaseResult::Acquired(t) => t,
-            other => panic!("{other:?}"),
-        };
-        let _ = buzz_db::relay_admin_actions::execute_ban_with_marker(
-            &pool, action_id, lt, cid, &target, &actor, None,
-        )
-        .await
-        .expect("execute_ban");
-        let _ = buzz_db::relay_admin_actions::finalize_success(
-            &pool,
-            action_id,
-            cid,
-            report_id,
-            "resolved",
-            &actor,
-            "ban",
-            Some(&target),
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .expect("finalize");
-
-        // Find the reporter_notice outbox row created by finalize_success.
-        let notice_outbox_id: uuid::Uuid = sqlx::query_scalar(
-            "SELECT id FROM relay_admin_outbox WHERE action_id = $1 AND task_type = 'reporter_notice'",
-        )
-        .bind(action_id)
-        .fetch_one(&pool)
-        .await
-        .expect("reporter_notice outbox row");
+        let (_warm_report_id, _action_id, notice_outbox_id) =
+            e2e_reporter_notice_action(&pool, community_id, &target, &actor).await;
 
         // Pre-warm: deliver once through the full production path so the DM channel
         // is created (open_dm is check-then-insert; concurrent creation races on the
         // unique participant_hash index). After this delivery the DM channel exists,
-        // so both concurrent workers will hit the idempotent fast path. Delete the
-        // resulting events and reset the outbox row so the actual overlap test starts
-        // from a clean state.
+        // so both concurrent workers will hit the idempotent fast path. The warm-up
+        // kind-9 event is retained because ordinary SQL deletion of signed originals
+        // is intentionally forbidden; a fresh action/outbox row supplies a new
+        // idempotency anchor for the overlap assertion below.
         let state = state_from_pool(pool.clone()).await;
         {
             let lease_until = chrono::Utc::now() + chrono::Duration::seconds(30);
@@ -7484,23 +7495,8 @@ mod postgres_tests {
                 .expect("notice row in warmup batch");
             crate::handlers::admin_outbox_worker::deliver_one(&state, &warm_row).await;
         }
-        // Delete the events produced by the warm-up (kind:9 notice + discovery/profile
-        // events) so the concurrent test proves fresh insertion, not dedup against
-        // warm-up artefacts.
-        sqlx::query("DELETE FROM events WHERE community_id = $1")
-            .bind(community_id)
-            .execute(&pool)
-            .await
-            .expect("delete warmup events");
-        // Reset outbox row to pending so it can be re-claimed.
-        sqlx::query(
-            "UPDATE relay_admin_outbox SET state = 'pending', outbox_claim_token = NULL, \
-             held_by = NULL, lease_expires_at = NULL, attempt_count = 0 WHERE id = $1",
-        )
-        .bind(notice_outbox_id)
-        .execute(&pool)
-        .await
-        .expect("reset outbox row for overlap test");
+        let (report_id, _fresh_action_id, notice_outbox_id) =
+            e2e_reporter_notice_action(&pool, community_id, &target, &actor).await;
 
         // Worker A claims the outbox row and captures the stable created_at.
         let lease_until_a = chrono::Utc::now() + chrono::Duration::seconds(30);
