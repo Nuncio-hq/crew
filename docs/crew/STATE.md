@@ -66,5 +66,5 @@ Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
   [#346](https://github.com/Nuncio-hq/crew/issues/346) (mention-recipients
   composer case first — likely a real bug).
 - Observer priority preserves causal order and two-urgent/one-normal fairness
-  (#352, D-075 item 6); installed-runtime latency and receipt/control settling
-  remain unverified. See [scheduling limits](ARCHITECTURE.md#observer-completion-scheduling-352).
+  (#352, D-075 item 6). The historical 5–10 s under-load symptom has not been
+  remeasured in staging. See [scheduling and control limits](ARCHITECTURE.md#observer-completion-scheduling-352).

@@ -236,6 +236,12 @@ Validated receipts already match the exact agent, triggering event, session
 and turn when projecting a healthy thread's Ready to review badge. This is
 distinct from observer-driven live control targets and founder acceptance.
 Error, disconnected and stalled attention retain their existing precedence.
+During harness finalization, a task record can outlive its control receiver.
+Cancel and model-switch report a sent signal only when the receiver accepts
+it. A closed receiver preserves the existing fallbacks: cancel drains that
+conversation's queued work or reports no active turn; model-switch reports
+`turn_ending` while the task record remains. Receipts do not hide live controls
+or change the model picker's live-switch/default-setting decision.
 
 ## CompanyOS prototype integration boundary
 

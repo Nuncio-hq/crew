@@ -140,7 +140,11 @@ test("receipt before observer completion settles the exact badge, not control au
     ingestAgentReceiptEvent(event, parent, ancestry, projectionOwner),
     false,
   );
-  syncAgentTurnsFromEvents(AGENT, [observer(2, "turn_completed")]);
-  assert.equal(view()?.state, "running", "late T1 terminal must not remove T2");
+  syncAgentTurnsFromEvents(AGENT, [observer(4, "turn_completed")]);
+  assert.equal(
+    view()?.state,
+    "running",
+    "later-sequence T1 terminal must not remove T2",
+  );
   assert.equal(getActiveTurnControlTargetsForAgent(AGENT)[0].turnId, "turn-2");
 });

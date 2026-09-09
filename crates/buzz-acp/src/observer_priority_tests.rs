@@ -53,7 +53,7 @@ async fn completion_channel_gets_first_legal_slot_under_three_channel_chunk_back
     assert_eq!(queue.dropped_events, 0);
     let start = tokio::time::Instant::now();
     let mut tick = tokio::time::interval_at(start + OBSERVER_PUBLISH_TICK, OBSERVER_PUBLISH_TICK);
-    // The fake relay allows every tick; each tick consumes exactly one legal slot.
+    // An unrestricted slot fixture: every tick permits one queue selection.
     let mut slots = 0;
     let mut completion_slot = None;
     let mut channels = Vec::new();

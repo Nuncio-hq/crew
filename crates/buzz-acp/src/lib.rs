@@ -6,6 +6,8 @@ mod channel_membership_signal;
 mod channel_subscription_updates;
 mod compaction_signal;
 mod config;
+#[cfg(test)]
+mod control_delivery_tests;
 mod conversation;
 mod cowork_turn;
 mod declared_plan;
@@ -1326,8 +1328,8 @@ fn handle_switch_model_control(
 
     let status = if turn_in_flight {
         // Busy path: deliver over the oneshot. `false` means the oneshot was
-        // already consumed this turn (a prior cancel/interrupt) — the turn is
-        // already ending, so the switch cannot land on it.
+        // already consumed or its receiver closed during finalization — the
+        // turn is ending, so the switch cannot land on it.
         let fired = if let Some(turn_id) = turn_id {
             signal_in_flight_turn(
                 pool,
@@ -4074,7 +4076,7 @@ fn mode_gate_signal(
 }
 
 /// Send a control signal to the in-flight task for `channel_id`.
-/// Returns `true` if a signal was sent, `false` if no in-flight task was found.
+/// Returns `true` only if the task's control receiver accepted the signal.
 fn signal_in_flight_task(
     pool: &mut AgentPool,
     conversation_id: uuid::Uuid,
@@ -4103,13 +4105,15 @@ fn signal_in_flight_task(
 
     if let Some(meta) = task_id.and_then(|task_id| pool.task_map_mut().get_mut(&task_id)) {
         if let Some(tx) = meta.control_tx.take() {
+            if tx.send(mode.clone()).is_err() {
+                return false;
+            }
             tracing::info!(
                 channel = %routing_channel_id,
                 conversation = %conversation_id,
                 ?mode,
                 "control signal sent to in-flight task"
             );
-            let _ = tx.send(mode);
             return true;
         }
     }
@@ -4124,8 +4128,10 @@ fn signal_in_flight_turn(pool: &mut AgentPool, turn_id: &str, mode: ControlSigna
         .find_map(|(task_id, meta)| (meta.turn_id == turn_id).then_some(*task_id));
     if let Some(meta) = task_id.and_then(|task_id| pool.task_map_mut().get_mut(&task_id)) {
         if let Some(tx) = meta.control_tx.take() {
+            if tx.send(mode.clone()).is_err() {
+                return false;
+            }
             tracing::info!(turn = %turn_id, ?mode, "control signal sent to exact in-flight turn");
-            let _ = tx.send(mode);
             return true;
         }
     }
