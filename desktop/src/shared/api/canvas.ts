@@ -8,6 +8,9 @@ type RawCanvasResponse = {
   contact_pubkey?: string | null;
   crew_authority?: "absent" | "owner" | "foreign";
   crew_parse_state?: "absent" | "valid" | "invalid";
+  stored_assignments?: Record<string, string>;
+  stored_routing?: Record<string, string>;
+  stored_capabilities?: Record<string, string[]>;
   updated_at: number | null;
   author: string | null;
   routing: {
@@ -38,6 +41,9 @@ export async function getCanvas(channelId: string): Promise<CanvasResponse> {
     contactPubkey: response.contact_pubkey ?? null,
     crewAuthority: response.crew_authority ?? "absent",
     crewParseState: response.crew_parse_state ?? "absent",
+    storedAssignments: response.stored_assignments ?? {},
+    storedRouting: response.stored_routing ?? {},
+    storedCapabilities: response.stored_capabilities ?? {},
     updatedAt: response.updated_at ?? null,
     author: response.author ?? null,
     routing: response.routing.map((entry) => ({

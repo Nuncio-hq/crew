@@ -309,11 +309,15 @@ Retries first load that UUID and validate the original channel/member intent.
 Only unchanged or applied completes the outer cleanup; other outcomes retain
 recovery. This integration contract does not prove the full deletion workflow.
 
-UI integration remains tracked by #350 and is not included in the native
-checkpoint. The dialog must retain its draft on conflict or partial delivery,
-expose status and manual retry, and require explicit replacement after reviewing
-a newer canvas. Raw unresolved assignments must remain visible and preserved
-until explicitly removed.
+The #350 Manage roles dialog is reached through the existing channel Canvas
+section. It loads current canvas and member data between native scope captures,
+keeps role/contact edits in temporary form state, and fences queued results on
+scope changes. It retains the draft on conflict or partial delivery, exposes
+read-only status checks and explicit manual retry, and requires explicit draft
+replacement after reviewing a newer canvas. Raw unresolved assignments remain
+visible and preserved until explicitly removed. Multi-holder roles still use
+the existing one-role-per-agent assignment map; checking a different role moves
+that agent, and removing an in-use role requires explicit reference cleanup.
 The existing raw `set_canvas` command remains a separate review/edit path without
 an expected-head guard. Existing ACP sessions keep their cached canvas until
 explicit restart; configuration saves do not hot-refresh those sessions. Full

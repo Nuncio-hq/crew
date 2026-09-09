@@ -23,6 +23,9 @@ test("getCanvas retains the native head and editable role metadata", async () =>
           contact_pubkey: "contact",
           crew_authority: "owner",
           crew_parse_state: "valid",
+          stored_assignments: { " bad-key ": " Review ", "bad-key": "Ghost" },
+          stored_routing: { audit: "Code Review" },
+          stored_capabilities: { "code review": ["buzz-dev-mcp"] },
           dev_mcp_granted: null,
           crew_parse_error: null,
         };
@@ -38,6 +41,14 @@ test("getCanvas retains the native head and editable role metadata", async () =>
     assert.equal(canvas.contactPubkey, "contact");
     assert.equal(canvas.crewAuthority, "owner");
     assert.equal(canvas.crewParseState, "valid");
+    assert.deepEqual(canvas.storedAssignments, {
+      " bad-key ": " Review ",
+      "bad-key": "Ghost",
+    });
+    assert.deepEqual(canvas.storedRouting, { audit: "Code Review" });
+    assert.deepEqual(canvas.storedCapabilities, {
+      "code review": ["buzz-dev-mcp"],
+    });
   } finally {
     globalThis.window = previous;
   }

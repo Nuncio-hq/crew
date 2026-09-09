@@ -2058,7 +2058,7 @@ from this amendment.
 
 - **Status:** Accepted architecture; implementation in progress, not shipped
 - **Date:** 2026-09-09
-- **Issues:** #362, #363, #364; shared Project recovery consumer
+- **Issues:** #350, #362, #363, #364; shared Project recovery consumer
 - **Seams:** existing addressable-event replacement transaction and coordinate lock, kind 30623 Wiki, kinds 30617/30621 Project, native identity/workspace state, and existing rusqlite dependency
 
 The relay remains domain authority. A native SQLite recovery journal records exact signed events and unresolved side effects before publication. It does not become a page cache, Project registry, or second domain database.
@@ -2090,6 +2090,15 @@ available.
 **Bounds and retention.** Each entire signed Wiki event is at most 192 KiB UTF-8; a publication has at most 256 pages and 64 MiB. Relay admission limits reserved live Wiki rows to 512 MiB and 4096 events per owner/community under owner-then-coordinate locks; exact replay adds no usage. This bounds logical live data, not physical soft-deleted/audit storage. There is no prune/GC API or control in the first release. Failed uploads also consume quota. `restricted: wiki-storage-quota` preserves the current head and explains that safe reclamation is unsupported, requiring administrator remediation or future reviewed tooling. Neither historical lineage nor local preflight proves cross-client deletion safety.
 
 **Native operation recovery.** `owner-operations/recovery.db` uses private directories/files, canonicalizes the trusted existing platform app-data anchor, rejects symlink paths below that anchor, and fails visibly on corrupt or future schemas without reset. `BEGIN IMMEDIATE`, `synchronous=FULL`, `journal_mode=DELETE`, `temp_store=MEMORY`, and a 250 ms busy limit protect whole-record CAS and owner-wide quota. No transaction spans external IO. Scope is native owner plus canonical HTTP community origin; an unresolved `(owner, community, kind, resource_key)` claim remains unique regardless of status. Same ID/equal payload is replay, same ID/different intent conflicts, and competing resource creation returns the existing operation. Only domain-reconciled records can be removed. Fixed native admission permits 100 unresolved `ChannelCrewConfig` operations per owner/community at 1 MiB per complete serialized record (including event envelopes). Other kinds collectively retain 16 unresolved operations per owner and 64 MiB per record. All kinds share the 256 MiB owner cap. Kind size applies to creation intent, encode/update, and load before allocation; callers cannot override policy. Reconciled history remains at most 100 entries/30 days; the admission transaction also evicts oldest reconciled history under byte pressure including the incoming snapshot. Unresolved rows are never evicted. Update timestamps clamp to the previous timestamp when the wall clock moves backward. A resource claim is not an execution lease; the domain owns timed worker-token/revision recovery. Automatic retry is bounded to five attempts before explicit recovery.
+
+**Channel canvas consumer (#350).** Role edits and member cleanup use this shared
+journal rather than the retention-DB placement originally proposed in the issue.
+Kind 40100 remains an ordinary historical event: expected-head checks and
+canonical post-ACK readback provide optimistic protection, not the conditional
+publication extension above. The Crew-owned domain owns exact-event retry,
+partial announcement status and explicit supersession; see
+[Architecture](ARCHITECTURE.md) for the implemented lifecycle and remaining
+acceptance gates.
 
 **Scope fencing.** Native capture and revalidation bind workspace generation, identity generation, owner, and canonical origin, including A→B→A. Every committed key replacement increments identity generation with Release before swap through a helper requiring the held identity-mutation guard. Capture takes the workspace lock without advancing its generation, then the identity lock off the executor; `signing_keys()` retains recovery failures. Workspace relay/key mutation holds the identity lock only for the short mutation block, never filesystem IO or await. Field locks use keys-then-relay order, matching the existing workspace reader; acquire every needed field lock before changing either field. Startup resolution, runtime import, pairing import, and workspace key replacement all use the shared seam. Returned tokens also fence consumer application and subsequent side effects.
 

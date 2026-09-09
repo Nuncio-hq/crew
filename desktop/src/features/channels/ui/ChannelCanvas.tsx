@@ -1,8 +1,12 @@
 import { Pencil, Save, X } from "lucide-react";
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCommunities } from "@/features/communities/useCommunities";
+import { useIdentityQuery } from "@/shared/api/hooks";
+import { ChannelRolesDialog } from "./ChannelRolesDialog";
+import { useChannelCanvasLive } from "../hooks/useChannelCanvasLive";
 
 import {
-  useAssignChannelAgentRoleMutation,
   useCanvasQuery,
   useSetCanvasMutation,
 } from "@/features/channels/hooks";
@@ -28,7 +32,17 @@ export function ChannelCanvas({
 }: ChannelCanvasProps) {
   const canvasQuery = useCanvasQuery(channelId, channelId !== null);
   const setCanvasMutation = useSetCanvasMutation(channelId);
-  const assignRoleMutation = useAssignChannelAgentRoleMutation(channelId);
+  const queryClient = useQueryClient();
+  const { activeCommunity, reinitKey } = useCommunities();
+  const identity = useIdentityQuery();
+  const editorScope = `${activeCommunity?.id}:${reinitKey}:${identity.data?.pubkey}:${identity.dataUpdatedAt}:${channelId}`;
+  const liveError = useChannelCanvasLive(channelId, editorScope);
+  const [rolesScope, setRolesScope] = React.useState<string | null>(null);
+  const [savedHead, setSavedHead] = React.useState<{
+    scope: string;
+    id: string | null;
+    observedAt: number;
+  } | null>(null);
   const { channels } = useChannelNavigation();
   const channelNames = React.useMemo(
     () => channels.filter((c) => c.channelType !== "dm").map((c) => c.name),
@@ -36,9 +50,6 @@ export function ChannelCanvas({
   );
   const [isEditing, setIsEditing] = React.useState(false);
   const [draft, setDraft] = React.useState("");
-  const [assignmentAgent, setAssignmentAgent] = React.useState("");
-  const [assignmentLabel, setAssignmentLabel] = React.useState("");
-  const [assignmentDefinition, setAssignmentDefinition] = React.useState("");
 
   const canvasContent = canvasQuery.data?.content ?? null;
   const routing = canvasQuery.data?.routing ?? [];
@@ -68,13 +79,24 @@ export function ChannelCanvas({
     return <p className="text-sm text-muted-foreground">Loading canvas...</p>;
   }
 
-  if (canvasQuery.error instanceof Error) {
+  if (canvasQuery.error instanceof Error && !canvasQuery.data) {
     return (
-      <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-        {isRelayUnreachableError(canvasQuery.error)
-          ? RELAY_UNREACHABLE_SHORT
-          : canvasQuery.error.message}
-      </p>
+      <div className="space-y-2">
+        <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {isRelayUnreachableError(canvasQuery.error)
+            ? RELAY_UNREACHABLE_SHORT
+            : canvasQuery.error.message}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            void canvasQuery.refetch();
+          }}
+        >
+          Refresh canvas
+        </Button>
+      </div>
     );
   }
 
@@ -128,6 +150,53 @@ export function ChannelCanvas({
 
   return (
     <div className="space-y-3">
+      {canvasQuery.error instanceof Error ? (
+        <p role="alert" className="text-sm text-destructive">
+          Canvas refresh failed. The previous version remains visible.
+        </p>
+      ) : null}
+      {liveError ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {liveError}
+        </p>
+      ) : null}
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={canvasQuery.isFetching}
+        onClick={() => {
+          void canvasQuery.refetch();
+        }}
+      >
+        Refresh canvas
+      </Button>
+      {channelId && canEdit && !isArchived && rolesScope === editorScope ? (
+        <ChannelRolesDialog
+          key={`${editorScope}:${channelId}`}
+          channelId={channelId}
+          onClose={() => setRolesScope(null)}
+          onApplied={(id) => {
+            setSavedHead({
+              scope: `${editorScope}:${channelId}`,
+              id,
+              observedAt: canvasQuery.dataUpdatedAt,
+            });
+            setRolesScope(null);
+            void queryClient.invalidateQueries({
+              queryKey: ["channel-canvas", channelId],
+            });
+          }}
+        />
+      ) : null}
+      {savedHead?.scope === `${editorScope}:${channelId}` ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {canvasQuery.dataUpdatedAt > savedHead.observedAt &&
+          canvasQuery.data?.eventId !== savedHead.id
+            ? "A newer canvas replaced your saved roles."
+            : "Roles are current on the relay. Existing sessions need a restart to load the changes."}
+        </p>
+      ) : null}
       {canvasContent ? (
         <div
           className="rounded-2xl border border-border/70 bg-muted/20 px-4 py-3"
@@ -216,89 +285,15 @@ export function ChannelCanvas({
             <Pencil className="h-4 w-4" />
             {canvasContent ? "Edit canvas" : "Create canvas"}
           </Button>
-          <div className="basis-full space-y-2 rounded-xl border border-border/70 p-3">
-            <p className="text-sm font-medium">Assign an agent role</p>
-            <input
-              aria-label="Agent pubkey"
-              className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
-              onChange={(event) => setAssignmentAgent(event.target.value)}
-              placeholder="Agent pubkey (hex or npub)"
-              value={assignmentAgent}
-            />
-            <input
-              aria-label="Role label"
-              className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
-              onChange={(event) => setAssignmentLabel(event.target.value)}
-              placeholder="Role label"
-              value={assignmentLabel}
-            />
-            <Textarea
-              aria-label="Role definition"
-              className="min-h-20 text-sm"
-              onChange={(event) => setAssignmentDefinition(event.target.value)}
-              placeholder="Allowed, not-allowed, and redirect definition"
-              value={assignmentDefinition}
-            />
-            <Button
-              data-testid="channel-canvas-assign-role"
-              disabled={
-                assignRoleMutation.isPending ||
-                !assignmentAgent.trim() ||
-                !assignmentLabel.trim() ||
-                !assignmentDefinition.trim()
-              }
-              onClick={() => {
-                assignRoleMutation.mutate({
-                  agentPubkey: assignmentAgent,
-                  label: assignmentLabel,
-                  definition: assignmentDefinition,
-                });
-              }}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              {assignRoleMutation.isPending ? "Assigning..." : "Assign role"}
-            </Button>
-            <p className="text-xs text-muted-foreground">
-              If another author last edited this canvas, the default assignment
-              is refused. An explicit overwrite will discard that foreign canvas
-              content and replace it with a founder-signed canvas.
-            </p>
-            {assignRoleMutation.error instanceof Error &&
-            assignRoleMutation.error.message.includes(
-              "review it before assigning",
-            ) ? (
-              <Button
-                data-testid="channel-canvas-overwrite-foreign"
-                disabled={assignRoleMutation.isPending}
-                onClick={() => {
-                  assignRoleMutation.mutate({
-                    agentPubkey: assignmentAgent,
-                    label: assignmentLabel,
-                    definition: assignmentDefinition,
-                    overwriteForeignCanvas: true,
-                  });
-                }}
-                size="sm"
-                type="button"
-                variant="destructive"
-              >
-                Discard foreign canvas and assign
-              </Button>
-            ) : null}
-          </div>
-          {assignRoleMutation.error instanceof Error ? (
-            <p className="basis-full text-sm text-destructive">
-              {assignRoleMutation.error.message}
-            </p>
-          ) : null}
-          {assignRoleMutation.isSuccess ? (
-            <p className="basis-full text-sm text-muted-foreground">
-              Assigned {assignmentLabel} to {assignmentAgent}; announcement
-              published.
-            </p>
-          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="channel-manage-roles"
+            onClick={() => setRolesScope(editorScope)}
+          >
+            Manage roles
+          </Button>
         </div>
       ) : null}
     </div>

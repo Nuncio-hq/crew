@@ -1,0 +1,262 @@
+import assert from "node:assert/strict";
+import { after, before, test } from "node:test";
+import { JSDOM } from "jsdom";
+
+const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+  url: "http://localhost",
+});
+before(() =>
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  }),
+);
+after(() => dom.window.close());
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+async function mount({
+  pending = true,
+  pendingOutcome = "not_committed",
+} = {}) {
+  const { act, renderHook } = await import("@testing-library/react");
+  const { useChannelRoleEditor } = await import("./useChannelRoleEditor.ts");
+  const token = {
+    scope: { owner: "a".repeat(64), community: "http://localhost" },
+    workspace_generation: 1,
+    identity_generation: 1,
+  };
+  const progress = {
+    operation_id: "operation-one",
+    canvas_event_id: "saved-head",
+    current_event_id: "saved-head",
+    outcome: pendingOutcome,
+    automatic_retry_at: null,
+    manual_retry_required: true,
+  };
+  const requests = [];
+  const applied = [];
+  const calls = [];
+  window.__TAURI_INTERNALS__ = {
+    invoke: async (command) => {
+      calls.push(command);
+      if (command === "owner_operation_scope") return token;
+      if (command === "get_canvas")
+        return {
+          content: "# Latest",
+          event_id: "latest-head",
+          definitions: [
+            { role_label: "Review", definition: "Inspect patches" },
+          ],
+          stored_assignments: {},
+          stored_routing: {},
+          stored_capabilities: {},
+          contact_pubkey: null,
+          crew_authority: "owner",
+          crew_parse_state: "valid",
+          routing: [],
+          assignments: [],
+          dev_mcp_granted: null,
+          crew_parse_error: null,
+        };
+      if (command === "list_relay_agents") return [];
+      if (command === "list_channel_crew_operations")
+        return { token, value: pending ? [progress] : [] };
+      if (
+        [
+          "get_channel_crew_operation",
+          "retry_channel_crew_config",
+          "save_channel_crew_config",
+        ].includes(command)
+      ) {
+        const request = deferred();
+        requests.push({ command, ...request });
+        return request.promise;
+      }
+      throw new Error(`Unexpected command ${command}`);
+    },
+  };
+  const hook = renderHook(() =>
+    useChannelRoleEditor("channel", (head) => applied.push(head)),
+  );
+  await act(async () => {});
+  assert.ok(hook.result.current.draft, "real hook finished its initial load");
+  return {
+    ...hook,
+    act,
+    requests,
+    calls,
+    applied,
+    reply: (outcome) => ({ token, value: { ...progress, outcome } }),
+  };
+}
+
+test("late status cannot restore an old operation after reviewed draft replacement", async () => {
+  const h = await mount();
+  try {
+    let first;
+    await h.act(async () => {
+      first = h.result.current.refresh();
+    });
+    let second;
+    await h.act(async () => {
+      second = h.result.current.refresh();
+    });
+    assert.equal(h.requests.length, 2);
+    await h.act(async () => {
+      h.requests[1].resolve(h.reply("superseded"));
+      await second;
+    });
+    await h.act(async () => {
+      await h.result.current.loadLatest();
+    });
+    await h.act(async () => {
+      h.result.current.replaceDraft();
+    });
+    await h.act(async () => {
+      h.result.current.setDraft((draft) => ({
+        ...draft,
+        roles: draft.roles.map((role) => ({
+          ...role,
+          label: "New reviewed draft",
+        })),
+      }));
+    });
+    assert.equal(h.result.current.operation, null);
+    await h.act(async () => {
+      h.requests[0].resolve(h.reply("applied"));
+      await first;
+    });
+    assert.equal(
+      h.applied.length,
+      0,
+      "late Applied must not close a newer draft",
+    );
+    assert.equal(
+      h.result.current.operation,
+      null,
+      "late status must not restore the retired operation",
+    );
+    assert.equal(h.result.current.draft.roles[0].label, "New reviewed draft");
+  } finally {
+    h.unmount();
+  }
+});
+
+test("an older status response cannot overwrite the newer manual retry result", async () => {
+  const h = await mount();
+  try {
+    let first, second;
+    await h.act(async () => {
+      first = h.result.current.refresh();
+    });
+    await h.act(async () => {
+      second = h.result.current.refresh(true);
+    });
+    assert.equal(h.requests[0].command, "get_channel_crew_operation");
+    assert.equal(h.requests[1].command, "retry_channel_crew_config");
+    await h.act(async () => {
+      h.requests[1].resolve(h.reply("canvas_committed_announcement_pending"));
+      await second;
+    });
+    await h.act(async () => {
+      h.requests[0].resolve(h.reply("not_committed"));
+      await first;
+    });
+    assert.equal(
+      h.result.current.progress.outcome,
+      "canvas_committed_announcement_pending",
+    );
+  } finally {
+    h.unmount();
+  }
+});
+
+test("same-tick saves claim the action before awaiting scope capture", async () => {
+  const h = await mount({ pending: false });
+  try {
+    let first, second;
+    await h.act(async () => {
+      first = h.result.current.save();
+      second = h.result.current.save();
+    });
+    assert.equal(
+      h.requests.length,
+      1,
+      "one user save must dispatch one native command",
+    );
+    await h.act(async () => {
+      h.requests[0].resolve({
+        ...h.reply("not_committed"),
+        value: { result: "conflict", current_event_id: "newer" },
+      });
+      await Promise.all([first, second]);
+    });
+  } finally {
+    for (const request of h.requests)
+      request.resolve({
+        ...h.reply("not_committed"),
+        value: { result: "conflict", current_event_id: "newer" },
+      });
+    h.unmount();
+  }
+});
+
+test("a retired operation cannot surface a late read failure in the replacement draft", async () => {
+  const h = await mount({ pendingOutcome: "superseded" });
+  try {
+    assert.equal(
+      h.result.current.conflict,
+      true,
+      "reopened superseded recovery exposes review",
+    );
+    let request;
+    await h.act(async () => {
+      request = h.result.current.refresh();
+    });
+    await h.act(async () => {
+      await h.result.current.loadLatest();
+    });
+    await h.act(async () => {
+      h.result.current.replaceDraft();
+    });
+    await h.act(async () => {
+      h.requests[0].reject(new Error("stale read failed"));
+      await request;
+    });
+    assert.equal(h.result.current.error, null);
+    assert.equal(h.result.current.operation, null);
+  } finally {
+    h.unmount();
+  }
+});
+
+test("same-tick manual retries claim one action while status reads remain read-only", async () => {
+  const h = await mount();
+  try {
+    let first, second, read;
+    await h.act(async () => {
+      first = h.result.current.refresh(true);
+      second = h.result.current.refresh(true);
+      read = h.result.current.refresh();
+    });
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].command, "retry_channel_crew_config");
+    await h.act(async () => {
+      h.requests[0].resolve(h.reply("not_committed"));
+      await Promise.all([first, second, read]);
+    });
+    assert.equal(h.result.current.busy, false);
+  } finally {
+    h.unmount();
+  }
+});
