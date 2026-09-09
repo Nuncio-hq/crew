@@ -11,6 +11,9 @@ pub enum WikiError {
     /// Git snapshot failed.
     #[error("git: {0}")]
     Git(String),
+    /// The selected Git repository has an unborn HEAD and no commits yet.
+    #[error("git: repository has no commits")]
+    EmptyGitTree,
     /// Generation failed (LLM or heuristic).
     #[error("generate: {0}")]
     Generate(String),
@@ -35,6 +38,7 @@ impl WikiError {
             Self::GenerateInProgress => "generate_in_progress",
             Self::NotFound => "not_found",
             Self::Git(_) => "git_error",
+            Self::EmptyGitTree => "git_error",
             Self::InvalidSteering(_) => "invalid_steering",
             Self::Generate(_) => "generate_failed",
             Self::Publish(_) => "publish_failed",

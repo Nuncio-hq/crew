@@ -230,6 +230,11 @@ fn resolve_ref(
                     .strip_prefix("refs/heads/")
                     .ok_or_else(|| unavailable("unsupported HEAD reference"))?
                     .to_owned();
+                let head_exists =
+                    reader.run(&["show-ref", "--verify", "--quiet", &reference], 1)?;
+                if !head_exists.success {
+                    return Err(WikiError::EmptyGitTree);
+                }
                 Ok((reference, branch))
             } else {
                 Ok(("HEAD".into(), String::new()))

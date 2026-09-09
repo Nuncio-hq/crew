@@ -107,14 +107,13 @@ pub async fn wiki_generate(
         }
         Ok(snapshot) => snapshot,
         Err(err) => {
-            return Ok(
-                match classify_from_git_failure(&root, &err.to_string(), true) {
-                    WikiLocalSnapshotError::MissingLocalPath => {
-                        missing_local_outcome(&owner, &repo_d, cost_note)
-                    }
-                    WikiLocalSnapshotError::EmptyTree => empty_outcome(&owner, &repo_d, cost_note),
-                },
-            );
+            return match classify_from_git_failure(&root, &err) {
+                WikiLocalSnapshotError::MissingLocalPath => {
+                    Ok(missing_local_outcome(&owner, &repo_d, cost_note))
+                }
+                WikiLocalSnapshotError::EmptyTree => Ok(empty_outcome(&owner, &repo_d, cost_note)),
+                WikiLocalSnapshotError::CaptureFailed => Err(err.to_string()),
+            };
         }
     };
 
@@ -237,5 +236,48 @@ mod tests {
         assert!(outcome.empty_repo);
         assert!(!outcome.missing_local_path);
         assert_eq!(outcome.pages, 0);
+    }
+
+    #[tokio::test]
+    async fn wiki_generate_propagates_invalid_committed_steering() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        for args in [
+            &["init"][..],
+            &["config", "user.email", "crew-wiki-tests@example.invalid"][..],
+            &["config", "user.name", "Crew Wiki Tests"][..],
+        ] {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(directory.path())
+                .status()
+                .expect("git command");
+            assert!(status.success(), "git command failed: {args:?}");
+        }
+        std::fs::create_dir_all(directory.path().join(".crew")).expect("steering directory");
+        std::fs::write(directory.path().join(".crew/wiki.json"), "{ invalid")
+            .expect("invalid steering");
+        for args in [
+            &["add", "."][..],
+            &["commit", "--quiet", "-m", "invalid steering"][..],
+        ] {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(directory.path())
+                .status()
+                .expect("git command");
+            assert!(status.success(), "git command failed: {args:?}");
+        }
+
+        let error = wiki_generate(
+            "ef".repeat(32),
+            "invalid-steering".to_owned(),
+            Some(directory.path().display().to_string()),
+        )
+        .await
+        .expect_err("invalid committed steering must not become an empty success");
+        assert!(
+            error.contains("invalid steering file"),
+            "unexpected worker error: {error}"
+        );
     }
 }
