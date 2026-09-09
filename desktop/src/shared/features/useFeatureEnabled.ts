@@ -94,7 +94,7 @@ export function useFeatureEnabled(featureId: string): boolean {
 
   const feature = getFeature(featureId);
   if (!feature) {
-    if (import.meta.env.DEV) {
+    if (import.meta.env?.DEV) {
       console.warn(
         `[FeatureFlags] Unknown feature id: "${featureId}". Check preview-features.json.`,
       );

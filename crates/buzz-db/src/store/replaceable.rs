@@ -9,33 +9,9 @@ use uuid::Uuid;
 use crate::observability::{self, LockType, TransactionOperation};
 use crate::{Db, DbError, Result};
 
-/// Result category for a parameterized-replaceable event write.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ParameterizedReplaceStatus {
-    /// The incoming event was inserted as the coordinate's live head.
-    Inserted,
-    /// The exact event was already accepted.
-    Duplicate,
-    /// A newer event, or lower-ID same-second event, already dominates it.
-    Superseded,
-    /// A requested current revision has no live coordinate head.
-    RevisionMissing,
-    /// The live coordinate head differs from the requested revision.
-    RevisionMismatch,
-    /// An exact replay was required, but the event is not the live head.
-    ReplayOnlyMiss,
-}
-
-/// Structural precondition for a parameterized-replaceable write.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ParameterizedReplacePrecondition<'a> {
-    /// Apply normal NIP-33 ordering without a revision precondition.
-    Unconditional,
-    /// Require the live head to match this validated event ID.
-    ExpectedRevision(&'a [u8]),
-    /// Accept only an exact live-head replay and perform no mutation otherwise.
-    ExactReplayOnly,
-}
+#[path = "replaceable_conditions.rs"]
+mod conditions;
+pub use conditions::{ParameterizedReplacePrecondition, ParameterizedReplaceStatus};
 
 /// Result of a transaction-bound parameterized-replaceable event write.
 #[derive(Clone, Debug)]
@@ -166,8 +142,14 @@ async fn replace_parameterized_event_in_transaction_impl(
         });
     let hard_delete_superseded = is_nip_rs || is_buzz_mesh_status;
 
-    let existing: Option<(DateTime<Utc>, Vec<u8>)> = sqlx::query_as(
-        "SELECT created_at, id FROM events \
+    let (guard_name, guard_value) = match precondition {
+        ParameterizedReplacePrecondition::RejectIfLiveHeadHasTag(name, value) => {
+            (Some(name), Some(value))
+        }
+        _ => (None, None),
+    };
+    let existing_row: Option<(DateTime<Utc>, Vec<u8>, bool)> = sqlx::query_as(
+        "SELECT created_at, id, EXISTS(SELECT 1 FROM jsonb_array_elements(tags) tag WHERE tag->>0=$5 AND tag->>1=$6) FROM events \
          WHERE community_id = $1 AND kind = $2 AND pubkey = $3 AND d_tag = $4 AND deleted_at IS NULL \
          ORDER BY created_at DESC, id ASC LIMIT 1",
     )
@@ -175,8 +157,14 @@ async fn replace_parameterized_event_in_transaction_impl(
     .bind(kind_i32)
     .bind(pubkey_bytes.as_slice())
     .bind(d_tag)
+    .bind(guard_name)
+    .bind(guard_value)
     .fetch_optional(&mut **tx)
     .await?;
+    let blocked_live_tag = existing_row
+        .as_ref()
+        .is_some_and(|(_, _, blocked)| *blocked);
+    let existing = existing_row.map(|(created_at, id, _)| (created_at, id));
     let watermark: Option<(DateTime<Utc>, Vec<u8>)> = if is_nip_rs {
         sqlx::query_as(
             "SELECT created_at, event_id FROM parameterized_event_watermarks \
@@ -205,6 +193,17 @@ async fn replace_parameterized_event_in_transaction_impl(
             received_at,
             channel_id,
             ParameterizedReplaceStatus::Duplicate,
+        ));
+    }
+
+    if (precondition == ParameterizedReplacePrecondition::ExpectedMissing && existing.is_some())
+        || blocked_live_tag
+    {
+        return Ok(ParameterizedReplaceResult::new(
+            event,
+            received_at,
+            channel_id,
+            ParameterizedReplaceStatus::RevisionMismatch,
         ));
     }
 
@@ -329,7 +328,7 @@ async fn replace_parameterized_event_in_transaction_impl(
             event,
             received_at,
             channel_id,
-            ParameterizedReplaceStatus::Duplicate,
+            ParameterizedReplaceStatus::DuplicateNotLive,
         ));
     }
 
@@ -362,6 +361,136 @@ async fn replace_parameterized_event_in_transaction_impl(
     ))
 }
 
+/// Replace a NIP-16 coordinate inside a caller-owned transaction.
+/// A savepoint preserves the caller's prior work when the event loses ordering
+/// or its ID already exists; replacement and mention indexing remain atomic.
+pub async fn replace_addressable_event_in_transaction(
+    parent: &mut Transaction<'_, Postgres>,
+    community_id: CommunityId,
+    event: &nostr::Event,
+    channel_id: Option<Uuid>,
+) -> Result<(StoredEvent, bool)> {
+    let kind_i32 = buzz_core::kind::event_kind_i32(event);
+    let pubkey_bytes = event.pubkey.to_bytes();
+    let created_at_secs = event.created_at.as_secs() as i64;
+    let created_at = chrono::DateTime::from_timestamp(created_at_secs, 0)
+        .ok_or(DbError::InvalidTimestamp(created_at_secs))?;
+
+    // Collisions only cause extra serialization; they cannot change behavior.
+    let lock_key = event_replacement_lock_key(
+        community_id,
+        kind_i32,
+        pubkey_bytes.as_slice(),
+        channel_id.as_ref().map(|id| id.as_bytes().as_slice()),
+    );
+
+    let mut tx = parent.begin().await?;
+    // Serialize all writers for the same (kind, pubkey, channel_id) tuple.
+    // Advisory lock is transaction-scoped — released on commit/rollback.
+    observability::observe_advisory_lock(
+        observability::LockType::Replacement,
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(lock_key)
+            .execute(&mut *tx),
+    )
+    .await?;
+
+    // Check for the newest existing event. ORDER BY + LIMIT 1 is defensive against
+    // historical data where prior bugs may have left multiple live rows.
+    let existing: Option<(chrono::DateTime<chrono::Utc>, Vec<u8>)> = sqlx::query_as(
+        "SELECT created_at, id FROM events \
+                 WHERE community_id = $1 AND kind = $2 AND pubkey = $3 \
+                 AND channel_id IS NOT DISTINCT FROM $4 \
+                 AND deleted_at IS NULL \
+                 ORDER BY created_at DESC, id ASC LIMIT 1",
+    )
+    .bind(community_id.as_uuid())
+    .bind(kind_i32)
+    .bind(pubkey_bytes.as_slice())
+    .bind(channel_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    // Stale-write protection: reject if incoming is not newer.
+    // NIP-16: created_at is second-resolution. On same-second tie, lowest
+    // event id (lexicographic) wins — deterministic across relays.
+    let incoming_id = event.id.as_bytes().as_slice();
+    if let Some((existing_ts, existing_id)) = existing {
+        let dominated = created_at < existing_ts
+            || (created_at == existing_ts && incoming_id >= existing_id.as_slice());
+        if dominated {
+            tx.rollback().await?;
+            let received_at = chrono::Utc::now();
+            return Ok((
+                StoredEvent::with_received_at(event.clone(), received_at, channel_id, false),
+                false,
+            ));
+        }
+    }
+
+    // Soft-delete the old event (if any). IS NOT DISTINCT FROM for NULL safety.
+    sqlx::query(
+        "UPDATE events SET deleted_at = NOW() \
+             WHERE community_id = $1 AND kind = $2 AND pubkey = $3 \
+             AND channel_id IS NOT DISTINCT FROM $4 \
+             AND deleted_at IS NULL",
+    )
+    .bind(community_id.as_uuid())
+    .bind(kind_i32)
+    .bind(pubkey_bytes.as_slice())
+    .bind(channel_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // Insert the new event inside the same transaction.
+    let sig_bytes = event.sig.serialize();
+    let tags_json = serde_json::to_value(&event.tags)?;
+    let received_at = chrono::Utc::now();
+    let d_tag = crate::event::extract_d_tag(event);
+
+    let insert_result = sqlx::query(
+            "INSERT INTO events (community_id, id, pubkey, created_at, kind, tags, content, sig, received_at, channel_id, d_tag) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(community_id.as_uuid())
+        .bind(event.id.as_bytes().as_slice())
+        .bind(pubkey_bytes.as_slice())
+        .bind(created_at)
+        .bind(kind_i32)
+        .bind(&tags_json)
+        .bind(&event.content)
+        .bind(sig_bytes.as_slice())
+        .bind(received_at)
+        .bind(channel_id)
+        .bind(d_tag.as_deref())
+        .execute(&mut *tx)
+        .await?;
+
+    let was_inserted = insert_result.rows_affected() > 0;
+    if !was_inserted {
+        // ON CONFLICT fired — the event ID already exists. Rollback the
+        // soft-delete so we don't lose the previous replaceable event.
+        tx.rollback().await?;
+        return Ok((
+            StoredEvent::with_received_at(event.clone(), received_at, channel_id, false),
+            false,
+        ));
+    }
+
+    // The replaceable event and its denormalized mention index are one
+    // authoritative discovery write. An indexing error must roll back the
+    // new event and restore the previously-live event.
+    crate::insert_mentions_in_transaction(&mut tx, community_id, event, channel_id).await?;
+
+    tx.commit().await?;
+
+    Ok((
+        StoredEvent::with_received_at(event.clone(), received_at, channel_id, true),
+        true,
+    ))
+}
+
 impl Db {
     /// Atomically replace a replaceable event: NIP-16 kinds (0, 3, 41, 10000–19999)
     /// and NIP-29 discovery state (39000–39002, called from side_effects.rs).
@@ -377,145 +506,22 @@ impl Db {
         event: &nostr::Event,
         channel_id: Option<Uuid>,
     ) -> Result<(StoredEvent, bool)> {
-        let kind_i32 = buzz_core::kind::event_kind_i32(event);
-        let pubkey_bytes = event.pubkey.to_bytes();
-        let created_at_secs = event.created_at.as_secs() as i64;
-        let created_at = chrono::DateTime::from_timestamp(created_at_secs, 0)
-            .ok_or(DbError::InvalidTimestamp(created_at_secs))?;
-
-        // Collisions only cause extra serialization; they cannot change behavior.
-        let lock_key = event_replacement_lock_key(
-            community_id,
-            kind_i32,
-            pubkey_bytes.as_slice(),
-            channel_id.as_ref().map(|id| id.as_bytes().as_slice()),
-        );
-
-        let (mut tx, transaction_timer) = observability::begin_transaction(
+        let (mut tx, timer) = observability::begin_transaction(
             &self.pool,
             observability::TransactionOperation::ReplaceAddressableEvent,
         )
         .await?;
-
-        transaction_timer
+        timer
             .observe(async {
-                // Serialize all writers for the same (kind, pubkey, channel_id) tuple.
-                // Advisory lock is transaction-scoped — released on commit/rollback.
-                observability::observe_advisory_lock(
-                    observability::LockType::Replacement,
-                    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-                        .bind(lock_key)
-                        .execute(&mut *tx),
+                let result = replace_addressable_event_in_transaction(
+                    &mut tx,
+                    community_id,
+                    event,
+                    channel_id,
                 )
                 .await?;
-
-                // Check for the newest existing event. ORDER BY + LIMIT 1 is defensive against
-                // historical data where prior bugs may have left multiple live rows.
-                let existing: Option<(chrono::DateTime<chrono::Utc>, Vec<u8>)> =
-                    sqlx::query_as(
-                        "SELECT created_at, id FROM events \
-                         WHERE community_id = $1 AND kind = $2 AND pubkey = $3 \
-                         AND channel_id IS NOT DISTINCT FROM $4 \
-                         AND deleted_at IS NULL \
-                         ORDER BY created_at DESC, id ASC LIMIT 1",
-                    )
-                    .bind(community_id.as_uuid())
-                    .bind(kind_i32)
-                    .bind(pubkey_bytes.as_slice())
-                    .bind(channel_id)
-                    .fetch_optional(&mut *tx)
-                    .await?;
-
-                // Stale-write protection: reject if incoming is not newer.
-                // NIP-16: created_at is second-resolution. On same-second tie, lowest
-                // event id (lexicographic) wins — deterministic across relays.
-                let incoming_id = event.id.as_bytes().as_slice();
-                if let Some((existing_ts, existing_id)) = existing {
-                    let dominated = created_at < existing_ts
-                        || (created_at == existing_ts
-                            && incoming_id >= existing_id.as_slice());
-                    if dominated {
-                        tx.rollback().await?;
-                        let received_at = chrono::Utc::now();
-                        return Ok((
-                            StoredEvent::with_received_at(
-                                event.clone(),
-                                received_at,
-                                channel_id,
-                                false,
-                            ),
-                            false,
-                        ));
-                    }
-                }
-
-                // Soft-delete the old event (if any). IS NOT DISTINCT FROM for NULL safety.
-                sqlx::query(
-                    "UPDATE events SET deleted_at = NOW() \
-                     WHERE community_id = $1 AND kind = $2 AND pubkey = $3 \
-                     AND channel_id IS NOT DISTINCT FROM $4 \
-                     AND deleted_at IS NULL",
-                )
-                .bind(community_id.as_uuid())
-                .bind(kind_i32)
-                .bind(pubkey_bytes.as_slice())
-                .bind(channel_id)
-                .execute(&mut *tx)
-                .await?;
-
-                // Insert the new event inside the same transaction.
-                let sig_bytes = event.sig.serialize();
-                let tags_json = serde_json::to_value(&event.tags)?;
-                let received_at = chrono::Utc::now();
-                let d_tag = crate::event::extract_d_tag(event);
-
-                let insert_result = sqlx::query(
-                    "INSERT INTO events (community_id, id, pubkey, created_at, kind, tags, content, sig, received_at, channel_id, d_tag) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
-                     ON CONFLICT DO NOTHING",
-                )
-                .bind(community_id.as_uuid())
-                .bind(event.id.as_bytes().as_slice())
-                .bind(pubkey_bytes.as_slice())
-                .bind(created_at)
-                .bind(kind_i32)
-                .bind(&tags_json)
-                .bind(&event.content)
-                .bind(sig_bytes.as_slice())
-                .bind(received_at)
-                .bind(channel_id)
-                .bind(d_tag.as_deref())
-                .execute(&mut *tx)
-                .await?;
-
-                let was_inserted = insert_result.rows_affected() > 0;
-                if !was_inserted {
-                    // ON CONFLICT fired — the event ID already exists. Rollback the
-                    // soft-delete so we don't lose the previous replaceable event.
-                    tx.rollback().await?;
-                    return Ok((
-                        StoredEvent::with_received_at(
-                            event.clone(),
-                            received_at,
-                            channel_id,
-                            false,
-                        ),
-                        false,
-                    ));
-                }
-
-                // The replaceable event and its denormalized mention index are one
-                // authoritative discovery write. An indexing error must roll back the
-                // new event and restore the previously-live event.
-                crate::insert_mentions_in_transaction(&mut tx, community_id, event, channel_id)
-                    .await?;
-
                 tx.commit().await?;
-
-                Ok((
-                    StoredEvent::with_received_at(event.clone(), received_at, channel_id, true),
-                    true,
-                ))
+                Ok(result)
             })
             .await
     }
@@ -1366,7 +1372,7 @@ mod postgres_tests {
             .expect("evaluate soft-deleted duplicate");
         assert_eq!(
             result.status,
-            replaceable::ParameterizedReplaceStatus::Duplicate
+            replaceable::ParameterizedReplaceStatus::DuplicateNotLive
         );
 
         let live_id: Vec<u8> = sqlx::query_scalar(
@@ -1760,3 +1766,7 @@ mod postgres_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "conditional_publication_tests.rs"]
+pub(crate) mod conditional_publication_postgres_tests;

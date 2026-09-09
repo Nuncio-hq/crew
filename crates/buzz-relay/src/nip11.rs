@@ -293,6 +293,10 @@ pub(crate) async fn nip11_document(state: &crate::state::AppState, raw_host: &st
         admin_api.as_deref(),
         state.config.klipy.as_ref().map(|_| "klipy"),
     );
+    crate::handlers::channel_atomic_create::advertise(
+        &mut info.supported_extensions,
+        state.config.crew_atomic_channel_create,
+    );
     let tenant_host = if state.config.push_enabled {
         crate::tenant::bind_community(&state.db, raw_host)
             .await

@@ -245,6 +245,23 @@ or change the model picker's live-switch/default-setting decision.
 
 ## CompanyOS prototype integration boundary
 
+The #349 shell candidate mounts the existing Project sidebar projection and
+channel browser beneath the workspace menu. Project expansion preserves its
+repository coordinates; Wiki navigation carries the selected kind 30617
+address, and channel entries use the existing channel IDs. Removing the old
+channel groups from the visible sidebar does not delete their saved ordering
+or membership. Project and Workflow preview definitions are retired per D-078.
+The new Project Overview presentation is not yet mounted; its operation
+controller and native recovery dispatcher remain #361 acceptance work.
+
+The #361 relay candidate extends kind 9007 with the opt-in atomic creation and
+exact-event recovery contract in D-080. Its durable state remains in Buzz's
+channel, membership and event tables. All canonical discovery writers in this
+binary share the fenced snapshot transaction. Deployment requires every writer
+to be upgraded or quiesced before enabling `BUZZ_CREW_ATOMIC_CHANNEL_CREATE`;
+leaving the flag off rejects signed opt-in requests without a legacy fallback.
+The flag does not establish compatibility with older concurrent writers.
+
 The shared [design reference](../../design/companyos/README.md) is simulated; its `index.html#feasibility` contains the current code/GitHub audit and proposed backlog consolidation. Existing production UI already mounts per-agent declared plans and a PTY-backed terminal; their new prototype tabs are presentation integration, not new engines. The audit also distinguishes current canvas assignment UI from bulk editing/contact routing and API-backed guided handover from the proposed runtime-backed user recap. Compact thread activity can reuse `conversationActivityHeadline` and the observer transcript projection: ACP session updates feed message/thought/tool items, coalescing chunks and updating tool rows by identity without another model request. This is an implementation path, not evidence that the new UI is connected.
 
 Observer kind 24200 is ephemeral and owner-scoped, with NIP-44 encryption (`buzz-core/src/observer.rs`). A new card must preserve that access boundary, conversation/turn scoping and disconnected/missing-data states; channel membership alone does not grant access to raw telemetry. Runtime reasoning is displayed only when the adapter emits it. Complete history, multi-engine streaming and reconnect recovery require live verification.
@@ -396,3 +413,14 @@ checkout; its declared package version is not a binary fingerprint or an
 executed version result. Mutable source, wrappers, executable upgrades, model,
 profile, platform or enforcement changes invalidate any future positive proof.
 Exact local path observations and one-run logs belong to #351/task evidence.
+
+G-THREAD-1 v3 extends `toolPaneStore` with bounded scoped view selection, not a
+second resource/session store. `ThreadFocusForgeSplit` and `ChannelToolPane`
+consume exact channel/root-matched forge subjects; `FocusThreadDrawer` supplies
+the outer Escape gate. `resetCommunityState` clears preferences; a small new
+invalidation function binds confirmed mutation/query removal outcomes.
+`useDeclaredPlansForThread` and existing observer/control generation projections
+remain authoritative. Preserve `browserClose`/sim visibility cleanup; fence
+`browserOpen` and `simEnsureDevice` mount activation. The existing channel-only
+popout has independent window state and remains outside #354; governor resource
+identity/leases remain shared. D-078 records the bounded approved decision.

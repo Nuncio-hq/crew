@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   linkProjectLocalWorkspace,
   publishProjectAnnouncementAndReadBack,
+  unlinkProjectLocalWorkspace,
 } from "./lib/project-local-workspace-relay.ts";
 
 const OWNER = "a".repeat(64);
@@ -254,4 +255,51 @@ test("signed identity mismatch is rejected before publication", async () => {
   );
 
   assert.equal(publishCount, 0);
+});
+
+test("unlink preserves repository metadata and reads back without a local location", async () => {
+  const current = {
+    ...relayEvent({ id: "current", createdAt: 200 }),
+    tags: [
+      ["d", "crew"],
+      ["name", "Crew"],
+      ["buzz-channel", CHANNEL_ID],
+      ["buzz-location", "local", LOCAL_PATH],
+      ["crew-workspace-mode", "folder"],
+      ["future-tag", "preserve"],
+    ],
+  };
+  const saved = {
+    ...current,
+    id: "unlinked",
+    created_at: 300,
+    tags: current.tags.filter((tag) => tag[0] !== "buzz-location"),
+  };
+  let signedInput;
+  let fetchCount = 0;
+  const result = await unlinkProjectLocalWorkspace(
+    { owner: OWNER, currentPubkey: OWNER, dtag: "crew" },
+    {
+      fetchEvents: async () => (++fetchCount === 1 ? [current] : [saved]),
+      signRelayEvent: async (event) => {
+        signedInput = event;
+        return saved;
+      },
+      publishEvent: async () => {},
+    },
+  );
+  assert.equal(result.id, saved.id);
+  assert.deepEqual(signedInput.tags, saved.tags);
+  assert.equal(
+    signedInput.tags.some((tag) => tag[0] === "buzz-location"),
+    false,
+  );
+  assert.deepEqual(
+    signedInput.tags.find((tag) => tag[0] === "crew-workspace-mode"),
+    ["crew-workspace-mode", "folder"],
+  );
+  assert.deepEqual(
+    signedInput.tags.find((tag) => tag[0] === "future-tag"),
+    ["future-tag", "preserve"],
+  );
 });

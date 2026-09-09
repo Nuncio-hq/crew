@@ -3303,6 +3303,14 @@ async fn ingest_event_inner(
 
     // Track pre-created channel UUID for compensation on insert failure.
     let mut pre_created_channel: Option<Uuid> = None;
+    let atomic_channel_create =
+        super::channel_atomic_create::requested(&event, state.config.crew_atomic_channel_create)
+            .map_err(IngestError::Rejected)?;
+    if atomic_channel_create && channel_id.is_none() {
+        return Err(IngestError::Rejected(
+            "invalid: atomic create requires a channel UUID h tag".into(),
+        ));
+    }
 
     if kind_u32 == KIND_NIP29_CREATE_GROUP {
         // Validate name tag is present and non-empty before any DB work.
@@ -3360,7 +3368,7 @@ async fn ingest_event_inner(
                 IngestError::Rejected(format!("invalid channel_type: {channel_type_str}"))
             })?;
 
-        if let Some(client_uuid) = channel_id {
+        if let Some(client_uuid) = channel_id.filter(|_| !atomic_channel_create) {
             let name = create_name.unwrap_or_default();
             let name = buzz_core::channel::canonical_channel_name(&name);
 
@@ -3646,7 +3654,19 @@ async fn ingest_event_inner(
         });
     }
 
-    let (stored_event, was_inserted) = if buzz_core::kind::is_replaceable(kind_u32) {
+    let (stored_event, was_inserted) = if atomic_channel_create {
+        let channel = channel_id.ok_or_else(|| {
+            IngestError::Rejected("invalid: atomic create requires channel UUID".into())
+        })?;
+        super::channel_atomic_create::store_or_replay(
+            tenant,
+            state,
+            &event,
+            channel,
+            thread_meta.as_ref().map(|meta| meta.as_params()),
+        )
+        .await?
+    } else if buzz_core::kind::is_replaceable(kind_u32) {
         // NIP-16 replaceable event — atomic replace with stale-write protection.
         // channel_id is None for global kinds (0, 1, 3) due to step 5b above.
         state
@@ -3724,6 +3744,11 @@ async fn ingest_event_inner(
             // RUST_LOG=error, so warn! made these failures invisible during
             // the #3527 triage.
             error!(event_id = %event_id_hex, kind = kind_u32, "Side effect failed: {e}");
+            if atomic_channel_create {
+                return Err(IngestError::Internal(format!(
+                    "error: side-effect-pending: {e}"
+                )));
+            }
         }
     }
 

@@ -20,49 +20,49 @@ function installStorage(value) {
 
 test("getOverrides drops unknown feature IDs without writing to storage", () => {
   const { values, writes } = installStorage({
-    workflows: true,
+    pulse: true,
     removedFeature: false,
   });
 
-  assert.deepEqual(getOverrides(), { workflows: true });
+  assert.deepEqual(getOverrides(), { pulse: true });
   assert.deepEqual(writes, []);
   assert.equal(
     values.get(OVERRIDES_KEY),
-    JSON.stringify({ workflows: true, removedFeature: false }),
+    JSON.stringify({ pulse: true, removedFeature: false }),
   );
 });
 
 test("setOverride persists filtered overrides", () => {
   const { values } = installStorage({
-    workflows: true,
+    pulse: true,
     removedFeature: false,
   });
 
-  setOverride("projects", true);
+  setOverride("forum", true);
 
   assert.equal(
     values.get(OVERRIDES_KEY),
-    JSON.stringify({ workflows: true, projects: true }),
+    JSON.stringify({ pulse: true, forum: true }),
   );
 });
 
 test("thread-scoped ACP session preference persists without changing existing experiments", () => {
-  const { values } = installStorage({ workflows: true, projects: false });
+  const { values } = installStorage({ pulse: true, forum: false });
 
   setOverride("threadScopedAcpSessions", true);
 
   assert.equal(
     values.get(OVERRIDES_KEY),
     JSON.stringify({
-      workflows: true,
-      projects: false,
+      pulse: true,
+      forum: false,
       threadScopedAcpSessions: true,
     }),
   );
 });
 
 test("getOverrides drops non-boolean values", () => {
-  installStorage({ workflows: "yes", projects: false });
+  installStorage({ pulse: "yes", forum: false });
 
-  assert.deepEqual(getOverrides(), { projects: false });
+  assert.deepEqual(getOverrides(), { forum: false });
 });

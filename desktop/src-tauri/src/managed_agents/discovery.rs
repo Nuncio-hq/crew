@@ -8,7 +8,7 @@ use crate::managed_agents::{
     AcpRuntimeCatalogEntry, AuthStatus, CommandAvailabilityInfo, HarnessSource,
 };
 mod auth_status_cache;
-pub(crate) mod bounded_command;
+pub(super) mod bounded_command;
 mod login_shell;
 mod presets;
 mod runtime_metadata;

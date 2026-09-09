@@ -16,6 +16,36 @@ const FRONTEND_OWNER = "b".repeat(64);
 const BACKEND_OWNER = "c".repeat(64);
 const RELAY_ORIGIN = "https://relay.example";
 
+test("full repository coordinates select the exact member and never fall back", () => {
+  const backendAddress = `30617:${PROJECT_OWNER}:backend`;
+  const frontendAddress = `30617:${PROJECT_OWNER}:frontend`;
+  const [project] = buildProjectReadModels({
+    projectEvents: [
+      projectEvent([
+        ["a", backendAddress],
+        ["a", frontendAddress],
+      ]),
+    ],
+    repositoryEvents: [
+      repositoryEvent(PROJECT_OWNER, "backend"),
+      repositoryEvent(PROJECT_OWNER, "frontend"),
+    ],
+    relayOrigin: RELAY_ORIGIN,
+  });
+  assert.equal(
+    selectProjectRepository(project, frontendAddress)?.repoAddress,
+    frontendAddress,
+  );
+  assert.equal(
+    selectProjectRepository(project, `30617:${FRONTEND_OWNER}:frontend`),
+    null,
+  );
+  assert.equal(
+    selectProjectRepository(project, `30617:${PROJECT_OWNER}:deleted`),
+    null,
+  );
+});
+
 function repositoryEvent(owner, id, createdAt = 100) {
   return {
     id: `${id}-${createdAt}`,

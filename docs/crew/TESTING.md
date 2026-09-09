@@ -416,6 +416,34 @@ staging acceptance. Those remain #338 gates; real staging requires #348.
 
 ## CompanyOS grouped evidence (#344)
 
+For the #349 shell, `companyos-shell-navigation.spec.ts` checks stable Projects
+and Workflows despite saved preview opt-outs, workspace-menu navigation,
+Company Wiki, Settings, and Project expansion versus row navigation. Existing
+channel navigation specs use `openWorkspaceChannel` to exercise Browse
+channels through the real menu. These mock-bridge cases establish UI routing,
+not installed runtime or Project-operation recovery acceptance.
+
+For #361, run the native `project_git_workspace_probe` tests separately from
+the root Rust workspace. The probe must preserve the exact selected path,
+distinguish a Git root from a subdirectory, and propagate inaccessible-path or
+probe failures. Its Git subprocesses share one bounded deadline. Relay atomic
+creation/recovery tests must use isolated owned databases and an explicitly
+enabled relay; D-080's concurrent-writer and deployment checks remain separate
+from these local probe tests.
+
+The native Project workspace journal has a focused unit lane:
+
+```text
+cargo test -j 1 --locked --manifest-path desktop/src-tauri/Cargo.toml \
+  -p buzz-desktop --lib project_change_link -- --test-threads=1
+```
+
+It covers the durable v1 channel link, v2 repository attachment, v3 unlink,
+and v4 exact workspace path link. The shared driver cases cover lost-ack retry
+identity; v4-specific cases cover tag-order/path preservation and pre-persist
+intent validation. This lane does not prove the relay's conditional capability
+advertisement or installed picker behavior.
+
 Related issues may reuse one unchanged build and owned real-data run; keep an
 explicit issue-to-case mapping and post evidence on each corresponding issue.
 Record candidate SHA/build, source revision, runtime/model/profile, test data
@@ -477,3 +505,13 @@ inventory retained `process_group_cleanup_denied` despite exit 0; it is not a
 clean containment result. Subsequent owned synthetic process fixtures established
 the unreaped-root EPERM case and the checked reap/retry behavior. No repeat
 Claude call was used to replace that failed cleanup record with a success.
+
+For #354 / G-THREAD-1 v3, bind regressions to the production pane store, scoped
+forge subject, current-generation dispatch and drawer Escape gate. Prove exact
+thread return restores selection without opening/launching; account/removal
+clears scope but query failure does not fabricate removal; explicit empty and
+invalidated plans remain distinct from retained history; narrow Escape preserves
+draft/scroll and returns focus without closing the outer thread. Observe zero
+native activation commands from selection/restoration, while existing hide and
+sim-visible-false cleanup still executes. Preserve channel-to-channel remount
+compatibility. Mock checks do not satisfy native #348/#357 evidence.
