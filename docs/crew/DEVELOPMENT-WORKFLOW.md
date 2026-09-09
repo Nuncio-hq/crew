@@ -36,7 +36,9 @@ notes explaining purpose, user actions, behavior, acceptance, and open questions
 Include failure/recovery scenarios and expected results. Scenario controls
 and implementation notes stay outside the app frame; simulations are labeled.
 
-Agree on the affected states before implementing them. Approval of one screen
+Use the recorded #344 approval for demonstrated Project/Wiki v0.9 states; do
+not ask for the same approval again. Resolve only named outstanding gates.
+Approval of one screen
 does not approve all proposals in the reference. Each handoff points to the
 specific reference state and its matching living-doc contract; verification
 compares the real flow to that state. Update this same artifact in place.
@@ -227,3 +229,8 @@ Stop and ask rather than infer when:
 - credentials, external publication, deletion, or deployment require new
   authority;
 - provider behavior differs in a way that changes user experience.
+
+For the CompanyOS delivery ledger, related issues may share one unchanged
+reference/candidate build and runtime run, while retaining issue-to-case mapping.
+Each issue still needs its own safe evidence/readback comment. Prototype-only
+screenshots are labeled as such and cannot satisfy real-runtime acceptance.

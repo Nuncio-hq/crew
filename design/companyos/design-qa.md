@@ -7,8 +7,8 @@ verification of Crew's real backend. All detailed flows remain proposals.
 
 ## Evidence and normalization
 
-- Source visual: `public/references/codex-layout.png`, 5120 × 2826 pixels.
-- Installed-app baseline: `public/references/crew-focus-before.png`.
+- Source visual: private local capture, excluded from this public handoff.
+- Installed-app baseline: private local capture, excluded from this public handoff.
 - Accepted rendered capture: `.qa/workspace.png`, 1119 × 1089 pixels.
 - Browser: Codex In-app Browser, normal CSS viewport approximately 1120 × 1089;
   reported devicePixelRatio 2.4, with the CUA screenshot normalized to CSS scale.
@@ -276,30 +276,149 @@ Browser checks at 1130×1089: Delete Codex opens an effect preview; Cancel retai
 
 Agent plans shows separate Hermes/Codex ACP snapshots and Claude structured-todo examples with Pending, In progress and Completed. The disconnected scenario keeps its last-known plan and states that current execution is unconfirmed. Settings and plan screenshots were inspected for readable controls and scrolling. Existing backend snapshot/projection/runtime-matrix tests: 27 passed. Vite build and four Sites checks passed. No live deletion, runtime discovery, recap generation or ACP adapter run was performed.
 
-## Stage 0 public source handoff — 2026-09-09 (#344)
+## Project page and Add Project review (2026-09-09)
 
-Documentation RED: clean main at `8278d2b14cd04e17c1010d819c9fdd20eaefff9a`
-has no `design/companyos`; FORK/D-066 prohibit Projects, D-056 retains permanent
-plan placement, and PRODUCT describes a Workbench door despite D-065 redirects.
-The accepted conceptual shell split is recorded; detailed UI and G-THREAD-1
-remain proposed. Production guard changes belong to #349. No artificial unit
-test or mutation test was added for this source/docs-only change.
+Source visual: founder annotation on the existing channel breadcrumb and supplied 1130×1089 prototype view. Baseline screenshot of `state=channel` was captured before editing. Compared it together with the final channel screenshot at the same 1130×1089 viewport, collapsed project groups and settled activity frame. Channel header, cards, typography, composer and spacing are preserved; intended deltas are the linked project breadcrumb, Workspace Channels entry, Projects add action and separate name/expand controls.
 
-GREEN in the isolated worktree: `npm ci`, `npm run build`, and
-`npm run test:sites` (4 passed, 0 failed/skipped). Both HTML entries and
-Sites-compatible output exist. Browser at task-owned port 4344 resolved all 15
-named state IDs with correct selected scenario and simulation label: settings,
-agents, channel, thread-working, needs-you, offline, dm, empty, inbox, wiki,
-workflows, done, completed, blocked, discussion. No broken images were observed.
-Document hash links and local Markdown file targets resolve. Original private
-captures are excluded; document and Blueprint panel links use safe source/state
-references. Narrow 800×700 check: no document horizontal overflow, Settings
-opens with Enter, scenario selection reaches Agents, Blueprint opens with Enter,
-and Close tools dismisses the pane with Enter. Browser console had no errors.
-These checks establish reference usability only, not production behavior.
+New Project page and Add Project modal were visually inspected at 1130×1089. At 800×700, the project scroll region keeps content reachable and the modal has a scrolling body with visible footer controls. Input focus starts at the first field; Escape closes the dialog and returns focus to its trigger. Earlier initial focus on Close, an incorrect Optional label while linking a required workspace, and an invalid default existing-channel choice were corrected before final capture.
 
-The 58-file founder source/doc fingerprint matched before/after copying and
-again after validation. No founder file, daily data, agent or runtime was changed.
-PR #347 committed topology hunks and unrelated dirty HERMES/STATE/templates
-are excluded. Final repository `just ci`, remote Gate, independent exact-head
-reviews and post-merge downstream pinning remain pending coordinator scheduling.
+Browser interactions verified: breadcrumb opens Project; project arrows expand independently; Add Project supports no folder, simulated Git detection and unavailable-folder blocking; duplicate names block Create; new project opens with its main channel; Add channel updates its project; Link existing adds announcements; later folder linking supports a plain folder; Unlink preserves channels; Reset removes newly created sample projects. All filesystem, Git and relay effects remain simulated. A dedicated browser tab was used for final QA to avoid changing the founder's active preview.
+
+Vite production build passed after final edits. Four Sites packaging checks passed. No browser console errors were recorded in the fresh QA tab. Scoped `git diff --check` passed. Production Project/Repository reconciliation, native folder access, host identity, durable writes and live-agent behavior remain unimplemented by this prototype iteration. No code changes outside `design/companyos/`.
+
+final result: passed
+
+
+## Workspace Channels disclosure (2026-09-09)
+
+Compared the existing Project screenshot and updated Project screenshot together at 1280×720, with the same project and collapsed project groups. Main content, typography, spacing and controls match; intended changes are the expanded shared-channel rows and functional workspace menu. Inspected the Browse channels dialog and the Project page at 800×700; there is no horizontal document overflow and both content and project navigation remain scrollable.
+
+Verified through the browser: Channels collapses and expands without navigating, general opens its conversation directly, announcements opens from Browse channels, and the Project name still opens Channels/Workspace. Linked both common channels into NuncioCrew through Add channel; the empty standalone disclosure disappears while Browse channels still opens both conversations. Escape closes Browse channels and restores focus to the visible workspace-menu trigger. Reset restored fixtures in the dedicated QA tab. The old channels scenario now targets a conversation, not a landing page; Workspace breadcrumbs have no dead page link. Folder/Git selection remains simulated as before.
+
+Vite build and all four Sites packaging checks pass. No production files or live relay data changed.
+
+final result: passed
+
+## v0.9 — Project Wiki (2026-09-09)
+
+Source visual truth: the founder-selected Devin Wiki reading page at
+`https://app.devin.ai/org/oscarlehuu/wiki/Nuncio-hq/crew/page/4.6?branch=main`,
+recaptured at `/tmp/crew-wiki-prototype/qa/devin-reference.png`, plus the existing
+Crew prototype for palette, type, sidebar and dialog conventions. This is an
+adaptation of the Wiki interaction model, not a pixel clone of Devin's chrome
+or its generated prose. Crew keeps its global navigation and introduces a
+project-level TOC. Content differs deliberately and uses verified captured
+source snippets rather than copying the reference's potentially stale claims.
+
+Implementation evidence: `/tmp/crew-wiki-prototype/qa/wiki-read.png`,
+`wiki-answer-source.png`, `wiki-draft.png`, `wiki-empty.png` and
+`wiki-compact.png` in that same directory. Primary full-view comparison uses
+1130×1089 CSS pixels and 1130×1089 screenshot pixels for both reading surfaces;
+compact verification uses 800×700. Browser screenshots normalize the active
+surface's device density to CSS pixels; the source surface reported DPR 1,
+while a visible app surface sometimes reported DPR 2.4. Compare the equal-sized
+captured pixels, not raw device-scale assumptions. Discarded the transient
+frames immediately after viewport changes and inspected settled captures.
+
+Full-view comparison put source and rendered screenshots in the same input.
+Checked type hierarchy, article width, margins, neutral dark surfaces,
+source-pill visibility, TOC density and the anchored composer. Intentional
+changes: Project-scoped Wiki navigation, explicit Read/Ask state, existing-agent
+selection, private history, and an editable task handoff. Source code opens in
+place of the TOC, keeping at most an answer/article and source beside navigation.
+The final full-view comparison has no actionable P0/P1/P2 visual mismatch.
+Focused inspection used the source/answer split and task dialog screenshots:
+file paths wrap, line ranges are legible, selected code lines are highlighted,
+form labels are unique, and sharing controls remain distinct from saving a draft.
+
+Comparison history and fixes:
+
+- P2: the pre-existing 190px sidebar at 800×700 clipped its Hide sidebar icon.
+  Reduced only compact brand spacing/button width and allowed the workspace name
+  to truncate. Post-fix screenshot `wiki-compact.png` and DOM bounds confirm all
+  actions inside the sidebar (Hide sidebar right edge 173px; sidebar edge 190px).
+  Document horizontal overflow is false. Contents replaces the narrow TOC;
+  opening a citation uses the whole content pane and Escape restores citation focus.
+- Corrected the update icon to the existing retry icon and added the selected
+  task agent to the new sample thread's participants. The final task readback
+  shows one participant and its existing channel role; no role is synthesized.
+- Changed the backlink to restore the exact saved question, and keyed answers
+  by question so a new answer gets a fresh scroll container. Settled article
+  scrolling survives project navigation exactly (313px before and after).
+- During hot module replacement a context module refresh briefly produced a
+  null-context console error. Final verification used a fresh page after edits;
+  its complete generation/ask/draft/thread/backlink walkthrough recorded no
+  console warnings or errors. The HMR transition is not counted as a passing run.
+
+Browser interactions verified:
+
+- Full-body search for `canonical` returns article text and opens the selected page.
+- Ask from a page, cited answer, follow-up keyboard Enter, Shift+Enter newline,
+  unsupported-question recovery, source open/close and exact pinned GitHub links.
+- Private question history is empty in HeardBack and remains available in Crew;
+  project navigation restores the selected page and settled reading position.
+- Save task draft, resume, editable title/prompt/channel/agent, Cancel discards
+  unsaved edits, Start thread creates a local sample in engineering with sources,
+  and Back to Wiki restores the original question.
+- Failed update retains readable pages; retry, Hermes profile selection,
+  saved generator preferences, update progress and cancel work. Recap remains Off
+  while Wiki generation is configured and run. Empty Wiki generates its first
+  pages; unavailable workspace keeps cached reading and disables Update.
+- Unavailable Ask agent disables Send; choosing an available agent recovers.
+  A failed answer stays in history, Retry succeeds, and busy Hermes stays disabled.
+- Compact contents dialog navigation, source recovery, persistent composer and
+  no horizontal document overflow at 800×700.
+
+Build passed and all four Sites packaging tests passed after final code edits.
+Seven captured source excerpts include both endpoints of their displayed ranges.
+Scoped Git whitespace check passed. This prototype does not require repository
+CI, a PR, production deployment, or real agent execution for visual review.
+
+Remaining production verification: real workspace access and source versioning,
+Wiki generation/event persistence, full-content retrieval/QA, streaming/cancel,
+private-history authorization and retention, citation validation, unavailable or
+deleted agents, multi-repository selection, and atomic channel-thread dispatch.
+IME composition is guarded in the input handler but was not exercised with a
+native IME in this walkthrough. Real backend behavior remains unimplemented;
+this report passes only the prototype review surface. Company handbook placement
+in the future sidebar remains a product decision; no handbook content was deleted.
+
+final result: passed
+
+
+## Stage 0 v0.9 source handoff verification (2026-09-09)
+
+The walkthrough sections above are retained founder-source QA history. This
+section records the isolated Stage 0 rerun after public-source sanitization.
+It is simulated reference evidence for #344, not runtime acceptance for the
+implementation issues. The coordinator approved the concrete Company Wiki
+menu/sample/back-action compatibility diff; this is not a new founder claim.
+
+| Reference owner | Checks exercised together on the v0.9 source |
+| --- | --- |
+| #349, #361 | Project page; optional sample folder and existing main-channel creation; cancel; link an already-shared general channel into Crew; manage/unlink workspace keeps channels; separate project navigation; workspace-menu Company Wiki keyboard entry and library/back action |
+| #362, #363 | Failed update keeps article readable; retry opens independent temporary-runtime settings; sample update progress and cancel; all empty/missing/updating/failed/stale/unavailable states render |
+| #364 | Full-body search for canonical returns body snippets; pinned source panel and exact GitHub revision/range; close-source keyboard action; compact Contents navigation and source recovery |
+| #365, #366, #367 | Available Codex selected; private sample answer; editable task title; explicit Start creates sample engineering thread with selected participant and citations; Back to Wiki restores exact original question; draft Cancel |
+| #348–#357 | All 25 review scenarios render a main surface without broken images or horizontal document overflow at 1130×1089; this is a rendering sweep, not a fresh exhaustive handler test for every scenario |
+
+The compact source/Contents flow was checked at 800×700 with no horizontal
+document overflow. Eight distinct PNGs were visually inspected: Project, Add
+Project, company library, Wiki Read, answer/source, editable draft, failed
+update and compact source. Capture scaling was corrected before selecting the
+final images. They show sample data only; the original private captures are
+excluded. Browser viewport overrides were reset after capture.
+
+The public prototype build and four Sites packaging tests passed. Seven source
+excerpts were checked line-by-line against revision
+`8278d2b14cd04e17c1010d819c9fdd20eaefff9a`. The 74-file founder fingerprint still
+matched after the interaction checks: Stage 0 did not change that checkout.
+Repository-wide `just ci`, hook results and exact-head dual review are recorded
+on the resulting PR; the earlier prototype-only CI exemption above does not
+waive this repository's PR gate.
+
+Remaining verification is unchanged: real durable Project operations, immutable
+Wiki publication/recovery, bounded temporary runtime execution, private Ask
+transport/history authorization, and durable channel dispatch belong to their
+named issues and require real-data evidence. These screenshots close none of
+those proofs and do not close #344 or #357.

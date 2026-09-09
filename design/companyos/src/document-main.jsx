@@ -88,17 +88,17 @@ function Doc() {
         </section>
         <section id="authority">
           <div className="section-kicker">A / QUYẾT ĐỊNH</div>
-          <h2>Đã chọn layout; chưa duyệt mọi hành vi.</h2>
+          <h2>Project/Wiki v0.9 đã được duyệt; backend còn gate cụ thể.</h2>
           <p>
-            Yêu cầu của founder xác nhận các nhóm sidebar và vùng hội thoại ở
-            giữa. Những chi tiết dưới đây làm rõ đề xuất để review; chúng không
-            tự trở thành cam kết sản phẩm.
+            Founder đã duyệt walkthrough Project/Wiki v0.9 và yêu cầu triển khai
+            trong #344. Matrix bên dưới ghi đúng phạm vi đã chọn, đề xuất
+            compatibility của coordinator và các gate kỹ thuật chưa được chứng
+            minh.
           </p>
           <h3>Stage 0 · accepted / proposed / blocked</h3>
           <p>
-            Conceptual Projects/Channels split is accepted. Detailed UI remains
-            under discussion; mock controls are not approval or runtime
-            evidence.
+            Demonstrated Project/Wiki v0.9 flow is accepted. Backend contracts
+            retain their named gates; mock controls are not runtime evidence.
           </p>
           <div style={{ overflowX: "auto" }}>
             <table>
@@ -595,13 +595,14 @@ function Doc() {
           <div className="section-kicker">G / THAM CHIẾU</div>
           <h2>Thiết kế này bắt đầu từ đâu.</h2>
           <p>
-            The original annotated Codex and Crew captures contain private
-            workspace context and remain local. They are intentionally excluded
-            from this public source handoff.
+            Original annotated Codex and Crew captures contain private workspace
+            context and remain local. They are excluded from this public source
+            handoff.
           </p>
           <p>
-            <a href={proto("thread-working")}>Review the mock-only workspace</a>{" "}
-            · <a href={proto("channel")}>Review the mock-only channel</a>
+            <a href={proto("project")}>Project reference</a> ·{" "}
+            <a href={proto("wiki")}>Wiki reference</a> ·{" "}
+            <a href={proto("channel")}>Channel reference</a>
           </p>
           <p className="source-note">
             Thay đổi lần này: tách tài liệu thành index.html và giữ giao diện ở

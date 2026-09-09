@@ -1364,7 +1364,7 @@ See spikes 0035–0038.
 
 ## D-061 — Crew Wiki is a separable engine on relay events
 
-- **Status:** Accepted
+- **Status:** Accepted; navigation placement amended by D-078 v0.9. Generation/Ask protocol successors remain gated in #362–#367.
 - **Date:** 2026-08-13
 - **Issue:** #200
 
@@ -1858,7 +1858,7 @@ shortcuts and review-state transitions shown in v0.1 are proposals. The
 prototype must distinguish these from accepted layout and from shipped
 behavior. It uses simulated data, not the daily relay or real agent processes.
 
-### D-078 clarification — Stage 0 #344, 2026-09-09
+### D-078 clarification — initial Stage 0 #344, 2026-09-09 (navigation superseded below)
 
 The founder accepted the conceptual split: standalone/general channels stay in
 **Channels within Workspace**; project channels appear under **Projects**.
@@ -1880,3 +1880,69 @@ manual recap requests separately from routing, recap visibility, acceptance
 protocol and latency gates. Mock Accept/Reopen is not an approved protocol;
 D-070's explicit founder review remains authoritative. No production behavior
 is shipped by this source handoff.
+
+### D-078 v0.9 review record (preceded final approval below)
+
+**2026-09-09 prototype refinement.** The founder requested Project-scoped
+Wiki navigation: Inbox, Agents and Workflows remain at the top; expanded
+Projects show Wiki and channels. Shared channels remain reachable through
+Browse channels in the workspace menu. This updates the future layout
+placement above and D-061/D-067's global Wiki entry for this prototype; the
+shipped Wiki routes, event kinds and company-handbook content remain unchanged.
+The company handbook's entry in the new layout still needs a product decision.
+
+The requested interactive review flow is read → ask → inspect cited source →
+editable task draft → explicit start in a channel, with a return link. Questions
+stay private by default. The single maintained blueprint now demonstrates it,
+including access/update failures, with sample answers and generation timers.
+This records the requested review direction, not acceptance of its detailed
+implementation or evidence that production QA/search/history/dispatch is wired.
+Reuse the existing Crew Wiki engine and Buzz channel/thread models when the
+reviewed design is implemented; do not copy prototype state into production.
+
+### D-078 v0.9 accepted Project/Wiki flow — Stage 0 #344
+
+- **Date:** 2026-09-09
+- **Source:** Founder messages after the demonstrated Wiki walkthrough, recorded
+  in #344: “tốt rồim, tạo issues mới đi”, followed by “wiki và cả project nhé nếu
+  chưa tạo”; then explicit implementation and per-issue real-data evidence
+  instructions. This later approval supersedes the preceding pending-review
+  wording for the demonstrated Project/Wiki composition.
+
+Workspace top is **Inbox, Agents, Workflows**; Wiki appears within each Project.
+There are no global Wiki or Channels rows. **Browse channels** remains in the
+workspace menu, including when every general channel is Project-linked and
+when Project metadata is missing/inaccessible. Project name/breadcrumb opens
+its Channels/Workspace page; a separate chevron only expands/collapses. Existing
+home, related and repository channel relationships remain many-to-many. No
+new identity registry, membership/history move or Workbench picker is approved.
+This supersedes the earlier Channels-within-Workspace placement in this decision.
+
+The accepted demonstrated flow includes Project create/link/manage, optional
+folder and new/existing channels, Project-scoped Wiki Read/full-body Search/
+immutable Source, existing-agent private Ask/History, independent temporary
+generator settings and explicit editable draft → Start thread → Back to Wiki.
+Source snapshot, native path/host semantics, coherent publication/retention,
+private runtime/ACL guarantees and durable recovery are **not** proved by the
+prototype. #361–#367 own their named technical gates and implementation.
+D-061 generation/address/Ask changes require their concrete amendments there;
+this decision does not invent an event kind, generic outbox or private transport.
+D-056/G-THREAD-1 and the other existing gates remain scoped as in the blueprint.
+
+**Company-handbook compatibility is coordinator-approved (2026-09-09):**
+workspace menu → **Company Wiki** should call existing `goWiki()` → `/wiki` →
+`WikiLibraryScreen`, retaining its Company Wiki card and kind 30023 content.
+The coordinator reviewed the concrete menu entry, route mapping, labeled sample
+and back action. This records coordinator approval, not a new founder claim.
+The reference includes a labeled sample of that entry. #349 must wire and verify
+a reviewed replacement before removing the only global Wiki affordance. This
+is a navigation compatibility choice, not approval to delete content or create
+a parallel company library.
+
+The [`handoffContract` matrix](../../design/companyos/src/blueprint.js) is the
+state/control authority for the handoff. Accepted UI does not satisfy backend
+proof or installed acceptance. Per-issue real-data runs/screenshots remain
+required; related issues may share an unchanged build/run with explicit mapping.
+Both coordinator and actual Claude Code CLI Fable Medium approve the exact
+final PR head before merge. Stage 0 reference screenshots are prototype evidence
+only, and #344 remains the open delivery roadmap.

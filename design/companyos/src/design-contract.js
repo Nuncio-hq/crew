@@ -1,5 +1,5 @@
 // Explanatory design intent. State behavior lives only in blueprint.js.
-// Positions are founder-selected; detailed roles/flows below are proposals.
+// Accepted v0.9 Project/Wiki flow and remaining technical gates are in blueprint.js.
 export const sections = [
   {
     id: "inbox",
@@ -22,18 +22,18 @@ export const sections = [
     id: "wiki",
     number: "02",
     title: "Wiki",
-    zone: "Sidebar · nhóm 1",
+    zone: "Sidebar · trong mỗi Project",
     state: "wiki",
     purpose:
-      "Nơi đọc và tìm kiến thức dùng chung, các hướng dẫn và quyết định đã lưu.",
+      "Đọc và hỏi về repository ngay trong project, rồi chuyển hiểu biết thành bản nháp công việc.",
     shows:
-      "Danh sách tài liệu và nội dung tài liệu đang chọn. Kiến thức vẫn nằm trong ngữ cảnh workspace.",
+      "TOC + bài đọc; Ask thay bài ở vùng giữa. Mở nguồn thì ẩn TOC, hiện code tại revision và dòng được dẫn. Một repository được chọn tự động; nhiều repository mới cần picker.",
     actions:
-      "Chọn một tài liệu để đọc ở vùng giữa; có thể mở tài liệu liên quan cạnh thread khi làm việc.",
+      "Tìm toàn văn → đọc → hỏi agent hiện có → xem nguồn → Create task draft → chọn channel/agent và sửa prompt → Start thread. Lịch sử riêng và bản nháp giữ trong phiên preview; thread có Back to Wiki.",
     boundary:
-      "Không biến nội dung agent vừa nói thành kiến thức đã được chấp nhận. Tài liệu thiết kế này cũng không thay thế PRODUCT.md.",
-    open: "Luồng chỉnh sửa, nguồn dẫn và phân quyền tài liệu chưa được thiết kế trong bản này.",
-    seam: "Crew Wiki hiện có; không tạo knowledge database song song.",
+      "Hỏi không tự tạo task, không đăng channel và không chạy lại generator. Chỉ Start thread chia sẻ prompt + references đã duyệt. Runtime Wiki là phiên tạm riêng, độc lập Recap; Hermes chọn profile.",
+    open: "Prototype dùng bài mẫu và câu trả lời chuẩn bị trước; không có LLM/indexing thật. Company handbook không bị xóa; menu → Company Wiki là compatibility proposal của coordinator, chờ review concrete diff. Private-history ACL/persistence và dispatch thật chưa được nối.",
+    seam: "Tái dùng crew-wiki, WikiPageView/WikiTocRail/WikiSourceFiles, wikiEvents và useWikiEventsQuery. Không tạo knowledge database song song. wikiAsk hiện là placeholder: cần QA với source snapshot, citations, cancel/retry và handoff vào channel/thread hiện hữu.",
   },
   {
     id: "agents",
@@ -73,17 +73,17 @@ export const sections = [
     number: "05",
     title: "Projects",
     zone: "Sidebar · nhóm 2",
-    state: "channel",
+    state: "project",
     purpose:
-      "Tổ chức các cuộc trao đổi theo công việc hoặc sản phẩm để người dùng tìm lại đúng ngữ cảnh.",
+      "Một Project gom channels và workspace; channel/thread vẫn là nơi làm việc hằng ngày.",
     shows:
-      "Các project; khi mở rộng, bản đề xuất hiện channels và recent threads bên trong.",
+      "Trang Project nhẹ gồm Channels và Workspace. Folder cho biết máy chứa, đường dẫn và Git/folder mode; không sao chép dữ liệu qua relay.",
     actions:
-      "Mở/thu project; chọn channel hoặc recent thread để thay nội dung vùng giữa.",
+      "Tên Project hoặc breadcrumb mở trang Project; mũi tên chỉ bung/thu channels. Không còn global Channels/Wiki row; Browse channels nằm trong menu workspace kể cả khi mọi channel chung đã liên kết Project. Add project nhập tên, folder tùy chọn, main channel mới/có sẵn. Add channel, Link folder, Manage và Unlink dùng dữ liệu mẫu trong bộ nhớ.",
     boundary:
-      "Project không mặc nhiên là một repository, một folder, một channel hay một worktree. Chọn project không khởi chạy agent.",
-    open: "Cách ánh xạ project ↔ repositories ↔ channels, sắp xếp, pin và archive chưa chốt. Không tự tạo registry chỉ để chạy UI.",
-    seam: "Buzz kind 30621 là project; kind 30617 là repository. Mapping phải được quyết định trước implementation.",
+      "Founder đã duyệt demonstrated Project/Wiki v0.9 flow và yêu cầu implementation; provenance trong #344. Folder picker, Git detection và việc tạo/liên kết chỉ mô phỏng. Không gọi native API, sửa Git, folder, relay hay active agent.",
+    open: "G-PROJECT (#361) còn phải chứng minh mapping folder legacy Repository với explicit Project, zero/multiple repositories và exact owner+d writes. Đường dẫn chính xác, truy cập theo host, retry publish/readback và channel membership cần nguồn thật. Folder không truy cập được phải có trạng thái riêng.",
+    seam: "Project (30621), Repository (30617) + localWorkspacePath, projectRelatedChannels; existing native folder picker and probeProjectGitWorkspace.",
   },
   {
     id: "direct-messages",
@@ -220,9 +220,9 @@ export const feasibility = [
     source:
       "AppShell / AppSidebar, ChannelPane / MessageThreadPanel; NIP-MP kind 30621 nhóm repositories 30617; Project.projectChannelId, relatedChannelIds / buzz-related-channel và repository channels đã có.",
     remaining:
-      "Đưa layout D-078 vào app hiện có; project mapping đã có nền; detailed UI vẫn chờ review, không áp đặt one-project-only. Sửa guardrail check-channel-first-ia đang cấm Projects; giữ cấm Workbench picker. Không tạo registry React song song.",
+      "Đưa layout D-078 vào app hiện có; reuse existing home/related/repository channel relationships; no one-project-only invariant. Sửa guardrail check-channel-first-ia đang cấm Projects; giữ cấm Workbench picker. Không tạo registry React song song.",
     limit:
-      "D-056 còn yêu cầu plan rail luôn hiện, prototype dùng tab; cần ghi rõ quyết định thay thế khi chuyển UI. #344 hiện là roadmap; G-THREAD-1 còn mở, Workbench routes vẫn redirect.",
+      "D-056 còn yêu cầu plan rail luôn hiện, prototype dùng tab; cần ghi rõ quyết định thay thế khi chuyển UI. #344 là roadmap; G-THREAD-1 còn mở, Workbench routes vẫn redirect.",
   },
   {
     title: "Channel, thread, DM và search",
@@ -260,7 +260,7 @@ export const feasibility = [
     source:
       "agents/hooks.ts create/update; useManagedAgentActions → deleteManagedAgentWithRules → delete_managed_agent; Hermes profile discovery, runtime catalog và ModelPicker.",
     remaining:
-      "Tái dùng lifecycle đầy đủ trong UI mới; giữ channel-join acknowledgement, remote shutdown/orphan guard, identity history và cleanup retry. Membership signal/badge đã có (agentWorkingSignal và directory); #337 là readiness/recovery delta, không phải xây membership mới.",
+      "Tái dùng lifecycle đầy đủ trong UI mới; giữ channel-join acknowledgement, remote shutdown/orphan guard, identity history và cleanup retry. Membership signals/badges đã có; #337 là readiness/recovery delta.",
     limit:
       "Không thay bằng xóa một record trong React. Deleting an agent không có nghĩa uninstall runtime/profile/worktree.",
   },
@@ -272,7 +272,7 @@ export const feasibility = [
     remaining:
       "Editor bulk definitions/holders + một optional contact pubkey trong canvas. Conflict-aware save, preserve unrelated keys, contact-aware subscriptions/dispatch, explicit mention priority, verified-human-only fallback và deletion cleanup.",
     limit:
-      "set_canvas không có expected revision. Canvas publish và announcement là hai writes: có thể partial success. Tắt require_mention không đủ để chặn bot loops hoặc tin đang gọi người khác. receipt_parent_targets_agent trong buzz-relay/handlers/ingest.rs từ chối mentionless direct trigger (test agent_receipt_mentionless_trigger_does_not_authorize_registered_agent); #355 phải chứng minh relay authority trước implementation successor.",
+      "set_canvas không có expected revision. Canvas publish và announcement là hai writes: có thể partial success. Tắt require_mention không đủ để chặn bot loops hoặc tin đang gọi người khác. receipt_parent_targets_agent (buzz-relay/src/handlers/ingest.rs) từ chối mentionless direct trigger; #355 phải chứng minh relay authority trước approved implementation successor.",
   },
   {
     title: "Recap và Settings",
@@ -310,9 +310,9 @@ export const feasibility = [
     source:
       "crew-wiki + WikiLibraryScreen; buzz-workflow và workflow UI. #200 và #274 đã đóng.",
     remaining:
-      "Nối layout mới với thư viện/workflow thực. Routines mẫu cần persist enabled/schedule/runs và failure recovery.",
+      "Nối Wiki vào Project/Repository hiện có. Thêm full-content search, QA có source references, lịch sử riêng theo project/repo, cancel/retry và draft-to-thread có backlink; kiểm tra quyền đọc repo và channel riêng. Tái dùng generation/job/progress, snapshot và publish của crew-wiki. Routines cần persist enabled/schedule/runs và failure recovery.",
     limit:
-      "Workflow approval gate hiện trả approval_not_supported trong buzz-workflow/src/lib.rs:230. Không hứa tự pause/resume tại approval.",
+      "Wiki read/ask/source/task trong prototype là dữ liệu và timer mô phỏng; source snippets được chụp từ revision 8278d2b. Missing workspace vẫn đọc cached snapshot, failed update không xóa bài; agent thiếu quyền/unavailable không dispatch. Cần xác minh end-to-end bằng relay/runtime thật. Workflow approval gate hiện trả approval_not_supported trong buzz-workflow/src/lib.rs:230. Không hứa tự pause/resume tại approval.",
   },
   {
     title: "Marketing, email, lịch, khách hàng và deadline",
@@ -338,10 +338,10 @@ export const feasibility = [
 
 export const backlogAudit = [
   {
-    title: "#344 — CompanyOS roadmap and Stage 0 source",
+    title: "#344 — v0.9 roadmap and source handoff",
     url: "https://github.com/Nuncio-hq/crew/issues/344",
     action:
-      "Roadmap stays open. #349 shell; #350 roles; #351 certified runtime; #352 latency; #353 directory; #354 activity/plans/tools; #355 contact proof and approved successor; #356 recap; #348 staging; #357 installed acceptance. Stage 0 publishes source only.",
+      "Roadmap stays open. #349 shell; #350 roles; #351 runtime proof; #352 latency; #353 directory; #354 activity/plans/tools; #355 contact proof + successor; #356 recap; #348 staging; #357 installed acceptance. Project/Wiki: #361 create/link/manage, #362 publication/durable gate, #363 generator, #364 Read/Search/Source, #365 private Ask proof, #366 Ask/history, #367 draft/dispatch.",
   },
   {
     title: "#350 / #355 — roles editor and contact proof",
@@ -374,7 +374,7 @@ export const backlogAudit = [
     title: "#345 và PR #347 — không nhập vào redesign",
     url: "https://github.com/Nuncio-hq/crew/issues/345",
     action:
-      "#345 là thảo luận độ sâu fork delta. #347 là PR docs đang mở; Stage 0 excludes its committed topology delta; source snapshot came from its HEAD with dirty CompanyOS source. Review/reconcile docs trước khi tạo PR implementation từ main.",
+      "#345 là thảo luận độ sâu fork delta. #347 là PR docs đang mở; Source snapshot came from its HEAD with dirty CompanyOS source; Stage 0 excludes its committed topology hunks. Review/reconcile docs trước khi tạo PR implementation từ main.",
   },
   {
     title: "Closed issues là lịch sử, không phải backlog mới",
@@ -399,3 +399,14 @@ export const managementContract = {
   checkout:
     "Worktree registry/detail là nguồn branch và checkout thực; thread_github.rs cung cấp head/base, additions/deletions, isDraft và state. thread_forge/diff.rs phân biệt worktree diff với API diff. Card ghi local vs HEAD; PRs ghi PR diff tại revision cụ thể. Không cộng hai loại số, không tạo worktree cho non-code, và không coi checkout đã dọn là còn chạy.",
 };
+
+feasibility.push({
+  title: "Wiki v0.9 — publication, runtime, retrieval and private handoff",
+  status: "Demonstrated flow accepted; production proofs/wiring remain",
+  source:
+    "crew-wiki publish.rs/generate.rs; useWikiGenerate/useWikiRefresh/useWikiEventsQuery; wikiEvents; WikiPageView/WikiSourceFiles; current WikiAskBox and wikiAsk.ts use fixed examples.",
+  remaining:
+    "#362 coherent snapshot/retention and shared G-DURABLE; #363 installed-runtime immutable-source generation; #364 full-body scoped NIP-50 and immutable local blob reads; #365 private existing-agent proof; #366 real Ask/history; #367 durable explicit dispatch and private-safe backlink.",
+  limit:
+    "TOC-last alone cannot preserve replaced old pages. No generic Wiki/project outbox exists. Local file reader uses current bytes; copied source excerpts prove only this reference. Mock answer/history/timers are not runtime, privacy, persistence or receipt evidence. Company Wiki menu is coordinator-proposed compatibility, not an accepted new store.",
+});

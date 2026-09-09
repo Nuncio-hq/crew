@@ -217,7 +217,7 @@ The shared [design reference](../../design/companyos/README.md) is simulated; it
 
 Observer kind 24200 is ephemeral and owner-scoped, with NIP-44 encryption (`buzz-core/src/observer.rs`). A new card must preserve that access boundary, conversation/turn scoping and disconnected/missing-data states; channel membership alone does not grant access to raw telemetry. Runtime reasoning is displayed only when the adapter emits it. Complete history, multi-engine streaming and reconnect recovery require live verification.
 
-Role labels resolve from owner-signed channel canvas assignments (`crew_role.rs`, D-043/D-044); thread owner and participants do not redefine them. The prototype's sample channel roster is not an authoritative registry or a capability source. Detailed project UI (conceptual split accepted by D-078), queue/acceptance automation and external service integration are still proposals or unverified integration work.
+Role labels resolve from owner-signed channel canvas assignments (`crew_role.rs`, D-043/D-044); thread owner and participants do not redefine them. The prototype's sample channel roster is not an authoritative registry or a capability source. Project backend model/recovery (demonstrated v0.9 UI accepted by D-078), queue/acceptance automation and external service integration are still proposals or unverified integration work.
 
 The channel role editor prototype uses a local snapshot only. Its production write seam is `get_canvas` / `set_canvas` (kind 40100); implementation must preserve unrelated canvas content, routing and capabilities and resolve edit conflicts. The present command signature accepts channel/content without an expected revision, so concurrent-edit safety is not established by reusing the command alone. Show success only after relay acknowledgement; retain the draft on failure. This UI does not add channel members or grant tools.
 
@@ -241,3 +241,30 @@ membership store. Receipt validation currently rejects mentionless direct trigge
 (`receipt_parent_targets_agent`, ingest.rs); #355 must prove relay-authoritative
 routing and durable execution/replay before its approved successor can ship.
 Client-selected canvas/contact data alone cannot authorize a receipt.
+
+## Project/Wiki v0.9 handoff boundaries (#344, #361–#367)
+
+The accepted reference composes existing Project (30621), Repository (30617),
+Wiki (30623 repository / 30023 company) and channel/thread models. #361 owns
+exact selected-repository folder operations and legacy/zero/multiple mapping;
+#349 owns scoped navigation. Prototype names and in-memory lists are fixtures.
+
+#362 owns coherent publication/retention and shared G-DURABLE. Publishing TOC
+last alone cannot preserve old replaced pages. There is no established generic
+Project/Wiki journal, private Ask history store or message outbox in the audited
+desktop; the concrete bounded owner-local seam must be approved, with private
+history separated from signed-event recovery. No new authoritative domain store
+is implied by this handoff.
+
+#363 certifies installed-runtime generation and immutable Git/folder snapshots;
+#364 owns scoped full-body retrieval and exact-revision source reads. Current
+local file reads use worktree bytes and cannot prove historical source. #365
+proves private existing-agent Ask without employee-session stealing or task
+side effects; #366 consumes that proof and #367 owns explicit durable dispatch
+and ACL-safe origin links. These are gates, not source-handoff implementations.
+
+Coordinator-proposed handbook compatibility: workspace-menu Company Wiki →
+existing `goWiki()` / `/wiki` / `WikiLibraryScreen` Company Wiki card. Reuse
+its kind 30023 content and ACL, with no new generator action, route migration
+or company data removal. Review that entry before removing the sole old global
+Wiki affordance; the reference library is sample UI only.

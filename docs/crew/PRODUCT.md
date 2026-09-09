@@ -82,7 +82,7 @@ is keeping ongoing work understandable as threads, projects, and agents
 accumulate. CompanyOS must show what is queued, active, waiting for input,
 ready for review, and complete without requiring the founder to open every
 thread. These are user needs, not a finalized state machine. The founder selected the
-initial sidebar direction in D-078; detailed grouping and flows remain proposals.
+sidebar and demonstrated Project/Wiki v0.9 flow in D-078; backend proof gates remain explicit.
 
 Build this on Buzz's channels, threads, roles, mentions, and relay lifecycle.
 The chosen queue, department, and integration designs must name the existing
@@ -172,23 +172,26 @@ historical-session access must be reconciled with D-065 before implementation.
 
 The founder selected a Codex-style layout on 2026-09-08:
 
-- Sidebar top: Inbox, Wiki, Agents, Workflows.
-- Sidebar middle: Projects.
+- Sidebar top: Inbox, Agents, Workflows.
+- Sidebar middle: Projects, each expanding to Wiki and its channels.
+- Workspace menu: Browse channels, including shared/orphaned joined channels.
 - Sidebar bottom: direct conversations with agents.
 - Main area: the selected channel, thread, or direct conversation.
 
 This direction supersedes D-066's prohibition on Projects in navigation. It
 is not yet shipped. It does not restore a separate Workbench thread picker.
-Project grouping and how it maps to Buzz projects, repositories, and channels
-remain to be designed; the visible word "Project" must not redefine identity.
+The accepted Project Channels/Workspace page uses existing Project/Repository
+relationships. #361 resolves remaining legacy/zero/multiple-repository, exact
+path and recovery semantics; the visible word "Project" must not redefine identity.
 
 The maintained [CompanyOS blueprint](../../design/companyos/README.md) owns
 the design reference: `design/companyos/index.html` explains each area and
 its boundaries; `prototype.html` retains the interactive UI. Explanations live
 in `src/design-contract.js`. Its `src/blueprint.js` supplies the review state
 IDs, actions, expected results, and acceptance labels shown in the adjacent
-Blueprint panel. Right-hand tools and detailed interactions are proposals
-until explicitly accepted; prototype behavior is not runtime evidence.
+Blueprint panel. The demonstrated Project/Wiki v0.9 flow is accepted per #344;
+unproved backend contracts and unrelated proposals remain named in that matrix.
+Prototype behavior is not runtime evidence.
 
 ### Shared visual reference before UI implementation
 
@@ -334,10 +337,17 @@ thread-scoped tools, multiple linked PRs, Actions/CI/CD evidence, and explicit
 result acceptance. These are review proposals, not shipped state semantics or a
 new task protocol; see the maintained HTML reference before implementing.
 
-### Stage 0 shell contract (#344)
+### Stage 0 Project/Wiki contract (#344)
 
-Standalone/general channels remain in Channels within Workspace; project
-channels appear under Projects, with joined-channel fallback when project
-metadata is unavailable. No one-project-only invariant is introduced.
-The conceptual split is accepted; detailed Projects/Channels UI and interactions
-remain proposed. See D-078 and the blueprint's Stage 0 matrix for precise scope.
+The founder approved the demonstrated Project/Wiki walkthrough and requested
+implementation on 2026-09-09; D-078 records the exact message provenance.
+Project name/breadcrumb opens Channels/Workspace; the chevron only expands.
+Project Wiki supports Read/Search/Source, private existing-agent Ask/History,
+independent generator settings and editable draft → explicit Start thread →
+Back to Wiki. #361–#367 own backend implementation and proof; mocked source,
+answers and timers are not evidence of those services.
+
+Preserve company kind 30023 knowledge. The coordinator proposes a Company Wiki
+entry in the workspace menu opening existing `/wiki` / `WikiLibraryScreen`.
+That compatibility placement needs review before #349 removes the old sole
+global Wiki affordance. It does not create another knowledge store.

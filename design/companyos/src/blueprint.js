@@ -1,6 +1,67 @@
 // Stable state IDs are agent handoff anchors. This is the only scenario contract.
-export const version = "0.8";
+export const version = "0.9";
 export const scenarios = [
+  ...[
+    "empty",
+    "missing",
+    "updating",
+    "failed",
+    "stale",
+    "unavailable",
+    "answer-failed",
+  ].map((state) => ({
+    id: `wiki-${state}`,
+    label: `Wiki · ${state}`,
+    screen: "wiki",
+    status: "idle",
+    tools: false,
+    intent: "Review Wiki recovery and access states.",
+    steps: ["Read the state message and use its recovery action."],
+    expected: [
+      "Cached pages remain readable; generation and answers are simulated.",
+    ],
+    seam: "Existing Wiki events/job state; private QA and task handoff require real wiring.",
+  })),
+  {
+    id: "project",
+    label: "Project · channels & workspace",
+    screen: "project",
+    status: "idle",
+    tools: false,
+    intent:
+      "Project page nhẹ: Channels là nơi làm việc, Workspace quản lý folder.",
+    steps: [
+      "Bấm tên Project hoặc breadcrumb NuncioCrew.",
+      "Mở channel; Add channel hoặc Link existing.",
+      "Add project: nhập tên, thử folder Git / thường / không truy cập được, tạo hoặc nối channel.",
+      "Manage workspace: đổi folder hoặc unlink; Cancel/Escape giữ nguyên.",
+    ],
+    expected: [
+      "Mũi tên chỉ bung/thu channels; tên mở Project page.",
+      "Folder tùy chọn; Git detection và tạo project chỉ là mô phỏng.",
+      "Không sửa folder, Git, relay hoặc phiên agent thật.",
+      "Luồng Project v0.9 đã được founder duyệt trong #344; backend semantics còn các gate cụ thể.",
+    ],
+    seam: "Existing Project + Repository.localWorkspacePath, projectRelatedChannels, native folder picker/Git probe. Unifying legacy folder creation with explicit Project remains implementation work.",
+  },
+  {
+    id: "channels",
+    label: "Workspace · shared channels",
+    screen: "empty",
+    status: "idle",
+    tools: false,
+    intent: "Giữ channel chung trong Workspace.",
+    steps: [
+      "Mở menu workspace → Browse channels để vào channel chung.",
+      "Menu workspace → Browse channels vẫn mở được các channel chung đã liên kết Project.",
+      "Mở một channel hoặc liên kết nó vào Project qua Add channel.",
+    ],
+    expected: [
+      "Các channel chung vẫn truy cập được; liên kết project không sao chép lịch sử.",
+      "Tất cả thay đổi chỉ nằm trong bộ nhớ prototype.",
+    ],
+    seam: "Existing joined NIP-29 channels and Project related channels.",
+  },
   {
     id: "settings",
     label: "Settings · recap runtime",
@@ -168,13 +229,21 @@ scenarios.push(
   },
   {
     id: "wiki",
-    label: "Wiki · knowledge",
+    label: "Wiki · read, ask & task",
     screen: "wiki",
     status: "idle",
     tools: false,
-    intent: "Đọc tài liệu dùng chung.",
-    steps: ["Chọn một tài liệu trong Wiki."],
-    expected: ["Đổi nội dung ở vùng giữa."],
+    intent: "Wiki theo Project: đọc, hỏi, kiểm tra nguồn và tạo draft.",
+    steps: [
+      "Project → Wiki; đọc bài, tìm trong toàn văn.",
+      "Ask → hỏi, mở citation và đóng source.",
+      "Create task draft → chọn channel/agent → Start thread → Back to Wiki.",
+    ],
+    expected: [
+      "Ask thay bài đọc; mở nguồn ẩn TOC.",
+      "Lịch sử riêng, chỉ Start thread chia sẻ draft đã duyệt.",
+      "Agent/generation và việc tạo task là mô phỏng.",
+    ],
     seam: "Existing Crew Wiki surface",
   },
   {
@@ -204,15 +273,15 @@ export const layoutContract = [
   [
     "L1",
     "Accepted direction",
-    "Workspace: Inbox, Wiki, Agents, Workflows và Channels cho channel độc lập/general.",
+    "Nhóm đầu: Inbox, Agents, Workflows. Wiki nằm trong mỗi Project.",
   ],
   ["L2", "Accepted direction", "Nhóm giữa sidebar: Projects."],
   ["L3", "Accepted direction", "Nhóm dưới sidebar: nhắn tin riêng với agents."],
   ["L4", "Accepted direction", "Vùng giữa: channel, thread hoặc DM đang chọn."],
   [
-    "P1",
-    "Proposal",
-    "Project mở ra channels và recent threads; grouping không đổi danh tính relay.",
+    "L5",
+    "Accepted direction",
+    "Project name/breadcrumb mở Channels/Workspace; chevron chỉ bung/thu Wiki và channels. Browse channels trong workspace menu.",
   ],
   [
     "P2",
@@ -222,7 +291,7 @@ export const layoutContract = [
   [
     "P3",
     "Proposal",
-    "Trạng thái, shortcuts và các flow ở đây cần founder duyệt trước implementation.",
+    "Luồng Project/Wiki v0.9 đã được duyệt; các gate backend và đề xuất khác nằm trong Stage 0 matrix.",
   ],
 ];
 export const agents = [
@@ -282,25 +351,117 @@ scenarios.push(
   })),
 );
 
-// Stage 0 authority matrix. Status applies only to the stated contract, not all mock controls.
+// Authority applies only to the stated contract, never every sample control.
 export const handoffContract = [
   {
     id: "G-SHELL-1",
-    state: "channel, empty, sidebar",
+    state: "sidebar, project, channels, wiki",
     status: "accepted",
-    source: "Founder decision in #344, 2026-09-09; coordinator clarification",
+    source:
+      "Founder messages after Wiki v0.9 walkthrough, 2026-09-09, recorded in #344: “tốt rồim, tạo issues mới đi”; “wiki và cả project nhé nếu chưa tạo”; subsequent implementation instruction.",
     contract:
-      "Conceptual split only: standalone/general channels remain in Channels within Workspace; project channels appear under Projects. All joined channels remain reachable when project metadata is missing/inaccessible. Existing home, related and repository channel relationships; no one-project-only invariant. Detailed UI/interactions remain proposed.",
+      "Workspace top: Inbox, Agents, Workflows. Wiki is inside each Project; no global Wiki or Channels rows. Workspace menu → Browse channels stays reachable even if every shared channel is linked to a Project. Preserve all joined-channel reachability when project metadata is missing/inaccessible, membership/history/roles/contact scope and many-to-many relationships. Company handbook replacement is the separate coordinator proposal below.",
     owner: "#349",
   },
   {
-    id: "SHELL-DETAIL",
-    state: "channel, empty, sidebar",
-    status: "proposed",
-    source: "Stage 0 bounded recommendation; founder discussion ongoing",
+    id: "PROJECT-FLOW",
+    state:
+      "project: name/breadcrumb, expand, Add project, Add channel, Link folder, Manage/Unlink",
+    status: "accepted",
+    source:
+      "Founder messages after Wiki v0.9 walkthrough, 2026-09-09, recorded in #344: “tốt rồim, tạo issues mới đi”; “wiki và cả project nhé nếu chưa tạo”; subsequent implementation instruction.",
     contract:
-      "Use Project.projectChannelId, relatedChannelIds / buzz-related-channel and member repository channels; coordinates identify, names label. Detailed grouping, navigation and deduplication require review. Do not change the visual prototype yet.",
-    owner: "#349",
+      "Demonstrated lightweight Channels/Workspace page; name/breadcrumb opens it and chevron only expands. Optional folder and new/existing main channel; create/link related channel; folder link/manage/unlink with Cancel. Existing 30621 Project and exact selected 30617 Repository remain authoritative. Backend model/host/path/recovery choices remain gated by G-PROJECT and G-DURABLE.",
+    owner: "#349, #361",
+  },
+  {
+    id: "WIKI-READ",
+    state: "wiki: Read, Search, Source, Contents; wiki-empty/missing/stale",
+    status: "accepted",
+    source:
+      "Founder messages after Wiki v0.9 walkthrough, 2026-09-09, recorded in #344: “tốt rồim, tạo issues mới đi”; “wiki và cả project nhé nếu chưa tạo”; subsequent implementation instruction.",
+    contract:
+      "Project-scoped TOC/article; full-body search with excerpts; immutable cited source hides TOC. Ask replaces article. Remember page/scroll; one repository automatic, multiple require stable selection. Narrow Contents and dismissible source retain recovery/focus. Preserve company knowledge; no new CMS or implicit generation.",
+    owner: "#364",
+  },
+  {
+    id: "WIKI-GENERATE",
+    state:
+      "wiki-empty/updating/failed/stale: Generate/Update, Cancel, Retry, runtime settings",
+    status: "accepted",
+    source:
+      "Founder messages after Wiki v0.9 walkthrough, 2026-09-09, recorded in #344: “tốt rồim, tạo issues mới đi”; “wiki và cả project nhé nếu chưa tạo”; subsequent implementation instruction.",
+    contract:
+      "Temporary selected installed-runtime/profile generation independent of Recap and employee sessions. Old complete snapshot remains readable on failure/cancel. Runtime capabilities, immutable Git/folder snapshot and coherent publication need G-GEN/G-PUB proof. Sample timers are not backend evidence.",
+    owner: "#362, #363",
+  },
+  {
+    id: "WIKI-ASK-DRAFT",
+    state:
+      "wiki, wiki-unavailable, wiki-answer-failed: Ask, History, Source, draft, Start thread, Back to Wiki",
+    status: "accepted",
+    source:
+      "Founder messages after Wiki v0.9 walkthrough, 2026-09-09, recorded in #344: “tốt rồim, tạo issues mới đi”; “wiki và cả project nhé nếu chưa tạo”; subsequent implementation instruction.",
+    contract:
+      "Existing selected available Project agent; private question/history by default; asking neither generates nor posts. Editable private task draft; only explicit Start shares reviewed prompt/citations with selected channel/member agent. Exact-question return obeys private-history ACL. Privacy/session/capability and durable dispatch remain gated below.",
+    owner: "#365, #366, #367",
+  },
+  {
+    id: "G-HANDBOOK",
+    state:
+      "workspace menu → Company Wiki → company library (company-wiki preview)",
+    status: "accepted",
+    source:
+      "Coordinator reviewed and approved the concrete compatibility diff, 2026-09-09; not a new founder approval.",
+    contract:
+      "Add a workspace-menu Company Wiki entry that reuses existing production goWiki() → /wiki → WikiLibraryScreen and its Company Wiki card for kind 30023 knowledge. Keep current content/ACL/route; no migration or separate store. This source renders only a labeled sample compatibility preview. Coordinator approved this concrete entry; #349 must verify the production replacement before removing the only global Wiki affordance.",
+    owner: "#344 review; #349 wiring; #364 compatibility",
+  },
+  {
+    id: "G-PROJECT",
+    state: "project: create/link/manage/unlink",
+    status: "blocked",
+    source: "#361 source audit and model gate",
+    contract:
+      "Resolve exact legacy/zero/one/multiple Repository mapping, optional folder, owner+d targeting, current-device path probe and live-session replacement policy. No name-based migration, remote-host assumption, or deleting a pre-existing channel on ambiguous writes.",
+    owner: "#361",
+  },
+  {
+    id: "G-PUB",
+    state: "wiki: update/cancel/retry/current snapshot",
+    status: "blocked",
+    source: "#362 coherent publication gate",
+    contract:
+      "Prove generation grammar, immutable page/manifest references, relay retention and legacy compatibility before schema-dependent publication. Old complete snapshot must survive partial publish/restart/second-client reads; no fabricated fallback success.",
+    owner: "#362",
+  },
+  {
+    id: "G-DURABLE",
+    state:
+      "Project operations; Wiki publication, private history and task draft/dispatch",
+    status: "blocked",
+    source: "#362 shared architecture gate",
+    contract:
+      "Name and approve a bounded owner-local durable operation/history seam; specialized theme/observer stores are not generic outboxes. Separate private history from signed shared-publication recovery; define ACL/encryption, limits, atomic persistence, migration and retry identities. Buzz events remain authoritative.",
+    owner: "#362 shared; #361, #366, #367 consumers",
+  },
+  {
+    id: "G-GEN",
+    state: "wiki: installed-runtime generation and immutable source",
+    status: "blocked",
+    source: "#363 runtime/snapshot gate",
+    contract:
+      "Certify temporary runtime/profile/model invocation, read-only/no-tools or bounded snapshot tools, containment/cancel and immutable Git/folder source. No active-employee session reuse, dirty bytes labeled HEAD, or silent API/heuristic fallback.",
+    owner: "#363",
+  },
+  {
+    id: "G-ASK-PROOF",
+    state: "wiki: private existing-agent Ask, History and draft origin",
+    status: "blocked",
+    source: "#365 proof before #366 / #367 shipping",
+    contract:
+      "Prove identity/ACL/privacy with two authenticated users, isolation from busy employee sessions, no channel/file/task side effect, bounded attempt-scoped stream/cancel/recovery and a certified runtime. Mock private state or prompt obedience is insufficient.",
+    owner: "#365; #366, #367",
   },
   {
     id: "AGENTS",
@@ -390,7 +551,25 @@ export const handoffContract = [
     status: "blocked",
     source: "Founder execution/release contract in #344",
     contract:
-      "Staging proof plus final installed release on designated company dev-server test channels: real agents, actual handler effects, persisted readback and recovery. Coordinator and Fable approve exact final PR head; no executor merge/release.",
-    owner: "#348, #357 and dependent issues",
+      "For each implemented issue, launch the actual candidate with designated real data and isolated authorized runtime/profile state; exercise handlers/readback/recovery and post safe immutable screenshots plus exact SHA/runtime/data identity on that issue. Related issues may share one unchanged build/run while retaining issue-to-case mapping. Prototype screenshots satisfy only Stage 0 reference evidence. Coordinator + actual Fable Medium must approve exact PR head before merge; #357 retains installed release acceptance.",
+    owner: "#348, #357; #349–#356 and #361–#367",
   },
 ];
+
+scenarios.push({
+  id: "company-wiki",
+  label: "Company Wiki · compatibility proposal",
+  screen: "company-wiki",
+  status: "idle",
+  tools: false,
+  intent: "Keep existing company knowledge reachable from the workspace menu.",
+  steps: [
+    "Open workspace menu → Company Wiki.",
+    "Open the sample company handbook, then return to its library.",
+  ],
+  expected: [
+    "Coordinator-proposed compatibility entry; not founder-approved placement.",
+    "Production wiring reuses goWiki() /wiki and WikiLibraryScreen; preview stays simulated.",
+  ],
+  seam: "Existing WikiLibraryScreen Company Wiki card and kind 30023 pages; #349 owns production wiring after coordinator review.",
+});

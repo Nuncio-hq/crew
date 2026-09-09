@@ -92,8 +92,8 @@ repository level.
 
 ## Channel-first IA guardrail (#278; successor tracked in #349)
 
-D-078 / Stage 0 #344 accepts the conceptual Projects/Channels split for the
-future shell; detailed UI remains proposed. #349 owns the narrow Projects
+D-078 / Stage 0 #344 accepts the demonstrated v0.9 Project/Wiki shell, with
+Browse channels in the workspace menu. #349 owns the narrow Projects
 guard update with production implementation. The present guard still runs
 unchanged; the Workbench prohibition remains authoritative.
 

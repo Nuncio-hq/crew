@@ -88,12 +88,36 @@ export function Conversation({
           ) : (
             <Icon name={dm ? "message" : "hash"} />
           )}
-          <span className="breadcrumb">{dm ? "Direct messages" : project}</span>
+          {dm ? (
+            <span className="breadcrumb">Direct messages</span>
+          ) : project === "Workspace" ? (
+            <span className="breadcrumb">Workspace</span>
+          ) : (
+            <button
+              className="breadcrumb project-crumb"
+              onClick={() =>
+                go("project", {
+                  project,
+                })
+              }
+            >
+              {project}
+            </button>
+          )}
           <Icon name="right" size={12} />
           <span className="header-title">
             {dm ? agentName : thread ? `# ${channel}` : "Channel"}
           </span>
           <div className="spacer" />
+          {thread && selectedThread.wikiOrigin && (
+            <button
+              className="wiki-backlink"
+              onClick={() => go("wiki", selectedThread.wikiOrigin)}
+            >
+              <Icon name="wiki" size={13} />
+              Back to Wiki
+            </button>
+          )}
           {thread && (
             <IconButton
               data-film="open-tools"

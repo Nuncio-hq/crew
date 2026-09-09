@@ -1,3 +1,9 @@
+import { WikiProvider, useWiki, wikiKey } from "./WikiModel";
+import { WikiPage } from "./WikiPage";
+import { wikiSources } from "./wiki-content";
+import { ProjectProvider, useProjects } from "./ProjectModel";
+import { ProjectPage } from "./ProjectPage";
+import { AddProjectDialog } from "./ProjectDialogs";
 import { RecapProvider, useRecap } from "./RecapSettings";
 import { sampleRecipients } from "./contact-routing";
 import { AgentDirectoryProvider, useAgentDirectory } from "./AgentDirectory";
@@ -40,6 +46,9 @@ const initialThread =
                   : "workspace"),
   );
 function Workspace() {
+  const { reset: resetProjects } = useProjects();
+  const wiki = useWiki();
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
   const { agents, allAgents, reset: resetAgents } = useAgentDirectory();
   const { reset: resetRoles } = useChannelRoles();
   const { reset: resetRecap } = useRecap();
@@ -102,8 +111,9 @@ function Workspace() {
     );
     if (patch.status) setStatus(patch.status);
   }
-  function openThread(id, tab = "plan", prId = null) {
-    const t = threadList.find((t) => t.id === id);
+  function openThread(id, tab = "plan", prId = null, suppliedThread = null) {
+    const t = suppliedThread || threadList.find((t) => t.id === id);
+    if (!t) return;
     setScenario(
       {
         "needs-you": "needs-you",
@@ -141,9 +151,12 @@ function Workspace() {
     [sidebar, setSidebar] = useState(true),
     [agent, setAgent] = useState("Hermes"),
     [project, setProject] = useState(
-      initial.screen === "empty"
-        ? "HeardBack"
-        : initialThread.project || "NuncioCrew",
+      new URLSearchParams(location.search).get("project") ||
+        (initial.id === "channels"
+          ? "Workspace"
+          : initial.screen === "empty"
+            ? "HeardBack"
+            : initialThread.project || "NuncioCrew"),
     ),
     [channel, setChannel] = useState(
       initial.screen === "empty"
@@ -211,12 +224,16 @@ function Workspace() {
     clearTimeout(timer.current);
     setScenario(id);
     setScreen(s.screen);
-    if (s.screen === "thread" || s.screen === "channel") {
+    if (["thread", "channel", "project", "wiki"].includes(s.screen)) {
       setProject("NuncioCrew");
       setChannel("product");
     }
     if (s.screen === "empty") {
       setProject("HeardBack");
+      setChannel("general");
+    }
+    if (id === "channels") {
+      setProject("Workspace");
       setChannel("general");
     }
     if (s.screen === "thread") {
@@ -250,6 +267,8 @@ function Workspace() {
       agents: "agents",
       workflows: "workflows",
       settings: "settings",
+      project: "project",
+      "company-wiki": "company-wiki",
     };
     if (s === "thread") {
       openThread("workspace");
@@ -257,12 +276,32 @@ function Workspace() {
     }
     if (map[s]) {
       const returnContext =
-        s === "channel" && !context ? { project, channel } : context;
+        ["channel", "wiki"].includes(s) && !context
+          ? {
+              project: project === "Workspace" ? "NuncioCrew" : project,
+              channel,
+            }
+          : context;
       load(map[s]);
       context = returnContext;
       if (context) {
         setProject(context.project);
-        setChannel(context.channel);
+        if (context.channel) setChannel(context.channel);
+        if (s === "wiki") {
+          if (context.repository)
+            wiki.selectRepository(context.project, context.repository);
+          if (context.question)
+            wiki.patch(wikiKey(context.project, context.repository), {
+              activeQuestion: context.question,
+              view: "ask",
+              source: null,
+            });
+          history.replaceState(
+            null,
+            "",
+            `?film=off&state=wiki&project=${encodeURIComponent(context.project)}`,
+          );
+        }
       }
     } else {
       setScreen(s);
@@ -271,6 +310,9 @@ function Workspace() {
     }
   }
   function reset() {
+    resetProjects();
+    wiki.reset();
+    setAddProjectOpen(false);
     resetRecap();
     resetRoles();
     resetAgents();
@@ -286,6 +328,39 @@ function Workspace() {
     setThreadList(sampleThreads);
     load("thread-working");
     notice("Prototype reset");
+  }
+  function startWikiThread(draft, origin) {
+    const id = `wiki-task-${Date.now()}`;
+    const sources = draft.citations
+      .map((id) => {
+        const source = wikiSources.find((s) => s.id === id);
+        return `${source.path}:${source.start}-${source.end} @ ${origin.revision}`;
+      })
+      .join("\n");
+    const thread = {
+      id,
+      title: draft.title,
+      summary: "Started from a Wiki answer · sample task",
+      owner: draft.agent,
+      participants: [draft.agent],
+      project: origin.project,
+      channel: draft.channel,
+      status: "working",
+      next: "Sample task created. No real agent has been launched.",
+      replies: 1,
+      prs: [],
+      criteria: "Review the implementation plan and agree acceptance checks.",
+      wikiOrigin: origin,
+    };
+    setThreadList((items) => [...items, thread]);
+    setMessages((items) => ({
+      ...items,
+      [`thread:${id}`]: [
+        { author: "Oscar", text: `${draft.prompt}\n\nSources:\n${sources}` },
+      ],
+    }));
+    openThread(id, "plan", null, thread);
+    notice("Sample thread created. No real task was dispatched.");
   }
   function send(text) {
     const route =
@@ -451,6 +526,7 @@ function Workspace() {
         >
           {sidebar ? (
             <Sidebar
+              onAddProject={() => setAddProjectOpen(true)}
               attentionCount={
                 threadList.filter((t) =>
                   ["needs-you", "done"].includes(t.status),
@@ -511,6 +587,22 @@ function Workspace() {
                 setDraft={(s) => setDrafts((d) => ({ ...d, [key]: s }))}
                 scrollPositions={scrollPositions}
                 notice={notice}
+              />
+            ) : screen === "wiki" ? (
+              <WikiPage
+                key={project}
+                projectName={project}
+                scenario={scenario}
+                go={go}
+                notice={notice}
+                onStartThread={startWikiThread}
+              />
+            ) : screen === "project" ? (
+              <ProjectPage
+                key={`${screen}:${project}`}
+                projectName={project}
+                go={go}
+                threads={threadList}
               />
             ) : (
               <WorkspacePages
@@ -611,7 +703,7 @@ function Workspace() {
                 ["Product conversations", "NuncioCrew · channel", "channel"],
                 ["Hermes", "Direct message", "dm"],
                 ["Inbox", "Workspace", "inbox"],
-                ["Wiki", "Workspace", "wiki"],
+                ["Wiki", "NuncioCrew · repository knowledge", "wiki"],
               ]
                 .filter((x) =>
                   (x[0] + x[1]).toLowerCase().includes(query.toLowerCase()),
@@ -641,6 +733,16 @@ function Workspace() {
           </section>
         </div>
       )}
+      {addProjectOpen && (
+        <AddProjectDialog
+          onClose={() => setAddProjectOpen(false)}
+          onCreated={(p) => {
+            setAddProjectOpen(false);
+            go("project", { project: p.name });
+            notice("Project created in this preview");
+          }}
+        />
+      )}
       {toast && (
         <div className="toast" role="status">
           <Icon name="info" />
@@ -656,7 +758,11 @@ export function App() {
     <AgentDirectoryProvider>
       <ChannelRolesProvider>
         <RecapProvider>
-          <Workspace />
+          <ProjectProvider>
+            <WikiProvider>
+              <Workspace />
+            </WikiProvider>
+          </ProjectProvider>
         </RecapProvider>
       </ChannelRolesProvider>
     </AgentDirectoryProvider>

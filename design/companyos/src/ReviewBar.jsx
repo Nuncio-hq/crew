@@ -19,7 +19,7 @@ export function ReviewBar({
         </span>
         <span className="review-separator" />
         <span className="simulation-label">
-          Interactive proposal · simulated data
+          Interactive reference · simulated data
         </span>
         <a className="document-link" href="/index.html">
           Design document
@@ -101,7 +101,8 @@ export function Guide({ scenario, load, close }) {
       </h1>
       <p className="guide-intro">
         A living reference for the founder and implementation agents. Layout
-        follows the selected Codex screenshot. Detailed behavior is a proposal.
+        follows the selected Codex layout and accepted v0.9 Project/Wiki flow.
+        See the Stage 0 matrix for remaining gates.
       </p>
       <h2>01 / What is decided</h2>
       <div className="contract-list">

@@ -17,28 +17,71 @@ export function WorkspacePages({
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
   const [paused, setPaused] = useState(false);
-  const [article, setArticle] = useState("Product direction");
+  const [handbookOpen, setHandbookOpen] = useState(false);
   const titles = {
     inbox: ["Your inbox", "The next thing that needs your attention."],
-    wiki: ["Workspace wiki", "Decisions and knowledge, close to the work."],
     agents: [
       "Your agents",
       "People to think with, build with, and hand work to.",
     ],
     settings: ["Settings", "Choose how Crew helps you follow the work."],
     workflows: ["Workflows", "The routines that keep work moving."],
+    "company-wiki": ["Company Wiki", "Company knowledge, beyond one project."],
   };
   const [title, description] = titles[screen];
   return (
     <section className="workspace-page">
       <header>
-        <Icon name={screen} />
+        <Icon name={screen === "company-wiki" ? "wiki" : screen} />
         <span>{title}</span>
       </header>
       <div className="workspace-body">
         <span className="eyebrow">PERSONAL WORKSPACE</span>
         <h1>{title}</h1>
         <p className="page-description">{description}</p>
+        {screen === "company-wiki" && (
+          <>
+            <p className="quiet-note">
+              Coordinator-proposed compatibility entry · sample library.
+              Existing company knowledge stays available separately from Project
+              Wiki.
+            </p>
+            {handbookOpen ? (
+              <article
+                className="workflow-card"
+                aria-label="Sample company handbook"
+              >
+                <button
+                  className="light-button"
+                  onClick={() => setHandbookOpen(false)}
+                >
+                  Back to company library
+                </button>
+                <h2>Company handbook</h2>
+                <p>
+                  Agree on the work, keep decisions in the shared conversation,
+                  and bring evidence back for review.
+                </p>
+                <p>
+                  These are sample words for this reference. No company pages
+                  are loaded or changed.
+                </p>
+              </article>
+            ) : (
+              <button
+                className="inbox-item"
+                onClick={() => setHandbookOpen(true)}
+              >
+                <Icon name="wiki" />
+                <div>
+                  <strong>Company handbook</strong>
+                  <p>Shared company knowledge · sample page</p>
+                </div>
+                <Icon name="right" />
+              </button>
+            )}
+          </>
+        )}
         {screen === "inbox" && (
           <>
             <div className="filter-tabs">
@@ -147,41 +190,6 @@ export function WorkspacePages({
           </>
         )}
         {screen === "settings" && <RecapSettings />}
-        {screen === "wiki" && (
-          <div className="wiki-grid">
-            <nav>
-              {[
-                "Product direction",
-                "Engineering practices",
-                "Team decisions",
-              ].map((a) => (
-                <button
-                  key={a}
-                  onClick={() => setArticle(a)}
-                  className={article === a ? "active" : ""}
-                >
-                  <Icon name="file" />
-                  {a}
-                </button>
-              ))}
-            </nav>
-            <article>
-              <span className="eyebrow">TEAM KNOWLEDGE</span>
-              <h2>{article}</h2>
-              <p>
-                {article === "Product direction"
-                  ? "One workspace for projects, conversations, and a team of agents. Start with the complete coding loop: agree, delegate, verify, and hand back."
-                  : article === "Engineering practices"
-                    ? "Build on existing Buzz contracts. Exercise the real workflow. Return evidence, remaining limits, and a result the founder can inspect."
-                    : "Keep decisions close to the work. Record what was agreed, what remains open, and the reason for each change."}
-              </p>
-              <p>
-                Clear ownership and useful evidence make the next step easier.
-              </p>
-              <span className="muted">Example knowledge page</span>
-            </article>
-          </div>
-        )}
         {screen === "workflows" && (
           <div className="workflow-card">
             <div>

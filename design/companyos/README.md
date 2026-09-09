@@ -16,9 +16,9 @@ npm run dev -- --host 127.0.0.1 --port 4320 --strictPort
 
 Open `http://127.0.0.1:4320/` for the design document and
 `http://127.0.0.1:4320/prototype.html` for the UI. `index.html` is the design document. `prototype.html` is the interactive UI.
-Deep-link a review state with `prototype.html?state=needs-you`, for example.
+Deep-link a review state with `prototype.html?film=off&state=needs-you`, for example. Wiki states also accept `project=NuncioCrew`.
 Build validation: `npm run build`. The compiled app is `dist/client/`.
-This handoff is local-only; no deployment is authorized. Original private captures are excluded.
+This handoff is local-only; no Sites deployment is authorized. Original private captures are excluded.
 
 ## Authority and ownership
 
@@ -40,21 +40,34 @@ record, updated in place rather than multiplied per iteration.
 
 ## What is accepted, and what is not
 
-The founder selected the three sidebar groups and central conversation layout.
-The project hierarchy details, right-hand tools, control placement, state behavior,
-and example content are **proposals**. A functioning button in this prototype
-is not evidence of implemented backend behavior or founder acceptance.
+The founder accepted the demonstrated Project/Wiki v0.9 flow on 2026-09-09,
+then requested implementation and real-data evidence. Approval provenance in
+[#344](https://github.com/Nuncio-hq/crew/issues/344): “tốt rồim, tạo issues mới đi”
+and “wiki và cả project nhé nếu chưa tạo”. Earlier pending-review notes below
+are historical, not a requirement to obtain that same approval again.
 
-The view combines existing Buzz concepts: channels/threads, agent directory,
-DM conversations, observer activity, and the Tool Pane. The Projects group does
-not define a new identity registry. In production code, kind 30617 is a repository,
-kind 30621 is a project. The conceptual split is accepted: standalone/general channels stay in Channels within Workspace, project channels under Projects, with joined-channel fallback for missing/inaccessible project metadata. Detailed UI remains open; no one-project-only invariant.
+Workspace top is Inbox, Agents, Workflows. Wiki is inside each Project; there
+are no global Wiki/Channels rows. Browse channels stays in the workspace menu,
+including joined channels with missing/inaccessible Project metadata. Project
+name/breadcrumb opens Channels/Workspace; chevron only expands/collapses. Keep
+existing home/related/repository channel relationships and many-to-many bindings.
+Kind 30621 is a Project; kind 30617 is a Repository. Sample name-based state is
+not a production identity model.
+
+`src/blueprint.js` exports the authoritative `handoffContract` matrix, rendered
+in `index.html#authority`. Accepted flow is distinct from unproved backend
+semantics: G-PROJECT, G-PUB, G-DURABLE, G-GEN and G-ASK-PROOF remain explicit,
+alongside the existing thread/recap/contact/acceptance gates. A working sample
+button is not production evidence. The **Company Wiki** workspace-menu entry
+is a coordinator-proposed compatibility choice for existing `/wiki` /
+`WikiLibraryScreen` / kind 30023 pages, pending coordinator review before the
+old sole global entry is removed. The sample library does not query real pages.
 
 ## Working rules for implementation agents
 
 1. Read the Crew product, decisions, fork guidance, and applicable tests.
-2. Choose the exact state ID in `src/blueprint.js`; review it with the founder.
-3. If approved, update the affected living-doc contract and this same reference.
+2. Choose the exact state ID and accepted contract in `src/blueprint.js`; ask only about genuinely unresolved choices.
+3. Follow recorded approval and update the affected living-doc contract and this same reference.
    Do not mark other states accepted by inference.
 4. Map the state to the named Buzz seam. Reuse existing relay identity and lifecycle.
 5. Implement in production separately. Do not copy the prototype's in-memory
@@ -71,7 +84,7 @@ kind 30621 is a project. The conceptual split is accepted: standalone/general ch
 - DM reply is a short timer simulation. Switching views cannot deliver to another DM.
 - Reconnect, choice confirmation, Stop/Steer, and workflow pause are local examples.
 - Attach context is explicitly deferred; it does not upload files.
-- Global search covers the sample workspace, not the repository or daily relay.
+- Global search covers the sample workspace. Project Wiki search searches the full text of its sample pages; it does not query the daily relay.
 - Escape closes review/search or returns from the thread to the channel.
 - Keyboard arrows on the divider resize the two panes. Narrow windows show tools
   as a dismissible foreground pane so conversation text is not squeezed.
@@ -165,24 +178,36 @@ Thread tools now has Agent plans, with one reported ACP plan/structured todo sna
 
 ## Backend/frontend and GitHub audit (2026-09-09)
 
-The maintained audit is in `index.html#feasibility`, backed by `src/design-contract.js`; backlog proposals are in `#backlog-audit`. It compares production code, prototype interactions and GitHub issue history. Snapshot: 5 open issues, 134 closed issues, 1 open PR (#347). Recommendation: rewrite #344, add three coherent issues (channel policy/contact point, runtime recap, isolated staging/acceptance), and retain distinct runtime/CI bugs. No GitHub changes were made. Focused production tests: 126 passed with no skips; no live engine or staging verification.
+The historical pre-roadmap audit is in `index.html#feasibility`, backed by `src/design-contract.js`; backlog proposals are in `#backlog-audit`. It compares production code, prototype interactions and GitHub issue history. Snapshot: 5 open issues, 134 closed issues, 1 open PR (#347). Recommendation: rewrite #344, add three coherent issues (channel policy/contact point, runtime recap, isolated staging/acceptance), and retain distinct runtime/CI bugs. No GitHub changes were made. Focused production tests: 126 passed with no skips; no live engine or staging verification.
 
-## Stage 0 source handoff (#344)
+## Project page review iteration (2026-09-09)
 
-Source snapshot: founder checkout HEAD `a61590f2e626fe9e2dda3b405f588b0bd09e02b0`,
-with 58 fingerprinted source/doc files; aggregate SHA-256
-`deeb9c33d112fdf920326e5823369ef95ede9eb15cc9fcb84042d2c8c9add7dc`.
-Source fingerprints matched before and after copying. The Git commit containing
-this handoff is the portable revision; downstream agents must pin that commit.
+Open `prototype.html?film=off&state=project` for the lightweight Channels / Workspace page and `state=channels` to open a general workspace conversation directly. The superseding v0.9 sidebar has no global Channels row or landing page. Browse channels remains available from the workspace name menu, including when all shared channels are linked into Projects. Click a project name or channel breadcrumb to open the Project page; the separate arrow expands its channels. Use the Projects `+` to review Add Project, including optional folder, sample Git/folder/unavailable results, and new/existing main channel. Add channel and Manage workspace also work in local sample state. Cancel/Escape discard drafts; Reset restores all fixtures. No native folder selection, Git mutation or relay write occurs. The demonstrated flow is accepted in #344; unproved backend contracts remain gated. The interaction contract is in `src/blueprint.js` and the existing design document, not a new spec.
 
-`src/blueprint.js` exports `handoffContract`, rendered in `index.html#authority`.
-Its status applies only to the stated contract, not every control in a scenario.
-The current Projects visual remains an unapproved detailed proposal. Original
-`codex-layout.png` and `crew-focus-before.png` captures are intentionally omitted;
-the document links to mock-only states instead. Generated output, dependencies,
-QA captures and runtime state are excluded. No production app is changed.
 
-The earlier GitHub audit below/above is a historical snapshot. Current delivery
-ownership is #344 and children #348–#357; the roadmap stays open. Source pinning
-in downstream issues occurs after merge, by the coordinator. This PR does not
-satisfy installed runtime acceptance or authorize release.
+## Project Wiki review
+
+Open `prototype.html?film=off&state=wiki&project=NuncioCrew` for the current read → ask → source → task flow. Review scenarios include `wiki-empty`, `wiki-missing`, `wiki-updating`, `wiki-failed`, `wiki-stale`, `wiki-unavailable` and `wiki-answer-failed`. Sidebar Wiki belongs to each project; Browse channels remains in the workspace menu.
+
+Six curated pages and seven source excerpts use Crew revision `8278d2b14cd04e17c1010d819c9fdd20eaefff9a`. The source excerpts are real captured code; answers are deterministic examples. Generator progress, private history, draft storage and new threads stay in this browser session. Reset/reload clears them. No runtime is started and no real task is posted. The existing design document owns the backend mapping and remaining verification work.
+
+## Stage 0 v0.9 source handoff (#344)
+
+Refreshed from founder checkout HEAD `a61590f2e626fe9e2dda3b405f588b0bd09e02b0`
+with the reviewed v0.9 source and dirty living-doc hunks. The 74-file source/dirty
+doc fingerprint matched before and after copying; aggregate SHA-256:
+`e77b11cbffab03b1c39f56c9d65adc82a467dfe9d5beacb314fdfdcc96810cca`.
+The Git commit carrying this handoff is the portable source revision. Downstream
+issues pin that immutable commit after review/merge, not a localhost URL.
+
+Public source excludes the two original private captures, dependencies, dist,
+`.qa`, credentials and runtime state. Links use the safe mock reference instead.
+Stage 0 changes source/docs only; PR #347 committed topology hunks and unrelated
+dirty HERMES/STATE/templates are not imported. Only PRODUCT and DECISIONS changed
+among the previously reviewed docs since the first v0.8 snapshot.
+
+Current delivery ownership is #344, #348–#357 and #361–#367. Related source
+checks share one unchanged build with an issue-to-case map in existing
+`design-qa.md`. Reference screenshots posted to #344 are explicitly simulated;
+they cannot satisfy another issue's real installed-runtime evidence gate.
+The roadmap stays open. No merge, release or production acceptance is implied.

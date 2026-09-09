@@ -345,3 +345,15 @@ The live test uses a generated ephemeral keypair and unique `d` tag. It
 publishes a kind `30617`, links one path, reconnects for a cold read, relinks a
 Unicode path, and resolves the latest path into Project-channel agent context.
 Never point this test at a shared or production relay.
+
+## CompanyOS grouped evidence (#344)
+
+Related issues may reuse one unchanged build and owned real-data run; keep an
+explicit issue-to-case mapping and post evidence on each corresponding issue.
+Record candidate SHA/build, source revision, runtime/model/profile, test data
+identity, handler effects/readback and recovery. Preserve active employee
+sessions and private data. Stage 0 reference screenshots are explicitly
+simulated; final implementation evidence launches the real candidate flow.
+Use `scripts/post-screenshots.sh` on the resulting PR and copy its immutable
+image URLs with concise captions into the issue. Required final CI, independent
+exact-head review and installed release acceptance remain separate gates.
