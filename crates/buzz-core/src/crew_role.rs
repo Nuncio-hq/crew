@@ -11,6 +11,18 @@ use nostr::{FromBech32, PublicKey, ToBech32};
 use serde::Deserialize;
 use thiserror::Error;
 
+mod bulk;
+mod document;
+pub use bulk::{
+    remove_canvas_crew_members, update_canvas_crew_config, CrewConfigDraft, CrewRoleDefinition,
+};
+mod read;
+#[cfg(test)]
+use crate::crew_role as subject;
+pub use read::{read_canvas_crew_metadata, CanvasCrewMetadata};
+#[cfg(test)]
+mod bulk_tests;
+
 const MAX_LABEL_LEN: usize = 128;
 /// Capability key that grants the Crew developer MCP server.
 pub const CAPABILITY_DEV_MCP: &str = "buzz-dev-mcp";
@@ -40,6 +52,10 @@ pub struct CanvasRoleBlock {
     pub assignments: BTreeMap<String, String>,
     /// Case-folded role label to definition text.
     pub definitions: BTreeMap<String, String>,
+    /// Case-folded role key to its original display label.
+    pub definition_labels: BTreeMap<String, String>,
+    /// Optional canonical contact pubkey; metadata only, never execution authority.
+    pub contact_pubkey: Option<String>,
     /// Founder-authored work type to role label presets.
     pub routing: BTreeMap<String, String>,
     /// Founder-authored role label to Crew capability keys.
@@ -85,6 +101,8 @@ pub enum RoleParseError {
 #[derive(Debug, Deserialize)]
 struct RawCanvasRoleBlock {
     #[serde(default)]
+    contact: Option<String>,
+    #[serde(default)]
     assignments: BTreeMap<String, String>,
     #[serde(default)]
     definitions: BTreeMap<String, String>,
@@ -102,25 +120,18 @@ struct RawCanvasRoleBlock {
 pub fn parse_canvas_assignments(
     canvas_content: &str,
 ) -> Result<Option<CanvasRoleBlock>, RoleParseError> {
-    let starts: Vec<usize> = canvas_content
-        .lines()
-        .enumerate()
-        .filter_map(|(index, line)| (line.trim() == "```crew").then_some(index))
-        .collect();
-    let Some(&start) = starts.first() else {
+    let Some((_, yaml, _)) = bulk::split_fence(canvas_content)? else {
         return Ok(None);
     };
-    let lines: Vec<&str> = canvas_content.lines().collect();
-    let Some(end_offset) = lines[start + 1..]
-        .iter()
-        .position(|line| line.trim() == "```")
-    else {
-        return Err(RoleParseError::MalformedFence);
-    };
-    let end = start + 1 + end_offset;
-    let yaml = lines[start + 1..end].join("\n");
+    let document = document::parse_document(yaml)?;
     let raw: RawCanvasRoleBlock =
-        serde_yaml::from_str(&yaml).map_err(|e| RoleParseError::InvalidYaml(e.to_string()))?;
+        serde_yaml::from_value(document).map_err(|e| RoleParseError::InvalidYaml(e.to_string()))?;
+    let contact_pubkey = raw
+        .contact
+        .as_deref()
+        .map(parse_pubkey)
+        .transpose()?
+        .map(|key| key.to_hex());
     let mut assignments = BTreeMap::new();
     for (agent, label) in raw.assignments {
         let agent = agent.trim().to_string();
@@ -133,24 +144,47 @@ pub fn parse_canvas_assignments(
         assignments.insert(agent, label);
     }
     let mut definitions = BTreeMap::new();
+    let mut definition_labels = BTreeMap::new();
     for (label, definition) in raw.definitions {
         let normalized = normalize_label(&label)?;
-        definitions.insert(normalized.to_ascii_lowercase(), definition);
+        let key = normalized.to_ascii_lowercase();
+        if definitions.insert(key.clone(), definition).is_some() {
+            return Err(RoleParseError::InvalidLabel(format!(
+                "duplicate role: {normalized}"
+            )));
+        }
+        definition_labels.insert(key, normalized);
     }
     let mut routing = BTreeMap::new();
     for (work_type, label) in raw.routing {
         let work_type = normalize_label(&work_type)?;
         let label = normalize_label(&label)?;
-        routing.insert(work_type.to_ascii_lowercase(), label);
+        if routing
+            .insert(work_type.to_ascii_lowercase(), label)
+            .is_some()
+        {
+            return Err(RoleParseError::InvalidLabel(format!(
+                "duplicate routing key: {work_type}"
+            )));
+        }
     }
     let mut capabilities = BTreeMap::new();
     for (label, keys) in raw.capabilities {
         let label = normalize_label(&label)?;
-        capabilities.insert(label.to_ascii_lowercase(), keys);
+        if capabilities
+            .insert(label.to_ascii_lowercase(), keys)
+            .is_some()
+        {
+            return Err(RoleParseError::InvalidLabel(format!(
+                "duplicate capability role: {label}"
+            )));
+        }
     }
     Ok(Some(CanvasRoleBlock {
         assignments,
         definitions,
+        definition_labels,
+        contact_pubkey,
         routing,
         capabilities,
     }))
