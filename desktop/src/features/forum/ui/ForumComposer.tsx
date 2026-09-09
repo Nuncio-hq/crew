@@ -269,8 +269,9 @@ function ForumComposerVisit({
     (suggestion: ChannelSuggestion) => {
       if (isSubmissionPendingRef.current) return;
       const { cursor } = richText.getPlainTextAndCursor();
-      const { replaceFromOffset, replaceToOffset, insertText } =
-        channelLinks.insertChannel(suggestion, cursor);
+      const edit = channelLinks.insertChannel(suggestion, cursor);
+      if (!edit) return;
+      const { replaceFromOffset, replaceToOffset, insertText } = edit;
       richText.replacePlainTextRange(
         replaceFromOffset,
         replaceToOffset,

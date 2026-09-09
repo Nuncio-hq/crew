@@ -219,11 +219,41 @@ Observer kind 24200 is ephemeral and owner-scoped, with NIP-44 encryption (`buzz
 
 Role labels resolve from owner-signed channel canvas assignments (`crew_role.rs`, D-043/D-044); thread owner and participants do not redefine them. The prototype's sample channel roster is not an authoritative registry or a capability source. Project backend model/recovery (demonstrated v0.9 UI accepted by D-078), queue/acceptance automation and external service integration are still proposals or unverified integration work.
 
-The channel role editor prototype uses a local snapshot only. Its production write seam is `get_canvas` / `set_canvas` (kind 40100); implementation must preserve unrelated canvas content, routing and capabilities and resolve edit conflicts. The present command signature accepts channel/content without an expected revision, so concurrent-edit safety is not established by reusing the command alone. Show success only after relay acknowledgement; retain the draft on failure. This UI does not add channel members or grant tools.
+The shared `buzz-core::crew_role` parser reads the first line-delimited Crew
+fence; a malformed first fence cannot fall through to a later one. Definitions
+retain display labels separately from their existing ASCII-normalized lookup
+keys. Duplicate YAML keys (including unknown nested values), case-colliding
+role/reference keys and invalid contact pubkeys fail closed. Legacy unquoted
+numeric string keys are read directly from source, avoiding YAML numeric
+conversion. `get_canvas` carries the event ID, unassigned definitions, optional
+contact and explicit parse/author state to the desktop API. Foreign content is
+visible for review; it does not gain execution authority.
+
+`update_canvas_crew_config` is the pure bulk reconstruction seam;
+`remove_canvas_crew_members` performs surgical cleanup using the same parser and
+serializer. Both retain semantic unknown YAML,
+tooling and exact outside-fence prose/later fences. Inside-fence formatting,
+mapping order and comments may be normalized or lost by the YAML round-trip.
+Renames rewrite exact assignment/routing/capability references; deleting a
+defined role with unresolved references fails. Pre-existing dangling references
+remain visible, and member cleanup preserves unrelated unresolved assignment
+entries without choosing or dropping a holder. This helper performs no signing, publication, session reset or membership
+change. Its caller supplies the event content bound; native
+`events::build_set_canvas` independently enforces 64 KiB.
+
+The bulk editor and recoverable save command remain tracked by #350. The existing
+`set_canvas` (kind 40100) accepts channel/content without an expected head. Reusing
+it alone provides no concurrent-edit protection or distributed CAS. The complete
+flow must retain drafts on conflict/failure and expose partial announcement
+delivery. Existing ACP sessions keep their cached canvas until explicit restart;
+configuration saves do not hot-refresh those sessions.
 
 The v0.6 prototype management flow reuses the canvas distinction between role definitions and holder assignments, including unassigned definitions. Its agent add/edit design maps to managed-agent create/update and Hermes profile discovery: Hermes binds a profile without editing its model. Optional initial channel joins are a separate lifecycle with acknowledgement/recovery, not an assumed atomic create. Git metadata maps to worktree registry/details and thread GitHub/forge projections; local changes against HEAD and PR changes against the base revision must remain distinct. These prototype flows are not connected to the commands yet.
 
-The v0.7 prototype adds an optional **Channel contact point**, proposed and not implemented in the backend. Store one member pubkey with the owner-signed channel canvas snapshot, alongside roles while preserving unrelated data. This extends the existing canvas schema rather than creating another registry. Existing `crew_role.rs` routing presets map work types to role holders; they do not implement automatic wake-up. `buzz-acp/filter.rs` already supports channel/kind-scoped `SubscriptionRule.require_mention`, and `relay.rs` constructs `#h` / `#p` subscriptions. Implementing contact routing requires both subscription updates and inbound dispatch changes; turning off `require_mention` alone would also admit messages addressed to others and agent chatter. Preserve the separate `respond_to` author authorization gate.
+The optional **Channel contact point** is `contact` metadata in the shared Crew
+canvas parser, separate from assignments and capabilities. It is omitted when
+unset and normalized to a canonical pubkey when present. Saving it does not
+enable execution; #355 owns contact routing. Existing `crew_role.rs` routing presets map work types to role holders; they do not implement automatic wake-up. `buzz-acp/filter.rs` already supports channel/kind-scoped `SubscriptionRule.require_mention`, and `relay.rs` constructs `#h` / `#p` subscriptions. Implementing contact routing requires both subscription updates and inbound dispatch changes; turning off `require_mention` alone would also admit messages addressed to others and agent chatter. Preserve the separate `respond_to` author authorization gate.
 
 Proposed behavior: human-authored channel messages and thread replies without explicit mention targets go to the selected contact; explicit mentions take priority and do not also wake the contact. Agent messages cannot trigger this fallback. The contact does not become the thread owner, gain a role, or gain tools. None leaves mention-only behavior. Missing, removed, or unavailable contacts require a visible unresolved state with no silent replacement. The real implementation must verify authors/structured mention targets, membership and canvas signer; retain kind/channel/access gates, deduplicate event delivery, fence stale subscriptions when contact changes, and handle acknowledgement/conflicts on save. Live validation must cover bot-loop prevention, mention priority, channel isolation, contact replacement/removal, reconnect and two-client edits. The prototype uses local atomic role/contact state and text matching for sample messages only.
 

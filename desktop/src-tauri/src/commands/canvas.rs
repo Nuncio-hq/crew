@@ -97,6 +97,10 @@ pub async fn get_canvas(
             "author": null,
             "routing": [],
             "assignments": [],
+            "definitions": [],
+            "contact_pubkey": null,
+            "crew_authority": "absent",
+            "crew_parse_state": "absent",
             "dev_mcp_granted": null,
             "crew_parse_error": null,
         }));
@@ -108,6 +112,11 @@ pub async fn get_canvas(
         .public_key()
         .to_hex();
     let crew_parse_error = crew_parse_error(&event.content);
+    let metadata = buzz_core_pkg::crew_role::read_canvas_crew_metadata(
+        Some(&event.content),
+        Some(&event.pubkey.to_hex()),
+        &owner,
+    );
     let routing =
         buzz_core_pkg::crew_role::resolve_routing(&event.content, &event.pubkey.to_hex(), &owner)
             .ok()
@@ -139,6 +148,10 @@ pub async fn get_canvas(
         "event_id": event.id.to_hex(),
         "updated_at": event.created_at.as_secs(),
         "author": event.pubkey.to_hex(),
+        "definitions": metadata.definitions,
+        "contact_pubkey": metadata.contact_pubkey,
+        "crew_authority": metadata.crew_authority,
+        "crew_parse_state": metadata.crew_parse_state,
         "routing": routing.into_iter().map(|entry| serde_json::json!({
             "work_type": entry.work_type,
             "role_label": entry.role_label,
