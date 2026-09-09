@@ -165,6 +165,11 @@ fn read_owned_bytes(_path: &Path) -> Result<Vec<u8>, String> {
     Err("secure local transport status is unavailable on this platform".into())
 }
 
+#[cfg(not(unix))]
+pub(super) fn open_owned_directory(_path: &Path, _create_leaf: bool) -> Result<(), String> {
+    Err("secure local transport status is unavailable on this platform".into())
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
