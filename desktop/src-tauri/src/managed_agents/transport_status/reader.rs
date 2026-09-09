@@ -75,10 +75,18 @@ pub(super) fn open_owned_directory(
         let mode = Mode::from_bits_truncate(metadata.st_mode);
         if SFlag::from_bits_truncate(metadata.st_mode) != SFlag::S_IFDIR
             || (metadata.st_uid != 0 && metadata.st_uid != owner)
-            || !((mode & (Mode::S_IWGRP | Mode::S_IWOTH)).is_empty()
-                || metadata.st_uid == 0 && mode.contains(Mode::S_ISVTX))
         {
             return Err("local transport status ancestor is not trusted".into());
+        }
+        let writable = !(mode & (Mode::S_IWGRP | Mode::S_IWOTH)).is_empty();
+        let root_sticky = metadata.st_uid == 0 && mode.contains(Mode::S_ISVTX);
+        if writable && !root_sticky {
+            return Err(if metadata.st_uid == owner && metadata.st_uid != 0 {
+                "local transport status ancestor permissions unavailable"
+            } else {
+                "local transport status ancestor is not trusted"
+            }
+            .into());
         }
     }
     let parent = fstat(&directory).map_err(|_| "cannot inspect local transport status parent")?;
@@ -91,14 +99,16 @@ pub(super) fn open_owned_directory(
 /// Errors that mean the status sidechannel cannot currently be established.
 ///
 /// These are environmental failures (for example a read-only or not-yet
-/// created app-data parent). Security-policy failures such as a symlink,
-/// group-writable ancestor, or non-private leaf remain hard refusals.
+/// created app-data parent, or an owner-owned writable ancestor). Security-
+/// policy failures such as a symlink, foreign owner, or non-private leaf remain
+/// hard refusals.
 pub(super) fn is_storage_unavailable(error: &str) -> bool {
     matches!(
         error,
         "cannot anchor local transport status directory"
             | "local transport status ancestor is missing"
             | "local transport status ancestor is inaccessible"
+            | "local transport status ancestor permissions unavailable"
             | "cannot create private local transport status directory"
             | "cannot open private local transport status directory"
             | "cannot inspect local transport status directory"
@@ -230,6 +240,26 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::fs::set_permissions(&fixture.0, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(read_owned_record(&path).is_err());
+    }
+
+    #[test]
+    fn classifies_owned_writable_ancestor_as_storage_unavailable() {
+        let fixture = Fixture::new();
+        let path = fixture.record();
+        let child = fixture.0.join("child");
+        std::fs::create_dir(&child).unwrap();
+        std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let child_record = child.join("status.json");
+        std::fs::copy(&path, &child_record).unwrap();
+        std::fs::set_permissions(&child_record, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(&fixture.0, std::fs::Permissions::from_mode(0o770)).unwrap();
+
+        let error = read_owned_record(&child_record).unwrap_err();
+        assert_eq!(
+            error,
+            "local transport status ancestor permissions unavailable"
+        );
+        assert!(is_storage_unavailable(&error));
     }
 
     #[test]

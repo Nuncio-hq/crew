@@ -137,6 +137,23 @@ fn malformed_saturation_refuses_without_deleting_required_history() {
 }
 
 #[test]
+fn owner_writable_directory_degrades_to_storage_unavailable() {
+    let fixture = Fixture::new();
+    fixture.record(&nonce(), true, 100);
+    std::fs::set_permissions(&fixture.directory, std::fs::Permissions::from_mode(0o770)).unwrap();
+
+    assert!(matches!(
+        preflight(
+            &fixture.directory,
+            &fixture.runtime_id,
+            &HashSet::new(),
+            100_000
+        ),
+        Err(super::PreflightError::Unavailable)
+    ));
+}
+
+#[test]
 fn failed_replacement_keeps_previous_required_final_on_every_attempt() {
     let fixture = Fixture::new();
     let required = nonce();
