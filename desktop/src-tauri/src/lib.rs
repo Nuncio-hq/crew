@@ -36,6 +36,7 @@ mod native_websocket_batch;
 mod nostr_bind;
 pub mod nostr_convert;
 mod observed_unread;
+mod owner_operations;
 mod persona_catalog;
 mod prevent_sleep;
 mod ptt_shortcut;
