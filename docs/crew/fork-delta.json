@@ -642,6 +642,12 @@
       "why": "web `check` runs file-size guard.",
       "resolve": "keep the script line.",
       "filesAtRecord": 0
+    },
+    {
+      "area": ".config/nextest.toml",
+      "why": "Crew opt-in PostgreSQL proof modules for Project channel links and conditional publication require named disposable fixture URLs; the default CI lane must not execute them without those resources.",
+      "resolve": "Keep the default postgres-ci and wrapper filters excluding only these explicit-fixture modules. Dedicated proof commands select them with owned fixture URLs; never weaken production guards or silently fall back to localhost.",
+      "filesAtRecord": 1
     }
   ]
 }
