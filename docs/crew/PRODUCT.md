@@ -164,9 +164,9 @@ and deeper inspection accessible. Live progress should project existing message/
 
 These names describe the desired experience, not two newly approved routes.
 D-065 superseded D-055's Workbench destination: current `/workbench` routes
-redirect to Inbox or the channel thread. Further Focus work is tracked in
-[#344](https://github.com/Nuncio-hq/crew/issues/344); its navigation and
-historical-session access must be reconciled with D-065 before implementation.
+redirect to Inbox or the channel thread. Focus presentation is tracked in
+[#354](https://github.com/Nuncio-hq/crew/issues/354); observer completion
+scheduling and its measured limits belong to [#352](https://github.com/Nuncio-hq/crew/issues/352).
 
 ### Workspace layout direction (D-078)
 
