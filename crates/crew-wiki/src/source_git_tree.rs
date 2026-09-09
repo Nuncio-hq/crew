@@ -4,6 +4,8 @@ use crate::source_snapshot::{
     source_hash, source_path_from_bytes, valid_source_path, MAX_SOURCE_BYTES, MAX_SOURCE_FILES,
 };
 use crate::WikiError;
+#[cfg(unix)]
+use rustix::fd::OwnedFd;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -18,20 +20,53 @@ pub(crate) struct GitReader<'a> {
     deadline: Instant,
     commands: usize,
     blob_reads: usize,
+    #[cfg(unix)]
+    cwd_fd: Option<OwnedFd>,
 }
 impl<'a> GitReader<'a> {
     pub(crate) fn new(root: &'a Path) -> Self {
+        Self::with_deadline(root, Instant::now() + Duration::from_secs(180))
+    }
+    pub(crate) fn with_deadline(root: &'a Path, deadline: Instant) -> Self {
         Self {
             root,
-            deadline: Instant::now() + Duration::from_secs(180),
+            deadline,
             commands: 0,
             blob_reads: 0,
+            #[cfg(unix)]
+            cwd_fd: None,
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn with_directory_fd(
+        root: &'a Path,
+        cwd_fd: OwnedFd,
+        deadline: Instant,
+    ) -> Result<Self, WikiError> {
+        use rustix::io::{fcntl_setfd, FdFlags};
+        fcntl_setfd(&cwd_fd, FdFlags::empty()).map_err(|_| invalid())?;
+        Ok(Self {
+            root,
+            deadline,
+            commands: 0,
+            blob_reads: 0,
+            cwd_fd: Some(cwd_fd),
+        })
     }
     pub(crate) fn run(&mut self, args: &[&str], limit: usize) -> Result<GitOutput, WikiError> {
         self.commands = self.commands.checked_add(1).ok_or_else(invalid)?;
         if self.commands > MAX_COMMANDS {
             return Err(invalid());
+        }
+        #[cfg(unix)]
+        if let Some(directory) = self.cwd_fd.as_ref() {
+            return source_git_command::run_with_directory_fd(
+                directory,
+                args,
+                limit,
+                self.deadline,
+            );
         }
         source_git_command::run(self.root, args, limit, self.deadline)
     }
@@ -65,6 +100,89 @@ pub(crate) struct TreeEntry {
     pub path: String,
     pub mode: String,
     pub oid: String,
+}
+
+/// Resolve only the authenticated path through verified raw objects.
+#[cfg(target_os = "linux")]
+pub(crate) fn source_blob(
+    reader: &mut GitReader<'_>,
+    commit: &str,
+    path: &str,
+    size: usize,
+) -> Result<Vec<u8>, WikiError> {
+    if !valid_oid(commit, commit.len()) || !valid_source_path(path) {
+        return Err(invalid());
+    }
+    let raw = reader.bytes(&["cat-file", "commit", commit], 1024 * 1024)?;
+    verify_object(&raw, "commit", commit)?;
+    let first = raw.split(|b| *b == b'\n').next().ok_or_else(invalid)?;
+    let mut oid = std::str::from_utf8(first)
+        .map_err(|_| invalid())?
+        .strip_prefix("tree ")
+        .filter(|id| valid_oid(id, commit.len()))
+        .ok_or_else(invalid)?
+        .to_owned();
+    let parts: Vec<_> = path.split('/').collect();
+    if parts.len() > MAX_DEPTH || path.len() > MAX_PATH_BYTES {
+        return Err(invalid());
+    }
+    let mut remaining = MAX_SOURCE_BYTES
+        .checked_sub(raw.len())
+        .ok_or_else(invalid)?;
+    for (index, wanted) in parts.iter().enumerate() {
+        let raw = reader.bytes(&["cat-file", "tree", &oid], remaining)?;
+        verify_object(&raw, "tree", &oid)?;
+        remaining = remaining.checked_sub(raw.len()).ok_or_else(invalid)?;
+        let mut cursor = 0;
+        let mut found = None;
+        let mut names = BTreeSet::new();
+        while cursor < raw.len() {
+            let rest = &raw[cursor..];
+            let space = rest.iter().position(|b| *b == b' ').ok_or_else(invalid)?;
+            let mode = std::str::from_utf8(&rest[..space]).map_err(|_| invalid())?;
+            if !matches!(
+                mode,
+                "40000" | "040000" | "100644" | "100755" | "120000" | "160000"
+            ) {
+                return Err(invalid());
+            }
+            let start = cursor + space + 1;
+            let end = start
+                + raw[start..]
+                    .iter()
+                    .position(|b| *b == 0)
+                    .ok_or_else(invalid)?;
+            let name = source_path_from_bytes(&raw[start..end])?;
+            if name.contains('/')
+                || !valid_source_path(name)
+                || !names.insert(name)
+                || names.len() > MAX_ENTRIES
+            {
+                return Err(invalid());
+            }
+            let next = end + 1 + commit.len() / 2;
+            let id = raw.get(end + 1..next).ok_or_else(invalid)?;
+            if name == *wanted {
+                found = Some((
+                    mode,
+                    id.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                ));
+            }
+            cursor = next;
+        }
+        let (mode, child) = found.ok_or_else(invalid)?;
+        if index + 1 == parts.len() {
+            if !matches!(mode, "100644" | "100755") {
+                return Err(invalid());
+            }
+            return reader.blob(&child, size);
+        }
+        if !matches!(mode, "40000" | "040000") {
+            return Err(invalid());
+        }
+        oid = child;
+    }
+    Err(invalid())
 }
 struct Budget {
     metadata: usize,

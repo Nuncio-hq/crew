@@ -18,6 +18,7 @@ pub mod incremental;
 pub mod publish;
 pub mod snapshot_v1;
 mod snapshot_v1_validation;
+pub mod source_access;
 pub mod source_folder;
 #[cfg(unix)]
 mod source_folder_walk;

@@ -1,6 +1,8 @@
 //! Bounded, read-only Git commands for local source capture, not a runtime launcher.
 
 use crate::WikiError;
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::Path;
 use std::time::Instant;
 
@@ -27,6 +29,33 @@ pub(crate) fn run(
     args: &[&str],
     limit: usize,
     deadline: Instant,
+) -> Result<GitOutput, WikiError> {
+    run_inner(root, args, limit, deadline, None)
+}
+
+#[cfg(unix)]
+pub(crate) fn run_with_directory_fd(
+    directory: &OwnedFd,
+    args: &[&str],
+    limit: usize,
+    deadline: Instant,
+) -> Result<GitOutput, WikiError> {
+    run_inner(
+        Path::new("/"),
+        args,
+        limit,
+        deadline,
+        Some(directory.as_raw_fd()),
+    )
+}
+
+#[cfg(unix)]
+fn run_inner(
+    root: &Path,
+    args: &[&str],
+    limit: usize,
+    deadline: Instant,
+    directory_fd: Option<i32>,
 ) -> Result<GitOutput, WikiError> {
     use rustix::fs::{fcntl_getfl, fcntl_setfl, OFlags};
     use std::os::unix::process::CommandExt;
@@ -55,11 +84,23 @@ pub(crate) fn run(
             "core.hooksPath=/dev/null",
         ])
         .args(args)
-        .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
+    #[cfg(unix)]
+    if let Some(fd) = directory_fd {
+        // macOS fdescfs does not expose directory FDs as path components;
+        // callers only use this runner on Unix targets where /dev/fd is a
+        // directory-capable retained-FD view. The descriptor remains owned by
+        // GitReader through spawn and the complete bounded read.
+        command
+            .current_dir("/")
+            .env("GIT_DIR", format!("/dev/fd/{fd}/.git"))
+            .env("GIT_WORK_TREE", format!("/dev/fd/{fd}"));
+    } else {
+        command.current_dir(root);
+    }
     let child = command
         .spawn()
         .map_err(|_| failure("cannot start local Git source read"))?;

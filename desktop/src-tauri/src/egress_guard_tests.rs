@@ -458,6 +458,7 @@ fn ncryptsec_handling_is_confined_to_allowlisted_files() {
         "src/commands/owner_operation_transport_tests.rs", // boundary 9 injection fixture
         "src/commands/personas/snapshot/import.rs",
         "src/native_websocket.rs",
+        "src/commands/owner_operation_transport_tests.rs", // boundary 9 injection fixture
     ];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
