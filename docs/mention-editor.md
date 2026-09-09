@@ -134,3 +134,11 @@ presentation marker. Readonly mention chips keep their own wrapping/accessibilit
 contract. Menu-based edit activation waits for Radix exit-focus cleanup before
 loading/focusing the editor; navigation tests must observe edit content and focus,
 not treat an already enabled reply input as an activated edit.
+
+The composer edit-as-undo affordance reads the edit target's historical
+`mentionRefs` and `unresolvedMentionPubkeys`, then checks exact keys against the
+known-agent set. It does not run current-draft recipient extraction during render:
+that can reject a historical ambiguous label before edit hydration, crashing the
+editor instead of allowing repair. Unbound body text alone cannot enable undo.
+Coverage: `useComposerEditAsUndo.test.mjs` and the unchanged edit/reopen cases in
+`mention-recipients.spec.ts`.
