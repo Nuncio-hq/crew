@@ -149,7 +149,6 @@ function MessageComposerImpl({
   });
   const { editAsUndoState } = useComposerEditAsUndo({
     editTarget,
-    extractMentionPubkeys: mentions.extractMentionPubkeys,
   });
   const channelLinks = useChannelLinks();
   const customEmoji = useCustomEmoji();
