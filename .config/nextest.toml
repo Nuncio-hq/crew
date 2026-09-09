@@ -18,6 +18,8 @@ command = { command-line = "scripts/postgres-test-wrapper.sh", relative-to = "wo
 default-filter = """
 (test(/postgres_tests::/) or binary(/^postgres_/))
 and not test(/(^|::)external_infra[^:]*::/)
+and not test(/project_channel_link::/)
+and not test(/conditional_publication_postgres_tests::/)
 """
 fail-fast = false
 # Eight workers was the fastest stable setting in the Blox benchmark while the
@@ -36,6 +38,6 @@ test-group = "postgres-cluster-global"
 [[profile.postgres-ci.scripts]]
 # Script filters are separate from default-filter: they attach the setup and
 # isolation wrapper to the same automatically discovered test set.
-filter = "(test(/postgres_tests::/) or binary(/^postgres_/)) and not test(/(^|::)external_infra[^:]*::/)"
+filter = "(test(/postgres_tests::/) or binary(/^postgres_/)) and not test(/(^|::)external_infra[^:]*::/) and not test(/project_channel_link::/) and not test(/conditional_publication_postgres_tests::/)"
 setup = "postgres-template"
 run-wrapper = "postgres-isolation"
