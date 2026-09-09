@@ -74,6 +74,7 @@ export function UserProfileAgentManagementRows({
       ) : null}
       {canDeleteAgent ? (
         <ProfileDeleteAgentRow
+          key={managedAgent?.pubkey ?? "definition"}
           isPending={isDeletePending}
           managedAgent={managedAgent}
           onDelete={onDeleteAgent}

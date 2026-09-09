@@ -1767,6 +1767,16 @@ upstream's `session_owners` model from `buzz-acp`.
    budget and drop accounting; add a falsifiable test; docs only until the
    Focus-grain work picks it up (see `PRODUCT.md`, "Watching agents work").
 
+**2026-09-09 clarification (#352, coordinator-reviewed scope):** item 6's
+unconditional one-tick wording is superseded by bounded cross-channel priority:
+at most two urgent frame selections while eligible normal channels wait,
+then one oldest normal channel frame. Preserve same-channel causal order and
+null-channel barriers even when they prevent terminal delivery in one slot.
+Keep the one-second tick and existing rate/byte/source-event budgets. The
+implementation and measurement boundary are documented in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#observer-completion-scheduling-352);
+real-data staging timing remains an acceptance gate, not a universal promise.
+
 ## D-076 — CompanyOS direction; department delegation and verified coding delivery first
 
 - **Status:** Accepted product direction; implementation is not implied

@@ -211,6 +211,38 @@ shutdown, and worktree deletion are distinct operations. The CompanyOS
 retention and automatic cleanup policy remains open in `PRODUCT.md`; this
 section does not authorize deleting unfinished work.
 
+## Observer completion scheduling (#352)
+
+`ObserverPublishQueue::next_frame` retains queue-wide same-channel batching;
+it does not publish one source event per tick. The Crew-owned
+`observer_priority.rs` selects the oldest urgent lifecycle/control channel
+within the prefix before the first null-channel barrier. A channel containing
+both urgent events and ordinary output is urgent until those urgent entries
+leave that prefix. Its causal predecessors still publish first. After two
+urgent frame selections while eligible normal channels wait, the oldest
+normal channel receives a frame. Classification is recomputed per slot, so
+flush, eviction and completed gathers leave no stale channel metadata.
+
+The publisher still emits at most one frame per one-second tick, under the
+existing 120/min relay ceiling shared with chat. The plaintext frame cap,
+4 MiB pending-byte budget and source-event drop accounting are unchanged.
+Priority cannot move a terminal past its own over-frame backlog or any
+null-channel barrier; fairness, relay quota and transport can also delay it.
+The three-channel deterministic regression reaches completion in slot one
+instead of slot three. This is queue/pacer evidence, not installed-runtime
+latency: baseline/candidate timing and real-data screenshots await #348/#338.
+
+Validated receipts already match the exact agent, triggering event, session
+and turn when projecting a healthy thread's Ready to review badge. This is
+distinct from observer-driven live control targets and founder acceptance.
+Error, disconnected and stalled attention retain their existing precedence.
+During harness finalization, a task record can outlive its control receiver.
+Cancel and model-switch report a sent signal only when the receiver accepts
+it. A closed receiver preserves the existing fallbacks: cancel drains that
+conversation's queued work or reports no active turn; model-switch reports
+`turn_ending` while the task record remains. Receipts do not hide live controls
+or change the model picker's live-switch/default-setting decision.
+
 ## CompanyOS prototype integration boundary
 
 The #349 shell candidate mounts the existing Project sidebar projection and
@@ -274,7 +306,9 @@ enable execution; #355 owns contact routing. Existing `crew_role.rs` routing pre
 
 Proposed behavior: human-authored channel messages and thread replies without explicit mention targets go to the selected contact; explicit mentions take priority and do not also wake the contact. Agent messages cannot trigger this fallback. The contact does not become the thread owner, gain a role, or gain tools. None leaves mention-only behavior. Missing, removed, or unavailable contacts require a visible unresolved state with no silent replacement. The real implementation must verify authors/structured mention targets, membership and canvas signer; retain kind/channel/access gates, deduplicate event delivery, fence stale subscriptions when contact changes, and handle acknowledgement/conflicts on save. Live validation must cover bot-loop prevention, mention priority, channel isolation, contact replacement/removal, reconnect and two-client edits. The prototype uses local atomic role/contact state and text matching for sample messages only.
 
-The v0.8 prototype adds agent deletion, recap settings and an Agent plans tab. Deletion maps to the existing `delete_managed_agent` lifecycle in `commands/agents.rs`: stop process, recover/clear assignments, remove the record/key and enqueue identity tombstone/archive. Preserve the deployed-remote guard and the existing higher-level deletion orchestration. The prototype retains an identity tombstone for historical display and projects active pickers/roles/contact from it; this local projection does not establish successful relay cleanup. The proposed canvas contact field must join a durable cleanup/retry flow before shipping.
+The v0.8 prototype adds agent deletion, recap settings and an Agent plans tab. Deletion maps to the existing `delete_managed_agent` lifecycle in `commands/agents.rs`: stop the process under the managed-store/process locks, recover/clear Bestie assignments through its existing journal, remove the record/key and enqueue identity tombstone/archive. This journal does not yet perform relay canvas role/contact cleanup. Preserve the deployed-remote guard and the existing higher-level deletion orchestration. The prototype retains an identity tombstone for historical display and projects active pickers/roles/contact from it; this local projection does not establish successful relay cleanup. Canvas role/contact removal must join a durable cleanup/retry flow before agent deletion can claim that cleanup.
+
+The Agents directory reuses the existing persona and managed-instance queries. Each query failure exposes its own Retry action, retaining any cached cards while the failed query recovers. Instance Delete confirmation names the agent and is keyed by its public key: replacing the selected instance dismisses the confirmation, including same-name replacements. Renaming the same identity preserves its target. Cancel performs no removal. Relay-only rows use the existing policy-filtered relay query, exclude local instance keys and archived identities, and open the exact public-key profile without local management controls. Unknown local inventory blocks relay-only classification and offers Retry. Directory/profile Start and Restart, and profile Message, capture the community and signer for existing native scope assertions; component lifetime and target checks discard stale completions. Message pending state belongs to its captured scope, so changing scope permits a new operation and a retired completion cannot clear its pending state. These directory controls do not establish successful native process termination or canvas cleanup; those require separate runtime evidence.
 
 Agent plans should reuse `declaredPlanSnapshot.ts` and `declaredPlanProjection.ts`, including ACP `sessionUpdate:plan`, structured todo fallbacks, complete snapshot replacement, explicit empty clears and retired-session filtering. Partition by agent pubkey and conversation; preserve owner-only observer access and last-known/disconnected/unknown states. Do not infer plan completion from process liveness or merge multiple agents' plans into a new authoritative task store. Runtime-matrix unit fixtures prove parser behavior, not live adapter emission. The new tab currently uses authored snapshots only.
 
@@ -316,6 +350,69 @@ its kind 30023 content and ACL, with no new generator action, route migration
 or company data removal. Verify the replacement in #349 before removing the sole old global
 Wiki affordance; the reference library is sample UI only.
 
+## Installed-runtime recap admission (#351)
+
+Recap admission extends `KnownAcpRuntime` through `recap_contract`; it does not
+create another runtime registry or borrow an employee's ACP session. Hermes
+uses an explicit `recap_native_command` catalog value because ordinary ACP
+discovery remains `hermes-acp` first. Other candidates use the existing
+`underlying_cli` metadata. The native
+CLI candidate and its model/profile selection contract are inventory, not proof
+of one-shot support. `classify_recap` currently returns only failure states;
+there is no positive capability cache, generation command, or runnable recap UI.
+[#356](https://github.com/Nuncio-hq/crew/issues/356) remains dependent on a proven
+runtime combination. Ordinary agent/ACP readiness is a separate contract.
+
+The default-off source slice contains a fixed Claude candidate argv/parser,
+private disposable-state ownership, and the existing bounded discovery process
+helper extended with caller-owned stdin, cancellation and per-stream budgets.
+The Claude recipe remains unapproved for generation. Its native `--tools ''`
+flag is not sufficient to establish that all hooks are disabled. A Unix process
+group bounds ordinary descendants but does not contain a `setsid` escape;
+reader shutdown is not evidence that an escaped process exited. No production
+OS-sandbox recipe is enabled.
+
+The staging ownership loader reads only native `app_data_dir()` plus
+`crew-staging-ownership-v1.json`. It verifies compiled demo identity, actual
+process UID, canonical private owned roots and the excluded employee roots.
+Manifest host/server strings are provenance, not launch authority. The five
+roots must already exist; reading this receipt does not create them. A receipt
+is tied to the root inode/device generations and revalidates before projecting
+the recap state parent. A manifest claiming generation permission or containing
+auth references is rejected. Ownership does not imply authentication readiness;
+a future, separately reviewed runtime-ready grant is still required.
+
+The derived `agents` base must be canonical and owned before any run-directory
+creation or recovery; an intermediate symlink is rejected, and active runs fence
+base-generation replacements. Disposable generations live below
+`agents/recap-runs/<uuid>`, use private files,
+and persist a phase before a process may start. Prompt stdin is capped, opened
+read-only and unlinked before launch. Cleanup refuses a pending-process phase;
+startup recovery bounds its scan and preserves unknown, corrupted, replaced or
+uncertain-process roots rather than guessing that a recorded PID is safe to kill.
+A failed cleanup does not prevent attempts on other bounded entries, but its
+first typed error still propagates. A `scan_limited` report means entries remain
+unexamined; the 1,024-entry sweep is not proof of complete recovery. Repeated
+unknown-entry flooding can delay reclamation, and pending-process roots require
+separate verified ownership recovery. Non-Unix private-state ACLs are unproved
+and rejected.
+
+### Bounded inventory limits (2026-09-09)
+
+These observations describe the installed artifacts examined for #351, not
+permanent limitations of the products. None is a successful recap generation.
+
+| Candidate inspected | Evidence scope | Current blocker |
+| --- | --- | --- |
+| Claude Code 2.1.266, native macOS arm64 image, SHA-256 `553d1b9e9e7068b275c0a783c7e139ff6503096f286e674c8c919379fb0eca62` | Isolated help/version and exact-image hook selection inspection | `unsupported_tool_isolation`: managed hooks survive safe mode/user hook-disable settings, including in-process HTTP hooks. |
+| Codex CLI 0.153.4, native macOS arm64 image, SHA-256 `b973d440acac501fd2594a43e7ca9ce41e0a65b9dfb28d0d7a7837c99e1261e3` | Isolated help/version/exec help and locally generated app-server JSON schema | `unsupported_tool_isolation`: exhaustive native tool denial was not proved by the available controls/schema. |
+| Hermes installed source declaring 0.21.1 in `pyproject.toml` | Read-only source inventory; no Hermes process executed | `unsupported_state_isolation`: CLI import enters installation repair; both CLI and `run_agent.AIAgent` import paths load the installation `.env` independently of disposable HOME. `hermes_cli/oneshot.py` imports the same AIAgent. |
+
+The installed Hermes source location was the user's `.hermes/hermes-agent`
+checkout; its declared package version is not a binary fingerprint or an
+executed version result. Mutable source, wrappers, executable upgrades, model,
+profile, platform or enforcement changes invalidate any future positive proof.
+Exact local path observations and one-run logs belong to #351/task evidence.
 
 G-THREAD-1 v3 extends `toolPaneStore` with bounded scoped view selection, not a
 second resource/session store. `ThreadFocusForgeSplit` and `ChannelToolPane`

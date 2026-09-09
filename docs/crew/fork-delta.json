@@ -319,7 +319,7 @@
     },
     {
       "area": "desktop/src/features/profile/**",
-      "why": "Hermes profile edit/offboard in profile panel; runtime avatars.",
+      "why": "Hermes profile edit/offboard in profile panel; runtime avatars; exact-instance deletion confirmation and scope-fenced lifecycle/DM actions (#353).",
       "resolve": "additive tabs.",
       "filesAtRecord": 12
     },
@@ -451,8 +451,10 @@
     },
     {
       "area": "desktop/src-tauri/**",
-      "why": "managed_agents: Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json. D-078 exact selected-folder/Git-root probe with existing bounded command helper (#361). D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362).",
-      "resolve": "register module + invoke entries only; impl in Crew files; keep `manage(ResourceGovernorHandle)`. Keep selected path separate from Git ancestor, bound probe output/time, and report unavailable access as an error. Preserve the shared guarded key-replacement and native scope capture seams; relay events remain domain authority.",
+
+      "why": "managed_agents: default-off recap capability/state/ownership proof (#351) and bounded discovery stdin/cancel/capture policy; Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json. D-078 exact selected-folder/Git-root probe with existing bounded command helper (#361). D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362).",
+      "resolve": "retain default-off recap catalog metadata and the null-stdin aggregate discovery wrapper; keep selected path separate from Git ancestor, bound probe output/time, and report unavailable access as an error; register module/invoke seams with implementations in Crew files; keep `manage(ResourceGovernorHandle)`. Preserve the shared guarded key-replacement and native scope capture seams; relay events remain domain authority.",
+
       "filesAtRecord": 88,
       "fileHints": [
         {

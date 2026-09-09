@@ -183,6 +183,7 @@ export default defineConfig({
         "**/experimental-features.spec.ts",
         "**/agent-provider-dropdowns.spec.ts",
         "**/agent-lifecycle-feedback.spec.ts",
+        "**/companyos-agents.spec.ts",
         "**/agent-sleeping-state.spec.ts",
         "**/session-aging-handover.spec.ts",
         "**/agent-access-warning.spec.ts",

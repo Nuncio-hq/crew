@@ -7918,6 +7918,8 @@ async function handleCreateChannel(
 async function handleOpenDm(
   args: {
     pubkeys: string[];
+    expectedRelayUrl?: string;
+    expectedSignerPubkey?: string;
   },
   config: E2eConfig | undefined,
 ) {
@@ -7925,6 +7927,9 @@ async function handleOpenDm(
   if (delayMs > 0) {
     await new Promise((resolve) => window.setTimeout(resolve, delayMs));
   }
+
+  assertExpectedRelayScope(args.expectedRelayUrl, config);
+  assertExpectedSigner(args.expectedSignerPubkey, config);
 
   const normalizedPubkeys = normalizeParticipantPubkeys(args.pubkeys);
   if (normalizedPubkeys.length === 0) {
