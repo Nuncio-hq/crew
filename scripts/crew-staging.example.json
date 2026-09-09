@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "environment_id": "crew-staging-example",
+  "server_host": "REPLACE_VERIFIED_HOST",
+  "source": {
+    "host": "REPLACE_VERIFIED_HOST",
+    "relay": "ws://100.64.0.1:3000",
+    "database": "daily",
+    "postgres_container": "REPLACE_SOURCE_CONTAINER",
+    "postgres_user": "REPLACE_READ_USER",
+    "schema_version": "REPLACE_SOURCE_SCHEMA",
+    "community_id": "REPLACE_SOURCE_COMMUNITY_UUID",
+    "container_ids": {
+      "REPLACE_SOURCE_CONTAINER": "REPLACE_EXACT_CONTAINER_ID",
+      "REPLACE_MEDIA_CONTAINER": "REPLACE_EXACT_CONTAINER_ID"
+    },
+    "volumes": [
+      "REPLACE_DAILY_POSTGRES_VOLUME",
+      "REPLACE_DAILY_MEDIA_VOLUME"
+    ],
+    "paths": [
+      "/srv/daily/repos",
+      "/var/lib/docker/volumes/REPLACE_DAILY_POSTGRES_VOLUME/_data",
+      "/var/lib/docker/volumes/REPLACE_DAILY_MEDIA_VOLUME/_data"
+    ],
+    "assets": {
+      "git": {
+        "path": "/srv/daily/repos"
+      },
+      "media": {
+        "container": "REPLACE_MEDIA_CONTAINER",
+        "path": "/data/buzz-media"
+      }
+    }
+  },
+  "target": {
+    "relay": "ws://100.64.0.1:3348",
+    "bind_ip": "100.64.0.1",
+    "ports": {
+      "relay": 3348,
+      "health": 8348,
+      "metrics": 9348,
+      "postgres": 15348
+    },
+    "database": "crew_staging_example_snapshot",
+    "network": "crew-staging-example-net",
+    "root": "/srv/crew-staging-example",
+    "volumes": {
+      "postgres": "crew-staging-example-postgres",
+      "redis": "crew-staging-example-redis",
+      "media": "crew-staging-example-media",
+      "git": "crew-staging-example-git"
+    },
+    "container_ids": {
+      "postgres": "REPLACE_VERIFIED_CONTAINER_ID",
+      "redis": "REPLACE_VERIFIED_CONTAINER_ID",
+      "media": "REPLACE_VERIFIED_CONTAINER_ID",
+      "relay": "REPLACE_VERIFIED_CONTAINER_ID"
+    },
+    "network_id": "REPLACE_VERIFIED_NETWORK_ID",
+    "volume_mounts": {
+      "postgres": "/var/lib/docker/volumes/crew-staging-example-postgres/_data",
+      "redis": "/var/lib/docker/volumes/crew-staging-example-redis/_data",
+      "media": "/var/lib/docker/volumes/crew-staging-example-media/_data",
+      "git": "/var/lib/docker/volumes/crew-staging-example-git/_data"
+    }
+  },
+  "snapshot_root": "/srv/crew-staging-baselines/crew-staging-example",
+  "mac": {
+    "source_roots": [
+      "/Users/REPLACE_USER/Library/Application Support/com.nuncio.crew",
+      "/Users/REPLACE_USER/.buzz"
+    ],
+    "app_data": "/Users/REPLACE_USER/Library/Application Support/com.nuncio.crew.staging-example",
+    "profiles": "/Users/REPLACE_USER/crew-staging-example/profiles",
+    "workspaces": "/Users/REPLACE_USER/crew-staging-example/workspaces"
+  },
+  "limits": {
+    "timeout_seconds": 120,
+    "output_bytes": 1048576,
+    "cpus": 0.5,
+    "memory_mb": 512,
+    "snapshot_bytes": 268435456
+  },
+  "auth": {
+    "mode": "real",
+    "admin_pubkey": "REPLACE_NEW_STAGING_PUBLIC_KEY",
+    "secret_refs": {
+      "admin_key": "/srv/crew-staging-example/secrets/staging-admin-key",
+      "relay_env": "/srv/crew-staging-example/secrets/relay.env",
+      "media_env": "/srv/crew-staging-example/secrets/media.env"
+    }
+  },
+  "build_sha": "REPLACE_REVIEWED_BUILD_SHA",
+  "schema_version": "REPLACE_TARGET_SCHEMA",
+  "migrations": [],
+  "images": {
+    "postgres": "REPLACE_IMAGE@sha256:REPLACE_REVIEWED_DIGEST",
+    "redis": "REPLACE_IMAGE@sha256:REPLACE_REVIEWED_DIGEST",
+    "media": "REPLACE_IMAGE@sha256:REPLACE_REVIEWED_DIGEST",
+    "relay": "REPLACE_IMAGE@sha256:REPLACE_REVIEWED_DIGEST"
+  },
+  "probe": {
+    "cli": "/srv/crew-staging-example/bin/buzz",
+    "cli_sha256": "REPLACE_REVIEWED_BINARY_SHA256",
+    "admin_key_file": "/srv/crew-staging-example/secrets/staging-admin-key"
+  }
+}

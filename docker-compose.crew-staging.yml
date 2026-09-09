@@ -1,0 +1,96 @@
+# Render only through crew-staging.py's explicit manifest environment.
+# No daily names, public admin bindings, automatic migrations, or fixture seed.
+name: ${CREW_STAGING_ID:?manifest required}
+
+x-limits: &limits
+  cpus: ${CREW_STAGING_CPUS:?manifest required}
+  mem_limit: ${CREW_STAGING_MEMORY:?manifest required}
+  labels:
+    com.nuncio.crew.staging: ${CREW_STAGING_ID}
+  networks:
+    - staging
+  restart: "no"
+
+services:
+  postgres:
+    <<: *limits
+    image: ${CREW_STAGING_POSTGRES_IMAGE:?digest required}
+    environment:
+      POSTGRES_USER: staging
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD_FILE: /run/staging/postgres-password
+    ports:
+      - "127.0.0.1:${CREW_STAGING_POSTGRES_PORT:?manifest required}:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - media:/restore/media
+      - git:/restore/git
+      - type: bind
+        source: ${CREW_STAGING_ROOT}/secrets/postgres-password
+        target: /run/staging/postgres-password
+        read_only: true
+
+  redis:
+    <<: *limits
+    image: ${CREW_STAGING_REDIS_IMAGE:?digest required}
+    command: [redis-server, --appendonly, "yes"]
+    volumes:
+      - redis:/data
+
+  media:
+    <<: *limits
+    image: ${CREW_STAGING_MEDIA_IMAGE:?digest required}
+    env_file:
+      - ${CREW_STAGING_ROOT}/secrets/media.env
+    command: [server, /data, --console-address, ":9001"]
+    volumes:
+      - media:/data
+
+  relay:
+    <<: *limits
+    image: ${CREW_STAGING_RELAY_IMAGE:?digest required}
+    env_file:
+      - ${CREW_STAGING_ROOT}/secrets/relay.env
+    environment:
+      BUZZ_BIND_ADDR: 0.0.0.0:3000
+      BUZZ_HEALTH_PORT: "8080"
+      BUZZ_METRICS_PORT: "9102"
+      RELAY_URL: ws://${CREW_STAGING_IP}:${CREW_STAGING_RELAY_PORT}
+      REDIS_URL: redis://redis:6379
+      BUZZ_S3_ENDPOINT: http://media:9000
+      BUZZ_GIT_REPO_PATH: /srv/git/repos
+      BUZZ_GIT_PACK_CACHE_PATH: /srv/git/cache
+      BUZZ_AUTO_MIGRATE: "false"
+      BUZZ_REQUIRE_AUTH_TOKEN: "true"
+      BUZZ_REQUIRE_RELAY_MEMBERSHIP: "true"
+      BUZZ_PUSH_ENABLED: "false"
+    ports:
+      - "${CREW_STAGING_IP}:${CREW_STAGING_RELAY_PORT}:3000"
+      - "127.0.0.1:${CREW_STAGING_HEALTH_PORT}:8080"
+      - "127.0.0.1:${CREW_STAGING_METRICS_PORT}:9102"
+    volumes:
+      - git:/srv/git
+
+volumes:
+  postgres:
+    name: ${CREW_STAGING_ID}-postgres
+    labels:
+      com.nuncio.crew.staging: ${CREW_STAGING_ID}
+  redis:
+    name: ${CREW_STAGING_ID}-redis
+    labels:
+      com.nuncio.crew.staging: ${CREW_STAGING_ID}
+  media:
+    name: ${CREW_STAGING_ID}-media
+    labels:
+      com.nuncio.crew.staging: ${CREW_STAGING_ID}
+  git:
+    name: ${CREW_STAGING_ID}-git
+    labels:
+      com.nuncio.crew.staging: ${CREW_STAGING_ID}
+
+networks:
+  staging:
+    name: ${CREW_STAGING_ID}-net
+    labels:
+      com.nuncio.crew.staging: ${CREW_STAGING_ID}

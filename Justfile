@@ -93,7 +93,11 @@ build-release:
     cargo build --workspace --release
 
 # Run repo lint, formatting, and repository policy checks
-check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check mobile-check file-size-check
+check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check mobile-check file-size-check crew-tooling-test
+
+# Pure Crew staging/delivery orchestration tests; no services or provider calls.
+crew-tooling-test:
+    python3 -m unittest discover -s scripts/tests -p 'test_*crew*.py' -v
 
 # Run the repository-wide differential file-size ratchet and its policy tests.
 # The ratchet inspects only files changed from the merge base, so this stays

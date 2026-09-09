@@ -112,6 +112,60 @@ For each observable contract:
 Never claim TDD when tests were written after implementation without first
 demonstrating that they detect the missing or broken behavior.
 
+## Isolated staging tooling
+
+`just crew-tooling-test` runs the bounded CLI regression suite. The same
+command is required by `just check` and the NuncioCrew CI Policy job. These
+tests replace external commands; they do not prove a running staging relay or
+a desktop workflow.
+
+Copy `scripts/crew-staging.example.json` outside Git and replace every placeholder
+from verified resource inventory; the example intentionally cannot run as-is.
+The server operator supplies this private version-1 manifest to
+`scripts/crew-staging.py`. It records the source container IDs, source schema,
+community and asset roots; separate target ports, volume names, network and
+container IDs; pinned images and build SHA; migration checksums; resource
+budgets; and private credential **paths**. Keep that manifest and all captured
+data outside Git. The CLI rejects shared source/target destinations.
+
+```sh
+python3 scripts/crew-staging.py plan --config /absolute/private/staging.json
+python3 scripts/crew-staging.py snapshot --config /absolute/private/staging.json --baseline initial
+python3 scripts/crew-staging.py restore --config /absolute/private/staging.json --baseline initial
+python3 scripts/crew-staging.py verify --config /absolute/private/staging.json --baseline initial
+```
+
+Provisioning is a separate reviewed operation. `restore` requires already
+recorded resource identities; it does not discover a container by name and
+assume ownership. Coordinate the PostgreSQL writer before restoring. A separate
+fixture database may share the owned PostgreSQL service, but cannot connect to
+the snapshot database. Stop/start and restore commands must never target the
+daily environment.
+
+A baseline uses a PostgreSQL dump transaction and unchanged pre/post asset,
+community, sanitized-user and signed-event sentinels. This is **not a globally
+atomic cross-store snapshot**. A changed sentinel leaves an incomplete baseline
+that cannot be restored. Capture a new baseline ID after inspection; never
+silently refresh an existing ID. Scheduled reminders and expiring channels
+currently cause refusal. Credential and executable table data are excluded;
+public profile data is retained except `users.okta_user_id`. Signed Nostr event
+fields are preserved and compared after restore. Git archives contain the
+`repos/` directory and are extracted into the owned Git volume root.
+
+Restore first records unavailable state and stops the target relay, then
+recreates only the declared snapshot database, applies hashed migrations, and
+checks signed events and persisted assets before starting services. Verification
+requires readiness plus a new private-channel message and exact CLI readback.
+`SERVER_VERIFIED` deliberately leaves desktop acceptance unverified: capture the
+actual isolated app workflow separately and post evidence with
+`scripts/post-screenshots.sh`.
+
+The Mac profile export accepts a separately approved ownership document through
+`scripts/crew_staging_profiles.py`. Its output is inert runtime/model/provider
+choices. It grants no generation permission and copies no employee identities,
+credentials, prompts, sessions or environment variables. Native account reuse
+requires a separately verified auth reference and refresh-write boundary.
+
 ## Test layers
 
 | Layer             | What it proves                                 | Typical Crew use                                  |
