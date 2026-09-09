@@ -24,6 +24,7 @@ import {
   useProjectsQuery,
 } from "@/features/projects/hooks";
 import { listProjectChildChannels } from "@/features/projects/lib/projectRelatedChannels";
+import { SidebarProjectWikiRow } from "./SidebarProjectWikiRow";
 import { canDeleteProject } from "@/features/projects/projectDeletion";
 import { useProjectOwnerProfiles } from "@/features/projects/useProjectOwnerProfiles";
 import { projectShareLink } from "@/features/projects/lib/projectShareLinks";
@@ -134,6 +135,7 @@ function SidebarProjectsSectionContent() {
   const { goChannel, goProject, goProjects } = useAppNavigation();
   const pathname = useLocation({ select: (location) => location.pathname });
   const routeProjectId = selectedProjectRouteId(pathname);
+  const routeTab = useLocation({ select: (location) => location.search.tab });
   const routeChannelId = selectedChannelRouteId(pathname);
   const relayOrigin = getCachedRelayOrigin();
   const [collapsed, setCollapsed] = React.useState(false);
@@ -307,8 +309,7 @@ function SidebarProjectsSectionContent() {
                   },
                 );
                 const isExpanded =
-                  childChannels.length > 0 &&
-                  (projectExpansion[project.projectAddress] ?? false);
+                  projectExpansion[project.projectAddress] ?? false;
 
                 return (
                   <React.Fragment key={project.id}>
@@ -318,9 +319,9 @@ function SidebarProjectsSectionContent() {
                         currentPubkey,
                         ownerProfiles,
                       )}
-                      childCount={childChannels.length}
+                      childCount={childChannels.length + 1}
                       deleteDisabled={deleteProjectMutation.isPending}
-                      isActive={isActive}
+                      isActive={isActive && routeTab !== "wiki"}
                       isExpanded={isExpanded}
                       onDelete={() => setProjectToDelete(project)}
                       onOpen={() => {
@@ -332,6 +333,13 @@ function SidebarProjectsSectionContent() {
                       }
                       project={project}
                     />
+                    {isExpanded ? (
+                      <SidebarProjectWikiRow
+                        project={project}
+                        active={isActive && routeTab === "wiki"}
+                        onOpen={goProject}
+                      />
+                    ) : null}
                     {isExpanded
                       ? childChannels.map(({ binding, channel }) => {
                           const ChannelIcon =

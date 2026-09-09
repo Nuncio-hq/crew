@@ -44,6 +44,12 @@ pub enum DbError {
     /// A value in the database is malformed or unexpected.
     #[error("invalid data: {0}")]
     InvalidData(String),
+    /// An atomic create cannot adopt an existing UUID or missing original event.
+    #[error("atomic channel conflict: {0}")]
+    AtomicChannelConflict(String),
+    /// Replay signer is not both the original creator and a current owner.
+    #[error("channel replay denied")]
+    ChannelReplayDenied,
 
     /// A serving write admitted before the lifecycle transition is still live.
     /// This is an ordinary retryable drain condition, not a safety violation.

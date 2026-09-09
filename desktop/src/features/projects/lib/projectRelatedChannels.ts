@@ -181,8 +181,8 @@ export function listProjectBoundChannels(
 }
 
 /**
- * Nested sidebar rows under a project: bound streams except the home
- * channel, which is the project row itself.
+ * Nested sidebar rows include the home channel. The Project row opens the
+ * overview, so every bound conversation needs its own child destination.
  */
 export function listProjectChildChannels(
   project: Pick<
@@ -190,7 +190,5 @@ export function listProjectChildChannels(
     "projectChannelId" | "relatedChannelIds" | "repositories"
   >,
 ): ProjectBoundChannel[] {
-  return listProjectBoundChannels(project).filter(
-    (channel) => channel.role !== "home",
-  );
+  return listProjectBoundChannels(project);
 }

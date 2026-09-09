@@ -7,11 +7,10 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use buzz_core::kind::{
-    event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE, KIND_DM_VISIBILITY,
+    is_parameterized_replaceable, KIND_AGENT_PROFILE, KIND_DM_VISIBILITY,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED,
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS,
-    KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION,
-    KIND_THREAD_SUMMARY,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_MEMBERS,
+    KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION, KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
@@ -918,60 +917,10 @@ pub async fn emit_membership_notification(
     Ok(())
 }
 
-/// Sign, store (replacing previous), and fan-out a single addressable discovery event.
-async fn emit_addressable_discovery_event(
-    tenant: &TenantContext,
-    state: &Arc<AppState>,
-    channel_id: Uuid,
-    kind: u32,
-    tags: Vec<Tag>,
-    relay_pubkey_hex: &str,
-) -> anyhow::Result<()> {
-    // Ensure the new event's created_at is strictly greater than any existing event
-    // of the same (kind, pubkey, channel_id). Without this, rapid successive updates
-    // (e.g. set topic then set purpose in the same second) can produce events with
-    // identical created_at, causing the second to be rejected by stale-write protection
-    // (NIP-16 tiebreaker: lower event ID wins, which is random).
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let min_ts = {
-        let existing = state
-            .db
-            .query_events_for_event_write(&buzz_db::event::EventQuery {
-                kinds: Some(vec![kind as i32]),
-                channel_id: Some(channel_id),
-                limit: Some(1),
-                ..buzz_db::event::EventQuery::for_community(tenant.community())
-            })
-            .await
-            .unwrap_or_default();
-        existing
-            .first()
-            .map(|e| e.event.created_at.as_secs() + 1)
-            .unwrap_or(now)
-    };
-    let ts = now.max(min_ts);
-
-    let event = EventBuilder::new(Kind::Custom(kind as u16), "")
-        .tags(tags)
-        .custom_created_at(nostr::Timestamp::from(ts))
-        .sign_with_keys(&state.relay_keypair)
-        .map_err(|e| anyhow::anyhow!("failed to sign kind:{kind}: {e}"))?;
-
-    let (stored, was_inserted) = state
-        .db
-        .replace_addressable_event(tenant.community(), &event, Some(channel_id))
-        .await?;
-    if was_inserted {
-        let kind_u32 = event_kind_u32(&stored.event);
-        dispatch_persistent_event(tenant, state, &stored, kind_u32, relay_pubkey_hex, None).await;
-    }
-    Ok(())
-}
-
-fn group_members_tags(group_id: &str, members: &[MemberRecord]) -> anyhow::Result<Vec<Tag>> {
+pub(crate) fn group_members_tags(
+    group_id: &str,
+    members: &[MemberRecord],
+) -> anyhow::Result<Vec<Tag>> {
     let mut tags: Vec<Tag> = Vec::with_capacity(members.len() + 1);
     tags.push(Tag::parse(["d", group_id])?);
     for member in members {
@@ -1053,115 +1002,7 @@ pub async fn emit_group_discovery_events(
     state: &Arc<AppState>,
     channel_id: Uuid,
 ) -> anyhow::Result<()> {
-    let channel = state
-        .db
-        .get_channel_for_event_write(tenant.community(), channel_id)
-        .await?;
-    let members = state
-        .db
-        .get_members_for_event_write(tenant.community(), channel_id)
-        .await?;
-
-    let relay_pubkey_hex = hex::encode(state.relay_keypair.public_key().to_bytes());
-    let group_id = channel_id.to_string();
-
-    {
-        let mut tags: Vec<Tag> = vec![Tag::parse(["d", &group_id])?];
-        tags.push(Tag::parse(["name", &channel.name])?);
-        if let Some(ref desc) = channel.description {
-            if !desc.is_empty() {
-                tags.push(Tag::parse(["about", desc])?);
-            }
-        }
-        if channel.visibility == "private" {
-            tags.push(Tag::parse(["private"])?);
-        } else {
-            // Explicit "public" tag complements NIP-29's absence-of-"private" convention,
-            // making channel visibility self-describing for clients.
-            tags.push(Tag::parse(["public"])?);
-        }
-        // NIP-29 hidden tag: hint to clients not to show DMs in public group lists.
-        // Not a security boundary — access control is handled by channel-scoped storage.
-        if channel.channel_type == "dm" {
-            tags.push(Tag::parse(["hidden"])?);
-            // Include participant pubkeys in kind:39000 for DMs so clients can
-            // resolve display names without a separate kind:39002 fetch.
-            for m in &members {
-                let pubkey_hex = hex::encode(&m.pubkey);
-                tags.push(Tag::parse(["p", &pubkey_hex])?);
-            }
-        }
-        // Buzz channels always require explicit membership
-        tags.push(Tag::parse(["closed"])?);
-        // Channel type tag so clients can distinguish stream/forum/dm without inference
-        tags.push(Tag::parse(["t", &channel.channel_type])?);
-        // Optional topic / purpose for richer client UX
-        if let Some(ref topic) = channel.topic {
-            if !topic.is_empty() {
-                tags.push(Tag::parse(["topic", topic])?);
-            }
-        }
-        if let Some(ref purpose) = channel.purpose {
-            if !purpose.is_empty() {
-                tags.push(Tag::parse(["purpose", purpose])?);
-            }
-        }
-        // Archived state — clients use this to hide channels from the sidebar.
-        if channel.archived_at.is_some() {
-            tags.push(Tag::parse(["archived", "true"])?);
-        }
-        // Ephemeral channel TTL — clients use this to show countdown timers.
-        if let Some(ttl) = channel.ttl_seconds {
-            tags.push(Tag::parse(["ttl", &ttl.to_string()])?);
-        }
-        if let Some(ref deadline) = channel.ttl_deadline {
-            tags.push(Tag::parse(["ttl_deadline", &deadline.to_rfc3339()])?);
-        }
-        emit_addressable_discovery_event(
-            tenant,
-            state,
-            channel_id,
-            KIND_NIP29_GROUP_METADATA,
-            tags,
-            &relay_pubkey_hex,
-        )
-        .await?;
-    }
-
-    {
-        let mut tags: Vec<Tag> = vec![Tag::parse(["d", &group_id])?];
-        for m in members
-            .iter()
-            .filter(|m| m.role == "owner" || m.role == "admin")
-        {
-            let pubkey_hex = hex::encode(&m.pubkey);
-            tags.push(Tag::parse(["p", &pubkey_hex, &m.role])?);
-        }
-        emit_addressable_discovery_event(
-            tenant,
-            state,
-            channel_id,
-            KIND_NIP29_GROUP_ADMINS,
-            tags,
-            &relay_pubkey_hex,
-        )
-        .await?;
-    }
-
-    // Re-capture membership behind the writer lock immediately before the
-    // authoritative 39002 replacement. Metadata/admin snapshots retain their
-    // existing behavior; only membership publication needs this freshness fence.
-    let relay_pubkey = state.relay_keypair.public_key().to_bytes();
-    let mut member_snapshot = state
-        .db
-        .lock_member_snapshot(tenant.community(), channel_id, &relay_pubkey)
-        .await?;
-    let stored_members =
-        store_group_members_event(tenant, state, channel_id, &mut member_snapshot).await?;
-    member_snapshot.release().await?;
-    dispatch_group_members_event(tenant, state, stored_members, &relay_pubkey_hex).await;
-
-    Ok(())
+    super::channel_discovery::emit(tenant, state, channel_id, None).await
 }
 
 async fn handle_agent_profile(
@@ -1793,44 +1634,11 @@ async fn handle_create_group(
     // via create_channel_with_id(). Fetch it rather than creating a duplicate.
     // If no h-tag, fall back to the original auto-UUID creation path.
     //
-    // Double-count analysis (C5): the counter increments below do NOT
-    // double-count vs. ingest.rs. For the h-tag path, ingest increments on
-    // was_created=true and this handler only reaches create_channel() on a DB
-    // lookup Err — an error recovery path where ingest's channel is
-    // inaccessible, so the counter correctly records a new creation. For the
-    // no-h-tag path, ingest never creates the channel, so this is the sole
-    // increment.
     let channel = if let Some(client_uuid) = extract_h_tag_channel(event) {
-        match state
+        state
             .db
             .get_channel_for_event_write(tenant.community(), client_uuid)
-            .await
-        {
-            Ok(ch) => ch,
-            Err(_) => {
-                // Channel not found — shouldn't happen (ingest_event pre-created it),
-                // but fall back to creation to stay resilient.
-                let ch = state
-                    .db
-                    .create_channel(
-                        tenant.community(),
-                        &name,
-                        channel_type,
-                        visibility,
-                        description.as_deref(),
-                        &actor_bytes,
-                        ttl_seconds,
-                    )
-                    .await?;
-                metrics::counter!(
-                    "buzz_channels_created_total",
-                    "community" => tenant.host().to_owned(),
-                    "type" => channel_type.to_string()
-                )
-                .increment(1);
-                ch
-            }
-        }
+            .await?
     } else {
         let ch = state
             .db
@@ -1873,8 +1681,16 @@ async fn handle_create_group(
     )
     .await?;
 
-    if let Err(e) = emit_group_discovery_events(tenant, state, channel.id).await {
-        warn!(channel = %channel.id, error = %e, "NIP-29 group discovery emission failed");
+    if event
+        .tags
+        .iter()
+        .any(|tag| tag.as_slice() == ["crew-atomic-create", "1"])
+    {
+        emit_group_discovery_events(tenant, state, channel.id).await?;
+    } else {
+        if let Err(e) = emit_group_discovery_events(tenant, state, channel.id).await {
+            warn!(channel = %channel.id, error = %e, "NIP-29 group discovery emission failed");
+        }
     }
 
     if let Err(e) = emit_membership_notification(
@@ -3480,7 +3296,7 @@ pub async fn publish_dm_visibility_snapshot(
     // Force created_at strictly past any prior snapshot for this viewer: a same-second
     // replacement whose random event id sorts higher is rejected by stale-write
     // protection, so a hide→re-open within one second could otherwise strand the stale
-    // snapshot. Same guard as emit_addressable_discovery_event.
+    // snapshot. The canonical discovery snapshot uses the same guard.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

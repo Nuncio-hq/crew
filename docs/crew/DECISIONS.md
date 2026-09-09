@@ -1164,8 +1164,6 @@ layout of existing components**, not a second product.
 
 ## D-056 — Thread-visible declared plans: one latest ACP snapshot per agent
 
-**Placement amendment:** D-078 / G-THREAD-1 v3 replaces item 4's permanent rail with an explicit Agent plans tab; all source, ordering and invalidation rules below remain.
-
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** #190 (Workbench #186 may later reuse the rail; it is not a
@@ -1205,8 +1203,6 @@ Missing signal is unknown, not guessed from prose.
 
 ## D-057 — GitHub PR hub in thread focus (two tiers, `gh` data plane)
 
-**Layout amendment:** D-078 / G-THREAD-1 v3 replaces item 1's narrow Chat/PR toggle with a tool overlay; the summary card still explicitly opens PR and the data/audience contracts remain.
-
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** #193
@@ -1243,8 +1239,6 @@ not a NIP-34 conversation and not a Crew GitHub protocol.
    scope. Workbench may later embed the hub as a component.
 
 ## D-058 — Channel Tool Pane: Resource Governor owns sim, browser, and dev servers
-
-**Thread-pane amendment:** D-078 / G-THREAD-1 v3 extends thread tabs and fences mount-time browser open and simulator find-or-create behind explicit activation. Existing hide cleanup, governor identity/ownership and channel-mode compatibility remain.
 
 - **Status:** Accepted
 - **Date:** 2026-08-13
@@ -1370,7 +1364,7 @@ See spikes 0035–0038.
 
 ## D-061 — Crew Wiki is a separable engine on relay events
 
-- **Status:** Accepted; navigation placement amended by D-078 v0.9. Publication and native recovery architecture amended by D-079; implementation and Ask proof remain gated in #362–#367.
+- **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** #200
 
@@ -1495,8 +1489,6 @@ See spikes 0049–0051.
 
 ## D-065 — No Workbench place; desk only when a job is live
 
-**Historical information clarification:** D-078 / G-THREAD-1 v3 permits retained read-only history without a live job. The live-control desk and Workbench redirect/no-picker rules below remain.
-
 - **Status:** Accepted
 - **Date:** 2026-08-17
 - **Issue:** #219
@@ -1519,7 +1511,7 @@ Inbox, never a picker place.
 
 ## D-066 — Sidebar is Inbox + channels + DMs; Project is not a rail peer
 
-- **Status:** Projects prohibition narrowly superseded by D-078 / Stage 0 #344; no-Workbench constraint remains
+- **Status:** Accepted
 - **Date:** 2026-08-17
 - **Issue:** #223
 - **Supersedes:** D-062 items 2–3 (exclusive binding as a sidebar folder;
@@ -1608,7 +1600,7 @@ See spike 0054.
 
 ## D-070 — Client acceptance (Gate C); CI green ≠ Accept
 
-- **Status:** Accepted; CoS-specific ownership in item 3 generalized by D-076
+- **Status:** Accepted
 - **Date:** 2026-08-19
 - **Issue:** #234
 
@@ -1657,7 +1649,7 @@ Spike 0055 PASS. Gate C DoD still applies (D-070).
 
 ## D-072 — CoS is channel intake; specialists called by name
 
-- **Status:** Partially superseded by D-076: CoS is optional, not the founder's only contact
+- **Status:** Accepted
 - **Date:** 2026-08-19
 - **Issue:** #232
 
@@ -1775,284 +1767,35 @@ upstream's `session_owners` model from `buzz-acp`.
    budget and drop accounting; add a falsifiable test; docs only until the
    Focus-grain work picks it up (see `PRODUCT.md`, "Watching agents work").
 
-## D-076 — CompanyOS direction; department delegation and verified coding delivery first
+## D-080 — Opt-in atomic channel creation and exact-event discovery recovery
 
-- **Status:** Accepted product direction; implementation is not implied
-- **Date:** 2026-09-08
-- **Source:** Founder clarification and first-workflow selection in this task
-- **Supersedes:** D-072's mandatory single-CoS intake and D-070 item 3's
-  CoS-specific handoff ownership. Named calls, channel permissions, and
-  founder acceptance remain in force.
-
-The current, authoritative product brief is [`PRODUCT.md`](PRODUCT.md).
-The founder confirmed:
-
-1. One app for personal, client, and company work, including coding and
-   non-code work. Clients, deadlines, email, X growth, advertising, browser,
-   and simulator integration belong to the intended scope.
-2. Functional department hierarchy: the founder can talk directly to
-   Marketing, a CTO, or another lead, who dispatches specialists and owns
-   the evidence-backed handoff. A CoS is one possible intake role.
-3. Autonomy follows agreed brainstorming and planning. Agents queue and
-   carry out that work, including agreed issue work, testing, and performance
-   investigation. This does not authorize unlimited proactive work.
-4. Verification skills are central: agents must establish that the outcome
-   is correct, explain evidence and limits, and repair failures within scope.
-   CI green does not replace founder acceptance.
-5. Slack-style conversation remains welcome. Thread volume and the lifecycle
-   of coding and non-code work need better management; a task, conversation,
-   runtime session, and worktree must not be treated as the same thing.
-6. Hermes remains the primary employee runtime under D-025. Keep the generic
-   Buzz/ACP boundary rather than a parallel Hermes-only company protocol.
-7. First priority is the complete coding loop: agreed project → delegation
-   and queue → implementation and verification → handoff to the founder.
-8. Before implementing the user-facing experience, use one maintained HTML
-   product reference combining the journey, screenshots or interactive
-   prototypes, and review notes, following the founder's The13 / HeardBack /
-   Didit method. Review screens and behavior together; keep accepted decisions,
-   proposals, and simulated functionality distinct. See the workflow for handoff.
-
-The department schema, queue mechanics, retention/cleanup policy, and first
-integration design remain open. This decision does not reinstate the removed
-Org roster (D-069), override navigation rules (D-065/D-066), or approve the
-earlier Gmail/EA/`#inbox` proposal as an implementation plan. Runtime prompts
-and UI need separate verification against this direction; this is a docs change.
-
-## D-077 — Real-data staging on dev-server, isolated from the daily relay
-
-- **Status:** Accepted testing policy; staging provisioning remains pending
-- **Date:** 2026-09-08
-- **Source:** Founder confirmation after live dev-server inspection
-
-The daily relay and the proposed staging environment share dev-server as
-a host, not writable data. Local Crew builds and test agents connect to a
-separate staging relay over Tailscale. Staging is restored from a deliberate
-snapshot baseline, reused through a fix/retest cycle; test writes never flow
-back to the daily system. Fast fixture-based tests remain separate.
-
-Reuse relevant installed NuncioCrew settings through isolated test copies,
-not shared live app-data, agent sessions, Hermes profiles, or workspaces.
-Verify destinations and tool authority before agents run. Live write testing
-requires explicit scope; missing staging does not authorize it.
-
-[`TESTING.md`](TESTING.md#test-environments-and-real-data-staging-d-077)
-owns the operational policy; `ARCHITECTURE.md` owns deployment topology and
-`STATE.md` records readiness. This decision documents the agreed approach;
-it neither creates staging nor authorizes a destructive setup on the daily stack.
-
-
-## D-078 — Codex-style workspace layout and one maintained design blueprint
-
-- **Status:** Accepted layout direction; prototype interactions remain proposals
-- **Date:** 2026-09-08
-- **Source:** Founder-selected annotated Codex screenshot and explicit layout request
-- **Supersedes:** D-066's prohibition on Projects in the sidebar for the future UI.
-  D-065's removal of a separate Workbench picker remains in force.
-
-The founder requested a redesign prototype with three left-sidebar groups:
-workspace navigation (Inbox, Wiki, Agents, Workflows), Projects, and direct
-agent conversations. The main area holds channel chat and threads. The
-accepted direction is described in `PRODUCT.md`; the running app has not
-been changed by this decision.
-
-Maintain the single reference at `design/companyos/`, with an HTML entry,
-interactive states, source screenshots and adjacent agent-readable rules.
-The new artifact is justified as the reusable visual/interaction blueprint;
-existing living docs retain product, architecture and workflow authority.
-Do not create per-feature prototype forks or copy contracts across documents.
-
-Projects-to-channels/repositories mapping, right-hand tools, default behavior,
-shortcuts and review-state transitions shown in v0.1 are proposals. The
-prototype must distinguish these from accepted layout and from shipped
-behavior. It uses simulated data, not the daily relay or real agent processes.
-
-### D-078 clarification — initial Stage 0 #344, 2026-09-09 (navigation superseded below)
-
-The founder accepted the conceptual split: standalone/general channels stay in
-**Channels within Workspace**; project channels appear under **Projects**.
-All joined channels remain reachable, including fallback when project metadata
-is missing or inaccessible. Existing home, related and repository channels may
-participate; there is no one-project-only data invariant. Membership, history,
-role/contact scope and relay identity are unchanged.
-
-This supersedes only D-066's conflicting Projects prohibition. D-065 still
-forbids a separate Workbench picker. Detailed Projects/Channels UI and
-interactions remain under founder discussion; no prototype layout changes are
-authorized by this clarification. At this historical clarification, D-056 placement and historical desk/tool
-semantics remained pending G-THREAD-1. The coordinator-approved v3 amendment
-below subsequently resolves that bounded gate.
-
-The canonical accepted/proposed/blocked control matrix is
-[`src/blueprint.js`](../../design/companyos/src/blueprint.js), rendered by the
-reference document. It records explicit management, roles, per-agent plans and
-manual recap requests separately from routing, recap visibility, acceptance
-protocol and latency gates. Mock Accept/Reopen is not an approved protocol;
-D-070's explicit founder review remains authoritative. No production behavior
-is shipped by this source handoff.
-
-### D-078 v0.9 review record (preceded final approval below)
-
-**2026-09-09 prototype refinement.** The founder requested Project-scoped
-Wiki navigation: Inbox, Agents and Workflows remain at the top; expanded
-Projects show Wiki and channels. Shared channels remain reachable through
-Browse channels in the workspace menu. This updates the future layout
-placement above and D-061/D-067's global Wiki entry for this prototype; the
-shipped Wiki routes, event kinds and company-handbook content remain unchanged.
-The company handbook's entry in the new layout still needs a product decision.
-
-The requested interactive review flow is read → ask → inspect cited source →
-editable task draft → explicit start in a channel, with a return link. Questions
-stay private by default. The single maintained blueprint now demonstrates it,
-including access/update failures, with sample answers and generation timers.
-This records the requested review direction, not acceptance of its detailed
-implementation or evidence that production QA/search/history/dispatch is wired.
-Reuse the existing Crew Wiki engine and Buzz channel/thread models when the
-reviewed design is implemented; do not copy prototype state into production.
-
-### D-078 v0.9 accepted Project/Wiki flow — Stage 0 #344
-
+- **Status:** Accepted implementation contract; runtime acceptance pending
 - **Date:** 2026-09-09
-- **Source:** Founder messages after the demonstrated Wiki walkthrough, recorded
-  in #344: “tốt rồim, tạo issues mới đi”, followed by “wiki và cả project nhé nếu
-  chưa tạo”; then explicit implementation and per-issue real-data evidence
-  instructions. This later approval supersedes the preceding pending-review
-  wording for the demonstrated Project/Wiki composition.
+- **Issues:** #361, shared durable operations in #362
 
-Workspace top is **Inbox, Agents, Workflows**; Wiki appears within each Project.
-There are no global Wiki or Channels rows. **Browse channels** remains in the
-workspace menu, including when every general channel is Project-linked and
-when Project metadata is missing/inaccessible. Project name/breadcrumb opens
-its Channels/Workspace page; a separate chevron only expands/collapses. Existing
-home, related and repository channel relationships remain many-to-many. No
-new identity registry, membership/history move or Workbench picker is approved.
-This supersedes the earlier Channels-within-Workspace placement in this decision.
+Project operations extend Buzz's existing kind 9007 channel command and its
+channel, membership and event tables. They do not create a parallel channel
+registry. A signed `crew-atomic-create=1` tag requests one transaction for the
+supplied UUID, initial owner membership and exact signed command, including the
+normal thread metadata. An existing UUID without that exact original command is
+a conflict, including historical partial creations. The relay never guesses
+intent from a name or substitutes another UUID.
 
-The accepted demonstrated flow includes Project create/link/manage, optional
-folder and new/existing channels, Project-scoped Wiki Read/full-body Search/
-immutable Source, existing-agent private Ask/History, independent temporary
-generator settings and explicit editable draft → Start thread → Back to Wiki.
-Source snapshot, native path/host semantics, coherent publication/retention,
-private runtime/ACL guarantees and durable recovery are **not** proved by the
-prototype. #361–#367 own their named technical gates and implementation.
-D-061 generation/address/Ask changes require their concrete amendments there;
-this decision does not invent an event kind, generic outbox or private transport.
-D-056/G-THREAD-1 and the other existing gates remain scoped as in the blueprint.
+Exact-event replay only rebuilds canonical discovery. It requires the original
+creator to remain a current owner in the same community and retains current
+metadata, roles, archive state and TTL. It does not repeat initial system,
+welcome, template or runtime effects. Required canvas/template work belongs to
+the durable user operation; this is not an exactly-once notification outbox.
 
-**Company-handbook compatibility is coordinator-approved (2026-09-09):**
-workspace menu → **Company Wiki** should call existing `goWiki()` → `/wiki` →
-`WikiLibraryScreen`, retaining its Company Wiki card and kind 30023 content.
-The coordinator reviewed the concrete menu entry, route mapping, labeled sample
-and back action. This records coordinator approval, not a new founder claim.
-The reference includes a labeled sample of that entry. #349 must wire and verify
-a reviewed replacement before removing the only global Wiki affordance. This
-is a navigation compatibility choice, not approval to delete content or create
-a parallel company library.
+All current-binary canonical discovery callers use one transaction and lock
+order: community deletion shared, TTL shared, 39000/39001/39002 replacement
+locks, membership lock, live channel `FOR SHARE`. Capture the current channel,
+members and replay authorization under those locks; commit all three canonical
+heads before fanout. Metadata updates and deletion cannot cross the snapshot.
 
-The [`handoffContract` matrix](../../design/companyos/src/blueprint.js) is the
-state/control authority for the handoff. Accepted UI does not satisfy backend
-proof or installed acceptance. Per-issue real-data runs/screenshots remain
-required; related issues may share an unchanged build/run with explicit mapping.
-Both coordinator and actual Claude Code CLI Fable Medium approve the exact
-final PR head before merge. Stage 0 reference screenshots are prototype evidence
-only, and #344 remains the open delivery roadmap.
-
-
-### G-THREAD-1 v3 — coordinator-approved thread presentation (2026-09-09)
-
-The coordinator approved this bounded implementation decision under the existing
-execute authorization, not as a new founder approval. Actual Claude Code CLI
-Fable Medium reviewed v2 and explicitly accepted either channel-switch
-clarification; the coordinator selected existing channel-mode compatibility for
-v3. The published v0.9 reference remains simulated. This accepts the decision,
-not #354 implementation or native/runtime evidence.
-
-- **One pane and initial selection.** One right-hand pane per current thread
-  view; Context on first explicit opening, with a named reachable Agent plans
-  tab. Navigation alone does not open it. Use actual capabilities and bindings;
-  recap is Off/unavailable until #351/#356 provide its real path. No extra plan
-  column, fabricated content, or global cross-window exclusivity claim.
-- **Ephemeral selection.** Keep at most 128 LRU records in memory for this app
-  session, keyed by normalized active-community relay URL, normalized viewer
-  pubkey, channel ID and validated root. Use existing conversation derivation.
-  No durable or relay preference and no second session/workspace authority.
-  Missing/invalid root stores nothing; restart/eviction returns Context. Existing
-  community reset clears on account/relay/logout. Confirmed removal/revocation
-  clears the affected scope through a small store invalidation function wired
-  to existing mutation outcomes and authoritative query reconciliation. Failed,
-  loading or partial queries do not prove removal. Fence async results by full
-  scope and current view generation.
-- **Navigation and resources.** Thread navigation closes presentation and
-  returns focus; returning to the exact thread restores selection for the next
-  explicit opening, without reopening or launching/attaching resources. Closing
-  presentation must not stop agents or terminate PTYs. Preserve existing
-  `browserClose` (native hide, not destruction) and `simSetPaneVisible(false)`
-  cleanup. Governor caps, idle timers and quit cleanup remain authoritative;
-  do not add another hide API or lifecycle. Revoked scopes lose control authority
-  even when a native resource survives.
-- **Narrow overlay.** Keep chat mounted with its draft and reader scroll, covered
-  by one modal tool overlay. Trap focus and make covered content inert. Tool
-  Escape/back dismisses that overlay first and restores focus to the opener or
-  current-scope fallback. Drive the outer `FocusThreadDrawer.escapeEnabled`
-  gate while the inner overlay owns Escape; coordinate shortcuts/editor/IME
-  ownership so one event cannot also close the thread.
-- **Plans and history.** Reuse D-056 projections: one latest reported snapshot
-  per agent/conversation lineage; preserve replacement, explicit empty,
-  invalidation, sleeping/disconnected, retained historical and unknown labels.
-  Never resurrect invalidated private history or infer tasks from prose. An
-  expired transcript is unavailable even if a legitimate plan remains. Historical
-  information is readable in the same thread without a live job. Stop/Steer/
-  Need-you recheck exact authorized current agent/session generation at dispatch.
-  Receipts/plans are neither live-job authority nor outcome acceptance.
-- **Explicit activation.** Selecting/restoring/opening thread tools may read
-  metadata but issues no browser-open, simulator-ensure/create/boot, dev-server,
-  terminal-attach or checkout-launch command. Activate through an explicit
-  instrument action. An absent simulator uses its existing create card and
-  governor find-or-create action. Browser keeps Custom URL default and no
-  dev-server setup gate. These are bounded timing changes to D-058 item 2
-  (simulator) and item 4/#236 (Browser), not new resource ownership. A
-  thread-scoped preference does not make channel-owned resources thread-private.
-- **Channel compatibility.** Channel-to-channel switches retain current
-  remount-per-channel behavior; the close rule above applies only to thread
-  presentations. Switching into/out of a thread closes the previous presentation.
-  Channel mode retains Sim/Browser and valid-channel shortcuts, without minting
-  a thread key; no valid channel means no resource-opening shortcut. Thread
-  shortcuts select/open UI but respect the explicit activation fence.
-- **PR and popout.** PR subject availability/results must match current channel
-  and root, including URL subjects, with community/viewer reset. A summary-card
-  click explicitly opens PR. Remove forced-open and Close-to-PR visibility
-  overrides, preserving PR data and separate relay/GitHub composers. Offer no
-  popout in the new thread pane. Existing channel popout opens another app window
-  and is outside this decision; its multi-window limitation is not solved by a
-  scoped preference. No cross-window synchronization or channel-pane redesign.
-
-`/workbench` still redirects to Inbox, `/workbench/:channel/:thread` to the same
-channel thread, and `goWorkbench` remains a compatibility alias. No new picker.
-#349 supplies shell integration; #352 owns observer scheduling; #354 must prove
-state, action-time generation, visibility cleanup, no mount launch, narrow
-focus/scroll/draft and account/removal oracles. Native paths still require
-#348/#357 staging evidence. No protocol change or production acceptance follows
-from this amendment.
-## D-079 — Owner recovery and conditional publication
-
-- **Status:** Accepted architecture; implementation in progress, not shipped
-- **Date:** 2026-09-09
-- **Issues:** #362, #363, #364; shared Project recovery consumer
-- **Seams:** existing addressable-event replacement transaction and coordinate lock, kind 30623 Wiki, kinds 30617/30621 Project, native identity/workspace state, and existing rusqlite dependency
-
-The relay remains domain authority. A native SQLite recovery journal records exact signed events and unresolved side effects before publication. It does not become a page cache, Project registry, or second domain database.
-
-**Conditional relay contract.** NIP-11 extension `crew-conditional-publication-v1` covers kinds 30617, 30621, and 30623. Exactly one signed `expected-revision` tag names a 64-character lowercase live event ID, or literal `absent` for initial creation. Compare and write share the existing community/kind/author/d coordinate lock. Only insertion or exact *current* signed-event replay succeeds; non-live replay, superseded writes, and mismatched preconditions conflict. Ambiguous ACKs retain the operation and reconcile exact live state without re-signing. Conditional repository announcements rerun their existing idempotent side-effect ensure before success ACK, including exact live replay; post-commit ensure failure is `error: side-effect-pending`. Project separately proves channel binding and authenticated git transport readiness. Channel kind 9007 recovery is an independent Project contract.
-
-**Deployment and rollback.** `BUZZ_CREW_CONDITIONAL_PUBLICATION_V1` defaults false. Enable advertisement only after all guarantees pass and the operator attests that all writers are upgraded and old pods quiesced. Mixed-version writers are unsupported. With the flag off, opt-in conditional/versioned writes explicitly reject; clients never fall back to unconditional writes. Reserved immutable-address and existing-v1 downgrade protections remain active when advertisement is disabled, including rollback. Legacy unconditioned Project events retain legacy semantics.
-
-**Wiki commit boundary.** Keep kind 30623 and `a=30617:<owner>:<repoD>`; the event author must equal the repository owner. A v1 `_toc` carries `wiki-version=1`, a `wiki-snapshot` UUID, and an exact immutable manifest reference. Pages use `repoD/p1-<SHA256>` and manifests `repoD/m1-<SHA256>`; fixed-order canonical envelopes bind the snapshot UUID, source revision, owner, and content. Reserved addresses allow creation or exact current replay, never independent replacement, even without version tags. Prepare the complete signed batch durably; publish and verify pages, then manifest, then CAS the TOC. Legacy sections point to encoded immutable slugs. Once v1 is live, the locked replacement path rejects unconditioned or legacy downgrade. Readers verify exact authors, IDs, digests, membership, and source revision in bounded queries; incomplete revisions never mix with an earlier verified snapshot. Generic owner deletion remains possible and must produce an incomplete-read state.
-
-**Bounds and retention.** Each entire signed Wiki event is at most 192 KiB UTF-8; a publication has at most 256 pages and 64 MiB. Relay admission limits reserved live Wiki rows to 512 MiB and 4096 events per owner/community under owner-then-coordinate locks; exact replay adds no usage. This bounds logical live data, not physical soft-deleted/audit storage. There is no prune/GC API or control in the first release. Failed uploads also consume quota. `restricted: wiki-storage-quota` preserves the current head and explains that safe reclamation is unsupported, requiring administrator remediation or future reviewed tooling. Neither historical lineage nor local preflight proves cross-client deletion safety.
-
-**Native operation recovery.** `owner-operations/recovery.db` uses private directories/files, canonicalizes the trusted existing platform app-data anchor, rejects symlink paths below that anchor, and fails visibly on corrupt or future schemas without reset. `BEGIN IMMEDIATE`, `synchronous=FULL`, `journal_mode=DELETE`, `temp_store=MEMORY`, and a 250 ms busy limit protect whole-record CAS and owner-wide quota. No transaction spans external IO. Scope is native owner plus canonical HTTP community origin; an unresolved `(owner, community, kind, resource_key)` claim remains unique regardless of status. Same ID/equal payload is replay, same ID/different intent conflicts, and competing resource creation returns the existing operation. Only domain-reconciled records can be removed. Fixed native admission permits 100 unresolved `ChannelCrewConfig` operations per owner/community at 1 MiB per complete serialized record (including event envelopes). Other kinds collectively retain 16 unresolved operations per owner and 64 MiB per record. All kinds share the 256 MiB owner cap. Kind size applies to creation intent, encode/update, and load before allocation; callers cannot override policy. Reconciled history remains at most 100 entries/30 days; the admission transaction also evicts oldest reconciled history under byte pressure including the incoming snapshot. Unresolved rows are never evicted. Update timestamps clamp to the previous timestamp when the wall clock moves backward. A resource claim is not an execution lease; the domain owns timed worker-token/revision recovery. Automatic retry is bounded to five attempts before explicit recovery.
-
-**Scope fencing.** Native capture and revalidation bind workspace generation, identity generation, owner, and canonical origin, including A→B→A. Every committed key replacement increments identity generation with Release before swap through a helper requiring the held identity-mutation guard. Capture takes the workspace lock without advancing its generation, then the identity lock off the executor; `signing_keys()` retains recovery failures. Workspace relay/key mutation holds the identity lock only for the short mutation block, never filesystem IO or await. Field locks use keys-then-relay order, matching the existing workspace reader; acquire every needed field lock before changing either field. Startup resolution, runtime import, pairing import, and workspace key replacement all use the shared seam. Returned tokens also fence consumer application and subsequent side effects.
-
-Private answer storage remains separate encrypted native records with its own quota; shared publication records never carry private history. Any larger-answer integration must atomically bind encrypted chunks and manifest to scope/revision/order/digests and prove a greater-than-256-KiB roundtrip, crash atomicity, and no plaintext persistence. This decision does not claim shipped private history or lower its logical limits.
-
-Shipping still requires production-bound race/crash/mutation tests, isolated real relay/app evidence, repository gates, and exact-head independent review.
+`BUZZ_CREW_ATOMIC_CHANNEL_CREATE` defaults to false. Only an explicitly enabled
+relay advertises `crew-atomic-channel-create` in NIP-11. Disabled relays reject
+the signed opt-in; they never fall back to legacy semantics. Operators may
+activate it only after every writer is upgraded or quiesced. There is no
+mixed-version guarantee or new writer registry. Isolated relay fault, replay,
+concurrent-writer and deletion evidence remains required before acceptance.

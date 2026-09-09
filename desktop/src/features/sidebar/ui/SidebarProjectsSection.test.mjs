@@ -11,6 +11,33 @@ import {
 const OWNER = "a".repeat(64);
 const VIEWER = "b".repeat(64);
 
+test("same-name sidebar projects retain coordinate order across relay arrival order", () => {
+  const first = makeProject({ name: "Shared" });
+  const second = makeProject({
+    name: "Shared",
+    owner: VIEWER,
+    id: `30621:${VIEWER}:sprout`,
+    projectAddress: `30621:${VIEWER}:sprout`,
+  });
+  for (const sort of ["name", "created"]) {
+    for (const projects of [
+      [first, second],
+      [second, first],
+    ]) {
+      assert.deepEqual(
+        listSidebarProjects({
+          addedProjectAddresses: new Set([first.id, second.id]),
+          currentPubkey: VIEWER,
+          filter: "added",
+          projects,
+          sort,
+        }).map((project) => project.projectAddress),
+        [first.projectAddress, second.projectAddress],
+      );
+    }
+  }
+});
+
 test("project expansion persists independently per relay and viewer", () => {
   const values = new Map();
   const previousLocalStorage = globalThis.localStorage;

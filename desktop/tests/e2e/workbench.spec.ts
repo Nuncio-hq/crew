@@ -1,3 +1,4 @@
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 import { expect, test, type Page } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
@@ -51,8 +52,7 @@ test.describe("thread session stays on the channel (#219)", () => {
 
     await page.goto("/");
     await expect(page.getByTestId("open-workbench-view")).toHaveCount(0);
-    await expect(page.getByTestId("channel-engineering")).toBeVisible();
-    await page.getByTestId("channel-engineering").click();
+    await openWorkspaceChannel(page, "engineering");
     await waitForLive(page, "engineering");
     await expect
       .poll(async () =>

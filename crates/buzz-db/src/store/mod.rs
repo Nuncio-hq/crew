@@ -10,8 +10,12 @@ pub mod api_token;
 pub mod archived_identities;
 /// Channel lifecycle and metadata persistence.
 pub mod channel;
+pub mod channel_atomic_create;
+pub mod channel_discovery;
 /// Channel membership and roster persistence.
 pub mod channel_members;
+#[cfg(test)]
+mod channel_recovery_tests;
 /// Community lifecycle and host-map persistence.
 pub mod community;
 /// Durable whole-community deletion lifecycle and PostgreSQL adapter.

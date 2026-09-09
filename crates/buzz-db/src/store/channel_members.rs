@@ -178,7 +178,7 @@ pub async fn verify_channel_roster_fence_behavior(pool: &sqlx::PgPool) -> Result
 /// Take the per-channel membership lock. MUST be the first statement in the
 /// transaction that then reads roles/owner counts and writes membership, so the
 /// whole check-then-write sequence is atomic against a concurrent one.
-async fn acquire_channel_membership_lock(
+pub(crate) async fn acquire_channel_membership_lock(
     tx: &mut Transaction<'_, Postgres>,
     community_id: CommunityId,
     channel_id: Uuid,
@@ -1192,7 +1192,7 @@ async fn get_users_bulk_with_operation(
     Ok(out)
 }
 
-fn row_to_member_record(row: sqlx::postgres::PgRow) -> Result<MemberRecord> {
+pub(crate) fn row_to_member_record(row: sqlx::postgres::PgRow) -> Result<MemberRecord> {
     let channel_id: Uuid = row.try_get("channel_id")?;
 
     Ok(MemberRecord {

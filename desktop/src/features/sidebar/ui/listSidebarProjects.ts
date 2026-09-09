@@ -193,9 +193,13 @@ export function listSidebarProjects({
       if (sort === "created") {
         return (
           right.createdAt - left.createdAt ||
-          left.name.localeCompare(right.name)
+          left.name.localeCompare(right.name) ||
+          left.projectAddress.localeCompare(right.projectAddress)
         );
       }
-      return left.name.localeCompare(right.name);
+      return (
+        left.name.localeCompare(right.name) ||
+        left.projectAddress.localeCompare(right.projectAddress)
+      );
     });
 }

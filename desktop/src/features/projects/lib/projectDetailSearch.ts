@@ -13,6 +13,16 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function repositoryCoordinate(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  const match =
+    typeof value === "string" && /^30617:[0-9a-f]{64}:(.+)$/s.exec(value);
+  if (!match || new TextEncoder().encode(match[1]).byteLength > 1_024) {
+    throw new Error("Invalid repository coordinate in Project navigation.");
+  }
+  return value as string;
+}
+
 /**
  * Project detail URLs carry forge params (repository, tab, issue) and, on
  * channel-first home, the same auxiliary-panel params a stream channel uses
@@ -26,7 +36,11 @@ export function parseProjectDetailSearch(search: Record<string, unknown>) {
     pullRequestId: optionalSearchString(search.pullRequestId),
     issueId: optionalSearchString(search.issueId),
     repositoryId: optionalSearchString(search.repositoryId),
-    tab: isEntityLinkTab(search.tab) ? search.tab : undefined,
+    repositoryAddress: repositoryCoordinate(search.repositoryAddress),
+    tab:
+      isEntityLinkTab(search.tab) || search.tab === "wiki"
+        ? search.tab
+        : undefined,
     agentSession: nonEmptyString(search.agentSession),
     agentSessionChannel: nonEmptyString(search.agentSessionChannel),
     autoSend: nonEmptyString(search.autoSend),
@@ -52,10 +66,12 @@ export function wantsProjectRepositorySurface(input: {
   projectId: string;
   pullRequestId?: string;
   repositoryId?: string;
+  repositoryAddress?: string;
   tab?: string;
 }): boolean {
   if (
     input.repositoryId ||
+    input.repositoryAddress ||
     input.tab ||
     input.issueId ||
     input.pullRequestId ||

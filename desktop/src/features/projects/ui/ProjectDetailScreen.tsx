@@ -54,7 +54,6 @@ import {
 } from "@/features/projects/lib/projectRepoAvailability";
 import { selectProjectRepository } from "@/features/projects/projectModels";
 import { useMemberChannelIds } from "@/features/projects/useRepositoryAccess";
-import { KIND_REPO_ANNOUNCEMENT } from "@/shared/constants/kinds";
 import { useProjectRepoPresentation } from "@/features/projects/useProjectRepoHost";
 import { WorkspaceTabs } from "./ProjectWorkspaceTabs";
 import { ProjectOutcomeDetail } from "./ProjectOutcomeDetail";
@@ -77,6 +76,8 @@ import {
 import {
   PROJECT_REPOSITORY_SEARCH_KEYS,
   type ProjectDetailScreenProps,
+  projectRepositorySelectionPatch,
+  projectRouteRepositoryId,
   pushPullTitle,
   snapshotHasContent,
 } from "./projectDetailHelpers";
@@ -100,12 +101,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const projectWorkItemsQuery = useProjectsWorkItemsQuery(
     project ? [project] : [],
   );
-  const routeRepositoryId: string | undefined = React.useMemo(() => {
-    if (repositoryId) return repositoryId;
-    const kindStr = `${String(KIND_REPO_ANNOUNCEMENT)}:`;
-    if (!projectId.startsWith(kindStr)) return undefined;
-    return projectId.slice(kindStr.length);
-  }, [projectId, repositoryId]);
+  const routeRepositoryId = projectRouteRepositoryId(projectId, repositoryId);
   const repository = selectProjectRepository(project, routeRepositoryId);
   const isLinkedWorkspace =
     Boolean(repository?.localWorkspacePath) ||
@@ -599,7 +595,9 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
       if (createdRepository.id === repository?.id) {
         await pullRequestsQuery.refetch();
       } else {
-        applyRepositorySearch({ repositoryId: createdRepository.id });
+        applyRepositorySearch(
+          projectRepositorySelectionPatch(createdRepository.id),
+        );
       }
       setSelectedPullRequestId(pullRequestId);
     },

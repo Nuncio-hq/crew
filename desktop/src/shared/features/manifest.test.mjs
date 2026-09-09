@@ -24,25 +24,11 @@ test("thread-scoped ACP sessions is a default-off desktop experiment", () => {
   assert.equal(feature.defaultEnabled, undefined);
 });
 
-test("existing Projects and Workflows experiments remain unchanged", () => {
-  const existing = Object.fromEntries(
-    manifest.features
-      .filter(({ id }) => id === "projects" || id === "workflows")
-      .map((feature) => [feature.id, feature]),
-  );
-
-  assert.deepEqual(existing, {
-    projects: {
-      id: "projects",
-      name: "Projects",
-      description: "Git repository browser and collaboration",
-      platforms: ["desktop"],
-    },
-    workflows: {
-      id: "workflows",
-      name: "Workflows",
-      description: "YAML-defined automations with approval gates",
-      platforms: ["desktop"],
-    },
-  });
+test("Projects and Workflows are stable destinations outside the preview manifest", () => {
+  for (const id of ["projects", "workflows"]) {
+    assert.equal(
+      manifest.features.some((feature) => feature.id === id),
+      false,
+    );
+  }
 });
