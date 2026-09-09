@@ -349,6 +349,18 @@ impl ProjectLinkRuntime for NativeProjectLink {
                 self.repository_eligible(Some(operation), repository_coordinate)
                     .await
             }
+            (
+                Some(ProjectMetadataAction::LinkWorkspace {
+                    repository_coordinate,
+                    channel_id,
+                    ..
+                }),
+                None,
+            ) => {
+                self.repository_eligible(Some(operation), repository_coordinate)
+                    .await?;
+                NativeProjectLink::eligible(self, Some(operation), channel_id).await
+            }
             (Some(ProjectMetadataAction::UnlinkWorkspace { .. }), None) => Ok(()),
             _ => Err("Invalid Project operation action.".into()),
         }

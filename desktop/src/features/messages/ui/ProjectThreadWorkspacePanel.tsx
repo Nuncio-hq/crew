@@ -36,10 +36,13 @@ import {
   parseRepoAddress,
 } from "@/features/messages/lib/parseForgePullRequestUrl";
 import {
+  canonicalCrewRepoAddress,
   isMissingFolderWorkspaceError,
   parseCrewRepoAddress,
 } from "@/features/messages/lib/projectThreadWorkspace";
 import { linkCurrentProjectWorkspace } from "@/features/projects/lib/project-local-workspace-runtime";
+import { projectsQueryKey } from "@/features/projects/hooks";
+import { ProjectWorkspaceRecoveryControl } from "@/features/projects/ui/ProjectWorkspaceRecoveryControl";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { chooseProjectWorkspaceFolder } from "@/shared/api/tauri-project-folder-dialog";
 import {
@@ -368,6 +371,10 @@ export function ProjectThreadWorkspacePanel({
     }
   };
 
+  const recoveryRepositoryCoordinate = canonicalCrewRepoAddress(
+    context.repoAddress,
+  );
+
   return (
     <section
       className="@container shrink-0 border-b border-border/50 bg-background px-3 py-1.5"
@@ -602,6 +609,19 @@ export function ProjectThreadWorkspacePanel({
             target={target}
             workspace={workspace}
           />
+          {recoveryRepositoryCoordinate ? (
+            <ProjectWorkspaceRecoveryControl
+              onRecovered={async () => {
+                await queryClient.invalidateQueries({
+                  queryKey: ["crew-project-announcement"],
+                });
+                await queryClient.invalidateQueries({
+                  queryKey: projectsQueryKey,
+                });
+              }}
+              repositoryCoordinate={recoveryRepositoryCoordinate}
+            />
+          ) : null}
         </div>
       ) : null}
     </section>

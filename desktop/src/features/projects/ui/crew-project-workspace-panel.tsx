@@ -8,13 +8,8 @@ import {
   projectLocalWorkspaceFromEvent,
   readCanonicalProjectChannel,
 } from "@/features/projects/lib/project-local-workspace";
+import { projectWorkspaceUiReadiness } from "@/features/projects/lib/project-local-workspace-ui";
 import {
-  projectWorkspaceUiReadiness,
-  reusableProjectWorkspaceChannel,
-  type RetryProjectChannel,
-} from "@/features/projects/lib/project-local-workspace-ui";
-import {
-  createProjectWorkspaceChannel,
   currentRelayWsUrl,
   fetchCurrentProjectAnnouncement,
   linkCurrentProjectWorkspace,
@@ -26,6 +21,7 @@ import { CrewProjectWorkspaceStatus } from "@/features/projects/ui/crew-project-
 import { useIdentityQuery } from "@/shared/api/hooks";
 import {
   loadProjectChannelLink,
+  retryProjectWorkspaceLink,
   retryProjectWorkspaceUnlink,
 } from "@/shared/api/projectChannelLink";
 import { chooseProjectWorkspaceFolder } from "@/shared/api/tauri-project-folder-dialog";
@@ -46,8 +42,6 @@ export function CrewProjectWorkspacePanel() {
   );
   const [saving, setSaving] = React.useState(false);
   const [unlinking, setUnlinking] = React.useState(false);
-  const [retryChannel, setRetryChannel] =
-    React.useState<RetryProjectChannel | null>(null);
   const currentPubkey = identityQuery.data?.pubkey.toLowerCase();
   const projects = React.useMemo(
     () =>
@@ -67,7 +61,6 @@ export function CrewProjectWorkspacePanel() {
   React.useEffect(() => {
     if (selected && selected.id !== selectedId) {
       setSelectedId(selected.id);
-      setRetryChannel(null);
       setSelectedNowPath(null);
     }
   }, [selected, selectedId]);
@@ -102,6 +95,11 @@ export function CrewProjectWorkspacePanel() {
     "unlink-workspace"
       ? unlinkRecoveryQuery.data.operation
       : null;
+  const pendingLink =
+    unlinkRecoveryQuery.data?.operation?.payload.action?.type ===
+    "link-workspace"
+      ? unlinkRecoveryQuery.data.operation
+      : null;
   const announcementStatus = announcementQuery.isPending
     ? "loading"
     : announcementQuery.isError
@@ -127,7 +125,6 @@ export function CrewProjectWorkspacePanel() {
   const confirmLink = async () => {
     if (!selected || !pendingPath || !currentPubkey) return;
     setSaving(true);
-    let createdChannelId: string | null = null;
     try {
       if (!readiness.canPublish || !relayUrl) {
         throw new Error(
@@ -146,16 +143,12 @@ export function CrewProjectWorkspacePanel() {
       if (channel.status === "invalid") {
         throw new Error("Project has an invalid canonical Project channel.");
       }
-      let channelId = reusableProjectWorkspaceChannel(
-        selected.id,
-        channel.status === "ready" ? channel.channelId : null,
-        retryChannel,
-      );
-      if (!channelId) {
-        channelId = await createProjectWorkspaceChannel(selected.name);
-        setRetryChannel({ projectId: selected.id, channelId });
+      if (channel.status === "absent") {
+        throw new Error(
+          "Create or select the Project channel before linking a workspace.",
+        );
       }
-      if (channel.status === "absent") createdChannelId = channelId;
+      const channelId = channel.channelId;
       const saved = await linkCurrentProjectWorkspace({
         owner: selected.owner,
         currentPubkey,
@@ -168,14 +161,10 @@ export function CrewProjectWorkspacePanel() {
         saved,
       );
       setSelectedNowPath(pendingPath);
-      setRetryChannel(null);
       setPendingPath(null);
       toast.success("Project workspace linked on relay.");
     } catch (error) {
-      const suffix = createdChannelId
-        ? ` Channel ${createdChannelId} was created and can be reused on retry.`
-        : "";
-      toast.error(`${errorMessage(error)}${suffix}`);
+      toast.error(errorMessage(error));
     } finally {
       setSaving(false);
     }
@@ -201,6 +190,31 @@ export function CrewProjectWorkspacePanel() {
     } finally {
       setUnlinking(false);
     }
+  };
+
+  const retryLinkFolder = async () => {
+    if (!repositoryCoordinate || !pendingLink || !unlinkRecoveryQuery.data) {
+      return;
+    }
+    const action = pendingLink.payload.action;
+    if (action?.type !== "link-workspace") return;
+    const result = await retryProjectWorkspaceLink(
+      unlinkRecoveryQuery.data.token,
+      pendingLink,
+      repositoryCoordinate,
+      action.channel_id,
+      action.local_path,
+    );
+    if (!result.value.reconciled || result.value.status !== "complete") {
+      throw new Error(
+        result.value.payload.last_error ??
+          "The workspace link is still pending relay confirmation.",
+      );
+    }
+    await unlinkRecoveryQuery.refetch();
+    await announcementQuery.refetch();
+    setSelectedNowPath(action.local_path);
+    toast.success("Project workspace link recovered.");
   };
 
   const retryUnlinkFolder = async () => {
@@ -232,7 +246,6 @@ export function CrewProjectWorkspacePanel() {
           label="Project for local workspace"
           onChange={(projectId) => {
             setSelectedId(projectId);
-            setRetryChannel(null);
             setSelectedNowPath(null);
           }}
           options={projects.map((project) => ({
@@ -263,6 +276,20 @@ export function CrewProjectWorkspacePanel() {
             <FolderOpen className="h-4 w-4" />
             {workspace.status === "linked" ? "Relink folder" : "Link folder"}
           </Button>
+          {pendingLink ? (
+            <Button
+              disabled={saving || unlinking || unlinkRecoveryQuery.isFetching}
+              onClick={() =>
+                void retryLinkFolder().catch((error) =>
+                  toast.error(errorMessage(error)),
+                )
+              }
+              size="sm"
+              variant="ghost"
+            >
+              Retry link
+            </Button>
+          ) : null}
           {workspace.status === "linked" ? (
             <Button
               disabled={saving || unlinking || unlinkRecoveryQuery.isFetching}

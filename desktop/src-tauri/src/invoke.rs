@@ -435,6 +435,7 @@ macro_rules! desktop_invoke_handler {
             wiki_generate,
             project_change_link_prepare,
             project_change_attach_repository_prepare,
+            project_change_link_workspace_prepare,
             project_change_unlink_workspace_prepare,
             project_change_link_dispatch,
             owner_operation_scope,

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildProjectThreadAgentSteps,
+  canonicalCrewRepoAddress,
   collectProjectThreadAgentMentions,
   isMissingFolderWorkspaceError,
   parseCrewRepoAddress,
@@ -174,6 +175,14 @@ test("Crew repo addresses parse owner and dtag for relink", () => {
     },
   );
   assert.equal(parseCrewRepoAddress("Nuncio-hq/crew"), null);
+});
+
+test("native recovery keys normalize mixed-case repository owners", () => {
+  assert.equal(
+    canonicalCrewRepoAddress(`30617:${"A".repeat(64)}:crew`),
+    `30617:${"a".repeat(64)}:crew`,
+  );
+  assert.equal(canonicalCrewRepoAddress("Nuncio-hq/crew"), null);
 });
 
 test("missing-folder workspace errors are the recover path, not a generic setup failure", () => {

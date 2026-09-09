@@ -20,9 +20,15 @@ export type ProjectMetadataAction =
   | {
       type: "unlink-workspace";
       repository_coordinate: string;
+    }
+  | {
+      type: "link-workspace";
+      repository_coordinate: string;
+      channel_id: string;
+      local_path: string;
     };
 export type ProjectChannelLinkPayload = {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   project_coordinate: string;
   channel_id?: string;
   action?: ProjectMetadataAction;
@@ -60,6 +66,20 @@ export const projectLinkNative = {
       expected,
       projectCoordinate,
       repositoryCoordinate,
+    }),
+  prepareWorkspace: (
+    expected: OwnerOperationScope,
+    repositoryCoordinate: string,
+    channelId: string,
+    localPath: string,
+  ) =>
+    invoke<
+      ScopedOwnerOperation<OwnerOperationCreate<ProjectChannelLinkPayload>>
+    >("project_change_link_workspace_prepare", {
+      expected,
+      repositoryCoordinate,
+      channelId,
+      localPath,
     }),
   prepareUnlink: (
     expected: OwnerOperationScope,
@@ -145,7 +165,14 @@ export async function loadProjectChannelLink(
             operation.payload.channel_id.length <= 36) ||
           ((operation.payload?.action?.type === "attach-repository" ||
             operation.payload?.action?.type === "unlink-workspace") &&
-            typeof operation.payload.action.repository_coordinate === "string")
+            typeof operation.payload.action.repository_coordinate ===
+              "string") ||
+          (operation.payload?.action?.type === "link-workspace" &&
+            typeof operation.payload.action.repository_coordinate ===
+              "string" &&
+            typeof operation.payload.action.channel_id === "string" &&
+            typeof operation.payload.action.local_path === "string" &&
+            operation.payload.action.local_path.length <= 4096)
         ) ||
         (operation.payload.last_error != null &&
           typeof operation.payload.last_error !== "string")
@@ -199,6 +226,69 @@ export async function attachExistingProjectRepository(
   checked(result, token);
   await assertProjectLinkScope(token, native);
   return result;
+}
+
+/** Prepare and dispatch one exact repository workspace location change. */
+export async function linkProjectWorkspace(
+  repositoryCoordinate: string,
+  channelId: string,
+  localPath: string,
+  native: ProjectLinkNative = projectLinkNative,
+) {
+  const token = await native.capture();
+  const created = checked(
+    await native.prepareWorkspace(
+      token,
+      repositoryCoordinate,
+      channelId,
+      localPath,
+    ),
+    token,
+  );
+  const operation = created.operation;
+  const action = operation.payload.action;
+  if (
+    operation.kind !== "project-change" ||
+    operation.resource_key !== repositoryCoordinate ||
+    action?.type !== "link-workspace" ||
+    action.repository_coordinate !== repositoryCoordinate ||
+    action.channel_id !== channelId ||
+    action.local_path !== localPath
+  ) {
+    throw new Error(
+      "This repository has another pending workspace operation. Recover it before linking a different folder.",
+    );
+  }
+  await assertProjectLinkScope(token, native);
+  const result = await native.dispatch(
+    token,
+    operation,
+    created.result === "existing",
+  );
+  checked(result, token);
+  await assertProjectLinkScope(token, native);
+  return result;
+}
+
+/** Retry a persisted workspace link without preparing a successor event. */
+export async function retryProjectWorkspaceLink(
+  token: OwnerOperationScope,
+  operation: ProjectChannelLinkOperation,
+  repositoryCoordinate: string,
+  channelId: string,
+  localPath: string,
+  native: ProjectLinkNative = projectLinkNative,
+) {
+  const action = operation.payload.action;
+  if (
+    action?.type !== "link-workspace" ||
+    action.repository_coordinate !== repositoryCoordinate ||
+    action.channel_id !== channelId ||
+    action.local_path !== localPath
+  ) {
+    throw new Error("The pending workspace link targets another operation.");
+  }
+  return retryProjectChannelLink(token, operation, native);
 }
 
 /** Prepare durably, then invoke only the opaque native record ID and revision. */

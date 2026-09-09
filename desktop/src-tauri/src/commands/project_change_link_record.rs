@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::project_change_link::{
     validate_signed_attachment, validate_signed_link, validate_signed_unlink,
+    validate_signed_workspace_link,
 };
 use crate::owner_operations::{Operation, OperationKind, OperationStatus};
 
@@ -29,12 +30,22 @@ pub(super) struct ProjectLinkRecord {
     pub(super) lease: Option<ProjectLinkLease>,
 }
 
-/// Version two explicitly identifies metadata-only repository attachment.
+/// Metadata-only repository actions are versioned so old journal records keep
+/// their exact JSON shape and cannot be retargeted by a newer renderer.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 pub(super) enum ProjectMetadataAction {
-    AttachRepository { repository_coordinate: String },
-    UnlinkWorkspace { repository_coordinate: String },
+    AttachRepository {
+        repository_coordinate: String,
+    },
+    UnlinkWorkspace {
+        repository_coordinate: String,
+    },
+    LinkWorkspace {
+        repository_coordinate: String,
+        channel_id: String,
+        local_path: String,
+    },
 }
 
 /// A journal CAS claims a worker; expiry never permits a different signed event.
@@ -78,6 +89,22 @@ impl ProjectLinkRecord {
                 native_owner,
                 repository_coordinate,
             ),
+            (
+                4,
+                None,
+                Some(ProjectMetadataAction::LinkWorkspace {
+                    repository_coordinate,
+                    channel_id,
+                    local_path,
+                }),
+            ) => validate_signed_workspace_link(
+                &self.original_head,
+                &self.signed_patch,
+                native_owner,
+                repository_coordinate,
+                channel_id,
+                local_path,
+            ),
             _ => Err("Invalid Project operation action or version.".into()),
         }
     }
@@ -113,7 +140,8 @@ impl ProjectLinkRecord {
             })
             .ok_or_else(|| "Project identifier is missing.".to_string())?;
         let kind = match &record.action {
-            Some(ProjectMetadataAction::UnlinkWorkspace { .. }) => {
+            Some(ProjectMetadataAction::UnlinkWorkspace { .. })
+            | Some(ProjectMetadataAction::LinkWorkspace { .. }) => {
                 buzz_core_pkg::kind::KIND_GIT_REPO_ANNOUNCEMENT
             }
             _ => buzz_core_pkg::kind::KIND_PROJECT,

@@ -1965,6 +1965,22 @@ The relay remains domain authority. A native SQLite recovery journal records exa
 
 **Project channel associations (implementation in progress).** The additional `crew-project-channel-link-v1` capability requires conditional publication and validates newly associated channels in the same kind 30621 replacement transaction. Associations are the union of the singleton `buzz-channel` home and `buzz-related-channel` values; initial creation validates every target, while moving an existing association between roles does not require membership again. New targets must be canonical UUIDs and active stream channels in the same community, with active membership for the signing Project owner. Growing the association set permits at most 64 distinct related channels. The existing Project coordinate lock and old-head row lock precede sorted membership advisory locks, membership row locks, and channel row locks, all retained through the caller's commit. Row locks cover admin kick, archive, deletion, and TTL writers. Any validation failure rolls back the replacement. Exact live replay bypasses mutable eligibility checks; read-only supersession reconciliation never republishes an older event. This contract adds no signed action tag, event kind, or registry. Runtime race evidence and final capability wiring remain release requirements.
 
+**Workspace metadata recovery (desktop implementation in progress).** Folder
+linking and unlinking use the shared native ProjectChange journal against the
+exact `30617:<owner>:<repoD>` coordinate. The v4 `LinkWorkspace` record stores
+the canonical channel UUID and selected absolute path with the signed
+repository event before publication; retries reuse those bytes and validate the
+live head. The signer preserves unknown tag order, removes only transient auth
+and local-location metadata, and keeps the repository `d` tag in place. The
+existing v3 `UnlinkWorkspace` path uses the same ordered repository builder.
+LinkWorkspace refuses a repository without an existing canonical
+`buzz-channel`; it does not create a channel as an unjournaled prefix. Channel
+creation and Project attachment remain a separate, explicitly recoverable
+operation.
+Relay capability advertisement and the conditional 30617 transaction remain
+deployment gates owned by #362; the desktop fails closed until they are
+available.
+
 **Deployment and rollback.** `BUZZ_CREW_CONDITIONAL_PUBLICATION_V1` defaults false. Enable advertisement only after all guarantees pass and the operator attests that all writers are upgraded and old pods quiesced. Mixed-version writers are unsupported. With the flag off, opt-in conditional/versioned writes explicitly reject; clients never fall back to unconditional writes. Reserved immutable-address and existing-v1 downgrade protections remain active when advertisement is disabled, including rollback. Legacy unconditioned Project events retain legacy semantics.
 
 **Wiki commit boundary.** Keep kind 30623 and `a=30617:<owner>:<repoD>`; the event author must equal the repository owner. A v1 `_toc` carries `wiki-version=1`, a `wiki-snapshot` UUID, and an exact immutable manifest reference. Pages use `repoD/p1-<SHA256>` and manifests `repoD/m1-<SHA256>`; fixed-order canonical envelopes bind the snapshot UUID, source revision, owner, and content. Reserved addresses allow creation or exact current replay, never independent replacement, even without version tags. Prepare the complete signed batch durably; publish and verify pages, then manifest, then CAS the TOC. Legacy sections point to encoded immutable slugs. Once v1 is live, the locked replacement path rejects unconditioned or legacy downgrade. Readers verify exact authors, IDs, digests, membership, and source revision in bounded queries; incomplete revisions never mix with an earlier verified snapshot. Generic owner deletion remains possible and must produce an incomplete-read state.

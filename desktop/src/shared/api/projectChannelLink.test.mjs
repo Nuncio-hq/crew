@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   attachExistingProjectRepository,
+  linkProjectWorkspace,
+  retryProjectWorkspaceLink,
   linkExistingProjectChannel,
   retryProjectChannelLink,
   loadProjectChannelLink,
@@ -106,6 +108,87 @@ test("repository attachment prepares its exact coordinate and dispatches once", 
   assert.equal(calls[0][0], "prepareRepository");
   assert.equal(calls[0][3], repository);
   assert.equal(calls[1][0], "dispatch");
+});
+
+test("workspace linking persists and dispatches the exact path and channel", async () => {
+  const repository = `30617:${"b".repeat(64)}:backend`;
+  const channel = "018f30b4-57c0-7f10-a3f8-9f7d8e6c5b4a";
+  const path = "/Users/oscar/Projects/Nuncio Crew";
+  const calls = [];
+  const workspaceOperation = {
+    ...operation,
+    resource_key: repository,
+    payload: {
+      action: {
+        type: "link-workspace",
+        repository_coordinate: repository,
+        channel_id: channel,
+        local_path: path,
+      },
+    },
+  };
+  const native = fixture({
+    prepareWorkspace: async (...args) => {
+      calls.push(["prepareWorkspace", ...args]);
+      return {
+        token,
+        value: { result: "created", operation: workspaceOperation },
+      };
+    },
+    dispatch: async (...args) => {
+      calls.push(["dispatch", ...args]);
+      return {
+        token,
+        value: {
+          ...workspaceOperation,
+          status: "complete",
+          reconciled: true,
+        },
+      };
+    },
+  }).native;
+  const result = await linkProjectWorkspace(repository, channel, path, native);
+  assert.equal(result.value.reconciled, true);
+  assert.deepEqual(calls, [
+    ["prepareWorkspace", token, repository, channel, path],
+    ["dispatch", token, workspaceOperation, false],
+  ]);
+});
+
+test("workspace retry rejects a changed path and never prepares a successor", async () => {
+  const repository = `30617:${"b".repeat(64)}:backend`;
+  const channel = "018f30b4-57c0-7f10-a3f8-9f7d8e6c5b4a";
+  const path = "/Users/oscar/Projects/Nuncio Crew";
+  const { native, calls } = fixture({
+    dispatch: async (...args) => {
+      calls.push(["dispatch", ...args]);
+      return { token, value: operation };
+    },
+  });
+  const pending = {
+    ...operation,
+    resource_key: repository,
+    payload: {
+      action: {
+        type: "link-workspace",
+        repository_coordinate: repository,
+        channel_id: channel,
+        local_path: path,
+      },
+    },
+  };
+  await assert.rejects(
+    retryProjectWorkspaceLink(
+      token,
+      pending,
+      repository,
+      channel,
+      `${path}/changed`,
+      native,
+    ),
+    /another operation/,
+  );
+  assert.deepEqual(calls, []);
 });
 test("identity ABA after prepare prevents dispatch", async () => {
   let reads = 0;

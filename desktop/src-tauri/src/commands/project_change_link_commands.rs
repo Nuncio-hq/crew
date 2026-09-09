@@ -3,14 +3,14 @@ use super::owner_operations::{
     load_owner_operation_for_dispatch, owner_operation_create, ScopedOperationResult,
 };
 use super::project_change_link::{
-    attach_repository_tags, link_channel_tags, unlink_repository_tags,
+    attach_repository_tags, link_channel_tags, link_repository_tags, unlink_repository_tags,
 };
 use super::project_change_link_driver::drive;
 use super::project_change_link_record::{ProjectLinkRecord, ProjectMetadataAction};
 use super::project_change_link_runtime::{now, NativeProjectLink};
 use crate::app_state::owner_scope::{assert_current, OwnerScopeToken};
 use crate::owner_operations::{CreateResult, NewOperation, Operation, OperationKind};
-use nostr::Timestamp;
+use nostr::{EventBuilder, Kind, Timestamp};
 use tauri::AppHandle;
 
 /// Prepare one existing-channel link without any channel/template/runtime mutation.
@@ -39,6 +39,29 @@ pub(crate) async fn project_change_attach_repository_prepare(
         None,
         Some(ProjectMetadataAction::AttachRepository {
             repository_coordinate,
+        }),
+    )
+    .await
+}
+
+/// Prepare a durable exact workspace link on one repository announcement.
+#[tauri::command]
+pub(crate) async fn project_change_link_workspace_prepare(
+    app: AppHandle,
+    expected: OwnerScopeToken,
+    repository_coordinate: String,
+    channel_id: String,
+    local_path: String,
+) -> Result<ScopedOperationResult<CreateResult>, String> {
+    prepare_metadata(
+        app,
+        expected,
+        repository_coordinate.clone(),
+        None,
+        Some(ProjectMetadataAction::LinkWorkspace {
+            repository_coordinate,
+            channel_id,
+            local_path,
         }),
     )
     .await
@@ -80,6 +103,28 @@ async fn prepare_metadata(
         }
         (
             None,
+            Some(ProjectMetadataAction::LinkWorkspace {
+                repository_coordinate,
+                channel_id,
+                local_path,
+            }),
+        ) => {
+            let tags = link_repository_tags(
+                &original_head,
+                runtime.owner,
+                repository_coordinate,
+                channel_id,
+                local_path,
+            )?
+            .ok_or("That repository workspace is already linked.")?;
+            runtime
+                .repository_eligible(None, repository_coordinate)
+                .await?;
+            runtime.eligible(None, channel_id).await?;
+            tags
+        }
+        (
+            None,
             Some(ProjectMetadataAction::UnlinkWorkspace {
                 repository_coordinate,
             }),
@@ -100,20 +145,16 @@ async fn prepare_metadata(
         .checked_add(1)
         .ok_or("Project timestamp overflow")?
         .max(current_time);
-    let signed_patch = if let Some(ProjectMetadataAction::UnlinkWorkspace {
-        repository_coordinate,
-    }) = &action
-    {
-        let identifier = repository_coordinate
-            .splitn(3, ':')
-            .nth(2)
-            .ok_or("Repository identifier is missing")?;
-        buzz_sdk_pkg::builders::build_repo_announcement_with_tags(
-            identifier,
+    let signed_patch = if matches!(
+        &action,
+        Some(ProjectMetadataAction::UnlinkWorkspace { .. })
+            | Some(ProjectMetadataAction::LinkWorkspace { .. })
+    ) {
+        EventBuilder::new(
+            Kind::Custom(buzz_core_pkg::kind::KIND_GIT_REPO_ANNOUNCEMENT as u16),
             &original_head.content,
-            tags,
         )
-        .map_err(|error| error.to_string())?
+        .tags(tags)
         .custom_created_at(Timestamp::from_secs(timestamp))
         .sign_with_keys(&runtime.keys)
         .map_err(|error| error.to_string())?
@@ -130,6 +171,7 @@ async fn prepare_metadata(
             None => 1,
             Some(ProjectMetadataAction::AttachRepository { .. }) => 2,
             Some(ProjectMetadataAction::UnlinkWorkspace { .. }) => 3,
+            Some(ProjectMetadataAction::LinkWorkspace { .. }) => 4,
         },
         project_coordinate: project_coordinate.clone(),
         channel_id,
@@ -144,6 +186,9 @@ async fn prepare_metadata(
         last_error: None,
         lease: None,
     };
+    // Validate the exact signed bytes before they enter the durable journal;
+    // a malformed payload must never become a retryable operation.
+    record.validate_intent(runtime.owner)?;
     let result = owner_operation_create(
         app.clone(),
         expected.clone(),

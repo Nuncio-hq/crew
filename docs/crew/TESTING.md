@@ -377,6 +377,19 @@ creation/recovery tests must use isolated owned databases and an explicitly
 enabled relay; D-080's concurrent-writer and deployment checks remain separate
 from these local probe tests.
 
+The native Project workspace journal has a focused unit lane:
+
+```text
+cargo test -j 1 --locked --manifest-path desktop/src-tauri/Cargo.toml \
+  -p buzz-desktop --lib project_change_link -- --test-threads=1
+```
+
+It covers the durable v1 channel link, v2 repository attachment, v3 unlink,
+and v4 exact workspace path link. The shared driver cases cover lost-ack retry
+identity; v4-specific cases cover tag-order/path preservation and pre-persist
+intent validation. This lane does not prove the relay's conditional capability
+advertisement or installed picker behavior.
+
 Related issues may reuse one unchanged build and owned real-data run; keep an
 explicit issue-to-case mapping and post evidence on each corresponding issue.
 Record candidate SHA/build, source revision, runtime/model/profile, test data

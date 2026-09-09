@@ -8,6 +8,7 @@ import {
 } from "@/features/channels/lib/channelLocalWorkspace";
 import { projectsQueryKey, useProjectsQuery } from "@/features/projects/hooks";
 import { linkCurrentProjectWorkspace } from "@/features/projects/lib/project-local-workspace-runtime";
+import { ProjectWorkspaceRecoveryControl } from "@/features/projects/ui/ProjectWorkspaceRecoveryControl";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { chooseProjectWorkspaceFolder } from "@/shared/api/tauri-project-folder-dialog";
 import { normalizePubkey } from "@/shared/lib/pubkey";
@@ -94,7 +95,7 @@ export function ChannelLocalWorkspaceChip({
     }
   }, [binding, channelId, identityQuery.data?.pubkey, queryClient]);
 
-  if (!view) return null;
+  if (!view || !binding) return null;
 
   return (
     <div
@@ -118,6 +119,17 @@ export function ChannelLocalWorkspaceChip({
         >
           {view.actionLabel}
         </Button>
+      ) : null}
+      {view.actionLabel ? (
+        <ProjectWorkspaceRecoveryControl
+          onRecovered={async () => {
+            await queryClient.invalidateQueries({
+              queryKey: ["crew-project-announcement"],
+            });
+            await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+          }}
+          repositoryCoordinate={binding.repoAddress}
+        />
       ) : null}
     </div>
   );
