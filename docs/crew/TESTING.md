@@ -362,6 +362,21 @@ staging acceptance. Those remain #338 gates; real staging requires #348.
 
 ## CompanyOS grouped evidence (#344)
 
+For the #349 shell, `companyos-shell-navigation.spec.ts` checks stable Projects
+and Workflows despite saved preview opt-outs, workspace-menu navigation,
+Company Wiki, Settings, and Project expansion versus row navigation. Existing
+channel navigation specs use `openWorkspaceChannel` to exercise Browse
+channels through the real menu. These mock-bridge cases establish UI routing,
+not installed runtime or Project-operation recovery acceptance.
+
+For #361, run the native `project_git_workspace_probe` tests separately from
+the root Rust workspace. The probe must preserve the exact selected path,
+distinguish a Git root from a subdirectory, and propagate inaccessible-path or
+probe failures. Its Git subprocesses share one bounded deadline. Relay atomic
+creation/recovery tests must use isolated owned databases and an explicitly
+enabled relay; D-080's concurrent-writer and deployment checks remain separate
+from these local probe tests.
+
 Related issues may reuse one unchanged build and owned real-data run; keep an
 explicit issue-to-case mapping and post evidence on each corresponding issue.
 Record candidate SHA/build, source revision, runtime/model/profile, test data

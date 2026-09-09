@@ -1364,7 +1364,7 @@ See spikes 0035–0038.
 
 ## D-061 — Crew Wiki is a separable engine on relay events
 
-- **Status:** Accepted
+- **Status:** Accepted; navigation placement amended by D-078 v0.9. Generation/Ask protocol successors remain gated in #362–#367.
 - **Date:** 2026-08-13
 - **Issue:** #200
 
@@ -1511,7 +1511,7 @@ Inbox, never a picker place.
 
 ## D-066 — Sidebar is Inbox + channels + DMs; Project is not a rail peer
 
-- **Status:** Accepted
+- **Status:** Projects prohibition narrowly superseded by D-078 / Stage 0 #344; no-Workbench constraint remains
 - **Date:** 2026-08-17
 - **Issue:** #223
 - **Supersedes:** D-062 items 2–3 (exclusive binding as a sidebar folder;
@@ -1600,7 +1600,7 @@ See spike 0054.
 
 ## D-070 — Client acceptance (Gate C); CI green ≠ Accept
 
-- **Status:** Accepted
+- **Status:** Accepted; CoS-specific ownership in item 3 generalized by D-076
 - **Date:** 2026-08-19
 - **Issue:** #234
 
@@ -1649,7 +1649,7 @@ Spike 0055 PASS. Gate C DoD still applies (D-070).
 
 ## D-072 — CoS is channel intake; specialists called by name
 
-- **Status:** Accepted
+- **Status:** Partially superseded by D-076: CoS is optional, not the founder's only contact
 - **Date:** 2026-08-19
 - **Issue:** #232
 
@@ -1766,6 +1766,191 @@ upstream's `session_owners` model from `buzz-acp`.
    chunk backlog. Constraints: keep the 120/min quota ceiling, the byte
    budget and drop accounting; add a falsifiable test; docs only until the
    Focus-grain work picks it up (see `PRODUCT.md`, "Watching agents work").
+
+## D-076 — CompanyOS direction; department delegation and verified coding delivery first
+
+- **Status:** Accepted product direction; implementation is not implied
+- **Date:** 2026-09-08
+- **Source:** Founder clarification and first-workflow selection in this task
+- **Supersedes:** D-072's mandatory single-CoS intake and D-070 item 3's
+  CoS-specific handoff ownership. Named calls, channel permissions, and
+  founder acceptance remain in force.
+
+The current, authoritative product brief is [`PRODUCT.md`](PRODUCT.md).
+The founder confirmed:
+
+1. One app for personal, client, and company work, including coding and
+   non-code work. Clients, deadlines, email, X growth, advertising, browser,
+   and simulator integration belong to the intended scope.
+2. Functional department hierarchy: the founder can talk directly to
+   Marketing, a CTO, or another lead, who dispatches specialists and owns
+   the evidence-backed handoff. A CoS is one possible intake role.
+3. Autonomy follows agreed brainstorming and planning. Agents queue and
+   carry out that work, including agreed issue work, testing, and performance
+   investigation. This does not authorize unlimited proactive work.
+4. Verification skills are central: agents must establish that the outcome
+   is correct, explain evidence and limits, and repair failures within scope.
+   CI green does not replace founder acceptance.
+5. Slack-style conversation remains welcome. Thread volume and the lifecycle
+   of coding and non-code work need better management; a task, conversation,
+   runtime session, and worktree must not be treated as the same thing.
+6. Hermes remains the primary employee runtime under D-025. Keep the generic
+   Buzz/ACP boundary rather than a parallel Hermes-only company protocol.
+7. First priority is the complete coding loop: agreed project → delegation
+   and queue → implementation and verification → handoff to the founder.
+8. Before implementing the user-facing experience, use one maintained HTML
+   product reference combining the journey, screenshots or interactive
+   prototypes, and review notes, following the founder's The13 / HeardBack /
+   Didit method. Review screens and behavior together; keep accepted decisions,
+   proposals, and simulated functionality distinct. See the workflow for handoff.
+
+The department schema, queue mechanics, retention/cleanup policy, and first
+integration design remain open. This decision does not reinstate the removed
+Org roster (D-069), override navigation rules (D-065/D-066), or approve the
+earlier Gmail/EA/`#inbox` proposal as an implementation plan. Runtime prompts
+and UI need separate verification against this direction; this is a docs change.
+
+## D-077 — Real-data staging on dev-server, isolated from the daily relay
+
+- **Status:** Accepted testing policy; staging provisioning remains pending
+- **Date:** 2026-09-08
+- **Source:** Founder confirmation after live dev-server inspection
+
+The daily relay and the proposed staging environment share dev-server as
+a host, not writable data. Local Crew builds and test agents connect to a
+separate staging relay over Tailscale. Staging is restored from a deliberate
+snapshot baseline, reused through a fix/retest cycle; test writes never flow
+back to the daily system. Fast fixture-based tests remain separate.
+
+Reuse relevant installed NuncioCrew settings through isolated test copies,
+not shared live app-data, agent sessions, Hermes profiles, or workspaces.
+Verify destinations and tool authority before agents run. Live write testing
+requires explicit scope; missing staging does not authorize it.
+
+[`TESTING.md`](TESTING.md#test-environments-and-real-data-staging-d-077)
+owns the operational policy; `ARCHITECTURE.md` owns deployment topology and
+`STATE.md` records readiness. This decision documents the agreed approach;
+it neither creates staging nor authorizes a destructive setup on the daily stack.
+
+
+## D-078 — Codex-style workspace layout and one maintained design blueprint
+
+- **Status:** Accepted layout direction; prototype interactions remain proposals
+- **Date:** 2026-09-08
+- **Source:** Founder-selected annotated Codex screenshot and explicit layout request
+- **Supersedes:** D-066's prohibition on Projects in the sidebar for the future UI.
+  D-065's removal of a separate Workbench picker remains in force.
+
+The founder requested a redesign prototype with three left-sidebar groups:
+workspace navigation (Inbox, Wiki, Agents, Workflows), Projects, and direct
+agent conversations. The main area holds channel chat and threads. The
+accepted direction is described in `PRODUCT.md`; the running app has not
+been changed by this decision.
+
+Maintain the single reference at `design/companyos/`, with an HTML entry,
+interactive states, source screenshots and adjacent agent-readable rules.
+The new artifact is justified as the reusable visual/interaction blueprint;
+existing living docs retain product, architecture and workflow authority.
+Do not create per-feature prototype forks or copy contracts across documents.
+
+Projects-to-channels/repositories mapping, right-hand tools, default behavior,
+shortcuts and review-state transitions shown in v0.1 are proposals. The
+prototype must distinguish these from accepted layout and from shipped
+behavior. It uses simulated data, not the daily relay or real agent processes.
+
+### D-078 clarification — initial Stage 0 #344, 2026-09-09 (navigation superseded below)
+
+The founder accepted the conceptual split: standalone/general channels stay in
+**Channels within Workspace**; project channels appear under **Projects**.
+All joined channels remain reachable, including fallback when project metadata
+is missing or inaccessible. Existing home, related and repository channels may
+participate; there is no one-project-only data invariant. Membership, history,
+role/contact scope and relay identity are unchanged.
+
+This supersedes only D-066's conflicting Projects prohibition. D-065 still
+forbids a separate Workbench picker. Detailed Projects/Channels UI and
+interactions remain under founder discussion; no prototype layout changes are
+authorized by this clarification. D-056 plan placement and historical desk/tool
+semantics remain pending G-THREAD-1, not silently superseded.
+
+The canonical accepted/proposed/blocked control matrix is
+[`src/blueprint.js`](../../design/companyos/src/blueprint.js), rendered by the
+reference document. It records explicit management, roles, per-agent plans and
+manual recap requests separately from routing, recap visibility, acceptance
+protocol and latency gates. Mock Accept/Reopen is not an approved protocol;
+D-070's explicit founder review remains authoritative. No production behavior
+is shipped by this source handoff.
+
+### D-078 v0.9 review record (preceded final approval below)
+
+**2026-09-09 prototype refinement.** The founder requested Project-scoped
+Wiki navigation: Inbox, Agents and Workflows remain at the top; expanded
+Projects show Wiki and channels. Shared channels remain reachable through
+Browse channels in the workspace menu. This updates the future layout
+placement above and D-061/D-067's global Wiki entry for this prototype; the
+shipped Wiki routes, event kinds and company-handbook content remain unchanged.
+The company handbook's entry in the new layout still needs a product decision.
+
+The requested interactive review flow is read → ask → inspect cited source →
+editable task draft → explicit start in a channel, with a return link. Questions
+stay private by default. The single maintained blueprint now demonstrates it,
+including access/update failures, with sample answers and generation timers.
+This records the requested review direction, not acceptance of its detailed
+implementation or evidence that production QA/search/history/dispatch is wired.
+Reuse the existing Crew Wiki engine and Buzz channel/thread models when the
+reviewed design is implemented; do not copy prototype state into production.
+
+### D-078 v0.9 accepted Project/Wiki flow — Stage 0 #344
+
+- **Date:** 2026-09-09
+- **Source:** Founder messages after the demonstrated Wiki walkthrough, recorded
+  in #344: “tốt rồim, tạo issues mới đi”, followed by “wiki và cả project nhé nếu
+  chưa tạo”; then explicit implementation and per-issue real-data evidence
+  instructions. This later approval supersedes the preceding pending-review
+  wording for the demonstrated Project/Wiki composition.
+
+Workspace top is **Inbox, Agents, Workflows**; Wiki appears within each Project.
+There are no global Wiki or Channels rows. **Browse channels** remains in the
+workspace menu, including when every general channel is Project-linked and
+when Project metadata is missing/inaccessible. Project name/breadcrumb opens
+its Channels/Workspace page; a separate chevron only expands/collapses. Existing
+home, related and repository channel relationships remain many-to-many. No
+new identity registry, membership/history move or Workbench picker is approved.
+This supersedes the earlier Channels-within-Workspace placement in this decision.
+
+**Stable shell promotion is coordinator-approved (2026-09-09):** #349 promotes
+Projects and Workflows out of the preview manifest. Both remain available when
+an older device has a persisted false override. Other preview features retain
+their gates. This changes navigation availability, not their backing models.
+
+The accepted demonstrated flow includes Project create/link/manage, optional
+folder and new/existing channels, Project-scoped Wiki Read/full-body Search/
+immutable Source, existing-agent private Ask/History, independent temporary
+generator settings and explicit editable draft → Start thread → Back to Wiki.
+Source snapshot, native path/host semantics, coherent publication/retention,
+private runtime/ACL guarantees and durable recovery are **not** proved by the
+prototype. #361–#367 own their named technical gates and implementation.
+D-061 generation/address/Ask changes require their concrete amendments there;
+this decision does not invent an event kind, generic outbox or private transport.
+D-056/G-THREAD-1 and the other existing gates remain scoped as in the blueprint.
+
+**Company-handbook compatibility is coordinator-approved (2026-09-09):**
+workspace menu → **Company Wiki** should call existing `goWiki()` → `/wiki` →
+`WikiLibraryScreen`, retaining its Company Wiki card and kind 30023 content.
+The coordinator reviewed the concrete menu entry, route mapping, labeled sample
+and back action. This records coordinator approval, not a new founder claim.
+The reference includes a labeled sample of that entry. #349 must wire and verify
+a reviewed replacement before removing the only global Wiki affordance. This
+is a navigation compatibility choice, not approval to delete content or create
+a parallel company library.
+
+The [`handoffContract` matrix](../../design/companyos/src/blueprint.js) is the
+state/control authority for the handoff. Accepted UI does not satisfy backend
+proof or installed acceptance. Per-issue real-data runs/screenshots remain
+required; related issues may share an unchanged build/run with explicit mapping.
+Both coordinator and actual Claude Code CLI Fable Medium approve the exact
+final PR head before merge. Stage 0 reference screenshots are prototype evidence
+only, and #344 remains the open delivery roadmap.
 
 ## D-080 — Opt-in atomic channel creation and exact-event discovery recovery
 

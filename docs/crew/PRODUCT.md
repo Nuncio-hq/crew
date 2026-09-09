@@ -174,12 +174,17 @@ The founder selected a Codex-style layout on 2026-09-08:
 
 - Sidebar top: Inbox, Agents, Workflows.
 - Sidebar middle: Projects, each expanding to Wiki and its channels.
-- Workspace menu: Browse channels, including shared/orphaned joined channels.
+- Workspace menu: Browse channels, including shared/orphaned joined channels,
+  and Company Wiki.
 - Sidebar bottom: direct conversations with agents.
+- Footer: a direct Settings action.
 - Main area: the selected channel, thread, or direct conversation.
 
 This direction supersedes D-066's prohibition on Projects in navigation. It
-is not yet shipped. It does not restore a separate Workbench thread picker.
+is implemented in the #349 candidate, with release acceptance still pending.
+Projects and Workflows are stable navigation entries; old preview opt-outs no
+longer hide them. Other preview features retain their gates. It does not restore
+a separate Workbench thread picker.
 The accepted Project Channels/Workspace page uses existing Project/Repository
 relationships. #361 resolves remaining legacy/zero/multiple-repository, exact
 path and recovery semantics; the visible word "Project" must not redefine identity.
