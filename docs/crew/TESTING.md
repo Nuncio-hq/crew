@@ -371,3 +371,14 @@ simulated; final implementation evidence launches the real candidate flow.
 Use `scripts/post-screenshots.sh` on the resulting PR and copy its immutable
 image URLs with concise captions into the issue. Required final CI, independent
 exact-head review and installed release acceptance remain separate gates.
+
+
+For #354 / G-THREAD-1 v3, bind regressions to the production pane store, scoped
+forge subject, current-generation dispatch and drawer Escape gate. Prove exact
+thread return restores selection without opening/launching; account/removal
+clears scope but query failure does not fabricate removal; explicit empty and
+invalidated plans remain distinct from retained history; narrow Escape preserves
+draft/scroll and returns focus without closing the outer thread. Observe zero
+native activation commands from selection/restoration, while existing hide and
+sim-visible-false cleanup still executes. Preserve channel-to-channel remount
+compatibility. Mock checks do not satisfy native #348/#357 evidence.
