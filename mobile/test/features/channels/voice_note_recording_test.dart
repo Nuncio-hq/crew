@@ -8,6 +8,8 @@ import 'package:record/record.dart';
 import 'package:buzz/features/channels/voice_note_composer_recorder.dart';
 import 'package:buzz/features/channels/voice_note_recording.dart';
 
+import '../../helpers/voice_note_fixture_cleanup.dart';
+
 class _DelayedRecorderBackend implements VoiceNoteRecorderBackend {
   final permission = Completer<bool>();
   final nativeStart = Completer<void>();
@@ -346,7 +348,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'voice-note-playback-test',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => deleteVoiceNoteFixtureDirectory(directory));
       final player = DeviceVoiceNotePlayerController(
         coordinator: VoiceNotePlaybackCoordinator(),
         client: client,
@@ -391,9 +393,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'voice-note-toggle-cancel-test',
       );
-      addTearDown(() async {
-        if (await directory.exists()) await directory.delete(recursive: true);
-      });
+      addTearDown(() => deleteVoiceNoteFixtureDirectory(directory));
       final player = DeviceVoiceNotePlayerController(
         coordinator: VoiceNotePlaybackCoordinator(),
         client: client,
@@ -464,9 +464,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'voice-note-activation-cancel-test',
       );
-      addTearDown(() async {
-        if (await directory.exists()) await directory.delete(recursive: true);
-      });
+      addTearDown(() => deleteVoiceNoteFixtureDirectory(directory));
       final player = DeviceVoiceNotePlayerController(
         coordinator: coordinator,
         client: client,
@@ -525,9 +523,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'voice-note-source-load-cancel-test',
       );
-      addTearDown(() async {
-        if (await directory.exists()) await directory.delete(recursive: true);
-      });
+      addTearDown(() => deleteVoiceNoteFixtureDirectory(directory));
       final player = DeviceVoiceNotePlayerController(
         coordinator: VoiceNotePlaybackCoordinator(),
         client: client,
@@ -591,9 +587,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'voice-note-source-load-retry-test',
       );
-      addTearDown(() async {
-        if (await directory.exists()) await directory.delete(recursive: true);
-      });
+      addTearDown(() => deleteVoiceNoteFixtureDirectory(directory));
       final player = DeviceVoiceNotePlayerController(
         coordinator: VoiceNotePlaybackCoordinator(),
         client: client,
@@ -655,9 +649,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'voice-note-download-limit-test',
       );
-      addTearDown(() async {
-        if (await directory.exists()) await directory.delete(recursive: true);
-      });
+      addTearDown(() => deleteVoiceNoteFixtureDirectory(directory));
       final player = DeviceVoiceNotePlayerController(
         coordinator: VoiceNotePlaybackCoordinator(),
         client: client,
@@ -726,9 +718,7 @@ void main() {
     final directory = await Directory.systemTemp.createTemp(
       'voice-note-retry-test',
     );
-    addTearDown(() async {
-      if (await directory.exists()) await directory.delete(recursive: true);
-    });
+    addTearDown(() => deleteVoiceNoteFixtureDirectory(directory));
     final player = DeviceVoiceNotePlayerController(
       coordinator: VoiceNotePlaybackCoordinator(),
       client: client,
@@ -781,7 +771,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'voice-note-pause-test',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => deleteVoiceNoteFixtureDirectory(directory));
       final player = DeviceVoiceNotePlayerController(
         coordinator: VoiceNotePlaybackCoordinator(),
         client: client,
@@ -823,7 +813,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'voice-note-source-replacement-test',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => deleteVoiceNoteFixtureDirectory(directory));
       final player = DeviceVoiceNotePlayerController(
         coordinator: VoiceNotePlaybackCoordinator(),
         client: client,
