@@ -44,6 +44,7 @@ fn stop_managed_agent_pair<R: tauri::Runtime>(
     key: &ManagedAgentRuntimeKey,
 ) -> Result<(), String> {
     let Some(mut runtime) = runtimes.remove(key) else {
+        super::super::transport_status::clear_key(app, key);
         return Ok(());
     };
     let result = (|| -> Result<(), String> {
@@ -89,6 +90,7 @@ fn stop_managed_agent_pair<R: tauri::Runtime>(
         runtimes.insert(key.clone(), runtime);
         return Err(error);
     }
+    super::super::transport_status::clear_key(app, key);
     Ok(())
 }
 
@@ -143,10 +145,12 @@ pub fn stop_managed_agent_workspace_pair(
             // No tracked pair here — a pubkey-wide cache clear would disturb
             // live pairs in other communities, so stay pair-scoped.
             stop_legacy_scalar_pid(app, record)?;
+            super::super::transport_status::clear_key(app, &pair_key);
             state.clear_agent_session_cache(&pair_key);
         }
         None => {
             stop_legacy_scalar_pid(app, record)?;
+            super::super::transport_status::clear_pubkey(app, &record.pubkey);
             state.clear_agent_session_caches(&record.pubkey);
         }
     }
@@ -160,7 +164,9 @@ pub fn stop_managed_agent_process<R: tauri::Runtime>(
 ) -> Result<(), String> {
     let keys = managed_agent_runtime_keys(runtimes, &record.pubkey);
     if keys.is_empty() {
-        return stop_legacy_scalar_pid(app, record);
+        stop_legacy_scalar_pid(app, record)?;
+        super::super::transport_status::clear_pubkey(app, &record.pubkey);
+        return Ok(());
     }
 
     let mut errors = Vec::new();
@@ -179,6 +185,7 @@ pub fn stop_managed_agent_process<R: tauri::Runtime>(
     super::super::remove_agent_pid_file(app, &record.pubkey);
 
     if errors.is_empty() {
+        super::super::transport_status::clear_pubkey(app, &record.pubkey);
         Ok(())
     } else {
         Err(format!(

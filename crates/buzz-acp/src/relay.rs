@@ -691,6 +691,10 @@ pub enum RelayError {
     #[error("Auth failed: {0}")]
     AuthFailed(String),
 
+    /// Negative OK for the exact AUTH event on the current connection attempt.
+    #[error("Auth failed: {0}")]
+    AuthDenied(String),
+
     #[error("No auth challenge received")]
     NoAuthChallenge,
 
@@ -699,6 +703,10 @@ pub enum RelayError {
 
     #[error("Timeout")]
     Timeout,
+
+    /// Invalid or unavailable owned local transport diagnostics.
+    #[error("Managed transport status error: {0}")]
+    TransportStatus(String),
 
     #[error("HTTP error: {0}")]
     Http(String),
@@ -779,6 +787,7 @@ const MEMBERSHIP_NOTIF_SUB_ID: &str = "membership-notif";
 const OBSERVER_CONTROL_SUB_ID: &str = "agent-observer-control";
 
 /// Commands sent from `HarnessRelay` to the background WebSocket task.
+#[derive(Clone)]
 enum RelayCommand {
     /// Subscribe to a channel (sends a NIP-01 REQ) with the given filter.
     Subscribe {
@@ -886,8 +895,12 @@ impl HarnessRelay {
         // jittered backoff. A terminal error (bad URL, bad auth tag,
         // rejected/invalid signing key) fails immediately — see
         // `is_terminal_connect_error`.
+        let mut health = TransportHealth::from_environment(agent_pubkey_hex, relay_url).await?;
         let (ws, handshake_buffer) =
-            retry_initial_connect(|| do_connect(relay_url, keys, auth_tag.as_ref())).await?;
+            transport_reconnect::retry_initial_connect_with_health(&mut health, || {
+                do_connect(relay_url, keys, auth_tag.as_ref())
+            })
+            .await?;
 
         let (event_tx, event_rx) = mpsc::channel::<Option<BuzzEvent>>(event_channel_capacity());
         let (observer_control_tx, observer_control_rx) =
@@ -913,6 +926,7 @@ impl HarnessRelay {
                 bg_relay_url,
                 bg_agent_pubkey_hex,
                 bg_auth_tag,
+                health,
             )
             .await;
         });
@@ -1355,6 +1369,7 @@ struct BgState {
     /// the elevated rung it earned. Reset to 0 by the stability block once the
     /// connection has been up for `STABLE_CONNECTION_SECS`.
     backoff_step: usize,
+    health: TransportHealth,
 }
 
 impl BgState {
@@ -1383,6 +1398,7 @@ impl BgState {
             resubscribe_retry: HashSet::new(),
             connection_generation: 0,
             backoff_step: 0,
+            health: TransportHealth::default(),
         }
     }
 
@@ -1891,8 +1907,10 @@ async fn run_background_task(
     relay_url: String,
     agent_pubkey_hex: String,
     auth_tag: Option<nostr::Tag>,
+    health: TransportHealth,
 ) {
     let mut state = BgState::new();
+    state.health = health;
     state.subscription_snapshot = subscription_snapshot_tx;
 
     let handshake_ok = process_handshake_buffer(
@@ -1907,6 +1925,11 @@ async fn run_background_task(
         auth_tag.as_ref(),
     )
     .await;
+    if handshake_ok {
+        state.health.recovered().await;
+    } else {
+        state.health.failed(&RelayError::ConnectionClosed);
+    }
     if !handshake_ok {
         warn!("handshake buffer contained a drop signal — attempting autonomous reconnect");
         // Don't wait for a caller-driven Reconnect command — the caller was
@@ -2838,7 +2861,8 @@ async fn process_handshake_buffer(
             RelayMessage::Auth { .. } => None,
         };
         if let Some(text) = text {
-            let should_continue = handle_ws_message(
+            let deadline = state.health.recovery_deadline();
+            let operation = handle_ws_message(
                 Message::Text(text.into()),
                 ws,
                 event_tx,
@@ -2848,8 +2872,13 @@ async fn process_handshake_buffer(
                 relay_url,
                 agent_pubkey_hex,
                 auth_tag,
-            )
-            .await;
+            );
+            let should_continue = match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, operation)
+                    .await
+                    .unwrap_or(false),
+                None => operation.await,
+            };
             if !should_continue {
                 return false;
             }
@@ -2898,6 +2927,60 @@ async fn resubscribe_after_reconnect(
     agent_pubkey_hex: &str,
     is_fresh_connection: bool,
 ) -> ResubscribeResult {
+    let deadline = state.health.recovery_deadline();
+    let mut deferred_commands = VecDeque::new();
+    let mut current_command = None;
+    let operation = resubscribe_with_retained_commands(
+        ws,
+        cmd_rx,
+        state,
+        agent_pubkey_hex,
+        is_fresh_connection,
+        &mut deferred_commands,
+        &mut current_command,
+    );
+    let outcome = match deadline {
+        Some(deadline) => tokio::time::timeout_at(deadline, operation).await.ok(),
+        None => Some(operation.await),
+    };
+    if let Some(outcome) = outcome {
+        return outcome;
+    }
+    match retain_interrupted_recovery(state, current_command, &mut deferred_commands) {
+        ReconnectOutcome::Shutdown => ResubscribeResult::Shutdown,
+        _ => ResubscribeResult::RetryConnection,
+    }
+}
+
+fn retain_interrupted_recovery(
+    state: &mut BgState,
+    current_command: Option<RelayCommand>,
+    deferred_commands: &mut VecDeque<RelayCommand>,
+) -> ReconnectOutcome {
+    // Cancellation can interrupt a send after the command has left its queue.
+    // Keep that exact intent ahead of later deferred commands; observer event
+    // IDs remain unchanged so replay continues through the existing ACK path.
+    if matches!(current_command, Some(RelayCommand::Shutdown)) {
+        return ReconnectOutcome::Shutdown;
+    }
+    if let Some(command) = current_command {
+        retain_failed_command_intent(state, command);
+    }
+    retain_deferred_command_intent(state, deferred_commands);
+    state.requeue_observer_in_flight();
+    ReconnectOutcome::Failed
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resubscribe_with_retained_commands(
+    ws: &mut WsStream,
+    cmd_rx: &mut mpsc::Receiver<RelayCommand>,
+    state: &mut BgState,
+    agent_pubkey_hex: &str,
+    is_fresh_connection: bool,
+    deferred_commands: &mut VecDeque<RelayCommand>,
+    current_command: &mut Option<RelayCommand>,
+) -> ResubscribeResult {
     if is_fresh_connection {
         // These queues are derived from active subscription intent and rebuilt
         // below. The rate-limit gate is deliberately preserved: the relay's
@@ -2906,7 +2989,6 @@ async fn resubscribe_after_reconnect(
         state.resubscribe_retry.clear();
     }
 
-    let mut deferred_commands = VecDeque::new();
     let channels: Vec<Uuid> = state.active_subscriptions.keys().copied().collect();
     if !channels.is_empty() {
         info!(
@@ -2940,7 +3022,7 @@ async fn resubscribe_after_reconnect(
             if this_sent {
                 state.channel_dropped_since.remove(&channel_id);
                 // Shutdown-aware pacing sleep before any next replay/deferred REQ.
-                if !pacing_sleep(cmd_rx, &mut deferred_commands, REQ_PACING_INTERVAL).await {
+                if !pacing_sleep(cmd_rx, deferred_commands, REQ_PACING_INTERVAL).await {
                     return ResubscribeResult::Shutdown;
                 }
             } else {
@@ -2963,7 +3045,7 @@ async fn resubscribe_after_reconnect(
             state.membership_resub_needed = true;
         } else {
             if !state.active_subscriptions.is_empty()
-                && !pacing_sleep(cmd_rx, &mut deferred_commands, REQ_PACING_INTERVAL).await
+                && !pacing_sleep(cmd_rx, deferred_commands, REQ_PACING_INTERVAL).await
             {
                 return ResubscribeResult::Shutdown;
             }
@@ -2979,7 +3061,7 @@ async fn resubscribe_after_reconnect(
                 state.membership_resub_needed = false;
             } else {
                 warn!("failed to resubscribe membership after reconnect");
-                retain_deferred_command_intent(state, &mut deferred_commands);
+                retain_deferred_command_intent(state, deferred_commands);
                 return ResubscribeResult::RetryConnection;
             }
         }
@@ -2990,19 +3072,29 @@ async fn resubscribe_after_reconnect(
             debug!("rate-gated: parking observer control resubscribe after reconnect");
             state.observer_resub_needed = true;
         } else {
-            if !pacing_sleep(cmd_rx, &mut deferred_commands, REQ_PACING_INTERVAL).await {
+            if !pacing_sleep(cmd_rx, deferred_commands, REQ_PACING_INTERVAL).await {
                 return ResubscribeResult::Shutdown;
             }
             if !send_observer_control_subscribe(ws, agent_pubkey_hex).await {
                 warn!("failed to resubscribe observer controls after reconnect");
-                retain_deferred_command_intent(state, &mut deferred_commands);
+                retain_deferred_command_intent(state, deferred_commands);
                 return ResubscribeResult::RetryConnection;
             }
             state.observer_resub_needed = false;
         }
     }
 
-    match drain_commands(ws, cmd_rx, &mut deferred_commands, state, agent_pubkey_hex).await {
+    let tracked_command = state.health.recovery_deadline().map(|_| current_command);
+    match drain_commands_tracked(
+        ws,
+        cmd_rx,
+        deferred_commands,
+        state,
+        agent_pubkey_hex,
+        tracked_command,
+    )
+    .await
+    {
         ReconnectOutcome::Ok => ResubscribeResult::Ok,
         ReconnectOutcome::Failed => ResubscribeResult::RetryConnection,
         ReconnectOutcome::Shutdown => ResubscribeResult::Shutdown,
@@ -3202,8 +3294,39 @@ async fn drain_commands(
     state: &mut BgState,
     agent_pubkey_hex: &str,
 ) -> ReconnectOutcome {
+    let deadline = state.health.recovery_deadline();
+    let mut current_command = None;
+    let operation = drain_commands_tracked(
+        ws,
+        cmd_rx,
+        deferred_commands,
+        state,
+        agent_pubkey_hex,
+        deadline.map(|_| &mut current_command),
+    );
+    let outcome = match deadline {
+        Some(deadline) => tokio::time::timeout_at(deadline, operation).await.ok(),
+        None => Some(operation.await),
+    };
+    outcome
+        .unwrap_or_else(|| retain_interrupted_recovery(state, current_command, deferred_commands))
+}
+
+async fn drain_commands_tracked(
+    ws: &mut WsStream,
+    cmd_rx: &mut mpsc::Receiver<RelayCommand>,
+    deferred_commands: &mut VecDeque<RelayCommand>,
+    state: &mut BgState,
+    agent_pubkey_hex: &str,
+    mut current_command: Option<&mut Option<RelayCommand>>,
+) -> ReconnectOutcome {
     let mut send_failed = false;
     loop {
+        // Previous command completed; only a command whose future is still
+        // pending needs replay if the enclosing recovery deadline cancels us.
+        if let Some(current) = current_command.as_deref_mut() {
+            *current = None;
+        }
         let cmd = match deferred_commands.pop_front() {
             Some(cmd) => cmd,
             None => match cmd_rx.try_recv() {
@@ -3214,6 +3337,10 @@ async fn drain_commands(
                 }
             },
         };
+
+        if let Some(current) = current_command.as_deref_mut() {
+            *current = Some(cmd.clone());
+        }
 
         if send_failed {
             match cmd {
@@ -3284,275 +3411,6 @@ async fn drain_post_reconnect(
     agent_pubkey_hex: &str,
 ) -> ReconnectOutcome {
     drain_commands(ws, cmd_rx, &mut VecDeque::new(), state, agent_pubkey_hex).await
-}
-
-/// Attempt autonomous reconnect on socket loss.
-///
-/// Returns [`ReconnectOutcome::Ok`] on success, [`ReconnectOutcome::Failed`]
-/// if all attempts are exhausted, or [`ReconnectOutcome::Shutdown`] if a
-/// Shutdown command was received during backoff sleep. Callers MUST check
-/// for `Shutdown` and return immediately — do NOT fall through to
-/// `wait_for_reconnect`, which would loop forever since the Shutdown command
-/// was already consumed.
-#[allow(clippy::too_many_arguments)]
-async fn try_autonomous_reconnect(
-    ws: &mut WsStream,
-    cmd_rx: &mut mpsc::Receiver<RelayCommand>,
-    state: &mut BgState,
-    keys: &Keys,
-    relay_url: &str,
-    agent_pubkey_hex: &str,
-    event_tx: &mpsc::Sender<Option<BuzzEvent>>,
-    observer_control_tx: &mpsc::Sender<Event>,
-    auth_tag: Option<&nostr::Tag>,
-) -> ReconnectOutcome {
-    state.requeue_observer_in_flight();
-    // 5 attempts, up to 16s base backoff. Shares delay values with the
-    // initial-connect retry in `HarnessRelay::connect()` (STARTUP_CONNECT_BACKOFFS) —
-    // see its doc comment for how the two loops consume the array differently.
-    // DNS failures sleep flat (DNS_RETRY_INTERVAL) without consuming a ladder
-    // rung. Capped at 10 DNS-only retries in this bounded startup path so a
-    // total brownout cannot hang agent startup indefinitely. By contrast,
-    // `wait_for_reconnect` (the post-startup loop) retries DNS failures without
-    // a cap — a reconnecting agent should keep trying across extended outages.
-    let backoffs = STARTUP_CONNECT_BACKOFFS;
-    const MAX_DNS_FLAT_RETRIES: usize = 10;
-    let mut dns_retry_count = 0usize;
-
-    let mut attempt = 0usize;
-    while attempt < backoffs.len() {
-        info!(
-            "autonomous reconnect attempt {}/{} to {relay_url}…",
-            attempt + 1,
-            backoffs.len()
-        );
-        match do_connect(relay_url, keys, auth_tag).await {
-            Ok((new_ws, handshake_buffer)) => {
-                *ws = new_ws;
-                state.connection_generation = state.connection_generation.saturating_add(1);
-                info!("autonomous reconnect succeeded (attempt {})", attempt + 1);
-                let handshake_ok = process_handshake_buffer(
-                    ws,
-                    handshake_buffer,
-                    event_tx,
-                    observer_control_tx,
-                    state,
-                    keys,
-                    relay_url,
-                    agent_pubkey_hex,
-                    auth_tag,
-                )
-                .await;
-                if !handshake_ok {
-                    warn!(
-                        "handshake buffer drop signal after autonomous reconnect (attempt {})",
-                        attempt + 1
-                    );
-                    // Fall through to backoff sleep instead of returning immediately.
-                    // Returning false here would skip remaining attempts; continuing
-                    // without sleep would drive a tight reconnect storm.
-                } else {
-                    match resubscribe_after_reconnect(ws, cmd_rx, state, agent_pubkey_hex, true)
-                        .await
-                    {
-                        ResubscribeResult::Ok => return ReconnectOutcome::Ok,
-                        ResubscribeResult::Shutdown => return ReconnectOutcome::Shutdown,
-                        ResubscribeResult::RetryConnection => {
-                            warn!("resubscribe failed after autonomous reconnect — treating as failed attempt");
-                            // Fall through to backoff sleep and retry.
-                        }
-                    }
-                }
-            }
-            // DNS failures retry flat without consuming a ladder rung.
-            // Cap at MAX_DNS_FLAT_RETRIES so a total brownout doesn't hang startup.
-            Err(e) if is_dns_error(&e) && dns_retry_count < MAX_DNS_FLAT_RETRIES => {
-                dns_retry_count += 1;
-                warn!(
-                    "autonomous reconnect DNS failure ({}/{}), flat retry in {:.1}s: {e}",
-                    dns_retry_count,
-                    MAX_DNS_FLAT_RETRIES,
-                    DNS_RETRY_INTERVAL.as_secs_f64()
-                );
-                if !dns_flat_sleep(cmd_rx, state, DNS_RETRY_INTERVAL).await {
-                    return ReconnectOutcome::Shutdown;
-                }
-                continue; // retry WITHOUT incrementing attempt
-            }
-            Err(e) => {
-                warn!("autonomous reconnect attempt {} failed: {e}", attempt + 1);
-            }
-        }
-
-        // Backoff sleep between ladder attempts (shared by handshake-drop and connect-error).
-        // Skip sleep on the final attempt — we'll fall through to the caller.
-        // Use select! so Shutdown commands are honoured during sleep.
-        if attempt + 1 < backoffs.len() {
-            let jittered = jittered_duration(backoffs[attempt]);
-            tracing::info!(
-                "retrying autonomous reconnect in {:.1}s",
-                jittered.as_secs_f64()
-            );
-            // Deadline-based sleep: commands processed during the wait don't
-            // reset the timer (prevents PublishEvent traffic from collapsing backoff).
-            let deadline = tokio::time::Instant::now() + jittered;
-            let sleep = tokio::time::sleep_until(deadline);
-            tokio::pin!(sleep);
-            loop {
-                tokio::select! {
-                    _ = &mut sleep => break,
-                    cmd = cmd_rx.recv() => {
-                        match cmd {
-                            Some(RelayCommand::Shutdown) | None => return ReconnectOutcome::Shutdown,
-                            Some(cmd) => apply_command_to_state(state, cmd),
-                        }
-                    }
-                }
-            }
-        }
-        attempt += 1;
-    }
-
-    ReconnectOutcome::Failed
-}
-
-/// Attempt reconnection with exponential backoff. Resubscribes all active
-/// channels with `since` filters on success.
-///
-/// If `skip_drain` is `false`, drains the command channel until a `Reconnect`
-/// command arrives (used when called from the WS-error path where the caller
-/// hasn't sent Reconnect yet). If `true`, skips the drain and reconnects
-/// immediately (used when called from the `RelayCommand::Reconnect` arm where
-/// the command was already consumed).
-#[allow(clippy::too_many_arguments)]
-async fn wait_for_reconnect(
-    ws: &mut WsStream,
-    cmd_rx: &mut mpsc::Receiver<RelayCommand>,
-    state: &mut BgState,
-    keys: &Keys,
-    relay_url: &str,
-    agent_pubkey_hex: &str,
-    event_tx: &mpsc::Sender<Option<BuzzEvent>>,
-    observer_control_tx: &mpsc::Sender<Event>,
-    skip_drain: bool,
-    auth_tag: Option<&nostr::Tag>,
-) -> ReconnectOutcome {
-    state.requeue_observer_in_flight();
-    if !skip_drain {
-        // Drain commands until we get Reconnect (or Shutdown).
-        // Other commands update state so reconnect reflects latest intent.
-        loop {
-            match cmd_rx.recv().await {
-                Some(RelayCommand::Reconnect) => break,
-                Some(RelayCommand::Shutdown) | None => return ReconnectOutcome::Shutdown,
-                Some(cmd) => apply_command_to_state(state, cmd),
-            }
-        }
-    }
-
-    // 6 attempts with backoff up to 32s + jitter; uses tokio::select! so shutdown is
-    // honoured during sleep. Resumes from state.backoff_step so a flapping link
-    // keeps its elevated position; the stability block resets it to 0 after 60s.
-    // DNS failures retry flat without consuming a ladder rung.
-    let backoffs = [
-        Duration::from_secs(1),
-        Duration::from_secs(2),
-        Duration::from_secs(4),
-        Duration::from_secs(8),
-        Duration::from_secs(16),
-        Duration::from_secs(32),
-    ];
-    let mut attempt = state.backoff_step;
-    loop {
-        info!("attempting relay reconnect to {relay_url}…");
-        match do_connect(relay_url, keys, auth_tag).await {
-            Ok((new_ws, handshake_buffer)) => {
-                *ws = new_ws;
-                state.connection_generation = state.connection_generation.saturating_add(1);
-                info!("relay reconnected to {relay_url}");
-                let handshake_ok = process_handshake_buffer(
-                    ws,
-                    handshake_buffer,
-                    event_tx,
-                    observer_control_tx,
-                    state,
-                    keys,
-                    relay_url,
-                    agent_pubkey_hex,
-                    auth_tag,
-                )
-                .await;
-                if !handshake_ok {
-                    warn!("handshake buffer contained a drop signal after reconnect — will retry with backoff");
-                    // Fall through to the backoff sleep below instead of
-                    // tight-looping. A relay that consistently fails the
-                    // handshake would otherwise drive a reconnect storm.
-                } else {
-                    match resubscribe_after_reconnect(ws, cmd_rx, state, agent_pubkey_hex, true)
-                        .await
-                    {
-                        ResubscribeResult::Ok => {
-                            // Drain any commands that arrived during do_connect() +
-                            // resubscribe (which don't poll cmd_rx).
-                            return drain_post_reconnect(ws, cmd_rx, state, agent_pubkey_hex).await;
-                        }
-                        ResubscribeResult::Shutdown => return ReconnectOutcome::Shutdown,
-                        ResubscribeResult::RetryConnection => {
-                            warn!("resubscribe failed after reconnect — will retry with backoff");
-                            // Fall through to backoff sleep.
-                        }
-                    }
-                }
-            }
-            // DNS failures retry on a flat interval without consuming a backoff
-            // ladder rung — the host is temporarily unresolvable, not persistently
-            // rejecting us, so exponential back-off is counter-productive.
-            // This loop is unbounded (unlike the 10-retry cap in `try_autonomous_reconnect`)
-            // so a reconnecting agent keeps trying across extended DNS brownouts.
-            Err(e) if is_dns_error(&e) => {
-                warn!("relay reconnect DNS failure (not consuming ladder rung): {e}");
-                if !dns_flat_sleep(cmd_rx, state, DNS_RETRY_INTERVAL).await {
-                    return ReconnectOutcome::Shutdown;
-                }
-                continue; // retry without incrementing attempt
-            }
-            Err(e) => {
-                warn!("relay reconnect failed: {e}");
-            }
-        }
-
-        // Persist ladder position before sleeping — if shutdown arrives mid-sleep,
-        // the next session resumes from here rather than restarting at 0.
-        state.backoff_step = attempt;
-
-        // Backoff sleep — shared by both handshake-drop and connect-error paths.
-        // Uses a deadline so commands processed during the wait don't reset
-        // the timer. Without this, periodic PublishEvent traffic (typing
-        // refresh every 3s) would collapse the jittered backoff into a
-        // reconnect storm.
-        let delay = if attempt < backoffs.len() {
-            backoffs[attempt]
-        } else {
-            Duration::from_secs(60)
-        };
-        let jittered = jittered_duration(delay);
-        warn!("retrying reconnect in {:.1}s", jittered.as_secs_f64());
-        let deadline = tokio::time::Instant::now() + jittered;
-        let sleep = tokio::time::sleep_until(deadline);
-        tokio::pin!(sleep);
-        loop {
-            tokio::select! {
-                _ = &mut sleep => break,
-                cmd = cmd_rx.recv() => {
-                    match cmd {
-                        Some(RelayCommand::Shutdown) | None => return ReconnectOutcome::Shutdown,
-                        Some(cmd) => apply_command_to_state(state, cmd),
-                    }
-                }
-            }
-        }
-        attempt += 1;
-    }
 }
 
 /// Send a NIP-01 REQ for a channel, built from a [`ChannelFilter`].
@@ -3789,7 +3647,7 @@ pub(crate) fn is_dns_error(err: &RelayError) -> bool {
 
 /// Shutdown-aware fixed-duration sleep for REQ pacing in `resubscribe_after_reconnect`.
 ///
-/// Unlike `dns_flat_sleep`, no jitter is applied — exact `duration` is required
+/// No jitter is applied — exact `duration` is required
 /// to maintain the ≤8 REQ/s pacing invariant. Non-Shutdown commands received
 /// during the sleep are deferred in arrival order for live execution after
 /// replay. Returns `true` if sleep completed normally, `false` if shutdown was
@@ -3809,33 +3667,6 @@ async fn pacing_sleep(
                 match cmd {
                     Some(RelayCommand::Shutdown) | None => return false,
                     Some(cmd) => deferred_commands.push_back(cmd),
-                }
-            }
-        }
-    }
-}
-
-/// Shutdown-aware sleep used for DNS flat retries.
-///
-/// Selects between `duration` elapsing and a `Shutdown`/channel-closed signal on
-/// `cmd_rx`. Returns `true` if the sleep completed normally, `false` if the task
-/// should shut down.
-async fn dns_flat_sleep(
-    cmd_rx: &mut mpsc::Receiver<RelayCommand>,
-    state: &mut BgState,
-    duration: Duration,
-) -> bool {
-    let jittered = jittered_duration(duration);
-    let deadline = tokio::time::Instant::now() + jittered;
-    let sleep = tokio::time::sleep_until(deadline);
-    tokio::pin!(sleep);
-    loop {
-        tokio::select! {
-            _ = &mut sleep => return true,
-            cmd = cmd_rx.recv() => {
-                match cmd {
-                    Some(RelayCommand::Shutdown) | None => return false,
-                    Some(cmd) => apply_command_to_state(state, cmd),
                 }
             }
         }
@@ -4086,12 +3917,15 @@ pub(crate) fn parse_relay_message(text: &str) -> Result<RelayMessage, RelayError
 fn is_terminal_connect_error(err: &RelayError) -> bool {
     match err {
         RelayError::Http(_)
+        | RelayError::TransportStatus(_)
         | RelayError::HttpStatus { .. }
         | RelayError::AdmissionRejected(_)
         | RelayError::Json(_)
         | RelayError::UnexpectedMessage(_) => true,
         RelayError::WebSocket(e) => is_terminal_ws_error(e.as_ref()),
-        RelayError::AuthFailed(message) => is_terminal_auth_failure(message),
+        RelayError::AuthFailed(message) | RelayError::AuthDenied(message) => {
+            is_terminal_auth_failure(message)
+        }
         RelayError::NoAuthChallenge
         | RelayError::ConnectionClosed
         | RelayError::Timeout
@@ -4210,51 +4044,6 @@ fn is_terminal_auth_failure(message: &str) -> bool {
     !message.trim_start().starts_with("error:")
 }
 
-/// Retry `op` with bounded jittered backoff, stopping immediately on a
-/// terminal error (see [`is_terminal_connect_error`]). Used by
-/// `HarnessRelay::connect()` so a transient failure during the initial
-/// WebSocket/NIP-42 handshake — e.g. a dropped connection on a spotty link —
-/// doesn't fail agent startup outright.
-///
-/// Generic over the success type so the backoff/classification logic can be
-/// exercised in tests without a real socket. Returns the last transient
-/// error if all attempts are exhausted.
-async fn retry_initial_connect<F, Fut, T>(mut op: F) -> Result<T, RelayError>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T, RelayError>>,
-{
-    let mut last_err = None;
-
-    for (attempt, delay) in std::iter::once(None)
-        .chain(STARTUP_CONNECT_BACKOFFS.iter().map(|d| Some(*d)))
-        .enumerate()
-    {
-        if let Some(base) = delay {
-            let jittered = jittered_duration(base);
-            info!(
-                "retrying initial relay connect (attempt {attempt}) in {:.1}s",
-                jittered.as_secs_f64()
-            );
-            tokio::time::sleep(jittered).await;
-        }
-
-        match op().await {
-            Ok(v) => return Ok(v),
-            Err(e) if is_terminal_connect_error(&e) => {
-                warn!("initial relay connect failed with terminal error: {e}");
-                return Err(e);
-            }
-            Err(e) => {
-                warn!("initial relay connect attempt {attempt} failed: {e}");
-                last_err = Some(e);
-            }
-        }
-    }
-
-    Err(last_err.unwrap_or(RelayError::ConnectionClosed))
-}
-
 /// Perform a single WebSocket connect + NIP-42 auth handshake.
 ///
 /// Returns `(ws, buffer)` on success.
@@ -4281,7 +4070,7 @@ async fn do_connect(
     let auth_event_id = send_auth_response(&mut ws, &challenge, relay_url, keys, auth_tag).await?;
     let ok = wait_for_auth_ok(&mut ws, &mut buffer, &auth_event_id, AUTH_TIMEOUT).await?;
     if !ok.accepted {
-        return Err(RelayError::AuthFailed(ok.message));
+        return Err(RelayError::AuthDenied(ok.message));
     }
     let event_id = ok.event_id;
 
@@ -7358,3 +7147,20 @@ mod discovery_contract_tests;
 #[cfg(test)]
 #[path = "relay/auth-correlation-tests.rs"]
 mod auth_correlation_tests;
+
+#[cfg(test)]
+#[path = "relay/transport-health-tests.rs"]
+mod transport_health_tests;
+
+#[path = "relay/transport-reconnect.rs"]
+mod transport_reconnect;
+use transport_reconnect::{try_autonomous_reconnect, wait_for_reconnect};
+
+#[path = "transport_health.rs"]
+mod transport_health;
+use transport_health::TransportHealth;
+#[cfg(test)]
+use transport_reconnect::retry_initial_connect;
+
+#[path = "transport_status.rs"]
+mod transport_status;

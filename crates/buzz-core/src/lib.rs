@@ -44,6 +44,8 @@ pub mod private_managed_agent;
 pub mod relay;
 /// Tenant identity — the server-resolved community key carried on scoped paths.
 pub mod tenant;
+/// Local managed harness transport diagnostic protocol.
+pub mod transport_status;
 /// Agent-directed human question contracts.
 pub mod user_input;
 /// Schnorr signature and event ID verification.

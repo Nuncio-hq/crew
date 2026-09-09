@@ -70,6 +70,7 @@ pub(crate) mod team_catalog;
 pub(crate) mod team_events;
 mod team_repair;
 mod teams;
+pub(crate) mod transport_status;
 mod types;
 
 // Shared lock for tests that call `lock_path_mutex` or `lock_env_mutex`.
@@ -138,6 +139,7 @@ pub(crate) use session_policy::{
 pub use storage::*;
 pub(crate) use team_repair::team_persona_key;
 pub use teams::*;
+pub use transport_status::set_managed_transport_eligibility;
 pub use types::*;
 
 #[cfg(test)]

@@ -411,7 +411,14 @@ pub async fn restore_managed_agents_on_launch(
                 record.last_stopped_at = None;
                 record.last_exit_code = None;
                 record.last_error = None;
-                runtimes.insert(key, super::ManagedAgentPairRuntime::starting(*process));
+                let mut runtime = super::ManagedAgentPairRuntime::starting(*process);
+                super::transport_status::bind_registered(
+                    app,
+                    &key,
+                    &mut runtime,
+                    owner_hex.as_deref(),
+                );
+                runtimes.insert(key, runtime);
                 successfully_spawned.push(pubkey);
             }
             SpawnOutcome::Failed(error) => {

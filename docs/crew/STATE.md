@@ -7,7 +7,7 @@ progress notes here; change the sentence that is no longer true.
 ## Upstream
 
 Pinned to Buzz `desktop-v0.5.23` (`b9392d9d`) by a real merge
-(2026-09-07, branch `sync/upstream-2026-09-07`). Fork delta: 675
+(2026-09-07, branch `sync/upstream-2026-09-07`). Fork delta: 676
 upstream-owned files across 41 areas ([`fork-delta.json`](fork-delta.json)),
 checked in CI. Next sync is one release delta. See [`FORK.md`](FORK.md).
 
@@ -21,7 +21,17 @@ thread-per-session and #7337 busy-owner hold are **not** adopted
 (`scope.rs` present, unwired) — needs a decision before any change.
 ACP startup/reconnect AUTH acknowledgements match the exact sent event ID;
 unrelated OK/CLOSED frames remain buffered for normal processing (#338 slice 1).
-Local transport projection and the shared reconnect budget remain unfinished.
+Desktop-managed ACP generations opt into a six-attempt/300-second reconnect
+burst, then one probe every 270–330 seconds. Exact AUTH rejection ends the burst;
+authentication and subscription recovery must finish before health resets.
+Native transport diagnostics are separate from process lifecycle, fenced by
+native owner, runtime key, start nonce and leave/rejoin epoch. Missing or expired
+records become unknown; exited-generation results are explicitly historical.
+Manual retry uses the existing pair-scoped restart. Per-pair diagnostic storage
+is bounded; native preflight preserves required history, and ACP rechecks
+capacity before writing or recreating a file. Standalone ACP without the
+status environment pair retains legacy retry behavior. Installed staging and
+in-flight turn/receipt acceptance remain #338 gates, dependent on #348.
 
 ## Desktop
 

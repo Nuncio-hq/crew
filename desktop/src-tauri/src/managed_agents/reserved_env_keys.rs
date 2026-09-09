@@ -98,6 +98,8 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     // for same-session sweep decisions.
     "BUZZ_MANAGED_AGENT",
     "BUZZ_MANAGED_AGENT_START_NONCE",
+    "CREW_ACP_TRANSPORT_STATUS_PATH",
+    "CREW_ACP_TRANSPORT_START_NONCE",
 ];
 
 pub(crate) fn is_reserved_env_key(key: &str) -> bool {

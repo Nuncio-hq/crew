@@ -71,8 +71,12 @@ pub fn sync_managed_agent_processes(
                     record.last_error = Some(format!("failed to inspect process state: {error}"));
                     record.last_error_code = None;
                 }
+                runtime.error =
+                    Some(super::super::transport_status::PROCESS_INSPECTION_ERROR.into());
+                if let Some(monitor) = runtime.transport.as_mut() {
+                    monitor.inspection_failed();
+                }
                 changed = true;
-                exited.push(key.clone());
                 continue;
             }
         };
@@ -103,6 +107,9 @@ pub fn sync_managed_agent_processes(
             record.last_error_code = log_err.as_ref().and_then(|e| e.code);
         }
 
+        if let Some(monitor) = runtime.transport.as_mut() {
+            monitor.retire(!status.success(), std::time::Instant::now());
+        }
         changed = true;
         exited.push(key.clone());
     }

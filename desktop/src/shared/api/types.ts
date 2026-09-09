@@ -309,6 +309,26 @@ export type HermesProfileReadiness =
   | { state: "binary_missing"; command: string }
   | { state: "auth_unknown"; profile: string };
 
+export type ManagedAgentTransportStatus = {
+  state:
+    | "unknown"
+    | "connecting"
+    | "connected"
+    | "degraded"
+    | "exhausted"
+    | "auth_rejected";
+  code:
+    | "none"
+    | "connection_failed"
+    | "timeout"
+    | "auth_denied"
+    | "status_unavailable";
+  attempts: number;
+  elapsedMs: number;
+  nextRetryAtMs: number | null;
+  lastError: string | null;
+};
+
 export type ManagedAgentRuntimeStatus = {
   pubkey: string;
   /** Exact submitted descriptor, present only on startup reconcile results. */
@@ -317,6 +337,9 @@ export type ManagedAgentRuntimeStatus = {
   relayUrl: string;
   localSetup: boolean;
   profileReadiness?: HermesProfileReadiness | null;
+  /** Optional only for compatibility with older native/mock payloads. */
+  transport?: ManagedAgentTransportStatus;
+  transportRetired?: boolean;
   lifecycle: ManagedAgentRuntimeLifecycle;
   pid: number | null;
   error: string | null;

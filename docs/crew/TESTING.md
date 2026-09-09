@@ -400,7 +400,7 @@ publishes a kind `30617`, links one path, reconnects for a cold read, relinks a
 Unicode path, and resolves the latest path into Project-channel agent context.
 Never point this test at a shared or production relay.
 
-## ACP AUTH correlation (#338, first slice)
+## ACP transport recovery (#338)
 
 `cargo test -p buzz-acp --lib auth_correlation_tests` drives the actual
 `do_connect` handshake using ephemeral loopback WebSockets. It covers unrelated
@@ -410,9 +410,53 @@ CLOSED frames. Unrelated acknowledgements must neither authenticate an attempt
 nor reject credentials; only the exact sent AUTH ID can settle the handshake.
 Existing subscription handling consumes the buffered frames afterward.
 
-These fixtures do not prove bounded reconnect health episodes, local Desktop
-transport projection, in-flight receipt recovery during exhaustion, or installed
-staging acceptance. Those remain #338 gates; real staging requires #348.
+The managed retry contract is exercised through the production startup,
+autonomous reconnect, wait, handshake-buffer and subscription-replay seams in
+`transport-health-tests.rs`. Run `cargo test -p buzz-acp --lib relay::` for the
+combined suite. The same health episode covers six attempts and 300 seconds,
+including DNS, connection time, subscription replay and the final command drain.
+Slow probes use a fresh 270–330-second delay and a fresh 300-second bounded
+connect/replay/drain window; only complete recovery resets health. A deadline
+interrupting a command retains its exact signed observer event and deferred
+subscription intent for the existing replay/ACK path.
+
+Mode scope follows the #338 coordinator interpretation: both
+`CREW_ACP_TRANSPORT_STATUS_PATH` and `CREW_ACP_TRANSPORT_START_NONCE` missing means
+legacy retry behavior and no status I/O; a complete valid native pair enables
+managed policy; partial or invalid configuration fails explicitly. This is not
+a new founder product decision. Desktop reserves both keys and supplies them
+after custom environment entries; setup/adopted processes without a native
+nonce remain unknown. On platforms without the secure Unix storage backend,
+Desktop leaves both keys absent so the existing harness start remains usable;
+transport projection stays unknown.
+
+`cargo test -p buzz-core transport_status --lib` covers generation, monotonic
+sequence, freshness and final-record rules. ACP status tests cover atomic 0600
+writes, fixed safe diagnostics, renewal, startup failure flushing and a real
+staging-write failure that leaves the old connected file readable: its lease
+must expire to unknown, and renewal must later publish the retained new state.
+`cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib
+managed_agents::transport_status` covers secure reads, owner/nonce/epoch fences,
+late completion after leave or shutdown, and bounded retired diagnostics.
+
+The per-pair transport directory has a hard cap of 192 entries plus its empty
+shared lock file. Native preflight runs before spawn, reserves all three
+per-generation names, and performs bounded flat-directory hygiene under the
+same lock as ACP writes. It preserves the required previous generation across
+failed startup and one recent historical record (24-hour age target). Valid
+private single-link records with exact pair/nonce binding may be removed even
+when nonterminal; that grants no live-status authority. Unknown/malformed files
+are retained and counted; unsafe or saturated storage fails visibly before
+spawn. Every write rechecks capacity, including an old writer recreating an
+unlinked record. Repeated replacement, failed replacement, shared-lock,
+symlink/hardlink/FIFO/mode/size, and saturation cases bind these helpers.
+
+The Members menu keeps process and connection status separate. A live failed
+transport retains Stop Agent alongside Retry by restarting; a failed previous
+process is labeled Last process. A failed retry must leave a recovery action
+available. Mock-bridge E2E proves rendering and pair-scoped dispatch only; it
+cannot prove native process, installed staging, or in-flight turn/receipt
+acceptance. Those remain #338 gates; real staging requires #348.
 
 ## CompanyOS grouped evidence (#344)
 

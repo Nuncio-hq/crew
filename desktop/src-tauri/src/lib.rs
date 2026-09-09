@@ -84,8 +84,8 @@ use initial_window::*;
 use managed_agents::{
     backfill_persona_snapshots, ensure_nest, list_managed_agent_runtimes,
     put_managed_agent_runtime_lifecycle, reconcile_managed_agent_runtimes,
-    restart_managed_agent_runtime, start_managed_agent_runtime, stop_managed_agent_runtime,
-    try_regenerate_nest,
+    restart_managed_agent_runtime, set_managed_transport_eligibility, start_managed_agent_runtime,
+    stop_managed_agent_runtime, try_regenerate_nest,
 };
 #[cfg(not(feature = "mesh-llm"))]
 use mesh_llm_stubs::*;
@@ -346,6 +346,7 @@ pub fn run() {
             if let Ok(mut guard) = state.app_handle.lock() {
                 *guard = Some(app_handle.clone());
             }
+            managed_agents::transport_status::start(app_handle.clone());
 
             let (tts_settings, tts_settings_load_error) =
                 huddle::tts_settings::load_for_app(&app_handle);

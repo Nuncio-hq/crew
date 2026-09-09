@@ -266,6 +266,7 @@ macro_rules! desktop_invoke_handler {
             revalidate_relay_agents,
             list_managed_agents,
             list_managed_agent_runtimes,
+            set_managed_transport_eligibility,
             start_managed_agent_runtime,
             stop_managed_agent_runtime,
             restart_managed_agent_runtime,
