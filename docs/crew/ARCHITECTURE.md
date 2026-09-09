@@ -273,12 +273,34 @@ entries without choosing or dropping a holder. This helper performs no signing, 
 change. Its caller supplies the event content bound; native
 `events::build_set_canvas` independently enforces 64 KiB.
 
-The bulk editor and recoverable save command remain tracked by #350. The existing
-`set_canvas` (kind 40100) accepts channel/content without an expected head. Reusing
-it alone provides no concurrent-edit protection or distributed CAS. The complete
-flow must retain drafts on conflict/failure and expose partial announcement
-delivery. Existing ACP sessions keep their cached canvas until explicit restart;
-configuration saves do not hot-refresh those sessions.
+The #350 bulk editor uses `channel_crew_config` to prepare one owner-signed
+kind 40100 canvas and one unmentioned kind 9 working-agreement notice. It records
+both exact events in the shared owner-operation store before publication. The
+captured owner/community generations, expected canvas head, bounded worker lease
+and operation revision are rechecked at dispatch; retries read back exact IDs
+before resending. Canvas acknowledgement with a pending notice remains a partial
+commit. Applied status requires the canvas to remain the relay's current head;
+a newer head is superseded, including after recovery. This is optimistic
+readback protection, not distributed CAS: the relay can accept concurrent events.
+Five failed attempts stop automatic recovery; manual retry retains the original
+signed events. The native startup worker resumes due operations after restart.
+
+`save_channel_crew_member_cleanup` shares this journal and publication path with
+the deletion coordinator. The caller durably records its cleanup operation UUID
+before calling and releases managed-store/process locks before awaiting it.
+Retries first load that UUID and validate the original channel/member intent.
+Only unchanged or applied completes the outer cleanup; other outcomes retain
+recovery. This integration contract does not prove the full deletion workflow.
+
+UI integration remains tracked by #350 and is not included in the native
+checkpoint. The dialog must retain its draft on conflict or partial delivery,
+expose status and manual retry, and require explicit replacement after reviewing
+a newer canvas. Raw unresolved assignments must remain visible and preserved
+until explicitly removed.
+The existing raw `set_canvas` command remains a separate review/edit path without
+an expected-head guard. Existing ACP sessions keep their cached canvas until
+explicit restart; configuration saves do not hot-refresh those sessions. Full
+#350 relay and fresh/existing session acceptance remains outstanding.
 
 The v0.6 prototype management flow reuses the canvas distinction between role definitions and holder assignments, including unassigned definitions. Its agent add/edit design maps to managed-agent create/update and Hermes profile discovery: Hermes binds a profile without editing its model. Optional initial channel joins are a separate lifecycle with acknowledgement/recovery, not an assumed atomic create. Git metadata maps to worktree registry/details and thread GitHub/forge projections; local changes against HEAD and PR changes against the base revision must remain distinct. These prototype flows are not connected to the commands yet.
 

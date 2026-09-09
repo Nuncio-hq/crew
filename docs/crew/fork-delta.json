@@ -451,7 +451,7 @@
     },
     {
       "area": "desktop/src-tauri/**",
-      "why": "managed_agents: default-off recap capability/state/ownership proof (#351) and bounded discovery stdin/cancel/capture policy; Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json. D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362).",
+      "why": "managed_agents: default-off recap capability/state/ownership proof (#351) and bounded discovery stdin/cancel/capture policy; Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json. D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362); #350 bulk canvas command registration and startup recovery worker.",
       "resolve": "retain default-off recap catalog metadata and the null-stdin aggregate discovery wrapper; register module/invoke seams with implementations in Crew files; keep `manage(ResourceGovernorHandle)`. Preserve shared guarded key-replacement and native scope capture seams; relay events remain domain authority.",
       "filesAtRecord": 88,
       "fileHints": [
@@ -467,7 +467,7 @@
         },
         {
           "path": "desktop/src-tauri/src/commands/canvas.rs",
-          "why": "#196 `pub(crate)` on `fenced_crew_block` / `ensure_canvas_author`; #350 shared parser metadata in the existing canvas read response",
+          "why": "#196 `pub(crate)` on `fenced_crew_block` / `ensure_canvas_author`; #350 shared parser metadata and raw unresolved entries in the existing canvas read response",
           "resolve": "retain visibility and shared-parser read metadata; do not move YAML parsing here"
         },
         {

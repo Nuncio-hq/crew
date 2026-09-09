@@ -439,6 +439,10 @@ macro_rules! desktop_invoke_handler {
             owner_operation_list,
             owner_operation_update,
             owner_operation_remove,
+            save_channel_crew_config,
+            retry_channel_crew_config,
+            list_channel_crew_operations,
+            get_channel_crew_operation,
             set_window_vibrancy,
             #[cfg(target_os = "macos")]
             tray_menu::clear_tray_agent_activity,

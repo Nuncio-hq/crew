@@ -5,6 +5,7 @@ mod app_state;
 mod archive;
 mod build_identity;
 mod builderlab;
+mod channel_crew_config;
 mod channel_head_cache;
 mod commands;
 mod deep_link;
@@ -239,6 +240,7 @@ pub fn run() {
         .manage(channel_head_cache::ChannelHeadCacheStore::default())
         .setup(move |app| {
             let app_handle = app.handle().clone();
+            channel_crew_config::start(app_handle.clone());
             #[cfg(target_os = "macos")]
             {
                 tray_menu::init(&app_handle)?;
