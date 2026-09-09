@@ -17,6 +17,9 @@ const SKIP_DIRS: &[&str] = &[
     "Pods",
     ".dart_tool",
 ];
+pub(crate) fn skip_source_directory(name: &str) -> bool {
+    SKIP_DIRS.contains(&name)
+}
 const SOURCE_EXTS: &[&str] = &[
     "rs", "ts", "tsx", "js", "jsx", "md", "sql", "dart", "py", "go", "toml", "yml", "yaml", "json",
     "css", "html",
@@ -243,7 +246,7 @@ fn cluster_sections(files: &[String], _snapshot: &RepoSnapshot) -> Vec<PlannedSe
     sections
 }
 
-fn filter_source_files(files: &[String]) -> Vec<String> {
+pub(crate) fn filter_source_files(files: &[String]) -> Vec<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
     for path in files {
         if path.starts_with('.') && !path.starts_with(".crew/") {
@@ -332,6 +335,7 @@ mod tests {
                 "node_modules/foo/index.js".into(),
             ],
             contents: BTreeMap::new(),
+            ..RepoSnapshot::default()
         }
     }
 

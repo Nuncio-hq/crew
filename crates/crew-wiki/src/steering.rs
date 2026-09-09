@@ -42,6 +42,26 @@ pub fn load_steering(repo_root: &Path) -> Option<WikiSteering> {
     parse_steering(&bytes).ok()
 }
 
+/// Read steering from the same immutable source revision used by generation.
+pub fn load_captured_steering(
+    snapshot: &crate::git_snapshot::RepoSnapshot,
+) -> Result<Option<WikiSteering>, WikiError> {
+    if snapshot
+        .omissions
+        .iter()
+        .any(|item| item.path == ".crew/wiki.json")
+    {
+        return Err(WikiError::InvalidSteering(
+            "captured steering is unavailable".into(),
+        ));
+    }
+    snapshot
+        .contents
+        .get(".crew/wiki.json")
+        .map(|text| parse_steering(text))
+        .transpose()
+}
+
 /// Parse steering JSON.
 pub fn parse_steering(raw: &str) -> Result<WikiSteering, WikiError> {
     serde_json::from_str(raw).map_err(|e| WikiError::InvalidSteering(e.to_string()))

@@ -9,7 +9,7 @@ use crew_wiki::cluster::plan_pages;
 use crew_wiki::generate::{generate_page, HeuristicGenerator};
 use crew_wiki::git_snapshot::RepoSnapshot;
 use crew_wiki::publish::toc_content;
-use crew_wiki::steering::load_steering;
+use crew_wiki::steering::load_captured_steering;
 use rmcp::model::{CallToolResult, Content};
 use rmcp::ErrorData;
 use schemars::JsonSchema;
@@ -47,7 +47,8 @@ fn json_ok(value: serde_json::Value) -> Result<CallToolResult, ErrorData> {
 fn plan_repo(root: &Path) -> Result<(RepoSnapshot, crew_wiki::WikiPlan), CallToolResult> {
     let snapshot =
         RepoSnapshot::from_git(root).map_err(|e| json_error(e.code(), &e.to_string()))?;
-    let steering = load_steering(root);
+    let steering =
+        load_captured_steering(&snapshot).map_err(|e| json_error(e.code(), &e.to_string()))?;
     let plan = plan_pages(&snapshot, steering.as_ref())
         .map_err(|e| json_error(e.code(), &e.to_string()))?;
     Ok((snapshot, plan))
