@@ -433,6 +433,12 @@ macro_rules! desktop_invoke_handler {
             observed_unread::observed_unread_ingest,
             is_auto_update_supported,
             wiki_generate,
+            owner_operation_scope,
+            owner_operation_create,
+            owner_operation_load,
+            owner_operation_list,
+            owner_operation_update,
+            owner_operation_remove,
             set_window_vibrancy,
             #[cfg(target_os = "macos")]
             tray_menu::clear_tray_agent_activity,

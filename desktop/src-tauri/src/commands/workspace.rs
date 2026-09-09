@@ -36,6 +36,16 @@ async fn begin_workspace_apply(
     (guard, ticket)
 }
 
+// The real workspace apply and its scope regression share this mutation seam.
+fn apply_workspace_identity(
+    state: &AppState,
+    relay_url: String,
+    keys: Option<Keys>,
+) -> Result<(), String> {
+    let identity_guard = state.identity_mutation.lock().map_err(|e| e.to_string())?;
+    state.replace_workspace_identity(&identity_guard, keys, relay_url)
+}
+
 /// Adopt the pre-scoping global retention database's pending rows into `scope`.
 ///
 /// Best-effort: a failure is logged and the boot proceeds. The migration's own
@@ -212,18 +222,8 @@ pub async fn apply_workspace(
         assert_current_apply_generation(&state.workspace_apply_generation, apply_generation)?;
 
         // ── Apply all state changes (nothing below can fail) ──────────────────
-        {
-            let mut override_guard = state.relay_url_override.lock().map_err(|e| e.to_string())?;
-            *override_guard = Some(relay_url);
-        }
-        // Reset the Rust-side admission gate when switching workspace/community,
-        // matching `resetRateLimitGate()` on the TS side (useCommunityInit.ts:38).
+        apply_workspace_identity(&state, relay_url, parsed_keys)?;
         crate::relay_admission::reset_gate_for_workspace_change();
-
-        if let Some(keys) = parsed_keys {
-            let mut keys_guard = state.keys.lock().map_err(|e| e.to_string())?;
-            *keys_guard = keys;
-        }
 
         // Keep the backend-side reconcile guard aligned with the frontend
         // experiment before launch-time restore can spawn any agents. Missing
@@ -423,5 +423,80 @@ mod tests {
         let queued_ticket = queued.await.unwrap();
         assert!(queued_ticket > running_ticket);
         assert_current_apply_generation(&generation, queued_ticket).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod owner_scope_tests {
+    use super::*;
+    #[test]
+    fn owner_scope_workspace_writer_takes_keys_before_relay() {
+        let state = std::sync::Arc::new(crate::app_state::build_app_state());
+        let writer = state.clone();
+        let relay = state.relay_url_override.lock().unwrap();
+        let (signal, received) = std::sync::mpsc::channel();
+        let task = std::thread::spawn(move || {
+            crate::app_state::owner_scope::signal_key_lock_to(signal);
+            apply_workspace_identity(
+                &writer,
+                "wss://scope.example".into(),
+                Some(Keys::generate()),
+            )
+            .unwrap();
+        });
+        let keys_acquired = received
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .is_ok();
+        let keys_held = state.keys.try_lock().is_err();
+        drop(relay);
+        task.join().unwrap();
+        assert!(
+            keys_acquired && keys_held,
+            "writer must follow existing get_active_workspace keys-then-relay order"
+        );
+    }
+
+    #[tokio::test]
+    async fn owner_scope_workspace_origin_aba_invalidates_capture() {
+        let state = crate::app_state::build_app_state();
+        let capture = || {
+            let guard = state.identity_mutation.lock().unwrap();
+            state.capture_owner_scope(&guard).unwrap().token
+        };
+        {
+            let (_workspace, _) = begin_workspace_apply(
+                state.workspace_apply_lock.clone(),
+                &state.workspace_apply_generation,
+            )
+            .await;
+            apply_workspace_identity(&state, "wss://scope-a.example".into(), None).unwrap();
+        }
+        let initial = capture();
+        for origin in ["wss://scope-b.example", "wss://scope-a.example"] {
+            let (_workspace, _) = begin_workspace_apply(
+                state.workspace_apply_lock.clone(),
+                &state.workspace_apply_generation,
+            )
+            .await;
+            apply_workspace_identity(&state, origin.into(), None).unwrap();
+        }
+        let after = capture();
+        assert_eq!(initial.scope, after.scope);
+        assert_eq!(initial.identity_generation, after.identity_generation);
+        assert_ne!(initial, after);
+    }
+
+    #[tokio::test]
+    async fn owner_scope_workspace_key_replacement_advances_identity_epoch() {
+        let state = crate::app_state::build_app_state();
+        let (_workspace, _) = begin_workspace_apply(
+            state.workspace_apply_lock.clone(),
+            &state.workspace_apply_generation,
+        )
+        .await;
+        let before = state.identity_generation.load(Ordering::Acquire);
+        apply_workspace_identity(&state, "wss://scope.example".into(), Some(Keys::generate()))
+            .unwrap();
+        assert!(state.identity_generation.load(Ordering::Acquire) > before);
     }
 }
