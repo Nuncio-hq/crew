@@ -3,6 +3,11 @@ import type { CanvasResponse } from "./types";
 
 type RawCanvasResponse = {
   content: string | null;
+  event_id?: string | null;
+  definitions?: { role_label: string; definition: string }[];
+  contact_pubkey?: string | null;
+  crew_authority?: "absent" | "owner" | "foreign";
+  crew_parse_state?: "absent" | "valid" | "invalid";
   updated_at: number | null;
   author: string | null;
   routing: {
@@ -25,6 +30,14 @@ export async function getCanvas(channelId: string): Promise<CanvasResponse> {
   });
   return {
     content: response.content,
+    eventId: response.event_id ?? null,
+    definitions: (response.definitions ?? []).map((entry) => ({
+      roleLabel: entry.role_label,
+      definition: entry.definition,
+    })),
+    contactPubkey: response.contact_pubkey ?? null,
+    crewAuthority: response.crew_authority ?? "absent",
+    crewParseState: response.crew_parse_state ?? "absent",
     updatedAt: response.updated_at ?? null,
     author: response.author ?? null,
     routing: response.routing.map((entry) => ({
