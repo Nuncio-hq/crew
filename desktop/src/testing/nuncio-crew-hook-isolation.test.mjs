@@ -280,6 +280,11 @@ function dispatch(t, cwdKind, changed, fail = "", mutant = false) {
     { mode: 0o755 },
   );
   writeFileSync(
+    join(g.main, "scripts/check-push-head-scope.sh"),
+    readFileSync(join(source, "scripts/check-push-head-scope.sh")),
+    { mode: 0o755 },
+  );
+  writeFileSync(
     join(g.main, "lefthook.yml"),
     mutant ? yaml.replaceAll("./scripts/hook-lane-wrapper.sh ", "") : yaml,
   );
@@ -442,4 +447,213 @@ test("negative control reproduces exact linked GIT_DIR trigger only in scratch",
 
 test("mutation bypassing production YAML boundary exposes scratch corruption", (t) => {
   dispatch(t, "linked", "desktop/src-tauri/fixture.rs", "", true);
+});
+
+function scopeFixture(t, stripSelectors = false) {
+  const g = graph(t);
+  const lefthook = pinnedLefthook(g);
+  mkdirSync(join(g.main, "scripts"));
+  for (const script of [
+    "hook-lane-wrapper.sh",
+    "check-branch-skew.sh",
+    "check-push-head-scope.sh",
+  ])
+    writeFileSync(
+      join(g.main, "scripts", script),
+      readFileSync(join(source, "scripts", script)),
+      { mode: 0o755 },
+    );
+  writeFileSync(
+    join(g.main, "lefthook.yml"),
+    stripSelectors
+      ? yaml.replaceAll(
+          "      files: git diff --name-only origin/main...HEAD\n",
+          "",
+        )
+      : yaml,
+  );
+  const change = (cwd, file, content) => {
+    mkdirSync(dirname(join(cwd, file)), { recursive: true });
+    writeFileSync(join(cwd, file), content);
+    g.git(cwd, "add", file);
+    g.git(cwd, "commit", "-sm", `change ${JSON.stringify(file)}`);
+  };
+  g.git(g.main, "add", ".");
+  g.git(g.main, "commit", "-sm", "production hook configuration");
+  g.git(g.linked, "merge", "--ff-only", "main");
+  const remote = g.path("scope remote.git");
+  g.git(g.root, "init", "--bare", remote);
+  g.git(g.main, "remote", "add", "origin", remote);
+  g.git(g.main, "push", "origin", "main");
+  g.git(
+    g.main,
+    "symbolic-ref",
+    "refs/remotes/origin/HEAD",
+    "refs/remotes/origin/main",
+  );
+  change(g.linked, "docs/scope.md", "branch docs");
+  g.git(g.linked, "push", "-u", "origin", "linked");
+  for (const file of [
+    "crates/scope.rs",
+    "desktop/src-tauri/scope.rs",
+    "mobile/scope.dart",
+  ])
+    change(g.main, file, "incoming main");
+  g.git(g.main, "push", "origin", "main");
+  g.git(g.linked, "merge", "--no-edit", "main");
+  g.git(g.linked, "fsck", "--full");
+  const bin = g.path("scope stubs");
+  const log = g.path("scope lanes");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "just"),
+    '#!/bin/sh\nprintf "%s\\n" "$@" >> "$FIXTURE_LOG"\n',
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(bin, "node"),
+    '#!/bin/sh\nprintf "hook-isolation-test\\n" >> "$FIXTURE_LOG"\n',
+    { mode: 0o755 },
+  );
+  const env = {
+    PATH: `${bin}:${g.env.PATH}`,
+    LEFTHOOK_BIN: lefthook,
+    FIXTURE_LOG: log,
+  };
+  // This fixture exercises pre-push; other generated hooks are outside its scope.
+  g.ok(g.linked, lefthook, ["install", "pre-push", "--force"], env);
+  // Commits after installation need the same cheap fixture executables too.
+  const edit = (file, content) => {
+    mkdirSync(dirname(join(g.linked, file)), { recursive: true });
+    writeFileSync(join(g.linked, file), content);
+    g.ok(g.linked, "git", ["add", file], env);
+    g.ok(
+      g.linked,
+      "git",
+      ["commit", "-sm", `change ${JSON.stringify(file)}`],
+      env,
+    );
+  };
+  const push = (ref = "linked") => {
+    writeFileSync(log, "");
+    const before = g.snapshot();
+    const result = g.run(g.linked, "git", ["push", "origin", ref], env);
+    const after = g.snapshot();
+    assert.equal(after.config, before.config);
+    assert.deepEqual(after.files, before.files);
+    assert.equal(
+      after.refs
+        .split("\n")
+        .filter((line) => !line.startsWith("refs/remotes/"))
+        .join("\n"),
+      before.refs
+        .split("\n")
+        .filter((line) => !line.startsWith("refs/remotes/"))
+        .join("\n"),
+    );
+    return {
+      ...result,
+      lanes: readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .sort(),
+    };
+  };
+  return { g, remote, edit, push };
+}
+
+function assertDocsOnly(result) {
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.deepEqual(
+    result.lanes,
+    [],
+    "docs-only merge refresh must select no expensive lane",
+  );
+}
+
+test("merge-base selectors reject incoming-main lanes and preserve incremental positives", (t) => {
+  const f = scopeFixture(t);
+  assertDocsOnly(f.push());
+  f.edit("mobile/scope.dart", "branch mobile");
+  let result = f.push();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.lanes, ["mobile-test"]);
+  f.edit("crates/scope.rs", "branch rust");
+  result = f.push();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.lanes, [
+    "desktop-tauri-clippy",
+    "desktop-tauri-test",
+    "test-unit",
+  ]);
+  for (const name of ["internal space.dart", "line\nbreak.dart"]) {
+    f.edit(`mobile/${name}`, "branch mobile edge");
+    result = f.push();
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.lanes, ["mobile-test"]);
+  }
+  // Existing non-HEAD behavior remains: checks cover HEAD, warning names other ref.
+  f.g.git(f.g.linked, "branch", "other");
+  f.g.git(f.g.linked, "switch", "-c", "docs-only", "origin/main");
+  f.edit("docs/scope.md", "docs only");
+  result = f.push("other:other");
+  assertDocsOnly(result);
+  assert.match(
+    result.stdout + result.stderr,
+    /Pushing commits that are not the checked-out HEAD/,
+  );
+  assert.match(result.stdout + result.stderr, /refs\/heads\/other/);
+  assert.equal(
+    f.g.git(f.g.root, "--git-dir", f.remote, "rev-parse", "other"),
+    f.g.git(f.g.linked, "rev-parse", "other"),
+  );
+  // Keep the bare source missing too: the parallel branch-skew fetch cannot repair it.
+  const before = f.g.git(
+    f.g.root,
+    "--git-dir",
+    f.remote,
+    "rev-parse",
+    "linked",
+  );
+  f.g.git(f.g.linked, "update-ref", "-d", "refs/remotes/origin/main");
+  f.g.git(
+    f.g.root,
+    "--git-dir",
+    f.remote,
+    "update-ref",
+    "-d",
+    "refs/heads/main",
+  );
+  f.g.git(f.g.linked, "switch", "linked");
+  f.edit("docs/scope.md", "missing base");
+  result = f.push();
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(result.lanes, []);
+  assert.match(result.stdout + result.stderr, /origin\/main\.\.\.HEAD/);
+  assert.equal(
+    f.g.git(f.g.root, "--git-dir", f.remote, "rev-parse", "linked"),
+    before,
+  );
+});
+
+test("removing selectors falsifies the healthy docs-refresh assertion", (t) => {
+  const f = scopeFixture(t, true);
+  const result = f.push();
+  assert.equal(result.status, 0, result.stderr);
+  assert.throws(() => assertDocsOnly(result), /docs-only merge refresh/);
+  assert.deepEqual(result.lanes, [
+    "desktop-tauri-clippy",
+    "desktop-tauri-test",
+    "mobile-test",
+    "test-unit",
+  ]);
+  f.edit("crates/scope.rs", "branch rust");
+  const positive = f.push();
+  assert.equal(positive.status, 0, positive.stderr);
+  assert.deepEqual(positive.lanes, [
+    "desktop-tauri-clippy",
+    "desktop-tauri-test",
+    "test-unit",
+  ]);
 });
