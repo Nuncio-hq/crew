@@ -3791,6 +3791,10 @@ async fn ingest_event_inner(
 }
 
 #[cfg(test)]
+#[path = "contact_proof_tests.rs"]
+mod contact_proof_tests;
+
+#[cfg(test)]
 mod postgres_tests {
     use std::sync::Mutex;
 

@@ -4,6 +4,13 @@
 //! Ephemeral events (kinds 20000–29999) are never stored — Redis pub/sub only.
 //! Deduplication is application-layer: ON CONFLICT DO NOTHING.
 
+#[cfg(test)]
+#[path = "contact_proof_insert.rs"]
+mod contact_proof_insert;
+#[cfg(test)]
+#[path = "contact_proof_postgres_tests.rs"]
+mod contact_proof_postgres_tests;
+
 use chrono::{DateTime, Utc};
 use nostr::Event;
 use sqlx::{PgConnection, PgPool, Postgres, QueryBuilder, Row, Transaction};
@@ -1343,6 +1350,28 @@ pub(crate) async fn insert_event_with_thread_metadata_tx(
     channel_id: Option<Uuid>,
     thread_meta: Option<ThreadMetadataParams<'_>>,
 ) -> Result<(StoredEvent, bool)> {
+    insert_event_with_thread_metadata_classified_tx(
+        tx,
+        community_id,
+        event,
+        channel_id,
+        thread_meta,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+
+// The classification argument exists only in the isolated #355 proof build.
+// Production callers retain the existing SQL and do not require a new schema.
+async fn insert_event_with_thread_metadata_classified_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    community_id: CommunityId,
+    event: &Event,
+    channel_id: Option<Uuid>,
+    thread_meta: Option<ThreadMetadataParams<'_>>,
+    #[cfg(test)] contact_class: Option<contact_proof_insert::ContactClass>,
+) -> Result<(StoredEvent, bool)> {
     let kind_u16 = event.kind.as_u16();
     let kind_u32 = u32::from(kind_u16);
 
@@ -1365,27 +1394,32 @@ pub(crate) async fn insert_event_with_thread_metadata_tx(
     let d_tag = extract_d_tag(event);
     let not_before = extract_not_before(event);
 
-    let result = sqlx::query(
-        r#"
+    let insert_sql = r#"
         INSERT INTO events (community_id, id, pubkey, created_at, kind, tags, content, sig, received_at, channel_id, d_tag, not_before)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT DO NOTHING
-        "#,
-    )
-    .bind(community_id.as_uuid())
-    .bind(id_bytes.as_slice())
-    .bind(pubkey_bytes.as_slice())
-    .bind(created_at)
-    .bind(kind_i32)
-    .bind(&tags_json)
-    .bind(&event.content)
-    .bind(sig_bytes.as_slice())
-    .bind(received_at)
-    .bind(channel_id)
-    .bind(d_tag.as_deref())
-    .bind(not_before)
-    .execute(&mut **tx)
-    .await?;
+        "#;
+    #[cfg(test)]
+    let insert_sql = contact_class.map_or(insert_sql, |_| contact_proof_insert::CLASSIFIED_INSERT);
+    let query = sqlx::query(insert_sql)
+        .bind(community_id.as_uuid())
+        .bind(id_bytes.as_slice())
+        .bind(pubkey_bytes.as_slice())
+        .bind(created_at)
+        .bind(kind_i32)
+        .bind(&tags_json)
+        .bind(&event.content)
+        .bind(sig_bytes.as_slice())
+        .bind(received_at)
+        .bind(channel_id)
+        .bind(d_tag.as_deref())
+        .bind(not_before);
+    #[cfg(test)]
+    let query = match contact_class {
+        Some(class) => query.bind(class as i16),
+        None => query,
+    };
+    let result = query.execute(&mut **tx).await?;
 
     let was_inserted = result.rows_affected() > 0;
 

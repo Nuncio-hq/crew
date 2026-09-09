@@ -232,6 +232,10 @@ CREATE TABLE events (
     d_tag       TEXT,
     not_before  BIGINT,
     delivered_at BIGINT,
+    -- Crew contact storage metadata. NULL is preserved for legacy originals;
+    -- new kind-9 rows are stamped suppressed (0) by the guard below until a
+    -- reviewed routing decision path is enabled.
+    contact_class SMALLINT,
     PRIMARY KEY (community_id, created_at, id)
 ) PARTITION BY RANGE (created_at);
 
@@ -277,6 +281,154 @@ CREATE INDEX idx_events_not_before ON events (community_id, not_before)
 -- stays a single-column GIN. The search lane confirms the final spelling with
 -- EXPLAIN before its work lands (Quinn option A; Max's index-spelling caveat).
 CREATE INDEX idx_events_search_tsv ON events USING GIN (search_tsv);
+
+-- Contact decision evidence is tenant-scoped storage only. Automatic routing,
+-- proof validation, and retention workers are intentionally separate from the
+-- bootstrap schema. The deletion manifest does not include these relations
+-- yet, so a whole-community purge fails closed until its order is reviewed.
+CREATE TABLE contact_routes (
+    community_id        UUID NOT NULL REFERENCES communities(id),
+    original_id         BYTEA NOT NULL,
+    original_created_at TIMESTAMPTZ NOT NULL,
+    channel_id          UUID NOT NULL,
+    contact_pubkey      BYTEA NOT NULL,
+    relay_pubkey        BYTEA NOT NULL,
+    decision_id         BYTEA NOT NULL,
+    decision_created_at TIMESTAMPTZ NOT NULL,
+    stripe              SMALLINT NOT NULL CHECK (stripe BETWEEN 0 AND 15),
+    decided_at          TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (community_id, original_id),
+    UNIQUE (community_id, decision_id),
+    CHECK (octet_length(original_id) = 32),
+    CHECK (octet_length(contact_pubkey) = 32),
+    CHECK (octet_length(relay_pubkey) = 32),
+    CHECK (octet_length(decision_id) = 32)
+);
+CREATE INDEX contact_routes_stripe
+    ON contact_routes (community_id, stripe);
+
+CREATE TABLE contact_quota (
+    community_id UUID NOT NULL REFERENCES communities(id),
+    stripe       SMALLINT NOT NULL,
+    used         INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (community_id, stripe),
+    CHECK (stripe BETWEEN 0 AND 15),
+    CHECK (used BETWEEN 0 AND 8192)
+);
+
+ALTER TABLE events ADD CONSTRAINT contact_class_shape
+    CHECK (contact_class IS NULL OR (kind = 9 AND contact_class BETWEEN 0 AND 12));
+
+-- Keep kind-9 signed identity and classification immutable. Legacy rows remain
+-- NULL; new old-writer inserts become an explicit suppressed marker (0).
+CREATE FUNCTION contact_classify_original_v1() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.kind = 9 THEN
+            IF NEW.contact_class IS NULL THEN
+                NEW.contact_class := 0;
+            ELSIF NEW.contact_class <> 0 THEN
+                RAISE EXCEPTION 'contact routing classification requires the reviewed decision path'
+                    USING ERRCODE = 'check_violation';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF OLD.contact_class IS DISTINCT FROM NEW.contact_class THEN
+        RAISE EXCEPTION 'contact classification is immutable'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF OLD.kind = 9 OR NEW.kind = 9 THEN
+        IF ROW(OLD.community_id, OLD.id, OLD.created_at, OLD.kind)
+            IS DISTINCT FROM ROW(NEW.community_id, NEW.id, NEW.created_at, NEW.kind)
+        THEN
+            RAISE EXCEPTION 'kind-9 original identity is immutable, including legacy rows'
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER contact_classify_original_v1
+    BEFORE INSERT OR UPDATE ON events
+    FOR EACH ROW EXECUTE FUNCTION contact_classify_original_v1();
+
+-- Ordinary hard deletion of a kind-9 original is forbidden. The existing
+-- fenced whole-community executor is the only current exception; it supplies
+-- the matching community and fence generation on the same transaction.
+CREATE FUNCTION contact_guard_original_v1() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    executor_community TEXT;
+    executor_generation TEXT;
+    lifecycle TEXT;
+    expected_generation BIGINT;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.contact_class IS DISTINCT FROM NEW.contact_class THEN
+            RAISE EXCEPTION 'contact classification is immutable'
+                USING ERRCODE = 'check_violation';
+        END IF;
+        IF (OLD.kind = 9 OR NEW.kind = 9)
+           AND ROW(OLD.community_id, OLD.id, OLD.created_at, OLD.kind)
+               IS DISTINCT FROM ROW(NEW.community_id, NEW.id, NEW.created_at, NEW.kind)
+        THEN
+            RAISE EXCEPTION 'kind-9 original identity is immutable, including legacy rows'
+                USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF OLD.kind <> 9 THEN
+        RETURN OLD;
+    END IF;
+    executor_community := current_setting('buzz.deletion_executor_community', true);
+    executor_generation := current_setting('buzz.deletion_fence_generation', true);
+    SELECT deletion_state, deletion_fence_generation
+      INTO lifecycle, expected_generation
+      FROM communities
+     WHERE id = OLD.community_id;
+    IF executor_community = OLD.community_id::TEXT
+       AND executor_generation ~ '^[0-9]+$'
+       AND executor_generation::BIGINT = expected_generation
+       AND lifecycle IN ('fenced', 'tombstone')
+    THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'ordinary hard deletion of kind-9 originals is forbidden'
+        USING ERRCODE = 'check_violation';
+END
+$$;
+CREATE TRIGGER contact_guard_original_v1
+    BEFORE UPDATE OR DELETE ON events
+    FOR EACH ROW EXECUTE FUNCTION contact_guard_original_v1();
+
+-- The retention anchor is server-stamped even when a caller supplies a stale
+-- value. Route rows are immutable so the anchor cannot be backdated later.
+CREATE FUNCTION contact_stamp_decision_v1() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.decided_at := clock_timestamp();
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER contact_stamp_decision_v1
+    BEFORE INSERT ON contact_routes
+    FOR EACH ROW EXECUTE FUNCTION contact_stamp_decision_v1();
+
+CREATE FUNCTION contact_route_immutable_v1() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW IS DISTINCT FROM OLD THEN
+        RAISE EXCEPTION 'contact decision evidence is immutable'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER contact_route_immutable_v1
+    BEFORE UPDATE ON contact_routes
+    FOR EACH ROW EXECUTE FUNCTION contact_route_immutable_v1();
 
 -- ── Event mentions ────────────────────────────────────────────────────────────
 -- Conformance: "Channel-less global events and DMs" (#p fan-out). The join to
@@ -1753,6 +1905,8 @@ SELECT attach_community_write_fence('users');
 SELECT attach_community_write_fence('workflow_approvals');
 SELECT attach_community_write_fence('workflow_runs');
 SELECT attach_community_write_fence('workflows');
+SELECT attach_community_write_fence('contact_routes');
+SELECT attach_community_write_fence('contact_quota');
 
 -- ── Relay operator/moderator roster ──────────────────────────────────────────
 -- Deployment-level principals staffed via the admin API. Config-backed operators
