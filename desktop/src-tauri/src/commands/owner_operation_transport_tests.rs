@@ -410,3 +410,101 @@ fn owner_transport_rejects_noncanonical_origins_and_bounds_unicode_reasons() {
     assert!(bounded.len() <= 256);
     assert!(reason.starts_with(&bounded));
 }
+
+#[tokio::test]
+async fn owner_transport_real_import_aba_during_admission_is_not_attempted() {
+    use crate::app_state::{owner_scope, AppState, IdentityStorage};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use tauri::Manager;
+    let _serial = crate::relay_admission::TEST_SERIAL.lock().await;
+    let _reset = ResetAdmission;
+    crate::relay_admission::reset_rate_limit_gate();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let app = tauri::test::mock_builder()
+        .manage(crate::app_state::build_app_state())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    // Initial fixture configuration is installed before native scope capture.
+    *app.state::<AppState>().relay_url_override.lock().unwrap() =
+        Some(format!("ws://{}", listener.local_addr().unwrap()));
+    let captured = owner_scope::capture(app.handle().clone()).await.unwrap();
+    let signed = event(&captured.keys, "must never be sent after import ABA");
+    let body_length = signed.as_json().len();
+    let ack = serde_json::to_vec(&serde_json::json!({
+        "event_id":signed.id.to_hex(), "accepted":true, "message":"accepted"
+    }))
+    .unwrap();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let server_accepted = accepted.clone();
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        tokio::select! {
+            result = listener.accept() => {
+                let (mut socket, _) = result.unwrap();
+                server_accepted.fetch_add(1, Ordering::SeqCst);
+                tokio::time::timeout(Duration::from_secs(3), async {
+                    let mut request = Vec::new();
+                    let mut chunk = [0;4096];
+                    loop {
+                        let count = socket.read(&mut chunk).await.unwrap();
+                        assert!(count > 0, "client must finish the mutation-oracle request");
+                        request.extend_from_slice(&chunk[..count]);
+                        assert!(request.len() < REQUEST_LIMIT + 8192);
+                        if request.windows(4).position(|part| part == b"\r\n\r\n")
+                            .is_some_and(|end| request.len() >= end + 4 + body_length) { break; }
+                    }
+                    socket.write_all(&response(200, &ack)).await.unwrap();
+                }).await.expect("owned ABA oracle response deadline");
+            }
+            _ = stopped => {}
+        }
+    });
+    let transport = OwnerOperationTransport::captured(
+        &app.state::<AppState>(),
+        captured.token.scope.community.clone(),
+        captured.keys.clone(),
+        None,
+    )
+    .unwrap();
+    crate::relay_admission::activate_rate_limit(Some(1));
+    let guard = owner_scope::assert_current(app.handle().clone(), &captured.token);
+    let (result, ()) = tokio::join!(
+        tokio::time::timeout(Duration::from_secs(3), transport.publish(&signed, guard)),
+        async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let state = app.state::<AppState>();
+            let mutation = state.identity_mutation.lock().unwrap();
+            for keys in [Keys::generate(), captured.keys.clone()] {
+                crate::commands::commit_imported_identity(
+                    &state,
+                    &mutation,
+                    dir.path(),
+                    keys,
+                    |_| Ok(IdentityStorage::LocalFile),
+                )
+                .unwrap();
+            }
+        }
+    );
+    let _ = stop.send(());
+    server.await.unwrap();
+    let result = result.expect("native ABA oracle must produce a typed result");
+    let accepted = accepted.load(Ordering::SeqCst);
+    assert!(matches!(result, Err(OperationTransportError::NotAttempted(ref reason))
+        if reason == owner_scope::OWNER_SCOPE_STALE),
+        "post-admission native scope guard must prevent send: accepted_connections={accepted}, result={result:?}");
+    assert_eq!(accepted, 0, "stale native scope must never connect");
+    let after = owner_scope::capture(app.handle().clone()).await.unwrap();
+    assert_eq!(after.token.scope, captured.token.scope);
+    assert_ne!(
+        after.token.identity_generation,
+        captured.token.identity_generation
+    );
+}
+
+#[path = "owner_operation_transport_nip11_tests.rs"]
+mod nip11_tests;

@@ -2,12 +2,15 @@ import { FolderGit2 } from "lucide-react";
 import * as React from "react";
 
 import type { Project, Repository } from "@/features/projects/hooks";
+import type { ProjectChannelLinkOperation } from "@/shared/api/projectChannelLink";
 import { Button } from "@/shared/ui/button";
 import { ChooserDialogContent } from "@/shared/ui/chooser-dialog-content";
 import { Dialog } from "@/shared/ui/dialog";
 
 export function AttachProjectRepositoryDialog({
   isAttaching,
+  onRetry,
+  pendingOperation,
   onAttach,
   onOpenChange,
   open,
@@ -16,8 +19,10 @@ export function AttachProjectRepositoryDialog({
 }: {
   isAttaching: boolean;
   onAttach: (repository: Repository) => Promise<void>;
+  onRetry?: () => Promise<void>;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  pendingOperation?: ProjectChannelLinkOperation | null;
   project: Project;
   repositories: Repository[];
 }) {
@@ -55,6 +60,25 @@ export function AttachProjectRepositoryDialog({
         title="Add existing repository"
       >
         <div className="space-y-2">
+          {pendingOperation ? (
+            <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
+              <p className="text-sm font-medium">
+                Repository attachment needs recovery
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {pendingOperation.payload.last_error ??
+                  "The relay has not confirmed this exact attachment yet."}
+              </p>
+              <Button
+                disabled={isAttaching || !onRetry}
+                onClick={() => void onRetry?.()}
+                type="button"
+                variant="outline"
+              >
+                Retry attachment
+              </Button>
+            </div>
+          ) : null}
           {repositories.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
               Every available repository is already in this project.
@@ -64,7 +88,7 @@ export function AttachProjectRepositoryDialog({
               <Button
                 className="h-auto w-full justify-start gap-3 px-3 py-2.5 text-left"
                 data-testid={`attach-existing-repository-${repository.dtag}`}
-                disabled={isAttaching}
+                disabled={isAttaching || Boolean(pendingOperation)}
                 key={repository.repoAddress}
                 onClick={() => void handleAttach(repository)}
                 type="button"

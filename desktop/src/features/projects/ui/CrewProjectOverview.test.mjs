@@ -96,3 +96,17 @@ test("zero repositories retains the supplied folder action and channel navigatio
   assert.match(html, /Link folder/);
   assert.match(html, /project-overview-channel-home/);
 });
+
+test("channel recovery status renders alongside preserved channel rows", () => {
+  const html = renderToStaticMarkup(
+    tree({
+      channelStatus: React.createElement(
+        "p",
+        { role: "status" },
+        "Retry channel details",
+      ),
+    }),
+  );
+  assert.match(html, /Retry channel details/);
+  assert.match(html, /project-overview-channel-home/);
+});

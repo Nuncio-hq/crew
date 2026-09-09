@@ -17,6 +17,12 @@ const REQUEST_LIMIT: usize = 1024 * 1024;
 const RESPONSE_LIMIT: usize = 1024 * 1024;
 const REQUEST_BUDGET: Duration = Duration::from_secs(10);
 
+/// Advertised relay extensions; missing metadata never enables a capability.
+#[derive(serde::Deserialize)]
+pub(super) struct OwnerRelayInformation {
+    pub(super) supported_extensions: Option<Vec<String>>,
+}
+
 /// Errors never authorize deletion of an operation with unresolved prior effects.
 #[derive(Debug)]
 pub(super) enum OperationTransportError {
@@ -63,6 +69,14 @@ pub(super) struct OwnerOperationTransport {
 }
 
 impl OwnerOperationTransport {
+    /// Read NIP-11 only from the captured origin with the same dispatch fence.
+    pub(super) async fn relay_information<F: Future<Output = Result<(), String>>>(
+        &self,
+        before_send: F,
+    ) -> Result<OwnerRelayInformation, OperationTransportError> {
+        self.json(Method::GET, "/", Vec::new(), before_send).await
+    }
+
     /// Use the app's no-redirect client; never its general redirecting client.
     pub(super) fn captured(
         state: &crate::AppState,
@@ -164,7 +178,10 @@ impl OwnerOperationTransport {
         before_send: F,
     ) -> Result<Vec<u8>, OperationTransportError> {
         // Paths are native constants, never a persisted arbitrary request URL.
-        if !matches!(path, "/events" | "/query") {
+        if !matches!(
+            (method.as_str(), path),
+            ("POST", "/events" | "/query") | ("GET", "/")
+        ) {
             return Err(OperationTransportError::InvalidInput(
                 "Unsupported owner operation endpoint.".into(),
             ));
@@ -207,6 +224,9 @@ impl OwnerOperationTransport {
             .header("Content-Type", "application/json")
             .timeout(remaining)
             .body(body);
+        if path == "/" {
+            request = request.header("Accept", "application/nostr+json");
+        }
         if let Some(tag) = &self.auth_tag {
             request = request.header("x-auth-tag", tag);
         }

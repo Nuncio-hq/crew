@@ -162,13 +162,15 @@ async fn persist_command_event(
             ParameterizedReplaceStatus::Inserted => Ok(PersistResult::Inserted(tx)),
             ParameterizedReplaceStatus::Duplicate => Ok(PersistResult::Duplicate),
             ParameterizedReplaceStatus::Superseded
+            | ParameterizedReplaceStatus::DuplicateNotLive
                 if kind == KIND_WORKFLOW_DEF as i32 && expected_revision.is_some() =>
             {
                 Err(IngestError::Rejected(
                     "conflict: workflow update was superseded; refresh and try again".into(),
                 ))
             }
-            ParameterizedReplaceStatus::Superseded => Ok(PersistResult::Duplicate),
+            ParameterizedReplaceStatus::Superseded
+            | ParameterizedReplaceStatus::DuplicateNotLive => Ok(PersistResult::Duplicate),
             ParameterizedReplaceStatus::RevisionMissing => Err(IngestError::Rejected(
                 "conflict: workflow revision does not exist".into(),
             )),

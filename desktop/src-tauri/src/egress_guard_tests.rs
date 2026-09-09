@@ -455,6 +455,7 @@ fn ncryptsec_handling_is_confined_to_allowlisted_files() {
         "src/huddle/pipeline.rs",
         "src/commands/team_snapshot.rs",
         "src/commands/team_snapshot/tests.rs",
+        "src/commands/owner_operation_transport_tests.rs", // boundary 9 injection fixture
         "src/commands/personas/snapshot/import.rs",
         "src/native_websocket.rs",
     ];

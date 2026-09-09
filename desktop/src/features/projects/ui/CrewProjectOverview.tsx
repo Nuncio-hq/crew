@@ -11,6 +11,7 @@ export function CrewProjectOverview({
   project,
   channels,
   channelAction,
+  channelStatus,
   workspaceAction,
   workspaceManagement,
   onOpenChannel,
@@ -20,6 +21,7 @@ export function CrewProjectOverview({
   project: Project;
   channels: readonly Channel[];
   channelAction: React.ReactNode;
+  channelStatus?: React.ReactNode;
   workspaceAction: React.ReactNode;
   workspaceManagement: (repositoryAddress: string) => React.ReactNode;
   onOpenChannel: (channelId: string) => void;
@@ -93,6 +95,7 @@ export function CrewProjectOverview({
               </div>
               {channelAction}
             </header>
+            {channelStatus}
             <div className="divide-y rounded-xl border">
               {bound.map((binding) => {
                 const channel = channelById.get(binding.channelId);

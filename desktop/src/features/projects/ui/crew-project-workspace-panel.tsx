@@ -18,11 +18,16 @@ import {
   currentRelayWsUrl,
   fetchCurrentProjectAnnouncement,
   linkCurrentProjectWorkspace,
+  unlinkCurrentProjectWorkspace,
 } from "@/features/projects/lib/project-local-workspace-runtime";
 import { ProjectsListScopeDropdown } from "@/features/projects/ui/ProjectsListScopeDropdown";
 import { CrewProjectWorkspaceConsentDialog } from "@/features/projects/ui/crew-project-workspace-consent-dialog";
 import { CrewProjectWorkspaceStatus } from "@/features/projects/ui/crew-project-workspace-status";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import {
+  loadProjectChannelLink,
+  retryProjectWorkspaceUnlink,
+} from "@/shared/api/projectChannelLink";
 import { chooseProjectWorkspaceFolder } from "@/shared/api/tauri-project-folder-dialog";
 import { Button } from "@/shared/ui/button";
 
@@ -40,6 +45,7 @@ export function CrewProjectWorkspacePanel() {
     null,
   );
   const [saving, setSaving] = React.useState(false);
+  const [unlinking, setUnlinking] = React.useState(false);
   const [retryChannel, setRetryChannel] =
     React.useState<RetryProjectChannel | null>(null);
   const currentPubkey = identityQuery.data?.pubkey.toLowerCase();
@@ -54,6 +60,9 @@ export function CrewProjectWorkspacePanel() {
     projects.find((project) => project.id === selectedId) ??
     projects[0] ??
     null;
+  const repositoryCoordinate = selected
+    ? `30617:${selected.owner.toLowerCase()}:${selected.dtag}`
+    : null;
 
   React.useEffect(() => {
     if (selected && selected.id !== selectedId) {
@@ -71,6 +80,16 @@ export function CrewProjectWorkspacePanel() {
       return fetchCurrentProjectAnnouncement(selected.owner, selected.dtag);
     },
   });
+  const unlinkRecoveryQuery = useQuery({
+    enabled: Boolean(repositoryCoordinate),
+    queryKey: ["project-workspace-unlink-recovery", repositoryCoordinate],
+    queryFn: () => {
+      if (!repositoryCoordinate) throw new Error("No repository selected.");
+      return loadProjectChannelLink(repositoryCoordinate);
+    },
+    retry: false,
+    staleTime: 0,
+  });
   const relayUrlQuery = useQuery({
     queryKey: ["crew-project-workspace-relay-url"],
     queryFn: currentRelayWsUrl,
@@ -78,6 +97,11 @@ export function CrewProjectWorkspacePanel() {
   const workspace = announcementQuery.data
     ? projectLocalWorkspaceFromEvent(announcementQuery.data).localWorkspace
     : { status: "unlinked" as const };
+  const pendingUnlink =
+    unlinkRecoveryQuery.data?.operation?.payload.action?.type ===
+    "unlink-workspace"
+      ? unlinkRecoveryQuery.data.operation
+      : null;
   const announcementStatus = announcementQuery.isPending
     ? "loading"
     : announcementQuery.isError
@@ -157,6 +181,49 @@ export function CrewProjectWorkspacePanel() {
     }
   };
 
+  const unlinkFolder = async () => {
+    if (!selected || !currentPubkey) return;
+    setUnlinking(true);
+    try {
+      const saved = await unlinkCurrentProjectWorkspace({
+        owner: selected.owner,
+        currentPubkey,
+        dtag: selected.dtag,
+      });
+      queryClient.setQueryData(
+        ["crew-project-announcement", selected.owner, selected.dtag],
+        saved,
+      );
+      setSelectedNowPath(null);
+      toast.success("Local workspace unlinked from the repository.");
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setUnlinking(false);
+    }
+  };
+
+  const retryUnlinkFolder = async () => {
+    if (!repositoryCoordinate || !pendingUnlink || !unlinkRecoveryQuery.data) {
+      return;
+    }
+    const result = await retryProjectWorkspaceUnlink(
+      unlinkRecoveryQuery.data.token,
+      pendingUnlink,
+      repositoryCoordinate,
+    );
+    if (!result.value.reconciled || result.value.status !== "complete") {
+      throw new Error(
+        result.value.payload.last_error ??
+          "The workspace unlink is still pending relay confirmation.",
+      );
+    }
+    await unlinkRecoveryQuery.refetch();
+    await announcementQuery.refetch();
+    setSelectedNowPath(null);
+    toast.success("Local workspace unlink recovered.");
+  };
+
   return (
     <section className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
       <span className="text-sm font-semibold">Local workspace</span>
@@ -196,6 +263,26 @@ export function CrewProjectWorkspacePanel() {
             <FolderOpen className="h-4 w-4" />
             {workspace.status === "linked" ? "Relink folder" : "Link folder"}
           </Button>
+          {workspace.status === "linked" ? (
+            <Button
+              disabled={saving || unlinking || unlinkRecoveryQuery.isFetching}
+              onClick={() =>
+                void (pendingUnlink
+                  ? retryUnlinkFolder().catch((error) =>
+                      toast.error(errorMessage(error)),
+                    )
+                  : unlinkFolder())
+              }
+              size="sm"
+              variant="ghost"
+            >
+              {unlinking
+                ? "Unlinking…"
+                : pendingUnlink
+                  ? "Retry unlink"
+                  : "Unlink folder"}
+            </Button>
+          ) : null}
         </>
       ) : null}
       <CrewProjectWorkspaceConsentDialog

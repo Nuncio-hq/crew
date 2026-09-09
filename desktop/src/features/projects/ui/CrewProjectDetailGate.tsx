@@ -2,6 +2,7 @@ import { isCoworkRepository } from "@/features/projects/lib/cowork-project";
 import { selectProjectRepository } from "@/features/projects/projectModels";
 import { projectRouteRepositoryId } from "./projectDetailHelpers";
 import { CrewCoworkProjectScreen } from "@/features/projects/ui/CrewCoworkProjectScreen";
+import { CrewProjectOverviewScreen } from "@/features/projects/ui/CrewProjectOverviewScreen";
 import { ProjectDetailScreen } from "@/features/projects/ui/ProjectDetailScreen";
 import { useProjectQuery } from "@/features/projects/hooks";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
@@ -42,12 +43,20 @@ export function CrewProjectDetailGate({
   const hasDetailTarget = Boolean(
     tab || commitHash || filePath || issueId || pullRequestId,
   );
-  if (isCoworkRepository(repository) && !hasDetailTarget) {
+  if (thread && isCoworkRepository(repository) && !hasDetailTarget) {
     return (
       <CrewCoworkProjectScreen
         projectId={projectId}
         repositoryId={selectedRepositoryId}
         threadId={thread}
+      />
+    );
+  }
+  if (!hasDetailTarget && !thread) {
+    return (
+      <CrewProjectOverviewScreen
+        projectId={projectId}
+        repositoryId={selectedRepositoryId}
       />
     );
   }

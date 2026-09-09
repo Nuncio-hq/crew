@@ -98,3 +98,16 @@ test("file deep links retain repository detail", () => {
   assert.equal(result.type, "detail");
   assert.equal(result.props.filePath, "README.md");
 });
+
+// Explicit tabs select the existing repository detail surface, not the Project landing page.
+test("workspace overview tab opens exact repository details", () => {
+  const result = route({ repositoryId: folder.repoAddress, tab: "overview" });
+  assert.equal(result.type, "detail");
+  assert.equal(result.props.tab, "overview");
+  assert.equal(result.props.repositoryId, folder.repoAddress);
+});
+test("Git thread routes retain the existing repository detail branch", () => {
+  const result = route({ repositoryId: git.repoAddress, thread: "thread-a" });
+  assert.equal(result.type, "detail");
+  assert.equal(result.props.repositoryId, git.repoAddress);
+});
