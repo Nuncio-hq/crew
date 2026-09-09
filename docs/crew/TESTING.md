@@ -257,3 +257,17 @@ The live test uses a generated ephemeral keypair and unique `d` tag. It
 publishes a kind `30617`, links one path, reconnects for a cold read, relinks a
 Unicode path, and resolves the latest path into Project-channel agent context.
 Never point this test at a shared or production relay.
+
+## ACP AUTH correlation (#338, first slice)
+
+`cargo test -p buzz-acp --lib auth_correlation_tests` drives the actual
+`do_connect` handshake using ephemeral loopback WebSockets. It covers unrelated
+positive/negative OK frames before and after the challenge, exact AUTH denial,
+retryable `error:` dependency denial, AUTH-close, and buffered generic/channel
+CLOSED frames. Unrelated acknowledgements must neither authenticate an attempt
+nor reject credentials; only the exact sent AUTH ID can settle the handshake.
+Existing subscription handling consumes the buffered frames afterward.
+
+These fixtures do not prove bounded reconnect health episodes, local Desktop
+transport projection, in-flight receipt recovery during exhaustion, or installed
+staging acceptance. Those remain #338 gates; real staging requires #348.

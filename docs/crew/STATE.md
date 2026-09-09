@@ -19,7 +19,9 @@ leases + Cowork, elicitation, receipts + subscription/turn recovery
 tier-1. Upstream #7332 and #7335 are cherry-picked. Upstream #6732
 thread-per-session and #7337 busy-owner hold are **not** adopted
 (`scope.rs` present, unwired) — needs a decision before any change.
-`cargo test -p buzz-acp --lib`: 1185 passing.
+ACP startup/reconnect AUTH acknowledgements match the exact sent event ID;
+unrelated OK/CLOSED frames remain buffered for normal processing (#338 slice 1).
+Local transport projection and the shared reconnect budget remain unfinished.
 
 ## Desktop
 
