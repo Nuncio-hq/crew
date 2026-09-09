@@ -1,0 +1,738 @@
+[
+  {
+    "id": "thread",
+    "path": "crates/buzz-acp/src/thread_workspace.rs",
+    "start": 65,
+    "end": 81,
+    "lines": [
+      {
+        "number": 61,
+        "text": "    pub mode: WorkspaceMode,"
+      },
+      {
+        "number": 62,
+        "text": "}"
+      },
+      {
+        "number": 63,
+        "text": ""
+      },
+      {
+        "number": 64,
+        "text": "#[derive(Debug, Clone, PartialEq, Eq)]"
+      },
+      {
+        "number": 65,
+        "text": "pub(crate) struct ThreadWorkspace {"
+      },
+      {
+        "number": 66,
+        "text": "    pub(crate) root_event_id: String,"
+      },
+      {
+        "number": 67,
+        "text": "    pub(crate) repository_path: PathBuf,"
+      },
+      {
+        "number": 68,
+        "text": "    pub(crate) worktree_path: PathBuf,"
+      },
+      {
+        "number": 69,
+        "text": "    pub(crate) worktree_name: String,"
+      },
+      {
+        "number": 70,
+        "text": "    pub(crate) branch: String,"
+      },
+      {
+        "number": 71,
+        "text": "    pub(crate) base_revision: String,"
+      },
+      {
+        "number": 72,
+        "text": "    pub(crate) base_source: BaseSource,"
+      },
+      {
+        "number": 73,
+        "text": "    pub(crate) remote_default_branch: Option<String>,"
+      },
+      {
+        "number": 74,
+        "text": "    pub(crate) commits_behind_remote: Option<u64>,"
+      },
+      {
+        "number": 75,
+        "text": "    /// Canonical common Git directory (`git rev-parse --git-common-dir`),"
+      },
+      {
+        "number": 76,
+        "text": "    /// used to key `buzz-worktree` leases and lifecycle records."
+      },
+      {
+        "number": 77,
+        "text": "    pub(crate) common_git: PathBuf,"
+      },
+      {
+        "number": 78,
+        "text": "    pub(crate) checkout_kind: CheckoutKind,"
+      },
+      {
+        "number": 79,
+        "text": "    pub(crate) requested_base: Option<String>,"
+      },
+      {
+        "number": 80,
+        "text": "    pub(crate) uncommitted_count: u64,"
+      },
+      {
+        "number": 81,
+        "text": "}"
+      },
+      {
+        "number": 82,
+        "text": ""
+      },
+      {
+        "number": 83,
+        "text": "/// How `ensure_planned_thread_worktree` obtained a verified checkout."
+      },
+      {
+        "number": 84,
+        "text": "///"
+      },
+      {
+        "number": 85,
+        "text": "/// Callers use this to force ACP session invalidation after create/reattach"
+      },
+      {
+        "number": 86,
+        "text": "/// even when path/branch/eviction-generation strings still match (issue #59"
+      }
+    ]
+  },
+  {
+    "id": "plan",
+    "path": "crates/buzz-acp/src/thread_workspace.rs",
+    "start": 107,
+    "end": 122,
+    "lines": [
+      {
+        "number": 103,
+        "text": "        !matches!(self, Self::AlreadyPresent)"
+      },
+      {
+        "number": 104,
+        "text": "    }"
+      },
+      {
+        "number": 105,
+        "text": "}"
+      },
+      {
+        "number": 106,
+        "text": ""
+      },
+      {
+        "number": 107,
+        "text": "/// Discovery-only plan for a thread worktree: identity paths and base revision"
+      },
+      {
+        "number": 108,
+        "text": "/// without creating, reattaching, or claiming the checkout."
+      },
+      {
+        "number": 109,
+        "text": "///"
+      },
+      {
+        "number": 110,
+        "text": "/// Acquire the shared active-turn lease against `common_git` + `root_event_id`"
+      },
+      {
+        "number": 111,
+        "text": "/// *before* calling [`ensure_planned_thread_worktree`]."
+      },
+      {
+        "number": 112,
+        "text": "#[derive(Debug, Clone)]"
+      },
+      {
+        "number": 113,
+        "text": "pub(crate) struct ThreadWorkspacePlan {"
+      },
+      {
+        "number": 114,
+        "text": "    pub(crate) root_event_id: String,"
+      },
+      {
+        "number": 115,
+        "text": "    pub(crate) repository_path: PathBuf,"
+      },
+      {
+        "number": 116,
+        "text": "    pub(crate) worktree_path: PathBuf,"
+      },
+      {
+        "number": 117,
+        "text": "    pub(crate) branch: String,"
+      },
+      {
+        "number": 118,
+        "text": "    pub(crate) common_git: PathBuf,"
+      },
+      {
+        "number": 119,
+        "text": "    pub(crate) workspace_base: WorkspaceBase,"
+      },
+      {
+        "number": 120,
+        "text": "    pub(crate) checkout_kind: CheckoutKind,"
+      },
+      {
+        "number": 121,
+        "text": "    pub(crate) claim_exclusive_root: bool,"
+      },
+      {
+        "number": 122,
+        "text": "}"
+      },
+      {
+        "number": 123,
+        "text": ""
+      },
+      {
+        "number": 124,
+        "text": "#[derive(Debug)]"
+      },
+      {
+        "number": 125,
+        "text": "pub(crate) struct ThreadWorkspaceBranchConflict {"
+      },
+      {
+        "number": 126,
+        "text": "    worktree_path: PathBuf,"
+      },
+      {
+        "number": 127,
+        "text": "    current_branch: String,"
+      }
+    ]
+  },
+  {
+    "id": "git",
+    "path": "crates/buzz-acp/src/thread_workspace.rs",
+    "start": 558,
+    "end": 572,
+    "lines": [
+      {
+        "number": 554,
+        "text": "        .context(\"attached worktree failed repository verification\")?;"
+      },
+      {
+        "number": 555,
+        "text": "        return Ok((metadata, EnsureKind::AttachedExisting));"
+      },
+      {
+        "number": 556,
+        "text": "    }"
+      },
+      {
+        "number": 557,
+        "text": ""
+      },
+      {
+        "number": 558,
+        "text": "    let parent = worktree_path"
+      },
+      {
+        "number": 559,
+        "text": "        .parent()"
+      },
+      {
+        "number": 560,
+        "text": "        .context(\"planned worktree path has no parent directory\")?;"
+      },
+      {
+        "number": 561,
+        "text": "    fs::create_dir_all(parent).context(\"could not create Buzz worktree directory\")?;"
+      },
+      {
+        "number": 562,
+        "text": ""
+      },
+      {
+        "number": 563,
+        "text": "    let create = Command::new(\"git\")"
+      },
+      {
+        "number": 564,
+        "text": "        .arg(\"-C\")"
+      },
+      {
+        "number": 565,
+        "text": "        .arg(repo_root)"
+      },
+      {
+        "number": 566,
+        "text": "        .args([\"worktree\", \"add\", \"-b\", branch])"
+      },
+      {
+        "number": 567,
+        "text": "        .arg(worktree_path)"
+      },
+      {
+        "number": 568,
+        "text": "        .arg(&workspace_base.revision)"
+      },
+      {
+        "number": 569,
+        "text": "        .kill_on_drop(true)"
+      },
+      {
+        "number": 570,
+        "text": "        .output()"
+      },
+      {
+        "number": 571,
+        "text": "        .await"
+      },
+      {
+        "number": 572,
+        "text": "        .context(\"could not start git worktree add\")?;"
+      },
+      {
+        "number": 573,
+        "text": ""
+      },
+      {
+        "number": 574,
+        "text": "    if !create.status.success() {"
+      },
+      {
+        "number": 575,
+        "text": "        // Another harness may have won the same idempotent create race."
+      },
+      {
+        "number": 576,
+        "text": "        for _ in 0..10 {"
+      },
+      {
+        "number": 577,
+        "text": "            if let Some(metadata) = verified_metadata("
+      }
+    ]
+  },
+  {
+    "id": "folder",
+    "path": "crates/buzz-acp/src/thread_workspace/folder.rs",
+    "start": 39,
+    "end": 53,
+    "lines": [
+      {
+        "number": 35,
+        "text": "            notice = opened.notice.as_deref().unwrap_or(\"\"),"
+      },
+      {
+        "number": 36,
+        "text": "            \"cowork version history was rebuilt after corruption\""
+      },
+      {
+        "number": 37,
+        "text": "        );"
+      },
+      {
+        "number": 38,
+        "text": "    }"
+      },
+      {
+        "number": 39,
+        "text": "    Ok(ThreadWorkspacePlan {"
+      },
+      {
+        "number": 40,
+        "text": "        root_event_id: root_event_id.to_string(),"
+      },
+      {
+        "number": 41,
+        "text": "        repository_path: folder.clone(),"
+      },
+      {
+        "number": 42,
+        "text": "        worktree_path: folder,"
+      },
+      {
+        "number": 43,
+        "text": "        branch: \"folder\".into(),"
+      },
+      {
+        "number": 44,
+        "text": "        common_git: opened.repo.git_dir().to_path_buf(),"
+      },
+      {
+        "number": 45,
+        "text": "        workspace_base: WorkspaceBase {"
+      },
+      {
+        "number": 46,
+        "text": "            revision: \"0\".repeat(40),"
+      },
+      {
+        "number": 47,
+        "text": "            source: BaseSource::LocalFallback,"
+      },
+      {
+        "number": 48,
+        "text": "            remote_default_branch: None,"
+      },
+      {
+        "number": 49,
+        "text": "            requested_base: None,"
+      },
+      {
+        "number": 50,
+        "text": "        },"
+      },
+      {
+        "number": 51,
+        "text": "        checkout_kind: CheckoutKind::Folder,"
+      },
+      {
+        "number": 52,
+        "text": "        claim_exclusive_root: false,"
+      },
+      {
+        "number": 53,
+        "text": "    })"
+      },
+      {
+        "number": 54,
+        "text": "}"
+      },
+      {
+        "number": 55,
+        "text": ""
+      },
+      {
+        "number": 56,
+        "text": "pub(crate) fn ensure_folder_workspace("
+      },
+      {
+        "number": 57,
+        "text": "    plan: &ThreadWorkspacePlan,"
+      },
+      {
+        "number": 58,
+        "text": ") -> Result<(ThreadWorkspace, EnsureKind)> {"
+      }
+    ]
+  },
+  {
+    "id": "history",
+    "path": "crates/buzz-acp/src/thread_workspace/folder.rs",
+    "start": 18,
+    "end": 31,
+    "lines": [
+      {
+        "number": 14,
+        "text": "pub(crate) fn plan_folder_workspace("
+      },
+      {
+        "number": 15,
+        "text": "    workspace: &ProjectWorkspace,"
+      },
+      {
+        "number": 16,
+        "text": "    root_event_id: &str,"
+      },
+      {
+        "number": 17,
+        "text": ") -> Result<ThreadWorkspacePlan> {"
+      },
+      {
+        "number": 18,
+        "text": "    validate_root_event_id(root_event_id)?;"
+      },
+      {
+        "number": 19,
+        "text": "    let folder = super::canonicalize_project_workspace(&workspace.local_path)?;"
+      },
+      {
+        "number": 20,
+        "text": "    if !folder.is_dir() {"
+      },
+      {
+        "number": 21,
+        "text": "        bail!(\"Project workspace is not a folder: {}\", folder.display());"
+      },
+      {
+        "number": 22,
+        "text": "    }"
+      },
+      {
+        "number": 23,
+        "text": "    let history_root = buzz_cowork::history_dir_from_env()"
+      },
+      {
+        "number": 24,
+        "text": "        .context(\"version history location is not configured\")?;"
+      },
+      {
+        "number": 25,
+        "text": "    let opened = buzz_cowork::ShadowRepo::open_or_init("
+      },
+      {
+        "number": 26,
+        "text": "        &history_root,"
+      },
+      {
+        "number": 27,
+        "text": "        &workspace.repo_address,"
+      },
+      {
+        "number": 28,
+        "text": "        &folder,"
+      },
+      {
+        "number": 29,
+        "text": "        None,"
+      },
+      {
+        "number": 30,
+        "text": "    )"
+      },
+      {
+        "number": 31,
+        "text": "    .map_err(|error| anyhow::anyhow!(\"{error}\"))?;"
+      },
+      {
+        "number": 32,
+        "text": "    if opened.rebuilt {"
+      },
+      {
+        "number": 33,
+        "text": "        tracing::warn!("
+      },
+      {
+        "number": 34,
+        "text": "            repo = %workspace.repo_address,"
+      },
+      {
+        "number": 35,
+        "text": "            notice = opened.notice.as_deref().unwrap_or(\"\"),"
+      },
+      {
+        "number": 36,
+        "text": "            \"cowork version history was rebuilt after corruption\""
+      }
+    ]
+  },
+  {
+    "id": "wiki",
+    "path": "desktop/src/features/wiki/lib/wikiEvents.ts",
+    "start": 24,
+    "end": 45,
+    "lines": [
+      {
+        "number": 20,
+        "text": "  title: string;"
+      },
+      {
+        "number": 21,
+        "text": "  pages: WikiTocPage[];"
+      },
+      {
+        "number": 22,
+        "text": "};"
+      },
+      {
+        "number": 23,
+        "text": ""
+      },
+      {
+        "number": 24,
+        "text": "export type WikiToc = {"
+      },
+      {
+        "number": 25,
+        "text": "  event: RelayEvent;"
+      },
+      {
+        "number": 26,
+        "text": "  repoD: string;"
+      },
+      {
+        "number": 27,
+        "text": "  owner: string;"
+      },
+      {
+        "number": 28,
+        "text": "  commit: string;"
+      },
+      {
+        "number": 29,
+        "text": "  branch: string;"
+      },
+      {
+        "number": 30,
+        "text": "  cadence: WikiCadence;"
+      },
+      {
+        "number": 31,
+        "text": "  sections: WikiTocSection[];"
+      },
+      {
+        "number": 32,
+        "text": "  generatedAt: number;"
+      },
+      {
+        "number": 33,
+        "text": "};"
+      },
+      {
+        "number": 34,
+        "text": ""
+      },
+      {
+        "number": 35,
+        "text": "export type WikiPage = {"
+      },
+      {
+        "number": 36,
+        "text": "  event: RelayEvent;"
+      },
+      {
+        "number": 37,
+        "text": "  repoD: string;"
+      },
+      {
+        "number": 38,
+        "text": "  slug: string;"
+      },
+      {
+        "number": 39,
+        "text": "  title: string;"
+      },
+      {
+        "number": 40,
+        "text": "  section: string;"
+      },
+      {
+        "number": 41,
+        "text": "  commit: string;"
+      },
+      {
+        "number": 42,
+        "text": "  language: string;"
+      },
+      {
+        "number": 43,
+        "text": "  sourceFiles: string[];"
+      },
+      {
+        "number": 44,
+        "text": "  content: string;"
+      },
+      {
+        "number": 45,
+        "text": "};"
+      },
+      {
+        "number": 46,
+        "text": ""
+      },
+      {
+        "number": 47,
+        "text": "export type CompanyWikiPage = {"
+      },
+      {
+        "number": 48,
+        "text": "  event: RelayEvent;"
+      },
+      {
+        "number": 49,
+        "text": "  slug: string;"
+      },
+      {
+        "number": 50,
+        "text": "  title: string;"
+      }
+    ]
+  },
+  {
+    "id": "job",
+    "path": "desktop/src/features/wiki/lib/wikiEvents.ts",
+    "start": 57,
+    "end": 64,
+    "lines": [
+      {
+        "number": 53,
+        "text": "  engramSlug: string | null;"
+      },
+      {
+        "number": 54,
+        "text": "  status: string | null;"
+      },
+      {
+        "number": 55,
+        "text": "};"
+      },
+      {
+        "number": 56,
+        "text": ""
+      },
+      {
+        "number": 57,
+        "text": "export type WikiJobState = {"
+      },
+      {
+        "number": 58,
+        "text": "  repoKey: string;"
+      },
+      {
+        "number": 59,
+        "text": "  status: \"idle\" | \"generating\" | \"failed\";"
+      },
+      {
+        "number": 60,
+        "text": "  done: number;"
+      },
+      {
+        "number": 61,
+        "text": "  total: number;"
+      },
+      {
+        "number": 62,
+        "text": "  error: string | null;"
+      },
+      {
+        "number": 63,
+        "text": "  costNote: string | null;"
+      },
+      {
+        "number": 64,
+        "text": "};"
+      },
+      {
+        "number": 65,
+        "text": ""
+      },
+      {
+        "number": 66,
+        "text": "function tagValue(event: RelayEvent, name: string): string | undefined {"
+      },
+      {
+        "number": 67,
+        "text": "  return event.tags.find((tag) => tag[0] === name)?.[1];"
+      },
+      {
+        "number": 68,
+        "text": "}"
+      },
+      {
+        "number": 69,
+        "text": ""
+      }
+    ]
+  }
+]

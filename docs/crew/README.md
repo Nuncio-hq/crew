@@ -2,8 +2,10 @@
 
 This repository is [Nuncio-hq/crew](https://github.com/Nuncio-hq/crew)
 (product name **NuncioCrew**, "Crew"), a fork of
-[block/buzz](https://github.com/block/buzz). Upstream docs elsewhere in the
-tree stay as they are; Crew's own rules live only in this directory.
+[block/buzz](https://github.com/block/buzz). Use upstream docs in this
+checkout for unchanged Buzz behavior. Crew docs describe extensions and
+Crew-owned contracts; correct misleading upstream references with a concise
+pointer to the relevant Crew doc. Do not duplicate upstream documentation.
 
 ## Read these, in this order, before working on Crew
 
@@ -39,11 +41,24 @@ Supporting runbooks that are also living but narrow:
 [`RELEASING.md`](RELEASING.md), [`GUIDES/`](GUIDES/),
 [`templates/`](templates/).
 
+## Shared design reference
+
+[CompanyOS blueprint](../../design/companyos/README.md) is the one maintained
+interactive reference (D-078). Its rendered Stage 0 matrix separates accepted
+contracts, proposals and blocked controls; living docs retain authority.
+
 ## Records (append-only directories)
 
-Dated evidence. Agents create new files here freely; nobody has to keep
-them current, and they are never the source of truth. If a record reaches
-a durable conclusion, copy the conclusion into one of the seven above.
+Dated evidence, not current product contracts. Existing records remain
+historical; a durable conclusion belongs in the relevant living document.
+Do not create a record for every task. Temporary plans, progress, and
+one-run evidence belong in the task or PR by default.
+
+A new record is justified only when evidence needs lasting reuse and no
+existing document fits. State that reason in the task or PR, date the
+record, and link its authoritative living document. Moving a new file into
+`plans/` or another directory does not bypass this rule. Prefer reusable
+tests and scripts over repeated prose reports.
 
 | Directory | What goes there |
 | --- | --- |
@@ -56,12 +71,17 @@ a durable conclusion, copy the conclusion into one of the seven above.
 
 ## The rule, in one line
 
-**Durable → edit one of the seven. Evidence for today → add a record.
-There is no third option.**
+**Durable knowledge → update an existing living document. Temporary evidence
+→ task or PR. New documents → justified exceptions, not a delivery ritual.**
 
 ## Workflow
 
-Every behavior change: spike → contract tests → smallest implementation →
+Every behavior change: assess uncertainty → spike only if needed → contract tests → smallest implementation →
 verification → update the affected living document in the same PR.
+If no docs are affected, explain why in the handoff. Keep each fact in one
+authoritative location; link rather than repeat. Rewrite stale descriptions
+and distinguish shipped behavior, accepted future work, and proposals.
+Review affected Crew documentation on every upstream sync. Verify both
+links and agreement with the resulting code; formatting alone is insufficient.
 Details in [`DEVELOPMENT-WORKFLOW.md`](DEVELOPMENT-WORKFLOW.md). The founder
 is the client; CI green is not Accept (D-070).

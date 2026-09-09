@@ -90,9 +90,14 @@ gates. `NuncioCrew Release` is manual, signed, and checks the exact `main`
 SHA. Inherited Buzz workflow files stay in the tree but are disabled at the
 repository level.
 
-## Channel-first IA guardrail (#278)
+## Channel-first IA guardrail (#278; successor tracked in #349)
 
-`pnpm --filter buzz check:channel-first-ia` rejects any sync hunk that
+D-078 / Stage 0 #344 accepts the demonstrated v0.9 Project/Wiki shell, with
+Browse channels in the workspace menu. #349 owns the narrow Projects
+guard update with production implementation. The present guard still runs
+unchanged; the Workbench prohibition remains authoritative.
+
+`pnpm --filter buzz check:channel-first-ia` currently rejects any sync hunk that
 re-adds a Projects sidebar section, a Workbench picker, `onSelectProjects`,
 `onSelectWorkbench`, or `selectedView: "workbench"`. Workbench routes stay
 as redirects; the live-job desk lives in `LiveJobDesk`.
