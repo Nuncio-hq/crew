@@ -476,7 +476,7 @@ async fn deadline_during_observer_send_retains_the_exact_event_for_ack_recovery(
     tokio::time::advance(Duration::from_millis(299_950)).await;
     assert!(matches!(
         resubscribe_after_reconnect(&mut ws, &mut cmd_rx, &mut state, "agent", true).await,
-        ResubscribeResult::RetryConnection
+        ResubscribeResult::Ok
     ));
     assert!(
         state
@@ -669,7 +669,7 @@ async fn shutdown_remains_terminal_when_recovery_deadline_interrupts_close() {
     tokio::time::advance(Duration::from_millis(299_950)).await;
     assert!(matches!(
         resubscribe_after_reconnect(&mut ws, &mut cmd_rx, &mut state, "agent", true).await,
-        ResubscribeResult::RetryConnection
+        ResubscribeResult::Ok
     ));
     cmd_tx.send(RelayCommand::Shutdown).await.unwrap();
     let started = tokio::time::Instant::now();

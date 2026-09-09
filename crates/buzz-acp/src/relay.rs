@@ -2955,7 +2955,6 @@ async fn resubscribe_after_reconnect(
 ) -> ResubscribeResult {
     let deadline = state.health.recovery_deadline();
     let mut deferred_commands = VecDeque::new();
-    let mut current_command = None;
     let operation = resubscribe_with_retained_commands(
         ws,
         cmd_rx,
@@ -2963,16 +2962,29 @@ async fn resubscribe_after_reconnect(
         agent_pubkey_hex,
         is_fresh_connection,
         &mut deferred_commands,
-        &mut current_command,
     );
     let outcome = match deadline {
         Some(deadline) => tokio::time::timeout_at(deadline, operation).await.ok(),
         None => Some(operation.await),
     };
     if let Some(outcome) = outcome {
+        if matches!(outcome, ResubscribeResult::Ok) {
+            // Replay itself is bounded by the recovery episode. Once all
+            // existing subscriptions/control subscriptions are restored, the
+            // remaining live-command drain has its own deadline handler so a
+            // healthy socket can retain intent and recover instead of entering
+            // SlowProbe at the edge of the episode.
+            return match drain_commands(ws, cmd_rx, &mut deferred_commands, state, agent_pubkey_hex)
+                .await
+            {
+                ReconnectOutcome::Ok => ResubscribeResult::Ok,
+                ReconnectOutcome::Failed => ResubscribeResult::RetryConnection,
+                ReconnectOutcome::Shutdown => ResubscribeResult::Shutdown,
+            };
+        }
         return outcome;
     }
-    match retain_interrupted_recovery(state, current_command, &mut deferred_commands) {
+    match retain_interrupted_recovery(state, None, &mut deferred_commands) {
         ReconnectOutcome::Shutdown => ResubscribeResult::Shutdown,
         _ => ResubscribeResult::RetryConnection,
     }
@@ -2997,6 +3009,23 @@ fn retain_interrupted_recovery(
     ReconnectOutcome::Failed
 }
 
+/// Preserve commands that were already queued when a deadline fired before
+/// the drain task could poll them. Returns `true` when shutdown is terminal.
+fn retain_queued_after_deadline(
+    state: &mut BgState,
+    cmd_rx: &mut mpsc::Receiver<RelayCommand>,
+) -> bool {
+    loop {
+        match cmd_rx.try_recv() {
+            Ok(RelayCommand::Shutdown) => return true,
+            Ok(RelayCommand::Reconnect) => {}
+            Ok(command) => retain_failed_command_intent(state, command),
+            Err(mpsc::error::TryRecvError::Empty) => return false,
+            Err(mpsc::error::TryRecvError::Disconnected) => return true,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn resubscribe_with_retained_commands(
     ws: &mut WsStream,
@@ -3005,7 +3034,6 @@ async fn resubscribe_with_retained_commands(
     agent_pubkey_hex: &str,
     is_fresh_connection: bool,
     deferred_commands: &mut VecDeque<RelayCommand>,
-    current_command: &mut Option<RelayCommand>,
 ) -> ResubscribeResult {
     if is_fresh_connection {
         // These queues are derived from active subscription intent and rebuilt
@@ -3110,21 +3138,7 @@ async fn resubscribe_with_retained_commands(
         }
     }
 
-    let tracked_command = state.health.recovery_deadline().map(|_| current_command);
-    match drain_commands_tracked(
-        ws,
-        cmd_rx,
-        deferred_commands,
-        state,
-        agent_pubkey_hex,
-        tracked_command,
-    )
-    .await
-    {
-        ReconnectOutcome::Ok => ResubscribeResult::Ok,
-        ReconnectOutcome::Failed => ResubscribeResult::RetryConnection,
-        ReconnectOutcome::Shutdown => ResubscribeResult::Shutdown,
-    }
+    ResubscribeResult::Ok
 }
 
 /// Send a signed EVENT frame on the live socket. Returns `false` on send failure.
@@ -3342,9 +3356,14 @@ async fn drain_commands(
             // interrupted command/deferred intent is retained above; return a
             // successful live-drain outcome so finish_reconnect clears the
             // episode and the normal pacing drain delivers queued REQs/events.
-            match retain_interrupted_recovery(state, current_command, deferred_commands) {
-                ReconnectOutcome::Shutdown => ReconnectOutcome::Shutdown,
-                ReconnectOutcome::Failed | ReconnectOutcome::Ok => ReconnectOutcome::Ok,
+            let interrupted =
+                retain_interrupted_recovery(state, current_command, deferred_commands);
+            if matches!(interrupted, ReconnectOutcome::Shutdown)
+                || retain_queued_after_deadline(state, cmd_rx)
+            {
+                ReconnectOutcome::Shutdown
+            } else {
+                ReconnectOutcome::Ok
             }
         }
     }
