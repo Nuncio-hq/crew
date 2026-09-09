@@ -85,6 +85,14 @@ function baseProps(overrides = {}) {
     actionNoticeMessage: null,
     agents: [],
     agentsError: null,
+    localInventoryReady: true,
+    relayAgents: [],
+    relayAgentsReady: true,
+    relayAgentsError: null,
+    isRelayAgentsLoading: false,
+    onRetryAgents: () => {},
+    onRetryPersonas: () => {},
+    onRetryRelayAgents: () => {},
     isActionPending: false,
     isAgentsLoading: false,
     restartingAgentPubkey: null,
@@ -598,4 +606,121 @@ test("N cards share a snapshot, one poll, failure recovery and live subscription
     dom.window.document.hasFocus = originalFocus;
     Object.assign(relayClient, original);
   }
+});
+
+for (const source of ["agents", "personas"]) {
+  test(`${source} directory failure exposes a scoped retry action`, async () => {
+    installFailOpenIpc();
+    const retried = [];
+    await act(async () => {
+      renderSection(
+        baseProps({
+          [`${source}Error`]: new Error(`${source} unavailable`),
+          onRetryAgents: () => retried.push("agents"),
+          onRetryPersonas: () => retried.push("personas"),
+        }),
+      );
+    });
+    assert.match(screen.getByRole("alert").textContent, /unavailable/);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: source === "agents" ? "Retry agents" : "Retry agent definitions",
+      }),
+    );
+    assert.deepEqual(retried, [source]);
+  });
+}
+
+test("relay-only cards exclude local keys and preserve same-name exact profile targets", async () => {
+  installFailOpenIpc();
+  const opened = [];
+  await act(async () => {
+    renderSection(
+      baseProps({
+        agents: [agent({ personaId: null })],
+        localInventoryReady: true,
+        relayAgents: [
+          {
+            pubkey: LIVE_PK.toUpperCase(),
+            name: "Local duplicate",
+            ownerPubkey: SELF_PK,
+          },
+          {
+            pubkey: ARCHIVED_PK,
+            name: "Same remote name",
+            ownerPubkey: SELF_PK,
+          },
+          { pubkey: SELF_PK, name: "Same remote name", ownerPubkey: LIVE_PK },
+        ],
+        relayAgentsReady: true,
+        onOpenAgentProfile: (pubkey) => opened.push(pubkey),
+      }),
+    );
+  });
+  assert.equal(
+    Boolean(screen.queryByTestId(`relay-only-agent-${LIVE_PK}`)),
+    false,
+  );
+  for (const key of [ARCHIVED_PK, SELF_PK]) {
+    const card = screen.getByTestId(`relay-only-agent-${key}`);
+    fireEvent.click(card.querySelector("button"));
+    assert.equal(
+      card.querySelectorAll("button").length,
+      1,
+      "remote card has profile navigation only",
+    );
+    assert.doesNotMatch(card.textContent, /Start|Stop|Delete|Edit/);
+  }
+  assert.deepEqual(opened, [ARCHIVED_PK, SELF_PK]);
+});
+
+test("failed local inventory keeps relay-only classification unknown and recoverable", async () => {
+  installFailOpenIpc();
+  const retries = [];
+  await act(async () => {
+    renderSection(
+      baseProps({
+        agents: [agent()],
+        agentsError: new Error("local inventory unavailable"),
+        localInventoryReady: false,
+        relayAgents: [{ pubkey: ARCHIVED_PK, name: "Remote" }],
+        relayAgentsReady: true,
+        onRetryAgents: () => retries.push("local"),
+      }),
+    );
+  });
+  assert.equal(
+    Boolean(screen.queryByTestId(`relay-only-agent-${ARCHIVED_PK}`)),
+    false,
+  );
+  assert.match(
+    screen.getByTestId("relay-only-agents").textContent,
+    /local.*unavailable|local.*unknown/i,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry agents", exact: true }),
+  );
+  assert.deepEqual(retries, ["local"]);
+});
+
+test("relay inventory errors expose their own Retry rather than a false empty group", async () => {
+  installFailOpenIpc();
+  const retries = [];
+  await act(async () => {
+    renderSection(
+      baseProps({
+        localInventoryReady: true,
+        relayAgents: [],
+        relayAgentsReady: false,
+        relayAgentsError: new Error("relay inventory unavailable"),
+        onRetryRelayAgents: () => retries.push("relay"),
+      }),
+    );
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Retry relay agents" }));
+  assert.deepEqual(retries, ["relay"]);
+  assert.match(
+    screen.getByTestId("relay-only-agents").textContent,
+    /relay inventory unavailable/,
+  );
 });

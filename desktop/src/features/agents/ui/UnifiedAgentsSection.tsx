@@ -28,15 +28,18 @@ import type {
   AgentPersona,
   ManagedAgent,
   ManagedAgentRuntimeStatus,
+  RelayAgent,
 } from "@/shared/api/types";
 import type { ProfilePanelOpenOptions } from "@/shared/context/ProfilePanelContext";
 import { useFeedbackToasts } from "@/shared/hooks/useToastEffect";
 import { Badge } from "@/shared/ui/badge";
+import { Button } from "@/shared/ui/button";
 import {
   ProtectedBestieCardBadge,
   useProtectedBestiePubkey,
 } from "@protected-feature-components";
 import { IdentityCardSkeleton } from "@/shared/ui/identity-card-skeleton";
+import { RelayOnlyAgentsSection } from "./RelayOnlyAgentsSection";
 import { AgentIdentityCard } from "./AgentIdentityCard";
 import { AgentRuntimeAvatarControl } from "./AgentRuntimeAvatarControl";
 import { resolveAgentDefaultRuntimeId } from "./AgentRuntimeDefaultAvatar";
@@ -52,6 +55,14 @@ type UnifiedAgentsSectionProps = {
   actionNoticeMessage: string | null;
   agents: ManagedAgent[];
   agentsError: Error | null;
+  onRetryAgents: () => void;
+  onRetryPersonas: () => void;
+  relayAgents: RelayAgent[];
+  relayAgentsReady: boolean;
+  relayAgentsError: Error | null;
+  isRelayAgentsLoading: boolean;
+  localInventoryReady: boolean;
+  onRetryRelayAgents: () => void;
   isActionPending: boolean;
   isAgentsLoading: boolean;
   restartingAgentPubkey: string | null;
@@ -96,6 +107,8 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
     getAvailability,
     agents,
     agentsError,
+    onRetryAgents,
+    onRetryPersonas,
     isActionPending,
     isAgentsLoading,
     restartingAgentPubkey,
@@ -258,19 +271,43 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
         </div>
       ) : null}
 
+      <RelayOnlyAgentsSection
+        agents={agents}
+        relayAgents={props.relayAgents ?? []}
+        localInventoryReady={props.localInventoryReady}
+        relayAgentsReady={props.relayAgentsReady}
+        relayAgentsError={props.relayAgentsError}
+        isAgentsLoading={isAgentsLoading}
+        isRelayAgentsLoading={props.isRelayAgentsLoading}
+        isArchived={isArchived}
+        gridClassName={IDENTITY_CARD_GRID_CLASS}
+        getAvailability={getAvailability}
+        onOpenAgentProfile={onOpenAgentProfile}
+        onRetryAgents={onRetryAgents}
+        onRetryRelayAgents={props.onRetryRelayAgents}
+      />
+
       {agentsError ? (
-        <p
-          className={`${AGENT_CARD_COLUMN_CLASS} rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive`}
+        <div
+          role="alert"
+          className={`${AGENT_CARD_COLUMN_CLASS} min-w-0 space-y-2 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive`}
         >
-          {agentsError.message}
-        </p>
+          <p className="break-words">{agentsError.message}</p>
+          <Button variant="outline" size="sm" onClick={onRetryAgents}>
+            Retry agents
+          </Button>
+        </div>
       ) : null}
       {personasError ? (
-        <p
-          className={`${AGENT_CARD_COLUMN_CLASS} rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive`}
+        <div
+          role="alert"
+          className={`${AGENT_CARD_COLUMN_CLASS} min-w-0 space-y-2 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive`}
         >
-          {personasError.message}
-        </p>
+          <p className="break-words">{personasError.message}</p>
+          <Button variant="outline" size="sm" onClick={onRetryPersonas}>
+            Retry agent definitions
+          </Button>
+        </div>
       ) : null}
     </section>
   );

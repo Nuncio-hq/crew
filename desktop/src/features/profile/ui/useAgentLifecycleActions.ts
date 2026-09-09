@@ -8,6 +8,10 @@ import {
   stopManagedAgentWithRules,
 } from "@/features/agents/lib/managedAgentControlActions";
 import { clearActiveTurnsForAgentOnStop } from "@/features/agents/managedAgentRuntimeHooks";
+import {
+  useAgentControlScope,
+  type AgentControlNativeScope,
+} from "@/features/agents/lib/useAgentControlScope";
 import type { Channel, ManagedAgent, RelayAgent } from "@/shared/api/types";
 
 export function useAgentLifecycleActions({
@@ -20,11 +24,15 @@ export function useAgentLifecycleActions({
   channels: readonly Channel[] | undefined;
   managedAgent: ManagedAgent | undefined;
   relayAgents: readonly RelayAgent[] | undefined;
-  startManagedAgent: (pubkey: string) => Promise<unknown>;
+  startManagedAgent: (
+    input: string | ({ pubkey: string } & AgentControlNativeScope),
+  ) => Promise<unknown>;
   stopManagedAgent: (pubkey: string) => Promise<unknown>;
 }) {
+  const captureControl = useAgentControlScope(managedAgent?.pubkey ?? null);
   const handleAgentPrimaryAction = React.useCallback(async () => {
     if (!managedAgent) return;
+    const control = captureControl();
 
     try {
       if (isManagedAgentActive(managedAgent)) {
@@ -34,6 +42,7 @@ export function useAgentLifecycleActions({
           relayAgents: relayAgents ?? [],
           stopManagedAgent,
         });
+        if (!control.isCurrent()) return;
         if (managedAgent.backend.type === "local") {
           clearActiveTurnsForAgentOnStop(managedAgent.pubkey);
         }
@@ -43,20 +52,24 @@ export function useAgentLifecycleActions({
 
       await startManagedAgentWithRules({
         agent: managedAgent,
-        startManagedAgent,
+        startManagedAgent: (pubkey) =>
+          startManagedAgent({ pubkey, ...control.nativeScope() }),
       });
+      if (!control.isCurrent()) return;
       toast.success(
         managedAgent.backend.type === "provider"
           ? `Deploying ${managedAgent.name}.`
           : `Started ${managedAgent.name}.`,
       );
     } catch (error) {
+      if (!control.isCurrent()) return;
       toast.error(
         error instanceof Error ? error.message : "Agent action failed.",
       );
     }
   }, [
     channels,
+    captureControl,
     managedAgent,
     relayAgents,
     startManagedAgent,
@@ -65,21 +78,29 @@ export function useAgentLifecycleActions({
 
   const handleAgentRestart = React.useCallback(async () => {
     if (!managedAgent) return;
+    const control = captureControl();
 
     try {
+      control.nativeScope();
       await respawnManagedAgentWithRules({
         agent: managedAgent,
-        startManagedAgent,
+        startManagedAgent: (pubkey) =>
+          startManagedAgent({ pubkey, ...control.nativeScope() }),
         stopManagedAgent,
-        onStopped: () => clearActiveTurnsForAgentOnStop(managedAgent.pubkey),
+        onStopped: () => {
+          if (control.isCurrent())
+            clearActiveTurnsForAgentOnStop(managedAgent.pubkey);
+        },
       });
+      if (!control.isCurrent()) return;
       toast.success(`Restarted ${managedAgent.name}.`);
     } catch (error) {
+      if (!control.isCurrent()) return;
       toast.error(
         error instanceof Error ? error.message : "Agent restart failed.",
       );
     }
-  }, [managedAgent, startManagedAgent, stopManagedAgent]);
+  }, [captureControl, managedAgent, startManagedAgent, stopManagedAgent]);
 
   return { handleAgentPrimaryAction, handleAgentRestart };
 }

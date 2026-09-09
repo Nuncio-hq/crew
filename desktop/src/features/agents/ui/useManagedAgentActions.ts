@@ -15,6 +15,7 @@ import {
   useDeleteManagedAgentMutation,
 } from "@/features/agents/hooks";
 import { useAgentAvailabilityLookup } from "../lib/useAgentAvailability";
+import { useAgentControlScope } from "../lib/useAgentControlScope";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { invalidateChannelMembersRosters } from "@/features/channels/rosterFreshness";
@@ -37,6 +38,7 @@ import {
 
 export function useManagedAgentActions() {
   const queryClient = useQueryClient();
+  const captureControl = useAgentControlScope();
   const { globalConfig } = useGlobalAgentConfig();
   const relayAgentsQuery = useRelayAgentsQuery();
   const managedAgentsQuery = useManagedAgentsQuery();
@@ -55,9 +57,10 @@ export function useManagedAgentActions() {
     ReadonlySet<string>
   >(() => new Set());
   const startingPersonaIdsRef = React.useRef(new Set<string>());
-  const [restartingAgentPubkey, setRestartingAgentPubkey] = React.useState<
-    string | null
-  >(null);
+  const [restartOperation, setRestartOperation] = React.useState<{
+    pubkey: string;
+    control: ReturnType<typeof captureControl>;
+  } | null>(null);
   const [logAgentPubkey, setLogAgentPubkey] = React.useState<string | null>(
     null,
   );
@@ -88,6 +91,15 @@ export function useManagedAgentActions() {
       }),
     [managedAgentsQuery.data],
   );
+  const currentAgents = React.useRef(managedAgents);
+  currentAgents.current = managedAgents;
+  const restartingAgentPubkey = restartOperation?.control.isCurrent()
+    ? restartOperation.pubkey
+    : null;
+  const captureAgentControl = (pubkey: string) =>
+    captureControl(() =>
+      currentAgents.current.some((agent) => agent.pubkey === pubkey),
+    );
   // Observer ingestion is owner-global (useAgentObserverIngestion in
   // AppShell); this hook only reads derived state.
 
@@ -97,8 +109,14 @@ export function useManagedAgentActions() {
   );
 
   const managedPubkeyList = React.useMemo(
-    () => managedAgents.map((agent) => agent.pubkey),
-    [managedAgents],
+    () => [
+      ...new Set(
+        [...managedAgents, ...(relayAgentsQuery.data ?? [])].map((agent) =>
+          normalizePubkey(agent.pubkey),
+        ),
+      ),
+    ],
+    [managedAgents, relayAgentsQuery.data],
   );
 
   const { query: managedPresenceQuery, getAvailability } =
@@ -161,15 +179,21 @@ export function useManagedAgentActions() {
   }
 
   async function handleStart(pubkey: string) {
+    const control = captureAgentControl(pubkey);
     clearFeedback();
     try {
       const agent = managedAgents.find((c) => c.pubkey === pubkey);
       if (!agent) return;
       await startManagedAgentWithRules({
         agent,
-        startManagedAgent: startMutation.mutateAsync,
+        startManagedAgent: (target) =>
+          startMutation.mutateAsync({
+            pubkey: target,
+            ...control.nativeScope(),
+          }),
       });
     } catch (error) {
+      if (!control.isCurrent()) return;
       setActionErrorMessage(
         error instanceof Error ? error.message : "Failed to start agent.",
       );
@@ -178,8 +202,9 @@ export function useManagedAgentActions() {
 
   async function handleRestart(pubkey: string) {
     if (restartingAgentPubkey) return;
+    const control = captureAgentControl(pubkey);
     clearFeedback();
-    setRestartingAgentPubkey(pubkey);
+    setRestartOperation({ pubkey, control });
     try {
       const agent = managedAgents.find(
         (candidate) => candidate.pubkey === pubkey,
@@ -187,16 +212,29 @@ export function useManagedAgentActions() {
       if (!agent) return;
       await respawnManagedAgentWithRules({
         agent,
-        startManagedAgent: startMutation.mutateAsync,
-        stopManagedAgent: stopMutation.mutateAsync,
-        onStopped: () => clearActiveTurnsForAgentOnStop(agent.pubkey),
+        startManagedAgent: (target) =>
+          startMutation.mutateAsync({
+            pubkey: target,
+            ...control.nativeScope(),
+          }),
+        stopManagedAgent: (target) => {
+          control.nativeScope();
+          return stopMutation.mutateAsync(target);
+        },
+        onStopped: () => {
+          if (control.isCurrent()) clearActiveTurnsForAgentOnStop(agent.pubkey);
+        },
       });
     } catch (error) {
+      if (!control.isCurrent()) return;
       setActionErrorMessage(
         error instanceof Error ? error.message : "Failed to restart agent.",
       );
     } finally {
-      setRestartingAgentPubkey(null);
+      // Clear only this operation; a new scope may already own another restart.
+      setRestartOperation((current) =>
+        current?.control === control ? null : current,
+      );
     }
   }
 
@@ -420,10 +458,11 @@ export function useManagedAgentActions() {
     stopMutation.isPending ||
     startOnLaunchMutation.isPending ||
     deleteMutation.isPending;
-  const startingAgentPubkey =
-    startMutation.isPending && typeof startMutation.variables === "string"
+  const startingAgentPubkey = startMutation.isPending
+    ? typeof startMutation.variables === "string"
       ? startMutation.variables
-      : null;
+      : (startMutation.variables?.pubkey ?? null)
+    : null;
 
   return {
     relayAgentsQuery,

@@ -29,6 +29,7 @@ import {
   useAcpRuntimesQueryForced,
   useBakedBuildEnvQuery,
 } from "@/features/agents/hooks";
+import { isAgentDirectoryReady } from "../lib/agentAutocompleteEligibility";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { Button } from "@/shared/ui/button";
@@ -245,6 +246,20 @@ export function AgentsView() {
               actionErrorMessage={agents.actionErrorMessage}
               actionNoticeMessage={agents.actionNoticeMessage}
               agents={agents.managedAgents}
+              relayAgents={agents.relayAgentsQuery.data ?? []}
+              relayAgentsReady={isAgentDirectoryReady(agents.relayAgentsQuery)}
+              relayAgentsError={
+                agents.relayAgentsQuery.error instanceof Error
+                  ? agents.relayAgentsQuery.error
+                  : null
+              }
+              isRelayAgentsLoading={agents.relayAgentsQuery.isLoading}
+              localInventoryReady={isAgentDirectoryReady(
+                agents.managedAgentsQuery,
+              )}
+              onRetryRelayAgents={agents.refetchRelayAgents}
+              onRetryAgents={agents.refetchManagedAgents}
+              onRetryPersonas={() => void personas.personasQuery.refetch()}
               agentsError={
                 agents.managedAgentsQuery.error instanceof Error
                   ? agents.managedAgentsQuery.error
