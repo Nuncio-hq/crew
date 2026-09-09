@@ -1669,6 +1669,32 @@ fn apply_command_to_state(state: &mut BgState, cmd: RelayCommand) {
 /// `Shutdown` and `Reconnect` are handled by the caller.
 fn retain_failed_command_intent(state: &mut BgState, cmd: RelayCommand) {
     match cmd {
+        RelayCommand::Subscribe {
+            channel_id,
+            filter,
+            replay_since,
+        } => {
+            apply_command_to_state(
+                state,
+                RelayCommand::Subscribe {
+                    channel_id,
+                    filter,
+                    replay_since,
+                },
+            );
+            // A command interrupted after it left the queue has not reached
+            // the relay. Keep it in the bounded retry drain as well as in the
+            // authoritative subscription intent.
+            state.resubscribe_retry.insert(channel_id);
+        }
+        RelayCommand::SubscribeMembership => {
+            apply_command_to_state(state, RelayCommand::SubscribeMembership);
+            state.membership_resub_needed = true;
+        }
+        RelayCommand::SubscribeObserverControls => {
+            apply_command_to_state(state, RelayCommand::SubscribeObserverControls);
+            state.observer_resub_needed = true;
+        }
         RelayCommand::PublishEvent { event }
             if event.kind.as_u16() as u32 == KIND_AGENT_OBSERVER_FRAME =>
         {
@@ -3308,8 +3334,20 @@ async fn drain_commands(
         Some(deadline) => tokio::time::timeout_at(deadline, operation).await.ok(),
         None => Some(operation.await),
     };
-    outcome
-        .unwrap_or_else(|| retain_interrupted_recovery(state, current_command, deferred_commands))
+    match outcome {
+        Some(outcome) => outcome,
+        None => {
+            // The recovery deadline is an episode bound, not a reason to
+            // poison a socket that is already authenticated and writable. The
+            // interrupted command/deferred intent is retained above; return a
+            // successful live-drain outcome so finish_reconnect clears the
+            // episode and the normal pacing drain delivers queued REQs/events.
+            match retain_interrupted_recovery(state, current_command, deferred_commands) {
+                ReconnectOutcome::Shutdown => ReconnectOutcome::Shutdown,
+                ReconnectOutcome::Failed | ReconnectOutcome::Ok => ReconnectOutcome::Ok,
+            }
+        }
+    }
 }
 
 async fn drain_commands_tracked(

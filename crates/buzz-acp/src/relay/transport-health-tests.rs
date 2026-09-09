@@ -536,18 +536,49 @@ async fn final_reconnect_drain_cannot_outlive_deadline_or_lose_inflight_observer
     let outcome =
         transport_reconnect::finish_reconnect(&mut ws, &mut cmd_rx, &mut state, "agent").await;
     assert!(
-        matches!(outcome, ReconnectOutcome::Failed),
-        "post-replay sends are still part of the health episode"
+        matches!(outcome, ReconnectOutcome::Ok),
+        "a deadline-interrupted live drain must recover and defer its intent"
     );
     assert!(started.elapsed() <= Duration::from_millis(50));
     assert!(
-        state.health.slow(),
-        "an expired final drain must not reset health"
+        !state.health.slow(),
+        "an expired final drain on a live socket must not poison health"
     );
     assert!(state
         .gated_observer_pending
         .iter()
         .any(|event| event.id == event_id));
+}
+
+#[tokio::test]
+async fn interrupted_subscription_command_is_parked_for_live_retry() {
+    let (mut client, mut server) = super::tests::test_ws_pair().await;
+    let mut state = BgState::new();
+    let channel_id = Uuid::new_v4();
+    retain_failed_command_intent(
+        &mut state,
+        RelayCommand::Subscribe {
+            channel_id,
+            filter: ChannelFilter {
+                kinds: Some(vec![9]),
+                require_mention: false,
+            },
+            replay_since: Some(1_000),
+        },
+    );
+
+    assert!(state.active_subscriptions.contains_key(&channel_id));
+    assert!(
+        state.resubscribe_retry.contains(&channel_id),
+        "an interrupted subscribe must be delivered by the bounded live retry drain"
+    );
+    assert_eq!(
+        drain_resubscribe_retry(&mut client, &mut state, "agent", 1).await,
+        1
+    );
+    let frame = super::tests::next_test_frame(&mut server).await;
+    assert_eq!(frame[0], "REQ");
+    assert_eq!(frame[1], channel_sub_id(channel_id));
 }
 
 #[tokio::test(start_paused = true)]
