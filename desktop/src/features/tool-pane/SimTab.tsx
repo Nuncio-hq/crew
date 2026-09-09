@@ -18,9 +18,7 @@ import {
   simBoot,
   simDelete,
   simErase,
-  simEnsureDevice,
   simKeep,
-  simSetPaneVisible,
 } from "./governorClient";
 import { invokeGovernor, useGovernorStatus } from "./governorStore";
 import { captureSimPng, postCaptureEvidence } from "./postEvidenceCapture";
@@ -32,6 +30,12 @@ import {
 import { DrivingBanner } from "./DrivingBanner";
 import { GhostCursorOverlay } from "./GhostCursorOverlay";
 import type { CanvasTooling, SimHolding, SimLifecycle } from "./types";
+
+import {
+  NativeToolActivation,
+  useThreadNativeActivation,
+  useSimNativePresentation,
+} from "./threadNativeActivation";
 
 const ENTER_EASE = [0.32, 0.72, 0, 1] as const;
 
@@ -46,6 +50,7 @@ export function SimTab({
   threadRootId?: string | null;
   tooling: CanvasTooling | null;
 }) {
+  const activation = useThreadNativeActivation(channelId, threadRootId);
   const status = useGovernorStatus();
   const control = useAgentControlUi();
   const lease = leaseFor(control, channelId, "sim");
@@ -56,27 +61,15 @@ export function SimTab({
       ? "bridge-missing"
       : (holding?.lifecycle ?? "absent");
 
-  React.useEffect(() => {
-    void simEnsureDevice({
-      channelId,
-      channelName,
-      deviceType: tooling?.simulator?.deviceType,
-      runtime: tooling?.simulator?.runtime,
-    }).catch(() => undefined);
-  }, [
+  useSimNativePresentation({
     channelId,
     channelName,
-    tooling?.simulator?.deviceType,
-    tooling?.simulator?.runtime,
-  ]);
-
-  React.useEffect(() => {
-    if (face === "bridge-missing" || face === "absent") return;
-    void simSetPaneVisible(channelId, true).catch(() => undefined);
-    return () => {
-      void simSetPaneVisible(channelId, false).catch(() => undefined);
-    };
-  }, [channelId, face]);
+    threadRootId,
+    tooling,
+    face,
+    active: activation.active,
+    reportError: activation.reportError,
+  });
 
   return (
     <div
@@ -98,7 +91,15 @@ export function SimTab({
       />
       <SimStatusLine holding={holding} onOpenSettings={() => undefined} />
       <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-4">
-        {face === "bridge-missing" ? (
+        {activation.error ? <p role="alert">{activation.error}</p> : null}
+        {!activation.active &&
+        face !== "absent" &&
+        face !== "bridge-missing" ? (
+          <NativeToolActivation
+            name="Simulator"
+            onActivate={activation.activate}
+          />
+        ) : face === "bridge-missing" ? (
           <BridgeMissingCard
             hint={bridge.installHint}
             message={bridge.message}

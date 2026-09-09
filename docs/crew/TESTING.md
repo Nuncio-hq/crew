@@ -562,3 +562,59 @@ draft/scroll and returns focus without closing the outer thread. Observe zero
 native activation commands from selection/restoration, while existing hide and
 sim-visible-false cleanup still executes. Preserve channel-to-channel remount
 compatibility. Mock checks do not satisfy native #348/#357 evidence.
+
+The #354 control foundation's `crew_thread_cancel_tests` Rust filter calls the
+real cancel handler with `AgentPool`, `EventQueue` and `ObserverHandle`. It covers
+stale targets with queued/replacement work, wrong channel/conversation, malformed
+explicit target presence, a closed signal receiver, accepted-only lease release,
+exact success and absent-turn legacy cancellation. The injected release callback
+observes the handler's side-effect decision; it does not prove native OS cleanup.
+Run `owner_control_command_tests` for adjacent queue/control compatibility.
+
+`useChannelUserInput.actions.test.mjs` mounts the real hook with existing durable
+hydration and authorization logic, stubbing relay/identity/IPC boundaries. It
+covers same-tick duplicate publication, current failure/retry, stale relay/viewer
+callbacks, resolved-request replay, immediate ownership revocation and concurrent
+question completion. `userInputAnswerGate.test.mjs` proves bounded admission has
+a visible error and recovers after authoritative reconciliation. These are scoped
+UI publication checks; the existing elicitation durable-claim tests establish the
+separate native claim contract. Selected-run controls additionally use the composed Activity tests below. Strict
+Steer and native workflow evidence remain required before #354 is complete.
+
+The first #354 slice adds production-bound `threadToolPaneSelection`,
+`threadToolPaneInvalidation`, `threadToolPanePresentation`,
+`threadPaneChatPreservation`, `threadNativeActivation`, and `toolPaneKeyboard`
+Node suites under `desktop/src/features/tool-pane/`. They exercise the real store,
+confirmed refresh seam, components and shared Radix dialog, stubbing native IPC
+and unrelated dependencies. `threadPlansPlacement` binds the conversation body;
+`threadTranscriptLiveness` covers optional exact-conversation live projection.
+Existing declared-plan and anchored-scroll suites remain the parser/generation
+and paused-reader contracts. The registered `companyos-thread-workspace.spec.ts`
+adds mock-bridge workflow coverage; running it requires the owned E2E build slot.
+Its Tools entry cases cover both side-thread and focus-thread modes. Deferred
+native promises cover old Browser bounds/hide and simulator visibility failures
+after a newer presentation, plus visible current-attempt failures and retry.
+These presentation checks complement the second-slice controls tests below;
+none replace final `just ci` or real installed staging screenshots.
+
+
+#354 scoped Stop native source tests live in
+`commands/scoped_observer_control_tests.rs`. They bind the actual command helper,
+native owner capture, shared transport, and bounded loopback HTTP receiver.
+The required cases are zero connections on stale scope/malformed target and
+identity import ABA during admission; captured event/NIP-98 owner and decrypted
+exact target on acceptance; unknown on mismatched ACK/refusal/disconnect; and
+preserved accepted outcome when identity changes after send. Native execution
+remains pending its allocated build slot; source registration is not RED/GREEN
+or installed-runtime evidence. The shared transport's existing tests also remain
+required and unchanged.
+
+
+`ThreadSelectedRunControls.test.mjs` binds the real component and correlated
+outcome helper, including same-tick duplicate claims, ownership refresh versus
+revocation, exact turn/request results, stale completion, and unknown delivery.
+`ThreadActivityRunControls.test.mjs` composes the actual Activity tab, run picker,
+selected control and outcome helper with external store/native boundaries mocked.
+It requires explicit choice, exact native token/target publication, no successor
+retarget, and fail-closed native owner mismatch. Node pass counts and falsifiable
+baseline evidence belong in the task; these mocks do not exercise native IPC.

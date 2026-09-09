@@ -375,14 +375,18 @@ test.describe("GitHub PR hub in thread focus (#193)", () => {
       .screenshot({ path: `${SHOTS}/09-tab-changes.png` });
 
     await page.setViewportSize({ width: 720, height: 720 });
-    await expect(page.getByTestId("thread-forge-pane-toggle")).toBeVisible();
-    await page.getByRole("button", { name: "Chat" }).click();
+    await expect(
+      page.getByRole("dialog", { name: "Thread tools" }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Close Tools", exact: true })
+      .click();
     await expect(
       page.getByTestId("channel-tool-pane").getByTestId("thread-pr-hub"),
     ).toBeHidden();
     await page
-      .getByTestId("thread-forge-pane-toggle")
-      .getByRole("button", { name: "PR" })
+      .getByTestId("message-thread-panel")
+      .getByTestId("thread-forge-summary-card")
       .click();
     await expect(
       page.getByTestId("channel-tool-pane").getByTestId("thread-pr-hub"),

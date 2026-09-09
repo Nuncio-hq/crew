@@ -1,8 +1,10 @@
 import type { AuxiliaryPanelClose } from "@/shared/layout/auxiliaryPanelContext";
 import * as React from "react";
+import { ThreadFocusForgeSplit } from "@/features/messages/ui/threadPrHub/ThreadFocusForgeSplit";
 
 import { FocusThreadDrawer } from "@/features/channels/ui/FocusThreadDrawer";
 import { usePresenceCoverage } from "@/features/channels/ui/useFocusDrawerPresence";
+import { useBindThreadToolPaneView } from "@/features/tool-pane/useThreadToolPaneScope";
 
 type ThreadPanelSurfaceProps = {
   channelName: string;
@@ -13,6 +15,8 @@ type ThreadPanelSurfaceProps = {
   covered: boolean;
   hasActiveEdit: boolean;
   isFocusDrawer: boolean;
+  /** Standalone thread views need the same tool host as the focus drawer. */
+  isStandalone?: boolean;
   onClose: () => void;
 };
 
@@ -30,10 +34,12 @@ export const ThreadPanelSurface = React.forwardRef<
     covered,
     hasActiveEdit,
     isFocusDrawer,
+    isStandalone = false,
     onClose,
   },
   ref,
 ) {
+  useBindThreadToolPaneView(channelId, threadRootId);
   return (
     <div
       aria-hidden={covered ? true : undefined}
@@ -54,6 +60,14 @@ export const ThreadPanelSurface = React.forwardRef<
         >
           {children}
         </FocusThreadDrawer>
+      ) : isStandalone ? (
+        <ThreadFocusForgeSplit
+          channelId={channelId ?? null}
+          channelName={channelName}
+          threadRootId={threadRootId ?? null}
+        >
+          {children}
+        </ThreadFocusForgeSplit>
       ) : (
         children
       )}

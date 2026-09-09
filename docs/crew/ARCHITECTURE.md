@@ -429,3 +429,68 @@ remain authoritative. Preserve `browserClose`/sim visibility cleanup; fence
 `browserOpen` and `simEnsureDevice` mount activation. The existing channel-only
 popout has independent window state and remains outside #354; governor resource
 identity/leases remain shared. D-078 records the bounded approved decision.
+
+The #354 control foundation extends the existing `cancel_turn` handler through
+`crates/buzz-acp/src/crew_thread_cancel.rs`. An explicit `turnId` requires an
+exact routing channel, conversation and current turn match; malformed or missing
+matches cannot drain queued work or release an instrument lease. A closed signal
+receiver is not a sent cancellation. Omitting `turnId` retains the existing
+conversation cancel/queue-drain behavior. This does not stop the agent process.
+
+`useChannelUserInput` retains the existing durable request validation and native
+answer publisher. Its bounded ephemeral publication gate prevents same-view
+duplicate answers and fences completion by relay, viewer, channel and ownership
+generation. Publication failure keeps the request available with its error;
+success waits for the existing durable resolution/claim semantics. Native
+`QuestionRuntime` remains the authority for answer-versus-cancel claims. The
+source-stage selected-run Stop UI is described below. Strict Steer remains
+unimplemented: the existing ordinary-message `_session/steering` transport can
+start a new turn and cannot promise rejection of a stale selected run.
+
+The #354 first slice implements the presentation in those seams: explicit Tools
+opens Context, Activity reads the existing exact-conversation observer archive/live
+merge, and Agent plans renders the unchanged D-056 projection in its own tab.
+Recap remains visibly Off/unavailable. Historical Activity remains read-only;
+the second slice adds explicitly selected current-run Stop and the scoped
+Need-you publication foundation. Strict Steer and additional workspace
+instruments remain unavailable. A retained plan without retained observer events displays unavailable
+transcript history rather than fabricated activity.
+
+Selection is an in-memory LRU of at most 128 canonical relay/viewer/channel/root
+keys. Navigation closes the presentation; explicit return restores only selection.
+Community reset and confirmed channel/root removal invalidate it, while failed
+channel queries preserve it. Narrow presentation uses the shared modal dialog and
+the existing drawer Escape gate; the conversation DOM remains mounted. Browser
+and existing simulator presentation require explicit activation per mounted thread
+view, including after a scope round trip. Native cleanup remains channel-owned.
+Native presentation attempts fence late errors by generation; failed hide cleanup
+stays visible in a channel-specific notice without disabling a newer activation.
+The channel tool pane retains its mount/popout compatibility. Unit and mock-bridge
+coverage establish view behavior only; installed staging evidence is still required
+by #348/#357 before #354 is complete.
+
+
+#354 selected-run Stop extends the existing encrypted observer control frame.
+The source-stage `send_scoped_observer_control` command captures the native
+owner scope and requires the caller's exact token, including identity/workspace
+generations. It uses the shared `OwnerOperationTransport` with captured keys and
+origin, and passes a lazy `assert_current` check that runs after admission.
+It neither adds a journal nor duplicates the transport. Native preparation or
+admission rejection is `not_attempted`; an exact positive relay acknowledgment
+is `accepted`; all uncertain sent outcomes remain `unknown`. Relay acceptance is
+not a harness Stop acknowledgment. The existing owner-authorized harness handler
+still verifies the exact channel/conversation/turn target. A scope change after
+send cannot retroactively turn that attempt into `not_attempted`.
+
+
+The source-stage Activity run picker uses existing live observer session/turn
+identities and captures the native owner token before enabling selection.
+No run is selected implicitly. Ending or replacing a selected run retains its
+identity as unavailable rather than targeting its successor. Stop requires the
+same current channel/conversation/session/turn and target ownership at click;
+ordinary ownership refetches or unrelated membership changes preserve pending
+claims. Revocation retires them. Results correlate agent, turn and request ID,
+and stale view completion cannot settle a newer request. Only a confirmed
+`not_attempted` publication unlocks retry; an unknown send remains unconfirmed.
+The transcript remains mounted alongside these controls. This source composition
+has Node proof; native batch, full CI, review and staging acceptance remain gates.

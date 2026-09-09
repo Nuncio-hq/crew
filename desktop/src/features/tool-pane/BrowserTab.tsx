@@ -17,14 +17,11 @@ import { cn } from "@/shared/lib/cn";
 
 import {
   browserBack,
-  browserClose,
   browserDevtools,
   browserForward,
-  browserOpen,
   browserReload,
   formatCountdown,
   getCanvasTooling,
-  setBrowserBounds,
   setCanvasTooling,
   startDevServer,
 } from "./governorClient";
@@ -45,6 +42,12 @@ import {
   type DevServerHolding,
 } from "./types";
 
+import {
+  NativeToolActivation,
+  useThreadNativeActivation,
+  useBrowserNativePreview,
+} from "./threadNativeActivation";
+
 type SubjectKind = "worktree" | "checkout" | "custom";
 
 export function BrowserTab({
@@ -60,6 +63,7 @@ export function BrowserTab({
   worktreePath?: string | null;
   checkoutPath?: string | null;
 }) {
+  const activation = useThreadNativeActivation(channelId, threadRootId);
   const status = useGovernorStatus();
   const control = useAgentControlUi();
   const lease = leaseFor(control, channelId, "browser");
@@ -93,29 +97,13 @@ export function BrowserTab({
     checkoutPath,
   });
 
-  React.useEffect(() => {
-    // No setup wall (#236): the webview opens for any resolved URL, whether
-    // it came from a Custom URL or a running Crew-owned dev server. Canvas
-    // `tooling.devServer` is never a precondition for navigating.
-    if (!url) return;
-    void browserOpen(channelId, url).catch(() => undefined);
-    return () => {
-      void browserClose(channelId).catch(() => undefined);
-    };
-  }, [channelId, url]);
-
-  React.useEffect(() => {
-    const node = frameRef.current;
-    if (!node) return;
-    const sync = () => {
-      const rect = node.getBoundingClientRect();
-      void setBrowserBounds(channelId, rect.x, rect.y, rect.width, rect.height);
-    };
-    const observer = new ResizeObserver(sync);
-    observer.observe(node);
-    sync();
-    return () => observer.disconnect();
-  }, [channelId]);
+  useBrowserNativePreview({
+    channelId,
+    url,
+    active: activation.active,
+    frameRef,
+    reportError: activation.reportError,
+  });
 
   return (
     <div
@@ -173,14 +161,22 @@ export function BrowserTab({
         className="flex min-h-0 flex-1 flex-col items-center justify-center p-3"
         ref={frameRef}
       >
-        <BrowserPreview
-          backend={status.childWebviewAvailable ? "child" : "window"}
-          url={url}
-          width={
-            VIEWPORT_PRESETS.find((preset) => preset.id === viewport)?.width ??
-            1280
-          }
-        />
+        {activation.error ? <p role="alert">{activation.error}</p> : null}
+        {!activation.active ? (
+          <NativeToolActivation
+            name="Browser"
+            onActivate={activation.activate}
+          />
+        ) : (
+          <BrowserPreview
+            backend={status.childWebviewAvailable ? "child" : "window"}
+            url={url}
+            width={
+              VIEWPORT_PRESETS.find((preset) => preset.id === viewport)
+                ?.width ?? 1280
+            }
+          />
+        )}
       </div>
       {server ? (
         <ServerStrip

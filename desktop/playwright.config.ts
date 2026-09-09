@@ -129,6 +129,7 @@ export default defineConfig({
         "**/thread-reply-anchor-roleplay.spec.ts",
         "**/threadpane-ultrawide.spec.ts",
         "**/thread-focus-mode.spec.ts",
+        "**/companyos-thread-workspace.spec.ts",
         "**/responsive-matrix.spec.ts",
         "**/thread-orientation.spec.ts",
         "**/animated-avatar.spec.ts",

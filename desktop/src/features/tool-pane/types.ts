@@ -13,7 +13,13 @@ export type DevServerFace =
   | "portConflict"
   | "setup";
 
-export type ToolPaneTab = "pr" | "browser" | "sim";
+export type ToolPaneTab =
+  | "context"
+  | "activity"
+  | "plans"
+  | "pr"
+  | "browser"
+  | "sim";
 
 export type BridgeStatus = {
   availability: "available" | "missing" | "failed" | string;

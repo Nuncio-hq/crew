@@ -1,11 +1,13 @@
 import * as React from "react";
 
 import type { TimelineMessage } from "@/features/messages/types";
+import type { UserProfileLookup } from "@/features/profile/lib/identity";
 
 export type ThreadForgeViewContext = {
   channelId: string | null;
   rootEventId: string | null;
   messages: TimelineMessage[];
+  profiles?: UserProfileLookup;
 };
 
 let context: ThreadForgeViewContext | null = null;

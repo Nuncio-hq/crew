@@ -214,9 +214,10 @@ export function FocusThreadDrawer({
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const previousFocusRef = React.useRef<HTMLElement | null>(null);
   const viewportRightInsetPx = useViewportRightInsetPx(overlayRef);
+  const [toolsOwnEscape, setToolsOwnEscape] = React.useState(false);
 
   React.useEffect(() => {
-    if (!escapeEnabled) return;
+    if (!escapeEnabled || toolsOwnEscape) return;
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
@@ -237,7 +238,7 @@ export function FocusThreadDrawer({
     return () => {
       window.removeEventListener("keydown", handleEscape, { capture: true });
     };
-  }, [escapeEnabled, hasActiveEdit, onClose]);
+  }, [escapeEnabled, hasActiveEdit, onClose, toolsOwnEscape]);
 
   React.useLayoutEffect(() => {
     previousFocusRef.current =
@@ -329,6 +330,7 @@ export function FocusThreadDrawer({
             channelId={channelId ?? null}
             channelName={channelName}
             threadRootId={threadRootId ?? null}
+            onOverlayOpenChange={setToolsOwnEscape}
           >
             <AuxiliaryPanelCloseOverrideContext.Provider
               value={panelClose ?? null}
