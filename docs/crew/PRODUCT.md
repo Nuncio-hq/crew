@@ -347,7 +347,7 @@ independent generator settings and editable draft → explicit Start thread →
 Back to Wiki. #361–#367 own backend implementation and proof; mocked source,
 answers and timers are not evidence of those services.
 
-Preserve company kind 30023 knowledge. The coordinator proposes a Company Wiki
+Preserve company kind 30023 knowledge. The coordinator approved a Company Wiki
 entry in the workspace menu opening existing `/wiki` / `WikiLibraryScreen`.
-That compatibility placement needs review before #349 removes the old sole
-global Wiki affordance. It does not create another knowledge store.
+This approval covers the concrete compatibility entry, not a new founder claim.
+#349 must verify the replacement before removing the old sole global Wiki affordance. It does not create another knowledge store.

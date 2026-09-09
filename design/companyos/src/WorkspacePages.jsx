@@ -42,7 +42,7 @@ export function WorkspacePages({
         {screen === "company-wiki" && (
           <>
             <p className="quiet-note">
-              Coordinator-proposed compatibility entry · sample library.
+              Coordinator-approved compatibility entry · sample library.
               Existing company knowledge stays available separately from Project
               Wiki.
             </p>

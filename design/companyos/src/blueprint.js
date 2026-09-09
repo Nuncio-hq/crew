@@ -360,7 +360,7 @@ export const handoffContract = [
     source:
       "Founder messages after Wiki v0.9 walkthrough, 2026-09-09, recorded in #344: “tốt rồim, tạo issues mới đi”; “wiki và cả project nhé nếu chưa tạo”; subsequent implementation instruction.",
     contract:
-      "Workspace top: Inbox, Agents, Workflows. Wiki is inside each Project; no global Wiki or Channels rows. Workspace menu → Browse channels stays reachable even if every shared channel is linked to a Project. Preserve all joined-channel reachability when project metadata is missing/inaccessible, membership/history/roles/contact scope and many-to-many relationships. Company handbook replacement is the separate coordinator proposal below.",
+      "Workspace top: Inbox, Agents, Workflows. Wiki is inside each Project; no global Wiki or Channels rows. Workspace menu → Browse channels stays reachable even if every shared channel is linked to a Project. Preserve all joined-channel reachability when project metadata is missing/inaccessible, membership/history/roles/contact scope and many-to-many relationships. Company handbook replacement is the separate coordinator-approved compatibility entry below.",
     owner: "#349",
   },
   {
@@ -558,7 +558,7 @@ export const handoffContract = [
 
 scenarios.push({
   id: "company-wiki",
-  label: "Company Wiki · compatibility proposal",
+  label: "Company Wiki · compatibility entry",
   screen: "company-wiki",
   status: "idle",
   tools: false,
@@ -568,8 +568,8 @@ scenarios.push({
     "Open the sample company handbook, then return to its library.",
   ],
   expected: [
-    "Coordinator-proposed compatibility entry; not founder-approved placement.",
+    "Coordinator-approved compatibility entry; not a new founder claim.",
     "Production wiring reuses goWiki() /wiki and WikiLibraryScreen; preview stays simulated.",
   ],
-  seam: "Existing WikiLibraryScreen Company Wiki card and kind 30023 pages; #349 owns production wiring after coordinator review.",
+  seam: "Existing WikiLibraryScreen Company Wiki card and kind 30023 pages; #349 owns production wiring and replacement verification.",
 });

@@ -301,9 +301,8 @@ final result: passed
 
 ## v0.9 — Project Wiki (2026-09-09)
 
-Source visual truth: the founder-selected Devin Wiki reading page at
-`https://app.devin.ai/org/oscarlehuu/wiki/Nuncio-hq/crew/page/4.6?branch=main`,
-recaptured at `/tmp/crew-wiki-prototype/qa/devin-reference.png`, plus the existing
+Source visual truth: the founder-selected private Devin Wiki reading page
+(private URL and capture excluded from this public handoff), plus the existing
 Crew prototype for palette, type, sidebar and dialog conventions. This is an
 adaptation of the Wiki interaction model, not a pixel clone of Devin's chrome
 or its generated prose. Crew keeps its global navigation and introduces a

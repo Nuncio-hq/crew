@@ -59,9 +59,9 @@ in `index.html#authority`. Accepted flow is distinct from unproved backend
 semantics: G-PROJECT, G-PUB, G-DURABLE, G-GEN and G-ASK-PROOF remain explicit,
 alongside the existing thread/recap/contact/acceptance gates. A working sample
 button is not production evidence. The **Company Wiki** workspace-menu entry
-is a coordinator-proposed compatibility choice for existing `/wiki` /
-`WikiLibraryScreen` / kind 30023 pages, pending coordinator review before the
-old sole global entry is removed. The sample library does not query real pages.
+is a coordinator-approved compatibility choice for existing `/wiki` /
+`WikiLibraryScreen` / kind 30023 pages. #349 must verify the production replacement
+before the old sole global entry is removed. This is not a new founder claim. The sample library does not query real pages.
 
 ## Working rules for implementation agents
 
@@ -202,8 +202,9 @@ issues pin that immutable commit after review/merge, not a localhost URL.
 
 Public source excludes the two original private captures, dependencies, dist,
 `.qa`, credentials and runtime state. Links use the safe mock reference instead.
-Stage 0 changes source/docs only; PR #347 committed topology hunks and unrelated
-dirty HERMES/STATE/templates are not imported. Only PRODUCT and DECISIONS changed
+Stage 0 changes source/docs only. PR #347 topology policy is inherited from
+merged main `b90bbbf828e77e0d0d8e0b78bd86d8c6860fd2f9`, not reintroduced as
+Stage 0 changes. Unrelated dirty HERMES/STATE/templates are not imported. Only PRODUCT and DECISIONS changed
 among the previously reviewed docs since the first v0.8 snapshot.
 
 Current delivery ownership is #344, #348–#357 and #361–#367. Related source

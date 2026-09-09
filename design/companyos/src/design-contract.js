@@ -32,7 +32,7 @@ export const sections = [
       "Tìm toàn văn → đọc → hỏi agent hiện có → xem nguồn → Create task draft → chọn channel/agent và sửa prompt → Start thread. Lịch sử riêng và bản nháp giữ trong phiên preview; thread có Back to Wiki.",
     boundary:
       "Hỏi không tự tạo task, không đăng channel và không chạy lại generator. Chỉ Start thread chia sẻ prompt + references đã duyệt. Runtime Wiki là phiên tạm riêng, độc lập Recap; Hermes chọn profile.",
-    open: "Prototype dùng bài mẫu và câu trả lời chuẩn bị trước; không có LLM/indexing thật. Company handbook không bị xóa; menu → Company Wiki là compatibility proposal của coordinator, chờ review concrete diff. Private-history ACL/persistence và dispatch thật chưa được nối.",
+    open: "Prototype dùng bài mẫu và câu trả lời chuẩn bị trước; không có LLM/indexing thật. Company handbook không bị xóa; menu → Company Wiki là compatibility entry đã được coordinator duyệt concrete diff; không phải founder duyệt tính năng mới. Private-history ACL/persistence và dispatch thật chưa được nối.",
     seam: "Tái dùng crew-wiki, WikiPageView/WikiTocRail/WikiSourceFiles, wikiEvents và useWikiEventsQuery. Không tạo knowledge database song song. wikiAsk hiện là placeholder: cần QA với source snapshot, citations, cancel/retry và handoff vào channel/thread hiện hữu.",
   },
   {
@@ -374,7 +374,7 @@ export const backlogAudit = [
     title: "#345 và PR #347 — không nhập vào redesign",
     url: "https://github.com/Nuncio-hq/crew/issues/345",
     action:
-      "#345 là thảo luận độ sâu fork delta. #347 là PR docs đang mở; Source snapshot came from its HEAD with dirty CompanyOS source; Stage 0 excludes its committed topology hunks. Review/reconcile docs trước khi tạo PR implementation từ main.",
+      "#345 là thảo luận độ sâu fork delta. #347 was open at the historical audit; its corrected docs now come from merged main b90bbbf. Stage 0 does not duplicate those topology hunks or import unrelated founder dirty files.",
   },
   {
     title: "Closed issues là lịch sử, không phải backlog mới",
@@ -408,5 +408,5 @@ feasibility.push({
   remaining:
     "#362 coherent snapshot/retention and shared G-DURABLE; #363 installed-runtime immutable-source generation; #364 full-body scoped NIP-50 and immutable local blob reads; #365 private existing-agent proof; #366 real Ask/history; #367 durable explicit dispatch and private-safe backlink.",
   limit:
-    "TOC-last alone cannot preserve replaced old pages. No generic Wiki/project outbox exists. Local file reader uses current bytes; copied source excerpts prove only this reference. Mock answer/history/timers are not runtime, privacy, persistence or receipt evidence. Company Wiki menu is coordinator-proposed compatibility, not an accepted new store.",
+    "TOC-last alone cannot preserve replaced old pages. No generic Wiki/project outbox exists. Local file reader uses current bytes; copied source excerpts prove only this reference. Mock answer/history/timers are not runtime, privacy, persistence or receipt evidence. Company Wiki menu is coordinator-approved compatibility, not a new founder claim or another knowledge store.",
 });

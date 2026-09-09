@@ -263,8 +263,8 @@ proves private existing-agent Ask without employee-session stealing or task
 side effects; #366 consumes that proof and #367 owns explicit durable dispatch
 and ACL-safe origin links. These are gates, not source-handoff implementations.
 
-Coordinator-proposed handbook compatibility: workspace-menu Company Wiki →
+Coordinator-approved handbook compatibility (not a new founder claim): workspace-menu Company Wiki →
 existing `goWiki()` / `/wiki` / `WikiLibraryScreen` Company Wiki card. Reuse
 its kind 30023 content and ACL, with no new generator action, route migration
-or company data removal. Review that entry before removing the sole old global
+or company data removal. Verify the replacement in #349 before removing the sole old global
 Wiki affordance; the reference library is sample UI only.
