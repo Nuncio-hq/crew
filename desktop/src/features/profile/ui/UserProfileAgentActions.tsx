@@ -287,11 +287,15 @@ export function HermesAwareAgentDeleteConfirmDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete this agent?</AlertDialogTitle>
           <AlertDialogDescription>
-            Deleting this agent stops and removes the agent from this community.
+            Delete {agent.name} and remove its local management record.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
           <li>Removes the local management record and saved agent key</li>
+          <li>
+            Preserves message history, agent definitions, runtime installations
+            and worktrees
+          </li>
           <li>Removes the agent from every channel it belongs to</li>
           <li>
             Archives the agent&apos;s identity on the relay so it no longer
