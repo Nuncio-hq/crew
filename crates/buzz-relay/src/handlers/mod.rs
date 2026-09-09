@@ -2,8 +2,12 @@
 pub mod admin_action_worker;
 pub mod admin_outbox_worker;
 pub mod auth;
+/// Opt-in channel creation with an atomic original command and exact replay.
+pub mod channel_atomic_create;
 /// Pure NIP-29 channel membership-authority decisions (kinds 9000/9001/9022).
 pub mod channel_authz;
+/// Lifecycle-fenced canonical channel metadata and roster publication.
+pub mod channel_discovery;
 /// Subscription close (CLOSE) handler.
 pub mod close;
 /// Command executor — transactional processing for command kinds.

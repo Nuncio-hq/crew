@@ -286,14 +286,20 @@ export async function createProject(
     ownerPubkey,
     templates.dtag,
   );
-  const projectEvent = await signRelayEvent(templates.project);
-  await publishProjectEvent(projectEvent);
-
   let repositoryEvent = existingRepositoryEvent;
   if (!repositoryEvent) {
     repositoryEvent = await signRelayEvent(templates.repository);
     await publishRepositoryEvent(repositoryEvent);
   }
+
+  // The repository is the Project member's durable identity. Publish it
+  // before the 30621 event so a successful Project announcement never points
+  // at a repository that has not yet been accepted by the relay. A failure
+  // after this point leaves an ordinary recoverable repository announcement;
+  // the next create attempt reuses its exact coordinate instead of creating a
+  // second repository.
+  const projectEvent = await signRelayEvent(templates.project);
+  await publishProjectEvent(projectEvent);
 
   const project = readCreatedProject(projectEvent, repositoryEvent);
   return finishCreate(channel, project, input, resume, projectId);

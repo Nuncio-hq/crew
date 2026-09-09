@@ -1,14 +1,23 @@
 import * as React from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, FolderPlus, Link, Plus, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { useIsManagedAgent } from "@/features/agent-memory/hooks";
 import { useChannelsQuery } from "@/features/channels/hooks";
-import type { Project, Repository } from "@/features/projects/hooks";
+import {
+  projectsQueryKey,
+  type Project,
+  type Repository,
+} from "@/features/projects/hooks";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { ownsAuthorAgent } from "@/features/profile/lib/identity";
 import { useAddProjectRepositoryMutation } from "@/features/projects/useAddProjectRepository";
 import { useAttachProjectRepositoryMutation } from "@/features/projects/useAttachProjectRepository";
+import {
+  loadProjectChannelLink,
+  retryProjectRepositoryAttachment,
+} from "@/shared/api/projectChannelLink";
 import { useBindProjectRepositoryChannelMutation } from "@/features/projects/useBindProjectRepositoryChannel";
 import { Button } from "@/shared/ui/button";
 import {
@@ -42,6 +51,7 @@ export function ProjectRepositoryManagement({
   projects: Project[];
   repository?: Repository | null;
 }) {
+  const queryClient = useQueryClient();
   const [uncontrolledCreateOpen, setUncontrolledCreateOpen] =
     React.useState(false);
   const createOpen = createOpenProp ?? uncontrolledCreateOpen;
@@ -69,6 +79,18 @@ export function ProjectRepositoryManagement({
     viewerOwnsProjectAgent && !projectOwnerIsManaged && !viewerIsProjectOwner
       ? project.owner
       : undefined;
+  const attachmentRecovery = useQuery({
+    enabled: Boolean(!ownerControlAgentPubkey && project.projectAddress),
+    queryKey: ["project-operation-recovery", project.projectAddress],
+    queryFn: () => loadProjectChannelLink(project.projectAddress),
+    retry: false,
+    staleTime: 0,
+  });
+  const pendingAttachment =
+    attachmentRecovery.data?.operation?.payload.action?.type ===
+    "attach-repository"
+      ? attachmentRecovery.data.operation
+      : null;
   const accessChannels = React.useMemo(
     () =>
       (channelsQuery.data ?? []).filter(
@@ -128,6 +150,34 @@ export function ProjectRepositoryManagement({
       />
       <AttachProjectRepositoryDialog
         isAttaching={attachMutation.isPending}
+        onRetry={
+          pendingAttachment && attachmentRecovery.data
+            ? async () => {
+                const coordinate =
+                  pendingAttachment.payload.action?.repository_coordinate;
+                if (!coordinate) return;
+                const result = await retryProjectRepositoryAttachment(
+                  attachmentRecovery.data.token,
+                  pendingAttachment,
+                  coordinate,
+                );
+                if (
+                  result.value.status !== "complete" ||
+                  !result.value.reconciled
+                ) {
+                  throw new Error(
+                    result.value.payload.last_error ??
+                      "The repository attachment is still pending.",
+                  );
+                }
+                await attachmentRecovery.refetch();
+                await queryClient.invalidateQueries({
+                  queryKey: projectsQueryKey,
+                });
+                toast.success("Repository attachment recovered.");
+              }
+            : undefined
+        }
         onAttach={async (candidate) => {
           const result = await attachMutation.mutateAsync({
             ownerControlAgentPubkey,
@@ -139,6 +189,7 @@ export function ProjectRepositoryManagement({
         }}
         onOpenChange={setAttachOpen}
         open={attachOpen}
+        pendingOperation={pendingAttachment}
         project={project}
         repositories={attachCandidates}
       />

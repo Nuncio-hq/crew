@@ -103,6 +103,15 @@ export function replaceLocalWorkspaceTag(
   ];
 }
 
+/** Remove only the local Buzz location metadata from a repository event. */
+export function removeLocalWorkspaceTag(tags: string[][]): string[][] {
+  return tags
+    .filter(
+      (tag) => !(tag[0] === PROJECT_LOCAL_LOCATION_TAG && tag[1] === "local"),
+    )
+    .map((tag) => [...tag]);
+}
+
 export function linkProjectWorkspaceTags(
   tags: string[][],
   input: { channelId: string; localPath: string },

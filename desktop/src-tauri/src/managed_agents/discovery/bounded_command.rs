@@ -7,14 +7,28 @@
 //! stall discovery; that stall is what left "Check again" spinning forever.
 
 use std::io::{ErrorKind, Read};
-use std::process::{ChildStderr, ChildStdout, Command, ExitStatus, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[path = "bounded_command/policy.rs"]
+mod policy;
+pub(crate) use policy::{BoundedFailure, BoundedOutcome, BoundedPolicy, OutputBudget};
+
+#[path = "bounded_command/runner.rs"]
+mod runner;
+pub(crate) use runner::output_with_policy;
+
+#[cfg(test)]
+#[path = "bounded_command/policy_tests.rs"]
+mod policy_tests;
+
 /// Poll interval while waiting for the child to exit.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Cleanup has its own hard ceiling after termination starts.
+const CLEANUP_BUDGET: Duration = Duration::from_secs(5);
 
 /// Idle backoff for a nonblocking Unix drain that has no bytes available and
 /// has not yet been told to stop. Short so a running child's output is pulled
@@ -73,149 +87,9 @@ const _: () = {
     assert!(BOUNDED_CREATION_FLAGS & CREATE_NO_WINDOW == CREATE_NO_WINDOW);
 };
 
-/// A spawned child plus ownership of its descendant tree, torn down on *every*
-/// exit path — timeout, error, or successful exit. The two platforms establish
-/// ownership differently, and the guarantee is deliberately asymmetric — the
-/// adjudicated design, not an oversight:
-///
-/// - **Unix:** the child leads its own process group (`process_group(0)`), so
-///   `killpg` reaches every descendant that has not left the group. A
-///   `setsid`/`setpgid` escapee holding a pipe is *not* owned and may survive
-///   one probe, yet never hangs the helper (see [`output_with_timeout`]).
-/// - **Windows:** the child is spawned `CREATE_SUSPENDED`, assigned to a
-///   kill-on-close Job Object while frozen, then resumed. The job owns the root
-///   before any descendant can exist and is created without breakaway, so no
-///   writer can escape it — a hard whole-tree guarantee. Closing that job reaps
-///   the whole tree *even after the root has exited* — the distinction that
-///   makes `taskkill /T <pid>` (a live-root lookup) unfit for the success path.
-///   This mirrors the Job Object discipline the harness uses to reap its 24
-///   agent workers (`process_lifecycle.rs`).
-struct BoundedChild {
-    child: std::process::Child,
-    /// The kill-on-close job that owns the whole tree. Taken and dropped by
-    /// `kill_tree` so the reap happens exactly once. Spawn is fail-closed: if
-    /// the job cannot be created, assigned, or the child resumed, the child is
-    /// terminated and `spawn` returns `None` rather than running unowned.
-    #[cfg(windows)]
-    job: Option<crate::managed_agents::JobHandle>,
-}
-
-impl BoundedChild {
-    /// Spawn `command`, establishing tree ownership before the child can run.
-    /// Returns `None` if the spawn fails or — on Windows — if the job cannot be
-    /// created, assigned, or the frozen child resumed; in every such case the
-    /// child is terminated and reaped before returning, so no unowned process
-    /// survives.
-    fn spawn(mut command: Command) -> Option<Self> {
-        // Run the child in its own process group so the whole tree can be torn
-        // down as a unit, not just a direct child that may have forked workers.
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt as _;
-            command.process_group(0);
-        }
-
-        // Spawn frozen so the Job Object can take ownership before any child
-        // code runs and forks a descendant that would escape the job. The flags
-        // are set here as the last writer before spawn; `Command::creation_flags`
-        // replaces rather than ORs, so `BOUNDED_CREATION_FLAGS` must itself carry
-        // `CREATE_NO_WINDOW` — a caller's earlier `configure_no_window` would be
-        // clobbered otherwise, flashing a console window on GUI discovery.
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt as _;
-            command.creation_flags(BOUNDED_CREATION_FLAGS);
-        }
-
-        // `mut` is used only on the Windows fail-closed path (kill/wait on the
-        // frozen child); Unix moves the child unmodified into `Self`.
-        #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut child = command.spawn().ok()?;
-
-        #[cfg(windows)]
-        let job = {
-            // Assign the frozen child to a kill-on-close job, then resume it.
-            // Any failure is fail-closed: terminate + reap the still-owned
-            // child and abort the spawn, never run it unowned to the deadline.
-            let Some(job) = crate::managed_agents::create_job_for_child(child.id()) else {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            };
-            if !crate::managed_agents::resume_process(child.id()) {
-                // Dropping the job kills the still-suspended child via
-                // kill-on-close; reap it so no zombie lingers.
-                drop(job);
-                let _ = child.wait();
-                return None;
-            }
-            job
-        };
-
-        Some(Self {
-            child,
-            #[cfg(windows)]
-            job: Some(job),
-        })
-    }
-
-    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
-    }
-
-    /// Timeout teardown: a graceful `SIGTERM` to the group and a bounded grace
-    /// period for a clean flush on Unix, then the unconditional forced kill.
-    /// Windows has no group signal, so it goes straight to the forced kill.
-    fn terminate_timed_out(&mut self) {
-        #[cfg(unix)]
-        {
-            // SAFETY: `killpg` on the group led by the child; an ignored result
-            // is intentional — the group may already be gone (ESRCH).
-            unsafe {
-                libc::killpg(self.child.id() as i32, libc::SIGTERM);
-            }
-            std::thread::sleep(KILL_GRACE);
-        }
-        self.kill_tree();
-    }
-
-    /// Forcibly reap the whole tree. Idempotent and safe on an already-exited
-    /// tree. Runs on every exit path — including success, because a login shell
-    /// or auth CLI can background a descendant that outlives the leader while
-    /// still holding the captured-output descriptors.
-    fn kill_tree(&mut self) {
-        #[cfg(unix)]
-        // SAFETY: `killpg` on the group led by the child; ignored result is
-        // intentional — `ESRCH` on a dead group is the success case.
-        unsafe {
-            libc::killpg(self.child.id() as i32, libc::SIGKILL);
-        }
-        #[cfg(windows)]
-        // Closing the kill-on-close job reaps every descendant, even once the
-        // root has exited — which `taskkill /T <root>` cannot. `spawn` is
-        // fail-closed, so the job is always present until this first take;
-        // a later take is a no-op (the tree is already reaped).
-        if let Some(job) = self.job.take() {
-            drop(job);
-        }
-    }
-
-    /// Reap the direct child so no zombie lingers after the tree is killed.
-    fn reap(&mut self) {
-        let _ = self.child.wait();
-    }
-
-    /// Take the captured stdout pipe. `Some` because [`output_with_timeout`]
-    /// configures `Stdio::piped()` before spawn.
-    fn take_stdout(&mut self) -> Option<ChildStdout> {
-        self.child.stdout.take()
-    }
-
-    /// Take the captured stderr pipe.
-    fn take_stderr(&mut self) -> Option<ChildStderr> {
-        self.child.stderr.take()
-    }
-}
+#[path = "bounded_command/process.rs"]
+mod process;
+use process::BoundedChild;
 
 /// Set a file descriptor nonblocking so a read on it returns `WouldBlock`
 /// instead of parking when no bytes are available. Returns `false` on any
@@ -269,6 +143,7 @@ fn spawn_drain<R: Read + Send + 'static>(
     total: Arc<AtomicU64>,
     overflow: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
+    limit: u64,
 ) -> JoinHandle<std::io::Result<Vec<u8>>> {
     // `stop` gates only the nonblocking Unix drain; the Windows path blocks to
     // the job-close EOF and never consults it.
@@ -285,9 +160,9 @@ fn spawn_drain<R: Read + Send + 'static>(
                     // `prev` is unique per call, so the two streams keep
                     // disjoint ranges and their retained bytes sum to <= cap.
                     let prev = total.fetch_add(n as u64, Ordering::Relaxed);
-                    if prev.saturating_add(n as u64) > CAPTURE_LIMIT {
+                    if prev.saturating_add(n as u64) > limit {
                         overflow.store(true, Ordering::Relaxed);
-                        let keep = CAPTURE_LIMIT.saturating_sub(prev).min(n as u64) as usize;
+                        let keep = limit.saturating_sub(prev).min(n as u64) as usize;
                         buf.extend_from_slice(&chunk[..keep]);
                         // Overflow: the result is already fail-closed, so nothing
                         // still in the pipe is worth preserving. Return NOW rather
@@ -303,7 +178,11 @@ fn spawn_drain<R: Read + Send + 'static>(
                     }
                     buf.extend_from_slice(&chunk[..n]);
                 }
-                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == ErrorKind::Interrupted => {
+                    if stop.load(Ordering::Relaxed) {
+                        return Ok(buf);
+                    }
+                }
                 // Nonblocking read (Unix only): no bytes available right now.
                 // After teardown, an escaped out-of-group writer is the only
                 // thing that could still hold the pipe open, so stop draining it
@@ -361,108 +240,17 @@ fn spawn_drain<R: Read + Send + 'static>(
 ///   above) — the adjudicated asymmetry. The timeout path additionally sends a
 ///   graceful `SIGTERM` and a grace period before the kill.
 pub(crate) fn output_with_timeout(mut command: Command, timeout: Duration) -> Option<Output> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = BoundedChild::spawn(command)?;
-
-    let stdout_pipe = child.take_stdout();
-    let stderr_pipe = child.take_stderr();
-
-    // Unix: make the parent read ends nonblocking so a drain can be told to stop
-    // (post-teardown) instead of parking forever on a group-escaping writer that
-    // still holds the pipe. Fail closed if the fd cannot be reconfigured — the
-    // child is still fully owned here, so cleanup is just kill + reap.
-    #[cfg(unix)]
-    {
-        let stdout_ok = match stdout_pipe.as_ref() {
-            Some(p) => set_nonblocking(p),
-            None => true,
-        };
-        let stderr_ok = match stderr_pipe.as_ref() {
-            Some(p) => set_nonblocking(p),
-            None => true,
-        };
-        if !(stdout_ok && stderr_ok) {
-            child.kill_tree();
-            child.reap();
-            return None;
-        }
-    }
-
-    // Shared drain state: one aggregate byte budget across both streams, an
-    // overflow flag the poll loop watches so a streaming producer that never
-    // exits is failed closed the moment it crosses the cap, and a stop flag that
-    // teardown raises to end the nonblocking Unix drains.
-    let total = Arc::new(AtomicU64::new(0));
-    let overflow = Arc::new(AtomicBool::new(false));
-    let stop = Arc::new(AtomicBool::new(false));
-    let stdout_drain =
-        stdout_pipe.map(|s| spawn_drain(s, total.clone(), overflow.clone(), stop.clone()));
-    let stderr_drain =
-        stderr_pipe.map(|s| spawn_drain(s, total.clone(), overflow.clone(), stop.clone()));
-
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    child.terminate_timed_out();
-                    break None;
-                }
-                // Fail closed on a capture breach *while the child runs*: the
-                // drain kept nothing over the cap; teardown below ends the
-                // drains so the join cannot hang.
-                if overflow.load(Ordering::Relaxed) {
-                    child.kill_tree();
-                    break None;
-                }
-                std::thread::sleep(POLL_INTERVAL);
-            }
-            Err(_) => {
-                child.kill_tree();
-                break None;
-            }
-        }
-    };
-
-    // Tree down on every path (timeout/error/overflow killed it above; a clean
-    // exit may still have backgrounded a descendant holding the pipe). Kill is
-    // idempotent, so calling it here on the success path is safe. Then raise
-    // `stop`: a killed in-group writer's pipe reaches EOF and ends its drain on
-    // its own, but a group-escaping writer never will — `stop` ends that drain
-    // on the next `WouldBlock` so the joins below return promptly.
-    child.kill_tree();
-    child.reap();
-    stop.store(true, Ordering::Relaxed);
-
-    let stdout = join_drain(stdout_drain);
-    let stderr = join_drain(stderr_drain);
-
-    // Fail closed if the child exited within the deadline but overran the cap in
-    // a final burst, or if either drain hit a read error (join_drain -> None).
-    let (status, stdout, stderr) = (status?, stdout?, stderr?);
-    if overflow.load(Ordering::Relaxed) {
-        return None;
-    }
-
-    Some(Output {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-/// Join a drain thread, returning its captured bytes. `None` (fail closed) if
-/// the stream was absent, the thread panicked, or the read errored.
-fn join_drain(drain: Option<JoinHandle<std::io::Result<Vec<u8>>>>) -> Option<Vec<u8>> {
-    match drain {
-        Some(handle) => handle.join().ok()?.ok(),
-        None => Some(Vec::new()),
-    }
+    command.stdin(Stdio::null());
+    output_with_policy(
+        command,
+        BoundedPolicy {
+            timeout,
+            budget: OutputBudget::Aggregate(CAPTURE_LIMIT),
+        },
+        &AtomicBool::new(false),
+    )
+    .ok()
+    .map(|result| result.output)
 }
 
 #[cfg(test)]
@@ -634,7 +422,13 @@ mod tests {
         // since a continuously-ready reader never hits the `WouldBlock` arm that
         // consults it. The overflow return is the only thing that can bound it.
         let stop = Arc::new(AtomicBool::new(true));
-        let drain = spawn_drain(AlwaysReady, total.clone(), overflow.clone(), stop);
+        let drain = spawn_drain(
+            AlwaysReady,
+            total.clone(),
+            overflow.clone(),
+            stop,
+            CAPTURE_LIMIT,
+        );
 
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {

@@ -38,6 +38,7 @@ fn goose_runtime() -> &'static KnownAcpRuntime {
         mcp_command: None,
         mcp_hooks: false,
         underlying_cli: None,
+        recap_native_command: None,
         cli_install_commands: &[],
         cli_install_commands_windows: &[],
         adapter_install_commands: &[],

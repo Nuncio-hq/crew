@@ -2,6 +2,10 @@ import { invokeTauri } from "@/shared/api/tauri";
 
 export type ProjectGitWorkspaceProbe = {
   isGit: boolean;
+  /** Native-selected path; absent on older hosts whose boundary is unknown. */
+  selectedPath: string | null;
+  gitRoot: string | null;
+  selection: "root" | "subdirectory" | "not-git" | "unknown";
   defaultBranch: string | null;
   currentBranch: string | null;
   dirty: boolean;
@@ -12,6 +16,11 @@ export type ProjectGitWorkspaceProbe = {
 
 type RawProjectGitWorkspaceProbe = {
   isGit?: boolean;
+  selectedPath?: string | null;
+  selected_path?: string | null;
+  gitRoot?: string | null;
+  git_root?: string | null;
+  selection?: ProjectGitWorkspaceProbe["selection"];
   is_git?: boolean;
   defaultBranch?: string | null;
   default_branch?: string | null;
@@ -35,6 +44,9 @@ export async function probeProjectGitWorkspace(
   );
   return {
     isGit: probe.isGit ?? probe.is_git ?? false,
+    selectedPath: probe.selectedPath ?? probe.selected_path ?? null,
+    gitRoot: probe.gitRoot ?? probe.git_root ?? null,
+    selection: probe.selection ?? "unknown",
     defaultBranch: probe.defaultBranch ?? probe.default_branch ?? null,
     currentBranch: probe.currentBranch ?? probe.current_branch ?? null,
     dirty: probe.dirty ?? false,

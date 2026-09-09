@@ -85,3 +85,64 @@ export async function publishWelcomeTeamPresence(page: Page) {
     team.map((agent) => agent.pubkey),
   );
 }
+
+/** Verify the stored kickoff and its bound recipient in the same rendered row. */
+export async function expectWelcomeKickoff(
+  page: Page,
+  recipientPubkey: string,
+) {
+  const team = await waitForWelcomeTeam(page);
+  const fizz = team.find((agent) => agent.persona_id === "builtin:fizz");
+  if (!fizz) throw new Error("Welcome team has no Fizz identity.");
+  const { channels } = await invokeMockCommand<{
+    channels: Array<{ id: string; name: string }>;
+  }>(page, "get_channels");
+  const welcomeChannels = channels.filter(
+    (channel) => channel.name === "Welcome",
+  );
+  expect(welcomeChannels).toHaveLength(1);
+  const channelId = welcomeChannels[0].id;
+  const greeting = "Hi @Morty QA, I'm Fizz. Welcome to Buzz.";
+  type KickoffEvent = {
+    id: string;
+    pubkey: string;
+    kind: number;
+    content: string;
+    tags: string[][];
+  };
+  let kickoffs: KickoffEvent[] = [];
+  await expect
+    .poll(async () => {
+      const { events } = await invokeMockCommand<{ events: KickoffEvent[] }>(
+        page,
+        "get_channel_messages_before",
+        { channelId, before: Math.floor(Date.now() / 1_000) + 1, limit: 50 },
+      );
+      kickoffs = events.filter(
+        (event) =>
+          event.pubkey === fizz.pubkey && event.content.startsWith(greeting),
+      );
+      return kickoffs.length;
+    })
+    .toBe(1);
+  const kickoff = kickoffs[0];
+  expect(kickoff.kind).toBe(9);
+  expect(kickoff.tags).toContainEqual(["h", channelId]);
+  expect(
+    kickoff.tags.some((tag) => tag[0] === "p" && tag[1] === recipientPubkey),
+  ).toBe(true);
+  expect(kickoff.id).toMatch(/^[0-9a-f]{64}$/);
+  const row = page
+    .getByTestId("message-timeline")
+    .locator(`[data-message-id="${kickoff.id}"]`);
+  await expect(row).toHaveCount(1);
+  const body = row.getByTestId("message-body");
+  await expect(body).toContainText("Hi Morty QA, I'm Fizz. Welcome to Buzz.");
+  const recipient = body.locator('[data-mention-label="Morty QA"]');
+  await expect(recipient).toHaveCount(1);
+  await expect(recipient).toHaveAttribute(
+    "data-mention-pubkey",
+    recipientPubkey,
+  );
+  await expect(recipient).toHaveText("Morty QA");
+}

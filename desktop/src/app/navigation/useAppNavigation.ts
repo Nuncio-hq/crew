@@ -184,6 +184,8 @@ export function useAppNavigation() {
         pullRequestId?: string;
         issueId?: string;
         repositoryId?: string;
+        /** Exact 30617 coordinate for scoped Project/Wiki navigation. */
+        repositoryAddress?: string;
         tab?: string;
         /** Reapply an entity selection even when its route is unchanged. */
         entityNavigationId?: string;
@@ -206,6 +208,9 @@ export function useAppNavigation() {
             ...(behavior?.issueId ? { issueId: behavior.issueId } : {}),
             ...(behavior?.repositoryId
               ? { repositoryId: behavior.repositoryId }
+              : {}),
+            ...(behavior?.repositoryAddress !== undefined
+              ? { repositoryAddress: behavior.repositoryAddress }
               : {}),
             ...(behavior?.tab ? { tab: behavior.tab } : {}),
           },

@@ -1,3 +1,4 @@
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 import { expect, test, type Page } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
@@ -18,12 +19,11 @@ test.describe("live job desk (#219)", () => {
   test("no job ⇒ no desk and no workbench-as-picker", async ({ page }) => {
     await installMockBridge(page);
     await page.goto("/");
-    await expect(page.getByTestId("channel-engineering")).toBeVisible();
     await expect(page.getByTestId("open-workbench-view")).toHaveCount(0);
     await expect(page.getByTestId("workbench-empty")).toHaveCount(0);
     await expect(page.getByTestId("workbench-rail")).toHaveCount(0);
 
-    await page.getByTestId("channel-engineering").click();
+    await openWorkspaceChannel(page, "engineering");
     await waitForLive(page, "engineering");
     await page.waitForFunction(
       () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
@@ -89,8 +89,7 @@ test.describe("live job desk (#219)", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByTestId("channel-engineering")).toBeVisible();
-    await page.getByTestId("channel-engineering").click();
+    await openWorkspaceChannel(page, "engineering");
     await waitForLive(page, "engineering");
     await expect
       .poll(async () =>

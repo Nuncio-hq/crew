@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { toast } from "sonner";
 
+import { useAgentControlScope } from "@/features/agents/lib/useAgentControlScope";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import {
   channelsQueryKey,
@@ -87,8 +88,14 @@ export function useProfileInteractionActions({
   onClose: () => void;
   viewerIsOwner: boolean | undefined;
 }) {
-  const [pendingAction, setPendingAction] =
-    React.useState<ProfileInteractionAction | null>(null);
+  const captureControl = useAgentControlScope(effectivePubkey);
+  const [pendingOperation, setPendingOperation] = React.useState<{
+    action: ProfileInteractionAction;
+    isCurrent: () => boolean;
+  } | null>(null);
+  const pendingAction = pendingOperation?.isCurrent()
+    ? pendingOperation.action
+    : null;
   const isMountedRef = React.useRef(false);
   const queryClient = useQueryClient();
   const { goChannel } = useAppNavigation();
@@ -117,16 +124,19 @@ export function useProfileInteractionActions({
     async (
       action: ProfileInteractionAction,
       operation: (targetPubkey: string) => Promise<void>,
+      isCurrent: () => boolean = () => true,
     ) => {
-      if (!effectivePubkey || pendingAction !== null) {
+      if (!effectivePubkey || pendingAction !== null || !isCurrent()) {
         return;
       }
 
       onBeforeAction?.();
-      setPendingAction(action);
+      const pending = { action, isCurrent };
+      setPendingOperation(pending);
       try {
         await operation(effectivePubkey);
       } catch (error) {
+        if (!isCurrent()) return;
         if (action === "huddle") {
           toast.error(formatHuddleActionError(error, "start"));
         } else {
@@ -140,7 +150,9 @@ export function useProfileInteractionActions({
         }
       } finally {
         if (isMountedRef.current) {
-          setPendingAction(null);
+          setPendingOperation((current) =>
+            current === pending ? null : current,
+          );
         }
       }
     },
@@ -152,14 +164,21 @@ export function useProfileInteractionActions({
       return;
     }
 
-    void runAction("message", async (targetPubkey) => {
-      const dm = await openDm({ pubkeys: [targetPubkey] });
-      await goChannel(dm.id);
-      if (isMountedRef.current) {
-        onClose();
-      }
-    });
-  }, [canMessage, goChannel, onClose, openDm, runAction]);
+    const control = captureControl();
+    void runAction(
+      "message",
+      async (targetPubkey) => {
+        const dm = await openDm({
+          pubkeys: [targetPubkey],
+          ...control.nativeScope(),
+        });
+        if (!control.isCurrent()) return;
+        await goChannel(dm.id);
+        if (control.isCurrent()) onClose();
+      },
+      control.isCurrent,
+    );
+  }, [canMessage, captureControl, goChannel, onClose, openDm, runAction]);
 
   const handleHuddle = React.useCallback(() => {
     if (!canHuddle || isStartingHuddle) {

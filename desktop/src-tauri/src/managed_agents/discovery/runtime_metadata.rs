@@ -78,6 +78,9 @@ pub(crate) struct KnownAcpRuntime {
     pub mcp_hooks: bool,
     /// CLI binary that indicates partial install (e.g. `"claude"` when `claude-agent-acp` is missing).
     pub underlying_cli: Option<&'static str>,
+    /// Explicit native recap CLI when ACP discovery candidates are not native-first.
+    /// Inventory only; this never changes ordinary ACP discovery or readiness.
+    pub recap_native_command: Option<&'static str>,
     /// Shell commands to install the runtime CLI itself (run sequentially).
     pub cli_install_commands: &'static [&'static str],
     /// Windows-specific CLI install commands (e.g. PowerShell installers).
@@ -166,6 +169,21 @@ pub(crate) struct KnownAcpRuntime {
 }
 
 impl KnownAcpRuntime {
+    /// Recap inventory uses this catalog's native CLI and profile metadata.
+    /// This is a candidate only: ACP availability never proves one-shot safety.
+    #[allow(dead_code)] // Default-off recap source proof; no generation command is registered.
+    pub(crate) fn recap_contract(&self) -> super::super::recap_capability::RecapRuntimeContract {
+        use super::super::recap_capability::{RecapRuntimeContract, RecapSelectionContract};
+        RecapRuntimeContract {
+            command: self.recap_native_command.or(self.underlying_cli),
+            selection: if self.profile_arg.is_some() {
+                RecapSelectionContract::StagingProfile
+            } else {
+                RecapSelectionContract::ExplicitModel
+            },
+        }
+    }
+
     /// Return the CLI install commands for the current platform.
     ///
     /// On Windows, returns `cli_install_commands_windows` when non-empty,
@@ -185,6 +203,20 @@ impl KnownAcpRuntime {
 #[cfg(test)]
 mod tests {
     use super::super::known_acp_runtime_exact;
+
+    #[test]
+    fn recap_inventory_uses_native_cli_not_acp_adapter() {
+        for (runtime, command) in [
+            ("claude", Some("claude")),
+            ("codex", Some("codex")),
+            ("hermes", Some("hermes")),
+            ("goose", Some("goose")),
+            ("buzz-agent", None),
+        ] {
+            let known = known_acp_runtime_exact(runtime).unwrap();
+            assert_eq!(known.recap_contract().command, command);
+        }
+    }
 
     #[test]
     fn vendor_metadata_distinguishes_cli_and_adapter_guidance() {

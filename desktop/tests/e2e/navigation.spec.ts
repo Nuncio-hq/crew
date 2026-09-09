@@ -1,3 +1,4 @@
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
@@ -64,10 +65,10 @@ async function createWorkflow(
 test("global back and forward move across channel routes", async ({ page }) => {
   await page.goto("/");
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
-  await page.getByTestId("channel-random").click();
+  await openWorkspaceChannel(page, "random");
   await expect(page.getByTestId("chat-title")).toHaveText("random");
 
   await page.getByTestId("global-back").click();
@@ -86,10 +87,10 @@ test("back/forward keyboard chords work while the composer has focus", async ({
 
   await page.goto("/");
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
-  await page.getByTestId("channel-random").click();
+  await openWorkspaceChannel(page, "random");
   await expect(page.getByTestId("chat-title")).toHaveText("random");
 
   // The composer autofocuses on channel switch; make the regression
@@ -188,7 +189,7 @@ test("forum reply deep links survive reload", async ({ page }) => {
 test("back and forward restore open thread panels", async ({ page }) => {
   await page.goto("/");
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const rootMessage = page
@@ -202,7 +203,7 @@ test("back and forward restore open thread panels", async ({ page }) => {
   await expect(threadPanel).toBeVisible();
   await expect(page).toHaveURL(/thread=/);
 
-  await page.getByTestId("channel-random").click();
+  await openWorkspaceChannel(page, "random");
   await expect(page.getByTestId("chat-title")).toHaveText("random");
   await expect(threadPanel).not.toBeVisible();
 
@@ -218,7 +219,7 @@ test("back and forward restore open thread panels", async ({ page }) => {
 test("back undoes closing a thread panel", async ({ page }) => {
   await page.goto("/");
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const rootMessage = page
@@ -241,7 +242,7 @@ test("back undoes closing a thread panel", async ({ page }) => {
 test("open thread panels survive reload", async ({ page }) => {
   await page.goto("/");
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const rootMessage = page
@@ -304,7 +305,7 @@ test("settings is a route: section survives reload, closing returns to the previ
   await page.goto("/");
 
   // Open a channel with a thread panel so there's panel state to come back to.
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   const rootMessage = page
     .getByTestId("message-timeline")
@@ -337,7 +338,7 @@ test("settings shortcut returns without opening search dialog", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   const channelUrl = page.url();
 
@@ -377,7 +378,7 @@ test("mixed Buzz permalinks render as chips in the composer", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const channelId = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
@@ -455,7 +456,7 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
     ];
   });
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
 
   const composerInput = page.getByTestId("message-input");
   const repoLink =
@@ -635,7 +636,7 @@ test("message links to visible root messages open the thread panel", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(page.getByTestId("message-timeline")).toContainText(
     "Welcome to general",

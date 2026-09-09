@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import {
@@ -49,4 +50,14 @@ test("a channel created by a failed publish is reused only for that Project", ()
     reusableProjectWorkspaceChannel("project-a", "canonical", retry),
     "canonical",
   );
+});
+
+test("mounted folder linking does not create a channel before the durable journal", async () => {
+  const source = await readFile(
+    new URL("../channels/ui/ChannelLocalWorkspaceChip.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /createProjectWorkspaceChannel/);
+  assert.doesNotMatch(source, /reusableProjectWorkspaceChannel/);
+  assert.match(source, /linkCurrentProjectWorkspace/);
 });

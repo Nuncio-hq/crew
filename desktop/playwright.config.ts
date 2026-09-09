@@ -29,6 +29,7 @@ export default defineConfig({
     {
       name: "smoke",
       testMatch: [
+        "**/companyos-shell-navigation.spec.ts",
         "**/projects-v3-screenshots.spec.ts",
         "**/appearance-previews.spec.ts",
         "**/smoke.spec.ts",
@@ -182,6 +183,7 @@ export default defineConfig({
         "**/experimental-features.spec.ts",
         "**/agent-provider-dropdowns.spec.ts",
         "**/agent-lifecycle-feedback.spec.ts",
+        "**/companyos-agents.spec.ts",
         "**/agent-sleeping-state.spec.ts",
         "**/session-aging-handover.spec.ts",
         "**/agent-access-warning.spec.ts",

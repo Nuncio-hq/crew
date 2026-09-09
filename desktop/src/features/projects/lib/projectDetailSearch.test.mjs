@@ -6,6 +6,36 @@ import {
   wantsProjectRepositorySurface,
 } from "./projectDetailSearch.ts";
 
+test("explicit Project Wiki navigation preserves its full repository coordinate", () => {
+  const repositoryAddress = `30617:${"a".repeat(64)}:different-repository`;
+  const search = parseProjectDetailSearch({ repositoryAddress, tab: "wiki" });
+  assert.equal(search.repositoryAddress, repositoryAddress);
+  assert.equal(search.tab, "wiki");
+  assert.equal(
+    wantsProjectRepositorySurface({
+      projectId: `30621:${"a".repeat(64)}:project`,
+      repositoryAddress,
+    }),
+    true,
+  );
+});
+
+test("invalid explicit repository navigation cannot silently fall back", () => {
+  for (const repositoryAddress of [
+    "",
+    "repository",
+    `30621:${"a".repeat(64)}:project`,
+    `30617:${"a".repeat(64)}:`,
+    `30617:${"a".repeat(64)}:${"x".repeat(1025)}`,
+    4,
+  ]) {
+    assert.throws(
+      () => parseProjectDetailSearch({ repositoryAddress }),
+      /Invalid repository coordinate/,
+    );
+  }
+});
+
 test("parseProjectDetailSearch keeps forge params and channel panel params", () => {
   const search = parseProjectDetailSearch({
     repositoryId: "30617:owner:buzz",

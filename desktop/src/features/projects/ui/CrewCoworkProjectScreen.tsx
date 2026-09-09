@@ -4,7 +4,7 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
-import { isCoworkProject } from "@/features/projects/lib/cowork-project";
+import { isCoworkRepository } from "@/features/projects/lib/cowork-project";
 import { selectProjectRepository } from "@/features/projects/projectModels";
 import { useProjectQuery } from "@/features/projects/hooks";
 import {
@@ -33,17 +33,21 @@ function megabytes(bytes: number): string {
 
 export function CrewCoworkProjectScreen({
   projectId,
+  repositoryId,
   threadId,
 }: {
   projectId: string;
+  repositoryId?: string;
   threadId?: string;
 }) {
   const { goProjects, goChannel } = useAppNavigation();
   const queryClient = useQueryClient();
   const projectQuery = useProjectQuery(projectId);
   const project = projectQuery.data;
-  const repository = selectProjectRepository(project, undefined);
-  const folder = repository?.localWorkspacePath ?? null;
+  const repository = selectProjectRepository(project, repositoryId);
+  const folder = isCoworkRepository(repository)
+    ? (repository?.localWorkspacePath ?? null)
+    : null;
   const repoAddress = repository?.repoAddress ?? null;
   const versionsQuery = useQuery({
     enabled: Boolean(folder && repoAddress),
@@ -103,7 +107,7 @@ export function CrewCoworkProjectScreen({
   if (projectQuery.isPending) {
     return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
   }
-  if (!project || !isCoworkProject(project) || !repository || !folder) {
+  if (!project || !repository || !folder) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-16 text-center">
         <p className="text-sm text-muted-foreground">

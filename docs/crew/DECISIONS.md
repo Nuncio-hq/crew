@@ -1166,8 +1166,6 @@ layout of existing components**, not a second product.
 
 ## D-056 — Thread-visible declared plans: one latest ACP snapshot per agent
 
-**Placement amendment:** D-078 / G-THREAD-1 v3 replaces item 4's permanent rail with an explicit Agent plans tab; all source, ordering and invalidation rules below remain.
-
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** #190 (Workbench #186 may later reuse the rail; it is not a
@@ -1207,8 +1205,6 @@ Missing signal is unknown, not guessed from prose.
 
 ## D-057 — GitHub PR hub in thread focus (two tiers, `gh` data plane)
 
-**Layout amendment:** D-078 / G-THREAD-1 v3 replaces item 1's narrow Chat/PR toggle with a tool overlay; the summary card still explicitly opens PR and the data/audience contracts remain.
-
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** #193
@@ -1245,8 +1241,6 @@ not a NIP-34 conversation and not a Crew GitHub protocol.
    scope. Workbench may later embed the hub as a component.
 
 ## D-058 — Channel Tool Pane: Resource Governor owns sim, browser, and dev servers
-
-**Thread-pane amendment:** D-078 / G-THREAD-1 v3 extends thread tabs and fences mount-time browser open and simulator find-or-create behind explicit activation. Existing hide cleanup, governor identity/ownership and channel-mode compatibility remain.
 
 - **Status:** Accepted
 - **Date:** 2026-08-13
@@ -1496,8 +1490,6 @@ adds a row.
 See spikes 0049–0051.
 
 ## D-065 — No Workbench place; desk only when a job is live
-
-**Historical information clarification:** D-078 / G-THREAD-1 v3 permits retained read-only history without a live job. The live-control desk and Workbench redirect/no-picker rules below remain.
 
 - **Status:** Accepted
 - **Date:** 2026-08-17
@@ -1777,6 +1769,16 @@ upstream's `session_owners` model from `buzz-acp`.
    budget and drop accounting; add a falsifiable test; docs only until the
    Focus-grain work picks it up (see `PRODUCT.md`, "Watching agents work").
 
+**2026-09-09 clarification (#352, coordinator-reviewed scope):** item 6's
+unconditional one-tick wording is superseded by bounded cross-channel priority:
+at most two urgent frame selections while eligible normal channels wait,
+then one oldest normal channel frame. Preserve same-channel causal order and
+null-channel barriers even when they prevent terminal delivery in one slot.
+Keep the one-second tick and existing rate/byte/source-event budgets. The
+implementation and measurement boundary are documented in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#observer-completion-scheduling-352);
+real-data staging timing remains an acceptance gate, not a universal promise.
+
 ## D-076 — CompanyOS direction; department delegation and verified coding delivery first
 
 - **Status:** Accepted product direction; implementation is not implied
@@ -1880,9 +1882,8 @@ role/contact scope and relay identity are unchanged.
 This supersedes only D-066's conflicting Projects prohibition. D-065 still
 forbids a separate Workbench picker. Detailed Projects/Channels UI and
 interactions remain under founder discussion; no prototype layout changes are
-authorized by this clarification. At this historical clarification, D-056 placement and historical desk/tool
-semantics remained pending G-THREAD-1. The coordinator-approved v3 amendment
-below subsequently resolves that bounded gate.
+authorized by this clarification. D-056 plan placement and historical desk/tool
+semantics remain pending G-THREAD-1, not silently superseded.
 
 The canonical accepted/proposed/blocked control matrix is
 [`src/blueprint.js`](../../design/companyos/src/blueprint.js), rendered by the
@@ -1929,6 +1930,11 @@ home, related and repository channel relationships remain many-to-many. No
 new identity registry, membership/history move or Workbench picker is approved.
 This supersedes the earlier Channels-within-Workspace placement in this decision.
 
+**Stable shell promotion is coordinator-approved (2026-09-09):** #349 promotes
+Projects and Workflows out of the preview manifest. Both remain available when
+an older device has a persisted false override. Other preview features retain
+their gates. This changes navigation availability, not their backing models.
+
 The accepted demonstrated flow includes Project create/link/manage, optional
 folder and new/existing channels, Project-scoped Wiki Read/full-body Search/
 immutable Source, existing-agent private Ask/History, independent temporary
@@ -1958,82 +1964,6 @@ Both coordinator and actual Claude Code CLI Fable Medium approve the exact
 final PR head before merge. Stage 0 reference screenshots are prototype evidence
 only, and #344 remains the open delivery roadmap.
 
-
-### G-THREAD-1 v3 — coordinator-approved thread presentation (2026-09-09)
-
-The coordinator approved this bounded implementation decision under the existing
-execute authorization, not as a new founder approval. Actual Claude Code CLI
-Fable Medium reviewed v2 and explicitly accepted either channel-switch
-clarification; the coordinator selected existing channel-mode compatibility for
-v3. The published v0.9 reference remains simulated. This accepts the decision,
-not #354 implementation or native/runtime evidence.
-
-- **One pane and initial selection.** One right-hand pane per current thread
-  view; Context on first explicit opening, with a named reachable Agent plans
-  tab. Navigation alone does not open it. Use actual capabilities and bindings;
-  recap is Off/unavailable until #351/#356 provide its real path. No extra plan
-  column, fabricated content, or global cross-window exclusivity claim.
-- **Ephemeral selection.** Keep at most 128 LRU records in memory for this app
-  session, keyed by normalized active-community relay URL, normalized viewer
-  pubkey, channel ID and validated root. Use existing conversation derivation.
-  No durable or relay preference and no second session/workspace authority.
-  Missing/invalid root stores nothing; restart/eviction returns Context. Existing
-  community reset clears on account/relay/logout. Confirmed removal/revocation
-  clears the affected scope through a small store invalidation function wired
-  to existing mutation outcomes and authoritative query reconciliation. Failed,
-  loading or partial queries do not prove removal. Fence async results by full
-  scope and current view generation.
-- **Navigation and resources.** Thread navigation closes presentation and
-  returns focus; returning to the exact thread restores selection for the next
-  explicit opening, without reopening or launching/attaching resources. Closing
-  presentation must not stop agents or terminate PTYs. Preserve existing
-  `browserClose` (native hide, not destruction) and `simSetPaneVisible(false)`
-  cleanup. Governor caps, idle timers and quit cleanup remain authoritative;
-  do not add another hide API or lifecycle. Revoked scopes lose control authority
-  even when a native resource survives.
-- **Narrow overlay.** Keep chat mounted with its draft and reader scroll, covered
-  by one modal tool overlay. Trap focus and make covered content inert. Tool
-  Escape/back dismisses that overlay first and restores focus to the opener or
-  current-scope fallback. Drive the outer `FocusThreadDrawer.escapeEnabled`
-  gate while the inner overlay owns Escape; coordinate shortcuts/editor/IME
-  ownership so one event cannot also close the thread.
-- **Plans and history.** Reuse D-056 projections: one latest reported snapshot
-  per agent/conversation lineage; preserve replacement, explicit empty,
-  invalidation, sleeping/disconnected, retained historical and unknown labels.
-  Never resurrect invalidated private history or infer tasks from prose. An
-  expired transcript is unavailable even if a legitimate plan remains. Historical
-  information is readable in the same thread without a live job. Stop/Steer/
-  Need-you recheck exact authorized current agent/session generation at dispatch.
-  Receipts/plans are neither live-job authority nor outcome acceptance.
-- **Explicit activation.** Selecting/restoring/opening thread tools may read
-  metadata but issues no browser-open, simulator-ensure/create/boot, dev-server,
-  terminal-attach or checkout-launch command. Activate through an explicit
-  instrument action. An absent simulator uses its existing create card and
-  governor find-or-create action. Browser keeps Custom URL default and no
-  dev-server setup gate. These are bounded timing changes to D-058 item 2
-  (simulator) and item 4/#236 (Browser), not new resource ownership. A
-  thread-scoped preference does not make channel-owned resources thread-private.
-- **Channel compatibility.** Channel-to-channel switches retain current
-  remount-per-channel behavior; the close rule above applies only to thread
-  presentations. Switching into/out of a thread closes the previous presentation.
-  Channel mode retains Sim/Browser and valid-channel shortcuts, without minting
-  a thread key; no valid channel means no resource-opening shortcut. Thread
-  shortcuts select/open UI but respect the explicit activation fence.
-- **PR and popout.** PR subject availability/results must match current channel
-  and root, including URL subjects, with community/viewer reset. A summary-card
-  click explicitly opens PR. Remove forced-open and Close-to-PR visibility
-  overrides, preserving PR data and separate relay/GitHub composers. Offer no
-  popout in the new thread pane. Existing channel popout opens another app window
-  and is outside this decision; its multi-window limitation is not solved by a
-  scoped preference. No cross-window synchronization or channel-pane redesign.
-
-`/workbench` still redirects to Inbox, `/workbench/:channel/:thread` to the same
-channel thread, and `goWorkbench` remains a compatibility alias. No new picker.
-#349 supplies shell integration; #352 owns observer scheduling; #354 must prove
-state, action-time generation, visibility cleanup, no mount launch, narrow
-focus/scroll/draft and account/removal oracles. Native paths still require
-#348/#357 staging evidence. No protocol change or production acceptance follows
-from this amendment.
 ## D-079 — Owner recovery and conditional publication
 
 - **Status:** Accepted architecture; implementation in progress, not shipped
@@ -2044,6 +1974,24 @@ from this amendment.
 The relay remains domain authority. A native SQLite recovery journal records exact signed events and unresolved side effects before publication. It does not become a page cache, Project registry, or second domain database.
 
 **Conditional relay contract.** NIP-11 extension `crew-conditional-publication-v1` covers kinds 30617, 30621, and 30623. Exactly one signed `expected-revision` tag names a 64-character lowercase live event ID, or literal `absent` for initial creation. Compare and write share the existing community/kind/author/d coordinate lock. Only insertion or exact *current* signed-event replay succeeds; non-live replay, superseded writes, and mismatched preconditions conflict. Ambiguous ACKs retain the operation and reconcile exact live state without re-signing. Conditional repository announcements rerun their existing idempotent side-effect ensure before success ACK, including exact live replay; post-commit ensure failure is `error: side-effect-pending`. Project separately proves channel binding and authenticated git transport readiness. Channel kind 9007 recovery is an independent Project contract.
+
+**Project channel associations (implementation in progress).** The additional `crew-project-channel-link-v1` capability requires conditional publication and validates newly associated channels in the same kind 30621 replacement transaction. Associations are the union of the singleton `buzz-channel` home and `buzz-related-channel` values; initial creation validates every target, while moving an existing association between roles does not require membership again. New targets must be canonical UUIDs and active stream channels in the same community, with active membership for the signing Project owner. Growing the association set permits at most 64 distinct related channels. The existing Project coordinate lock and old-head row lock precede sorted membership advisory locks, membership row locks, and channel row locks, all retained through the caller's commit. Row locks cover admin kick, archive, deletion, and TTL writers. Any validation failure rolls back the replacement. Exact live replay bypasses mutable eligibility checks; read-only supersession reconciliation never republishes an older event. This contract adds no signed action tag, event kind, or registry. Runtime race evidence and final capability wiring remain release requirements.
+
+**Workspace metadata recovery (desktop implementation in progress).** Folder
+linking and unlinking use the shared native ProjectChange journal against the
+exact `30617:<owner>:<repoD>` coordinate. The v4 `LinkWorkspace` record stores
+the canonical channel UUID and selected absolute path with the signed
+repository event before publication; retries reuse those bytes and validate the
+live head. The signer preserves unknown tag order, removes only transient auth
+and local-location metadata, and keeps the repository `d` tag in place. The
+existing v3 `UnlinkWorkspace` path uses the same ordered repository builder.
+LinkWorkspace refuses a repository without an existing canonical
+`buzz-channel`; it does not create a channel as an unjournaled prefix. Channel
+creation and Project attachment remain a separate, explicitly recoverable
+operation.
+Relay capability advertisement and the conditional 30617 transaction remain
+deployment gates owned by #362; the desktop fails closed until they are
+available.
 
 **Deployment and rollback.** `BUZZ_CREW_CONDITIONAL_PUBLICATION_V1` defaults false. Enable advertisement only after all guarantees pass and the operator attests that all writers are upgraded and old pods quiesced. Mixed-version writers are unsupported. With the flag off, opt-in conditional/versioned writes explicitly reject; clients never fall back to unconditional writes. Reserved immutable-address and existing-v1 downgrade protections remain active when advertisement is disabled, including rollback. Legacy unconditioned Project events retain legacy semantics.
 
@@ -2058,3 +2006,36 @@ The relay remains domain authority. A native SQLite recovery journal records exa
 Private answer storage remains separate encrypted native records with its own quota; shared publication records never carry private history. Any larger-answer integration must atomically bind encrypted chunks and manifest to scope/revision/order/digests and prove a greater-than-256-KiB roundtrip, crash atomicity, and no plaintext persistence. This decision does not claim shipped private history or lower its logical limits.
 
 Shipping still requires production-bound race/crash/mutation tests, isolated real relay/app evidence, repository gates, and exact-head independent review.
+
+## D-080 — Opt-in atomic channel creation and exact-event discovery recovery
+
+- **Status:** Accepted implementation contract; runtime acceptance pending
+- **Date:** 2026-09-09
+- **Issues:** #361, shared durable operations in #362
+
+Project operations extend Buzz's existing kind 9007 channel command and its
+channel, membership and event tables. They do not create a parallel channel
+registry. A signed `crew-atomic-create=1` tag requests one transaction for the
+supplied UUID, initial owner membership and exact signed command, including the
+normal thread metadata. An existing UUID without that exact original command is
+a conflict, including historical partial creations. The relay never guesses
+intent from a name or substitutes another UUID.
+
+Exact-event replay only rebuilds canonical discovery. It requires the original
+creator to remain a current owner in the same community and retains current
+metadata, roles, archive state and TTL. It does not repeat initial system,
+welcome, template or runtime effects. Required canvas/template work belongs to
+the durable user operation; this is not an exactly-once notification outbox.
+
+All current-binary canonical discovery callers use one transaction and lock
+order: community deletion shared, TTL shared, 39000/39001/39002 replacement
+locks, membership lock, live channel `FOR SHARE`. Capture the current channel,
+members and replay authorization under those locks; commit all three canonical
+heads before fanout. Metadata updates and deletion cannot cross the snapshot.
+
+`BUZZ_CREW_ATOMIC_CHANNEL_CREATE` defaults to false. Only an explicitly enabled
+relay advertises `crew-atomic-channel-create` in NIP-11. Disabled relays reject
+the signed opt-in; they never fall back to legacy semantics. Operators may
+activate it only after every writer is upgraded or quiesced. There is no
+mixed-version guarantee or new writer registry. Isolated relay fault, replay,
+concurrent-writer and deletion evidence remains required before acceptance.

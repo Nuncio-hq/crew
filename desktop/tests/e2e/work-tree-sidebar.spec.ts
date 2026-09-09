@@ -1,3 +1,4 @@
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 import { expect, test, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
@@ -163,11 +164,25 @@ async function injectWorkspace(page: Page) {
 }
 
 test.describe("work-tree sidebar (#203 / #223)", () => {
-  test("office channel stays in Channels; needs-you deep-links", async ({
+  test("workspace channel stays reachable; Inbox needs-you deep-links", async ({
     page,
   }) => {
     await seedGlowmaxProject(page);
     await installMockBridge(page, {
+      searchProfiles: [
+        {
+          pubkey: HERMES,
+          displayName: "Hermes",
+          ownerPubkey: OWNER,
+          isAgent: true,
+        },
+        {
+          pubkey: CODEX,
+          displayName: "Codex",
+          ownerPubkey: OWNER,
+          isAgent: true,
+        },
+      ],
       managedAgents: [
         {
           pubkey: HERMES,
@@ -188,15 +203,8 @@ test.describe("work-tree sidebar (#203 / #223)", () => {
     await expect(page.getByTestId("work-tree-folder-engineering")).toHaveCount(
       0,
     );
-    await expect(
-      page.getByTestId("stream-list").getByTestId("channel-general"),
-    ).toBeVisible();
-    await expect(
-      page.getByTestId("stream-list").getByTestId("channel-random"),
-    ).toBeVisible();
-    await expect(
-      page.getByTestId("stream-list").getByTestId("channel-engineering"),
-    ).toBeVisible();
+    await expect(page.getByTestId("stream-list")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-menu-trigger")).toBeVisible();
     await expect(page.getByTestId("dm-list")).toBeVisible();
     await expect(page.getByTestId("needs-you-section")).toHaveCount(0);
     await waitForAnimations(page);
@@ -205,7 +213,7 @@ test.describe("work-tree sidebar (#203 / #223)", () => {
       clip: SIDEBAR_CLIP,
     });
 
-    await page.getByTestId("channel-engineering").click();
+    await openWorkspaceChannel(page, "engineering");
     await expect(page.getByTestId("chat-title")).toContainText("engineering");
     await expect(page).toHaveURL(new RegExp(`/channels/${ENGINEERING_ID}`));
     await waitForLive(page, "engineering");
@@ -231,25 +239,26 @@ test.describe("work-tree sidebar (#203 / #223)", () => {
 
     await expect(page.getByTestId("work-tree-projects")).toHaveCount(0);
     await expect(page.getByTestId(`work-thread-row-${ROOT_A}`)).toHaveCount(0);
-    await expect(page.getByTestId("needs-you-section")).toBeVisible();
-    await waitForAnimations(page);
-    await page.screenshot({
-      path: `${SHOTS}/02-needs-you.png`,
-      clip: SIDEBAR_CLIP,
+    await page
+      .getByTestId("sidebar-primary-menu")
+      .getByRole("button", { name: "Inbox", exact: true })
+      .click();
+    const attention = page.getByTestId("mission-inbox-section-needsYou");
+    const respond = attention.getByRole("button", {
+      name: "Respond",
+      exact: true,
     });
-
-    await page.getByTestId("needs-you-header").click();
-    await expect(page.getByTestId("needs-you-panel")).toBeVisible();
+    await expect(respond).toHaveCount(1);
+    await waitForAnimations(page);
+    await attention.screenshot({ path: `${SHOTS}/02-needs-you.png` });
+    await respond.click();
     await expect(
-      page.getByTestId(`needs-you-item-${REQUEST_ID}`),
+      page.getByTestId(`channel-user-input-card-${REQUEST_ID}`),
     ).toBeVisible();
     await waitForAnimations(page);
-    await page.screenshot({
-      path: `${SHOTS}/03-needs-you-panel.png`,
-      clip: SIDEBAR_CLIP,
-    });
-
-    await page.getByTestId(`needs-you-item-${REQUEST_ID}`).click();
+    await page
+      .getByTestId(`channel-user-input-card-${REQUEST_ID}`)
+      .screenshot({ path: `${SHOTS}/03-needs-you-panel.png` });
     await expect(page.getByTestId("message-thread-panel")).toBeVisible();
     await expect(page).toHaveURL(new RegExp(`/channels/${ENGINEERING_ID}`));
     await expect(page.getByTestId("workbench-screen")).toHaveCount(0);

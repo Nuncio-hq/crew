@@ -2,7 +2,10 @@ import type * as React from "react";
 
 import type { EntityLinkTab } from "@/shared/lib/entityLink";
 import type { ProjectDetailWorkItemCrumb } from "./ProjectDetailChrome";
-import { PROJECT_TAB_CRUMB_LABELS } from "./projectDetailHelpers";
+import {
+  PROJECT_TAB_CRUMB_LABELS,
+  projectRepositorySelectionPatch,
+} from "./projectDetailHelpers";
 
 export function buildProjectDetailCrumbs({
   activeTab,
@@ -60,7 +63,7 @@ export function buildProjectDetailCrumbs({
   };
   const handleRepositoryChange = (repositoryId: string) => {
     applyRepositorySearch({
-      repositoryId,
+      ...projectRepositorySelectionPatch(repositoryId),
       issueId: null,
       pullRequestId: null,
       commitHash: null,

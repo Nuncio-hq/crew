@@ -310,6 +310,9 @@ pub struct Config {
     /// Example: `BUZZ_EPHEMERAL_TTL_OVERRIDE=60` → all ephemeral channels expire
     /// 60 seconds after the last message.
     pub ephemeral_ttl_override: Option<i32>,
+    /// Enable atomic channel creation only after every relay writer is upgraded
+    /// or quiesced. Default off; advertises crew-atomic-channel-create.
+    pub crew_atomic_channel_create: bool,
 
     /// Root directory for the relay's local git scratch. No authoritative
     /// repository state lives here — runtime reads/writes hydrate ephemeral
@@ -911,6 +914,9 @@ impl Config {
             .ok()
             .and_then(|v| v.parse::<i32>().ok())
             .filter(|&v| v > 0);
+        let crew_atomic_channel_create = std::env::var("BUZZ_CREW_ATOMIC_CHANNEL_CREATE")
+            .map(|value| value == "true")
+            .unwrap_or(false);
 
         if let Some(ttl) = ephemeral_ttl_override {
             warn!(
@@ -1240,6 +1246,7 @@ impl Config {
             media_uploads_per_minute,
             audit_enabled,
             ephemeral_ttl_override,
+            crew_atomic_channel_create,
             git_repo_path,
             git_pack_cache_path,
             git_max_pack_bytes,

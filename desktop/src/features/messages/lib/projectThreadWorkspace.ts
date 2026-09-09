@@ -70,6 +70,12 @@ export function parseCrewRepoAddress(
   return { owner: match[1], dtag: match[2] };
 }
 
+/** Return the exact lowercase resource key used by native Project recovery. */
+export function canonicalCrewRepoAddress(address: string): string | null {
+  const parsed = parseCrewRepoAddress(address);
+  return parsed ? `30617:${parsed.owner.toLowerCase()}:${parsed.dtag}` : null;
+}
+
 export function parseProjectThreadContext(
   content: string | null | undefined,
 ): ProjectThreadContext | null {

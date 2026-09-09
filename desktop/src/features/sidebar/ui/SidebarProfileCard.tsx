@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Settings } from "lucide-react";
 
 import { getPresenceLabel } from "@/features/presence/lib/presence";
 import { PresenceDot } from "@/features/presence/ui/PresenceBadge";
@@ -241,6 +242,19 @@ export function SidebarProfileCard({
             <div className="relative mt-0.5">{readonlyCommunityLabel}</div>
           )}
         </div>
+        <button
+          className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+          data-testid="sidebar-settings"
+          onClick={(event) => {
+            event.stopPropagation();
+            setProfilePopoverOpen(false);
+            onOpenSettings();
+          }}
+          type="button"
+        >
+          <Settings aria-hidden="true" className="size-3.5" />
+          Settings
+        </button>
       </div>
     </div>
   );

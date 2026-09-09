@@ -18,6 +18,7 @@ mod cursor_startup_model;
 pub(crate) mod custom_harnesses;
 mod definition_validation;
 mod discovery;
+pub(crate) use discovery::bounded_command::output_with_timeout as bounded_local_command;
 pub(crate) mod effective_config;
 pub(crate) use cursor_startup_model::{resolve_buzz_acp_model_env, resolve_effective_agent_args};
 mod cowork_history_env;
@@ -39,6 +40,18 @@ mod personas;
 #[cfg(windows)]
 mod process_lifecycle;
 pub(crate) mod readiness;
+// Default-off source proof: no generation command or positive capability exists.
+#[allow(dead_code)]
+pub(crate) mod recap_adapter;
+#[allow(dead_code)]
+pub(crate) mod recap_capability;
+#[allow(dead_code)]
+pub(crate) mod recap_ownership;
+#[allow(dead_code)]
+#[path = "recap_ownership/native.rs"]
+mod recap_ownership_native;
+#[allow(dead_code)]
+pub(crate) mod recap_state;
 pub(crate) mod reconcile;
 mod relay_mesh;
 mod repos;

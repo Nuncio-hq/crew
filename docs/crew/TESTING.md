@@ -112,6 +112,60 @@ For each observable contract:
 Never claim TDD when tests were written after implementation without first
 demonstrating that they detect the missing or broken behavior.
 
+## Isolated staging tooling
+
+`just crew-tooling-test` runs the bounded CLI regression suite. The same
+command is required by `just check` and the NuncioCrew CI Policy job. These
+tests replace external commands; they do not prove a running staging relay or
+a desktop workflow.
+
+Copy `scripts/crew-staging.example.json` outside Git and replace every placeholder
+from verified resource inventory; the example intentionally cannot run as-is.
+The server operator supplies this private version-1 manifest to
+`scripts/crew-staging.py`. It records the source container IDs, source schema,
+community and asset roots; separate target ports, volume names, network and
+container IDs; pinned images and build SHA; migration checksums; resource
+budgets; and private credential **paths**. Keep that manifest and all captured
+data outside Git. The CLI rejects shared source/target destinations.
+
+```sh
+python3 scripts/crew-staging.py plan --config /absolute/private/staging.json
+python3 scripts/crew-staging.py snapshot --config /absolute/private/staging.json --baseline initial
+python3 scripts/crew-staging.py restore --config /absolute/private/staging.json --baseline initial
+python3 scripts/crew-staging.py verify --config /absolute/private/staging.json --baseline initial
+```
+
+Provisioning is a separate reviewed operation. `restore` requires already
+recorded resource identities; it does not discover a container by name and
+assume ownership. Coordinate the PostgreSQL writer before restoring. A separate
+fixture database may share the owned PostgreSQL service, but cannot connect to
+the snapshot database. Stop/start and restore commands must never target the
+daily environment.
+
+A baseline uses a PostgreSQL dump transaction and unchanged pre/post asset,
+community, sanitized-user and signed-event sentinels. This is **not a globally
+atomic cross-store snapshot**. A changed sentinel leaves an incomplete baseline
+that cannot be restored. Capture a new baseline ID after inspection; never
+silently refresh an existing ID. Scheduled reminders and expiring channels
+currently cause refusal. Credential and executable table data are excluded;
+public profile data is retained except `users.okta_user_id`. Signed Nostr event
+fields are preserved and compared after restore. Git archives contain the
+`repos/` directory and are extracted into the owned Git volume root.
+
+Restore first records unavailable state and stops the target relay, then
+recreates only the declared snapshot database, applies hashed migrations, and
+checks signed events and persisted assets before starting services. Verification
+requires readiness plus a new private-channel message and exact CLI readback.
+`SERVER_VERIFIED` deliberately leaves desktop acceptance unverified: capture the
+actual isolated app workflow separately and post evidence with
+`scripts/post-screenshots.sh`.
+
+The Mac profile export accepts a separately approved ownership document through
+`scripts/crew_staging_profiles.py`. Its output is inert runtime/model/provider
+choices. It grants no generation permission and copies no employee identities,
+credentials, prompts, sessions or environment variables. Native account reuse
+requires a separately verified auth reference and refresh-write boundary.
+
 ## Test layers
 
 | Layer             | What it proves                                 | Typical Crew use                                  |
@@ -362,6 +416,34 @@ staging acceptance. Those remain #338 gates; real staging requires #348.
 
 ## CompanyOS grouped evidence (#344)
 
+For the #349 shell, `companyos-shell-navigation.spec.ts` checks stable Projects
+and Workflows despite saved preview opt-outs, workspace-menu navigation,
+Company Wiki, Settings, and Project expansion versus row navigation. Existing
+channel navigation specs use `openWorkspaceChannel` to exercise Browse
+channels through the real menu. These mock-bridge cases establish UI routing,
+not installed runtime or Project-operation recovery acceptance.
+
+For #361, run the native `project_git_workspace_probe` tests separately from
+the root Rust workspace. The probe must preserve the exact selected path,
+distinguish a Git root from a subdirectory, and propagate inaccessible-path or
+probe failures. Its Git subprocesses share one bounded deadline. Relay atomic
+creation/recovery tests must use isolated owned databases and an explicitly
+enabled relay; D-080's concurrent-writer and deployment checks remain separate
+from these local probe tests.
+
+The native Project workspace journal has a focused unit lane:
+
+```text
+cargo test -j 1 --locked --manifest-path desktop/src-tauri/Cargo.toml \
+  -p buzz-desktop --lib project_change_link -- --test-threads=1
+```
+
+It covers the durable v1 channel link, v2 repository attachment, v3 unlink,
+and v4 exact workspace path link. The shared driver cases cover lost-ack retry
+identity; v4-specific cases cover tag-order/path preservation and pre-persist
+intent validation. This lane does not prove the relay's conditional capability
+advertisement or installed picker behavior.
+
 Related issues may reuse one unchanged build and owned real-data run; keep an
 explicit issue-to-case mapping and post evidence on each corresponding issue.
 Record candidate SHA/build, source revision, runtime/model/profile, test data
@@ -372,6 +454,57 @@ Use `scripts/post-screenshots.sh` on the resulting PR and copy its immutable
 image URLs with concise captions into the issue. Required final CI, independent
 exact-head review and installed release acceptance remain separate gates.
 
+## Recap capability source proof (#351)
+
+The default-off native recap slice is tested through its production modules:
+`recap_capability`, `recap_adapter`, `recap_state`, `recap_ownership`, and
+`discovery::bounded_command`. The native `AppHandle` loader belongs to the full
+Tauri build gate; a small exact-module Cargo harness alone does not certify that
+integration. Run `just ci` before the PR and require the immutable head's
+NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limits-2026-09-09)
+for the current unsupported inventory.
+
+Test boundaries include explicit model/profile admission, identity invalidation,
+fixed argv with a fake tool sentinel, native final-result/model parsing, private
+unlinked stdin and size limits, durable process-pending state, copied/symlinked
+ownership records, root-generation replacement, UID/build/profile/exclusion
+mismatch, and rejection of generation/auth claims in an ownership-only manifest.
+The bounded process tests cover aggregate discovery versus independent recap
+budgets, cancellation before and after spawn, zero deadlines, EPERM retry only
+after observed root reap, and cleanup failures. The existing escaped-descendant
+test deliberately proves the limit of Unix process groups and cleans its own
+fixture; it must never be reported as whole-tree containment.
+
+Keep RED, mutation and restored-GREEN evidence separate. Removing the fixed
+`--tools` argument, prompt cap, pending-process cleanup guard, or EPERM reap
+condition must fail the corresponding production-seam regression. Synthetic
+argv/output tests and authorized design reviews do not establish provider auth,
+effective generation model, native tool isolation or a working recap. Real
+staging generation remains blocked until one exact runtime combination proves
+all those properties and #348 supplies a separate runtime-ready grant. Evidence
+screenshots must label a source/tooling summary as such; they cannot substitute
+for the designated staging runtime acceptance required by #351/#356.
+
+The 2026-09-09 inventory used resolved native executables identified by the
+Architecture table's hashes, not the user's updating wrapper. Recorded arguments
+(excluding that executable) were:
+
+- Claude: `["--version"]` and `["--safe-mode", "--setting-sources", "", "--help"]`.
+  Cleared environment allowlist: `HOME`, `PATH`, `TMPDIR`, `CLAUDE_CONFIG_DIR`,
+  `CLAUDE_CODE_SAFE_MODE`, `DISABLE_AUTOUPDATER`.
+- Codex: `["--version"]`, `["--help"]`, `["exec", "--help"]`,
+  `["app-server", "--help"]`, `["app-server", "generate-json-schema", "--help"]`,
+  and `["app-server", "generate-json-schema", "--experimental", "--out", "/tmp/crew-351-evidence/codex-schema"]`.
+  Cleared environment allowlist: `HOME`, `PATH`, `TMPDIR`, `CODEX_HOME`.
+- Hermes: no executable arguments were run; inspection followed the installed
+  CLI, `run_agent.AIAgent`, and `hermes_cli/oneshot.py` source imports only.
+
+HOME/config/temp paths above pointed to disposable inventory roots. Help/version
+capture used a 10-second deadline and 64 KiB per stream. The initial Claude
+inventory retained `process_group_cleanup_denied` despite exit 0; it is not a
+clean containment result. Subsequent owned synthetic process fixtures established
+the unreaped-root EPERM case and the checked reap/retry behavior. No repeat
+Claude call was used to replace that failed cleanup record with a success.
 
 For #354 / G-THREAD-1 v3, bind regressions to the production pane store, scoped
 forge subject, current-generation dispatch and drawer Escape gate. Prove exact

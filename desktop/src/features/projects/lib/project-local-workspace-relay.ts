@@ -1,5 +1,6 @@
 import {
   linkProjectWorkspaceTags,
+  removeLocalWorkspaceTag,
   projectLocalWorkspaceFromEvent,
 } from "./project-local-workspace";
 
@@ -191,4 +192,83 @@ export async function linkProjectLocalWorkspace(
     },
     dependencies,
   );
+}
+
+/**
+ * Remove only the local Buzz location from the selected 30617 announcement.
+ * The repository identity, access channel, workspace mode, and every unknown
+ * tag remain byte-for-byte represented in the replacement event.
+ */
+export async function unlinkProjectLocalWorkspace(
+  input: {
+    owner: string;
+    currentPubkey: string;
+    dtag: string;
+  },
+  dependencies: RelayDependencies,
+): Promise<ProjectRelayEvent> {
+  if (input.owner.toLowerCase() !== input.currentPubkey.toLowerCase()) {
+    throw new Error(
+      "Only the repository owner can unlink its local workspace.",
+    );
+  }
+  const current = selectCurrentProjectAnnouncement(
+    await dependencies.fetchEvents({
+      kinds: [PROJECT_KIND],
+      authors: [input.owner],
+      "#d": [input.dtag],
+      limit: 50,
+    }),
+    input.owner,
+    input.dtag,
+  );
+  if (!current)
+    throw new Error("Repository announcement was not found on relay.");
+  const workspace = projectLocalWorkspaceFromEvent(current);
+  if (workspace.localWorkspace.status === "unlinked") return current;
+  if (workspace.localWorkspace.status === "invalid") {
+    throw new Error("Repository has invalid local workspace metadata.");
+  }
+  const signed = await dependencies.signRelayEvent({
+    kind: PROJECT_KIND,
+    content: current.content,
+    createdAt: nextProjectAnnouncementCreatedAt(current.created_at),
+    tags: removeLocalWorkspaceTag(current.tags),
+  });
+  if (
+    signed.pubkey.toLowerCase() !== input.owner.toLowerCase() ||
+    signed.kind !== PROJECT_KIND ||
+    signed.id === current.id ||
+    projectLocalWorkspaceFromEvent(signed).localWorkspace.status !== "unlinked"
+  ) {
+    throw new Error(
+      "Signed repository unlink did not match the selected head.",
+    );
+  }
+  await dependencies.publishEvent(
+    signed,
+    "Timed out unlinking the repository workspace.",
+    "Failed to unlink the repository workspace.",
+  );
+  const readBack = selectCurrentProjectAnnouncement(
+    await dependencies.fetchEvents({
+      ids: [signed.id],
+      kinds: [PROJECT_KIND],
+      authors: [signed.pubkey],
+      "#d": [input.dtag],
+      limit: 1,
+    }),
+    input.owner,
+    input.dtag,
+  );
+  if (!readBack || readBack.id !== signed.id) {
+    throw new Error("Repository unlink failed relay read-back validation.");
+  }
+  if (
+    projectLocalWorkspaceFromEvent(readBack).localWorkspace.status !==
+    "unlinked"
+  ) {
+    throw new Error("Repository unlink did not remove the local location tag.");
+  }
+  return readBack;
 }
