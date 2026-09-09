@@ -1,15 +1,18 @@
 import { resolveProjectChannelAgentMessage } from "./project-channel-agent-context";
 import type { WorkspaceBindingChoice } from "@/features/messages/lib/workspaceBindingSpec";
 import {
-  linkProjectLocalWorkspace,
   selectCurrentProjectAnnouncement,
   type ProjectRelayEvent,
 } from "./project-local-workspace-relay";
 
 import { relayClient } from "@/shared/api/relayClient";
 import { createChannel } from "@/shared/api/tauriChannels";
-import { getRelayWsUrl, signRelayEvent } from "@/shared/api/tauri";
+import { getRelayWsUrl } from "@/shared/api/tauri";
 import { getIdentity } from "@/shared/api/tauriIdentity";
+import {
+  linkProjectWorkspace,
+  unlinkProjectWorkspace,
+} from "@/shared/api/projectChannelLink";
 
 type RelayFilter = Parameters<typeof relayClient.fetchEvents>[0];
 
@@ -37,17 +40,55 @@ export async function linkCurrentProjectWorkspace(input: {
   channelId: string;
   localPath: string;
 }): Promise<ProjectRelayEvent> {
-  return linkProjectLocalWorkspace(input, {
-    fetchEvents,
-    signRelayEvent,
-    publishEvent: async (
-      event,
-      timeoutMessage = "Timed out linking the Project workspace.",
-      errorMessage = "Failed to link the Project workspace.",
-    ) => {
-      await relayClient.publishEvent(event, timeoutMessage, errorMessage);
-    },
-  });
+  if (input.owner.toLowerCase() !== input.currentPubkey.toLowerCase()) {
+    throw new Error("Only the repository owner can link its workspace.");
+  }
+  const repositoryCoordinate = `30617:${input.owner.toLowerCase()}:${input.dtag}`;
+  const result = await linkProjectWorkspace(
+    repositoryCoordinate,
+    input.channelId,
+    input.localPath,
+  );
+  if (!result.value.reconciled || result.value.status !== "complete") {
+    throw new Error(
+      result.value.payload.last_error ??
+        "The workspace link is still pending relay confirmation.",
+    );
+  }
+  const saved = await fetchCurrentProjectAnnouncement(input.owner, input.dtag);
+  if (!saved) {
+    throw new Error(
+      "The workspace was linked, but the repository could not be read.",
+    );
+  }
+  return saved;
+}
+
+export async function unlinkCurrentProjectWorkspace(input: {
+  owner: string;
+  currentPubkey: string;
+  dtag: string;
+}): Promise<ProjectRelayEvent> {
+  if (input.owner.toLowerCase() !== input.currentPubkey.toLowerCase()) {
+    throw new Error(
+      "Only the repository owner can unlink its local workspace.",
+    );
+  }
+  const repositoryCoordinate = `30617:${input.owner.toLowerCase()}:${input.dtag}`;
+  const result = await unlinkProjectWorkspace(repositoryCoordinate);
+  if (!result.value.reconciled || result.value.status !== "complete") {
+    throw new Error(
+      result.value.payload.last_error ??
+        "The workspace unlink is still pending relay confirmation.",
+    );
+  }
+  const saved = await fetchCurrentProjectAnnouncement(input.owner, input.dtag);
+  if (!saved) {
+    throw new Error(
+      "The workspace was unlinked, but the repository could not be read.",
+    );
+  }
+  return saved;
 }
 
 export async function createProjectWorkspaceChannel(

@@ -300,7 +300,7 @@ test("listProjectBoundChannels includes extra related channels after home", () =
   );
 });
 
-test("listProjectChildChannels omits the home channel", () => {
+test("listProjectChildChannels keeps the home channel now that the Project row opens its overview", () => {
   const related = "33333333-3333-4333-8333-333333333333";
   assert.deepEqual(
     listProjectChildChannels(
@@ -311,6 +311,7 @@ test("listProjectChildChannels omits the home channel", () => {
       }),
     ),
     [
+      { channelId: CHANNEL_B, repositoryId: null, role: "home" },
       {
         channelId: related,
         repositoryId: null,

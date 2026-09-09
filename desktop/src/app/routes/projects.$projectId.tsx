@@ -28,6 +28,7 @@ function ProjectDetailRouteComponent() {
     pullRequestId,
     issueId,
     repositoryId,
+    repositoryAddress,
     tab,
     thread,
   } = Route.useSearch();
@@ -49,7 +50,7 @@ function ProjectDetailRouteComponent() {
         issueId={issueId}
         projectId={projectId}
         pullRequestId={pullRequestId}
-        repositoryId={repositoryId}
+        repositoryId={repositoryAddress ?? repositoryId}
         tab={tab}
         thread={thread}
       />

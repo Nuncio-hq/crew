@@ -3,14 +3,33 @@ import type {
   Repository as Project,
 } from "@/features/projects/hooks";
 import { normalizePubkey } from "@/shared/lib/pubkey";
+import { KIND_REPO_ANNOUNCEMENT } from "@/shared/constants/kinds";
+
+/** Preserve repository deep links while an explicit selection takes priority. */
+export function projectRouteRepositoryId(
+  projectId: string,
+  repositoryId?: string,
+) {
+  if (repositoryId) return repositoryId;
+  const prefix = `${KIND_REPO_ANNOUNCEMENT}:`;
+  return projectId.startsWith(prefix)
+    ? projectId.slice(prefix.length)
+    : undefined;
+}
 
 export const PROJECT_REPOSITORY_SEARCH_KEYS = [
   "repositoryId",
+  "repositoryAddress",
   "issueId",
   "pullRequestId",
   "commitHash",
   "filePath",
 ] as const;
+
+/** A new legacy selection clears any explicit coordinate from the old route. */
+export function projectRepositorySelectionPatch(repositoryId: string) {
+  return { repositoryId, repositoryAddress: null };
+}
 
 export const PROJECT_TAB_CRUMB_LABELS: Record<string, string> = {
   files: "Files",

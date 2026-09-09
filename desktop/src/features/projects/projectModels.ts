@@ -538,11 +538,20 @@ export function buildProjectReadModels({
   );
 }
 
+/** Full-coordinate requests fail closed; legacy IDs retain their fallback. */
 export function selectProjectRepository(
   project: Project | null | undefined,
   requestedRepositoryId: string | null | undefined,
 ): Repository | null {
   if (!project) return null;
+
+  if (requestedRepositoryId?.startsWith(`${KIND_REPO_ANNOUNCEMENT}:`)) {
+    return (
+      project.repositories.find(
+        (repository) => repository.repoAddress === requestedRepositoryId,
+      ) ?? null
+    );
+  }
 
   const requested = requestedRepositoryId
     ? project.repositories.find(

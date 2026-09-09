@@ -200,6 +200,35 @@ pub async fn create_channel_with_id(
     created_by: &[u8],
     ttl_seconds: Option<i32>,
 ) -> Result<(ChannelRecord, bool)> {
+    let mut tx = begin_event_write_transaction(pool).await?;
+    let result = create_channel_with_id_in_transaction(
+        &mut tx,
+        community_id,
+        channel_id,
+        name,
+        channel_type,
+        visibility,
+        description,
+        created_by,
+        ttl_seconds,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn create_channel_with_id_in_transaction(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    community_id: CommunityId,
+    channel_id: Uuid,
+    name: &str,
+    channel_type: ChannelType,
+    visibility: ChannelVisibility,
+    description: Option<&str>,
+    created_by: &[u8],
+    ttl_seconds: Option<i32>,
+) -> Result<(ChannelRecord, bool)> {
     if created_by.len() != 32 {
         return Err(DbError::InvalidData(format!(
             "pubkey must be 32 bytes, got {}",
@@ -218,8 +247,6 @@ pub async fn create_channel_with_id(
         return Err(DbError::InvalidData("channel name is required".into()));
     }
 
-    let mut tx = begin_event_write_transaction(pool).await?;
-
     let rows_affected = sqlx::query(
         r#"
         INSERT INTO channels (id, community_id, name, channel_type, visibility, description, created_by, ttl_seconds, ttl_deadline)
@@ -236,7 +263,7 @@ pub async fn create_channel_with_id(
     .bind(description)
     .bind(created_by)
     .bind(ttl_seconds)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?
     .rows_affected();
 
@@ -258,7 +285,7 @@ pub async fn create_channel_with_id(
         .bind(channel_id)
         .bind(created_by)
         .bind(created_by)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     }
 
@@ -276,11 +303,10 @@ pub async fn create_channel_with_id(
     )
     .bind(community_id.as_uuid())
     .bind(channel_id)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
 
     let record = row_to_channel_record(row)?;
-    tx.commit().await?;
     Ok((record, was_created))
 }
 

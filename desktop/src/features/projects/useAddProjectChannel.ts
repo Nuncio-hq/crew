@@ -146,15 +146,16 @@ export async function addProjectChannel(
         projectCreatedAt = publication.event.created_at;
       }
     } catch (error) {
-      await removeCreatedChannelAndThrow(
-        isUnsupportedProjectKindError(error)
-          ? new Error(
-              "This relay does not support projects yet, so the channel could not be linked.",
-            )
-          : error instanceof Error
-            ? error
-            : new Error("Could not link the channel to this project."),
-      );
+      // Publication can succeed while its acknowledgement is lost. Once the
+      // write is attempted, deleting the channel can destroy an accepted
+      // binding. Preserve it and propagate until recovery confirms the result.
+      throw isUnsupportedProjectKindError(error)
+        ? new Error(
+            "This relay does not support projects yet, so the channel could not be linked.",
+          )
+        : error instanceof Error
+          ? error
+          : new Error("Could not link the channel to this project.");
     }
   }
 

@@ -1,4 +1,4 @@
-import { Activity, BookOpen, Bot, Inbox, Zap } from "lucide-react";
+import { Bot, Inbox, Zap } from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { FeatureGate } from "@/shared/features";
@@ -43,8 +43,6 @@ type AppSidebarPrimaryMenuProps = {
   homeBadgeCount: number;
   onSelectAgents: () => void;
   onSelectHome: () => void;
-  onSelectWiki: () => void;
-  onSelectPulse: () => void;
   onSelectWorkflows: () => void;
   selectedView: SidebarSelectedView;
 };
@@ -92,8 +90,6 @@ export function AppSidebarPrimaryMenu({
   homeBadgeCount,
   onSelectAgents,
   onSelectHome,
-  onSelectWiki,
-  onSelectPulse,
   onSelectWorkflows,
   selectedView,
 }: AppSidebarPrimaryMenuProps) {
@@ -123,32 +119,6 @@ export function AppSidebarPrimaryMenu({
               {Math.min(homeBadgeCount, 99)}
             </SidebarMenuBadge>
           ) : null}
-        </SidebarMenuItem>
-        <FeatureGate feature="pulse">
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              data-testid="open-pulse-view"
-              isActive={selectedView === "pulse"}
-              onClick={onSelectPulse}
-              tooltip="Pulse"
-              type="button"
-            >
-              <Activity className="h-4 w-4" />
-              <SidebarMenuLabel>Pulse</SidebarMenuLabel>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </FeatureGate>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            data-testid="open-wiki-view"
-            isActive={selectedView === "wiki"}
-            onClick={onSelectWiki}
-            tooltip="Wiki"
-            type="button"
-          >
-            <BookOpen className="h-4 w-4" />
-            <SidebarMenuLabel>Wiki</SidebarMenuLabel>
-          </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
