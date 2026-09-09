@@ -17,6 +17,7 @@ pub(crate) fn validate_wiki_page_ingest(event: &Event) -> Result<(), IngestError
         .collect();
     validate_wiki_page_envelope(event.kind.as_u16() as u32, &tags)
         .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    super::source_publication::validate(event)?;
     Ok(())
 }
 
@@ -72,5 +73,25 @@ mod tests {
             .sign_with_keys(&keys)
             .expect("sign");
         assert!(validate_wiki_page_ingest(&event).is_err());
+    }
+
+    #[tokio::test]
+    async fn rejects_source_bound_page_at_the_ingest_validation_seam() {
+        let keys = nostr::Keys::generate();
+        let event = EventBuilder::new(Kind::Custom(KIND_REPO_WIKI_PAGE as u16), "# Overview")
+            .tags([
+                Tag::parse(["d", "crew/overview"]).expect("d"),
+                Tag::parse(["a", &format!("30617:{}:crew", owner())]).expect("a"),
+                Tag::parse(["commit", "abc123"]).expect("commit"),
+                Tag::parse(["wiki-source-files", "1"]).expect("source marker"),
+            ])
+            .sign_with_keys(&keys)
+            .expect("sign");
+
+        assert!(matches!(
+            validate_wiki_page_ingest(&event),
+            Err(IngestError::Rejected(reason))
+                if reason == "unsupported: crew-conditional-publication-v1"
+        ));
     }
 }

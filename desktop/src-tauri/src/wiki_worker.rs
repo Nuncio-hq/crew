@@ -13,9 +13,8 @@ use crew_wiki::generate_root::{
 };
 use crew_wiki::git_snapshot::RepoSnapshot;
 use crew_wiki::publish::{page_event_tags, toc_content, toc_event_tags, PageDraft, TocManifest};
-use crew_wiki::steering::load_steering;
+use crew_wiki::steering::load_captured_steering;
 use serde::Serialize;
-use std::path::Path;
 use std::sync::OnceLock;
 
 fn generate_lock() -> &'static GenerateLock {
@@ -97,23 +96,28 @@ pub async fn wiki_generate(
     };
 
     let snapshot = match RepoSnapshot::from_git(&root) {
-        Ok(snapshot) if snapshot.files.is_empty() => {
+        Ok(snapshot) if snapshot.is_empty_tree() => {
             return Ok(empty_outcome(&owner, &repo_d, cost_note));
         }
-        Ok(snapshot) => hydrate_contents(snapshot, &root),
+        Ok(snapshot) if snapshot.files.is_empty() => {
+            return Err(format!(
+                "Source coverage unavailable: no supported source files ({} omitted paths)",
+                snapshot.omissions.len()
+            ));
+        }
+        Ok(snapshot) => snapshot,
         Err(err) => {
-            return Ok(
-                match classify_from_git_failure(&root, &err.to_string(), true) {
-                    WikiLocalSnapshotError::MissingLocalPath => {
-                        missing_local_outcome(&owner, &repo_d, cost_note)
-                    }
-                    WikiLocalSnapshotError::EmptyTree => empty_outcome(&owner, &repo_d, cost_note),
-                },
-            );
+            return match classify_from_git_failure(&root, &err) {
+                WikiLocalSnapshotError::MissingLocalPath => {
+                    Ok(missing_local_outcome(&owner, &repo_d, cost_note))
+                }
+                WikiLocalSnapshotError::EmptyTree => Ok(empty_outcome(&owner, &repo_d, cost_note)),
+                WikiLocalSnapshotError::CaptureFailed => Err(err.to_string()),
+            };
         }
     };
 
-    let steering = load_steering(&root);
+    let steering = load_captured_steering(&snapshot).map_err(|err| err.to_string())?;
     let plan = plan_pages(&snapshot, steering.as_ref()).map_err(|err| err.to_string())?;
     let generator = HeuristicGenerator;
     let mut drafts = Vec::new();
@@ -160,17 +164,6 @@ fn dto_from_draft(draft: PageDraft, tags: Vec<Vec<String>>) -> WikiDraftDto {
     }
 }
 
-fn hydrate_contents(mut snapshot: RepoSnapshot, root: &Path) -> RepoSnapshot {
-    let paths = snapshot.files.clone();
-    for path in paths.iter().take(80) {
-        let body = snapshot.read(path, Some(root));
-        if !body.is_empty() {
-            snapshot.contents.insert(path.clone(), body);
-        }
-    }
-    snapshot
-}
-
 fn empty_outcome(owner: &str, repo_d: &str, cost_note: String) -> WikiGenerateOutcome {
     let manifest = TocManifest {
         sections: Vec::new(),
@@ -199,4 +192,92 @@ fn missing_local_outcome(owner: &str, repo_d: &str, cost_note: String) -> WikiGe
     outcome.empty_repo = false;
     outcome.missing_local_path = true;
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    #[tokio::test]
+    async fn wiki_generate_reports_a_bound_non_git_directory_as_missing_local() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let outcome = wiki_generate(
+            "ab".repeat(32),
+            "crew".to_owned(),
+            Some(directory.path().display().to_string()),
+        )
+        .await
+        .expect("typed missing-local outcome");
+
+        assert!(outcome.missing_local_path);
+        assert!(!outcome.empty_repo);
+        assert_eq!(outcome.pages, 0);
+    }
+
+    #[tokio::test]
+    async fn wiki_generate_reports_an_empty_git_tree_as_empty_repo() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let status = Command::new("git")
+            .args(["init"])
+            .current_dir(directory.path())
+            .status()
+            .expect("git init");
+        assert!(status.success());
+
+        let outcome = wiki_generate(
+            "cd".repeat(32),
+            "empty".to_owned(),
+            Some(directory.path().display().to_string()),
+        )
+        .await
+        .expect("typed empty-repo outcome");
+
+        assert!(outcome.empty_repo);
+        assert!(!outcome.missing_local_path);
+        assert_eq!(outcome.pages, 0);
+    }
+
+    #[tokio::test]
+    async fn wiki_generate_propagates_invalid_committed_steering() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        for args in [
+            &["init"][..],
+            &["config", "user.email", "crew-wiki-tests@example.invalid"][..],
+            &["config", "user.name", "Crew Wiki Tests"][..],
+        ] {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(directory.path())
+                .status()
+                .expect("git command");
+            assert!(status.success(), "git command failed: {args:?}");
+        }
+        std::fs::create_dir_all(directory.path().join(".crew")).expect("steering directory");
+        std::fs::write(directory.path().join(".crew/wiki.json"), "{ invalid")
+            .expect("invalid steering");
+        for args in [
+            &["add", "."][..],
+            &["commit", "--quiet", "-m", "invalid steering"][..],
+        ] {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(directory.path())
+                .status()
+                .expect("git command");
+            assert!(status.success(), "git command failed: {args:?}");
+        }
+
+        let error = wiki_generate(
+            "ef".repeat(32),
+            "invalid-steering".to_owned(),
+            Some(directory.path().display().to_string()),
+        )
+        .await
+        .expect_err("invalid committed steering must not become an empty success");
+        assert!(
+            error.contains("invalid steering file"),
+            "unexpected worker error: {error}"
+        );
+    }
 }

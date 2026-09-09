@@ -17,44 +17,37 @@ pub struct RepoSnapshot {
     pub files: Vec<String>,
     /// Optional file contents (tests / heuristic generator).
     pub contents: BTreeMap<String, String>,
+    /// Typed identity of the exact captured bytes.
+    pub source_revision: String,
+    /// Explicit coverage omissions, never silent missing content.
+    pub omissions: Vec<crate::source_snapshot::SourceOmission>,
 }
 
 impl RepoSnapshot {
+    /// Whether capture found a genuinely empty tree rather than omitted source.
+    pub fn is_empty_tree(&self) -> bool {
+        self.files.is_empty() && self.omissions.is_empty()
+    }
+
     /// Paths only.
     pub fn paths(&self) -> Vec<String> {
         self.files.clone()
     }
 
-    /// Build from a local git worktree via `git ls-tree`.
+    /// Build from verified immutable Git objects in the local repository.
     pub fn from_git(root: &Path) -> Result<Self, WikiError> {
-        let commit = git_stdout(root, &["rev-parse", "HEAD"])?;
-        let branch = git_stdout(root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
-        let tree = git_stdout(root, &["ls-tree", "-r", "--name-only", "HEAD"])?;
-        let files = tree
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(ToString::to_string)
-            .collect();
-        Ok(Self {
-            commit,
-            branch,
-            files,
-            contents: BTreeMap::new(),
-        })
+        crate::source_snapshot::capture_git(
+            root,
+            crate::source_snapshot::GitSourceChoice::CurrentHead,
+        )
     }
 
-    /// Read a file from the snapshot cache or disk.
-    pub fn read(&self, path: &str, root: Option<&Path>) -> String {
-        if let Some(cached) = self.contents.get(path) {
-            return cached.clone();
-        }
-        if let Some(root) = root {
-            if let Ok(bytes) = std::fs::read_to_string(root.join(path)) {
-                return bytes.chars().take(8_000).collect();
-            }
-        }
-        String::new()
+    /// Read only immutable captured content; missing historical bytes are unavailable.
+    pub fn read(&self, path: &str, _root: Option<&Path>) -> Result<&str, WikiError> {
+        self.contents
+            .get(path)
+            .map(String::as_str)
+            .ok_or_else(|| WikiError::Git("captured source is unavailable".into()))
     }
 }
 

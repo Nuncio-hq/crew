@@ -21,34 +21,26 @@ pub fn resolve_wiki_generate_root(repo_path: Option<&str>) -> WikiGenerateRoot {
     }
 }
 
-/// `from_git` failed or listed no files.
+/// Why an accepted local root cannot be used for generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WikiLocalSnapshotError {
     /// Bound path is gone or not a git worktree.
     MissingLocalPath,
     /// Git tree exists but has no files / no HEAD.
     EmptyTree,
+    /// Source capture failed for a reason that must reach the caller.
+    CaptureFailed,
 }
 
 /// Classify a `from_git` failure for a root that `resolve` already accepted.
-pub fn classify_from_git_failure(
-    root: &Path,
-    git_error: &str,
-    files_empty: bool,
-) -> WikiLocalSnapshotError {
-    let err = git_error.to_ascii_lowercase();
-    if err.contains("not a git repository") || !root.join(".git").exists() {
+pub fn classify_from_git_failure(root: &Path, error: &crate::WikiError) -> WikiLocalSnapshotError {
+    if !root.join(".git").exists() {
         return WikiLocalSnapshotError::MissingLocalPath;
     }
-    if files_empty
-        || err.contains("ambiguous argument")
-        || err.contains("unknown revision")
-        || err.contains("bad revision")
-        || err.contains("needed a single revision")
-    {
+    if matches!(error, crate::WikiError::EmptyGitTree) {
         return WikiLocalSnapshotError::EmptyTree;
     }
-    WikiLocalSnapshotError::EmptyTree
+    WikiLocalSnapshotError::CaptureFailed
 }
 
 #[cfg(test)]
@@ -102,7 +94,7 @@ mod tests {
             .status()
             .expect("git init");
         assert!(status.success());
-        let err = classify_from_git_failure(&dir, "ambiguous argument 'HEAD'", true);
+        let err = classify_from_git_failure(&dir, &crate::WikiError::EmptyGitTree);
         assert_eq!(err, WikiLocalSnapshotError::EmptyTree);
         let _ = fs::remove_dir_all(dir);
     }
@@ -110,8 +102,26 @@ mod tests {
     #[test]
     fn not_a_git_directory_is_missing_local_path() {
         let dir = tmp_dir("not-git");
-        let err = classify_from_git_failure(&dir, "not a git repository", false);
+        let err =
+            classify_from_git_failure(&dir, &crate::WikiError::Git("not a git repository".into()));
         assert_eq!(err, WikiLocalSnapshotError::MissingLocalPath);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unrelated_capture_failure_is_not_an_empty_tree() {
+        let dir = tmp_dir("capture-failure");
+        let status = Command::new("git")
+            .args(["init"])
+            .current_dir(&dir)
+            .status()
+            .expect("git init");
+        assert!(status.success());
+        let err = classify_from_git_failure(
+            &dir,
+            &crate::WikiError::InvalidSteering("invalid JSON".into()),
+        );
+        assert_eq!(err, WikiLocalSnapshotError::CaptureFailed);
         let _ = fs::remove_dir_all(dir);
     }
 }

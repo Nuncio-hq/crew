@@ -16,6 +16,15 @@ pub mod generate_root;
 pub mod git_snapshot;
 pub mod incremental;
 pub mod publish;
+pub mod snapshot_v1;
+mod snapshot_v1_validation;
+pub mod source_access;
+pub mod source_folder;
+#[cfg(unix)]
+mod source_folder_walk;
+mod source_git_command;
+mod source_git_tree;
+pub mod source_snapshot;
 pub mod steering;
 pub mod types;
 

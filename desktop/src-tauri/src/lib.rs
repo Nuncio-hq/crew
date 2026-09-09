@@ -222,6 +222,7 @@ pub fn run() {
             });
         })
         .manage(build_app_state())
+        .manage(commands::SourceState::default())
         .manage(ClipboardState::new())
         .manage(PendingCommunityDeepLinks::default())
         .manage(PendingNavigationDeepLinks::default())
