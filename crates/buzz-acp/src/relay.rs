@@ -3864,7 +3864,7 @@ async fn send_auth_response(
     relay_url: &str,
     keys: &Keys,
     auth_tag: Option<&nostr::Tag>,
-) -> Result<(), RelayError> {
+) -> Result<String, RelayError> {
     let relay_nostr_url = RelayUrl::parse(relay_url)
         .map_err(|e| RelayError::Http(format!("invalid relay URL: {e}")))?;
 
@@ -3887,7 +3887,7 @@ async fn send_auth_response(
     let auth_msg = serde_json::to_string(&json!(["AUTH", auth_event]))?;
     ws_send_timeout(ws, Message::Text(auth_msg.into()), WS_SEND_TIMEOUT_SECS).await?;
     debug!("sent AUTH response for challenge");
-    Ok(())
+    Ok(auth_event.id.to_hex())
 }
 
 /// Convert a WebSocket URL to its HTTP equivalent.
@@ -4278,20 +4278,12 @@ async fn do_connect(
 
     let challenge = wait_for_auth_challenge(&mut ws, &mut buffer, AUTH_TIMEOUT).await?;
 
-    send_auth_response(&mut ws, &challenge, relay_url, keys, auth_tag).await?;
-
-    let event_id = {
-        // We need the event_id that was just sent. Re-derive it by signing again
-        // just to get the ID — but that's wasteful. Instead, parse the last sent
-        // message. Simpler: wait_for_ok accepts any OK (we just sent one event).
-        // The event_id in the OK will match whatever we sent.
-        // We'll accept the first OK we receive.
-        let ok = wait_for_any_ok(&mut ws, &mut buffer, AUTH_TIMEOUT).await?;
-        if !ok.accepted {
-            return Err(RelayError::AuthFailed(ok.message));
-        }
-        ok.event_id
-    };
+    let auth_event_id = send_auth_response(&mut ws, &challenge, relay_url, keys, auth_tag).await?;
+    let ok = wait_for_auth_ok(&mut ws, &mut buffer, &auth_event_id, AUTH_TIMEOUT).await?;
+    if !ok.accepted {
+        return Err(RelayError::AuthFailed(ok.message));
+    }
+    let event_id = ok.event_id;
 
     debug!("NIP-42 authentication successful (event {event_id})");
     Ok((ws, buffer))
@@ -4356,16 +4348,17 @@ struct OkResponse {
     message: String,
 }
 
-/// Wait for the first `OK` message from the relay (used after sending AUTH).
-async fn wait_for_any_ok(
+/// Wait for the exact sent AUTH event acknowledgement, buffering unrelated frames.
+async fn wait_for_auth_ok(
     ws: &mut WsStream,
     buffer: &mut VecDeque<RelayMessage>,
+    auth_event_id: &str,
     timeout_dur: Duration,
 ) -> Result<OkResponse, RelayError> {
     // Check if there's already one buffered.
     if let Some(idx) = buffer
         .iter()
-        .position(|m| matches!(m, RelayMessage::Ok { .. }))
+        .position(|m| matches!(m, RelayMessage::Ok { event_id, .. } if event_id == auth_event_id))
     {
         if let Some(RelayMessage::Ok {
             event_id,
@@ -4406,7 +4399,7 @@ async fn wait_for_any_ok(
                         event_id,
                         accepted,
                         message,
-                    } => {
+                    } if event_id == auth_event_id => {
                         return Ok(OkResponse {
                             event_id,
                             accepted,
@@ -7361,3 +7354,7 @@ mod subscription_recovery_tests;
 #[cfg(test)]
 #[path = "relay/discovery-contract-tests.rs"]
 mod discovery_contract_tests;
+
+#[cfg(test)]
+#[path = "relay/auth-correlation-tests.rs"]
+mod auth_correlation_tests;
