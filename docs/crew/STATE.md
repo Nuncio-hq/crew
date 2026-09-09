@@ -26,9 +26,9 @@ Local transport projection and the shared reconnect budget remain unfinished.
 ## Desktop
 
 Channel-first IA (Inbox + channels + DMs; no Projects/Workbench/Org nav).
-Thread Workbench route exists but has no door — Focus grain work is
-[#344](https://github.com/Nuncio-hq/crew/issues/344) (S1 doors → S2
-sub-second done → S3 Tool Pane → S4 reconcile). Tool Pane (PR · Browser · Sim) in thread focus. Crew
+Thread Workbench route exists but has no door — Focus presentation is
+[#354](https://github.com/Nuncio-hq/crew/issues/354), observer completion
+is [#352](https://github.com/Nuncio-hq/crew/issues/352). Tool Pane (PR · Browser · Sim) in thread focus. Crew
 Dark theme, text-only zoom, 1000-line ratchet. Mention send flow follows
 upstream's composer-revision security model with Crew context in
 `crewSendContext.ts`. Desktop unit suite: 7358 tests passing.
@@ -65,5 +65,6 @@ Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
   post-0.5.23 drift tracked in
   [#346](https://github.com/Nuncio-hq/crew/issues/346) (mention-recipients
   composer case first — likely a real bug).
-- Observer "turn done" latency 5–10 s under load (pacer; #344 S2, D-075
-  item 6).
+- Observer priority preserves causal order and two-urgent/one-normal fairness
+  (#352, D-075 item 6). The historical 5–10 s under-load symptom has not been
+  remeasured in staging. See [scheduling and control limits](ARCHITECTURE.md#observer-completion-scheduling-352).

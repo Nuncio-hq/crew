@@ -211,6 +211,38 @@ shutdown, and worktree deletion are distinct operations. The CompanyOS
 retention and automatic cleanup policy remains open in `PRODUCT.md`; this
 section does not authorize deleting unfinished work.
 
+## Observer completion scheduling (#352)
+
+`ObserverPublishQueue::next_frame` retains queue-wide same-channel batching;
+it does not publish one source event per tick. The Crew-owned
+`observer_priority.rs` selects the oldest urgent lifecycle/control channel
+within the prefix before the first null-channel barrier. A channel containing
+both urgent events and ordinary output is urgent until those urgent entries
+leave that prefix. Its causal predecessors still publish first. After two
+urgent frame selections while eligible normal channels wait, the oldest
+normal channel receives a frame. Classification is recomputed per slot, so
+flush, eviction and completed gathers leave no stale channel metadata.
+
+The publisher still emits at most one frame per one-second tick, under the
+existing 120/min relay ceiling shared with chat. The plaintext frame cap,
+4 MiB pending-byte budget and source-event drop accounting are unchanged.
+Priority cannot move a terminal past its own over-frame backlog or any
+null-channel barrier; fairness, relay quota and transport can also delay it.
+The three-channel deterministic regression reaches completion in slot one
+instead of slot three. This is queue/pacer evidence, not installed-runtime
+latency: baseline/candidate timing and real-data screenshots await #348/#338.
+
+Validated receipts already match the exact agent, triggering event, session
+and turn when projecting a healthy thread's Ready to review badge. This is
+distinct from observer-driven live control targets and founder acceptance.
+Error, disconnected and stalled attention retain their existing precedence.
+During harness finalization, a task record can outlive its control receiver.
+Cancel and model-switch report a sent signal only when the receiver accepts
+it. A closed receiver preserves the existing fallbacks: cancel drains that
+conversation's queued work or reports no active turn; model-switch reports
+`turn_ending` while the task record remains. Receipts do not hide live controls
+or change the model picker's live-switch/default-setting decision.
+
 ## CompanyOS prototype integration boundary
 
 The shared [design reference](../../design/companyos/README.md) is simulated; its `index.html#feasibility` contains the current code/GitHub audit and proposed backlog consolidation. Existing production UI already mounts per-agent declared plans and a PTY-backed terminal; their new prototype tabs are presentation integration, not new engines. The audit also distinguishes current canvas assignment UI from bulk editing/contact routing and API-backed guided handover from the proposed runtime-backed user recap. Compact thread activity can reuse `conversationActivityHeadline` and the observer transcript projection: ACP session updates feed message/thought/tool items, coalescing chunks and updating tool rows by identity without another model request. This is an implementation path, not evidence that the new UI is connected.

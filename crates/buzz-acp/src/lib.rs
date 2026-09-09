@@ -6,6 +6,8 @@ mod channel_membership_signal;
 mod channel_subscription_updates;
 mod compaction_signal;
 mod config;
+#[cfg(test)]
+mod control_delivery_tests;
 mod conversation;
 mod cowork_turn;
 mod declared_plan;
@@ -16,6 +18,9 @@ mod filter;
 mod governor_env;
 mod guided_handover;
 mod observer;
+mod observer_priority;
+#[cfg(test)]
+mod observer_priority_tests;
 mod org_roster;
 mod pi_launcher;
 mod pool;
@@ -395,13 +400,13 @@ const OBSERVER_PUBLISH_TICK: Duration = Duration::from_secs(1);
 /// high-cardinality chunk flood (many distinct coalescer keys) is bounded
 /// exactly like a plain event flood; neither buffer is a bypass around the
 /// other. Lossless-ness is bounded by this budget: each publish slot packs
-/// one ~64KB frame, gathered queue-wide for the front channel, so a single
+/// one ~64KB frame, gathered queue-wide for the selected channel, so a single
 /// channel drains at ~64KB/s and 4 MiB buys roughly **64 seconds** of
 /// sustained over-production before the oldest items are dropped WITH
-/// accounting (a warn carrying the dropped-event count). With C channels
-/// producing concurrently the slots round-robin between them, so the
-/// per-channel drain is ~64KB/Cs and the budget shortens accordingly —
-/// still bytes-per-slot, never events-per-slot (see
+/// accounting (a warn carrying the dropped-event count). Concurrent channels
+/// share those slots: urgent lifecycle/control channels receive priority,
+/// bounded by oldest-normal-channel service after two urgent selections.
+/// The aggregate drain is still bytes-per-slot, never events-per-slot (see
 /// [`ObserverPublishQueue::next_frame`]). Beyond-budget floods therefore
 /// degrade to designed, visible loss — strictly better than the
 /// pre-batching pacer's silent 90/min drop.
@@ -434,6 +439,7 @@ const OBSERVER_BATCH_KIND: &str = "batch";
 #[derive(Default)]
 struct ObserverPublishQueue {
     coalescer: ObserverChunkCoalescer,
+    priority: observer_priority::ObserverPriority,
     /// `(serialized_len, source_events, event)`, oldest first. Length is
     /// captured at enqueue (post-fit) so byte accounting never re-serializes
     /// on eviction; `source_events` is how many GENERATED observer events the
@@ -516,8 +522,8 @@ impl ObserverPublishQueue {
         self.events.is_empty() && self.coalescer.pending.is_empty()
     }
 
-    /// Pack and remove AT MOST ONE publishable frame: the front event's
-    /// channel, gathered queue-wide in FIFO order (packed greedily until
+    /// Pack and remove AT MOST ONE publishable frame: the selected channel,
+    /// gathered queue-wide in FIFO order (packed greedily until
     /// adding the next event would push the envelope over
     /// `OBSERVER_MAX_PLAINTEXT_LEN`). Singletons ship unwrapped.
     ///
@@ -543,11 +549,14 @@ impl ObserverPublishQueue {
     ///
     /// Pending coalesced chunks are flushed into the queue first, so a
     /// publish slot never leaves merged chunk text stranded behind the tick.
+    /// Selection prioritizes lifecycle/control channels within the first
+    /// barrier-delimited prefix, with at most two urgent frames while normal
+    /// channels wait. Priority never changes the per-channel gather below.
     fn next_frame(&mut self) -> Option<observer::ObserverEvent> {
         for (source_events, ready) in self.coalescer.flush() {
             self.enqueue(source_events, ready);
         }
-        let channel = self.events.front()?.2.channel_id.clone();
+        let channel = self.priority.select_channel(&self.events)?;
 
         let mut picked: Vec<observer::ObserverEvent> = Vec::new();
         let mut kept: VecDeque<(usize, u64, observer::ObserverEvent)> =
@@ -1319,8 +1328,8 @@ fn handle_switch_model_control(
 
     let status = if turn_in_flight {
         // Busy path: deliver over the oneshot. `false` means the oneshot was
-        // already consumed this turn (a prior cancel/interrupt) — the turn is
-        // already ending, so the switch cannot land on it.
+        // already consumed or its receiver closed during finalization — the
+        // turn is ending, so the switch cannot land on it.
         let fired = if let Some(turn_id) = turn_id {
             signal_in_flight_turn(
                 pool,
@@ -4067,7 +4076,7 @@ fn mode_gate_signal(
 }
 
 /// Send a control signal to the in-flight task for `channel_id`.
-/// Returns `true` if a signal was sent, `false` if no in-flight task was found.
+/// Returns `true` only if the task's control receiver accepted the signal.
 fn signal_in_flight_task(
     pool: &mut AgentPool,
     conversation_id: uuid::Uuid,
@@ -4096,13 +4105,15 @@ fn signal_in_flight_task(
 
     if let Some(meta) = task_id.and_then(|task_id| pool.task_map_mut().get_mut(&task_id)) {
         if let Some(tx) = meta.control_tx.take() {
+            if tx.send(mode.clone()).is_err() {
+                return false;
+            }
             tracing::info!(
                 channel = %routing_channel_id,
                 conversation = %conversation_id,
                 ?mode,
                 "control signal sent to in-flight task"
             );
-            let _ = tx.send(mode);
             return true;
         }
     }
@@ -4117,8 +4128,10 @@ fn signal_in_flight_turn(pool: &mut AgentPool, turn_id: &str, mode: ControlSigna
         .find_map(|(task_id, meta)| (meta.turn_id == turn_id).then_some(*task_id));
     if let Some(meta) = task_id.and_then(|task_id| pool.task_map_mut().get_mut(&task_id)) {
         if let Some(tx) = meta.control_tx.take() {
+            if tx.send(mode.clone()).is_err() {
+                return false;
+            }
             tracing::info!(turn = %turn_id, ?mode, "control signal sent to exact in-flight turn");
-            let _ = tx.send(mode);
             return true;
         }
     }
