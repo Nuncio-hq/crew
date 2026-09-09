@@ -371,3 +371,55 @@ simulated; final implementation evidence launches the real candidate flow.
 Use `scripts/post-screenshots.sh` on the resulting PR and copy its immutable
 image URLs with concise captions into the issue. Required final CI, independent
 exact-head review and installed release acceptance remain separate gates.
+
+## Recap capability source proof (#351)
+
+The default-off native recap slice is tested through its production modules:
+`recap_capability`, `recap_adapter`, `recap_state`, `recap_ownership`, and
+`discovery::bounded_command`. The native `AppHandle` loader belongs to the full
+Tauri build gate; a small exact-module Cargo harness alone does not certify that
+integration. Run `just ci` before the PR and require the immutable head's
+NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limits-2026-09-09)
+for the current unsupported inventory.
+
+Test boundaries include explicit model/profile admission, identity invalidation,
+fixed argv with a fake tool sentinel, native final-result/model parsing, private
+unlinked stdin and size limits, durable process-pending state, copied/symlinked
+ownership records, root-generation replacement, UID/build/profile/exclusion
+mismatch, and rejection of generation/auth claims in an ownership-only manifest.
+The bounded process tests cover aggregate discovery versus independent recap
+budgets, cancellation before and after spawn, zero deadlines, EPERM retry only
+after observed root reap, and cleanup failures. The existing escaped-descendant
+test deliberately proves the limit of Unix process groups and cleans its own
+fixture; it must never be reported as whole-tree containment.
+
+Keep RED, mutation and restored-GREEN evidence separate. Removing the fixed
+`--tools` argument, prompt cap, pending-process cleanup guard, or EPERM reap
+condition must fail the corresponding production-seam regression. Synthetic
+argv/output tests and authorized design reviews do not establish provider auth,
+effective generation model, native tool isolation or a working recap. Real
+staging generation remains blocked until one exact runtime combination proves
+all those properties and #348 supplies a separate runtime-ready grant. Evidence
+screenshots must label a source/tooling summary as such; they cannot substitute
+for the designated staging runtime acceptance required by #351/#356.
+
+The 2026-09-09 inventory used resolved native executables identified by the
+Architecture table's hashes, not the user's updating wrapper. Recorded arguments
+(excluding that executable) were:
+
+- Claude: `["--version"]` and `["--safe-mode", "--setting-sources", "", "--help"]`.
+  Cleared environment allowlist: `HOME`, `PATH`, `TMPDIR`, `CLAUDE_CONFIG_DIR`,
+  `CLAUDE_CODE_SAFE_MODE`, `DISABLE_AUTOUPDATER`.
+- Codex: `["--version"]`, `["--help"]`, `["exec", "--help"]`,
+  `["app-server", "--help"]`, `["app-server", "generate-json-schema", "--help"]`,
+  and `["app-server", "generate-json-schema", "--experimental", "--out", "/tmp/crew-351-evidence/codex-schema"]`.
+  Cleared environment allowlist: `HOME`, `PATH`, `TMPDIR`, `CODEX_HOME`.
+- Hermes: no executable arguments were run; inspection followed the installed
+  CLI, `run_agent.AIAgent`, and `hermes_cli/oneshot.py` source imports only.
+
+HOME/config/temp paths above pointed to disposable inventory roots. Help/version
+capture used a 10-second deadline and 64 KiB per stream. The initial Claude
+inventory retained `process_group_cleanup_denied` despite exit 0; it is not a
+clean containment result. Subsequent owned synthetic process fixtures established
+the unreaped-root EPERM case and the checked reap/retry behavior. No repeat
+Claude call was used to replace that failed cleanup record with a success.

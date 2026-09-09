@@ -298,3 +298,67 @@ existing `goWiki()` / `/wiki` / `WikiLibraryScreen` Company Wiki card. Reuse
 its kind 30023 content and ACL, with no new generator action, route migration
 or company data removal. Verify the replacement in #349 before removing the sole old global
 Wiki affordance; the reference library is sample UI only.
+
+## Installed-runtime recap admission (#351)
+
+Recap admission extends `KnownAcpRuntime` through `recap_contract`; it does not
+create another runtime registry or borrow an employee's ACP session. Hermes
+uses an explicit `recap_native_command` catalog value because ordinary ACP
+discovery remains `hermes-acp` first. Other candidates use the existing
+`underlying_cli` metadata. The native
+CLI candidate and its model/profile selection contract are inventory, not proof
+of one-shot support. `classify_recap` currently returns only failure states;
+there is no positive capability cache, generation command, or runnable recap UI.
+[#356](https://github.com/Nuncio-hq/crew/issues/356) remains dependent on a proven
+runtime combination. Ordinary agent/ACP readiness is a separate contract.
+
+The default-off source slice contains a fixed Claude candidate argv/parser,
+private disposable-state ownership, and the existing bounded discovery process
+helper extended with caller-owned stdin, cancellation and per-stream budgets.
+The Claude recipe remains unapproved for generation. Its native `--tools ''`
+flag is not sufficient to establish that all hooks are disabled. A Unix process
+group bounds ordinary descendants but does not contain a `setsid` escape;
+reader shutdown is not evidence that an escaped process exited. No production
+OS-sandbox recipe is enabled.
+
+The staging ownership loader reads only native `app_data_dir()` plus
+`crew-staging-ownership-v1.json`. It verifies compiled demo identity, actual
+process UID, canonical private owned roots and the excluded employee roots.
+Manifest host/server strings are provenance, not launch authority. The five
+roots must already exist; reading this receipt does not create them. A receipt
+is tied to the root inode/device generations and revalidates before projecting
+the recap state parent. A manifest claiming generation permission or containing
+auth references is rejected. Ownership does not imply authentication readiness;
+a future, separately reviewed runtime-ready grant is still required.
+
+The derived `agents` base must be canonical and owned before any run-directory
+creation or recovery; an intermediate symlink is rejected, and active runs fence
+base-generation replacements. Disposable generations live below
+`agents/recap-runs/<uuid>`, use private files,
+and persist a phase before a process may start. Prompt stdin is capped, opened
+read-only and unlinked before launch. Cleanup refuses a pending-process phase;
+startup recovery bounds its scan and preserves unknown, corrupted, replaced or
+uncertain-process roots rather than guessing that a recorded PID is safe to kill.
+A failed cleanup does not prevent attempts on other bounded entries, but its
+first typed error still propagates. A `scan_limited` report means entries remain
+unexamined; the 1,024-entry sweep is not proof of complete recovery. Repeated
+unknown-entry flooding can delay reclamation, and pending-process roots require
+separate verified ownership recovery. Non-Unix private-state ACLs are unproved
+and rejected.
+
+### Bounded inventory limits (2026-09-09)
+
+These observations describe the installed artifacts examined for #351, not
+permanent limitations of the products. None is a successful recap generation.
+
+| Candidate inspected | Evidence scope | Current blocker |
+| --- | --- | --- |
+| Claude Code 2.1.266, native macOS arm64 image, SHA-256 `553d1b9e9e7068b275c0a783c7e139ff6503096f286e674c8c919379fb0eca62` | Isolated help/version and exact-image hook selection inspection | `unsupported_tool_isolation`: managed hooks survive safe mode/user hook-disable settings, including in-process HTTP hooks. |
+| Codex CLI 0.153.4, native macOS arm64 image, SHA-256 `b973d440acac501fd2594a43e7ca9ce41e0a65b9dfb28d0d7a7837c99e1261e3` | Isolated help/version/exec help and locally generated app-server JSON schema | `unsupported_tool_isolation`: exhaustive native tool denial was not proved by the available controls/schema. |
+| Hermes installed source declaring 0.21.1 in `pyproject.toml` | Read-only source inventory; no Hermes process executed | `unsupported_state_isolation`: CLI import enters installation repair; both CLI and `run_agent.AIAgent` import paths load the installation `.env` independently of disposable HOME. `hermes_cli/oneshot.py` imports the same AIAgent. |
+
+The installed Hermes source location was the user's `.hermes/hermes-agent`
+checkout; its declared package version is not a binary fingerprint or an
+executed version result. Mutable source, wrappers, executable upgrades, model,
+profile, platform or enforcement changes invalidate any future positive proof.
+Exact local path observations and one-run logs belong to #351/task evidence.

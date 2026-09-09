@@ -451,8 +451,8 @@
     },
     {
       "area": "desktop/src-tauri/**",
-      "why": "managed_agents: Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json.",
-      "resolve": "register module + invoke entries only; impl in Crew files; keep `manage(ResourceGovernorHandle)`.",
+      "why": "managed_agents: default-off recap capability/state/ownership proof (#351) and bounded discovery stdin/cancel/capture policy; Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json.",
+      "resolve": "retain default-off recap catalog metadata and the null-stdin aggregate discovery wrapper; register module/invoke seams with implementations in Crew files; keep `manage(ResourceGovernorHandle)`.",
       "filesAtRecord": 88,
       "fileHints": [
         {
