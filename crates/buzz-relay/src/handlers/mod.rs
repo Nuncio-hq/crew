@@ -46,6 +46,8 @@ pub mod report_resolution;
 pub mod req;
 /// NIP-29 and NIP-25 side-effect handlers.
 pub mod side_effects;
+/// Fail-closed admission for source-bound Wiki publications.
+pub(crate) mod source_publication;
 /// Crew repo wiki page / TOC ingest (kind 30623).
 pub mod wiki_page;
 
