@@ -71,6 +71,7 @@ impl Fixture {
     }
     fn run(&self, protected: &HashSet<String>) -> Result<(), String> {
         preflight(&self.directory, &self.runtime_id, protected, 100_000)
+            .map_err(|error| format!("preflight failed: {error:?}"))
     }
 }
 impl Drop for Fixture {

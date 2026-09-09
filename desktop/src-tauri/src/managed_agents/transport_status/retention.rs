@@ -2,15 +2,24 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PreflightError {
+    /// The status sidechannel cannot be established in the current app-data
+    /// environment. The managed process may still run without diagnostics.
+    Unavailable,
+    /// Existing status data violates the bounded storage contract and must be
+    /// surfaced before starting another generation.
+    Refused,
+}
+
 #[cfg(unix)]
 pub(super) fn preflight(
     directory: &Path,
     runtime_id: &str,
     protected: &HashSet<String>,
     now_secs: u64,
-) -> Result<(), String> {
+) -> Result<(), PreflightError> {
     platform::preflight(directory, runtime_id, protected, now_secs)
-        .map_err(|_| buzz_core_pkg::transport_status::STORAGE_REVIEW_ERROR.to_owned())
 }
 
 #[cfg(not(unix))]
@@ -19,8 +28,8 @@ pub(super) fn preflight(
     _runtime_id: &str,
     _protected: &HashSet<String>,
     _now_secs: u64,
-) -> Result<(), String> {
-    Err(buzz_core_pkg::transport_status::STORAGE_REVIEW_ERROR.into())
+) -> Result<(), PreflightError> {
+    Err(PreflightError::Refused)
 }
 
 #[cfg(unix)]
@@ -150,86 +159,97 @@ mod platform {
         runtime_id: &str,
         protected: &HashSet<String>,
         now_secs: u64,
-    ) -> Result<(), String> {
-        let mut directory = reader::open_owned_directory(path, true)?;
-        let _lock = lock(&directory)?;
-        let entries = inspect(&mut directory)?;
-        let mut remove = HashSet::new();
-        let mut records = Vec::new();
-        for (index, entry) in entries.iter().enumerate() {
-            let Some(name) = entry.name.to_str() else {
-                continue;
-            };
-            if let Some(nonce) = staging_nonce(name) {
-                if !protected.contains(nonce) {
-                    remove.insert(index);
+    ) -> Result<(), super::PreflightError> {
+        let mut directory = reader::open_owned_directory(path, true).map_err(|error| {
+            if reader::is_storage_unavailable(&error) {
+                super::PreflightError::Unavailable
+            } else {
+                super::PreflightError::Refused
+            }
+        })?;
+        let result = (|| -> Result<(), String> {
+            let _lock = lock(&directory)?;
+            let entries = inspect(&mut directory)?;
+            let mut remove = HashSet::new();
+            let mut records = Vec::new();
+            for (index, entry) in entries.iter().enumerate() {
+                let Some(name) = entry.name.to_str() else {
+                    continue;
+                };
+                if let Some(nonce) = staging_nonce(name) {
+                    if !protected.contains(nonce) {
+                        remove.insert(index);
+                    }
+                    continue;
                 }
-                continue;
+                let Some(nonce) = record_nonce(name) else {
+                    continue;
+                };
+                if protected.contains(nonce) {
+                    continue;
+                }
+                let bytes = reader::read_owned_entry(&directory, &entry.name)?;
+                let Ok(record) = serde_json::from_slice::<TransportRecord>(&bytes) else {
+                    continue;
+                };
+                if valid_record(&record, runtime_id, nonce) {
+                    records.push(index);
+                }
             }
-            let Some(nonce) = record_nonce(name) else {
-                continue;
-            };
-            if protected.contains(nonce) {
-                continue;
+            // A status record retained for historical inspection does not acquire
+            // a native ticket. Keep at most one recent unprotected record, in
+            // addition to the registered/last-required nonce exclusions.
+            records.sort_by(|left, right| {
+                let left = &entries[*left];
+                let right = &entries[*right];
+                (
+                    right.metadata.st_mtime,
+                    right.metadata.st_mtime_nsec,
+                    &right.name,
+                )
+                    .cmp(&(
+                        left.metadata.st_mtime,
+                        left.metadata.st_mtime_nsec,
+                        &left.name,
+                    ))
+            });
+            let recent = records.first().copied().filter(|index| {
+                let modified = u64::try_from(entries[*index].metadata.st_mtime).unwrap_or(0);
+                modified <= now_secs.saturating_add(5)
+                    && now_secs.saturating_sub(modified) < HISTORY_MAX_AGE
+            });
+            remove.extend(records.into_iter().filter(|index| Some(*index) != recent));
+            // Required state and unknown files are never sacrificed to make room.
+            if entries.len().saturating_sub(remove.len()) + GENERATION_ENTRY_RESERVATION
+                > MAX_DIRECTORY_ENTRIES
+            {
+                return Err("diagnostics require manual capacity recovery".into());
             }
-            let bytes = reader::read_owned_entry(&directory, &entry.name)?;
-            let Ok(record) = serde_json::from_slice::<TransportRecord>(&bytes) else {
-                continue;
-            };
-            if valid_record(&record, runtime_id, nonce) {
-                records.push(index);
+            for index in remove {
+                let entry = &entries[index];
+                let current = fstatat(
+                    &directory,
+                    entry.name.as_os_str(),
+                    AtFlags::AT_SYMLINK_NOFOLLOW,
+                )
+                .map_err(|_| "diagnostics changed before cleanup")?;
+                if current.st_ino != entry.metadata.st_ino
+                    || current.st_dev != entry.metadata.st_dev
+                {
+                    return Err("diagnostics changed before cleanup".into());
+                }
+                reader::validate_file_metadata(&current, geteuid().as_raw())?;
+                unlinkat(
+                    &directory,
+                    entry.name.as_os_str(),
+                    UnlinkatFlags::NoRemoveDir,
+                )
+                .map_err(|_| "cannot reclaim diagnostics")?;
             }
-        }
-        // A status record retained for historical inspection does not acquire
-        // a native ticket. Keep at most one recent unprotected record, in
-        // addition to the registered/last-required nonce exclusions.
-        records.sort_by(|left, right| {
-            let left = &entries[*left];
-            let right = &entries[*right];
-            (
-                right.metadata.st_mtime,
-                right.metadata.st_mtime_nsec,
-                &right.name,
-            )
-                .cmp(&(
-                    left.metadata.st_mtime,
-                    left.metadata.st_mtime_nsec,
-                    &left.name,
-                ))
-        });
-        let recent = records.first().copied().filter(|index| {
-            let modified = u64::try_from(entries[*index].metadata.st_mtime).unwrap_or(0);
-            modified <= now_secs.saturating_add(5)
-                && now_secs.saturating_sub(modified) < HISTORY_MAX_AGE
-        });
-        remove.extend(records.into_iter().filter(|index| Some(*index) != recent));
-        // Required state and unknown files are never sacrificed to make room.
-        if entries.len().saturating_sub(remove.len()) + GENERATION_ENTRY_RESERVATION
-            > MAX_DIRECTORY_ENTRIES
-        {
-            return Err("diagnostics require manual capacity recovery".into());
-        }
-        for index in remove {
-            let entry = &entries[index];
-            let current = fstatat(
-                &directory,
-                entry.name.as_os_str(),
-                AtFlags::AT_SYMLINK_NOFOLLOW,
-            )
-            .map_err(|_| "diagnostics changed before cleanup")?;
-            if current.st_ino != entry.metadata.st_ino || current.st_dev != entry.metadata.st_dev {
-                return Err("diagnostics changed before cleanup".into());
-            }
-            reader::validate_file_metadata(&current, geteuid().as_raw())?;
-            unlinkat(
-                &directory,
-                entry.name.as_os_str(),
-                UnlinkatFlags::NoRemoveDir,
-            )
-            .map_err(|_| "cannot reclaim diagnostics")?;
-        }
-        fsync(&directory).map_err(|_| "cannot commit diagnostics cleanup")?;
-        Ok(())
+            fsync(&directory).map_err(|_| "cannot commit diagnostics cleanup")?;
+            Ok(())
+        })();
+        result.map_err(|_| super::PreflightError::Refused)
     }
 }
 

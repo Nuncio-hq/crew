@@ -62,7 +62,13 @@ pub(super) fn open_owned_directory(
                 Dir::openat(&directory, component.as_os_str(), flags, Mode::empty())
                     .map_err(|_| "cannot open private local transport status directory")?
             }
-            Err(_) => return Err("local transport status ancestor is missing or unsafe".into()),
+            Err(nix::errno::Errno::ENOENT) => {
+                return Err("local transport status ancestor is missing".into())
+            }
+            Err(nix::errno::Errno::ELOOP) => {
+                return Err("local transport status ancestor is symlinked".into())
+            }
+            Err(_) => return Err("local transport status ancestor is inaccessible".into()),
         };
         let metadata =
             fstat(&directory).map_err(|_| "cannot inspect local transport status directory")?;
@@ -80,6 +86,24 @@ pub(super) fn open_owned_directory(
         return Err("local transport status directory must be owner-owned and private".into());
     }
     Ok(directory)
+}
+
+/// Errors that mean the status sidechannel cannot currently be established.
+///
+/// These are environmental failures (for example a read-only or not-yet
+/// created app-data parent). Security-policy failures such as a symlink,
+/// group-writable ancestor, or non-private leaf remain hard refusals.
+pub(super) fn is_storage_unavailable(error: &str) -> bool {
+    matches!(
+        error,
+        "cannot anchor local transport status directory"
+            | "local transport status ancestor is missing"
+            | "local transport status ancestor is inaccessible"
+            | "cannot create private local transport status directory"
+            | "cannot open private local transport status directory"
+            | "cannot inspect local transport status directory"
+            | "cannot inspect local transport status parent"
+    )
 }
 
 #[cfg(unix)]

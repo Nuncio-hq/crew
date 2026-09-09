@@ -33,13 +33,35 @@ fn agent_secret_store() -> Option<&'static SecretStore> {
 }
 
 pub fn managed_agents_base_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    let dir = app
+    let app_data_dir = app
         .path()
         .app_data_dir()
-        .map_err(|error| format!("failed to resolve app data dir: {error}"))?
-        .join("agents");
-    fs::create_dir_all(&dir).map_err(|error| format!("failed to create agents dir: {error}"))?;
+        .map_err(|error| format!("failed to resolve app data dir: {error}"))?;
+    ensure_private_directory(&app_data_dir)
+        .map_err(|error| format!("failed to secure app data dir: {error}"))?;
+    let dir = app_data_dir.join("agents");
+    ensure_private_directory(&dir)
+        .map_err(|error| format!("failed to secure agents dir: {error}"))?;
     Ok(dir)
+}
+
+/// Create an application-owned directory with owner-only permissions.
+///
+/// The transport status reader rejects group-writable ancestors because a
+/// shared directory would let another local user replace a status record. A
+/// default umask of `0002` otherwise leaves newly created app-data trees at
+/// `0775`, making every managed transport start fail on affected systems.
+fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700).create(path)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    fs::create_dir_all(path)?;
+    Ok(())
 }
 
 pub(crate) fn managed_agents_store_path<R: tauri::Runtime>(
@@ -50,7 +72,8 @@ pub(crate) fn managed_agents_store_path<R: tauri::Runtime>(
 
 fn managed_agents_logs_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = managed_agents_base_dir(app)?.join("logs");
-    fs::create_dir_all(&dir).map_err(|error| format!("failed to create logs dir: {error}"))?;
+    ensure_private_directory(&dir)
+        .map_err(|error| format!("failed to secure logs dir: {error}"))?;
     Ok(dir)
 }
 

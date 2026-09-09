@@ -4,7 +4,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::app_state::AppState;
 use crate::managed_agents::runtime_commands::{emit_status, status_for_with, StatusInputs};
-use crate::managed_agents::{load_global_agent_config, load_managed_agents, load_personas};
+use crate::managed_agents::{
+    current_instance_id, load_global_agent_config, load_managed_agents, load_personas,
+    remove_agent_runtime_receipt, save_managed_agents, sync_managed_agent_processes,
+};
 use tauri::{AppHandle, Manager};
 
 const MAX_READS_PER_TICK: usize = 256;
@@ -17,7 +20,6 @@ pub(crate) fn start(app: AppHandle) {
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut cursor = 0;
         let mut last_error: Option<String> = None;
-        let mut last_process_error: Option<String> = None;
         loop {
             ticks.tick().await;
             if app
@@ -26,19 +28,6 @@ pub(crate) fn start(app: AppHandle) {
                 .load(Ordering::Acquire)
             {
                 break;
-            }
-            // Reuse the process manager's existing exit/bookkeeping operation.
-            // It captures the real exit status before minting a retirement token.
-            let result =
-                crate::managed_agents::runtime_commands::list_managed_agent_runtimes(app.clone())
-                    .await;
-            if let Err(error) = result {
-                if last_process_error.as_ref() != Some(&error) {
-                    eprintln!("local transport process poll: {error}");
-                }
-                last_process_error = Some(error);
-            } else {
-                last_process_error = None;
             }
             let reader_app = app.clone();
             match tokio::task::spawn_blocking(move || poll_once(&reader_app, cursor)).await {
@@ -99,6 +88,9 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
         );
         tickets
     };
+    if tickets.is_empty() {
+        return Ok(cursor);
+    }
     tickets.sort_by(|left, right| {
         left.key
             .runtime_id()
@@ -127,15 +119,41 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
         .managed_agents_store_lock
         .lock()
         .map_err(|_| "managed records unavailable")?;
-    let records = load_managed_agents(app)?;
+    let mut records = load_managed_agents(app)?;
     let wall_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "local status clock unavailable")?
         .as_millis();
     let wall_ms = u64::try_from(wall_ms).unwrap_or(u64::MAX);
+    let mut records_changed = false;
     apply_with_current_owner(&state, &owner, |runtimes| {
         let now = Instant::now();
         let mut changed = HashSet::new();
+        let previous_errors: std::collections::HashMap<_, _> = runtimes
+            .iter()
+            .map(|(key, runtime)| (key.clone(), runtime.error.clone()))
+            .collect();
+        let previous_keys: Vec<_> = runtimes.keys().cloned().collect();
+        let (lifecycle_changed, exited_pubkeys) =
+            sync_managed_agent_processes(&mut records, runtimes, &current_instance_id(app));
+        records_changed |= lifecycle_changed;
+        for key in previous_keys {
+            let exited = exited_pubkeys
+                .iter()
+                .any(|pubkey| pubkey.eq_ignore_ascii_case(&key.pubkey))
+                && !runtimes.contains_key(&key);
+            let inspection_changed = runtimes
+                .get(&key)
+                .map(|runtime| runtime.error != previous_errors.get(&key).cloned().flatten())
+                .unwrap_or(false);
+            if exited {
+                remove_agent_runtime_receipt(app, &key);
+                state.clear_agent_session_cache(&key);
+                changed.insert(key);
+            } else if inspection_changed {
+                changed.insert(key);
+            }
+        }
         for (key, runtime) in runtimes.iter_mut() {
             if let Some(monitor) = runtime.transport.as_mut() {
                 if monitor.expire(now) {
@@ -191,6 +209,9 @@ fn poll_once(app: &AppHandle, cursor: usize) -> Result<usize, String> {
             }
         }
     })?;
+    if records_changed {
+        save_managed_agents(app, &records)?;
+    }
     Ok(if total == 0 {
         0
     } else {

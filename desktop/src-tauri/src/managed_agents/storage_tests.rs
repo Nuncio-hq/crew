@@ -16,6 +16,34 @@ use super::{
     KeyMigration, KeyStore, KeyringProbe, ManagedAgentRecord,
 };
 
+#[cfg(unix)]
+#[test]
+fn app_owned_directories_are_private_even_under_a_group_writable_umask() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().expect("temp dir");
+    let app_data = root.path().join("app-data");
+    let agents = app_data.join("agents");
+    let logs = agents.join("logs");
+    std::fs::create_dir_all(&logs).expect("seed directories");
+    for path in [&app_data, &agents, &logs] {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o775))
+            .expect("relax directory");
+        super::ensure_private_directory(path).expect("secure app-owned directory");
+    }
+
+    for path in [app_data, agents, logs] {
+        assert_eq!(
+            std::fs::metadata(path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+    }
+}
+
 /// In-memory [`KeyStore`] for testing the migrate decision without the OS
 /// keyring. `reachable=false` simulates a backend outage; `fail_verify`
 /// simulates a write whose read-back does not confirm.

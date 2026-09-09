@@ -9,7 +9,9 @@ pub(crate) use poll::start;
 
 use crate::app_state::AppState;
 use crate::managed_agents::ManagedAgentRuntimeKey;
-pub(crate) use monitor::{Diagnostics, Monitor, ReadTicket};
+#[cfg(test)]
+pub(crate) use monitor::ReadTicket;
+pub(crate) use monitor::{Diagnostics, Monitor};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
@@ -46,6 +48,7 @@ fn can_monitor_with_storage(
         })
 }
 
+#[cfg(test)]
 pub(crate) fn configure_child(
     command: &mut std::process::Command,
     log_path: &Path,
@@ -53,10 +56,24 @@ pub(crate) fn configure_child(
     owner: Option<&str>,
     setup: bool,
 ) {
+    configure_child_with_storage(command, log_path, nonce, owner, setup, true);
+}
+
+/// Configure the optional status pair after native preflight. If the
+/// sidechannel is unavailable, the child keeps the legacy ACP environment and
+/// Desktop projects its transport as unknown instead of preventing startup.
+pub(crate) fn configure_child_with_storage(
+    command: &mut std::process::Command,
+    log_path: &Path,
+    nonce: &str,
+    owner: Option<&str>,
+    setup: bool,
+    storage_available: bool,
+) {
     command
         .env_remove(STATUS_PATH_ENV)
         .env_remove(START_NONCE_ENV);
-    if can_monitor(nonce, owner, setup) {
+    if storage_available && can_monitor(nonce, owner, setup) {
         command
             .env(STATUS_PATH_ENV, status_path(log_path, nonce))
             .env(START_NONCE_ENV, nonce);
@@ -73,9 +90,9 @@ pub(crate) fn preflight_child(
     nonce: &str,
     owner: Option<&str>,
     setup: bool,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if !can_monitor(nonce, owner, setup) {
-        return Ok(());
+        return Ok(false);
     }
     let state = app.state::<AppState>();
     let mut protected = std::collections::HashSet::from([nonce.to_owned()]);
@@ -91,12 +108,24 @@ pub(crate) fn preflight_child(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "local transport clock unavailable")?
         .as_secs();
-    retention::preflight(
+    match retention::preflight(
         &log_path.with_extension("transport"),
         &key.runtime_id(),
         &protected,
         now,
-    )
+    ) {
+        Ok(()) => Ok(true),
+        Err(retention::PreflightError::Unavailable) => {
+            eprintln!(
+                "local transport diagnostics unavailable for {}; continuing without status sidechannel",
+                key.runtime_id()
+            );
+            Ok(false)
+        }
+        Err(retention::PreflightError::Refused) => {
+            Err(buzz_core_pkg::transport_status::STORAGE_REVIEW_ERROR.into())
+        }
+    }
 }
 
 fn registered_monitor(
@@ -116,11 +145,18 @@ fn registered_monitor(
     if !can_monitor(nonce, owner, setup) {
         return None;
     }
+    let path = status_path(log_path, nonce);
+    if reader::open_owned_directory(path.parent()?, false).is_err() {
+        // Preflight may have degraded the optional sidechannel because the
+        // app-data tree is temporarily unavailable. Keep the process tracked,
+        // but do not mint a monitor whose writer cannot be read safely.
+        return None;
+    }
     Some(Monitor::new(
         monitor::ReadTicket {
             key: key.clone(),
             nonce: nonce.into(),
-            path: status_path(log_path, nonce),
+            path,
             owner: owner?.to_ascii_lowercase(),
             epoch: 0,
         },
@@ -167,6 +203,8 @@ pub(crate) fn clear_pubkey<R: tauri::Runtime>(app: &AppHandle<R>, pubkey: &str) 
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn transport_environment_keys_are_reserved_from_user_overrides() {
@@ -195,6 +233,28 @@ mod tests {
             Some(std::ffi::OsStr::new(&nonce))
         );
         configure_child(&mut command, log, &nonce, Some(&owner), true);
+        let env: HashMap<_, _> = command.get_envs().collect();
+        assert_eq!(env[std::ffi::OsStr::new(STATUS_PATH_ENV)], None);
+        assert_eq!(env[std::ffi::OsStr::new(START_NONCE_ENV)], None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn unavailable_status_storage_keeps_legacy_spawn_environment() {
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let owner = "a".repeat(64);
+        let mut command = std::process::Command::new("fixture");
+        command
+            .env(STATUS_PATH_ENV, "/untrusted/path")
+            .env(START_NONCE_ENV, "untrusted");
+        configure_child_with_storage(
+            &mut command,
+            Path::new("/fixture/runtime.log"),
+            &nonce,
+            Some(&owner),
+            false,
+            false,
+        );
         let env: HashMap<_, _> = command.get_envs().collect();
         assert_eq!(env[std::ffi::OsStr::new(STATUS_PATH_ENV)], None);
         assert_eq!(env[std::ffi::OsStr::new(START_NONCE_ENV)], None);
@@ -251,12 +311,22 @@ mod tests {
         let diagnostics = Arc::new(Mutex::new(Diagnostics::default()));
         let key = ManagedAgentRuntimeKey::new("a".repeat(64), "ws://fixture").unwrap();
         let owner = "b".repeat(64);
-        let log = Path::new("/fixture/runtime.log");
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("crew-338-monitor-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let log = root.join("runtime.log");
+        let transport_dir = log.with_extension("transport");
+        std::fs::create_dir(&transport_dir).unwrap();
+        std::fs::set_permissions(&transport_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         let nonce = uuid::Uuid::new_v4().simple().to_string();
+        assert!(reader::open_owned_directory(&transport_dir, false).is_ok());
         let old_ticket = monitor::ReadTicket {
             key: key.clone(),
             nonce: "old".into(),
-            path: log.into(),
+            path: log.clone(),
             owner: owner.clone(),
             epoch: 0,
         };
@@ -266,17 +336,18 @@ mod tests {
             .unwrap()
             .projection(&key, &owner, std::time::Instant::now())
             .is_some());
-        let monitor = registered_monitor(&key, log, &nonce, Some(&owner), false, &diagnostics)
+        let monitor = registered_monitor(&key, &log, &nonce, Some(&owner), false, &diagnostics)
             .expect("registered generation must own a monitor");
         let ticket = monitor.snapshot().unwrap();
         assert_eq!(ticket.key, key);
         assert_eq!(ticket.nonce, nonce);
         assert_eq!(ticket.owner, owner);
-        assert_eq!(ticket.path, status_path(log, &nonce));
+        assert_eq!(ticket.path, status_path(&log, &nonce));
         assert!(diagnostics
             .lock()
             .unwrap()
             .projection(&key, &owner, std::time::Instant::now())
             .is_none());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

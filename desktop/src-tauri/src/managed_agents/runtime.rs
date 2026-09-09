@@ -799,7 +799,7 @@ pub fn spawn_agent_child(
     command
         .env("BUZZ_MANAGED_AGENT", current_instance_id(app))
         .env("BUZZ_MANAGED_AGENT_START_NONCE", &start_nonce);
-    super::transport_status::preflight_child(
+    let transport_storage_available = super::transport_status::preflight_child(
         app,
         &runtime_key,
         &log_path,
@@ -807,12 +807,13 @@ pub fn spawn_agent_child(
         owner_hex,
         spawned_setup_mode,
     )?;
-    super::transport_status::configure_child(
+    super::transport_status::configure_child_with_storage(
         &mut command,
         &log_path,
         &start_nonce,
         owner_hex,
         spawned_setup_mode,
+        transport_storage_available,
     );
 
     // Stamp spawn config from values above, BEFORE spawning — a post-spawn
