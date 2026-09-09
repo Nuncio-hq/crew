@@ -6,6 +6,7 @@ import { nsecEncode } from "nostr-tools/nip19";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { expectEmojiMartStylesInstalled } from "../helpers/css";
 import {
+  expectWelcomeKickoff,
   invokeMockCommand,
   publishWelcomeTeamPresence,
   waitForWelcomeTeam,
@@ -3245,9 +3246,7 @@ test("first-run onboarding posts the live Fizz kickoff", async ({ page }) => {
   await publishWelcomeTeamPresence(page);
   // Greeted by the name typed above — the @mention pill also files the opener
   // into the new user's Inbox mentions feed.
-  await expect(page.getByTestId("message-timeline")).toContainText(
-    "Hi @Morty QA, I'm Fizz. Welcome to Buzz.",
-  );
+  await expectWelcomeKickoff(page, BLANK_TYLER_IDENTITY.pubkey);
   await expect(page.getByTestId("message-timeline")).toContainText(
     "Honey and Pollen, introduce yourselves",
   );
@@ -3270,9 +3269,7 @@ test("first-run onboarding lands before Welcome team bootstrap completes", async
   await expectPrivateWelcomeLanding(page);
   await expect(page.getByTestId("app-loading-gate")).toHaveCount(0);
   await publishWelcomeTeamPresence(page);
-  await expect(page.getByTestId("message-timeline")).toContainText(
-    "Hi @Morty QA, I'm Fizz. Welcome to Buzz.",
-  );
+  await expectWelcomeKickoff(page, BLANK_TYLER_IDENTITY.pubkey);
   await page.waitForTimeout(1_500);
   expect(await commandCount(page, "create_managed_agent")).toBe(3);
 });
