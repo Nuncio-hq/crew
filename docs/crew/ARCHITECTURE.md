@@ -268,3 +268,15 @@ existing `goWiki()` / `/wiki` / `WikiLibraryScreen` Company Wiki card. Reuse
 its kind 30023 content and ACL, with no new generator action, route migration
 or company data removal. Verify the replacement in #349 before removing the sole old global
 Wiki affordance; the reference library is sample UI only.
+
+
+G-THREAD-1 v3 extends `toolPaneStore` with bounded scoped view selection, not a
+second resource/session store. `ThreadFocusForgeSplit` and `ChannelToolPane`
+consume exact channel/root-matched forge subjects; `FocusThreadDrawer` supplies
+the outer Escape gate. `resetCommunityState` clears preferences; a small new
+invalidation function binds confirmed mutation/query removal outcomes.
+`useDeclaredPlansForThread` and existing observer/control generation projections
+remain authoritative. Preserve `browserClose`/sim visibility cleanup; fence
+`browserOpen` and `simEnsureDevice` mount activation. The existing channel-only
+popout has independent window state and remains outside #354; governor resource
+identity/leases remain shared. D-078 records the bounded approved decision.

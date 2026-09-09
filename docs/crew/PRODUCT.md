@@ -351,3 +351,14 @@ Preserve company kind 30023 knowledge. The coordinator approved a Company Wiki
 entry in the workspace menu opening existing `/wiki` / `WikiLibraryScreen`.
 This approval covers the concrete compatibility entry, not a new founder claim.
 #349 must verify the replacement before removing the old sole global Wiki affordance. It does not create another knowledge store.
+
+
+The coordinator-approved G-THREAD-1 v3 contract in D-078 defines the thread tools:
+one right pane, Context on first explicit opening, reachable Agent plans, and
+bounded per-thread app-session selection. Narrow tools overlay mounted chat;
+thread navigation closes presentation without stopping agents/resources.
+Retained historical information remains readable; live controls require the
+exact current generation. Browser/simulator activation is explicit and existing
+governor hide/idle cleanup remains. Channel-mode compatibility and Workbench
+redirects stay unchanged. This records implementation discretion, not a new
+founder approval or proof that #354 is implemented.
