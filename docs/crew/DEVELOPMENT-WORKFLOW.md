@@ -23,6 +23,28 @@ Write the intended outcome in manager language:
 
 Do not begin by naming files or libraries unless they are genuine constraints.
 
+### Shared reference for CompanyOS UI work
+
+Before production UI implementation, update the canonical
+[CompanyOS blueprint](../../design/companyos/README.md) with the founder.
+Start at `index.html` for each area's meaning, boundaries and open decisions;
+follow its state links into `prototype.html` to exercise the UI.
+Its `src/blueprint.js` is the single source for review state IDs and expected
+behavior; the Blueprint panel renders those rules beside the interactive UI. Use the method in `PRODUCT.md`: an
+overall journey, screen images or interactive states, and adjacent review
+notes explaining purpose, user actions, behavior, acceptance, and open questions.
+Include failure/recovery scenarios and expected results. Scenario controls
+and implementation notes stay outside the app frame; simulations are labeled.
+
+Agree on the affected states before implementing them. Approval of one screen
+does not approve all proposals in the reference. Each handoff points to the
+specific reference state and its matching living-doc contract; verification
+compares the real flow to that state. Update this same artifact in place.
+The first HTML artifact is justified as the shared visual/interactive surface
+that Markdown cannot provide, not as permission to add per-task specs. Backend
+work with no affected user experience does not require a contrived mock screen.
+
+
 ## Gate 1: Feasibility spike
 
 First identify any decision-changing uncertainty. Run a spike only when
@@ -131,6 +153,11 @@ Rules:
 - stop if evidence contradicts a locked decision.
 
 ## Gate 7: GREEN and refactor
+
+Select and verify the test environment using
+[`TESTING.md`](TESTING.md#test-environments-and-real-data-staging-d-077)
+before starting agents or write tests. The daily relay is not a fallback
+for unprovisioned staging or missing fixture data.
 
 Run the narrow tests first. Once green:
 

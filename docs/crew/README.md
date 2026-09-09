@@ -41,6 +41,12 @@ Supporting runbooks that are also living but narrow:
 [`RELEASING.md`](RELEASING.md), [`GUIDES/`](GUIDES/),
 [`templates/`](templates/).
 
+## Shared design reference
+
+[CompanyOS blueprint](../../design/companyos/README.md) is the one maintained
+interactive reference (D-078). Its rendered Stage 0 matrix separates accepted
+contracts, proposals and blocked controls; living docs retain authority.
+
 ## Records (append-only directories)
 
 Dated evidence, not current product contracts. Existing records remain
