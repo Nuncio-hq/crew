@@ -319,7 +319,7 @@
     },
     {
       "area": "desktop/src/features/profile/**",
-      "why": "Hermes profile edit/offboard in profile panel; runtime avatars; exact-instance deletion confirmation (#353).",
+      "why": "Hermes profile edit/offboard in profile panel; runtime avatars; exact-instance deletion confirmation and scope-fenced lifecycle/DM actions (#353).",
       "resolve": "additive tabs.",
       "filesAtRecord": 12
     },
