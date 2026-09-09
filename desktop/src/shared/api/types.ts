@@ -77,6 +77,11 @@ export type SetChannelPurposeInput = {
 
 export type CanvasResponse = {
   content: string | null;
+  eventId: string | null;
+  definitions: { roleLabel: string; definition: string }[];
+  contactPubkey: string | null;
+  crewAuthority: "absent" | "owner" | "foreign";
+  crewParseState: "absent" | "valid" | "invalid";
   updatedAt: number | null;
   author: string | null;
   routing: CanvasRoutingPreset[];

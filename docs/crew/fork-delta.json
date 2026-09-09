@@ -43,7 +43,7 @@
     },
     {
       "area": "crates/buzz-core/**",
-      "why": "Crew kinds: KIND_ORG_ROSTER 30680 (inert, D-069), KIND_REPO_WIKI_PAGE 30623 (#200), KIND_AGENT_INSTRUMENT_OVERLAY 24201 (#197); observer context fields.",
+      "why": "Crew kinds: KIND_ORG_ROSTER 30680 (inert, D-069), KIND_REPO_WIKI_PAGE 30623 (#200), KIND_AGENT_INSTRUMENT_OVERLAY 24201 (#197); observer context fields; Crew-owned role parser/read/bulk mutation and cleanup contracts (#350).",
       "resolve": "keep constants in ALL_KINDS / P_GATED_KINDS / parameterized asserts.",
       "filesAtRecord": 4,
       "fileHints": [
@@ -467,8 +467,8 @@
         },
         {
           "path": "desktop/src-tauri/src/commands/canvas.rs",
-          "why": "#196 `pub(crate)` on `fenced_crew_block` / `ensure_canvas_author`",
-          "resolve": "visibility only; do not move YAML parse here"
+          "why": "#196 `pub(crate)` on `fenced_crew_block` / `ensure_canvas_author`; #350 shared parser metadata in the existing canvas read response",
+          "resolve": "retain visibility and shared-parser read metadata; do not move YAML parsing here"
         },
         {
           "path": "desktop/src-tauri/src/commands/channels.rs",
