@@ -48,6 +48,7 @@ Avoid consultant vocabulary and process diagrams the founder did not ask for.
 | Choice | Detail |
 | --- | --- |
 | Keep Buzz backend | Relay, Nostr identity, channels, ACP harness, event log |
+| Company deployment | Use the founder's [chosen dev-server deployment](ARCHITECTURE.md#company-deployment); other configured communities remain supported |
 | Thin fork | Prefer additive Crew files; keep syncing upstream ([`FORK.md`](FORK.md)) |
 | Build on top | Every Crew feature attaches to an existing Buzz kind, type, command, or extension point |
 | Until | A deliberate platform change is recorded as a new decision |

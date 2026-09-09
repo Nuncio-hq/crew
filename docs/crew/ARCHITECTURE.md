@@ -28,6 +28,21 @@ buzz-acp -> provider ACP adapter -> coding agent
 
 The relay is the shared coordination log. It is not the source-code store.
 
+### Company deployment
+
+The founder chose the self-hosted dev-server over Tailscale
+(`ws://100.86.143.13:3000`) as the relay for this company's deployment and
+acceptance work. This choice does not restrict Crew's multi-community support:
+users can configure other relays, including hosted communities.
+
+The deployment choice does not establish current relay health, the installed
+build, or each client's effective target. Verify those on the endpoint used
+for an acceptance run; repository support for an event kind does not prove
+that an installed relay accepts it. Historical transport observations and the
+remaining reconnect/status work are tracked in
+[#338](https://github.com/Nuncio-hq/crew/issues/338); isolated staging is
+tracked in [#348](https://github.com/Nuncio-hq/crew/issues/348).
+
 ## Three data planes
 
 | Data                                 | Authority         | May leave the machine through |

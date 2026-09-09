@@ -43,13 +43,22 @@ mirror desktop. No org/wiki UI. 1000-line policy.
 
 ## Relay / DB
 
+The [company deployment choice](ARCHITECTURE.md#company-deployment) is the
+founder's dev-server over Tailscale. Current endpoint health, installed build,
+and client/agent targets have not been reverified by this documentation change.
+Historical AUTH-challenge/close observations in
+[#338](https://github.com/Nuncio-hq/crew/issues/338) are transport symptoms,
+not evidence of an explicit credential denial or a confirmed root cause.
+
 Stock Buzz relay with Crew kinds (30680 inert, 30623 wiki, 24201 overlay).
 Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
 
 ## Known gaps
 
-- Hosted-relay acceptance for #337/#338 incomplete (receipt kind unknown to
-  hosted relay 0.2.1).
+- #337 membership acceptance and #338 reconnect/status/receipt acceptance
+  remain open. Real staging verification depends on
+  [#348](https://github.com/Nuncio-hq/crew/issues/348); fixture results do not
+  establish live relay health.
 - Desktop Smoke / Integration E2E lanes are advisory only (D-032, D-047);
   post-0.5.23 drift tracked in
   [#346](https://github.com/Nuncio-hq/crew/issues/346) (mention-recipients

@@ -5,7 +5,7 @@
 No behavior change goes directly from idea to implementation.
 
 ```text
-Spike -> RED tests -> edge-case tests -> approved plan -> implementation
+Assess uncertainty -> spike if needed -> RED tests -> edge-case tests -> approved plan -> implementation
 ```
 
 The workflow is intentionally evidence-first because the manager reviews intent
@@ -25,7 +25,12 @@ Do not begin by naming files or libraries unless they are genuine constraints.
 
 ## Gate 1: Feasibility spike
 
-Every feature starts with a spike under `docs/crew/spikes/`.
+First identify any decision-changing uncertainty. Run a spike only when
+existing code, tests, and documentation cannot resolve it; otherwise record
+the supporting evidence briefly in the task or PR and proceed to Gate 2.
+A spike does not require a new file. Keep its question, result, and evidence
+in the task or PR by default. Apply the [documentation policy](README.md)
+before adding any lasting record under `docs/crew/spikes/` or elsewhere.
 
 A spike must:
 
@@ -47,7 +52,7 @@ run a narrower spike, or ask for a product decision.
 
 ## Gate 2: Contract and test design
 
-After a passing spike, translate intent into observable contracts.
+After resolving feasibility, translate intent into observable contracts.
 
 For each contract identify:
 
@@ -100,7 +105,7 @@ the architecture, state model, or user experience.
 The implementation plan must state:
 
 - manager-visible outcome;
-- spike evidence;
+- feasibility evidence (including spike results when a spike was needed);
 - tests already RED;
 - files to add;
 - upstream files, if any, that must be edited;
@@ -147,17 +152,38 @@ Review must verify:
 - the fork surface is still small;
 - no unrelated upstream behavior changed.
 
-Then update:
+Before completion, identify affected authoritative docs and update them in
+the same change. If none are affected, explain why in the task or PR.
+Update only the documents whose content changes:
 
 - `STATE.md` with current truth;
 - `DECISIONS.md` only for durable new decisions;
-- the spike with final follow-up evidence;
+- any existing spike record whose conclusion changes;
 - user-facing or architecture docs when behavior changed.
+
+Review documentation against the final implementation, including links and
+contradictions. Keep each fact in one home and link to it elsewhere; replace
+stale text rather than appending progress logs. Distinguish shipped behavior,
+accepted future work, and proposals. Preserve decision history while marking
+superseded decisions with a successor reference.
+
+For unchanged Buzz behavior, refer to upstream docs in this checkout. For
+Crew extensions, document the delta; for Crew-owned components, document
+the current Crew contract. Update ownership references in `FORK.md`,
+`ARCHITECTURE.md`, and applicable `fork-delta.json` areas when they change.
+An upstream sync includes this review for affected Crew differences, even
+when Git reports no documentation conflicts.
+
+Edit or consolidate existing docs first. Any new doc, including a plan or
+verification record, needs a lasting purpose and a reason no existing doc
+fits, stated in the task or PR. Temporary evidence stays in the task or PR.
 
 ## Documentation-only changes
 
-Documentation changes still begin with a scope spike: inspect upstream docs,
-confirm the new file does not collide, and identify authoritative sources.
+Documentation changes begin by inspecting the affected docs and identifying
+authoritative sources. No separate scope-spike file is required. Resolve
+contradictions in existing documents and justify any necessary new file
+under the policy above.
 They do not require contrived unit tests. Their RED equivalent is a documented
 validation target such as a broken link, missing required section, or an
 additive-only diff assertion. Validate links, formatting, and Git diff before
