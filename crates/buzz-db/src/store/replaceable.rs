@@ -1769,4 +1769,4 @@ mod postgres_tests {
 
 #[cfg(test)]
 #[path = "conditional_publication_tests.rs"]
-pub(crate) mod conditional_publication_tests;
+pub(crate) mod conditional_publication_postgres_tests;

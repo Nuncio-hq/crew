@@ -5,7 +5,7 @@ use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
 use sqlx::PgPool;
 
 #[path = "project_channel_link_race_tests.rs"]
-mod races;
+mod races_postgres_tests;
 
 struct Fixture {
     db: Db,

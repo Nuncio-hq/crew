@@ -170,4 +170,4 @@ mod tests;
 
 #[cfg(test)]
 #[path = "project_channel_link_db_tests.rs"]
-mod db_tests;
+mod db_postgres_tests;
