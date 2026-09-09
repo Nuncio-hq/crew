@@ -12,7 +12,7 @@
       "recordedAt": "2026-08-23"
     },
     "src/features/messages/ui/MessageComposer.tsx": {
-      "lines": 1039,
+      "lines": 1038,
       "reason": "Upstream desktop-v0.5.23 is 1012 lines (composer-revision draft model #7124/#7133); Crew keeps ComposerUploadProgressOverlay, suppressLinkPreviews and removedMentionPubkeys edit forwarding (+27).",
       "recordedAt": "2026-09-07"
     },
