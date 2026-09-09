@@ -10,6 +10,16 @@ use serde_yaml::{Mapping, Value};
 
 use super::RoleParseError;
 
+pub(super) fn assignment_entries(document: &serde_yaml::Mapping) -> BTreeMap<String, String> {
+    document
+        .get(Value::String("assignments".into()))
+        .and_then(Value::as_mapping)
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, value)| Some((key.as_str()?.to_string(), value.as_str()?.to_string())))
+        .collect()
+}
+
 struct StringMap<T>(BTreeMap<String, T>);
 
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for StringMap<T> {

@@ -15,6 +15,7 @@ mod assignment_publish;
 mod bestie;
 mod canvas;
 mod canvas_tooling;
+mod channel_crew_config;
 mod channel_reconnect_repair;
 mod channel_templates;
 mod channel_window;
@@ -125,6 +126,7 @@ pub(crate) use assignment_publish::{
 pub use bestie::*;
 pub use canvas::*;
 pub use canvas_tooling::*;
+pub(crate) use channel_crew_config::*;
 pub use channel_reconnect_repair::*;
 pub use channel_templates::*;
 pub use channel_window::*;
