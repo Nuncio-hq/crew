@@ -199,11 +199,15 @@ Before agents run Git or hooks, activate the repo's Hermit environment
 (`. ./bin/activate-hermit`) so `./bin` leads `PATH` and the pinned toolchain
 (flutter, dart, lefthook) wins over any Homebrew version; do not
 rewrite hook commands to compensate for an unconfigured shell `PATH`. The
-pre-push hook self-pins regardless: `bin/.lefthookrc` (sourced by the generated
-`.git/hooks/*`) prepends the Hermit `bin/` to `PATH` and pins `LEFTHOOK_BIN`, so
-lane subprocesses resolve the pinned flutter/dart/lefthook even when an
-unactivated shell has Homebrew first. Activating Hermit remains recommended for
-non-hook commands.
+generated hook checks `LEFTHOOK_BIN`, then `PATH`, then installation fallbacks.
+`lefthook.yml` does not configure `rc:`, so `bin/.lefthookrc` is not sourced;
+activate Hermit before invoking hooks to select the pinned lane toolchains.
+After Lefthook selects files, `scripts/hook-lane-wrapper.sh` clears canonical
+repository-local Git variables (including invoking-command config overrides)
+only in each check/test lane and verifies its physical cwd is the repo root.
+This keeps nested Git fixtures from writing the caller's shared worktree metadata
+while preserving the parent hook's diff/staging context. Wrapper/config edits
+run the fast isolation contract; existing native lane globs remain unchanged.
 
 **Commit with `git commit -s`.** The required **DCO Check** fails any PR with a commit missing a `Signed-off-by` trailer, and `just hooks` installs a `commit-msg` hook that adds it to commits you create locally (`git rebase` and `git cherry-pick` still need `--signoff`) — if you build commit commands programmatically, include `-s` every time. To repair a branch that already has unsigned commits: `git rebase --signoff main`, then force-push.
 
