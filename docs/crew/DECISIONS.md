@@ -1038,9 +1038,11 @@ Compose rule for the post-sync seam:
    (D-048 / D-049); upstream has no equivalent.
 
 Community deletion (`buzz-deletion`, migrations 0029/0030) is taken from
-upstream as-is. Crew has no community-scoped Postgres tables to add to
-`EXPECTED_SCOPED_TABLES`; Crew durable session state is local filesystem /
-Nostr events, not a parallel deletion engine.
+upstream as-is. The contact retention foundation is an additive Crew storage
+surface: its `contact_routes` and `contact_quota` tables are registered in
+`EXPECTED_SCOPED_TABLES` and purged in child-before-parent order. Crew durable
+session state is local filesystem / Nostr events, not a parallel deletion
+engine.
 
 ## D-053 — Workspace binding per thread (git Projects)
 

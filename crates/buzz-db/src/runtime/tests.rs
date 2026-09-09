@@ -760,7 +760,11 @@ async fn seed_community_channel(
 }
 
 fn signed_event_at(keys: &nostr::Keys, content: &str, secs: u64) -> nostr::Event {
-    nostr::EventBuilder::new(nostr::Kind::Custom(9), content)
+    signed_event_at_kind(keys, content, secs, 9)
+}
+
+fn signed_event_at_kind(keys: &nostr::Keys, content: &str, secs: u64, kind: u16) -> nostr::Event {
+    nostr::EventBuilder::new(nostr::Kind::Custom(kind), content)
         .custom_created_at(nostr::Timestamp::from(secs))
         .sign_with_keys(keys)
         .expect("sign event")
@@ -2957,7 +2961,7 @@ async fn floor_guard_blocks_updates_that_move_rows_below_the_fence() {
 
     // Seed via unarmed session: one old channel-NULL row, one fresh
     // channel row.
-    let old_null = signed_event_at(&author, "old-null", now_secs - floor - 120);
+    let old_null = signed_event_at_kind(&author, "old-null", now_secs - floor - 120, 1);
     insert_top_level(&pool, community, channel, &old_null).await;
     sqlx::query("UPDATE events SET channel_id = NULL WHERE community_id = $1 AND id = $2")
         .bind(community)
@@ -2965,7 +2969,7 @@ async fn floor_guard_blocks_updates_that_move_rows_below_the_fence() {
         .execute(&pool)
         .await
         .expect("detach channel (unarmed seed)");
-    let fresh = signed_event_at(&author, "fresh-row", now_secs);
+    let fresh = signed_event_at_kind(&author, "fresh-row", now_secs, 1);
     insert_top_level(&pool, community, channel, &fresh).await;
 
     // Armed transaction, deferred to COMMIT (the production shape).

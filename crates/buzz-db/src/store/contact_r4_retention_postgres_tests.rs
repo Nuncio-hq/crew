@@ -342,32 +342,17 @@ async fn contact_proof_r4_next_b4_gc_rollback_replay_and_repeat_are_atomic() {
 
 #[tokio::test]
 #[ignore = "requires Postgres"]
-async fn contact_proof_r4_next_b5_actual_deletion_catalog_rejects_unregistered_proof_tables() {
+async fn contact_proof_r4_next_b5_actual_deletion_catalog_accepts_registered_proof_tables() {
     let f = Fixture::new().await;
     let db = crate::Db::from_pool(f.pool.clone());
-    // The production storage foundation is deliberately absent from the
-    // deletion manifest, so the real executor must already fail closed before
-    // this fixture adds its proof-only objects.
-    let production_error = db
-        .validate_deletion_catalog()
+    // The production storage foundation is part of the reviewed deletion
+    // manifest. The real executor must accept it before the proof-only guards
+    // are installed.
+    db.validate_deletion_catalog()
         .await
-        .expect_err("unregistered production contact tables must fail closed");
-    let production_text = production_error.to_string();
-    assert!(
-        production_text.contains("contact_routes") && production_text.contains("contact_quota"),
-        "{production_text}"
-    );
+        .expect("registered production contact tables must pass the catalog guard");
     next::install(&f).await;
-    let error = db
-        .validate_deletion_catalog()
+    db.validate_deletion_catalog()
         .await
-        .expect_err("actual executor must reject unknown scoped tables");
-    assert!(matches!(error, crate::error::DbError::DeletionSafety(_)));
-    let text = error.to_string();
-    assert!(
-        text.contains("contact_routes") && text.contains("contact_quota"),
-        "{text}"
-    );
-    // purge_postgres invokes this same connection-bound validator before any
-    // scoped DELETE. No fake lease/GUC or positive executor emulation here.
+        .expect("proof-only contact guards must preserve the catalog contract");
 }

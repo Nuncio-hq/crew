@@ -167,8 +167,8 @@ CREATE TRIGGER contact_route_immutable_v1
     BEFORE UPDATE ON contact_routes
     FOR EACH ROW EXECUTE FUNCTION contact_route_immutable_v1();
 
--- These relations are tenant-scoped. They intentionally remain absent from
--- the deletion manifest until the reviewed proof/route purge order lands;
--- deletion therefore fails closed while this storage slice is deployed.
+-- These relations are tenant-scoped and are included in the reviewed
+-- child-before-parent deletion order. The deletion catalog therefore keeps
+-- the storage slice fail-closed if either relation or its write fence drifts.
 SELECT attach_community_write_fence('contact_routes');
 SELECT attach_community_write_fence('contact_quota');
