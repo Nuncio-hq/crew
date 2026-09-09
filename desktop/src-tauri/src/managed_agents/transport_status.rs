@@ -9,7 +9,7 @@ pub(crate) use poll::start;
 
 use crate::app_state::AppState;
 use crate::managed_agents::ManagedAgentRuntimeKey;
-pub(crate) use monitor::{Diagnostics, Monitor};
+pub(crate) use monitor::{Diagnostics, Monitor, ReadTicket};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};

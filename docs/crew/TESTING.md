@@ -454,9 +454,12 @@ symlink/hardlink/FIFO/mode/size, and saturation cases bind these helpers.
 The Members menu keeps process and connection status separate. A live failed
 transport retains Stop Agent alongside Retry by restarting; a failed previous
 process is labeled Last process. A failed retry must leave a recovery action
-available. Mock-bridge E2E proves rendering and pair-scoped dispatch only; it
-cannot prove native process, installed staging, or in-flight turn/receipt
-acceptance. Those remain #338 gates; real staging requires #348.
+available. The `channels.spec.ts` mock-bridge case binds the rendered
+transport status and retry click to the same pair's stop/start commands, while
+the `community-rail.spec.ts` leave case binds removal to the native eligibility
+invalidation command. These cases cannot prove native process behavior,
+installed staging, or in-flight turn/receipt acceptance. Those remain #338
+gates; real staging requires #348.
 
 ## CompanyOS grouped evidence (#344)
 

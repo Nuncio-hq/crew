@@ -4897,6 +4897,90 @@ test("members sidebar can stop and start a managed bot in this community", async
   );
 });
 
+test("members sidebar retries an exhausted transport by restarting its pair", async ({
+  page,
+}) => {
+  const agentPubkey = TEST_IDENTITIES.charlie.pubkey;
+  const relayUrl = (
+    process.env.BUZZ_E2E_RELAY_URL ?? "http://localhost:3000"
+  ).replace(/^http/, "ws");
+
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: agentPubkey,
+        name: "charlie",
+        status: "running",
+        channelNames: ["general"],
+      },
+    ],
+    managedAgentRuntimes: [
+      {
+        pubkey: agentPubkey,
+        relayUrl,
+        lifecycle: "ready",
+        transport: {
+          state: "exhausted",
+          code: "connection_failed",
+          attempts: 6,
+          elapsedMs: 300_000,
+          nextRetryAtMs: null,
+          lastError: "relay unavailable",
+        },
+      },
+    ],
+  });
+  // The current shell keeps channels behind the workspace browser. Open the
+  // real channel route directly so this regression stays about the Members
+  // Sidebar/Retry production path rather than the navigation surface.
+  await page.goto(`/#/channels/${GENERAL_CHANNEL_ID}`);
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await page.getByTestId("channel-members-trigger").click();
+  await expect(page.getByTestId("members-sidebar")).toBeVisible();
+
+  const row = page.getByTestId(`sidebar-member-${agentPubkey}`);
+  await expect(row).toBeVisible();
+  await expect(
+    row.getByTestId(`sidebar-agent-transport-${agentPubkey}`),
+  ).toContainText("Connection retries exhausted");
+
+  await openMemberMenu(page, agentPubkey);
+  const retry = page.getByTestId(`sidebar-agent-retry-${agentPubkey}`);
+  await expect(retry).toBeVisible();
+  await retry.click();
+
+  await expect(
+    page
+      .locator("[data-sonner-toast]")
+      .filter({ hasText: "Restarted charlie in this community." }),
+  ).toBeVisible();
+
+  const commands = await readCommandPayloadLog(page);
+  const pairCommands = commands.filter(
+    ({ command }) =>
+      command === "stop_managed_agent_runtime" ||
+      command === "start_managed_agent_runtime",
+  );
+  expect(pairCommands).toEqual([
+    {
+      command: "stop_managed_agent_runtime",
+      payload: { pubkey: agentPubkey, relayUrl },
+    },
+    {
+      command: "start_managed_agent_runtime",
+      payload: { pubkey: agentPubkey, relayUrl },
+    },
+  ]);
+  expect(
+    commands.some(({ command }) => command === "restart_managed_agent_runtime"),
+  ).toBe(false);
+  expect(
+    commands.some(
+      ({ command }) => command === "set_managed_transport_eligibility",
+    ),
+  ).toBe(false);
+});
+
 test("stopping a managed bot in one community leaves its other communities running", async ({
   page,
 }) => {

@@ -6,6 +6,8 @@ import { FEATURE_OVERRIDES_STORAGE_KEY } from "../helpers/features";
 const RELAY_URL = "ws://localhost:3000";
 const THEME_STORAGE_KEY = "buzz-theme";
 const OWNER_PUBKEY = "deadbeef".repeat(8);
+const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
+const RANDOM_CHANNEL_ID = "9dae0116-799b-5071-a0a8-fdd30a91a35d";
 
 function snapshotKey(relayUrl: string) {
   return `buzz-channels.v1:${relayUrl}:${OWNER_PUBKEY.toLowerCase()}`;
@@ -881,13 +883,24 @@ test.describe("community rail", () => {
   }) => {
     await installMockBridge(page, undefined, { skipCommunitySeed: true });
     await seedCommunities(page, [COMMUNITY_A, COMMUNITY_B], COMMUNITY_A.id);
-    await page.goto("/");
+    // Stream channels are opened from the workspace browser in the current
+    // CompanyOS shell, so use their stable production route IDs here.
+    await page.goto(`/#/channels/${RANDOM_CHANNEL_ID}`);
+    await expect(page.getByTestId("chat-title")).toHaveText("random");
 
     await page.getByTestId(`community-rail-button-${COMMUNITY_B.id}`).click();
-    await page.getByTestId("channel-random").click();
+    await expect(
+      page.getByTestId(`community-rail-button-${COMMUNITY_B.id}`),
+    ).toHaveAttribute("aria-current", "true");
+    await page.goto(`/#/channels/${RANDOM_CHANNEL_ID}`);
+    await expect(page.getByTestId("chat-title")).toHaveText("random");
     const randomUrl = page.url();
     await page.getByTestId(`community-rail-button-${COMMUNITY_A.id}`).click();
-    await page.getByTestId("channel-general").click();
+    await expect(
+      page.getByTestId(`community-rail-button-${COMMUNITY_A.id}`),
+    ).toHaveAttribute("aria-current", "true");
+    await page.goto(`/#/channels/${GENERAL_CHANNEL_ID}`);
+    await expect(page.getByTestId("chat-title")).toHaveText("general");
 
     await page.getByTestId("sidebar-profile-avatar-button").click();
     await page.getByTestId("community-switcher").click();
@@ -904,6 +917,20 @@ test.describe("community rail", () => {
         ),
       )
       .toBe(COMMUNITY_B.id);
+
+    // Leaving a community invalidates native transport eligibility before the
+    // local community list changes. This is the production removal path, not
+    // a direct helper invocation.
+    const eligibilityUpdates = await page.evaluate(() =>
+      (window.__BUZZ_E2E_COMMAND_LOG__ ?? [])
+        .filter(
+          ({ command }) => command === "set_managed_transport_eligibility",
+        )
+        .map(({ payload }) => payload),
+    );
+    expect(eligibilityUpdates).toEqual([
+      { relayUrl: COMMUNITY_A.relayUrl, enabled: false },
+    ]);
   });
 
   test("shows the quiet switch gate, not the boot splash, while switching", async ({
