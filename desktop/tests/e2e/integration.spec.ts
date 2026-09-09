@@ -6,6 +6,10 @@ import {
   openCreateChannelDialog,
   TEST_IDENTITIES,
 } from "../helpers/bridge";
+import {
+  expectInboxMention,
+  expectMentionMessage,
+} from "../helpers/mentionAssertions";
 import { openSettings } from "../helpers/settings";
 import { assertRelaySeeded } from "../helpers/seed";
 
@@ -72,7 +76,7 @@ async function sendChannelMessage(
     mentionPubkeys?: string[];
   },
 ) {
-  await page.evaluate(
+  return page.evaluate(
     async ({
       channelName: targetChannelName,
       content,
@@ -102,14 +106,15 @@ async function sendChannelMessage(
         throw new Error(`Channel not found: ${targetChannelName}`);
       }
 
-      await invoke("send_channel_message", {
+      const sent = (await invoke("send_channel_message", {
         channelId: channel.id,
         content,
         parentEventId: null,
         mediaTags: null,
         mentionPubkeys: mentionPubkeys ?? null,
         kind: kind ?? null,
-      });
+      })) as { event_id: string };
+      return sent.event_id;
     },
     { channelName, content, kind, mentionPubkeys },
   );
@@ -357,14 +362,21 @@ test("live mentions refetch the home feed without waiting for polling", async ({
     await expect(targetPage.getByTestId("chat-title")).toHaveText("general");
 
     const message = `Heads up @tyler live mention ${stamp}`;
-    await sendChannelMessage(senderPage, {
+    const eventId = await sendChannelMessage(senderPage, {
       channelName: "general",
       content: message,
       mentionPubkeys: [TEST_IDENTITIES.tyler.pubkey],
     });
+    const mention = {
+      eventId,
+      renderedContent: `Heads up tyler live mention ${stamp}`,
+      label: "tyler",
+      pubkey: TEST_IDENTITIES.tyler.pubkey,
+    };
 
-    await expect(targetPage.getByTestId("message-timeline")).toContainText(
-      message,
+    await expectMentionMessage(
+      targetPage.getByTestId("message-timeline"),
+      mention,
     );
 
     await expect.poll(() => getLoggedNotificationCount(targetPage)).toBe(1);
@@ -386,9 +398,7 @@ test("live mentions refetch the home feed without waiting for polling", async ({
       .getByRole("button", { name: "Inbox" })
       .click();
     await expect(targetPage.getByTestId("home-inbox-list")).toBeVisible();
-    await expect(targetPage.getByTestId("home-inbox-list")).toContainText(
-      message,
-    );
+    await expectInboxMention(targetPage, mention);
     await expect(targetPage.getByTestId("sidebar-home-count")).toHaveCount(0);
     await expect.poll(() => getLoggedNotificationCount(targetPage)).toBe(1);
   } finally {
@@ -421,12 +431,18 @@ test("live forum mentions refetch the home feed without waiting for polling", as
     await joinChannel(senderPage, "watercooler");
 
     const message = `Forum ping @tyler ${stamp}`;
-    await sendChannelMessage(senderPage, {
+    const eventId = await sendChannelMessage(senderPage, {
       channelName: "watercooler",
       content: message,
       kind: 45001,
       mentionPubkeys: [TEST_IDENTITIES.tyler.pubkey],
     });
+    const mention = {
+      eventId,
+      renderedContent: `Forum ping tyler ${stamp}`,
+      label: "tyler",
+      pubkey: TEST_IDENTITIES.tyler.pubkey,
+    };
 
     await expect(targetPage.getByTestId("sidebar-home-count")).toHaveText("1");
 
@@ -444,9 +460,7 @@ test("live forum mentions refetch the home feed without waiting for polling", as
       .click();
     await expect(targetPage.getByTestId("home-inbox-list")).toBeVisible();
     await expect(targetPage.getByTestId("home-inbox-list")).toBeVisible();
-    await expect(targetPage.getByTestId("home-inbox-list")).toContainText(
-      message,
-    );
+    await expectInboxMention(targetPage, mention);
     await expect(targetPage.getByTestId("sidebar-home-count")).toHaveCount(0);
     await expect.poll(() => getLoggedNotificationCount(targetPage)).toBe(1);
   } finally {

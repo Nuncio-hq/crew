@@ -54,7 +54,8 @@ export function useChannelLinks() {
   const debounceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const latestValueRef = React.useRef<string>("");
+  const currentQueryRef =
+    React.useRef<ReturnType<typeof detectPrefixQuery>>(null);
   const latestCursorRef = React.useRef<number>(0);
 
   /** Channel names (original casing) for overlay highlighting. */
@@ -93,8 +94,27 @@ export function useChannelLinks() {
 
   const isChannelOpen = channelQuery !== null && channelSuggestions.length > 0;
 
+  const isCurrentQuery = React.useCallback(() => {
+    const current = currentQueryRef.current;
+    return (
+      current !== null &&
+      current.query === channelQuery &&
+      current.startIndex === channelStartIndex
+    );
+  }, [channelQuery, channelStartIndex]);
+
   const insertChannel = React.useCallback(
-    (suggestion: ChannelSuggestion, selectionEnd: number): AutocompleteEdit => {
+    (
+      suggestion: ChannelSuggestion,
+      selectionEnd: number,
+    ): AutocompleteEdit | null => {
+      // Pointer callbacks may still belong to the previous rendered menu.
+      if (
+        !isCurrentQuery() ||
+        selectionEnd !== latestCursorRef.current ||
+        !channelSuggestions.some((entry) => entry.id === suggestion.id)
+      )
+        return null;
       if (debounceTimerRef.current !== null) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
@@ -102,6 +122,7 @@ export function useChannelLinks() {
 
       const insertText = `#${suggestion.name} `;
 
+      currentQueryRef.current = null;
       setChannelQuery(null);
       setChannelSelectedIndex(0);
 
@@ -111,40 +132,47 @@ export function useChannelLinks() {
         insertText,
       };
     },
-    [channelStartIndex],
+    [channelStartIndex, channelSuggestions, isCurrentQuery],
   );
 
   const updateChannelQuery = React.useCallback(
     (value: string, cursorPosition: number) => {
-      // Store latest values so the debounced callback always uses fresh data
-      latestValueRef.current = value;
+      const query = detectPrefixQuery(
+        "#",
+        value,
+        cursorPosition,
+        knownNamesLowerRef.current,
+      );
+      const previous = currentQueryRef.current;
+      currentQueryRef.current = query;
       latestCursorRef.current = cursorPosition;
-
+      // Close stale suggestions now, before Enter/Tab or a queued pointer
+      // callback can select from them. Only opening the new list is debounced.
+      if (
+        !query ||
+        query.query !== previous?.query ||
+        query.startIndex !== previous?.startIndex
+      ) {
+        setChannelQuery(null);
+        setChannelSelectedIndex(0);
+      }
       if (debounceTimerRef.current !== null) {
         clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
       }
-
+      if (!query) return;
       debounceTimerRef.current = setTimeout(() => {
         debounceTimerRef.current = null;
-        const channel = detectPrefixQuery(
-          "#",
-          latestValueRef.current,
-          latestCursorRef.current,
-          knownNamesLowerRef.current,
-        );
-        if (channel) {
-          setChannelQuery(channel.query);
-          setChannelStartIndex(channel.startIndex);
-          setChannelSelectedIndex(0);
-        } else {
-          setChannelQuery(null);
-        }
+        setChannelQuery(query.query);
+        setChannelStartIndex(query.startIndex);
+        setChannelSelectedIndex(0);
       }, CHANNEL_QUERY_DEBOUNCE_MS);
     },
     [],
   );
 
   const clearChannels = React.useCallback(() => {
+    currentQueryRef.current = null;
     if (debounceTimerRef.current !== null) {
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
@@ -157,7 +185,7 @@ export function useChannelLinks() {
     (
       event: React.KeyboardEvent,
     ): { handled: boolean; suggestion?: ChannelSuggestion } => {
-      if (!isChannelOpen) {
+      if (!isChannelOpen || !isCurrentQuery()) {
         return { handled: false };
       }
 
@@ -197,13 +225,19 @@ export function useChannelLinks() {
 
       if (event.key === "Escape") {
         event.preventDefault();
-        setChannelQuery(null);
+        clearChannels();
         return { handled: true };
       }
 
       return { handled: false };
     },
-    [isChannelOpen, channelSelectedIndex, channelSuggestions],
+    [
+      isChannelOpen,
+      isCurrentQuery,
+      channelSelectedIndex,
+      channelSuggestions,
+      clearChannels,
+    ],
   );
 
   return {

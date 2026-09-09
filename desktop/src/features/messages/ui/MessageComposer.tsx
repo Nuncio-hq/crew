@@ -437,7 +437,8 @@ function MessageComposerImpl({
   }, [composerDisabled, replyTarget, richText.focusPreserve]);
   useComposerAutofocus(richText.focus, effectiveDraftKey, composerDisabled);
   const applyAutocompleteEdit = React.useCallback(
-    (edit: AutocompleteEdit) => {
+    (edit: AutocompleteEdit | null) =>
+      edit &&
       richText.replacePlainTextRange(
         edit.replaceFromOffset,
         edit.replaceToOffset,
@@ -445,8 +446,7 @@ function MessageComposerImpl({
         edit.customEmojiShortcode,
         edit.preserveSelection,
         edit.reassertMentionCaret,
-      );
-    },
+      ),
     [richText.replacePlainTextRange],
   );
   const {

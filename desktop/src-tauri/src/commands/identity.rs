@@ -361,14 +361,15 @@ pub async fn import_identity(
         std::fs::create_dir_all(&data_dir).map_err(|e| format!("create app data dir: {e}"))?;
         let key_path = data_dir.join("identity.key");
 
-        let (pubkey, storage) = commit_imported_identity(&state, &data_dir, keys, |keys| {
-            // Persist into the OS keyring first (store → read-back verify →
-            // marker → delete file). Falls back to the 0o600 file when the
-            // keyring is unavailable; returns Err only when both backends fail.
-            let store =
-                crate::secret_store::SecretStore::shared(crate::app_state::keyring_service());
-            crate::app_state::persist_imported_identity(store, keys, &key_path, &data_dir)
-        })?;
+        let (pubkey, storage) =
+            commit_imported_identity(&state, &_mutation_guard, &data_dir, keys, |keys| {
+                // Persist into the OS keyring first (store → read-back verify →
+                // marker → delete file). Falls back to the 0o600 file when the
+                // keyring is unavailable; returns Err only when both backends fail.
+                let store =
+                    crate::secret_store::SecretStore::shared(crate::app_state::keyring_service());
+                crate::app_state::persist_imported_identity(store, keys, &key_path, &data_dir)
+            })?;
 
         let pubkey_hex = pubkey.to_hex();
         let display_name = truncated_display_name(&pubkey)?;
@@ -406,6 +407,7 @@ pub async fn import_identity(
 ///    replaced by the next backup creation; we log and move on.
 pub(crate) fn commit_imported_identity(
     state: &AppState,
+    mutation_guard: &std::sync::MutexGuard<'_, ()>,
     data_dir: &std::path::Path,
     keys: nostr::Keys,
     persist: impl FnOnce(&nostr::Keys) -> Result<crate::app_state::IdentityStorage, String>,
@@ -419,11 +421,8 @@ pub(crate) fn commit_imported_identity(
     // stores below pair with Acquire loads in get_identity: a reader
     // observing false is guaranteed to see the updated keys.
     let pubkey = keys.public_key();
-    {
-        let mut active_keys = state.keys.lock().map_err(|e| e.to_string())?;
-        *active_keys = keys;
-        state.set_identity_storage(storage);
-    }
+    state.replace_identity_keys(mutation_guard, keys)?;
+    state.set_identity_storage(storage);
 
     // Clear both recovery flags — an import is valid in either lost or
     // keyring-locked state and resolves both. In the locked case the

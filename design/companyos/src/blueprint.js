@@ -285,7 +285,7 @@ export const layoutContract = [
   ],
   [
     "P2",
-    "Proposal",
+    "Accepted coordinator decision",
     "Tools bên phải có tab; Context/Plan không là cột thứ ba mặc định.",
   ],
   [
@@ -503,10 +503,10 @@ export const handoffContract = [
   {
     id: "G-THREAD-1",
     state: "thread-working, done, completed, offline; tools",
-    status: "proposed",
-    source: "Stage 0 recommendation, not founder approval",
+    status: "accepted",
+    source: "Coordinator-approved G-THREAD-1 v3, 2026-09-09; actual Fable Medium reviewed v2 and explicitly accepted the selected channel-compatibility clarification. Not a new founder approval.",
     contract:
-      "Agent plans tab supersedes only D-056 permanent placement; keep per-agent source/ordering. Historical transcripts readable in same thread, exact-live-job controls only; no Workbench picker. Context initially; selected tool per exact thread within session; narrow overlay keeps conversation readable.",
+      "One thread-view right pane; Context on first explicit opening; Agent plans preserves D-056 authority. Bounded ephemeral selection keyed by relay/viewer/channel/root; thread navigation closes presentation, return restores selection without reopening or native launch. Narrow modal preserves chat draft/scroll and owns Escape. Historical information remains readable; exact-current-generation live controls only; Workbench redirects unchanged. D-078 G-THREAD-1 v3 defines D-057 overlay, D-058 explicit activation/hide cleanup, scoped PR, channel compatibility and popout limits; native proof remains #354/#357.",
     owner: "#354",
   },
   {

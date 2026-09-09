@@ -1164,6 +1164,8 @@ layout of existing components**, not a second product.
 
 ## D-056 — Thread-visible declared plans: one latest ACP snapshot per agent
 
+**Placement amendment:** D-078 / G-THREAD-1 v3 replaces item 4's permanent rail with an explicit Agent plans tab; all source, ordering and invalidation rules below remain.
+
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** #190 (Workbench #186 may later reuse the rail; it is not a
@@ -1203,6 +1205,8 @@ Missing signal is unknown, not guessed from prose.
 
 ## D-057 — GitHub PR hub in thread focus (two tiers, `gh` data plane)
 
+**Layout amendment:** D-078 / G-THREAD-1 v3 replaces item 1's narrow Chat/PR toggle with a tool overlay; the summary card still explicitly opens PR and the data/audience contracts remain.
+
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** #193
@@ -1239,6 +1243,8 @@ not a NIP-34 conversation and not a Crew GitHub protocol.
    scope. Workbench may later embed the hub as a component.
 
 ## D-058 — Channel Tool Pane: Resource Governor owns sim, browser, and dev servers
+
+**Thread-pane amendment:** D-078 / G-THREAD-1 v3 extends thread tabs and fences mount-time browser open and simulator find-or-create behind explicit activation. Existing hide cleanup, governor identity/ownership and channel-mode compatibility remain.
 
 - **Status:** Accepted
 - **Date:** 2026-08-13
@@ -1364,7 +1370,7 @@ See spikes 0035–0038.
 
 ## D-061 — Crew Wiki is a separable engine on relay events
 
-- **Status:** Accepted; navigation placement amended by D-078 v0.9. Generation/Ask protocol successors remain gated in #362–#367.
+- **Status:** Accepted; navigation placement amended by D-078 v0.9. Publication and native recovery architecture amended by D-079; implementation and Ask proof remain gated in #362–#367.
 - **Date:** 2026-08-13
 - **Issue:** #200
 
@@ -1488,6 +1494,8 @@ adds a row.
 See spikes 0049–0051.
 
 ## D-065 — No Workbench place; desk only when a job is live
+
+**Historical information clarification:** D-078 / G-THREAD-1 v3 permits retained read-only history without a live job. The live-control desk and Workbench redirect/no-picker rules below remain.
 
 - **Status:** Accepted
 - **Date:** 2026-08-17
@@ -1870,8 +1878,9 @@ role/contact scope and relay identity are unchanged.
 This supersedes only D-066's conflicting Projects prohibition. D-065 still
 forbids a separate Workbench picker. Detailed Projects/Channels UI and
 interactions remain under founder discussion; no prototype layout changes are
-authorized by this clarification. D-056 plan placement and historical desk/tool
-semantics remain pending G-THREAD-1, not silently superseded.
+authorized by this clarification. At this historical clarification, D-056 placement and historical desk/tool
+semantics remained pending G-THREAD-1. The coordinator-approved v3 amendment
+below subsequently resolves that bounded gate.
 
 The canonical accepted/proposed/blocked control matrix is
 [`src/blueprint.js`](../../design/companyos/src/blueprint.js), rendered by the
@@ -1946,3 +1955,104 @@ required; related issues may share an unchanged build/run with explicit mapping.
 Both coordinator and actual Claude Code CLI Fable Medium approve the exact
 final PR head before merge. Stage 0 reference screenshots are prototype evidence
 only, and #344 remains the open delivery roadmap.
+
+
+### G-THREAD-1 v3 — coordinator-approved thread presentation (2026-09-09)
+
+The coordinator approved this bounded implementation decision under the existing
+execute authorization, not as a new founder approval. Actual Claude Code CLI
+Fable Medium reviewed v2 and explicitly accepted either channel-switch
+clarification; the coordinator selected existing channel-mode compatibility for
+v3. The published v0.9 reference remains simulated. This accepts the decision,
+not #354 implementation or native/runtime evidence.
+
+- **One pane and initial selection.** One right-hand pane per current thread
+  view; Context on first explicit opening, with a named reachable Agent plans
+  tab. Navigation alone does not open it. Use actual capabilities and bindings;
+  recap is Off/unavailable until #351/#356 provide its real path. No extra plan
+  column, fabricated content, or global cross-window exclusivity claim.
+- **Ephemeral selection.** Keep at most 128 LRU records in memory for this app
+  session, keyed by normalized active-community relay URL, normalized viewer
+  pubkey, channel ID and validated root. Use existing conversation derivation.
+  No durable or relay preference and no second session/workspace authority.
+  Missing/invalid root stores nothing; restart/eviction returns Context. Existing
+  community reset clears on account/relay/logout. Confirmed removal/revocation
+  clears the affected scope through a small store invalidation function wired
+  to existing mutation outcomes and authoritative query reconciliation. Failed,
+  loading or partial queries do not prove removal. Fence async results by full
+  scope and current view generation.
+- **Navigation and resources.** Thread navigation closes presentation and
+  returns focus; returning to the exact thread restores selection for the next
+  explicit opening, without reopening or launching/attaching resources. Closing
+  presentation must not stop agents or terminate PTYs. Preserve existing
+  `browserClose` (native hide, not destruction) and `simSetPaneVisible(false)`
+  cleanup. Governor caps, idle timers and quit cleanup remain authoritative;
+  do not add another hide API or lifecycle. Revoked scopes lose control authority
+  even when a native resource survives.
+- **Narrow overlay.** Keep chat mounted with its draft and reader scroll, covered
+  by one modal tool overlay. Trap focus and make covered content inert. Tool
+  Escape/back dismisses that overlay first and restores focus to the opener or
+  current-scope fallback. Drive the outer `FocusThreadDrawer.escapeEnabled`
+  gate while the inner overlay owns Escape; coordinate shortcuts/editor/IME
+  ownership so one event cannot also close the thread.
+- **Plans and history.** Reuse D-056 projections: one latest reported snapshot
+  per agent/conversation lineage; preserve replacement, explicit empty,
+  invalidation, sleeping/disconnected, retained historical and unknown labels.
+  Never resurrect invalidated private history or infer tasks from prose. An
+  expired transcript is unavailable even if a legitimate plan remains. Historical
+  information is readable in the same thread without a live job. Stop/Steer/
+  Need-you recheck exact authorized current agent/session generation at dispatch.
+  Receipts/plans are neither live-job authority nor outcome acceptance.
+- **Explicit activation.** Selecting/restoring/opening thread tools may read
+  metadata but issues no browser-open, simulator-ensure/create/boot, dev-server,
+  terminal-attach or checkout-launch command. Activate through an explicit
+  instrument action. An absent simulator uses its existing create card and
+  governor find-or-create action. Browser keeps Custom URL default and no
+  dev-server setup gate. These are bounded timing changes to D-058 item 2
+  (simulator) and item 4/#236 (Browser), not new resource ownership. A
+  thread-scoped preference does not make channel-owned resources thread-private.
+- **Channel compatibility.** Channel-to-channel switches retain current
+  remount-per-channel behavior; the close rule above applies only to thread
+  presentations. Switching into/out of a thread closes the previous presentation.
+  Channel mode retains Sim/Browser and valid-channel shortcuts, without minting
+  a thread key; no valid channel means no resource-opening shortcut. Thread
+  shortcuts select/open UI but respect the explicit activation fence.
+- **PR and popout.** PR subject availability/results must match current channel
+  and root, including URL subjects, with community/viewer reset. A summary-card
+  click explicitly opens PR. Remove forced-open and Close-to-PR visibility
+  overrides, preserving PR data and separate relay/GitHub composers. Offer no
+  popout in the new thread pane. Existing channel popout opens another app window
+  and is outside this decision; its multi-window limitation is not solved by a
+  scoped preference. No cross-window synchronization or channel-pane redesign.
+
+`/workbench` still redirects to Inbox, `/workbench/:channel/:thread` to the same
+channel thread, and `goWorkbench` remains a compatibility alias. No new picker.
+#349 supplies shell integration; #352 owns observer scheduling; #354 must prove
+state, action-time generation, visibility cleanup, no mount launch, narrow
+focus/scroll/draft and account/removal oracles. Native paths still require
+#348/#357 staging evidence. No protocol change or production acceptance follows
+from this amendment.
+## D-079 — Owner recovery and conditional publication
+
+- **Status:** Accepted architecture; implementation in progress, not shipped
+- **Date:** 2026-09-09
+- **Issues:** #362, #363, #364; shared Project recovery consumer
+- **Seams:** existing addressable-event replacement transaction and coordinate lock, kind 30623 Wiki, kinds 30617/30621 Project, native identity/workspace state, and existing rusqlite dependency
+
+The relay remains domain authority. A native SQLite recovery journal records exact signed events and unresolved side effects before publication. It does not become a page cache, Project registry, or second domain database.
+
+**Conditional relay contract.** NIP-11 extension `crew-conditional-publication-v1` covers kinds 30617, 30621, and 30623. Exactly one signed `expected-revision` tag names a 64-character lowercase live event ID, or literal `absent` for initial creation. Compare and write share the existing community/kind/author/d coordinate lock. Only insertion or exact *current* signed-event replay succeeds; non-live replay, superseded writes, and mismatched preconditions conflict. Ambiguous ACKs retain the operation and reconcile exact live state without re-signing. Conditional repository announcements rerun their existing idempotent side-effect ensure before success ACK, including exact live replay; post-commit ensure failure is `error: side-effect-pending`. Project separately proves channel binding and authenticated git transport readiness. Channel kind 9007 recovery is an independent Project contract.
+
+**Deployment and rollback.** `BUZZ_CREW_CONDITIONAL_PUBLICATION_V1` defaults false. Enable advertisement only after all guarantees pass and the operator attests that all writers are upgraded and old pods quiesced. Mixed-version writers are unsupported. With the flag off, opt-in conditional/versioned writes explicitly reject; clients never fall back to unconditional writes. Reserved immutable-address and existing-v1 downgrade protections remain active when advertisement is disabled, including rollback. Legacy unconditioned Project events retain legacy semantics.
+
+**Wiki commit boundary.** Keep kind 30623 and `a=30617:<owner>:<repoD>`; the event author must equal the repository owner. A v1 `_toc` carries `wiki-version=1`, a `wiki-snapshot` UUID, and an exact immutable manifest reference. Pages use `repoD/p1-<SHA256>` and manifests `repoD/m1-<SHA256>`; fixed-order canonical envelopes bind the snapshot UUID, source revision, owner, and content. Reserved addresses allow creation or exact current replay, never independent replacement, even without version tags. Prepare the complete signed batch durably; publish and verify pages, then manifest, then CAS the TOC. Legacy sections point to encoded immutable slugs. Once v1 is live, the locked replacement path rejects unconditioned or legacy downgrade. Readers verify exact authors, IDs, digests, membership, and source revision in bounded queries; incomplete revisions never mix with an earlier verified snapshot. Generic owner deletion remains possible and must produce an incomplete-read state.
+
+**Bounds and retention.** Each entire signed Wiki event is at most 192 KiB UTF-8; a publication has at most 256 pages and 64 MiB. Relay admission limits reserved live Wiki rows to 512 MiB and 4096 events per owner/community under owner-then-coordinate locks; exact replay adds no usage. This bounds logical live data, not physical soft-deleted/audit storage. There is no prune/GC API or control in the first release. Failed uploads also consume quota. `restricted: wiki-storage-quota` preserves the current head and explains that safe reclamation is unsupported, requiring administrator remediation or future reviewed tooling. Neither historical lineage nor local preflight proves cross-client deletion safety.
+
+**Native operation recovery.** `owner-operations/recovery.db` uses private directories/files, canonicalizes the trusted existing platform app-data anchor, rejects symlink paths below that anchor, and fails visibly on corrupt or future schemas without reset. `BEGIN IMMEDIATE`, `synchronous=FULL`, `journal_mode=DELETE`, `temp_store=MEMORY`, and a 250 ms busy limit protect whole-record CAS and owner-wide quota. No transaction spans external IO. Scope is native owner plus canonical HTTP community origin; an unresolved `(owner, community, kind, resource_key)` claim remains unique regardless of status. Same ID/equal payload is replay, same ID/different intent conflicts, and competing resource creation returns the existing operation. Only domain-reconciled records can be removed. Fixed native admission permits 100 unresolved `ChannelCrewConfig` operations per owner/community at 1 MiB per complete serialized record (including event envelopes). Other kinds collectively retain 16 unresolved operations per owner and 64 MiB per record. All kinds share the 256 MiB owner cap. Kind size applies to creation intent, encode/update, and load before allocation; callers cannot override policy. Reconciled history remains at most 100 entries/30 days; the admission transaction also evicts oldest reconciled history under byte pressure including the incoming snapshot. Unresolved rows are never evicted. Update timestamps clamp to the previous timestamp when the wall clock moves backward. A resource claim is not an execution lease; the domain owns timed worker-token/revision recovery. Automatic retry is bounded to five attempts before explicit recovery.
+
+**Scope fencing.** Native capture and revalidation bind workspace generation, identity generation, owner, and canonical origin, including A→B→A. Every committed key replacement increments identity generation with Release before swap through a helper requiring the held identity-mutation guard. Capture takes the workspace lock without advancing its generation, then the identity lock off the executor; `signing_keys()` retains recovery failures. Workspace relay/key mutation holds the identity lock only for the short mutation block, never filesystem IO or await. Field locks use keys-then-relay order, matching the existing workspace reader; acquire every needed field lock before changing either field. Startup resolution, runtime import, pairing import, and workspace key replacement all use the shared seam. Returned tokens also fence consumer application and subsequent side effects.
+
+Private answer storage remains separate encrypted native records with its own quota; shared publication records never carry private history. Any larger-answer integration must atomically bind encrypted chunks and manifest to scope/revision/order/digests and prove a greater-than-256-KiB roundtrip, crash atomicity, and no plaintext persistence. This decision does not claim shipped private history or lower its logical limits.
+
+Shipping still requires production-bound race/crash/mutation tests, isolated real relay/app evidence, repository gates, and exact-head independent review.

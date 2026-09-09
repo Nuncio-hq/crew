@@ -1845,8 +1845,15 @@ mod postgres_tests {
         let mut expected_fences = migration.fence_attachments.clone();
         expected_fences.remove("product_feedback");
         expected_fences.remove("rate_limit_violations");
+        // #355 adds these tenant-scoped storage relations after immutable
+        // migration 0029. They intentionally cannot appear in 0029's parsed
+        // surface, so compare the post-0029 desired schema without treating
+        // their additive fence attachments as deletion-surface drift.
+        let mut schema_fences = schema.fence_attachments.clone();
+        schema_fences.remove("contact_routes");
+        schema_fences.remove("contact_quota");
         assert_eq!(
-            expected_fences, schema.fence_attachments,
+            expected_fences, schema_fences,
             "write-fence attachment targets differ after recovery policy"
         );
 
