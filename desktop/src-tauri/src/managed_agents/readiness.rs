@@ -1002,6 +1002,7 @@ mod tests {
             mcp_command: None,
             mcp_hooks: false,
             underlying_cli,
+            recap_native_command: None,
             cli_install_commands: &[],
             cli_install_commands_windows: &[],
             adapter_install_commands: &[],
@@ -1197,6 +1198,7 @@ mod tests {
             mcp_command: None,
             mcp_hooks: false,
             underlying_cli,
+            recap_native_command: None,
             cli_install_commands: &[],
             cli_install_commands_windows: &[],
             adapter_install_commands: &[],
@@ -1524,8 +1526,6 @@ mod tests {
             Some("claude-opus-4-5")
         );
     }
-
-    // ── provider-specific model fallback tests ────────────────────────────
 
     #[test]
     fn buzz_agent_databricks_v2_with_databricks_model_but_no_buzz_agent_model_is_ready() {
