@@ -8,7 +8,9 @@
 use crew_wiki::cadence::GenerateLock;
 use crew_wiki::cluster::plan_pages;
 use crew_wiki::generate::{generate_page, HeuristicGenerator};
-use crew_wiki::generate_root::{resolve_wiki_generate_root, WikiGenerateRoot};
+use crew_wiki::generate_root::{
+    classify_from_git_failure, resolve_wiki_generate_root, WikiGenerateRoot, WikiLocalSnapshotError,
+};
 use crew_wiki::git_snapshot::RepoSnapshot;
 use crew_wiki::publish::{page_event_tags, toc_content, toc_event_tags, PageDraft, TocManifest};
 use crew_wiki::steering::load_captured_steering;
@@ -104,7 +106,16 @@ pub async fn wiki_generate(
             ));
         }
         Ok(snapshot) => snapshot,
-        Err(err) => return Err(err.to_string()),
+        Err(err) => {
+            return Ok(
+                match classify_from_git_failure(&root, &err.to_string(), true) {
+                    WikiLocalSnapshotError::MissingLocalPath => {
+                        missing_local_outcome(&owner, &repo_d, cost_note)
+                    }
+                    WikiLocalSnapshotError::EmptyTree => empty_outcome(&owner, &repo_d, cost_note),
+                },
+            );
+        }
     };
 
     let steering = load_captured_steering(&snapshot).map_err(|err| err.to_string())?;
@@ -182,4 +193,49 @@ fn missing_local_outcome(owner: &str, repo_d: &str, cost_note: String) -> WikiGe
     outcome.empty_repo = false;
     outcome.missing_local_path = true;
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    #[tokio::test]
+    async fn wiki_generate_reports_a_bound_non_git_directory_as_missing_local() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let outcome = wiki_generate(
+            "ab".repeat(32),
+            "crew".to_owned(),
+            Some(directory.path().display().to_string()),
+        )
+        .await
+        .expect("typed missing-local outcome");
+
+        assert!(outcome.missing_local_path);
+        assert!(!outcome.empty_repo);
+        assert_eq!(outcome.pages, 0);
+    }
+
+    #[tokio::test]
+    async fn wiki_generate_reports_an_empty_git_tree_as_empty_repo() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let status = Command::new("git")
+            .args(["init"])
+            .current_dir(directory.path())
+            .status()
+            .expect("git init");
+        assert!(status.success());
+
+        let outcome = wiki_generate(
+            "cd".repeat(32),
+            "empty".to_owned(),
+            Some(directory.path().display().to_string()),
+        )
+        .await
+        .expect("typed empty-repo outcome");
+
+        assert!(outcome.empty_repo);
+        assert!(!outcome.missing_local_path);
+        assert_eq!(outcome.pages, 0);
+    }
 }

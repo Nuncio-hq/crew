@@ -58,9 +58,19 @@ fn has_reserved_address(event: &Event) -> bool {
             && values.get(1).is_some_and(|value| {
                 value
                     .split_once('/')
-                    .is_some_and(|(_, slug)| slug.starts_with("p1-") || slug.starts_with("m1-"))
+                    .is_some_and(|(_, slug)| is_reserved_slug(slug))
             })
     })
+}
+
+fn is_reserved_slug(slug: &str) -> bool {
+    let Some(digest) = slug
+        .strip_prefix("p1-")
+        .or_else(|| slug.strip_prefix("m1-"))
+    else {
+        return false;
+    };
+    digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -110,6 +120,25 @@ mod tests {
             validate(&reserved),
             Err(IngestError::Rejected(reason)) if reason == UNSUPPORTED
         ));
+    }
+
+    #[test]
+    fn only_well_formed_immutable_slugs_are_reserved() {
+        for prefix in ["p1-", "m1-"] {
+            let valid = wiki(
+                vec![vec!["d", &format!("repo/{prefix}{}", "a".repeat(64))]],
+                "page",
+            );
+            assert!(matches!(
+                validate(&valid),
+                Err(IngestError::Rejected(reason)) if reason == UNSUPPORTED
+            ));
+        }
+
+        for suffix in ["short".to_owned(), "a".repeat(63), "g".repeat(64)] {
+            let event = wiki(vec![vec!["d", &format!("repo/p1-{suffix}")]], "legacy slug");
+            assert!(validate(&event).is_ok());
+        }
     }
 
     #[test]
