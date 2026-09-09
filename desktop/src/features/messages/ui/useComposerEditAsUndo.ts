@@ -4,7 +4,9 @@ import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { useEditAsUndoUiState } from "@/features/agents/useEditAsUndoState";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 
-type EditTarget = { id: string; body: string } | null | undefined;
+import type { MessageComposerEditTarget } from "./MessageComposer.types";
+
+type EditTarget = MessageComposerEditTarget | null | undefined;
 
 /**
  * Edit-as-undo affordance for the composer edit path.
@@ -15,20 +17,21 @@ type EditTarget = { id: string; body: string } | null | undefined;
  */
 export function useComposerEditAsUndo({
   editTarget,
-  extractMentionPubkeys,
 }: {
   editTarget: EditTarget;
-  extractMentionPubkeys: (body: string) => string[];
 }) {
   const knownAgentPubkeys = useKnownAgentPubkeys();
   const editMentionsAgent = React.useMemo(() => {
     if (!editTarget) {
       return false;
     }
-    return extractMentionPubkeys(editTarget.body).some((pubkey) =>
-      knownAgentPubkeys.has(normalizePubkey(pubkey)),
-    );
-  }, [editTarget, extractMentionPubkeys, knownAgentPubkeys]);
+    // Historical event identities are authoritative even before draft hydration.
+    // Resolving old text against today's picker can throw or select a namesake.
+    return [
+      ...(editTarget.mentionRefs ?? []).map((ref) => ref.pubkey),
+      ...(editTarget.unresolvedMentionPubkeys ?? []),
+    ].some((pubkey) => knownAgentPubkeys.has(normalizePubkey(pubkey)));
+  }, [editTarget, knownAgentPubkeys]);
 
   const editAsUndoState = useEditAsUndoUiState({
     mentionsAgent: editMentionsAgent,
