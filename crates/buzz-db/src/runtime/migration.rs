@@ -2818,11 +2818,21 @@ mod postgres_tests {
             "all NIP-FI tables must be absent after migration 0045: {present:?}"
         );
 
-        // The deletion catalog must validate with ledger relations gone.
+        // Migration 0045 predates the contact-retention tables that are part of
+        // the current deletion manifest. Advance through that additive
+        // migration before validating the head catalog; validating at 0045
+        // would correctly report those not-yet-created relations as drift.
+        MIGRATOR
+            .run_to(46, &pool)
+            .await
+            .expect("migration 0046 must apply after ledger removal");
+
+        // The deletion catalog must validate with ledger relations gone and
+        // the current contact-retention surface present.
         crate::deletion::DeletionStore::new(pool.clone())
             .validate_catalog()
             .await
-            .expect("deletion catalog validates after migration 0045");
+            .expect("deletion catalog validates after migration 0046");
     }
 
     #[tokio::test]
