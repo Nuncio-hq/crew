@@ -1372,7 +1372,7 @@ mod postgres_tests {
             .expect("evaluate soft-deleted duplicate");
         assert_eq!(
             result.status,
-            replaceable::ParameterizedReplaceStatus::Duplicate
+            replaceable::ParameterizedReplaceStatus::DuplicateNotLive
         );
 
         let live_id: Vec<u8> = sqlx::query_scalar(
