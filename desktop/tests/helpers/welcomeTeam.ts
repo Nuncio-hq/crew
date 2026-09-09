@@ -132,7 +132,9 @@ export async function expectWelcomeKickoff(
     kickoff.tags.some((tag) => tag[0] === "p" && tag[1] === recipientPubkey),
   ).toBe(true);
   expect(kickoff.id).toMatch(/^[0-9a-f]{64}$/);
-  const row = page.locator(`[data-message-id="${kickoff.id}"]`);
+  const row = page
+    .getByTestId("message-timeline")
+    .locator(`[data-message-id="${kickoff.id}"]`);
   await expect(row).toHaveCount(1);
   const body = row.getByTestId("message-body");
   await expect(body).toContainText("Hi Morty QA, I'm Fizz. Welcome to Buzz.");
