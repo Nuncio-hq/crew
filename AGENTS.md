@@ -83,6 +83,37 @@ and runtime evidence answer different questions.
 
 ---
 
+## Documentation contract
+
+Documentation is part of delivery. Before editing, identify the affected
+authoritative docs in [the Crew index](docs/crew/README.md). Update them in
+the same change as behavior, configuration, or ownership changes; if none
+are affected, give a short reason in the task or PR handoff.
+
+- Edit or consolidate existing docs first. New files, including plans,
+  spikes, and verification reports, are exceptions: explain their lasting
+  purpose and why no existing document fits. Temporary plans, progress,
+  and one-run evidence belong in the task or PR by default.
+- Keep each fact in one authoritative location and link to it elsewhere.
+  Rewrite stale descriptions; distinguish shipped behavior, accepted but
+  unimplemented decisions, and proposals. Do not promote brainstorms into
+  product commitments. Mark superseded decisions with a successor reference.
+- For unchanged Buzz behavior, use the upstream docs in this checkout.
+  For Crew extensions, document the delta and link to the Buzz contract.
+  For Crew-owned components, document the current contract in Crew docs.
+  Keep ownership in `FORK.md` / `ARCHITECTURE.md` and the applicable
+  `fork-delta.json` area; correct misleading upstream references with a
+  concise pointer rather than copying whole documents.
+- On upstream sync, review docs for affected Crew differences as well as
+  code conflicts. Verify descriptions against the resulting implementation.
+- Before completion, check links, stale or contradictory statements, and
+  the reason for any new doc. Formatting checks alone do not establish
+  that a document is accurate.
+
+Use [the development workflow](docs/crew/DEVELOPMENT-WORKFLOW.md) for
+evidence and review. A spike is required only for a decision-changing
+uncertainty; it does not automatically require a new document.
+
 ## Ecosystem
 
 Buzz spans five repos. Upstream (`block/buzz`) is the OSS source for the relay,
