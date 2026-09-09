@@ -284,8 +284,9 @@ CREATE INDEX idx_events_search_tsv ON events USING GIN (search_tsv);
 
 -- Contact decision evidence is tenant-scoped storage only. Automatic routing,
 -- proof validation, and retention workers are intentionally separate from the
--- bootstrap schema. The deletion manifest does not include these relations
--- yet, so a whole-community purge fails closed until its order is reviewed.
+-- bootstrap schema. The deletion manifest includes these relations in
+-- child-before-parent order so whole-community purge remains fail-closed if
+-- the catalog or write fences drift.
 CREATE TABLE contact_routes (
     community_id        UUID NOT NULL REFERENCES communities(id),
     original_id         BYTEA NOT NULL,

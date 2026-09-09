@@ -436,7 +436,7 @@ pub async fn verify_floor_guard_behavior(pool: &PgPool) -> crate::Result<()> {
             "INSERT INTO events (community_id, id, pubkey, created_at, kind, tags, \
              content, sig, received_at, channel_id) \
              VALUES ($1, $2, $3, clock_timestamp() - make_interval(secs => $4::double precision), \
-             9, '[]', 'fence-verify', $5, NOW(), $6)",
+             1, '[]', 'fence-verify', $5, NOW(), $6)",
         )
         .bind(community)
         .bind(tx_id.to_vec())
