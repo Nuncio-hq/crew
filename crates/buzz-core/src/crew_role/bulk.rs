@@ -29,6 +29,16 @@ pub struct CrewConfigDraft {
     /// Original label to replacement label for preserving exact role references.
     #[serde(default)]
     pub renames: BTreeMap<String, String>,
+    /// Original entries explicitly retained verbatim, including unresolved data.
+    /// Every key/value must match the source; cannot introduce new assignments.
+    #[serde(default)]
+    pub preserved_assignments: BTreeMap<String, String>,
+    /// Existing normalized routing keys explicitly removed by the form.
+    #[serde(default)]
+    pub remove_routing: Vec<String>,
+    /// Existing normalized capability role keys explicitly removed by the form.
+    #[serde(default)]
+    pub remove_capabilities: Vec<String>,
 }
 
 /// Clear departing members' assignments/contact through the same bulk edit
@@ -147,14 +157,70 @@ pub fn update_canvas_crew_config(
             return Err(invalid("duplicate canonical agent key"));
         }
     }
+    let original_assignments = super::document::assignment_entries(&root);
+    for (agent, label) in &draft.preserved_assignments {
+        if original_assignments.get(agent) != Some(label) {
+            return Err(invalid(
+                "retained assignment must match the original canvas",
+            ));
+        }
+        if parse_pubkey(agent)
+            .ok()
+            .is_some_and(|key| assignments.contains_key(Value::String(key.to_hex())))
+        {
+            return Err(invalid(
+                "retained assignment conflicts with an edited agent",
+            ));
+        }
+        let canonical = label.trim().to_ascii_lowercase();
+        let target = renames.get(&canonical).unwrap_or(&canonical);
+        if !labels.contains_key(target)
+            && old
+                .as_ref()
+                .is_some_and(|old| old.definitions.contains_key(&canonical))
+        {
+            return Err(RoleParseError::MissingDefinition(label.clone()));
+        }
+        let label = if renames.contains_key(&canonical) {
+            labels[target].clone()
+        } else {
+            label.clone()
+        };
+        assignments.insert(Value::String(agent.clone()), Value::String(label));
+    }
     // Preserve unknown values and rewrite only exact role references.
     for field in ["routing", "capabilities"] {
+        let removals = if field == "routing" {
+            &draft.remove_routing
+        } else {
+            &draft.remove_capabilities
+        };
+        let mut removed = std::collections::BTreeSet::new();
+        for key in removals {
+            let key = normalize_label(key)?.to_ascii_lowercase();
+            let exists = old.as_ref().is_some_and(|old| {
+                if field == "routing" {
+                    old.routing.contains_key(&key)
+                } else {
+                    old.capabilities.contains_key(&key)
+                }
+            });
+            if !exists || !removed.insert(key) {
+                return Err(invalid("reference removal must name one existing key"));
+            }
+        }
         if let Some(value) = root.get_mut(Value::String(field.into())) {
             let mapping = value
                 .as_mapping()
                 .ok_or_else(|| invalid("role references must be mappings"))?;
             let mut updated = Mapping::new();
             for (key, value) in mapping {
+                if key
+                    .as_str()
+                    .is_some_and(|key| removed.contains(&key.trim().to_ascii_lowercase()))
+                {
+                    continue;
+                }
                 let reference = if field == "routing" { value } else { key };
                 let label = normalize_label(
                     reference

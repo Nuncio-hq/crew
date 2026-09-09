@@ -101,6 +101,9 @@ pub async fn get_canvas(
             "contact_pubkey": null,
             "crew_authority": "absent",
             "crew_parse_state": "absent",
+            "stored_assignments": {},
+            "stored_routing": {},
+            "stored_capabilities": {},
             "dev_mcp_granted": null,
             "crew_parse_error": null,
         }));
@@ -152,6 +155,9 @@ pub async fn get_canvas(
         "contact_pubkey": metadata.contact_pubkey,
         "crew_authority": metadata.crew_authority,
         "crew_parse_state": metadata.crew_parse_state,
+        "stored_assignments": metadata.stored_assignments,
+        "stored_routing": metadata.stored_routing,
+        "stored_capabilities": metadata.stored_capabilities,
         "routing": routing.into_iter().map(|entry| serde_json::json!({
             "work_type": entry.work_type,
             "role_label": entry.role_label,
