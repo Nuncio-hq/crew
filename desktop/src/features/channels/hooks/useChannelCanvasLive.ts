@@ -23,6 +23,11 @@ export function useChannelCanvasLive(
     let timer: ReturnType<typeof setTimeout> | undefined;
     let reading = false;
     let dirty = false;
+    // A live event can arrive after the scheduled refresh starts. Keep an
+    // explicit event revision in addition to `dirty`: cancelRefetch:false may
+    // join a fetch that began before the event, and the joined result must not
+    // be treated as the event's read.
+    let liveEventRevision = 0;
     setError(null);
 
     const retire = async () => {
@@ -59,8 +64,9 @@ export function useChannelCanvasLive(
         );
       return false;
     };
-    const schedule = () => {
+    const schedule = (fromLiveEvent = false) => {
       if (disposed || stopped) return;
+      if (fromLiveEvent) liveEventRevision += 1;
       dirty = true;
       if (reading || timer !== undefined) return;
       timer = setTimeout(() => {
@@ -72,6 +78,7 @@ export function useChannelCanvasLive(
       if (disposed || stopped || reading) return;
       reading = true;
       dirty = false;
+      const eventRevisionAtStart = liveEventRevision;
       try {
         if (!(await current())) return;
         const joinedOlderRead =
@@ -83,8 +90,11 @@ export function useChannelCanvasLive(
         );
         if (await current()) {
           // cancelRefetch:false may join a request started before this event.
-          // After a successful join, demand one bounded post-event read.
-          if (joinedOlderRead) dirty = true;
+          // After a successful join, demand one bounded post-event read. The
+          // revision check also covers an event that arrived while the query
+          // state was being inspected or while the invalidation was queued.
+          if (joinedOlderRead || liveEventRevision !== eventRevisionAtStart)
+            dirty = true;
           setError(null);
         }
       } catch {
@@ -109,7 +119,7 @@ export function useChannelCanvasLive(
               event.kind === 40100 &&
               event.tags.some((tag) => tag[0] === "h" && tag[1] === channelId)
             )
-              schedule();
+              schedule(true);
           },
           (status) => {
             if (disposed || stopped) return;

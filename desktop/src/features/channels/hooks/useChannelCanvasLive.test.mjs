@@ -224,6 +224,59 @@ test("one live event during an older in-flight query requires a subsequent curre
   }
 });
 
+test("events queued while the joined read is settling produce one bounded follow-up", async (t) => {
+  const h = await mount(t, { deferredRead: true });
+  try {
+    assert.equal(h.state.reads, 1);
+    h.state.head = "after-event";
+    await h.act(async () => {
+      h.emit();
+    });
+    await h.tick();
+    await h.act(async () => {
+      h.emit();
+      h.emit();
+      h.releaseRead();
+    });
+    await h.tick();
+    assert.equal(h.state.reads, 2);
+    await h.tick();
+    assert.equal(
+      h.state.reads,
+      2,
+      "a burst during the joined read must not create a timer loop",
+    );
+    assert.equal(
+      h.client.getQueryData(["channel-canvas", "channel"]).eventId,
+      "after-event",
+    );
+  } finally {
+    h.releaseRead();
+    h.cleanup();
+  }
+});
+
+test("scope retirement cancels a queued follow-up after the joined read", async (t) => {
+  const h = await mount(t, { deferredRead: true });
+  try {
+    h.state.head = "after-event";
+    await h.act(async () => {
+      h.emit();
+    });
+    await h.tick();
+    h.unmount();
+    await h.act(async () => {
+      h.releaseRead();
+    });
+    await h.tick();
+    assert.equal(h.state.reads, 1);
+    assert.equal(h.state.disposed, 1);
+  } finally {
+    h.releaseRead();
+    h.cleanup();
+  }
+});
+
 test("native scope change retires the live callback without repeated old-scope reads", async (t) => {
   const h = await mount(t);
   try {
