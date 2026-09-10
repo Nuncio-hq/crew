@@ -75,6 +75,16 @@ function installTauriInvoke(handler) {
   dom.window.__TAURI_INTERNALS__ = bridge;
 }
 
+/** Keep expected media bootstrap IPC out of operation-order assertions. */
+function filterOperationCalls(calls) {
+  return calls.filter((entry) => {
+    const command = typeof entry === "string" ? entry : entry.command;
+    return (
+      command !== "get_relay_http_url" && command !== "get_media_proxy_port"
+    );
+  });
+}
+
 /** Claim and project a row the way the production store APIs do. */
 function seedRow(job, at) {
   setWikiJobScope(repoKeyValue, at);
@@ -303,18 +313,19 @@ test("explicit regeneration passes the displayed scope and fresh source selectio
     });
 
     assert.equal(outcome.error, undefined);
+    const operationCalls = filterOperationCalls(calls);
     assert.deepEqual(
-      calls.map(({ command }) => command),
+      operationCalls.map(({ command }) => command),
       ["wiki_publication_regenerate", "wiki_publication_dispatch"],
     );
-    assert.deepEqual(calls[0].args, {
+    assert.deepEqual(operationCalls[0].args, {
       expected: current,
       id: "retired-operation",
       revision: 8,
       repoPath: "/tmp/crew",
       workspaceMode: "folder",
     });
-    assert.deepEqual(calls[1].args, {
+    assert.deepEqual(operationCalls[1].args, {
       expected: current,
       id: "new-successor",
       revision: 0,
@@ -365,7 +376,7 @@ test("regeneration rejects a row without typed immutable-retired proof", async (
       outcome.error?.message ?? "",
       /immutable-dependency retirement proof/,
     );
-    assert.deepEqual(calls, []);
+    assert.deepEqual(filterOperationCalls(calls), []);
   } finally {
     hook.unmount();
     client.clear();
@@ -430,16 +441,8 @@ test("a scope change during regeneration writes no successor row and invalidates
     await flush();
 
     assert.match(outcome.error?.message ?? "", /active owner or community/);
-    // The first status projection may bootstrap media URL helpers while this
-    // recovery is in flight. Keep those expected infrastructure calls out of
-    // the operation ordering assertion while still failing on any other
-    // command.
-    const operationCalls = calls.filter(
-      ({ command }) =>
-        command !== "get_relay_http_url" && command !== "get_media_proxy_port",
-    );
     assert.deepEqual(
-      operationCalls.map(({ command }) => command),
+      filterOperationCalls(calls).map(({ command }) => command),
       ["wiki_publication_regenerate"],
     );
     // No prepared projection, no failure projection, no content invalidation.
@@ -510,15 +513,8 @@ test("a regeneration dispatch failure keeps the known successor identity", async
     });
 
     assert.match(outcome.error?.message ?? "", /successor dispatch failed/);
-    // Recovery's first status projection bootstraps media URL helpers after
-    // dispatch fails. Keep those expected infrastructure calls out of the
-    // operation ordering assertion while still failing on any other command.
-    const operationCalls = calls.filter(
-      ({ command }) =>
-        command !== "get_relay_http_url" && command !== "get_media_proxy_port",
-    );
     assert.deepEqual(
-      operationCalls.map(({ command }) => command),
+      filterOperationCalls(calls).map(({ command }) => command),
       ["wiki_publication_regenerate", "wiki_publication_dispatch"],
     );
     const row = getWikiJobs().get(repoKeyValue);
