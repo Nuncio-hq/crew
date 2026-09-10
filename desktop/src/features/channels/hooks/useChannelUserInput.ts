@@ -28,6 +28,9 @@ import {
 } from "@/features/agents/userInputAttentionProjection";
 import { useCurrentOwnedAgentPubkeys } from "@/features/home/useOwnedAgentPubkeys";
 import { clearUserInputRequests } from "@/features/agents/needsYouStore";
+import { useCommunities } from "@/features/communities/useCommunities";
+import { normalizeRelayUrl } from "@/shared/lib/normalizeRelayUrl";
+import { createUserInputAnswerGate } from "./userInputAnswerGate";
 
 const USER_INPUT_PAGE_SIZE = 200;
 const USER_INPUT_HYDRATION_RETRY_MS = 5_000;
@@ -41,7 +44,19 @@ function causalParentId(event: RelayEvent): string | null {
 export function useChannelUserInput(channelId: string | null) {
   const identityQuery = useIdentityQuery();
   const currentPubkey = identityQuery.data?.pubkey ?? "";
+  const { activeCommunity } = useCommunities();
+  const relayUrl = normalizeRelayUrl(activeCommunity?.relayUrl ?? "");
   const ownedAgentPubkeys = useCurrentOwnedAgentPubkeys(currentPubkey);
+  const actionScope = React.useMemo(
+    () => ({ channelId, currentPubkey, relayUrl, ownedAgentPubkeys }),
+    [channelId, currentPubkey, relayUrl, ownedAgentPubkeys],
+  );
+  const answerGate = React.useRef(createUserInputAnswerGate(actionScope));
+  React.useLayoutEffect(() => {
+    const gate = createUserInputAnswerGate(actionScope);
+    answerGate.current = gate;
+    return () => gate.retire();
+  }, [actionScope]);
   const [events, setEvents] = React.useState<RelayEvent[]>([]);
   const [optimisticallyResolved, setOptimisticallyResolved] = React.useState(
     () => new Set<string>(),
@@ -61,13 +76,16 @@ export function useChannelUserInput(channelId: string | null) {
   );
 
   React.useEffect(() => {
+    void actionScope; // Relay/owner changes retire hydration and its action authority.
     setEvents([]);
     setOptimisticallyResolved(new Set());
     setSentRequestIds(new Set());
+    setSendingRequestId(null);
     setErrors({});
     setVisibleRequestIds(new Set());
     setDismissedResolutionIds(new Set());
     if (!channelId) return;
+    const gate = answerGate.current;
 
     let cancelled = false;
     let hydrationTerminal = false;
@@ -125,6 +143,7 @@ export function useChannelUserInput(channelId: string | null) {
           ({ event }) => event.id,
         ),
       ]);
+      gate.reconcile(derivePendingUserInputs(authorized, currentPubkey));
       if (compactHistory) {
         authorized = authorized.filter((event) => {
           if (activeIds.has(event.id)) return true;
@@ -276,7 +295,7 @@ export function useChannelUserInput(channelId: string | null) {
       hydrationRetry.stop();
       void dispose?.();
     };
-  }, [channelId, currentPubkey, ownedAgentPubkeys]);
+  }, [actionScope, channelId, currentPubkey, ownedAgentPubkeys]);
 
   const pending = React.useMemo(
     () =>
@@ -316,6 +335,17 @@ export function useChannelUserInput(channelId: string | null) {
 
   const answer = React.useCallback(
     async (request: UserInputEvent, answers: UserInputAnswers) => {
+      const gate = answerGate.current;
+      if (gate.scope !== actionScope) return;
+      const claim = gate.claim(request.event.id);
+      if (!claim) return;
+      if ("error" in claim) {
+        setErrors((current) => ({
+          ...current,
+          [request.event.id]: claim.error,
+        }));
+        return;
+      }
       setErrors((current) => {
         const next = { ...current };
         delete next[request.event.id];
@@ -325,14 +355,16 @@ export function useChannelUserInput(channelId: string | null) {
       try {
         const error = await publishUserInputAnswer(
           sendChannelUserInputAnswer,
-          channelId ?? request.request.channel_id,
+          claim.request.request.channel_id,
           request.event.id,
           buildUserInputAnswers(answers),
         );
+        if (!gate.isCurrent(claim)) return;
         if (error) {
           setErrors((current) => ({ ...current, [request.event.id]: error }));
           return;
         }
+        gate.accept(claim);
         setOptimisticallyResolved((current) => {
           const next = new Set(current);
           next.add(request.event.id);
@@ -344,10 +376,14 @@ export function useChannelUserInput(channelId: string | null) {
           return next;
         });
       } finally {
-        setSendingRequestId(null);
+        if (gate.release(claim)) {
+          setSendingRequestId((current) =>
+            current === request.event.id ? null : current,
+          );
+        }
       }
     },
-    [channelId],
+    [actionScope],
   );
 
   const skip = React.useCallback(

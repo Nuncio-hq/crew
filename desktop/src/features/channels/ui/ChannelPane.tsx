@@ -498,6 +498,7 @@ export const ChannelPane = React.memo(function ChannelPane({
       covered={threadSurface.covered}
       hasActiveEdit={threadEditTarget !== null}
       isFocusDrawer={useFocusThreadDrawer}
+      isStandalone={!useSplitAuxiliaryPane}
       key={THREAD_SURFACE_KEY}
       onClose={onCloseThread}
       ref={threadSurface.ref}

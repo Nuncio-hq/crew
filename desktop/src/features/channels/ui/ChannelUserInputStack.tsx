@@ -50,7 +50,7 @@ export function ChannelUserInputStack({
   );
   return (
     <div
-      className="pointer-events-auto mx-5 mb-2 max-h-[min(48vh,34rem)] space-y-2 overflow-y-auto"
+      className="relative z-10 pointer-events-auto mx-5 mb-2 max-h-[min(48vh,34rem)] space-y-2 overflow-y-auto"
       data-testid="channel-user-input-stack"
     >
       {([...sent, ...resolved, ...pending] as CardItem[]).map((item) => {

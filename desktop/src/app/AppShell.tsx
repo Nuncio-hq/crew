@@ -675,7 +675,7 @@ export function AppShell() {
     onOpenSettings: handleOpenSettings,
     open: isHuddleRoom ? undefined : settingsOpen,
   });
-  useToolPaneShortcuts();
+  useToolPaneShortcuts(activeChannel?.id ?? null);
   useMarkAsReadShortcuts({
     activeChannelId: activeChannel?.id ?? null,
     activeChannelLastMessageAt: activeChannel?.lastMessageAt,

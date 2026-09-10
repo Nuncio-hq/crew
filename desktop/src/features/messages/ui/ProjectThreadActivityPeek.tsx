@@ -4,7 +4,6 @@ import * as React from "react";
 import { buildTranscriptState } from "@/features/agents/ui/agentSessionTranscript";
 import {
   useArchivedChannelEvents,
-  useLoadArchivedObserverEvents,
   useObserverEvents,
 } from "@/features/agents/ui/useObserverEvents";
 
@@ -43,7 +42,6 @@ export function ProjectThreadActivityPeek({
 
   const liveSnapshot = useObserverEvents(Boolean(agentPubkey), agentPubkey);
   const archivedEvents = useArchivedChannelEvents(agentPubkey, channelId);
-  useLoadArchivedObserverEvents(Boolean(agentPubkey && channelId), channelId);
 
   const conversationEvents = React.useMemo(
     () =>

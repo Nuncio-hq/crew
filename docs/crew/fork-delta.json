@@ -26,8 +26,8 @@
         },
         {
           "path": "crates/buzz-acp/src/lib.rs",
-          "why": "machine-check the shared prompt contract; **one** idle reaper (#189 compose of #5682 + #169) feeding Ready → Draining → Listening | idle pool + observer controls; guided_handover / blind_session_reset (#173) | #196 `governor_env` module | #198 roster cache on PromptContext + inbound handoff gate | #197 `desktop_control` + MCP env forward",
-          "resolve": "retain prompt assertions; keep a single `idle_pool_sleep_reaper` that calls `enter_draining` — never a second top-of-loop timer or sync teardown path | retain prompt assertions; keep control arms additive | retain `mod governor_env`; injection stays in `pool.rs` | keep `mod org_roster`; gate after `author_allowed` | retain `mod desktop_control`; no worktree I/O"
+          "why": "machine-check the shared prompt contract; **one** idle reaper (#189 compose of #5682 + #169) feeding Ready → Draining → Listening | idle pool + observer controls; guided_handover / blind_session_reset (#173) | #196 `governor_env` module | #198 roster cache on PromptContext + inbound handoff gate | #197 `desktop_control` + MCP env forward | #354 exact-turn cancel delegates to crew_thread_cancel.rs",
+          "resolve": "retain prompt assertions; keep a single `idle_pool_sleep_reaper` that calls `enter_draining` — never a second top-of-loop timer or sync teardown path | retain prompt assertions; keep control arms additive | retain `mod governor_env`; injection stays in `pool.rs` | keep `mod org_roster`; gate after `author_allowed` | retain `mod desktop_control`; no worktree I/O | explicit turn presence requires channel/conversation/turn equality; misses never drain queued work or release instrument leases"
         },
         {
           "path": "crates/buzz-acp/src/pool.rs",
@@ -232,7 +232,7 @@
     },
     {
       "area": "desktop/src/features/channels/**",
-      "why": "Tool Pane mount + Tools header button (#196); origin prompt (#197); composer workspace selector + Relink chip (#187/#242); channel-first IA (no Projects/Workbench nav, #278).",
+      "why": "Tool Pane mount + Tools header button (#196); origin prompt (#197); composer workspace selector + Relink chip (#187/#242); channel-first IA (no Projects/Workbench nav, #278). #354 scoped user-input publication claims and stale completion fencing over existing durable question validation.",
       "resolve": "provider + toolbarExtraActions only; no onSelectProjects.",
       "filesAtRecord": 29,
       "fileHints": [

@@ -18,9 +18,7 @@ import {
   simBoot,
   simDelete,
   simErase,
-  simEnsureDevice,
   simKeep,
-  simSetPaneVisible,
 } from "./governorClient";
 import { invokeGovernor, useGovernorStatus } from "./governorStore";
 import { captureSimPng, postCaptureEvidence } from "./postEvidenceCapture";
@@ -32,6 +30,12 @@ import {
 import { DrivingBanner } from "./DrivingBanner";
 import { GhostCursorOverlay } from "./GhostCursorOverlay";
 import type { CanvasTooling, SimHolding, SimLifecycle } from "./types";
+
+import {
+  NativeToolActivation,
+  useThreadNativeActivation,
+  useSimNativePresentation,
+} from "./threadNativeActivation";
 
 const ENTER_EASE = [0.32, 0.72, 0, 1] as const;
 
@@ -46,8 +50,20 @@ export function SimTab({
   threadRootId?: string | null;
   tooling: CanvasTooling | null;
 }) {
+  const activation = useThreadNativeActivation(channelId, threadRootId);
+  const activationRef = React.useRef(activation);
+  activationRef.current = activation;
+  // A scope can round-trip back to the same channel/root while boot is in flight;
+  // the generation keeps that stale completion from activating the new view.
+  const createScopeRef = React.useRef(activation.scope);
+  const createGenerationRef = React.useRef(0);
+  if (createScopeRef.current !== activation.scope) {
+    createScopeRef.current = activation.scope;
+    createGenerationRef.current += 1;
+  }
   const status = useGovernorStatus();
   const control = useAgentControlUi();
+  const [creating, setCreating] = React.useState(false);
   const lease = leaseFor(control, channelId, "sim");
   const holding = holdingForChannel(status, channelId);
   const bridge = status.bridge;
@@ -56,27 +72,15 @@ export function SimTab({
       ? "bridge-missing"
       : (holding?.lifecycle ?? "absent");
 
-  React.useEffect(() => {
-    void simEnsureDevice({
-      channelId,
-      channelName,
-      deviceType: tooling?.simulator?.deviceType,
-      runtime: tooling?.simulator?.runtime,
-    }).catch(() => undefined);
-  }, [
+  useSimNativePresentation({
     channelId,
     channelName,
-    tooling?.simulator?.deviceType,
-    tooling?.simulator?.runtime,
-  ]);
-
-  React.useEffect(() => {
-    if (face === "bridge-missing" || face === "absent") return;
-    void simSetPaneVisible(channelId, true).catch(() => undefined);
-    return () => {
-      void simSetPaneVisible(channelId, false).catch(() => undefined);
-    };
-  }, [channelId, face]);
+    threadRootId,
+    tooling,
+    face,
+    active: activation.active,
+    reportError: activation.reportError,
+  });
 
   return (
     <div
@@ -98,7 +102,17 @@ export function SimTab({
       />
       <SimStatusLine holding={holding} onOpenSettings={() => undefined} />
       <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-4">
-        {face === "bridge-missing" ? (
+        {activation.error ? <p role="alert">{activation.error}</p> : null}
+        {creating && !activation.active ? (
+          <CreateDeviceCard pending tooling={tooling} onCreate={createDevice} />
+        ) : !activation.active &&
+          face !== "absent" &&
+          face !== "bridge-missing" ? (
+          <NativeToolActivation
+            name="Simulator"
+            onActivate={activation.activate}
+          />
+        ) : face === "bridge-missing" ? (
           <BridgeMissingCard
             hint={bridge.installHint}
             message={bridge.message}
@@ -106,9 +120,9 @@ export function SimTab({
           />
         ) : face === "absent" ? (
           <CreateDeviceCard
-            channelId={channelId}
-            channelName={channelName}
+            pending={creating}
             tooling={tooling}
+            onCreate={createDevice}
           />
         ) : face === "shutdown" ? (
           <ShutdownFace
@@ -137,6 +151,36 @@ export function SimTab({
       ) : null}
     </div>
   );
+
+  async function createDevice() {
+    if (creating) return;
+    const requestedScope = activation.scope;
+    const requestedGeneration = createGenerationRef.current;
+    setCreating(true);
+    try {
+      await simBoot({
+        channelId,
+        channelName,
+        deviceType: tooling?.simulator?.deviceType ?? "iPhone 16 Pro",
+        runtime: tooling?.simulator?.runtime ?? "iOS 18",
+      });
+      if (
+        activationRef.current.scope === requestedScope &&
+        createGenerationRef.current === requestedGeneration
+      ) {
+        activationRef.current.activate();
+      }
+    } catch (error) {
+      if (
+        activationRef.current.scope === requestedScope &&
+        createGenerationRef.current === requestedGeneration
+      ) {
+        activationRef.current.reportError(error);
+      }
+    } finally {
+      setCreating(false);
+    }
+  }
 }
 
 function SimStatusLine({
@@ -187,13 +231,13 @@ function SimStatusLine({
 }
 
 function CreateDeviceCard({
-  channelId,
-  channelName,
   tooling,
+  onCreate,
+  pending = false,
 }: {
-  channelId: string;
-  channelName: string;
   tooling: CanvasTooling | null;
+  onCreate: () => void;
+  pending?: boolean;
 }) {
   const deviceType = tooling?.simulator?.deviceType ?? "iPhone 16 Pro";
   const runtime = tooling?.simulator?.runtime ?? "iOS 18";
@@ -211,14 +255,11 @@ function CreateDeviceCard({
       <Button
         className="mt-3"
         data-testid="sim-create"
-        onClick={() => {
-          void simBoot({ channelId, channelName, deviceType, runtime }).catch(
-            () => undefined,
-          );
-        }}
+        disabled={pending}
+        onClick={onCreate}
         type="button"
       >
-        Create {deviceType} ({runtime})
+        {pending ? "Creating…" : `Create ${deviceType} (${runtime})`}
       </Button>
     </div>
   );

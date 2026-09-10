@@ -1166,6 +1166,8 @@ layout of existing components**, not a second product.
 
 ## D-056 — Thread-visible declared plans: one latest ACP snapshot per agent
 
+**Placement amendment:** D-078 / G-THREAD-1 v3 replaces item 4's permanent rail with an explicit Agent plans tab; all source, ordering and invalidation rules below remain.
+
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** #190 (Workbench #186 may later reuse the rail; it is not a
@@ -1205,6 +1207,8 @@ Missing signal is unknown, not guessed from prose.
 
 ## D-057 — GitHub PR hub in thread focus (two tiers, `gh` data plane)
 
+**Layout amendment:** D-078 / G-THREAD-1 v3 replaces item 1's narrow Chat/PR toggle with a tool overlay; the summary card still explicitly opens PR and the data/audience contracts remain.
+
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** #193
@@ -1241,6 +1245,8 @@ not a NIP-34 conversation and not a Crew GitHub protocol.
    scope. Workbench may later embed the hub as a component.
 
 ## D-058 — Channel Tool Pane: Resource Governor owns sim, browser, and dev servers
+
+**Thread-pane amendment:** D-078 / G-THREAD-1 v3 extends thread tabs and fences mount-time browser open and simulator find-or-create behind explicit activation. Existing hide cleanup, governor identity/ownership and channel-mode compatibility remain.
 
 - **Status:** Accepted
 - **Date:** 2026-08-13
@@ -1490,6 +1496,8 @@ adds a row.
 See spikes 0049–0051.
 
 ## D-065 — No Workbench place; desk only when a job is live
+
+**Historical information clarification:** D-078 / G-THREAD-1 v3 permits retained read-only history without a live job. The live-control desk and Workbench redirect/no-picker rules below remain.
 
 - **Status:** Accepted
 - **Date:** 2026-08-17
@@ -1882,8 +1890,9 @@ role/contact scope and relay identity are unchanged.
 This supersedes only D-066's conflicting Projects prohibition. D-065 still
 forbids a separate Workbench picker. Detailed Projects/Channels UI and
 interactions remain under founder discussion; no prototype layout changes are
-authorized by this clarification. D-056 plan placement and historical desk/tool
-semantics remain pending G-THREAD-1, not silently superseded.
+authorized by this clarification. At this historical clarification, D-056 placement and historical desk/tool
+semantics remained pending G-THREAD-1. The coordinator-approved v3 amendment
+below subsequently resolves that bounded gate.
 
 The canonical accepted/proposed/blocked control matrix is
 [`src/blueprint.js`](../../design/companyos/src/blueprint.js), rendered by the
@@ -1963,6 +1972,87 @@ required; related issues may share an unchanged build/run with explicit mapping.
 Both coordinator and actual Claude Code CLI Fable Medium approve the exact
 final PR head before merge. Stage 0 reference screenshots are prototype evidence
 only, and #344 remains the open delivery roadmap.
+
+
+### G-THREAD-1 v3 — coordinator-approved thread presentation (2026-09-09)
+
+The coordinator approved this bounded implementation decision under the existing
+execute authorization, not as a new founder approval. Actual Claude Code CLI
+Fable Medium reviewed v2 and explicitly accepted either channel-switch
+clarification; the coordinator selected existing channel-mode compatibility for
+v3. The published v0.9 reference remains simulated. This accepts the decision,
+not #354 implementation or native/runtime evidence.
+
+- **One pane and initial selection.** One right-hand pane per current thread
+  view; Context on first explicit opening, with a named reachable Agent plans
+  tab. Navigation alone does not open it. Use actual capabilities and bindings;
+  recap is Off/unavailable until #351/#356 provide its real path. No extra plan
+  column, fabricated content, or global cross-window exclusivity claim.
+- **Ephemeral selection.** Keep at most 128 LRU records in memory for this app
+  session, keyed by normalized active-community relay URL, normalized viewer
+  pubkey, channel ID and validated root. Use existing conversation derivation.
+  No durable or relay preference and no second session/workspace authority.
+  Missing/invalid root stores nothing; restart/eviction returns Context. Existing
+  community reset clears on account/relay/logout. Confirmed removal/revocation
+  clears the affected scope through a small store invalidation function wired
+  to existing mutation outcomes and authoritative query reconciliation. Failed,
+  loading or partial queries do not prove removal. Fence async results by full
+  scope and current view generation.
+- **Navigation and resources.** Thread navigation closes presentation and
+  returns focus; returning to the exact thread restores selection for the next
+  explicit opening, without reopening or launching/attaching resources. Closing
+  presentation must not stop agents or terminate PTYs. Preserve existing
+  `browserClose` (native hide, not destruction) and `simSetPaneVisible(false)`
+  cleanup. Governor caps, idle timers and quit cleanup remain authoritative;
+  do not add another hide API or lifecycle. Revoked scopes lose control authority
+  even when a native resource survives.
+- **Narrow overlay.** Keep chat mounted with its draft and reader scroll, covered
+  by one modal tool overlay. Trap focus and make covered content inert. Tool
+  Escape/back dismisses that overlay first and restores focus to the opener or
+  current-scope fallback. Drive the outer `FocusThreadDrawer.escapeEnabled`
+  gate while the inner overlay owns Escape; coordinate shortcuts/editor/IME
+  ownership so one event cannot also close the thread.
+- **Plans and history.** Reuse D-056 projections: one latest reported snapshot
+  per agent/conversation lineage; preserve replacement, explicit empty,
+  invalidation, sleeping/disconnected, retained historical and unknown labels.
+  Never resurrect invalidated private history or infer tasks from prose. An
+  expired transcript is unavailable even if a legitimate plan remains. Historical
+  information is readable in the same thread without a live job. Stop/Steer/
+  Need-you recheck exact authorized current agent/session generation at dispatch.
+  Receipts/plans are neither live-job authority nor outcome acceptance.
+- **Explicit activation.** Selecting/restoring/opening thread tools may read
+  metadata but issues no browser-open, simulator-ensure/create/boot, dev-server,
+  terminal-attach or checkout-launch command. Activate through an explicit
+  instrument action. An absent simulator uses its existing create card and
+  governor find-or-create action. Browser keeps Custom URL default and no
+  dev-server setup gate. These are bounded timing changes to D-058 item 2
+  (simulator) and item 4/#236 (Browser), not new resource ownership. A
+  thread-scoped preference does not make channel-owned resources thread-private.
+- **Channel compatibility.** Channel-to-channel switches retain current
+  remount-per-channel behavior; the close rule above applies only to thread
+  presentations. Switching into/out of a thread closes the previous presentation.
+  Channel mode retains Sim/Browser and valid-channel shortcuts, without minting
+  a thread key; no valid channel means no resource-opening shortcut. Thread
+  shortcuts select/open UI through the mounted thread focus host and respect the
+  explicit activation fence. The absent-simulator Create action is that thread
+  view's activation and keeps failure retryable. The mounted conversation body owns
+  one stable channel archive pager for the Activity peek and Activity/Plans pane;
+  pane transitions and agent switches do not create or cancel another owner.
+- **PR and popout.** PR subject availability/results must match current channel
+  and root, including URL subjects, with community/viewer reset. A summary-card
+  click explicitly opens PR. Remove forced-open and Close-to-PR visibility
+  overrides, preserving PR data and separate relay/GitHub composers. Offer no
+  popout in the new thread pane. Existing channel popout opens another app window
+  and is outside this decision; its multi-window limitation is not solved by a
+  scoped preference. No cross-window synchronization or channel-pane redesign.
+
+`/workbench` still redirects to Inbox, `/workbench/:channel/:thread` to the same
+channel thread, and `goWorkbench` remains a compatibility alias. No new picker.
+#349 supplies shell integration; #352 owns observer scheduling; #354 must prove
+state, action-time generation, visibility cleanup, no mount launch, narrow
+focus/scroll/draft and account/removal oracles. Native paths still require
+#348/#357 staging evidence. No protocol change or production acceptance follows
+from this amendment.
 
 ## D-079 — Owner recovery and conditional publication
 

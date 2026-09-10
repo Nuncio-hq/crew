@@ -1,31 +1,22 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useMemo, useRef } from "react";
 
+import { useLoadArchivedObserverEvents } from "@/features/agents/ui/useObserverEvents";
+import { setThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
 import { ProjectThreadWorkspacePanel } from "@/features/messages/ui/ProjectThreadWorkspacePanel";
 import type { ProjectThreadWorkspaceModel } from "@/features/messages/ui/useProjectThreadWorkspaceModel";
-import { setThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
-import {
-  useElementWidth,
-  useIsThreadPanelOverlay,
-} from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
 import {
   getAuxiliaryPanelBodyClass,
   type AuxiliaryPanelMode,
 } from "@/shared/layout/AuxiliaryPanel";
-import { shouldStackDeclaredPlansRail } from "@/shared/layout/responsiveContract";
+import {
+  openThreadToolPane,
+  useToolPane,
+} from "@/features/tool-pane/toolPaneStore";
 
-import { DeclaredPlansRail } from "./DeclaredPlansRail";
-import { useDeclaredPlansForThread } from "./useDeclaredPlansForThread";
-
-/**
- * Thread-panel body with declared-plans rail (#205).
- *
- * Auxiliary panel min 300px, max 720px. At ≤340px (and whenever a `w-72`
- * side rail would squeeze the transcript) the rail **stacks** between the
- * header and the scroll region — never overlaps chrome, never letter-soup.
- */
+/** Conversation body; declared plans live in the explicit Agent plans tab. */
 export function ThreadPanelDeclaredPlansBody({
   channelId,
   children,
@@ -47,43 +38,71 @@ export function ThreadPanelDeclaredPlansBody({
   threadMessages: TimelineMessage[];
   workspaceModel: ProjectThreadWorkspaceModel | null;
 }) {
-  const isOverlay = useIsThreadPanelOverlay();
-  const [bodyRef, paneWidthPx] = useElementWidth<HTMLDivElement>();
-  const { plans } = useDeclaredPlansForThread({
+  const toolPane = useToolPane();
+  const archiveScope = channelId;
+  const archiveRequestRef = useRef({ requested: false, scope: archiveScope });
+  if (archiveRequestRef.current.scope !== archiveScope) {
+    archiveRequestRef.current = { requested: false, scope: archiveScope };
+  }
+  if (
+    workspaceModel?.activePubkey ||
+    (toolPane.open && (toolPane.tab === "activity" || toolPane.tab === "plans"))
+  ) {
+    // Keep one mounted owner active after its first consumer appears. Disabling
+    // it when the pane closes would cancel an eager hydration pass and a later
+    // reopen would have to start again from a second paging state.
+    archiveRequestRef.current.requested = true;
+  }
+  const loadedArchivePaging = useLoadArchivedObserverEvents(
+    Boolean(channelId && archiveRequestRef.current.requested),
     channelId,
-    profiles,
-    threadHead,
-    threadMessages,
-  });
-  const showRail = !isHuddleTranscript && !isOverlay && plans.length > 0;
-  const stacked =
-    showRail &&
-    (paneWidthPx === 0 || shouldStackDeclaredPlansRail(paneWidthPx));
+  );
+  const { fetchOlderArchived, hasOlderArchived } = loadedArchivePaging;
+  const archivePaging = useMemo(
+    () => ({
+      fetchOlderArchived,
+      hasOlderArchived,
+    }),
+    [fetchOlderArchived, hasOlderArchived],
+  );
 
   useEffect(() => {
     setThreadForgeViewContext({
+      archivePaging,
       channelId,
       rootEventId: threadHead.id,
       messages: [threadHead, ...threadMessages],
+      profiles,
     });
-    return () => {
+  }, [archivePaging, channelId, profiles, threadHead, threadMessages]);
+
+  useEffect(
+    () => () => {
       setThreadForgeViewContext(null);
-    };
-  }, [channelId, threadHead, threadMessages]);
+    },
+    [],
+  );
 
   return (
     <div
       className={cn(
-        "@container flex min-h-0 min-w-0 flex-1",
-        stacked ? "flex-col" : showRail ? "flex-row" : "flex-col",
+        "@container flex min-h-0 min-w-0 flex-1 flex-col",
         getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
       )}
-      data-plans-layout={stacked ? "stacked" : showRail ? "side" : "none"}
+      data-plans-layout="none"
       data-testid="declared-plans-body"
-      ref={bodyRef}
     >
-      {stacked ? (
-        <DeclaredPlansRail layout="stacked" plans={plans} profiles={profiles} />
+      {!isHuddleTranscript ? (
+        <button
+          aria-label="Open thread tools"
+          className="self-end rounded-md px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
+          onClick={() => {
+            openThreadToolPane();
+          }}
+          type="button"
+        >
+          Tools
+        </button>
       ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <ProjectThreadWorkspacePanel
@@ -94,9 +113,6 @@ export function ThreadPanelDeclaredPlansBody({
         />
         {children}
       </div>
-      {showRail && !stacked ? (
-        <DeclaredPlansRail layout="side" plans={plans} profiles={profiles} />
-      ) : null}
     </div>
   );
 }

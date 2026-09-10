@@ -506,10 +506,11 @@ test("Project threads show truthful isolated workspace and agent handoff", async
   await hub.screenshot({
     path: "test-results/thread-worktree/02-pr-history.png",
   });
-  const chatToggle = page
-    .getByTestId("thread-forge-pane-toggle")
-    .getByRole("button", { name: "Chat", exact: true });
-  if (await chatToggle.isVisible()) await chatToggle.click();
+  if (await page.getByRole("dialog", { name: "Thread tools" }).isVisible()) {
+    await page
+      .getByRole("button", { name: "Close Tools", exact: true })
+      .click();
+  }
   await page
     .getByRole("button", { name: "Show thread beside channel" })
     .click();

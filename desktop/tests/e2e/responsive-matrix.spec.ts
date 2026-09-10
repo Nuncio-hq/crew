@@ -145,7 +145,7 @@ async function assertSidebarContentResponsive(page: Page) {
 test.describe("responsive matrix #205", () => {
   test.describe.configure({ timeout: 90_000 });
 
-  test("declared-plans rail stacks at 300/340/380 and does not overlap header", async ({
+  test("declared plans occupy their explicit tool pane without another chat column", async ({
     page,
   }, testInfo) => {
     await mkdir(SHOTS, { recursive: true });
@@ -162,17 +162,17 @@ test.describe("responsive matrix #205", () => {
     await openThreadReply(page, root.id);
     await injectPlan(page, root.id);
     const rail = page.getByTestId("declared-plans-rail");
+    await expect(rail).toHaveCount(0);
+    await page.getByRole("button", { name: "Open thread tools" }).click();
+    await page.getByRole("tab", { name: "Agent plans", exact: true }).click();
     await expect(rail).toBeVisible();
-    await expect(rail).toHaveAttribute("data-layout", "stacked");
-    await assertPaneResponsive(page, "message-thread-panel", {
-      mustNotOverlap: [
-        ["auxiliary-panel-header", "declared-plans-rail"],
-        ["thread-breadcrumb", "declared-plans-rail"],
-      ],
+    await expect(rail).toHaveAttribute("data-layout", "pane");
+    await assertPaneResponsive(page, "channel-tool-pane", {
+      mustNotOverlap: [["tool-pane-tabs", "declared-plans-rail"]],
     });
     await waitForAnimations(page);
     const shot = path.join(SHOTS, `thread-plans-rail-${width}.png`);
-    await page.getByTestId("message-thread-panel").screenshot({ path: shot });
+    await page.getByTestId("channel-tool-pane").screenshot({ path: shot });
     await testInfo.attach(`thread-plans-rail-${width}`, {
       path: shot,
       contentType: "image/png",
@@ -195,15 +195,8 @@ test.describe("responsive matrix #205", () => {
       await openThreadReply(page, root.id);
       await injectPlan(page, root.id);
       const rail = page.getByTestId("declared-plans-rail");
-      await expect(rail).toBeVisible();
-      const stacked = width < 508;
-      await expect(rail).toHaveAttribute(
-        "data-layout",
-        stacked ? "stacked" : "side",
-      );
-      await assertPaneResponsive(page, "message-thread-panel", {
-        mustNotOverlap: [["auxiliary-panel-header", "declared-plans-rail"]],
-      });
+      await expect(rail).toHaveCount(0);
+      await assertPaneResponsive(page, "message-thread-panel");
       if (width <= 340) {
         await expect(
           page

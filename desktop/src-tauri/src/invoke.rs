@@ -150,6 +150,7 @@ macro_rules! desktop_invoke_handler {
             sign_out,
             decrypt_observer_event,
             build_observer_control_event,
+            send_scoped_observer_control,
             create_auth_event,
             nip44_encrypt_to_self,
             nip44_decrypt_from_self,
