@@ -8,7 +8,7 @@ use std::sync::Arc;
 /// Deletion races against an open conditional decision. Kept in this namespace
 /// so the registered PostgreSQL lane discovers them and they reuse [`scenario`].
 #[path = "conditional_publication_deletion_tests.rs"]
-mod deletion_races;
+mod postgres_tests;
 
 pub(crate) async fn scenario<F, Fut>(body: F)
 where
