@@ -526,9 +526,12 @@ test("a mounted priority correction preserves a non-priority repository's prior 
   });
   const wrapper = ({ children }) =>
     React.createElement(QueryClientProvider, { client }, children);
-  const firstHook = renderHook(() => useWikiEventsQuery([stalled, selected]), {
-    wrapper,
-  });
+  // Seed the canonical project collection so the first consumer contributes
+  // both coordinates without making either one a priority. The second
+  // consumer below then adds only `selectedKey` to the priority set, which is
+  // the correction-pass shape this test is meant to exercise.
+  client.setQueryData(["projects"], [{ repositories: [stalled, selected] }]);
+  const firstHook = renderHook(() => useWikiEventsQuery(), { wrapper });
   try {
     // Both coordinates enter the first pass, which is still held.
     await waitFor(() => {
@@ -536,9 +539,12 @@ test("a mounted priority correction preserves a non-priority repository's prior 
     });
 
     // A second consumer selects the other repository, revising the priority
-    // order while the first pass is in flight.
+    // order while the first pass is in flight. The production signature takes
+    // `WikiEventsQueryOptions`, so the priority must be an option field: an
+    // array here is silently ignored and no correction is ever requested.
     const secondHook = renderHook(
-      () => useWikiEventsQuery([selected], [selectedKey]),
+      () =>
+        useWikiEventsQuery([selected], { priorityCoordinates: [selectedKey] }),
       { wrapper },
     );
     releaseFirstPass();
@@ -554,10 +560,31 @@ test("a mounted priority correction preserves a non-priority repository's prior 
         firstHook.result.current.data.repositoryStatuses[stalledKey];
       assert.equal(before.message, "native snapshot incomplete");
 
+      // The correction pass must not merely *start*: wait until its request
+      // has landed AND the resulting projection is rendered, otherwise the
+      // comparison below could still be reading the first projection.
       await waitFor(() => {
         assert.ok(
           reads.slice(2).includes(selectedKey),
           `the revised priority must be re-read: ${JSON.stringify(reads)}`,
+        );
+      });
+      await waitFor(() => {
+        assert.equal(
+          reads.filter((key) => key === selectedKey).length,
+          2,
+          `the selected coordinate is read exactly twice: ${JSON.stringify(reads)}`,
+        );
+        assert.equal(
+          secondHook.result.current.isFetching,
+          false,
+          "the correction pass must have completed",
+        );
+        assert.equal(
+          secondHook.result.current.data?.repositoryStatuses[selectedKey]
+            ?.state,
+          "ready",
+          "the corrected projection is rendered",
         );
       });
 

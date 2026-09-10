@@ -533,7 +533,13 @@ relay, a missing query result and transport failure must never become deletion
 proof. A new UUID must produce new immutable addresses even for unchanged source.
 
 Head and precondition retirement (accepted design; implementation and runtime
-evidence pending in #362) extends the same matrix. On real PostgreSQL: an
+evidence pending in #362) extends the same matrix. The native guarded-read
+fences are covered separately from the proof decision: identity generation,
+durable revision and worker lease are each moved against a real captured
+scope, a real journal row and a real transport, before the first request and
+while each of the two reads is held, so a pre-send refusal and a post-response
+refusal are independently observable. Native A restart and independent signed
+protocol B acceptance remain pending and separately allocated. On real PostgreSQL: an
 accepted-then-deleted head must classify as retired while its exact live replay
 still ACKs as a duplicate first; an accepted-then-deleted non-absent
 `expected-revision` with no live head must classify as a retired precondition;

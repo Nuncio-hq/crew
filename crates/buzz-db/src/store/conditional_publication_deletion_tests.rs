@@ -488,11 +488,16 @@ async fn retirement_is_scoped_to_owner_community_kind_and_conditional_toc() {
             "nor does it retire the same head identity in this community"
         );
 
-        // A non-Wiki kind never carries this classification, even when the
-        // same owner/`d`/history shape exists.
-        let other_kind_d = "kindcheck";
+        // A non-Wiki kind never carries this classification. Vary ONLY the
+        // kind: this event keeps the v1 tag and the `_toc` address, so the
+        // assertion isolates the kind check instead of passing because some
+        // other guard rejected the shape first.
+        let other_kind_d = "kindcheck/_toc";
         let other_kind = EventBuilder::new(Kind::Custom(30078), "other-kind")
-            .tags(vec![Tag::parse(["d", other_kind_d]).unwrap()])
+            .tags(vec![
+                Tag::parse(["d", other_kind_d]).unwrap(),
+                Tag::parse(["wiki-version", "1"]).unwrap(),
+            ])
             .custom_created_at(Timestamp::from(Timestamp::now().as_secs() + 3))
             .sign_with_keys(&keys)
             .unwrap();
@@ -652,6 +657,232 @@ async fn deletion_first_then_a_waiting_exact_writer_observes_retirement() {
             competing.id.as_bytes().to_vec(),
             "a rejected retired write must not replace the competing head"
         );
+        writer_pool.close().await;
+    })
+    .await;
+}
+
+/// Item 2, old-send-first: an already accepted H cannot be retired by a later
+/// deletion of its predecessor E. The H decision is held open in a real
+/// transaction, so the deletion must block on the shared coordinate lock.
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn an_accepted_head_is_not_retired_by_a_later_predecessor_deletion() {
+    scenario(|db, community, keys| async move {
+        let d = "repo/_toc";
+        let owner = keys.public_key().to_bytes();
+        let predecessor = event(&keys, d, "predecessor", Timestamp::now().as_secs(), true);
+        let head = event(&keys, d, "head", Timestamp::now().as_secs() + 1, true);
+        assert_eq!(
+            expect_missing_write(&db, community, &predecessor, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+
+        // H's conditional decision against E succeeds and is held open.
+        let mut decision = db
+            .begin_event_write_transaction()
+            .await
+            .expect("decision tx");
+        let decided = db
+            .replace_parameterized_event_in_transaction(
+                &mut decision,
+                community,
+                &head,
+                d,
+                None,
+                ParameterizedReplacePrecondition::ExpectedRevision(predecessor.id.as_bytes()),
+            )
+            .await
+            .expect("conditional decision");
+        assert_eq!(decided.status, ParameterizedReplaceStatus::Inserted);
+
+        // Deleting E now must wait for that open decision.
+        let deleter_pool = bounded_deleter_pool(&db).await;
+        let deleter = Db::from_pool(deleter_pool.clone());
+        match deleter
+            .soft_delete_event(community, predecessor.id.as_bytes())
+            .await
+        {
+            Err(error) => assert_lock_timeout(error),
+            Ok(deleted) => panic!("predecessor deletion must wait: {deleted}"),
+        }
+        decision.commit().await.expect("commit head");
+        // Committing H already soft-deleted the superseded E as part of the
+        // production replacement, so the now-unblocked delete finds no live
+        // row and reports false. Assert the durable tombstone directly rather
+        // than inferring it from this return value.
+        assert!(
+            !deleter
+                .soft_delete_event(community, predecessor.id.as_bytes())
+                .await
+                .expect("unblocked predecessor delete"),
+            "an already superseded predecessor is no longer live to delete"
+        );
+        let predecessor_tombstoned: bool = sqlx::query_scalar(
+            "SELECT deleted_at IS NOT NULL FROM events \
+             WHERE community_id=$1 AND kind=30623 AND pubkey=$2 AND d_tag=$3 AND id=$4",
+        )
+        .bind(community.as_uuid())
+        .bind(owner.as_slice())
+        .bind(d)
+        .bind(predecessor.id.as_bytes())
+        .fetch_one(&db.pool)
+        .await
+        .expect("predecessor row");
+        assert!(
+            predecessor_tombstoned,
+            "the exact predecessor is durably non-live at this coordinate"
+        );
+
+        // H is live and stays the unique live head. Its exact replay ACKs as a
+        // duplicate and must not be reclassified as retired.
+        assert_eq!(live_rows(&db, community, &owner, d).await, 1);
+        assert_eq!(
+            exact_replay(&db, community, &head, d).await,
+            ParameterizedReplaceStatus::Duplicate,
+            "an accepted live head keeps ACKing successfully"
+        );
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &head,
+                d,
+                ParameterizedReplacePrecondition::ExpectedRevision(predecessor.id.as_bytes()),
+            )
+            .await,
+            ParameterizedReplaceStatus::Duplicate,
+            "a retired predecessor must not retire an already accepted head"
+        );
+        let live: Vec<u8> = sqlx::query_scalar(
+            "SELECT id FROM events WHERE community_id=$1 AND kind=30623 \
+             AND pubkey=$2 AND d_tag=$3 AND deleted_at IS NULL",
+        )
+        .bind(community.as_uuid())
+        .bind(owner.as_slice())
+        .bind(d)
+        .fetch_one(&db.pool)
+        .await
+        .expect("live head id");
+        assert_eq!(live, head.id.as_bytes().to_vec());
+        deleter_pool.close().await;
+    })
+    .await;
+}
+
+/// Item 2, deletion-first: E is deleted, then the H/E retirement decision is
+/// held open in its real transaction while a late conditional H writer blocks
+/// on the same coordinate lock.
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn expected_head_retirement_serializes_with_a_late_conditional_writer() {
+    scenario(|db, community, keys| async move {
+        let d = "repo/_toc";
+        let owner = keys.public_key().to_bytes();
+        let predecessor = event(&keys, d, "predecessor", Timestamp::now().as_secs(), true);
+        let head = event(&keys, d, "head", Timestamp::now().as_secs() + 1, true);
+        assert_eq!(
+            expect_missing_write(&db, community, &predecessor, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert!(db
+            .soft_delete_event(community, predecessor.id.as_bytes())
+            .await
+            .expect("delete predecessor"));
+        assert_eq!(live_rows(&db, community, &owner, d).await, 0);
+
+        // The refusal decision is held open in a real transaction.
+        let mut refusal = db
+            .begin_event_write_transaction()
+            .await
+            .expect("refusal tx");
+        let refused = db
+            .replace_parameterized_event_in_transaction(
+                &mut refusal,
+                community,
+                &head,
+                d,
+                None,
+                ParameterizedReplacePrecondition::ExpectedRevision(predecessor.id.as_bytes()),
+            )
+            .await
+            .expect("retirement decision");
+        assert_eq!(
+            refused.status,
+            ParameterizedReplaceStatus::WikiExpectedHeadRetired
+        );
+
+        // A late conditional writer for the same coordinate must block on that
+        // decision's lock rather than race it.
+        let writer_pool = bounded_deleter_pool(&db).await;
+        let writer = Db::from_pool(writer_pool.clone());
+        let mut late = writer
+            .begin_event_write_transaction()
+            .await
+            .expect("late tx");
+        match writer
+            .replace_parameterized_event_in_transaction(
+                &mut late,
+                community,
+                &head,
+                d,
+                None,
+                ParameterizedReplacePrecondition::ExpectedRevision(predecessor.id.as_bytes()),
+            )
+            .await
+        {
+            Err(error) => assert_lock_timeout(error),
+            Ok(result) => panic!("the late writer must wait: {:?}", result.status),
+        }
+        let _ = late.rollback().await;
+
+        // The relay rolls the refusal back; the classification is stable and
+        // nothing was written.
+        refusal.rollback().await.expect("rollback refusal");
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &head,
+                d,
+                ParameterizedReplacePrecondition::ExpectedRevision(predecessor.id.as_bytes()),
+            )
+            .await,
+            ParameterizedReplaceStatus::WikiExpectedHeadRetired,
+            "the decision is stable across the rolled-back refusal"
+        );
+        assert_eq!(live_rows(&db, community, &owner, d).await, 0);
+
+        // A competing head is a separate fact: with C live, the same request
+        // takes the ordinary current-head conflict branch and C is untouched.
+        let competing = event(&keys, d, "competing", Timestamp::now().as_secs() + 2, true);
+        assert_eq!(
+            expect_missing_write(&db, community, &competing, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &head,
+                d,
+                ParameterizedReplacePrecondition::ExpectedRevision(predecessor.id.as_bytes()),
+            )
+            .await,
+            ParameterizedReplaceStatus::RevisionMismatch,
+            "a live competing head is an ordinary conflict, not retirement proof"
+        );
+        let live: Vec<u8> = sqlx::query_scalar(
+            "SELECT id FROM events WHERE community_id=$1 AND kind=30623 \
+             AND pubkey=$2 AND d_tag=$3 AND deleted_at IS NULL",
+        )
+        .bind(community.as_uuid())
+        .bind(owner.as_slice())
+        .bind(d)
+        .fetch_one(&db.pool)
+        .await
+        .expect("live head id");
+        assert_eq!(live, competing.id.as_bytes().to_vec());
         writer_pool.close().await;
     })
     .await;

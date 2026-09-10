@@ -81,7 +81,9 @@ pub(crate) async fn load_owner_operation_for_dispatch<R: Runtime>(
     load_owner_operation_for_dispatch_at_path(app, path, expected, id, revision).await
 }
 
-async fn load_owner_operation_for_dispatch_at_path<R: Runtime>(
+// Widened to sibling command modules only so the native guarded-read context
+// can fence on an explicitly supplied journal path. No IPC or store API change.
+pub(super) async fn load_owner_operation_for_dispatch_at_path<R: Runtime>(
     app: AppHandle<R>,
     path: PathBuf,
     expected: OwnerScopeToken,

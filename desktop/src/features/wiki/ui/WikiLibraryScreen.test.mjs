@@ -60,6 +60,7 @@ Object.assign(globalThis, {
   document: dom.window.document,
   HTMLElement: dom.window.HTMLElement,
   IS_REACT_ACT_ENVIRONMENT: true,
+  localStorage: dom.window.localStorage,
   window: dom.window,
   ResizeObserver: NoopObserver,
   IntersectionObserver: NoopObserver,
@@ -133,6 +134,9 @@ const React = await import("react");
 const { QueryClient, QueryClientProvider } = await import(
   "@tanstack/react-query"
 );
+const { CommunitiesProvider } = await import(
+  "@/features/communities/useCommunities.tsx"
+);
 const { relayClient } = await import("@/shared/api/relayClient");
 const { resetWikiStore } = await import("@/features/wiki/lib/wikiStore");
 const { WikiLibraryScreen } = await import(
@@ -180,7 +184,12 @@ async function mountDetail(localWorkspacePath, calls) {
   });
 
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+      // useWikiPublicationRecovery's mutation is created by the real screen;
+      // zero GC keeps its post-unmount timeout out of this short-lived client.
+      mutations: { gcTime: 0 },
+    },
   });
   // useProjectsQuery has a positive staleTime, so seeding its cache prevents
   // any repository fetch.
@@ -193,7 +202,11 @@ async function mountDetail(localWorkspacePath, calls) {
     React.createElement(
       QueryClientProvider,
       { client },
-      React.createElement(WikiLibraryScreen),
+      React.createElement(
+        CommunitiesProvider,
+        null,
+        React.createElement(WikiLibraryScreen),
+      ),
     ),
   );
 
@@ -213,6 +226,7 @@ async function mountDetail(localWorkspacePath, calls) {
     dispose() {
       view.unmount();
       client.clear();
+      client.unmount();
       cleanup();
       resetWikiStore();
       relayClient.fetchEvents = originalFetchEvents;

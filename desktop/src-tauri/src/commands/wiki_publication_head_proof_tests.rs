@@ -552,39 +552,84 @@ mod terminal_metadata {
     /// the durable claim retryable and the stored evidence untouched.
     #[tokio::test]
     async fn terminal_proof_on_a_writable_row_is_refused_before_dispatch() {
+        use super::super::wiki_publication_record::WikiPublicationProgress;
         let state = fixture("crew.compat.writable", None);
-        let mut value = payload(&state);
-        assert!(
-            !state.record.head_attempted && !state.record.reconcile_only,
-            "this fixture really is a writable row"
-        );
-        reconciliation(
-            &mut value,
-            serde_json::json!({
-                "proof": "superseded",
-                "current_head_id": null,
-                "retired_dependency_id": null,
-                "head_retirement": {
-                    "retired": "head",
-                    "head_id": state.record.head.id.to_hex()
-                }
-            }),
-        );
-        let record = parsed(&value).expect("shape parses");
-        assert!(
-            record.validate_intent(state.keys.public_key()).is_err(),
-            "a writable row must never carry terminal head-retirement proof"
-        );
-        assert!(record.validate_projection(state.keys.public_key()).is_err());
+        let head_id = state.record.head.id.to_hex();
+        let proof = serde_json::json!({
+            "proof": "superseded",
+            "current_head_id": null,
+            "retired_dependency_id": null,
+            "head_retirement": {"retired": "head", "head_id": head_id}
+        });
 
-        // The same refusal reaches the dispatcher's own entry point, so such a
-        // row can never be driven and re-sent.
-        let mut operation = state.operation.clone();
-        operation.payload = value;
-        assert!(
-            WikiPublicationRecord::from_operation(&operation, state.keys.public_key()).is_err(),
-            "dispatch must refuse it too"
-        );
+        // Positive control: the settled shape validates, so each negative
+        // below isolates exactly one changed requirement.
+        let mut settled = settled_payload(&state);
+        reconciliation(&mut settled, proof.clone());
+        parsed(&settled)
+            .expect("settled shape parses")
+            .validate_intent(state.keys.public_key())
+            .expect("the settled control must validate");
+
+        // Vary ONE requirement at a time from that valid settled record.
+        // `progress` moves to `Manifest`, never `Preparing`, so the older
+        // head_attempted/Preparing guard cannot mask removal of the new check.
+        // Each case differs from the validated control in EXACTLY one field,
+        // so removing any one production requirement leaves its own case
+        // passing where it must fail.
+        type Mutate = Box<dyn Fn(&mut WikiPublicationRecord)>;
+        let cases: Vec<(&str, Mutate)> = vec![
+            (
+                "never attempted",
+                Box::new(|record: &mut WikiPublicationRecord| record.head_attempted = false),
+            ),
+            (
+                "still writable",
+                Box::new(|record: &mut WikiPublicationRecord| record.reconcile_only = false),
+            ),
+            (
+                "a non-head phase",
+                Box::new(|record: &mut WikiPublicationRecord| {
+                    record.progress = WikiPublicationProgress::Manifest;
+                }),
+            ),
+        ];
+
+        for (why, mutate) in cases {
+            let mut control = state.record.clone();
+            control.head_attempted = true;
+            control.progress = WikiPublicationProgress::Head;
+            control.reconcile_only = true;
+            let mut record = control.clone();
+            mutate(&mut record);
+            // Prove the isolation rather than assuming it: exactly one of the
+            // three terminal requirements may differ from the control.
+            let differing = usize::from(record.head_attempted != control.head_attempted)
+                + usize::from(record.reconcile_only != control.reconcile_only)
+                + usize::from(record.progress != control.progress);
+            assert_eq!(differing, 1, "{why}: exactly one field may vary");
+            let mut value = serde_json::to_value(&record).expect("record JSON");
+            reconciliation(&mut value, proof.clone());
+            let parsed_record = parsed(&value).expect("shape parses");
+            assert!(
+                parsed_record
+                    .validate_intent(state.keys.public_key())
+                    .is_err(),
+                "{why}: terminal proof must not validate as intent"
+            );
+            assert!(
+                parsed_record
+                    .validate_projection(state.keys.public_key())
+                    .is_err(),
+                "{why}: terminal proof must not validate as a projection"
+            );
+            let mut operation = state.operation.clone();
+            operation.payload = value;
+            assert!(
+                WikiPublicationRecord::from_operation(&operation, state.keys.public_key()).is_err(),
+                "{why}: dispatch must refuse it too"
+            );
+        }
     }
 
     /// A terminal reconciled row is never reopened for dispatch, so terminal

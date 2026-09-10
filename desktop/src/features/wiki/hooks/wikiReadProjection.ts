@@ -135,7 +135,11 @@ export function projectWikiRepositoryReads(
         ? result.snapshot.state
         : (result?.outcome ?? "error");
     const resultMessage =
-      result && "error" in result ? messageFor(result.error) : null;
+      result && "error" in result
+        ? messageFor(result.error)
+        : result && "snapshot" in result && result.snapshot.error
+          ? messageFor(result.snapshot.error)
+          : null;
 
     // A coordinator can run a priority-only correction pass while preserving
     // entries that were already accepted by the same scope. Keep the prior
@@ -171,7 +175,12 @@ export function projectWikiRepositoryReads(
 
     let snapshot: WikiSnapshotRead | null = currentSnapshot;
     let bytes = currentBytes;
-    let finalOutcome: WikiRepositoryReadOutcome = outcome;
+    // A preservation result is only authoritative when the prior cache passes
+    // the scope and aggregate budget checks above. Rejected preservation must
+    // become an ordinary unavailable result rather than exposing the internal
+    // correction marker as a user-facing outcome.
+    let finalOutcome: WikiRepositoryReadOutcome =
+      outcome === "preserved" ? "error" : outcome;
     let message = resultMessage;
     let repoState =
       result && "snapshot" in result ? result.snapshot.repoState : null;

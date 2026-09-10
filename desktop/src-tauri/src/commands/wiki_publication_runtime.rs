@@ -1,22 +1,21 @@
 //! Captured desktop runtime for the Wiki publication driver.
 
 use super::owner_operation_transport::{OperationTransportError, OwnerOperationTransport};
-use super::owner_operations::{load_owner_operation_for_dispatch, owner_operation_update};
+use super::owner_operations::owner_operation_update;
 use super::wiki_publication_driver::{
     WikiDependencyState, WikiHead, WikiHeadRetirementProof, WikiPublicationRuntime,
     WikiPublishError,
 };
-use super::wiki_publication_record::{
-    WikiHeadRetirement, WikiPublicationLease, WikiPublicationRecord,
-};
-use crate::app_state::owner_scope::{assert_current, capture, OwnerScopeToken};
+use super::wiki_publication_native_reads::NativeReadContext;
+use super::wiki_publication_record::{WikiHeadRetirement, WikiPublicationRecord};
+use crate::app_state::owner_scope::{capture, OwnerScopeToken};
 use crate::owner_operations::{Operation, OperationStatus, OperationUpdate};
 use nostr::{Event, Keys, PublicKey};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tauri::{AppHandle, Manager};
 
-const WIKI_KIND: u16 = 30623;
+pub(super) const WIKI_KIND: u16 = 30623;
 // Four maximum-size events stay below the transport's 1 MiB response cap.
 const MAX_QUERY_BATCH: usize = 4;
 
@@ -70,45 +69,25 @@ impl NativeWikiPublication {
         })
     }
 
+    /// Borrow this publication's captured identity, transport and coordinate
+    /// as the shared guarded-read context. The journal path stays lazily
+    /// resolved and the clock stays the system clock: production behaviour is
+    /// unchanged, and a test can drive the very same checks with an owned
+    /// journal and a controlled clock.
+    fn reads(&self) -> NativeReadContext<'_, tauri::Wry> {
+        NativeReadContext {
+            app: &self.app,
+            expected: &self.expected,
+            owner: self.owner,
+            repo_d: &self.repo_d,
+            transport: &self.transport,
+            journal: &super::wiki_publication_native_reads::FROM_APP,
+            clock: &super::wiki_publication_native_reads::SYSTEM_CLOCK,
+        }
+    }
+
     async fn guard(&self, operation: Option<&Operation>) -> Result<(), String> {
-        let captured = capture(self.app.clone()).await?;
-        if captured.token != self.expected || captured.keys.public_key() != self.owner {
-            return Err(crate::app_state::owner_scope::OWNER_SCOPE_STALE.into());
-        }
-        if let Some(operation) = operation {
-            let (_, current) = load_owner_operation_for_dispatch(
-                self.app.clone(),
-                self.expected.clone(),
-                operation.id.clone(),
-                operation.revision,
-            )
-            .await?;
-            if current.payload != operation.payload
-                || current.status != operation.status
-                || current.reconciled
-            {
-                return Err("Wiki publication changed before dispatch.".into());
-            }
-            // `drive` validates the complete signed graph before entering the
-            // runtime. The exact payload equality above is the immutable
-            // revision fence, so re-running full graph verification on every
-            // transport pre/post fence would make a large publication scale
-            // with every page for every query. Decode only the mutable lease
-            // metadata needed for this fence; the next CAS still validates the
-            // complete record before persisting it.
-            let lease = current
-                .payload
-                .get("lease")
-                .cloned()
-                .map(serde_json::from_value::<WikiPublicationLease>)
-                .transpose()
-                .map_err(|_| "Invalid Wiki publication lease metadata.".to_string())?;
-            let current_time = now()?;
-            if lease.is_none_or(|lease| lease.expires_at <= current_time) {
-                return Err("Wiki publication worker lease expired.".into());
-            }
-        }
-        assert_current(self.app.clone(), &self.expected).await
+        self.reads().guard(operation).await
     }
 
     async fn query(
@@ -116,36 +95,11 @@ impl NativeWikiPublication {
         operation: Option<&Operation>,
         filter: Value,
     ) -> Result<Vec<Event>, String> {
-        let result = self
-            .transport
-            .query(filter, self.guard(operation))
-            .await
-            .map_err(|error| error.to_string());
-        self.guard(operation).await?;
-        result
+        self.reads().query(operation, filter).await
     }
 
     async fn query_head(&self, operation: Option<&Operation>) -> Result<Option<Event>, String> {
-        let d = format!("{}/_toc", self.repo_d);
-        let events = self
-            .query(
-                operation,
-                json!({"kinds":[WIKI_KIND],"authors":[self.owner.to_hex()],"#d":[d],"limit":2}),
-            )
-            .await?;
-        match events.as_slice() {
-            [] => Ok(None),
-            [event] => {
-                validate_coordinate(
-                    event,
-                    self.owner,
-                    &self.repo_d,
-                    &format!("{}/_toc", self.repo_d),
-                )?;
-                Ok(Some(event.clone()))
-            }
-            _ => Err("Wiki head query returned duplicate events.".into()),
-        }
+        self.reads().query_head(operation).await
     }
 
     pub(super) async fn current_head(&self) -> Result<Option<Event>, String> {
@@ -823,7 +777,7 @@ pub(super) fn coordinate_parts(coordinate: &str) -> Result<(&str, &str), String>
     Ok((owner, repo))
 }
 
-fn validate_coordinate(
+pub(super) fn validate_coordinate(
     event: &Event,
     owner: PublicKey,
     repo: &str,
