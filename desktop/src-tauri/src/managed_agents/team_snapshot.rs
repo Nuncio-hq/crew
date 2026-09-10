@@ -254,6 +254,7 @@ mod tests {
     /// Build a minimal `ManagedAgentRecord` for use as a team member.
     fn agent_record(name: &str) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            instance_generation: None,
             provider_policy_pending: false,
             description: None,
             pubkey: format!("{name}-pubkey"),

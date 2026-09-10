@@ -11,7 +11,7 @@
 //! at spawn time and cannot be mutated in place.
 
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::{
     app_state::AppState,
@@ -73,6 +73,17 @@ pub async fn set_global_agent_config(
     let app_for_write = app.clone();
     let phase1 = tokio::task::spawn_blocking(move || {
         validate_global_config(&config)?;
+        let state = app_for_write.state::<AppState>();
+        let _store_guard = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|error| error.to_string())?;
+        for record in load_managed_agents(&app_for_write)? {
+            crate::managed_agents::instance_identity::assert_instance_available(
+                &app_for_write,
+                &record.pubkey,
+            )?;
+        }
 
         let old_global = load_global_agent_config(&app_for_write).unwrap_or_default();
 
@@ -81,6 +92,7 @@ pub async fn set_global_agent_config(
         // Re-read from disk so the returned value reflects the strip-on-write pass.
         let new_global = load_global_agent_config(&app_for_write)?;
 
+        drop(_store_guard);
         // Pre-filter: identify agents that look eligible before taking any locks.
         // This is a hint only; definitive eligibility check happens under lock
         // in Phase 2.
@@ -267,6 +279,10 @@ async fn restart_local_agent_on_config_change(
             .lock()
             .map_err(|e| format!("failed to acquire store lock: {e}"))?;
 
+        crate::managed_agents::instance_identity::assert_instance_available(
+            &app_for_stop,
+            &pubkey_owned,
+        )?;
         let mut records = load_managed_agents(&app_for_stop)?;
         let mut runtimes = state
             .managed_agent_processes

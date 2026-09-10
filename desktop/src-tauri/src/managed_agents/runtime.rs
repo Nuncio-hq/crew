@@ -444,6 +444,7 @@ pub fn spawn_agent_child(
     owner_hex: Option<&str>,
     replay_floor_unix: Option<u64>,
 ) -> Result<crate::managed_agents::ManagedAgentProcess, String> {
+    super::instance_identity::assert_instance_available(app, &record.pubkey)?;
     super::hermes_profile::validate_profile_bound_agent_invariants(record)?;
     if let Some(error) = spawn_key_refusal(record) {
         return Err(error);
@@ -918,6 +919,7 @@ fn start_managed_agent_process_supported(
     workspace_relay_url: &str,
     replay_floor_unix: Option<u64>,
 ) -> Result<(), String> {
+    super::instance_identity::assert_instance_available(app, &record.pubkey)?;
     let key = ManagedAgentRuntimeKey::new(record.pubkey.clone(), workspace_relay_url)?;
     if let Some(runtime) = runtimes.get_mut(&key) {
         if runtime

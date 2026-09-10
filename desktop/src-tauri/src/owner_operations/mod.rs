@@ -28,6 +28,8 @@ pub enum OperationKind {
     ThreadHandoff,
     /// Channel Crew role configuration with fixed native admission policy.
     ChannelCrewConfig,
+    /// App-global keyed instance offboarding with durable relay cleanup.
+    ManagedAgentDelete,
 }
 
 /// Observable operation phase. Reconciliation is independent of phase.
@@ -208,11 +210,15 @@ impl std::error::Error for StoreError {}
 
 #[cfg(all(test, unix))]
 mod kind_policy_tests;
+mod managed_delete_claim;
+#[cfg(all(test, unix))]
+mod managed_delete_claim_tests;
 
 // Fixed native policy; never caller/renderer-configurable.
 fn record_byte_limit(limits: Limits, kind: OperationKind) -> usize {
     match kind {
         OperationKind::ChannelCrewConfig => limits.bytes_per_operation.min(1024 * 1024),
+        OperationKind::ManagedAgentDelete => limits.bytes_per_operation.min(64 * 1024),
         _ => limits.bytes_per_operation,
     }
 }

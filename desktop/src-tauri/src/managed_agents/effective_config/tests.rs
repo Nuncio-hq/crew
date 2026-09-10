@@ -41,6 +41,7 @@ fn record(
 ) -> ManagedAgentRecord {
     use crate::managed_agents::{BackendKind, RespondTo};
     ManagedAgentRecord {
+        instance_generation: None,
         provider_policy_pending: false,
         description: None,
         pubkey: "agent-pk".to_string(),

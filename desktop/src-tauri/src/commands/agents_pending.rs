@@ -90,84 +90,12 @@ pub(crate) fn tombstone_managed_agent_at(
     keys: &nostr::Keys,
     agent_pubkey: &str,
 ) -> Result<(), String> {
-    use crate::managed_agents::{
-        agent_events::build_agent_delete,
-        persona_events::monotonic_created_at,
-        retention::{
-            delete_retained_event, get_retained_event, open_retention_db, retain_event,
-            tombstone_retention_d_tag, RetainedEvent,
-        },
-    };
-    use buzz_core_pkg::kind::{KIND_IA_ARCHIVE_REQUEST, KIND_MANAGED_AGENT};
-    use nostr::JsonUtil;
-
-    const KIND_DELETE: u32 = 5;
-
-    let owner_pubkey = keys.public_key().to_hex();
-    let conn = open_retention_db(db_path)?;
-    // Single transaction: a kill between the head purge and the tombstone
-    // enqueue would otherwise leave the 30177 head live with no local retry
-    // witness. Reading the head's `created_at` inside the same `BEGIN
-    // IMMEDIATE` closes both the crash window and the read-then-sign race —
-    // and lets the kind:5 be signed strictly past a future-dated head
-    // (`retain_agent_record` bumps a same-second re-publish past the prior
-    // head) so it cannot survive its own tombstone once the head row is
-    // purged. Mirrors the persona/team tombstone helpers.
-    conn.execute_batch("BEGIN IMMEDIATE")
-        .map_err(|e| format!("failed to begin managed-agent tombstone transaction: {e}"))?;
-    let result = (|| -> Result<(), String> {
-        let prior_head =
-            get_retained_event(&conn, KIND_MANAGED_AGENT, &owner_pubkey, agent_pubkey)?;
-        let event = build_agent_delete(agent_pubkey, &owner_pubkey)?
-            .custom_created_at(monotonic_created_at(
-                prior_head.as_ref().map(|row| row.created_at),
-            ))
-            .sign_with_keys(keys)
-            .map_err(|e| format!("failed to sign managed-agent tombstone: {e}"))?;
-        // Recover the archive's `persona_id` from the head that is about to be
-        // purged, where it survives as owner-signed historical alias data.
-        let persona_id = prior_head
-            .as_ref()
-            .and_then(|row| persona_id_from_head(&row.content));
-        let archive = build_agent_archive_request(keys, agent_pubkey, persona_id.as_deref())?;
-        delete_retained_event(&conn, KIND_MANAGED_AGENT, &owner_pubkey, agent_pubkey)?;
-        retain_event(
-            &conn,
-            &RetainedEvent {
-                kind: KIND_DELETE,
-                pubkey: owner_pubkey.clone(),
-                // Key by the target coordinate so cross-kind d-tag tombstones
-                // occupy distinct rows (F2c).
-                d_tag: tombstone_retention_d_tag(KIND_MANAGED_AGENT, agent_pubkey),
-                content: event.content.to_string(),
-                created_at: event.created_at.as_secs() as i64,
-                raw_event: event.as_json(),
-                pending_sync: true,
-            },
-        )?;
-        retain_event(
-            &conn,
-            &RetainedEvent {
-                kind: KIND_IA_ARCHIVE_REQUEST,
-                pubkey: owner_pubkey.clone(),
-                d_tag: agent_pubkey.to_string(),
-                content: archive.content.to_string(),
-                created_at: archive.created_at.as_secs() as i64,
-                raw_event: archive.as_json(),
-                pending_sync: true,
-            },
-        )
-    })();
-    match result {
-        Ok(()) => conn
-            .execute_batch("COMMIT")
-            .map_err(|e| format!("failed to commit managed-agent tombstone transaction: {e}")),
-        Err(e) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(e)
-        }
-    }
+    durable::enqueue(db_path, keys, agent_pubkey, None, None).map(|_| ())
 }
+
+#[path = "agents_pending_durable.rs"]
+mod durable;
+pub(crate) use durable::{enqueue_agent_offboarding_at, AgentOffboardingReceipt};
 
 /// Extract `persona_id` from a retained kind:30177 head's content projection.
 /// Absent (definition-less agent) or unparseable content yields `None`, so the

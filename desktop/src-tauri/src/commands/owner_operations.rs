@@ -51,7 +51,7 @@ where
     Ok(ScopedOperationResult { token, value })
 }
 
-fn journal_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+pub(crate) fn journal_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let base = app
         .path()
         .app_data_dir()
@@ -124,6 +124,9 @@ pub(crate) async fn owner_operation_create(
     expected: OwnerScopeToken,
     operation: NewOperation,
 ) -> Result<ScopedOperationResult<CreateResult>, String> {
+    if operation.kind == crate::owner_operations::OperationKind::ManagedAgentDelete {
+        return Err("Instance deletion requires the native offboarding command".into());
+    }
     run_at_path(
         app.clone(),
         journal_path(&app)?,
@@ -197,6 +200,10 @@ pub(crate) async fn owner_operation_update(
         journal_path(&app)?,
         expected,
         move |store, scope| {
+            let current = store.load(scope, &id).map_err(|error| error.to_string())?;
+            if current.kind == crate::owner_operations::OperationKind::ManagedAgentDelete {
+                return Err("Instance deletion requires the native offboarding command".into());
+            }
             store
                 .compare_and_swap(scope, &id, revision, update, now()?)
                 .map_err(|error| error.to_string())

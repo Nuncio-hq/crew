@@ -54,6 +54,7 @@ mod notifications;
 mod observer_archive;
 mod os_idle;
 mod owner_operation_transport;
+pub(crate) use owner_operation_transport::OwnerOperationTransport;
 mod owner_operations;
 pub mod pairing;
 mod personas;

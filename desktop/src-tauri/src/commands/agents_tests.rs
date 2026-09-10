@@ -9,6 +9,7 @@ fn bare_agent_record(
     use crate::managed_agents::{BackendKind, RespondTo};
     use std::collections::BTreeMap;
     ManagedAgentRecord {
+        instance_generation: None,
         provider_policy_pending: false,
         description: None,
         pubkey: "agent".to_string(),

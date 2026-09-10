@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 /// relevant to snapshot export are filled; the rest use defaults.
 fn minimal_record() -> ManagedAgentRecord {
     ManagedAgentRecord {
+        instance_generation: None,
         provider_policy_pending: false,
         description: None,
         pubkey: "deadbeef".to_string(),
@@ -669,4 +670,56 @@ fn unsupported_version_is_rejected() {
     let result = decode_snapshot_json(&bytes);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("Unsupported snapshot version"));
+}
+
+#[test]
+fn portable_snapshot_cannot_roundtrip_or_supply_local_instance_generation() {
+    let mut record = minimal_record();
+    let generation = uuid::Uuid::new_v4();
+    record.instance_generation = Some(generation);
+    let snapshot = build_snapshot(&record, MemoryLevel::None, vec![], None);
+    let mut json = serde_json::to_value(&snapshot).unwrap();
+    assert!(!serde_json::to_string(&json)
+        .unwrap()
+        .contains(&generation.to_string()));
+    json["instance_generation"] = serde_json::json!(generation);
+    json["definition"]["instanceGeneration"] = serde_json::json!(generation);
+    let imported: AgentSnapshot = serde_json::from_value(json).unwrap();
+    assert_eq!(
+        imported, snapshot,
+        "portable DTO cannot retain an injected local incarnation"
+    );
+    assert!(!serde_json::to_string(&imported)
+        .unwrap()
+        .contains(&generation.to_string()));
+}
+
+#[test]
+fn legacy_instance_generation_is_persisted_once_and_save_failure_propagates() {
+    use crate::managed_agents::instance_identity::ensure_instance_generation;
+    let mut records = vec![minimal_record()];
+    let pubkey = records[0].pubkey.clone();
+    assert!(!pubkey.is_empty());
+    assert!(
+        ensure_instance_generation(&mut records, &pubkey, |_| Err("disk full".into())).is_err()
+    );
+    assert_eq!(records[0].instance_generation, None);
+    let mut persisted = None;
+    let generation = ensure_instance_generation(&mut records, &pubkey, |snapshot| {
+        persisted = Some(serde_json::to_string(snapshot).unwrap());
+        Ok(())
+    })
+    .unwrap();
+    let mut reopened: Vec<ManagedAgentRecord> = serde_json::from_str(&persisted.unwrap()).unwrap();
+    assert_eq!(
+        ensure_instance_generation(&mut reopened, &pubkey, |_| panic!("must not save twice"))
+            .unwrap(),
+        generation
+    );
+    assert_eq!(records[0].instance_generation, Some(generation));
+    records[0].pubkey.clear();
+    records[0].instance_generation = None;
+    assert!(
+        ensure_instance_generation(&mut records, "", |_| panic!("no keyed incarnation")).is_err()
+    );
 }

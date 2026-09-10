@@ -36,6 +36,7 @@ pub async fn set_managed_agent_start_on_app_launch(
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
+        crate::managed_agents::instance_identity::assert_instance_available(&app, &pubkey)?;
         let mut records = load_managed_agents(&app)?;
         let mut runtimes = state
             .managed_agent_processes
@@ -80,6 +81,7 @@ pub async fn set_managed_agent_auto_restart(
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
+        crate::managed_agents::instance_identity::assert_instance_available(&app, &pubkey)?;
         let mut records = load_managed_agents(&app)?;
         let mut runtimes = state
             .managed_agent_processes

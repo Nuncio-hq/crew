@@ -75,6 +75,7 @@ pub fn backfill_persona_snapshots(app: &tauri::AppHandle) -> Result<(), String> 
         // persona leaves model/provider blank, the record's own configured
         // values are preserved — a blank persona must not clobber a
         // user-configured agent. See `apply_persona_snapshot`.
+        super::instance_identity::assert_instance_available(app, &record.pubkey)?;
         super::persona_events::apply_persona_snapshot(record, persona);
         record.updated_at = util::now_iso();
         changed = true;
@@ -179,6 +180,13 @@ pub async fn restore_managed_agents_on_launch(
 
         let mut to_start = Vec::new();
         for pubkey in &candidates {
+            if let Err(error) = super::instance_identity::assert_instance_available(app, pubkey) {
+                if let Some(record) = records.iter_mut().find(|record| record.pubkey == *pubkey) {
+                    record.last_error = Some(error);
+                    changed = true;
+                }
+                continue;
+            }
             if let Some(runtime) = runtimes
                 .iter_mut()
                 .find(|(key, _)| key.pubkey == *pubkey)
@@ -442,6 +450,7 @@ pub async fn restore_managed_agents_on_launch(
                 Some((
                     pubkey.clone(),
                     crate::commands::ProfileReconcileData {
+                        instance_generation: record.instance_generation,
                         private_key_nsec: record.private_key_nsec.clone(),
                         name: record.name.clone(),
                         relay_url: record.relay_url.clone(),
@@ -531,6 +540,8 @@ pub(crate) fn spawn_pending_profile_reconciliations(app: &tauri::AppHandle, work
                         &reconcile_app,
                         &pubkey,
                         &relay_url,
+                        data.instance_generation,
+                        &data.name,
                     ) {
                         eprintln!(
                             "buzz-desktop: failed to record profile reconciliation for agent {pubkey}: {error}"

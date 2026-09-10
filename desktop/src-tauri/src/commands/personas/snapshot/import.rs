@@ -550,6 +550,7 @@ pub async fn confirm_agent_snapshot_import(
         let mut personas = load_personas(&app)?;
         let mut records = load_managed_agents(&app)?;
 
+        crate::managed_agents::instance_identity::assert_instance_available(&app, &pubkey)?;
         // Guard against duplicate pubkey (astronomically unlikely but safe).
         if records.iter().any(|r| r.pubkey == pubkey) {
             return Err(format!("generated pubkey {pubkey} already exists — retry"));
@@ -597,6 +598,7 @@ pub async fn confirm_agent_snapshot_import(
         // Build the managed agent record — no machine-local commands, no
         // secrets, no lineage from the snapshot.
         let record = ManagedAgentRecord {
+            instance_generation: Some(uuid::Uuid::new_v4()),
             pubkey: pubkey.clone(),
             name: display_name.clone(),
             display_name: None,
@@ -687,6 +689,8 @@ pub async fn confirm_agent_snapshot_import(
     let relay_url =
         effective_agent_relay_url(&record.relay_url, &relay_ws_url_with_override(&state));
     let profile_sync_error = crate::commands::agents::publish_persona_profile(
+        &app,
+        record.instance_generation,
         &state,
         &record.relay_url,
         &agent_keys,

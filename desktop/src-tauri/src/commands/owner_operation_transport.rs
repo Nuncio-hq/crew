@@ -19,7 +19,7 @@ const REQUEST_BUDGET: Duration = Duration::from_secs(10);
 
 /// Errors never authorize deletion of an operation with unresolved prior effects.
 #[derive(Debug)]
-pub(super) enum OperationTransportError {
+pub(crate) enum OperationTransportError {
     /// Invalid input refused before any request in this call.
     InvalidInput(String),
     /// Admission exhausted the budget before signing or sending this request.
@@ -55,7 +55,7 @@ fn unknown(reason: impl Into<String>) -> OperationTransportError {
 }
 
 /// Captured identity and immutable canonical HTTP origin for one operation.
-pub(super) struct OwnerOperationTransport {
+pub(crate) struct OwnerOperationTransport {
     client: Client,
     origin: String,
     keys: Keys,
@@ -64,7 +64,7 @@ pub(super) struct OwnerOperationTransport {
 
 impl OwnerOperationTransport {
     /// Use the app's no-redirect client; never its general redirecting client.
-    pub(super) fn captured(
+    pub(crate) fn captured(
         state: &crate::AppState,
         origin: String,
         keys: Keys,
@@ -80,7 +80,7 @@ impl OwnerOperationTransport {
     }
 
     /// Submit the exact persisted envelope without re-signing or retargeting.
-    pub(super) async fn publish<F: Future<Output = Result<(), String>>>(
+    pub(crate) async fn publish<F: Future<Output = Result<(), String>>>(
         &self,
         event: &nostr::Event,
         before_send: F,
@@ -108,7 +108,7 @@ impl OwnerOperationTransport {
     }
 
     /// Query explicit bounded kinds; domain code verifies signatures and heads.
-    pub(super) async fn query<F: Future<Output = Result<(), String>>>(
+    pub(crate) async fn query<F: Future<Output = Result<(), String>>>(
         &self,
         filter: serde_json::Value,
         before_send: F,

@@ -28,6 +28,7 @@ fn buzz_agent() -> &'static KnownAcpRuntime {
 
 pub(super) fn record() -> ManagedAgentRecord {
     ManagedAgentRecord {
+        instance_generation: None,
         hermes_profile: None,
         pubkey: "test".to_string(),
         name: "Test Agent".to_string(),

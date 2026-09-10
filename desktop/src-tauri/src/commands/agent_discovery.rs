@@ -365,6 +365,10 @@ async fn restart_single_agent_after_install(
             .lock()
             .map_err(|e| format!("failed to acquire store lock: {e}"))?;
 
+        crate::managed_agents::instance_identity::assert_instance_available(
+            &app_for_stop,
+            &pubkey_owned,
+        )?;
         let mut records = load_managed_agents(&app_for_stop)?;
         let mut runtimes = state
             .managed_agent_processes

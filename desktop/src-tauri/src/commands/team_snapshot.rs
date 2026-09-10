@@ -20,7 +20,7 @@ use crate::{
         load_managed_agents, load_personas, load_teams, load_teams_readonly, save_managed_agents,
         save_personas, save_teams, AgentDefinition, ManagedAgentRecord, TeamRecord,
     },
-    relay::{effective_agent_relay_url, relay_ws_url_with_override, sync_managed_agent_profile},
+    relay::{effective_agent_relay_url, relay_ws_url_with_override},
     util::now_iso,
 };
 
@@ -498,7 +498,7 @@ pub async fn preview_team_snapshot_import(
 ///      surfacing rollback failures alongside the original error. This makes
 ///      the store phase all-or-none for ordinary application errors; a process
 ///      crash between atomic file commits is NOT covered.
-///   4. Profile sync — for each member, call `sync_managed_agent_profile`.
+///   4. Profile sync — publish each member through the instance mutation guard.
 ///      Best-effort; errors are collected per member.
 ///   5. Memory restore — for each member with non-empty snapshot memory,
 ///      publish each entry as a `kind:30174` engram event. Best-effort.
@@ -559,6 +559,7 @@ pub async fn confirm_team_snapshot_import(
 
         // Build the ManagedAgentRecord for this member.
         let record = ManagedAgentRecord {
+            instance_generation: Some(uuid::Uuid::new_v4()),
             pubkey: pubkey.clone(),
             name: display_name.clone(),
             display_name: None,
@@ -651,6 +652,7 @@ pub async fn confirm_team_snapshot_import(
         // Guard against duplicate pubkeys (astronomically unlikely).
         let existing_records = load_managed_agents(&app)?;
         for m in &minted {
+            crate::managed_agents::instance_identity::assert_instance_available(&app, &m.pubkey)?;
             if existing_records.iter().any(|r| r.pubkey == m.pubkey) {
                 return Err(format!(
                     "generated pubkey {} already exists — retry",
@@ -781,7 +783,9 @@ pub async fn confirm_team_snapshot_import(
         // Phase 4: profile sync (best-effort).
         let profile_about =
             crate::managed_agents::effective_agent_description(m.definition.description.as_deref());
-        let profile_sync_error = sync_managed_agent_profile(
+        let profile_sync_error = crate::commands::sync_owned_instance_profile(
+            &app,
+            m.record.instance_generation,
             &state,
             &relay_url,
             &m.agent_keys,

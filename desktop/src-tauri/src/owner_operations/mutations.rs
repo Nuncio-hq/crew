@@ -127,6 +127,9 @@ impl OperationStore {
         if new.resource_key.is_empty() || new.resource_key.len() > 512 || now < 0 {
             return Err(StoreError::Invalid);
         }
+        if new.kind == super::OperationKind::ManagedAgentDelete {
+            super::managed_delete_claim::validate_pubkey(&new.resource_key)?;
+        }
         let limits = self.limits;
         let creation_digest = initial_digest(&new, limits)?;
         let tx = self
@@ -146,6 +149,18 @@ impl OperationStore {
                 return Err(StoreError::Conflict);
             }
             return Ok(CreateResult::Existing(existing));
+        }
+        if new.kind == super::OperationKind::ManagedAgentDelete {
+            if let Some(existing) = super::managed_delete_claim::claim(
+                &tx,
+                &new.resource_key,
+                limits.bytes_per_operation,
+            )? {
+                if existing.scope != *scope {
+                    return Err(StoreError::Busy);
+                }
+                return Ok(CreateResult::Existing(existing));
+            }
         }
         let claimed: Option<String> = tx.query_row("SELECT id FROM operations WHERE owner=?1 AND community=?2 AND kind=?3 AND resource_key=?4 AND reconciled=0", params![scope.owner,scope.community,kind_key(new.kind),new.resource_key], |row|row.get(0)).optional().map_err(sql_error)?;
         if let Some(id) = claimed {

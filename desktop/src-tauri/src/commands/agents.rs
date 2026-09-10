@@ -33,7 +33,10 @@ pub(super) fn workspace_owner_hex(state: &AppState) -> Result<String, String> {
 mod pending;
 #[cfg(test)]
 use pending::build_agent_archive_request;
-pub(crate) use pending::{retain_managed_agent_pending, tombstone_managed_agent_pending};
+pub(crate) use pending::{
+    enqueue_agent_offboarding_at, retain_managed_agent_pending, tombstone_managed_agent_pending,
+    AgentOffboardingReceipt,
+};
 
 /// Build a summary from fresh disk state (personas, teams, global config).
 /// For one-shot command paths only — the 5s list poll calls
@@ -209,6 +212,7 @@ async fn start_local_agent_with_preflight(
         .managed_agents_store_lock
         .lock()
         .map_err(|e| e.to_string())?;
+    crate::managed_agents::instance_identity::assert_instance_available(app, pubkey)?;
     let mut records = load_managed_agents(app)?;
     let mut runtimes = state
         .managed_agent_processes
@@ -465,6 +469,7 @@ pub async fn create_managed_agent(
         Some(tag)
     };
 
+    let instance_generation = uuid::Uuid::new_v4();
     // ── Phase 3: save record (sync lock) ───────────────────────────────────────
     let (agent, resolved_avatar_url, profile_about) = {
         let _store_guard = state
@@ -486,6 +491,7 @@ pub async fn create_managed_agent(
             state.clear_agent_session_caches(pubkey);
         }
 
+        crate::managed_agents::instance_identity::assert_instance_available(&app, &pubkey)?;
         // Guard against a duplicate pubkey appearing between phase 1 and phase 3
         // (extremely unlikely but safe to check).
         if records.iter().any(|record| record.pubkey == pubkey) {
@@ -622,6 +628,7 @@ pub async fn create_managed_agent(
             linked_persona.as_ref(),
         )?;
         let record = ManagedAgentRecord {
+            instance_generation: Some(instance_generation),
             pubkey: pubkey.clone(),
             name: name.clone(),
             description: None,
@@ -778,6 +785,8 @@ pub async fn create_managed_agent(
     // Use the avatar persisted on the record so the published profile and any
     // later reconciliation agree on the same value.
     let mut profile_sync_error = profile::publish_agent_profile_with_about(
+        &app,
+        Some(instance_generation),
         &state,
         &resolved_relay_url,
         &agent_keys,
@@ -910,6 +919,7 @@ pub async fn start_managed_agent(
             crate::managed_agents::record_agent_command(record, &reconcile_personas);
 
         let reconcile = ProfileReconcileData {
+            instance_generation: record.instance_generation,
             private_key_nsec: record.private_key_nsec.clone(),
             name: record.name.clone(),
             relay_url: record.relay_url.clone(),
@@ -1055,7 +1065,7 @@ pub async fn stop_managed_agent(
 
 // Async so the blocking body (disk reads/writes, process termination, keyring
 // delete, nest regeneration) runs off the main UI thread via spawn_blocking.
-fn run_managed_agent_deletion<T>(
+pub(crate) fn run_managed_agent_deletion<T>(
     base_dir: &std::path::Path,
     pubkey: &str,
     records: &mut Vec<ManagedAgentRecord>,
@@ -1167,7 +1177,8 @@ use deploy::{ensure_remote_provider_supported, resolve_deploy_model_provider};
 mod profile;
 pub(crate) use profile::{
     load_pending_profile_reconciliations, mark_profile_reconciled, publish_persona_profile,
-    reconcile_agent_profile, ProfileReconcileData, ProfileReconcileOutcome,
+    reconcile_agent_profile, sync_owned_instance_profile, ProfileReconcileData,
+    ProfileReconcileOutcome,
 };
 #[cfg(test)]
 use profile::{profile_needs_sync, resolve_legacy_avatar};

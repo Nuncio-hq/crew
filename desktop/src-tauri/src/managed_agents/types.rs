@@ -110,6 +110,7 @@ impl AgentDefinition {
     /// event coordinate (`d_tag = slug`) across the fold.
     pub fn into_agent_record(self) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            instance_generation: None,
             pubkey: String::new(),
             name: self.display_name.clone(),
             persona_id: None,
@@ -231,6 +232,10 @@ pub struct RelayAgentInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManagedAgentRecord {
     pub pubkey: String,
+    /// Local keyed incarnation identity; never included in portable snapshots.
+    /// Legacy records acquire it durably before offboarding admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_generation: Option<uuid::Uuid>,
     pub name: String,
     #[serde(default)]
     pub persona_id: Option<String>,

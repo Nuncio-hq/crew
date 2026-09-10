@@ -16,6 +16,7 @@ pub(crate) enum ProfileReconcileOutcome {
 }
 
 pub(crate) struct ProfileReconcileData {
+    pub(crate) instance_generation: Option<uuid::Uuid>,
     pub(crate) private_key_nsec: String,
     pub(crate) name: String,
     pub(crate) relay_url: String,
@@ -88,6 +89,7 @@ pub(crate) fn profile_reconcile_data(
     personas: &[crate::managed_agents::AgentDefinition],
 ) -> ProfileReconcileData {
     ProfileReconcileData {
+        instance_generation: record.instance_generation,
         private_key_nsec: record.private_key_nsec.clone(),
         name: record.name.clone(),
         relay_url: record.relay_url.clone(),
@@ -149,12 +151,23 @@ pub(crate) fn mark_profile_reconciled(
     app: &AppHandle,
     pubkey: &str,
     relay_url: &str,
+    generation: Option<uuid::Uuid>,
+    expected_name: &str,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
     let _store_guard = state
         .managed_agents_store_lock
         .lock()
         .map_err(|error| error.to_string())?;
+    crate::managed_agents::instance_identity::assert_instance_available(app, pubkey)?;
+    let records = crate::managed_agents::load_managed_agents(app)?;
+    if !records.iter().any(|record| {
+        record.pubkey == pubkey
+            && record.instance_generation == generation
+            && record.name == expected_name
+    }) {
+        return Err("The managed instance changed before profile reconciliation completed".into());
+    }
     let store_path = crate::managed_agents::managed_agents_store_path(app)?;
     let queue_path = crate::migration::profile_reconcile_queue_path(&store_path);
     if !queue_path.exists() {
@@ -205,8 +218,24 @@ pub(crate) async fn reconcile_agent_profile(
         return Ok(ProfileReconcileOutcome::SkippedDisabled);
     }
 
+    let _mutation = crate::managed_agents::instance_identity::lock_instance_mutation(
+        app,
+        agent_pubkey,
+        data.instance_generation,
+    )
+    .await?;
     // Query the relay for the agent's existing kind:0 profile.
-    let existing = query_agent_profile(state, &relay_url, agent_pubkey).await?;
+    let existing = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        query_agent_profile(state, &relay_url, agent_pubkey),
+    )
+    .await
+    .map_err(|_| "Agent profile query timed out")??;
+    crate::managed_agents::instance_identity::assert_instance_generation(
+        app,
+        agent_pubkey,
+        data.instance_generation,
+    )?;
 
     // Resolve the expected avatar — backfilling for legacy records that have no
     // stored avatar_url yet.
@@ -236,6 +265,10 @@ pub(crate) async fn reconcile_agent_profile(
                     .managed_agents_store_lock
                     .lock()
                     .map_err(|e| e.to_string())?;
+                crate::managed_agents::instance_identity::assert_instance_available(
+                    app,
+                    agent_pubkey,
+                )?;
                 let mut records = load_managed_agents(app)?;
                 if let Some(record) = records.iter_mut().find(|r| r.pubkey == data.pubkey) {
                     record.avatar_url = Some(backfilled.clone());
@@ -272,16 +305,30 @@ pub(crate) async fn reconcile_agent_profile(
         return Ok(ProfileReconcileOutcome::SkippedDisabled);
     }
 
-    sync_managed_agent_profile(
-        state,
-        &relay_url,
-        &agent_keys,
-        &data.name,
-        expected_avatar.as_deref(),
-        data.about.as_deref(),
-        data.auth_tag.as_deref(),
+    crate::managed_agents::instance_identity::assert_instance_generation(
+        app,
+        agent_pubkey,
+        data.instance_generation,
+    )?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        sync_managed_agent_profile(
+            state,
+            &relay_url,
+            &agent_keys,
+            &data.name,
+            expected_avatar.as_deref(),
+            data.about.as_deref(),
+            data.auth_tag.as_deref(),
+        ),
     )
-    .await?;
+    .await
+    .map_err(|_| "Agent profile publication timed out")??;
+    crate::managed_agents::instance_identity::assert_instance_generation(
+        app,
+        agent_pubkey,
+        data.instance_generation,
+    )?;
     Ok(ProfileReconcileOutcome::Reconciled)
 }
 
@@ -314,6 +361,8 @@ pub(super) fn profile_needs_sync(
 /// create and snapshot-import flows that share this helper.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn publish_agent_profile_with_about(
+    app: &AppHandle,
+    generation: Option<uuid::Uuid>,
     state: &AppState,
     record_relay_url: &str,
     agent_keys: &nostr::Keys,
@@ -326,7 +375,9 @@ pub(crate) async fn publish_agent_profile_with_about(
         record_relay_url,
         &relay_ws_url_with_override(state),
     );
-    crate::relay::sync_managed_agent_profile(
+    sync_owned_instance_profile(
+        app,
+        generation,
         state,
         &relay_url,
         agent_keys,
@@ -343,6 +394,8 @@ pub(crate) async fn publish_agent_profile_with_about(
 /// effective public `about` from the persona itself.
 /// Shared by flows in files at the size ratchet (snapshot import).
 pub(crate) async fn publish_persona_profile(
+    app: &AppHandle,
+    generation: Option<uuid::Uuid>,
     state: &AppState,
     record_relay_url: &str,
     agent_keys: &nostr::Keys,
@@ -353,6 +406,8 @@ pub(crate) async fn publish_persona_profile(
 ) -> Option<String> {
     let about = crate::managed_agents::effective_agent_description(persona.description.as_deref());
     publish_agent_profile_with_about(
+        app,
+        generation,
         state,
         record_relay_url,
         agent_keys,
@@ -367,3 +422,33 @@ pub(crate) async fn publish_persona_profile(
 // Async so the blocking body (disk reads/writes + process termination) runs off
 // the main UI thread via spawn_blocking. State is re-derived from the owned
 // AppHandle inside the closure (`State<'_, _>` is borrowed, MutexGuard is !Send).
+
+/// Serialize an instance profile publication with delete admission and provider IO.
+/// All production direct profile publishers use this boundary; the underlying
+/// relay helper remains available to transport tests without managed app state.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn sync_owned_instance_profile(
+    app: &AppHandle,
+    generation: Option<uuid::Uuid>,
+    state: &AppState,
+    relay_url: &str,
+    keys: &nostr::Keys,
+    name: &str,
+    avatar: Option<&str>,
+    about: Option<&str>,
+    auth_tag: Option<&str>,
+) -> Result<(), String> {
+    let pubkey = keys.public_key().to_hex();
+    let _mutation =
+        crate::managed_agents::instance_identity::lock_instance_mutation(app, &pubkey, generation)
+            .await?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        crate::relay::sync_managed_agent_profile(
+            state, relay_url, keys, name, avatar, about, auth_tag,
+        ),
+    )
+    .await
+    .map_err(|_| "Agent profile publication timed out")??;
+    crate::managed_agents::instance_identity::assert_instance_generation(app, &pubkey, generation)
+}

@@ -31,6 +31,7 @@ pub(super) fn kind_key(kind: OperationKind) -> &'static str {
         OperationKind::ProjectChange => "project-change",
         OperationKind::ThreadHandoff => "thread-handoff",
         OperationKind::ChannelCrewConfig => "channel-crew-config",
+        OperationKind::ManagedAgentDelete => "managed-agent-delete",
     }
 }
 
@@ -155,7 +156,7 @@ impl OperationStore {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(sql_error)?;
-        if version != 0 && version != 1 {
+        if !matches!(version, 0..=2) {
             return Err(StoreError::Version);
         }
         connection
@@ -176,8 +177,27 @@ impl OperationStore {
             }
             tx.execute_batch(include_str!("schema.sql"))
                 .map_err(sql_error)?;
-        } else if version != 1 {
+        } else if version == 1 {
+            tx.execute_batch(include_str!("managed_delete_migration.sql"))
+                .map_err(sql_error)?;
+        } else if version != 2 {
             return Err(StoreError::Version);
+        }
+        let index_sql: Option<String> = tx.query_row(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='unresolved_managed_agent_delete'",
+            [], |row| row.get(0),
+        ).optional().map_err(sql_error)?;
+        let canonical = |sql: &str| {
+            sql.split_whitespace()
+                .collect::<String>()
+                .to_ascii_lowercase()
+        };
+        let expected = "CREATE UNIQUE INDEX unresolved_managed_agent_delete ON operations(resource_key) WHERE kind = 'managed-agent-delete' AND reconciled = 0";
+        if index_sql.as_deref().map(canonical) != Some(canonical(expected)) {
+            return Err(StoreError::Corrupt);
+        }
+        if version == 1 {
+            super::managed_delete_claim::claim(&tx, &"0".repeat(64), limits.bytes_per_operation)?;
         }
         tx.commit().map_err(sql_error)?;
         Ok(Self { connection, limits })
@@ -265,7 +285,7 @@ pub(super) fn read(
     max: usize,
 ) -> Result<Option<Operation>, StoreError> {
     let row = conn.query_row(
-        "SELECT CASE WHEN bytes = length(CAST(record_json AS BLOB)) AND length(CAST(record_json AS BLOB)) <= CASE WHEN kind='channel-crew-config' THEN min(?4,1048576) ELSE ?4 END THEN record_json END, revision, \
+        "SELECT CASE WHEN bytes = length(CAST(record_json AS BLOB)) AND length(CAST(record_json AS BLOB)) <= CASE WHEN kind='channel-crew-config' THEN min(?4,1048576) WHEN kind='managed-agent-delete' THEN min(?4,65536) ELSE ?4 END THEN record_json END, revision, \
          CASE WHEN length(CAST(kind AS BLOB)) BETWEEN 1 AND 32 THEN kind ELSE '' END, \
          CASE WHEN length(CAST(resource_key AS BLOB)) BETWEEN 1 AND 512 THEN resource_key ELSE '' END, \
          CASE WHEN length(CAST(status AS BLOB)) BETWEEN 1 AND 32 THEN status ELSE '' END, reconciled, created_at, updated_at \

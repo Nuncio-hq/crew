@@ -445,6 +445,7 @@ fn make_persona(id: &str, display_name: &str) -> AgentDefinition {
 
 fn make_agent(name: &str, persona_id: Option<&str>) -> ManagedAgentRecord {
     ManagedAgentRecord {
+        instance_generation: None,
         description: None,
         provider_policy_pending: false,
         team_catalog_source: None,

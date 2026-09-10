@@ -30,6 +30,7 @@ pub(crate) mod hermes_profile_config;
 pub(crate) mod hermes_profile_lifecycle;
 pub(crate) mod hermes_profile_readiness;
 pub(crate) mod hermes_profile_soul;
+pub(crate) mod instance_identity;
 mod managed_node_paths;
 mod nest;
 pub(crate) mod parallelism;

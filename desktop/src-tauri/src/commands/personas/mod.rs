@@ -159,6 +159,7 @@ pub async fn delete_persona(id: String, app: AppHandle) -> Result<(), String> {
                 .lock()
                 .map_err(|error| error.to_string())?;
 
+            crate::managed_agents::instance_identity::assert_persona_instances_available(&app, &id)?;
             // Load and validate the persona before any destructive work.
             let mut personas = load_personas(&app)?;
             let persona = personas
@@ -302,6 +303,7 @@ pub async fn set_persona_active(
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
+        crate::managed_agents::instance_identity::assert_persona_instances_available(&app, &id)?;
         let mut personas = load_personas(&app)?;
         let persona = personas
             .iter_mut()

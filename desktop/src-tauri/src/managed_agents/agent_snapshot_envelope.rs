@@ -366,6 +366,7 @@ mod tests {
     /// pubkey/nsec pair matters here.
     fn record_with_keys(pubkey: String, private_key_nsec: String) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            instance_generation: None,
             provider_policy_pending: false,
             description: None,
             pubkey,

@@ -96,6 +96,7 @@ pub(super) fn rollback_failed_agent_update(
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
+        crate::managed_agents::instance_identity::assert_instance_available(app, pubkey)?;
         let mut records = load_managed_agents(app)?;
         restore_agent_update(&mut records, pubkey, rollback)?;
         save_managed_agents(app, &records)?;

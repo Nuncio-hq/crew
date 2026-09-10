@@ -1,8 +1,8 @@
 //! Provider launch serialization and captured mention-wake scope.
 use super::{build_deploy_payload, AgentStartScope};
-use crate::{app_state::AppState, managed_agents::*, util::now_iso};
+use crate::{app_state::AppState, managed_agents::*};
 use std::sync::Arc;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 pub(super) async fn deploy_with_scope(
     app: &AppHandle,
@@ -22,15 +22,23 @@ pub(super) async fn deploy_with_scope(
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
         )
     };
-    let _guard = lock.lock().await;
+    let deploy_guard = tokio::time::timeout(std::time::Duration::from_secs(10), lock.lock_owned())
+        .await
+        .map_err(|_| "Instance mutation is busy; retry Start")?;
     // Waiting for another deploy may change the saved policy, relay or identity.
     // Build once after the await and validate the exact payload passed to the provider.
-    let (provider_id, config, cached_binary_path, mut agent_json) = {
+    let (provider_id, config, cached_binary_path, mut agent_json, captured_record) = {
         let _store_guard = state
             .managed_agents_store_lock
             .lock()
             .map_err(|e| e.to_string())?;
-        let records = load_managed_agents(app)?;
+        crate::managed_agents::instance_identity::assert_instance_available(app, pubkey)?;
+        let mut records = load_managed_agents(app)?;
+        crate::managed_agents::instance_identity::ensure_instance_generation(
+            &mut records,
+            pubkey,
+            |updated| save_managed_agents(app, updated),
+        )?;
         let record = records
             .iter()
             .find(|r| r.pubkey == pubkey)
@@ -43,6 +51,7 @@ pub(super) async fn deploy_with_scope(
             config.clone(),
             record.provider_binary_path.clone(),
             build_deploy_payload(app, state, record)?,
+            record.clone(),
         )
     };
     prepare_scoped_payload(&mut agent_json, scope)?;
@@ -61,38 +70,63 @@ pub(super) async fn deploy_with_scope(
         })
         .map_or_else(|| resolve_provider_binary(&provider_id), Ok)?;
 
-    let config_clone = config.clone();
-    let deploy_result =
-        tokio::task::spawn_blocking(move || provider_deploy(&bin_path, &agent_json, &config_clone))
-            .await
-            .map_err(|e| format!("spawn_blocking failed: {e}"))?;
+    worker::spawn(
+        AppProviderStore {
+            app: app.clone(),
+            pubkey: pubkey.to_owned(),
+        },
+        captured_record,
+        deploy_guard,
+        move || provider_deploy(&bin_path, &agent_json, &config),
+    )
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
 
-    // Persist result under lock.
-    let _store_guard = state
-        .managed_agents_store_lock
-        .lock()
-        .map_err(|e| e.to_string())?;
-    let mut records = load_managed_agents(app)?;
-    let rec = records
-        .iter_mut()
-        .find(|r| r.pubkey == pubkey)
-        .ok_or_else(|| format!("agent {pubkey} not found"))?;
+#[path = "provider-deployment-worker.rs"]
+mod worker;
 
-    match deploy_result {
-        Ok(backend_agent_id) => {
-            rec.backend_agent_id = Some(backend_agent_id);
-            rec.last_started_at = Some(now_iso());
-            rec.updated_at = now_iso();
-            rec.last_error = None;
-        }
-        Err(ref e) => {
-            rec.last_error = Some(e.clone());
-            rec.updated_at = now_iso();
-            save_managed_agents(app, &records)?;
-            return Err(e.clone());
-        }
+struct AppProviderStore {
+    app: AppHandle,
+    pubkey: String,
+}
+
+impl worker::RecordStore for AppProviderStore {
+    fn update(
+        &mut self,
+        change: impl FnOnce(&mut ManagedAgentRecord) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let state = self.app.state::<AppState>();
+        let _store_guard = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        crate::managed_agents::instance_identity::assert_instance_available(
+            &self.app,
+            &self.pubkey,
+        )?;
+        let mut records = load_managed_agents(&self.app)?;
+        let rec = records
+            .iter_mut()
+            .find(|r| r.pubkey == self.pubkey)
+            .ok_or("The managed instance is no longer available")?;
+        change(rec)?;
+        save_managed_agents(&self.app, &records)
     }
-    save_managed_agents(app, &records)?;
+}
+
+// A provider handle belongs to the captured incarnation and provider config.
+// Policy edits may leave pending work, but cannot retarget an old handle.
+fn validate_attempt(
+    current: &ManagedAgentRecord,
+    captured: &ManagedAgentRecord,
+) -> Result<(), String> {
+    if current.instance_generation != captured.instance_generation
+        || current.backend != captured.backend
+        || current.relay_url != captured.relay_url
+    {
+        return Err("The managed instance or provider changed while deployment was in flight; review pending deployment".into());
+    }
     Ok(())
 }
 

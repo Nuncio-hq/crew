@@ -111,7 +111,7 @@ fn prepare_linked_profile_update(
 }
 
 /// Profile sync params collected under the store lock for async relay publish:
-/// (agent keys, relay url, display name, avatar url, kind:0 about, auth tag).
+/// (agent keys, relay url, display name, avatar url, kind:0 about, auth tag, instance generation).
 type ProfileSyncParams = Vec<(
     nostr::Keys,
     String,
@@ -119,6 +119,7 @@ type ProfileSyncParams = Vec<(
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<uuid::Uuid>,
 )>;
 
 #[tauri::command]
@@ -170,6 +171,9 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
                 .managed_agents_store_lock
                 .lock()
                 .map_err(|error| error.to_string())?;
+            crate::managed_agents::instance_identity::assert_persona_instances_available(
+                &app, &input.id,
+            )?;
             let mut personas = load_personas(&app)?;
             pending::project_active_persona_sharing(&app, &state, &mut personas);
             let persona = personas
@@ -268,6 +272,7 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
                                 update.profile_avatar,
                                 new_about.clone(),
                                 record.auth_tag.clone(),
+                                record.instance_generation,
                             ));
                         }
                     }
@@ -304,10 +309,12 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
     // sees the fresh relay profile. Best-effort — failures are logged, not surfaced.
     if !profile_sync_params.is_empty() {
         let state = app.state::<AppState>();
-        for (agent_keys, relay_url, display_name, avatar_url, about, auth_tag) in
+        for (agent_keys, relay_url, display_name, avatar_url, about, auth_tag, generation) in
             profile_sync_params
         {
-            if let Err(e) = crate::relay::sync_managed_agent_profile(
+            if let Err(e) = crate::commands::sync_owned_instance_profile(
+                &app,
+                generation,
                 &state,
                 &relay_url,
                 &agent_keys,

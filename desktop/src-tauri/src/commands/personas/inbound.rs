@@ -266,6 +266,11 @@ fn reconcile_inbound_persona_event_blocking<R: tauri::Runtime>(
         KIND_PERSONA => {
             let outcome = commit_inbound_with_store(&conn, &inbound_retained_event, || {
                 let mut personas = load_personas(&app)?;
+                for persona in &personas {
+                    if persona_d_tag(persona) == d_tag {
+                        crate::managed_agents::instance_identity::assert_persona_instances_available(&app, &persona.id)?;
+                    }
+                }
                 // `inbound_persona` is `Some` for KIND_PERSONA (set above).
                 apply_inbound_persona(
                     &mut personas,
@@ -300,6 +305,9 @@ fn reconcile_inbound_persona_event_blocking<R: tauri::Runtime>(
         }
         KIND_TEAM => {
             let team_id = d_tag.clone();
+            crate::managed_agents::instance_identity::assert_team_instances_available(
+                &app, &team_id,
+            )?;
             let outcome = commit_inbound_with_store(&conn, &inbound_retained_event, || {
                 let mut teams = load_teams(&app)?;
                 commit_inbound_team(
@@ -332,6 +340,7 @@ fn reconcile_inbound_persona_event_blocking<R: tauri::Runtime>(
             if inbound_event_outcome(&conn, &inbound_retained_event)? == InboundOutcome::Skipped {
                 return Ok(None);
             }
+            crate::managed_agents::instance_identity::assert_instance_available(&app, &d_tag)?;
             let mut agents = load_managed_agents(&app)?;
             let managed_agent = inbound_managed_agent.ok_or_else(|| {
                 "managed-agent content was not parsed before retention".to_string()

@@ -158,6 +158,7 @@ mod tests {
 
     fn sample_agent() -> ManagedAgentRecord {
         ManagedAgentRecord {
+            instance_generation: None,
             provider_policy_pending: false,
             description: None,
             pubkey: "agentpubkeyhex".to_string(),

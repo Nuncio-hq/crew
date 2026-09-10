@@ -18,4 +18,7 @@ CREATE UNIQUE INDEX unresolved_resource
     ON operations(owner, community, kind, resource_key)
     WHERE reconciled = 0;
 CREATE INDEX owner_retention ON operations(owner, reconciled, updated_at);
-PRAGMA user_version = 1;
+CREATE UNIQUE INDEX unresolved_managed_agent_delete
+    ON operations(resource_key)
+    WHERE kind = 'managed-agent-delete' AND reconciled = 0;
+PRAGMA user_version = 2;
