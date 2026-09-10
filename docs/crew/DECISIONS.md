@@ -2118,6 +2118,45 @@ graph and checks exact dependency absence. Generic conflict, an older relay's
 response, timeout and query failure remain unresolved. This proof can apply
 before or after a TOC attempt; the desired TOC need not be live.
 
+**Wiki head and precondition retirement (accepted 2026-09-10; implementation
+in progress, acceptance pending).** The same evidence rule extends to the
+replaceable `_toc` head itself, using the existing conditional transaction and
+HTTP 400 seam — no new endpoint, event kind or store schema. Inside the
+existing owner→coordinate locks, and only for a conditional v1 Wiki `_toc`
+write, the store classifies two further facts after the exact-live replay still
+ACKs as a successful duplicate: the exact submitted head H was accepted at this
+same community/owner/kind/`d` coordinate and is now soft deleted
+(`conflict: wiki-head-retired:<H>`), or the coordinate has no live head and the
+non-absent `expected-revision` E was accepted at that same coordinate and is now
+soft deleted (`conflict: wiki-expected-head-retired:<H>:<E>`). A historical H is
+classified before the generic `RevisionMissing` return so retirement is never
+hidden behind it. An unknown or foreign E, a different live head, a query
+failure or a failed rollback never produce a proof, and generic conflict strings
+are never upgraded into one.
+
+Because a historical non-live exact event can never be reinserted, this is
+durable evidence that the attempt can never become live — unlike an empty read,
+which proves nothing. `expected-revision: absent` with a never-accepted head is
+deliberately excluded: absence is satisfiable again and stays admissible. The
+guarantee is scoped to the ordinary relay lifecycle and retained event history,
+not to administrative restore, reset or any future hard-deletion policy.
+
+Native recovery accepts the proof only from the captured relay's HTTP 400 with
+exact machine syntax whose IDs bind the persisted signed head and its exact
+non-absent precondition, under the active owner/community/generation/revision/
+lease fences, plus a successful fresh absence read of the exact retired event
+and a successful current `_toc` read. A live desired head contradicts the claim.
+The typed result settles the operation in one guarded compare-and-swap that
+records `Superseded` and releases the unresolved claim, before any ordinary
+post-send inspection and with no further network step. There is no pending-proof
+state and no new recovery action: a failed proof read or a failed journal write
+leaves the existing retryable claim, and the refusal can be obtained again.
+Reconcile and automatic restart never publish to obtain proof; the existing
+explicit Resume remains the only owner-reachable way to re-send the exact head.
+The terminal proof is separate metadata from `retired_dependency_id`, which is
+preserved independently across every conflict reconciliation. Older journal
+payloads without the field authorize nothing.
+
 Explicit **Regenerate** captures fresh source and builds a complete graph with a
 new snapshot UUID, including when source bytes are unchanged. Its page and
 manifest addresses therefore differ from the retired graph. A Wiki-only native

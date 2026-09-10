@@ -120,7 +120,9 @@ pub(super) use projection::{cancel_intent, wiki_operation_summaries, wiki_operat
 // the only production entry point to that rule. Keep them out of the library's
 // name surface so they cannot become an unused re-export.
 #[cfg(test)]
-pub(super) use projection::{may_cancel, RETIRED_CANCEL_REFUSAL};
+pub(super) use projection::{
+    job_from_projection as projected_job, may_cancel, RETIRED_CANCEL_REFUSAL,
+};
 
 #[cfg(test)]
 #[path = "wiki_publication_commands_tests.rs"]
@@ -488,6 +490,9 @@ pub(crate) async fn wiki_publication_regenerate(
         super::wiki_publication_record::WikiPublicationReconciliation::Superseded {
             current_head_id: after_head.map(|event| event.id.to_hex()),
             retired_dependency_id: Some(retired_dependency_id),
+            // Regeneration retires an immutable dependency, never the head or
+            // its precondition. Those are proven separately by the relay.
+            head_retirement: None,
         },
     );
     retired_record.lease = None;

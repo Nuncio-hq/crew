@@ -181,6 +181,161 @@ test("an incomplete refresh keeps the previous coherent graph as stale", () => {
   assert.equal(value.status.unavailable, true);
 });
 
+/**
+ * A priority-only correction pass emits `{error:"", outcome:"preserved"}` for
+ * every coordinate it did not re-read. Those entries must be kept exactly as
+ * they were — including entries whose snapshot is null, whose accurate prior
+ * status is `missing`, `incomplete` or an explicit error. Overwriting them
+ * with a generic unavailable row loses real repository state the coordinator
+ * never contradicted.
+ */
+test("a preserved correction pass keeps non-renderable prior entries verbatim", () => {
+  const priorFor = (name, status, message, repoState = null) => {
+    const key = coordinate(name);
+    return [
+      key,
+      {
+        scope: scope(),
+        coordinate: key,
+        snapshot: null,
+        repoState,
+        repoStateFresh: repoState !== null,
+        serializedBytes: 0,
+        status: {
+          coordinate: key,
+          state: "unavailable",
+          outcome: status,
+          stale: false,
+          unavailable: true,
+          message,
+        },
+      },
+    ];
+  };
+  const missingState = {
+    id: "state-missing",
+    kind: 30618,
+    pubkey: OWNER,
+    content: "",
+    created_at: 4,
+    tags: [["d", "missing"]],
+    sig: "",
+  };
+  const entries = [
+    priorFor("missing", "missing", null, missingState),
+    priorFor("incomplete", "incomplete", "native snapshot incomplete"),
+    priorFor("errored", "error", "relay unreachable"),
+  ];
+  const previous = new Map(entries);
+  const keys = entries.map(([key]) => key);
+
+  const projected = projectWikiRepositoryReads(
+    scope(),
+    keys,
+    keys.map((key) => ({ coordinate: key, error: "", outcome: "preserved" })),
+    [],
+    previous,
+  );
+
+  for (const [key, prior] of entries) {
+    const value = projected.get(key);
+    assert.deepEqual(
+      value,
+      prior,
+      `the whole prior entry for ${key} must be preserved verbatim`,
+    );
+    assert.equal(value.status.outcome, prior.status.outcome);
+    assert.equal(value.status.message, prior.status.message);
+    assert.equal(value.repoState, prior.repoState);
+  }
+});
+
+test("preservation still rejects a foreign scope and an over-budget graph", () => {
+  const key = coordinate("crew");
+  const foreignScope = { ...scope(), identity_generation: 99 };
+  const nullEntry = {
+    scope: foreignScope,
+    coordinate: key,
+    snapshot: null,
+    repoState: null,
+    repoStateFresh: false,
+    serializedBytes: 0,
+    status: {
+      coordinate: key,
+      state: "unavailable",
+      outcome: "incomplete",
+      stale: false,
+      unavailable: true,
+      message: "native snapshot incomplete",
+    },
+  };
+  const foreign = projectWikiRepositoryReads(
+    scope(),
+    [key],
+    [{ coordinate: key, error: "", outcome: "preserved" }],
+    [],
+    new Map([[key, nullEntry]]),
+  ).get(key);
+  assert.notDeepEqual(
+    foreign,
+    nullEntry,
+    "an A -> B -> A scope must not inherit another generation's entry",
+  );
+  assert.equal(foreign.status.outcome, "error");
+
+  const bigSnapshot = {
+    state: "complete",
+    head: {
+      id: "toc-big",
+      kind: 30623,
+      pubkey: OWNER,
+      content: "{}",
+      created_at: 9,
+      tags: [
+        ["d", "crew/_toc"],
+        ["a", `${30617}:${OWNER}:crew`],
+      ],
+      sig: "",
+    },
+    manifest: null,
+    pages: [],
+    repoState: null,
+  };
+  const overBudget = projectWikiRepositoryReads(
+    scope(),
+    [key],
+    [{ coordinate: key, error: "", outcome: "preserved" }],
+    [],
+    new Map([
+      [
+        key,
+        {
+          scope: scope(),
+          coordinate: key,
+          snapshot: bigSnapshot,
+          repoState: null,
+          repoStateFresh: false,
+          serializedBytes: estimateWikiSnapshotBytes(bigSnapshot),
+          status: {
+            coordinate: key,
+            state: "ready",
+            outcome: "complete",
+            stale: false,
+            unavailable: false,
+            message: null,
+          },
+        },
+      ],
+    ]),
+    0,
+  ).get(key);
+  assert.equal(
+    overBudget.snapshot,
+    null,
+    "a graph that cannot fit the retained budget is not preserved",
+  );
+});
+
 test("company Wiki remains available while a repository read is stalled", async () => {
   const { act, cleanup, renderHook, waitFor } = await import(
     "@testing-library/react"

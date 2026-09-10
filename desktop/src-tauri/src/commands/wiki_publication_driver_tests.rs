@@ -7,7 +7,8 @@
 //! assertion here also proves the durable transition it depends on.
 
 use super::wiki_publication_driver::{
-    drive, WikiDependencyState, WikiHead, WikiPublicationRuntime, WikiPublishError,
+    drive, WikiDependencyState, WikiHead, WikiHeadRetirementProof, WikiPublicationRuntime,
+    WikiPublishError,
 };
 use super::wiki_publication_record::{WikiPublicationProgress, WikiPublicationRecord};
 use super::wiki_publication_test_fixture as fixture;
@@ -52,6 +53,9 @@ pub(super) struct Journal {
     pub(super) rotate_owner_on_head_publish: AtomicBool,
     pub(super) sent: AtomicUsize,
     pub(super) sent_ids: Mutex<Vec<String>>,
+    /// Validated relay head/precondition retirement proof this fixture returns
+    /// from the head publish, standing in for the real transport validation.
+    pub(super) retire_head: Mutex<Option<WikiHeadRetirementProof>>,
     /// Durable phase read back from SQLite at the instant each head event was
     /// submitted. Capturing it inside the publish seam is the only way to
     /// prove the pre-send CAS landed *before* the send rather than after it.
@@ -115,6 +119,7 @@ impl Journal {
             rotate_owner_on_head_publish: AtomicBool::new(false),
             sent: AtomicUsize::new(0),
             sent_ids: Mutex::new(Vec::new()),
+            retire_head: Mutex::new(None),
             head_send_phase: Mutex::new(Vec::new()),
         };
         (journal, operation)
@@ -293,6 +298,9 @@ impl WikiPublicationRuntime for Journal {
             }
             if self.rotate_owner_on_head_publish.load(Ordering::SeqCst) {
                 self.rotate_owner();
+            }
+            if let Some(proof) = self.retire_head.lock().expect("head retirement").clone() {
+                return Err(WikiPublishError::HeadRetired(Box::new(proof)));
             }
             if self.lost_head_ack.load(Ordering::SeqCst) {
                 return Err(WikiPublishError::Unknown("ACK lost".into()));

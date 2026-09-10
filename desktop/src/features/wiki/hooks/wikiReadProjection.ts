@@ -139,16 +139,23 @@ export function projectWikiRepositoryReads(
 
     // A coordinator can run a priority-only correction pass while preserving
     // entries that were already accepted by the same scope. Keep the prior
-    // status verbatim only after checking both its scope fence and aggregate
-    // byte budget; a foreign or over-budget entry must go through the normal
+    // entry verbatim after checking both its scope fence and aggregate byte
+    // budget; a foreign or over-budget entry must go through the normal
     // unavailable path below.
+    //
+    // Preservation deliberately does NOT require a renderable graph. A
+    // missing, incomplete or errored entry carries real prior status, message
+    // and repository metadata for this coordinate, and a correction pass that
+    // never re-read it must not overwrite that with a generic "Wiki read
+    // failed." unavailable row. Null-snapshot entries contribute
+    // serializedBytes = 0, so the aggregate budget is unaffected by keeping
+    // them.
     if (
       result &&
       "error" in result &&
       result.outcome === "preserved" &&
       previousValue &&
       sameOwnerOperationScope(previousValue.scope, scope) &&
-      renderable(previousValue.snapshot) &&
       retainedBytes + previousValue.serializedBytes <= maxBytes
     ) {
       projected.set(coordinate, previousValue);

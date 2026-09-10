@@ -29,6 +29,30 @@ pub(super) enum WikiPublicationProgress {
     Head,
 }
 
+/// Durable relay evidence that this exact conditional attempt can never become
+/// live again (D-079 head/precondition retirement; accepted, pending
+/// acceptance). It is deliberately a *separate* type from the immutable
+/// dependency proof: a head or precondition is never a page or manifest.
+///
+/// This is terminal metadata only. It is recorded in the same compare-and-swap
+/// that settles `Superseded`, so there is no pending-proof state and no new
+/// recovery action. An older payload without this field deserializes as
+/// `None`, which authorizes nothing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "retired", rename_all = "kebab-case", deny_unknown_fields)]
+pub(super) enum WikiHeadRetirement {
+    /// The exact submitted head was accepted at this coordinate and is now
+    /// retired, so its event identity can never be live again.
+    Head { head_id: String },
+    /// The coordinate has no live head and the exact non-absent expected
+    /// revision this attempt compared against is retired, so the precondition
+    /// can never be satisfied again.
+    ExpectedHead {
+        head_id: String,
+        expected_revision: String,
+    },
+}
+
 /// Evidence recorded only after the native dispatcher establishes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "proof", rename_all = "kebab-case", deny_unknown_fields)]
@@ -42,6 +66,10 @@ pub(super) enum WikiPublicationReconciliation {
         /// typed proof on the reconciled predecessor as well.
         #[serde(default)]
         retired_dependency_id: Option<String>,
+        /// Relay proof that the exact head or its exact precondition is
+        /// permanently retired. Independent of `retired_dependency_id`.
+        #[serde(default)]
+        head_retirement: Option<WikiHeadRetirement>,
     },
     /// User canceled before the conditional head was attempted and native
     /// reconciliation proved the expected head is still live (or absent).
@@ -182,6 +210,7 @@ impl WikiPublicationRecord {
                 return Err("Wiki retirement evidence does not name a stored dependency.".into());
             }
         }
+        validate_head_retirement(self)?;
         if let Some(error) = &self.last_error {
             if error.is_empty() || error.len() > 512 || error.contains('\0') {
                 return Err("Wiki publication failure metadata is invalid.".into());
@@ -250,6 +279,7 @@ impl WikiPublicationRecord {
             return Err("Wiki publication head attempt has no recorded dependency phase.".into());
         }
         validate_retirement_metadata(self)?;
+        validate_head_retirement(self)?;
         validate_failure_metadata(self)?;
         let total = std::iter::once(&self.head)
             .chain(std::iter::once(&self.manifest))
@@ -340,6 +370,49 @@ fn validate_retirement_metadata(record: &WikiPublicationRecord) -> Result<(), St
                 .any(|event| event.id.to_hex() == *dependency_id)
         {
             return Err("Wiki retirement evidence does not name a stored dependency.".into());
+        }
+    }
+    Ok(())
+}
+
+/// Bind a stored head-retirement proof to this exact signed attempt.
+///
+/// The proof is only meaningful as a statement about *this* head and *this*
+/// precondition, so a payload naming any other event, or claiming a retired
+/// precondition while the attempt required no exact revision, is rejected
+/// rather than trusted. An absent field is the ordinary case and proves
+/// nothing.
+pub(super) fn validate_head_retirement(record: &WikiPublicationRecord) -> Result<(), String> {
+    let Some(WikiPublicationReconciliation::Superseded {
+        head_retirement: Some(retirement),
+        ..
+    }) = &record.reconciliation
+    else {
+        return Ok(());
+    };
+    let signed_head = record.head.id.to_hex();
+    match retirement {
+        WikiHeadRetirement::Head { head_id } => {
+            if !is_hex(head_id, 64) || *head_id != signed_head {
+                return Err("Wiki head retirement proof names a different head.".into());
+            }
+        }
+        WikiHeadRetirement::ExpectedHead {
+            head_id,
+            expected_revision,
+        } => {
+            if !is_hex(head_id, 64) || *head_id != signed_head {
+                return Err("Wiki head retirement proof names a different head.".into());
+            }
+            if record.expected_revision == "absent"
+                || !is_hex(expected_revision, 64)
+                || *expected_revision != record.expected_revision
+            {
+                return Err(
+                    "Wiki precondition retirement proof names a different expected revision."
+                        .into(),
+                );
+            }
         }
     }
     Ok(())

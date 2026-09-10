@@ -1,7 +1,8 @@
 //! Recovery-side dispatcher invariants, on the same real journal fixture.
 
 use super::*;
-use crate::commands::wiki_publication_record::WikiPublicationReconciliation;
+use crate::commands::wiki_publication_commands::projected_job;
+use crate::commands::wiki_publication_record::{WikiHeadRetirement, WikiPublicationReconciliation};
 
 fn retirement_proof(record: &WikiPublicationRecord) -> Option<String> {
     match &record.reconciliation {
@@ -225,4 +226,103 @@ async fn driver_resolves_both_relay_commit_orders_without_stranding_a_claim() {
         applied_record.reconciliation,
         Some(WikiPublicationReconciliation::Applied { .. })
     ));
+}
+
+/// R2: a conflict resolution replaces the whole reconciliation value, so the
+/// typed immutable-dependency proof must be carried into the new Superseded
+/// proof — in the durable row, through reopen, and through the public job
+/// projection the renderer actually consumes.
+#[tokio::test]
+async fn driver_conflict_preserves_an_existing_typed_dependency_retirement() {
+    let (journal, operation) = Journal::fixture_for("crew.preserve.dependency");
+    let id = operation.id.clone();
+    journal.head.store(HEAD_MISSING, Ordering::SeqCst);
+    journal
+        .dependencies
+        .store(DEPENDENCIES_MISSING_UNTIL_REPAIR, Ordering::SeqCst);
+    journal.retire_dependency.store(true, Ordering::SeqCst);
+    let retired = drive(&journal, operation, journal.owner, false, false)
+        .await
+        .expect("typed retirement proof is recorded");
+    assert!(!retired.reconciled);
+    let before = journal.stored_record(&id);
+    let dependency_id = retirement_proof(&before).expect("typed dependency proof");
+
+    // A competing head now wins the coordinate. Reconciling that conflict is
+    // where the proof used to be silently dropped.
+    journal.head.store(HEAD_CONFLICT, Ordering::SeqCst);
+    let settled = drive(&journal, journal.reopened(&id), journal.owner, false, true)
+        .await
+        .expect("read-only reconciliation resolves the conflict");
+    assert_eq!(settled.status, OperationStatus::Superseded);
+    assert!(settled.reconciled);
+
+    let after = journal.stored_record(&id);
+    match &after.reconciliation {
+        Some(WikiPublicationReconciliation::Superseded {
+            current_head_id: Some(_),
+            retired_dependency_id: Some(preserved),
+            ..
+        }) => assert_eq!(
+            *preserved, dependency_id,
+            "the dependency proof is retained"
+        ),
+        other => panic!("expected a Superseded proof carrying the dependency: {other:?}"),
+    }
+    // The same fact must survive a journal reopen and reach the projection.
+    let reopened = journal.reopened(&id);
+    assert!(reopened.reconciled);
+    let job = projected_job(&reopened).expect("terminal projection");
+    assert_eq!(
+        job.retired_dependency_id.as_deref(),
+        Some(&dependency_id[..])
+    );
+    // The signed graph and recorded progress are untouched by reconciliation.
+    assert_eq!(after.head, before.head);
+    assert_eq!(after.manifest, before.manifest);
+    assert_eq!(after.pages, before.pages);
+    assert_eq!(after.progress, before.progress);
+    assert_eq!(after.head_attempted, before.head_attempted);
+}
+
+/// R1: a validated head-retirement proof settles the operation terminally in
+/// one guarded CAS, releasing the resource claim so a fresh Generate can take
+/// it — with no further network step after the proof.
+#[tokio::test]
+async fn driver_head_retirement_proof_settles_superseded_and_releases_the_claim() {
+    let (journal, operation) = Journal::fixture_for("crew.head.retired");
+    let id = operation.id.clone();
+    let before = journal.stored_record(&id);
+    let head_id = before.head.id.to_hex();
+    *journal.retire_head.lock().expect("head retirement") = Some(WikiHeadRetirementProof {
+        retirement: WikiHeadRetirement::Head {
+            head_id: head_id.clone(),
+        },
+        current_head_id: None,
+    });
+
+    let settled = drive(&journal, operation, journal.owner, false, false)
+        .await
+        .expect("a proven retired head is terminal");
+    assert_eq!(settled.status, OperationStatus::Superseded);
+    assert!(settled.reconciled, "the unresolved claim is released");
+    assert_eq!(
+        journal.sent.load(Ordering::SeqCst),
+        1,
+        "the proof arrives from the head send; nothing is sent afterwards"
+    );
+
+    let after = journal.stored_record(&id);
+    match &after.reconciliation {
+        Some(WikiPublicationReconciliation::Superseded {
+            head_retirement: Some(WikiHeadRetirement::Head { head_id: proven }),
+            ..
+        }) => assert_eq!(*proven, head_id, "the proof binds this exact signed head"),
+        other => panic!("expected a head-retirement proof: {other:?}"),
+    }
+    assert!(journal.reopened(&id).reconciled, "terminal after reopen");
+    // The persisted signed graph is never replaced by settling.
+    assert_eq!(after.head, before.head);
+    assert_eq!(after.manifest, before.manifest);
+    assert_eq!(after.pages, before.pages);
 }

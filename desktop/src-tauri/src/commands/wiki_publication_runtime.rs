@@ -3,9 +3,12 @@
 use super::owner_operation_transport::{OperationTransportError, OwnerOperationTransport};
 use super::owner_operations::{load_owner_operation_for_dispatch, owner_operation_update};
 use super::wiki_publication_driver::{
-    WikiDependencyState, WikiHead, WikiPublicationRuntime, WikiPublishError,
+    WikiDependencyState, WikiHead, WikiHeadRetirementProof, WikiPublicationRuntime,
+    WikiPublishError,
 };
-use super::wiki_publication_record::{WikiPublicationLease, WikiPublicationRecord};
+use super::wiki_publication_record::{
+    WikiHeadRetirement, WikiPublicationLease, WikiPublicationRecord,
+};
 use crate::app_state::owner_scope::{assert_current, capture, OwnerScopeToken};
 use crate::owner_operations::{Operation, OperationStatus, OperationUpdate};
 use nostr::{Event, Keys, PublicKey};
@@ -502,6 +505,102 @@ impl NativeWikiPublication {
             Ok(None)
         }
     }
+
+    /// Validate a relay head/precondition retirement refusal for the exact
+    /// head this operation is submitting (D-079; accepted, pending
+    /// acceptance).
+    ///
+    /// Every one of these must hold or the outcome stays `Unknown` with a
+    /// retryable claim: the captured relay answered HTTP 400, the machine
+    /// reason parses exactly, its IDs bind this exact signed head (and, for
+    /// the precondition form, this exact non-absent `expected_revision`), the
+    /// owner/community/generation/revision/lease fences still pass on every
+    /// read, the exact retired event really reads back absent, and the current
+    /// `_toc` read succeeds. A live copy of the allegedly retired event
+    /// contradicts the claim outright.
+    async fn prove_retired_head(
+        &self,
+        operation: &Operation,
+        record: &WikiPublicationRecord,
+        event: &Event,
+        error: &OperationTransportError,
+    ) -> Result<Option<WikiHeadRetirementProof>, WikiPublishError> {
+        let OperationTransportError::RelayResponse {
+            status: 400,
+            reason,
+        } = error
+        else {
+            return Ok(None);
+        };
+        // Only the head write can carry a head-retirement proof.
+        if event.id != record.head.id {
+            return Ok(None);
+        }
+        let head_id = record.head.id.to_hex();
+        let Some(parsed) = parse_retired_head_reason(reason) else {
+            return Ok(None);
+        };
+        let (retired_event_id, retirement) = match parsed {
+            ParsedHeadRetirement::Head { head } => {
+                if head != head_id {
+                    return Ok(None);
+                }
+                (head.clone(), WikiHeadRetirement::Head { head_id: head })
+            }
+            ParsedHeadRetirement::ExpectedHead { head, expected } => {
+                if head != head_id
+                    || record.expected_revision == "absent"
+                    || expected != record.expected_revision
+                {
+                    return Ok(None);
+                }
+                (
+                    expected.clone(),
+                    WikiHeadRetirement::ExpectedHead {
+                        head_id: head,
+                        expected_revision: expected,
+                    },
+                )
+            }
+        };
+
+        // The retired event must actually read back absent at this exact
+        // coordinate. A failed query is Unknown, never proof.
+        let head_d = format!("{}/_toc", self.repo_d);
+        let retired = self
+            .query(
+                Some(operation),
+                json!({
+                    "kinds":[WIKI_KIND],
+                    "authors":[self.owner.to_hex()],
+                    "ids":[retired_event_id],
+                    "#d":[head_d],
+                    "limit":2
+                }),
+            )
+            .await
+            .map_err(|query_error| WikiPublishError::Unknown(query_error.to_string()))?;
+        if !retired.is_empty() {
+            return Ok(None);
+        }
+
+        // Read the current head as well. A live desired head contradicts the
+        // retirement claim; any other current head is retained as metadata.
+        let current = self
+            .query_head(Some(operation))
+            .await
+            .map_err(WikiPublishError::Unknown)?;
+        if current
+            .as_ref()
+            .is_some_and(|head| head.id == record.head.id)
+        {
+            return Ok(None);
+        }
+        Ok(Some(WikiHeadRetirementProof {
+            retirement,
+            current_head_id: current.map(|head| head.id.to_hex()),
+        }))
+    }
 }
 
 impl WikiPublicationRuntime for NativeWikiPublication {
@@ -615,6 +714,12 @@ impl WikiPublicationRuntime for NativeWikiPublication {
                     .await?
                 {
                     return Err(WikiPublishError::ImmutableDependencyRetired { event_id });
+                }
+                if let Some(proof) = self
+                    .prove_retired_head(operation, record, event, &error)
+                    .await?
+                {
+                    return Err(WikiPublishError::HeadRetired(Box::new(proof)));
                 }
                 return Err(WikiPublishError::Unknown(error.to_string()));
             }
@@ -763,8 +868,82 @@ fn is_lower_hex(value: &str, width: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+/// Machine reason shapes for D-079 head/precondition retirement.
+pub(super) enum ParsedHeadRetirement {
+    Head { head: String },
+    ExpectedHead { head: String, expected: String },
+}
+
+/// Parse the exact machine reasons the relay emits for a retired conditional
+/// head or a retired exact precondition.
+///
+/// The syntax is strict and total: any other text, a generic conflict, an
+/// older relay's phrasing, or a malformed ID yields `None` and the outcome
+/// stays Unknown. The longer prefix is tested first so it cannot be shadowed.
+pub(super) fn parse_retired_head_reason(reason: &str) -> Option<ParsedHeadRetirement> {
+    if let Some(value) = reason.strip_prefix("conflict: wiki-expected-head-retired:") {
+        let (head, expected) = value.split_once(':')?;
+        return (is_lower_hex(head, 64) && is_lower_hex(expected, 64)).then(|| {
+            ParsedHeadRetirement::ExpectedHead {
+                head: head.to_owned(),
+                expected: expected.to_owned(),
+            }
+        });
+    }
+    let value = reason.strip_prefix("conflict: wiki-head-retired:")?;
+    is_lower_hex(value, 64).then(|| ParsedHeadRetirement::Head {
+        head: value.to_owned(),
+    })
+}
+
 fn parse_retired_dependency_reason(reason: &str) -> Option<String> {
     let prefix = "conflict: wiki-immutable-retired:";
     let value = reason.strip_prefix(prefix)?;
     is_lower_hex(value, 64).then(|| value.to_owned())
+}
+
+#[cfg(test)]
+mod head_retirement_reason_tests {
+    use super::{parse_retired_head_reason, ParsedHeadRetirement};
+
+    const H: &str = "aa11bb22cc33dd44ee55ff6677889900aa11bb22cc33dd44ee55ff6677889900";
+    const E: &str = "bb11cc22dd33ee44ff5500667788990011223344556677889900aabbccddeeff";
+
+    /// Only the exact machine syntax is proof. Everything else — a generic
+    /// conflict, an older relay's phrasing, a truncated or upper-case ID, a
+    /// missing field — must stay unproven so the driver keeps a retryable
+    /// claim instead of settling on a guess.
+    #[test]
+    fn only_exact_head_retirement_machine_reasons_parse() {
+        match parse_retired_head_reason(&format!("conflict: wiki-head-retired:{H}")) {
+            Some(ParsedHeadRetirement::Head { head }) => assert_eq!(head, H),
+            other => panic!("exact head reason must parse: {}", other.is_some()),
+        }
+        match parse_retired_head_reason(&format!("conflict: wiki-expected-head-retired:{H}:{E}")) {
+            Some(ParsedHeadRetirement::ExpectedHead { head, expected }) => {
+                assert_eq!(head, H);
+                assert_eq!(expected, E);
+            }
+            other => panic!("exact precondition reason must parse: {}", other.is_some()),
+        }
+
+        for unproven in [
+            String::from("conflict: conditional publication revision changed"),
+            String::from("conflict: conditional publication is no longer the live head"),
+            format!("conflict: wiki-immutable-retired:{H}"),
+            format!("conflict: wiki-head-retired:{}", H.to_uppercase()),
+            format!("conflict: wiki-head-retired:{}", &H[..63]),
+            format!("conflict: wiki-head-retired:{H}:{E}"),
+            format!("conflict: wiki-expected-head-retired:{H}"),
+            format!("conflict: wiki-expected-head-retired:{H}:"),
+            format!("conflict: wiki-expected-head-retired:{H}:{}", &E[..10]),
+            format!("  conflict: wiki-head-retired:{H}"),
+            format!("restricted: wiki-head-retired:{H}"),
+        ] {
+            assert!(
+                parse_retired_head_reason(&unproven).is_none(),
+                "must not parse as proof: {unproven}"
+            );
+        }
+    }
 }

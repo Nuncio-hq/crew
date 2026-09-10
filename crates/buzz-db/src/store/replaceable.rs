@@ -81,6 +81,43 @@ pub(crate) fn event_replacement_lock_key(
     hash as i64
 }
 
+/// The replaceable Wiki head coordinate (`<repo-d>/_toc`). Only this address
+/// carries the conditional publication precondition.
+fn is_wiki_toc_d_tag(d_tag: &str) -> bool {
+    d_tag
+        .rsplit_once('/')
+        .is_some_and(|(repo, slug)| !repo.is_empty() && slug == "_toc")
+}
+
+/// Whether this exact event ID was accepted at this exact
+/// community/owner/kind/`d` coordinate and is now soft deleted.
+///
+/// Scoping every field is what makes the answer evidence: an event that only
+/// exists at some other coordinate, or under another owner or community, says
+/// nothing about this coordinate's precondition.
+async fn retired_at_coordinate(
+    tx: &mut Transaction<'_, Postgres>,
+    community_id: CommunityId,
+    kind_i32: i32,
+    pubkey_bytes: &[u8],
+    d_tag: &str,
+    event_id: &[u8],
+) -> Result<bool> {
+    let found: Option<(bool,)> = sqlx::query_as(
+        "SELECT true FROM events \
+         WHERE community_id = $1 AND kind = $2 AND pubkey = $3 AND d_tag = $4 AND id = $5 \
+           AND deleted_at IS NOT NULL LIMIT 1",
+    )
+    .bind(community_id.as_uuid())
+    .bind(kind_i32)
+    .bind(pubkey_bytes)
+    .bind(d_tag)
+    .bind(event_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(found.is_some())
+}
+
 fn is_reserved_wiki_d_tag(d_tag: &str) -> bool {
     let Some((_, slug)) = d_tag.rsplit_once('/') else {
         return false;
@@ -313,6 +350,72 @@ async fn replace_parameterized_event_in_transaction_impl(
             channel_id,
             ParameterizedReplaceStatus::ReplayOnlyMiss,
         ));
+    }
+
+    // D-079 head/precondition retirement (accepted; implementation pending
+    // acceptance). Only a conditional v1 Wiki `_toc` write qualifies, and only
+    // while this transaction already holds the owner then coordinate locks. A
+    // historical non-live exact event can never be reinserted, so its recorded
+    // identity is durable evidence that this exact attempt can never become
+    // live — unlike an empty read, which proves nothing. The exact live replay
+    // above is answered as a successful duplicate first, and a *different*
+    // live head keeps its existing conflict classification.
+    let conditional_toc = is_wiki
+        && incoming_v1_wiki
+        && !incoming_reserved_wiki
+        && is_wiki_toc_d_tag(d_tag)
+        && matches!(
+            precondition,
+            ParameterizedReplacePrecondition::ExpectedMissing
+                | ParameterizedReplacePrecondition::ExpectedRevision(_)
+        );
+    if conditional_toc {
+        // Classify a retired desired head *before* the generic
+        // ExpectedRevision early return, so a permanently retired H is never
+        // hidden behind RevisionMissing. A query failure propagates and can
+        // never be reported as proof.
+        if retired_at_coordinate(
+            tx,
+            community_id,
+            kind_i32,
+            pubkey_bytes.as_slice(),
+            d_tag,
+            incoming_id,
+        )
+        .await?
+        {
+            return Ok(ParameterizedReplaceResult::new(
+                event,
+                received_at,
+                channel_id,
+                ParameterizedReplaceStatus::WikiHeadRetired,
+            ));
+        }
+        if let ParameterizedReplacePrecondition::ExpectedRevision(expected_revision) = precondition
+        {
+            // The precondition is unsatisfiable only when there is no live
+            // head at all and the exact expected event is itself retired at
+            // this same coordinate. An unknown or foreign expected revision
+            // stays generic RevisionMissing.
+            if existing.is_none()
+                && retired_at_coordinate(
+                    tx,
+                    community_id,
+                    kind_i32,
+                    pubkey_bytes.as_slice(),
+                    d_tag,
+                    expected_revision,
+                )
+                .await?
+            {
+                return Ok(ParameterizedReplaceResult::new(
+                    event,
+                    received_at,
+                    channel_id,
+                    ParameterizedReplaceStatus::WikiExpectedHeadRetired,
+                ));
+            }
+        }
     }
 
     if let ParameterizedReplacePrecondition::ExpectedRevision(expected_revision) = precondition {

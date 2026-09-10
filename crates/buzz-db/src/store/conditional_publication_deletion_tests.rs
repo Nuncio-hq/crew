@@ -256,3 +256,156 @@ async fn conditional_publication_exact_id_delete_waits_for_live_replay_decision(
     })
     .await;
 }
+
+/// D-079 head retirement: the exact submitted head was accepted and later
+/// deleted, so a replay against absence is permanently refused with proof.
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn conditional_publication_reports_retired_head_after_accept_then_delete() {
+    scenario(|db, community, keys| async move {
+        let d = "repo/_toc";
+        let owner = keys.public_key().to_bytes();
+        let head = event(&keys, d, "head", Timestamp::now().as_secs(), true);
+
+        assert_eq!(
+            expect_missing_write(&db, community, &head, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        // The exact live head still ACKs as a successful duplicate. This
+        // ordering matters: proof must never pre-empt a live replay.
+        assert_eq!(
+            expect_missing_write(&db, community, &head, d).await,
+            ParameterizedReplaceStatus::Duplicate
+        );
+
+        assert!(db
+            .soft_delete_event(community, head.id.as_bytes())
+            .await
+            .expect("delete head"));
+        assert_eq!(live_rows(&db, community, &owner, d).await, 0);
+
+        assert_eq!(
+            expect_missing_write(&db, community, &head, d).await,
+            ParameterizedReplaceStatus::WikiHeadRetired,
+            "a historically accepted, now deleted head is permanently retired"
+        );
+        assert_eq!(
+            live_rows(&db, community, &owner, d).await,
+            0,
+            "a refused write must not insert anything"
+        );
+
+        // A head that was never accepted has no such evidence: absence alone
+        // is not retirement, and this attempt must stay admissible.
+        let fresh = event(&keys, d, "fresh", Timestamp::now().as_secs() + 1, true);
+        assert_eq!(
+            expect_missing_write(&db, community, &fresh, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert_eq!(live_rows(&db, community, &owner, d).await, 1);
+    })
+    .await;
+}
+
+/// D-079 precondition retirement: the exact expected predecessor was accepted
+/// and later deleted while the coordinate has no live head.
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn conditional_publication_reports_retired_expected_head_only_for_the_exact_predecessor() {
+    scenario(|db, community, keys| async move {
+        let d = "repo/_toc";
+        let owner = keys.public_key().to_bytes();
+        let predecessor = event(&keys, d, "predecessor", Timestamp::now().as_secs(), true);
+        let successor = event(&keys, d, "successor", Timestamp::now().as_secs() + 1, true);
+
+        assert_eq!(
+            expect_missing_write(&db, community, &predecessor, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert!(db
+            .soft_delete_event(community, predecessor.id.as_bytes())
+            .await
+            .expect("delete predecessor"));
+        assert_eq!(live_rows(&db, community, &owner, d).await, 0);
+
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &successor,
+                d,
+                ParameterizedReplacePrecondition::ExpectedRevision(predecessor.id.as_bytes()),
+            )
+            .await,
+            ParameterizedReplaceStatus::WikiExpectedHeadRetired,
+            "the exact expected predecessor can never be live again"
+        );
+        assert_eq!(live_rows(&db, community, &owner, d).await, 0);
+
+        // An expected revision that was never accepted at this coordinate is
+        // unknown, not retired, and keeps the generic classification.
+        let unknown = event(&keys, d, "unknown", Timestamp::now().as_secs() + 2, true);
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &successor,
+                d,
+                ParameterizedReplacePrecondition::ExpectedRevision(unknown.id.as_bytes()),
+            )
+            .await,
+            ParameterizedReplaceStatus::RevisionMissing,
+            "an unknown expected revision is never upgraded into proof"
+        );
+
+        // Neither is an event that exists only at a different coordinate.
+        let foreign_d = "other/_toc";
+        let foreign = event(
+            &keys,
+            foreign_d,
+            "foreign",
+            Timestamp::now().as_secs() + 3,
+            true,
+        );
+        assert_eq!(
+            expect_missing_write(&db, community, &foreign, foreign_d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert!(db
+            .soft_delete_event(community, foreign.id.as_bytes())
+            .await
+            .expect("delete foreign"));
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &successor,
+                d,
+                ParameterizedReplacePrecondition::ExpectedRevision(foreign.id.as_bytes()),
+            )
+            .await,
+            ParameterizedReplaceStatus::RevisionMissing,
+            "a retired event at another coordinate proves nothing here"
+        );
+
+        // With a live head restored, a retired predecessor is an ordinary
+        // mismatch again rather than a permanent retirement.
+        let live = event(&keys, d, "live", Timestamp::now().as_secs() + 4, true);
+        assert_eq!(
+            expect_missing_write(&db, community, &live, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &successor,
+                d,
+                ParameterizedReplacePrecondition::ExpectedRevision(predecessor.id.as_bytes()),
+            )
+            .await,
+            ParameterizedReplaceStatus::RevisionMismatch
+        );
+    })
+    .await;
+}

@@ -392,7 +392,11 @@ outcome; cancellation alone cannot prove that an attempted write did not land.
 Cancel stops automatic sends. For an unresolved ambiguous attempt, explicit
 Resume publication durably revokes cancellation before reusing the same graph
 and CAS precondition. Reconcile remains read-only. A typed permanently retired
-dependency requires Regenerate instead; see D-079 for the recovery contract.
+dependency requires Regenerate instead. When the relay proves that the exact
+head, or the exact non-absent revision it required, was accepted and later
+deleted, the attempt is settled terminally as superseded and its claim is
+released in the same guarded write — no new state, action or network step. All
+other absence remains unresolved; see D-079 for the full recovery contract.
 
 The native `wiki_snapshot_read` command reads one exact repository coordinate
 under a captured owner/community/generation token and rereads its replaceable

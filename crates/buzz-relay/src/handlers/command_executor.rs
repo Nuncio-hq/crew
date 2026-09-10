@@ -183,6 +183,15 @@ async fn persist_command_event(
                     "error: replay-only replacement lacked a revision error".into(),
                 )),
             },
+            // Wiki `_toc` head-retirement proof statuses. The store emits them
+            // only for conditional kind 30623 `_toc` writes, which never reach
+            // this workflow executor. Fail closed rather than silently treating
+            // an unexpected proof as a workflow duplicate; workflow semantics
+            // are unchanged.
+            ParameterizedReplaceStatus::WikiHeadRetired
+            | ParameterizedReplaceStatus::WikiExpectedHeadRetired => Err(IngestError::Internal(
+                "error: unexpected Wiki head-retirement result on the workflow path".into(),
+            )),
         };
     }
 

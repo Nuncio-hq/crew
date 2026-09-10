@@ -4,8 +4,8 @@
 //! the same ordering and recovery rules as the captured desktop runtime.
 
 use super::wiki_publication_record::{
-    WikiPublicationLease, WikiPublicationProgress, WikiPublicationReconciliation,
-    WikiPublicationRecord,
+    WikiHeadRetirement, WikiPublicationLease, WikiPublicationProgress,
+    WikiPublicationReconciliation, WikiPublicationRecord,
 };
 use crate::owner_operations::{Operation, OperationStatus};
 use nostr::PublicKey;
@@ -23,11 +23,28 @@ pub(super) enum WikiDependencyState {
 /// has a special, machine-readable relay refusal which is strong enough to
 /// authorize the explicit successor flow.  Every other transport failure is
 /// deliberately opaque to recovery: an ACK may have committed remotely.
+/// Validated relay proof that the conditional head attempt itself, or its
+/// exact expected predecessor, is permanently retired.
+///
+/// `current_head_id` is whatever different head the coordinate carries now,
+/// retained as Superseded metadata. It is never the desired head: a live
+/// desired head contradicts retirement and is rejected before this is built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct WikiHeadRetirementProof {
+    pub(super) retirement: WikiHeadRetirement,
+    pub(super) current_head_id: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum WikiPublishError {
     /// The relay proved that this exact persisted immutable event is no longer
     /// live.  The event ID is retained as typed evidence in the journal.
     ImmutableDependencyRetired { event_id: String },
+    /// The relay proved that this exact conditional head, or its exact
+    /// expected predecessor, can never become live again. This settles the
+    /// operation terminally; it is a different fact from a retired page or
+    /// manifest dependency and is never conflated with one.
+    HeadRetired(Box<WikiHeadRetirementProof>),
     /// The result is not strong enough to classify as permanent retirement.
     Unknown(String),
 }
@@ -39,6 +56,18 @@ impl std::fmt::Display for WikiPublishError {
                 formatter,
                 "Wiki immutable dependency retired: {event_id}. Regenerate the Wiki to create a fresh snapshot."
             ),
+            Self::HeadRetired(proof) => match &proof.retirement {
+                WikiHeadRetirement::Head { head_id } => write!(
+                    formatter,
+                    "Wiki head {head_id} is permanently retired; this publication can never be applied."
+                ),
+                WikiHeadRetirement::ExpectedHead {
+                    expected_revision, ..
+                } => write!(
+                    formatter,
+                    "The Wiki revision {expected_revision} this publication required is permanently retired."
+                ),
+            },
             Self::Unknown(reason) => formatter.write_str(reason),
         }
     }
@@ -151,6 +180,43 @@ fn truncate_error(reason: &str) -> String {
         "Wiki publication failed.".into()
     } else {
         text
+    }
+}
+
+/// Any immutable dependency retirement this record already proved.
+///
+/// A conflict resolution replaces the whole `reconciliation` value, so the
+/// typed dependency proof must be carried forward explicitly or it is lost —
+/// both from the durable row and from every later projection and reopen. It is
+/// read from either the unresolved typed proof or an already terminal-shaped
+/// Superseded metadata, so repeated reconciliation stays idempotent.
+fn retained_dependency_id(record: &WikiPublicationRecord) -> Option<String> {
+    match &record.reconciliation {
+        Some(WikiPublicationReconciliation::ImmutableDependencyRetired { dependency_id }) => {
+            Some(dependency_id.clone())
+        }
+        Some(WikiPublicationReconciliation::Superseded {
+            retired_dependency_id: Some(dependency_id),
+            ..
+        }) => Some(dependency_id.clone()),
+        _ => None,
+    }
+}
+
+/// The single production constructor for a Superseded proof.
+///
+/// Both conflict arms and the head-retirement settle go through it, so the
+/// dependency proof is preserved in exactly one place and a head-retirement
+/// proof is carried independently rather than conflated with it.
+fn superseded_proof(
+    record: &WikiPublicationRecord,
+    current_head_id: Option<String>,
+    head_retirement: Option<WikiHeadRetirement>,
+) -> WikiPublicationReconciliation {
+    WikiPublicationReconciliation::Superseded {
+        current_head_id,
+        retired_dependency_id: retained_dependency_id(record),
+        head_retirement,
     }
 }
 
@@ -315,16 +381,8 @@ pub(super) async fn drive<R: WikiPublicationRuntime>(
             .await;
         }
         Ok(WikiHead::Conflict(current_head_id)) => {
-            return resolve(
-                runtime,
-                &operation,
-                &mut record,
-                WikiPublicationReconciliation::Superseded {
-                    current_head_id: Some(current_head_id),
-                    retired_dependency_id: None,
-                },
-            )
-            .await;
+            let proof = superseded_proof(&record, Some(current_head_id), None);
+            return resolve(runtime, &operation, &mut record, proof).await;
         }
         Ok(WikiHead::Original) if read_only => {
             if record.cancel_requested && !record.head_attempted {
@@ -497,6 +555,21 @@ pub(super) async fn drive<R: WikiPublicationRuntime>(
         .save(&operation, &record, OperationStatus::Pending, false)
         .await?;
     let publish_result = runtime.publish(&operation, &record, &record.head).await;
+    // A validated head/precondition retirement is terminal on its own: the
+    // runtime already proved the exact retired event absent and read the
+    // current head under the active fences. Settle it in ONE guarded CAS
+    // before the ordinary post-send inspection, and take no further network
+    // step — another read could only reintroduce ambiguity into a fact that is
+    // already durable. If this save fails, nothing is released: the row keeps
+    // its retryable claim and the same relay refusal can be obtained again.
+    if let Err(WikiPublishError::HeadRetired(proof)) = &publish_result {
+        let proof = superseded_proof(
+            &record,
+            proof.current_head_id.clone(),
+            Some(proof.retirement.clone()),
+        );
+        return resolve(runtime, &operation, &mut record, proof).await;
+    }
     runtime.checkpoint(&operation).await?;
     match runtime.inspect(&mut operation, &mut record, &worker).await {
         Ok(WikiHead::Applied) => {
@@ -510,16 +583,8 @@ pub(super) async fn drive<R: WikiPublicationRuntime>(
             .await
         }
         Ok(WikiHead::Conflict(current_head_id)) => {
-            resolve(
-                runtime,
-                &operation,
-                &mut record,
-                WikiPublicationReconciliation::Superseded {
-                    current_head_id: Some(current_head_id),
-                    retired_dependency_id: None,
-                },
-            )
-            .await
+            let proof = superseded_proof(&record, Some(current_head_id), None);
+            resolve(runtime, &operation, &mut record, proof).await
         }
         Ok(WikiHead::Missing | WikiHead::Original) => {
             fail(

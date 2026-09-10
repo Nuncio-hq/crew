@@ -41,6 +41,7 @@ fn superseded_update(record: &WikiPublicationRecord) -> OperationUpdate {
     retired.reconciliation = Some(WikiPublicationReconciliation::Superseded {
         current_head_id: None,
         retired_dependency_id: None,
+        head_retirement: None,
     });
     retired.lease = None;
     retired.retry_at = 0;

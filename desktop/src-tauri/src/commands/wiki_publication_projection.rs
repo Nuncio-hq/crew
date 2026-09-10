@@ -20,7 +20,9 @@ pub(super) fn job_from_operation(operation: &Operation) -> Result<WikiPublicatio
     job_from_operation_with_validation(operation, true)
 }
 
-pub(super) fn job_from_projection(operation: &Operation) -> Result<WikiPublicationJob, String> {
+pub(in crate::commands) fn job_from_projection(
+    operation: &Operation,
+) -> Result<WikiPublicationJob, String> {
     job_from_operation_with_validation(operation, false)
 }
 

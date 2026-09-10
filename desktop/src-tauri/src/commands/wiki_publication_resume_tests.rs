@@ -353,6 +353,7 @@ async fn driver_resume_eligibility_requires_an_explicit_action_and_no_typed_proo
     proven.reconciliation = Some(WikiPublicationReconciliation::Superseded {
         current_head_id: Some("c".repeat(64)),
         retired_dependency_id: None,
+        head_retirement: None,
     });
     assert!(
         !may_resume(&proven, true, false),

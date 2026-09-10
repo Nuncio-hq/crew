@@ -532,6 +532,24 @@ first must leave a working recovery action. Generic refusal from an older
 relay, a missing query result and transport failure must never become deletion
 proof. A new UUID must produce new immutable addresses even for unchanged source.
 
+Head and precondition retirement (accepted design; implementation and runtime
+evidence pending in #362) extends the same matrix. On real PostgreSQL: an
+accepted-then-deleted head must classify as retired while its exact live replay
+still ACKs as a duplicate first; an accepted-then-deleted non-absent
+`expected-revision` with no live head must classify as a retired precondition;
+an unknown expected revision, one retired only at another coordinate, and a
+restored live head must all keep the generic classification; a never-accepted
+head under `expected-revision: absent` must stay admissible, proving absence is
+not retirement. Refused writes must insert nothing. Natively: each malformed,
+foreign, generic, non-400, failed-query and still-live condition must stay
+Unknown with a retryable claim; a validated proof must settle `Superseded` and
+reconciled in one guarded CAS, send nothing afterwards, survive journal reopen,
+release the resource claim for a fresh Generate, and preserve the signed graph,
+progress and head-attempt metadata. A conflict reconciliation must carry any
+existing typed dependency retirement into the new proof, visible through both
+the durable record and the public job projection. Reconcile and automatic
+restart must still send nothing.
+
 After migration, binary rollback alone is unsupported. The forward-recovery
 procedure is to quit every app instance using this journal, preserve its full
 directory, verify a v2-capable build and reopen the same journal. Set the paths

@@ -226,7 +226,14 @@ export function WikiLibraryScreen() {
             : undefined
         }
         onRegenerate={
-          selectedRecovery && repo && selectedJob?.retiredDependencyId
+          // Regeneration captures fresh source, which the native generator can
+          // only do from a linked local workspace. Gate the detail view on the
+          // same `localWorkspacePath` the library card and Projects tab
+          // already require, so an unlinked repository does not offer an
+          // action that must fail. Reconcile stays available either way.
+          selectedRecovery &&
+          repo?.localWorkspacePath &&
+          selectedJob?.retiredDependencyId
             ? () =>
                 recovery.recover({
                   action: "regenerate",

@@ -398,6 +398,22 @@ fn wiki_immutable_retired_error(kind: u32, d_tag: &str, event_id: &str) -> Optio
         .then(|| IngestError::Rejected(format!("conflict: wiki-immutable-retired:{event_id}")))
 }
 
+/// Lowercase hex of the exact non-absent expected revision this conditional
+/// request compared against, when it selected one.
+///
+/// `expected-revision: absent` carries no event identity and can never be
+/// retired, so it deliberately yields `None`.
+fn conditional_expected_revision_hex(
+    mode: &super::source_publication::PublicationMode,
+) -> Option<String> {
+    match mode {
+        super::source_publication::PublicationMode::Conditional(
+            super::source_publication::ConditionalRevision::ExpectedRevision(revision),
+        ) => Some(hex::encode(revision)),
+        _ => None,
+    }
+}
+
 /// Map the durable community write-fence lookup onto the ingest error taxonomy.
 ///
 /// An inactive community is an authorization decision and keeps the exact
@@ -3776,6 +3792,41 @@ async fn ingest_event_inner(
                         IngestError::Internal(format!("error: rollback publication replay: {e}"))
                     })?;
                     (result.event, false)
+                }
+                // D-079 head/precondition retirement (accepted; implementation
+                // pending acceptance). These two statuses are the only durable
+                // proof that this exact conditional Wiki attempt can never
+                // become live. The machine reason binds the exact submitted
+                // head — and, for the precondition case, the exact expected
+                // revision — so a native reader cannot mistake one attempt's
+                // refusal for another's. The proof is emitted only after the
+                // rejecting transaction rolls back cleanly; a failed rollback
+                // is an internal error and never a proof.
+                ParameterizedReplaceStatus::WikiHeadRetired => {
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication conflict: {e}"))
+                    })?;
+                    return Err(IngestError::Rejected(format!(
+                        "conflict: wiki-head-retired:{event_id_hex}"
+                    )));
+                }
+                ParameterizedReplaceStatus::WikiExpectedHeadRetired => {
+                    tx.rollback().await.map_err(|e| {
+                        IngestError::Internal(format!("error: rollback publication conflict: {e}"))
+                    })?;
+                    let Some(expected_hex) = conditional_expected_revision_hex(&publication_mode)
+                    else {
+                        // Unreachable: the store only returns this status for an
+                        // ExpectedRevision precondition. Without the exact
+                        // expected ID there is no bindable proof, so degrade to
+                        // the generic conflict rather than emit a partial one.
+                        return Err(IngestError::Rejected(
+                            "conflict: conditional publication revision changed".into(),
+                        ));
+                    };
+                    return Err(IngestError::Rejected(format!(
+                        "conflict: wiki-expected-head-retired:{event_id_hex}:{expected_hex}"
+                    )));
                 }
                 ParameterizedReplaceStatus::RevisionMissing
                 | ParameterizedReplaceStatus::RevisionMismatch
