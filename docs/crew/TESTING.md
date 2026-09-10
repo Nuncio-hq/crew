@@ -382,3 +382,21 @@ draft/scroll and returns focus without closing the outer thread. Observe zero
 native activation commands from selection/restoration, while existing hide and
 sim-visible-false cleanup still executes. Preserve channel-to-channel remount
 compatibility. Mock checks do not satisfy native #348/#357 evidence.
+
+The #354 control foundation's `crew_thread_cancel_tests` Rust filter calls the
+real cancel handler with `AgentPool`, `EventQueue` and `ObserverHandle`. It covers
+stale targets with queued/replacement work, wrong channel/conversation, malformed
+explicit target presence, a closed signal receiver, accepted-only lease release,
+exact success and absent-turn legacy cancellation. The injected release callback
+observes the handler's side-effect decision; it does not prove native OS cleanup.
+Run `owner_control_command_tests` for adjacent queue/control compatibility.
+
+`useChannelUserInput.actions.test.mjs` mounts the real hook with existing durable
+hydration and authorization logic, stubbing relay/identity/IPC boundaries. It
+covers same-tick duplicate publication, current failure/retry, stale relay/viewer
+callbacks, resolved-request replay, immediate ownership revocation and concurrent
+question completion. `userInputAnswerGate.test.mjs` proves bounded admission has
+a visible error and recovers after authoritative reconciliation. These are scoped
+UI publication checks; the existing elicitation durable-claim tests establish the
+separate native claim contract. Selected-run controls and strict Steer still need
+their own workflow proof before #354 is complete.

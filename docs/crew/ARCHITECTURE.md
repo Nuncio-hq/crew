@@ -280,3 +280,20 @@ remain authoritative. Preserve `browserClose`/sim visibility cleanup; fence
 `browserOpen` and `simEnsureDevice` mount activation. The existing channel-only
 popout has independent window state and remains outside #354; governor resource
 identity/leases remain shared. D-078 records the bounded approved decision.
+
+The #354 control foundation extends the existing `cancel_turn` handler through
+`crates/buzz-acp/src/crew_thread_cancel.rs`. An explicit `turnId` requires an
+exact routing channel, conversation and current turn match; malformed or missing
+matches cannot drain queued work or release an instrument lease. A closed signal
+receiver is not a sent cancellation. Omitting `turnId` retains the existing
+conversation cancel/queue-drain behavior. This does not stop the agent process.
+
+`useChannelUserInput` retains the existing durable request validation and native
+answer publisher. Its bounded ephemeral publication gate prevents same-view
+duplicate answers and fences completion by relay, viewer, channel and ownership
+generation. Publication failure keeps the request available with its error;
+success waits for the existing durable resolution/claim semantics. Native
+`QuestionRuntime` remains the authority for answer-versus-cancel claims. These
+foundations do not yet provide the selected-run controls UI. Strict Steer remains
+unimplemented: the existing ordinary-message `_session/steering` transport can
+start a new turn and cannot promise rejection of a stale selected run.

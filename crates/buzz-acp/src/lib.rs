@@ -1172,92 +1172,7 @@ async fn handle_relay_observer_control_event(
     }
 }
 
-/// Resolve the cancel_turn outcome after attempting to signal an in-flight turn.
-///
-/// When nothing is in flight, fall through to draining the conversation's
-/// queued events (the hold window / idle case). Keep `no_active_turn` only
-/// when there is genuinely nothing to stop.
-fn resolve_cancel_turn_outcome(
-    fired: bool,
-    queue: &mut EventQueue,
-    conversation_key: Uuid,
-) -> (&'static str, Vec<String>) {
-    if fired {
-        return ("sent", Vec::new());
-    }
-    let ids = queue.drain_channel(conversation_key);
-    if ids.is_empty() {
-        ("no_active_turn", ids)
-    } else {
-        ("cancelled_queued", ids)
-    }
-}
-
-/// Handle a `cancel_turn` control frame: signal the in-flight task to cancel,
-/// or drain queued (not-yet-dispatched) events when nothing is in flight.
-fn handle_cancel_turn_control(
-    payload: &serde_json::Value,
-    pool: &mut AgentPool,
-    queue: &mut EventQueue,
-    rest_client: Option<&relay::RestClient>,
-    observer: Option<&observer::ObserverHandle>,
-) {
-    let Some(channel_id) = payload
-        .get("channelId")
-        .and_then(|value| value.as_str())
-        .and_then(|value| value.parse::<Uuid>().ok())
-    else {
-        tracing::warn!("observer cancel_turn control frame missing valid channelId");
-        return;
-    };
-    let conversation_id = payload
-        .get("conversationId")
-        .and_then(|value| value.as_str())
-        .and_then(|value| value.parse::<Uuid>().ok());
-    let turn_id = payload
-        .get("turnId")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.is_empty());
-
-    let conversation_key = conversation_id.unwrap_or(channel_id);
-    let fired = if let Some(turn_id) = turn_id {
-        signal_in_flight_turn(pool, turn_id, ControlSignal::Cancel)
-    } else {
-        signal_in_flight_task(pool, conversation_key, channel_id, ControlSignal::Cancel)
-    };
-    let (status, drained_ids) = resolve_cancel_turn_outcome(fired, queue, conversation_key);
-    let drained_count = drained_ids.len();
-    if !drained_ids.is_empty() {
-        if let Some(rest) = rest_client {
-            let rest = rest.clone();
-            tokio::spawn(async move {
-                pool::clear_reactions(rest, drained_ids).await;
-            });
-        }
-    }
-    if let Some(observer) = observer {
-        let context = observer::context_for_conversation(
-            Some(channel_id),
-            conversation_id,
-            None,
-            turn_id.map(ToOwned::to_owned),
-        );
-        observer.emit(
-            "control_result",
-            None,
-            &context,
-            serde_json::json!({
-                "type": "cancel_turn",
-                "requestId": payload.get("requestId"),
-                "status": status,
-                "drainedCount": drained_count,
-                "conversationId": conversation_id.map(|id| id.to_string()),
-                "turnId": turn_id,
-            }),
-        );
-    }
-    crate::desktop_control::notify_lease_release(Some(channel_id.to_string()), "cancel");
-}
+include!("crew_thread_cancel.rs");
 
 /// Handle a `switch_model` control frame (Phase 3a, Option ii).
 ///
@@ -11563,4 +11478,10 @@ mod observer_payload_trim_tests {
         assert!(leaf.ends_with('…'));
         assert!(leaf.contains("[elided"));
     }
+}
+
+#[cfg(test)]
+mod crew_thread_cancel_tests {
+    use super::*;
+    include!("crew-thread-cancel-tests.rs");
 }
