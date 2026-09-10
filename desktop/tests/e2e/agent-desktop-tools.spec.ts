@@ -93,12 +93,11 @@ test.describe("agent desktop tools (#197)", () => {
     });
   });
 
-  test("instrument is not the pane: sidebar dot then mid-flight reveal", async ({
-    page,
-  }) => {
+  test("instrument is not the pane: mid-flight reveal", async ({ page }) => {
     await installMockBridge(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("channel-general")).toBeVisible();
+    await openWorkspaceChannel(page, "general");
+    await expect(page.getByTestId("chat-title")).toHaveText("general");
     await seedControl(page, {
       leases: [
         {
@@ -118,13 +117,6 @@ test.describe("agent desktop tools (#197)", () => {
       },
       pendingOrigin: null,
     });
-    await expect(page.getByTestId("resource-dot-sim")).toBeVisible();
-    await waitForAnimations(page);
-    await page.locator("[data-testid='channel-general']").screenshot({
-      path: `${SHOTS}/03-sidebar-dot-pane-closed.png`,
-    });
-
-    await openWorkspaceChannel(page, "general");
     await openTools(page, "sim");
     await expect(page.getByTestId("sim-driving-banner")).toContainText(
       "Hermes is driving",
@@ -132,7 +124,7 @@ test.describe("agent desktop tools (#197)", () => {
     await expect(page.getByTestId("sim-ghost-cursor")).toBeVisible();
     await waitForAnimations(page);
     await page.getByTestId("tool-pane-sim").screenshot({
-      path: `${SHOTS}/04-pane-opens-mid-flight.png`,
+      path: `${SHOTS}/03-pane-opens-mid-flight.png`,
     });
   });
 

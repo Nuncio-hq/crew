@@ -8,6 +8,7 @@ import {
 } from "../helpers/bridge";
 import { expectEmojiMartStylesInstalled } from "../helpers/css";
 import { openProfileMenu, openSettings } from "../helpers/settings";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 async function expectHomeView(page: import("@playwright/test").Page) {
   await expect(page.getByTestId("home-inbox-list")).toBeVisible();
@@ -80,14 +81,8 @@ async function addGenericAgent(
   agentName: string,
   systemPrompt = "Watch the channel and help when asked.",
 ): Promise<string> {
-  await page.getByTestId(`channel-${channelName}`).click();
+  await openWorkspaceChannel(page, channelName);
   await expect(page.getByTestId("chat-title")).toHaveText(channelName);
-  const channelId = await page
-    .getByTestId(`channel-${channelName}`)
-    .getAttribute("data-channel-id");
-  if (!channelId) {
-    throw new Error(`Channel ${channelName} is missing a data-channel-id.`);
-  }
 
   await page.waitForFunction(() => {
     return Boolean(
@@ -99,17 +94,31 @@ async function addGenericAgent(
     );
   });
   return page.evaluate(
-    async ({ agentName, channelId, systemPrompt }) => {
+    async ({ agentName, channelName, systemPrompt }) => {
       const invoke = (
         window as Window & {
           __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
             command: string,
             payload?: Record<string, unknown>,
-          ) => Promise<{ agent?: { pubkey: string }; id?: string }>;
+          ) => Promise<{
+            agent?: { pubkey: string };
+            channels?: Array<{ id: string; name: string }> | null;
+            id?: string;
+          }>;
         }
       ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__;
       if (!invoke) {
         throw new Error("Mock bridge is not installed.");
+      }
+
+      const channels = (await invoke("get_channels")) as {
+        channels?: Array<{ id: string; name: string }> | null;
+      };
+      const channelId = channels.channels?.find(
+        (channel) => channel.name === channelName,
+      )?.id;
+      if (!channelId) {
+        throw new Error(`Channel ${channelName} is missing from get_channels.`);
       }
 
       const persona = await invoke("create_persona", {
@@ -151,7 +160,7 @@ async function addGenericAgent(
 
       return pubkey;
     },
-    { agentName, channelId, systemPrompt },
+    { agentName, channelName, systemPrompt },
   );
 }
 
@@ -212,7 +221,7 @@ test("profile panel shows communication actions as quick action tiles", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await waitForMockLiveSubscription(page, "general");
 
@@ -1009,7 +1018,7 @@ test("renders agent profile ingress subviews from the Playwright mock bridge", a
     );
   await emitAgentPresence("online");
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await waitForMockLiveSubscription(page, "general");
 
@@ -1722,7 +1731,7 @@ test("an older agent message stays exact while persona navigation selects the li
   const exactInstanceContract = await readOwnedAgentProfileContract(page);
 
   await page.getByTestId("auxiliary-panel-close").click();
-  await page.getByTestId("channel-agents").click();
+  await openWorkspaceChannel(page, "agents");
   const historicalMessage = page
     .getByTestId("message-row")
     .filter({ hasText: "Indexing the channel catalog now." });
@@ -1760,7 +1769,7 @@ test("restored Inbox deep link hides the back arrow", async ({ page }) => {
   });
   await page.goto("/");
 
-  await page.getByTestId("channel-agents").click();
+  await openWorkspaceChannel(page, "agents");
   await expect(page.getByTestId("chat-title")).toHaveText("agents");
 
   const messageRow = page
@@ -1814,7 +1823,7 @@ test("declared owner sees runtime tab for a remote relay agent", async ({
   });
   await page.goto("/");
 
-  await page.getByTestId("channel-agents").click();
+  await openWorkspaceChannel(page, "agents");
   await expect(page.getByTestId("chat-title")).toHaveText("agents");
 
   await emitProfileMessage(page, pubkey, "Remote owner fixture");
@@ -1852,7 +1861,7 @@ test("declared owner sees runtime tab without a relay-agent record", async ({
 }) => {
   await page.goto("/");
 
-  await page.getByTestId("channel-agents").click();
+  await openWorkspaceChannel(page, "agents");
   await expect(page.getByTestId("chat-title")).toHaveText("agents");
 
   await emitProfileMessage(
@@ -1909,7 +1918,7 @@ test("owned agent absent from relay/managed lists still renders agent framing", 
   });
   await page.goto("/");
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await waitForMockLiveSubscription(page, "general");
 
@@ -2018,7 +2027,7 @@ test("notification settings drive the Inbox badge and desktop alerts", async ({
   );
 
   await page.getByTestId("settings-back-to-app").click();
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   // The dock badge sums unreadChannelIds.size + homeBadgeCount. Seeded test
@@ -2112,7 +2121,7 @@ test("notification settings drive the Inbox badge and desktop alerts", async ({
   );
 
   await expect(page.getByTestId("sidebar-home-count")).toHaveCount(0);
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await page.evaluate(() => {
     const win = window as Window & {
