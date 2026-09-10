@@ -307,6 +307,356 @@ async fn conditional_publication_reports_retired_head_after_accept_then_delete()
     .await;
 }
 
+/// Item 5: deletion-first versus send-first around a retired head, with the
+/// deletion held open on a real second connection so the ordering is the
+/// production lock ordering rather than a sequence of independent statements.
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn retired_head_classification_survives_both_commit_orders() {
+    scenario(|db, community, keys| async move {
+        let d = "repo/_toc";
+        let owner = keys.public_key().to_bytes();
+        let head = event(&keys, d, "head", Timestamp::now().as_secs(), true);
+        assert_eq!(
+            expect_missing_write(&db, community, &head, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+
+        // Old send first: a decision is already open on the live head when the
+        // deletion arrives, so the deletion must wait rather than tombstone a
+        // head the open decision is still reasoning about.
+        let mut decision = db
+            .begin_event_write_transaction()
+            .await
+            .expect("decision tx");
+        let decided = db
+            .replace_parameterized_event_in_transaction(
+                &mut decision,
+                community,
+                &head,
+                d,
+                None,
+                ParameterizedReplacePrecondition::ExpectedMissing,
+            )
+            .await
+            .expect("live replay decision");
+        assert_eq!(
+            decided.status,
+            ParameterizedReplaceStatus::Duplicate,
+            "the exact live head still ACKs before any retirement can be claimed"
+        );
+
+        let deleter_pool = bounded_deleter_pool(&db).await;
+        let deleter = Db::from_pool(deleter_pool.clone());
+        match deleter
+            .soft_delete_event(community, head.id.as_bytes())
+            .await
+        {
+            Err(error) => assert_lock_timeout(error),
+            Ok(deleted) => panic!("the deletion must wait for the open decision: {deleted}"),
+        }
+        decision.commit().await.expect("commit decision");
+
+        // Deletion first: once it commits, the same exact write is retired and
+        // no late replay can make it live again.
+        assert!(deleter
+            .soft_delete_event(community, head.id.as_bytes())
+            .await
+            .expect("unblocked delete"));
+        assert_eq!(live_rows(&db, community, &owner, d).await, 0);
+        assert_eq!(
+            expect_missing_write(&db, community, &head, d).await,
+            ParameterizedReplaceStatus::WikiHeadRetired
+        );
+        assert_eq!(
+            live_rows(&db, community, &owner, d).await,
+            0,
+            "a late exact writer must not become live after the proof"
+        );
+
+        // A competing head may legitimately take the coordinate afterwards,
+        // and a further rejected retired write must not remove it.
+        let competing = event(&keys, d, "competing", Timestamp::now().as_secs() + 1, true);
+        assert_eq!(
+            expect_missing_write(&db, community, &competing, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &head,
+                d,
+                ParameterizedReplacePrecondition::ExpectedRevision(competing.id.as_bytes()),
+            )
+            .await,
+            ParameterizedReplaceStatus::WikiHeadRetired,
+            "a retired head is classified even under an ExpectedRevision precondition"
+        );
+        assert_eq!(
+            live_rows(&db, community, &owner, d).await,
+            1,
+            "a rejected write must never remove the competing live head"
+        );
+        deleter_pool.close().await;
+    })
+    .await;
+}
+
+/// Item 5: scope negatives. Retirement is scoped to one exact
+/// community/owner/kind/`d` coordinate and to conditional v1 `_toc` writes.
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn retirement_is_scoped_to_owner_community_kind_and_conditional_toc() {
+    scenario(|db, community, keys| async move {
+        let d = "repo/_toc";
+        let head = event(&keys, d, "head", Timestamp::now().as_secs(), true);
+        assert_eq!(
+            expect_missing_write(&db, community, &head, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert!(db
+            .soft_delete_event(community, head.id.as_bytes())
+            .await
+            .expect("delete head"));
+
+        // A different owner's identical-shaped attempt has no history here.
+        let other_keys = Keys::generate();
+        let other_head = event(&other_keys, d, "head", Timestamp::now().as_secs(), true);
+        assert_eq!(
+            expect_missing_write(&db, community, &other_head, d).await,
+            ParameterizedReplaceStatus::Inserted,
+            "another owner's coordinate is untouched by this retirement"
+        );
+
+        // A retired expected revision belonging to ANOTHER OWNER at the same
+        // `d` must not prove anything for this owner's precondition. This is
+        // the foreign-owner E case, distinct from the fresh-insert case above.
+        assert!(db
+            .soft_delete_event(community, other_head.id.as_bytes())
+            .await
+            .expect("delete the other owner's head"));
+        let successor = event(&keys, d, "successor", Timestamp::now().as_secs() + 1, true);
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &successor,
+                d,
+                ParameterizedReplacePrecondition::ExpectedRevision(other_head.id.as_bytes()),
+            )
+            .await,
+            ParameterizedReplaceStatus::RevisionMissing,
+            "a retired event under a different owner is not this owner's precondition"
+        );
+
+        // The same fact across communities: an event retired in one community
+        // says nothing about the same coordinate in another. The scenario owns
+        // exactly one scratch database, so use a second community inside it.
+        let other_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO communities(id,host) VALUES($1,$2)")
+            .bind(other_id)
+            .bind(format!("scoped-{}.example", other_id.simple()))
+            .execute(&db.pool)
+            .await
+            .expect("owned second community");
+        let other_community = CommunityId::from_uuid(other_id);
+        let elsewhere = event(&keys, d, "elsewhere", Timestamp::now().as_secs() + 2, true);
+        assert_eq!(
+            expect_missing_write(&db, other_community, &elsewhere, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert!(db
+            .soft_delete_event(other_community, elsewhere.id.as_bytes())
+            .await
+            .expect("delete in the other community"));
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &successor,
+                d,
+                ParameterizedReplacePrecondition::ExpectedRevision(elsewhere.id.as_bytes()),
+            )
+            .await,
+            ParameterizedReplaceStatus::RevisionMissing,
+            "a retired event in another community proves nothing here"
+        );
+        assert_ne!(
+            expect_missing_write(&db, community, &elsewhere, d).await,
+            ParameterizedReplaceStatus::WikiHeadRetired,
+            "nor does it retire the same head identity in this community"
+        );
+
+        // A non-Wiki kind never carries this classification, even when the
+        // same owner/`d`/history shape exists.
+        let other_kind_d = "kindcheck";
+        let other_kind = EventBuilder::new(Kind::Custom(30078), "other-kind")
+            .tags(vec![Tag::parse(["d", other_kind_d]).unwrap()])
+            .custom_created_at(Timestamp::from(Timestamp::now().as_secs() + 3))
+            .sign_with_keys(&keys)
+            .unwrap();
+        assert_eq!(
+            expect_missing_write(&db, community, &other_kind, other_kind_d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert!(db
+            .soft_delete_event(community, other_kind.id.as_bytes())
+            .await
+            .expect("delete other kind"));
+        assert_ne!(
+            expect_missing_write(&db, community, &other_kind, other_kind_d).await,
+            ParameterizedReplaceStatus::WikiHeadRetired,
+            "only kind 30623 participates in Wiki head retirement"
+        );
+
+        // A non-`_toc` address is not the conditional head coordinate.
+        let page_d = "repo/overview";
+        let page = event(&keys, page_d, "page", Timestamp::now().as_secs(), true);
+        assert_eq!(
+            expect_missing_write(&db, community, &page, page_d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert!(db
+            .soft_delete_event(community, page.id.as_bytes())
+            .await
+            .expect("delete page"));
+        assert_ne!(
+            expect_missing_write(&db, community, &page, page_d).await,
+            ParameterizedReplaceStatus::WikiHeadRetired,
+            "only the replaceable _toc head carries this classification"
+        );
+
+        // A legacy, non-v1 `_toc` write keeps its existing classification.
+        let legacy_d = "legacy/_toc";
+        let legacy = event(&keys, legacy_d, "legacy", Timestamp::now().as_secs(), false);
+        assert_eq!(
+            expect_missing_write(&db, community, &legacy, legacy_d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+        assert!(db
+            .soft_delete_event(community, legacy.id.as_bytes())
+            .await
+            .expect("delete legacy"));
+        assert_ne!(
+            expect_missing_write(&db, community, &legacy, legacy_d).await,
+            ParameterizedReplaceStatus::WikiHeadRetired,
+            "a non-v1 head is not part of the conditional contract"
+        );
+
+        // Unconditional replacement is unchanged by any of this.
+        let unconditional = event(
+            &keys,
+            d,
+            "unconditional",
+            Timestamp::now().as_secs() + 5,
+            true,
+        );
+        assert_eq!(
+            write(
+                &db,
+                community,
+                &unconditional,
+                d,
+                ParameterizedReplacePrecondition::Unconditional,
+            )
+            .await,
+            ParameterizedReplaceStatus::Inserted
+        );
+    })
+    .await;
+}
+
+/// Item 5, second real order: the DELETION commits first and an exact writer
+/// then arrives while a decision is held open. The waiting writer must observe
+/// retirement, and must not resurrect the head behind the open decision.
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn deletion_first_then_a_waiting_exact_writer_observes_retirement() {
+    scenario(|db, community, keys| async move {
+        let d = "repo/_toc";
+        let owner = keys.public_key().to_bytes();
+        let head = event(&keys, d, "head", Timestamp::now().as_secs(), true);
+        assert_eq!(
+            expect_missing_write(&db, community, &head, d).await,
+            ParameterizedReplaceStatus::Inserted
+        );
+
+        // Deletion first, committed.
+        assert!(db
+            .soft_delete_event(community, head.id.as_bytes())
+            .await
+            .expect("delete head"));
+        assert_eq!(live_rows(&db, community, &owner, d).await, 0);
+
+        // A competing head now takes the coordinate inside a held transaction,
+        // so the late exact writer below must wait on the coordinate lock
+        // rather than racing it.
+        let competing = event(&keys, d, "competing", Timestamp::now().as_secs() + 1, true);
+        let mut holder = db.begin_event_write_transaction().await.expect("holder tx");
+        let held = db
+            .replace_parameterized_event_in_transaction(
+                &mut holder,
+                community,
+                &competing,
+                d,
+                None,
+                ParameterizedReplacePrecondition::ExpectedMissing,
+            )
+            .await
+            .expect("competing insert decision");
+        assert_eq!(held.status, ParameterizedReplaceStatus::Inserted);
+
+        let writer_pool = bounded_deleter_pool(&db).await;
+        let writer = Db::from_pool(writer_pool.clone());
+        let mut waiting = writer
+            .begin_event_write_transaction()
+            .await
+            .expect("waiting tx");
+        match writer
+            .replace_parameterized_event_in_transaction(
+                &mut waiting,
+                community,
+                &head,
+                d,
+                None,
+                ParameterizedReplacePrecondition::ExpectedMissing,
+            )
+            .await
+        {
+            Err(error) => assert_lock_timeout(error),
+            Ok(result) => panic!("the late writer must wait: {:?}", result.status),
+        }
+        let _ = waiting.rollback().await;
+        holder.commit().await.expect("commit competing head");
+
+        // Once unblocked, the retired head is classified as retired and the
+        // competing live head survives the rejected write untouched.
+        assert_eq!(
+            expect_missing_write(&db, community, &head, d).await,
+            ParameterizedReplaceStatus::WikiHeadRetired
+        );
+        assert_eq!(live_rows(&db, community, &owner, d).await, 1);
+        let live: Vec<u8> = sqlx::query_scalar(
+            "SELECT id FROM events WHERE community_id=$1 AND kind=30623 \
+             AND pubkey=$2 AND d_tag=$3 AND deleted_at IS NULL",
+        )
+        .bind(community.as_uuid())
+        .bind(owner.as_slice())
+        .bind(d)
+        .fetch_one(&db.pool)
+        .await
+        .expect("live head id");
+        assert_eq!(
+            live,
+            competing.id.as_bytes().to_vec(),
+            "a rejected retired write must not replace the competing head"
+        );
+        writer_pool.close().await;
+    })
+    .await;
+}
+
 /// D-079 precondition retirement: the exact expected predecessor was accepted
 /// and later deleted while the coordinate has no live head.
 #[tokio::test]

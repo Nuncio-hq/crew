@@ -22,6 +22,20 @@ pub(crate) fn publication(
     repo_d: &str,
     snapshot_id: Option<&str>,
 ) -> SnapshotPublication {
+    publication_with_expected(keys, repo_d, snapshot_id, None)
+}
+
+/// The same fixture with an explicit conditional precondition.
+///
+/// `expected_revision` goes through the production builder so the signed head
+/// really carries it; a test must never patch precondition metadata into an
+/// already signed envelope.
+pub(crate) fn publication_with_expected(
+    keys: &Keys,
+    repo_d: &str,
+    snapshot_id: Option<&str>,
+    expected_revision: Option<&str>,
+) -> SnapshotPublication {
     let owner = keys.public_key().to_hex();
     let commit = "a".repeat(40);
     let snapshot = RepoSnapshot {
@@ -62,7 +76,7 @@ pub(crate) fn publication(
         drafts: &drafts,
         cadence: "manual",
         snapshot_id,
-        expected_revision: None,
+        expected_revision,
         created_at: 10,
         keys,
     })

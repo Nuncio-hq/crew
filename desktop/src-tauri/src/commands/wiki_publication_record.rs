@@ -390,6 +390,18 @@ pub(super) fn validate_head_retirement(record: &WikiPublicationRecord) -> Result
     else {
         return Ok(());
     };
+    // A head-retirement proof only exists as the outcome of a real settlement,
+    // so the rest of the record must be shaped like one. Without this, a
+    // payload could carry terminal proof on an otherwise writable row —
+    // `Preparing`, never attempted, not read-only — and dispatch would happily
+    // re-send it. Refusing here keeps the durable claim retryable and leaves
+    // the stored evidence intact rather than inventing a pending proof state.
+    if !record.head_attempted
+        || !record.reconcile_only
+        || !matches!(record.progress, WikiPublicationProgress::Head)
+    {
+        return Err("Wiki head retirement proof is not a settled attempt.".into());
+    }
     let signed_head = record.head.id.to_hex();
     match retirement {
         WikiHeadRetirement::Head { head_id } => {

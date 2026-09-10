@@ -467,6 +467,135 @@ test("a repository selected during an active batch receives a priority retry", a
   }
 });
 
+/**
+ * Item 7: the real coordinator path. A second consumer mounts and changes the
+ * priority set while the first read is still in flight, so the coordinator
+ * runs its priority-only correction pass and emits `preserved` for the
+ * repository it did not re-read. That repository's accurate prior status must
+ * survive the pass instead of collapsing into a generic unavailable row.
+ */
+test("a mounted priority correction preserves a non-priority repository's prior status", async () => {
+  const { renderHook, waitFor, cleanup } = await import(
+    "@testing-library/react"
+  );
+  const React = await import("react");
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
+  const { relayClient } = await import("@/shared/api/relayClient");
+  const { useWikiEventsQuery } = await import("./useWikiEventsQuery.ts");
+  const expected = scope();
+  const stalled = repository("stalled");
+  const selected = repository("selected");
+  const stalledKey = coordinate("stalled");
+  const selectedKey = coordinate("selected");
+  const originalFetchEvents = relayClient.fetchEvents;
+  const reads = [];
+  let releaseFirstPass;
+  const firstPassGate = new Promise((resolve) => {
+    releaseFirstPass = resolve;
+  });
+  installTauriInvoke(async (command, args) => {
+    if (command === "owner_operation_scope") return expected;
+    if (command === "wiki_snapshot_read") {
+      reads.push(args.coordinate);
+      // Hold the first pass open so the priority revision below lands while
+      // it is still in flight, which is what makes the coordinator run its
+      // correction pass rather than a fresh full read.
+      if (reads.length <= 2) await firstPassGate;
+      if (args.coordinate === stalledKey) {
+        // A real incomplete read: accurate, specific, and not renderable.
+        return {
+          token: expected,
+          value: {
+            state: "incomplete",
+            head: null,
+            manifest: null,
+            pages: [],
+            error: "native snapshot incomplete",
+          },
+        };
+      }
+      return { token: expected, value: snapshot("complete") };
+    }
+    throw new Error(`Unexpected Tauri command: ${command}`);
+  });
+  relayClient.fetchEvents = async () => [];
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const wrapper = ({ children }) =>
+    React.createElement(QueryClientProvider, { client }, children);
+  const firstHook = renderHook(() => useWikiEventsQuery([stalled, selected]), {
+    wrapper,
+  });
+  try {
+    // Both coordinates enter the first pass, which is still held.
+    await waitFor(() => {
+      assert.equal(reads.length, 2, JSON.stringify(reads));
+    });
+
+    // A second consumer selects the other repository, revising the priority
+    // order while the first pass is in flight.
+    const secondHook = renderHook(
+      () => useWikiEventsQuery([selected], [selectedKey]),
+      { wrapper },
+    );
+    releaseFirstPass();
+    try {
+      await waitFor(() => {
+        assert.equal(
+          firstHook.result.current.data?.repositoryStatuses[stalledKey]
+            ?.outcome,
+          "incomplete",
+        );
+      });
+      const before =
+        firstHook.result.current.data.repositoryStatuses[stalledKey];
+      assert.equal(before.message, "native snapshot incomplete");
+
+      await waitFor(() => {
+        assert.ok(
+          reads.slice(2).includes(selectedKey),
+          `the revised priority must be re-read: ${JSON.stringify(reads)}`,
+        );
+      });
+
+      const after =
+        firstHook.result.current.data.repositoryStatuses[stalledKey];
+      // Falsifiable in two independent ways: the non-priority coordinate must
+      // never be re-read, and its accurate prior status object must survive
+      // the correction pass verbatim. Restoring the old `renderable(previous)`
+      // guard turns this entry into a generic unavailable row and fails here.
+      assert.equal(
+        reads.filter((key) => key === stalledKey).length,
+        1,
+        `the non-priority coordinate must not be refetched: ${JSON.stringify(reads)}`,
+      );
+      assert.deepEqual(
+        after,
+        before,
+        "the whole prior status object must be preserved",
+      );
+      assert.equal(after.outcome, "incomplete");
+      assert.equal(after.message, "native snapshot incomplete");
+      assert.notEqual(
+        after.message,
+        "Wiki read failed.",
+        "a preserved entry must not collapse into the generic failure",
+      );
+    } finally {
+      secondHook.unmount();
+    }
+  } finally {
+    releaseFirstPass();
+    firstHook.unmount();
+    relayClient.fetchEvents = originalFetchEvents;
+    client.clear();
+    cleanup();
+  }
+});
+
 test("two mounted Wiki consumers share one canonical scoped query and the global read bound", async () => {
   const { renderHook, waitFor, cleanup } = await import(
     "@testing-library/react"

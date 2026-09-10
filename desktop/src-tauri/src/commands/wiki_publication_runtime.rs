@@ -506,18 +506,6 @@ impl NativeWikiPublication {
         }
     }
 
-    /// Validate a relay head/precondition retirement refusal for the exact
-    /// head this operation is submitting (D-079; accepted, pending
-    /// acceptance).
-    ///
-    /// Every one of these must hold or the outcome stays `Unknown` with a
-    /// retryable claim: the captured relay answered HTTP 400, the machine
-    /// reason parses exactly, its IDs bind this exact signed head (and, for
-    /// the precondition form, this exact non-absent `expected_revision`), the
-    /// owner/community/generation/revision/lease fences still pass on every
-    /// read, the exact retired event really reads back absent, and the current
-    /// `_toc` read succeeds. A live copy of the allegedly retired event
-    /// contradicts the claim outright.
     async fn prove_retired_head(
         &self,
         operation: &Operation,
@@ -525,82 +513,141 @@ impl NativeWikiPublication {
         event: &Event,
         error: &OperationTransportError,
     ) -> Result<Option<WikiHeadRetirementProof>, WikiPublishError> {
-        let OperationTransportError::RelayResponse {
-            status: 400,
-            reason,
-        } = error
-        else {
-            return Ok(None);
-        };
-        // Only the head write can carry a head-retirement proof.
-        if event.id != record.head.id {
-            return Ok(None);
-        }
-        let head_id = record.head.id.to_hex();
-        let Some(parsed) = parse_retired_head_reason(reason) else {
-            return Ok(None);
-        };
-        let (retired_event_id, retirement) = match parsed {
-            ParsedHeadRetirement::Head { head } => {
-                if head != head_id {
-                    return Ok(None);
-                }
-                (head.clone(), WikiHeadRetirement::Head { head_id: head })
-            }
-            ParsedHeadRetirement::ExpectedHead { head, expected } => {
-                if head != head_id
-                    || record.expected_revision == "absent"
-                    || expected != record.expected_revision
-                {
-                    return Ok(None);
-                }
-                (
-                    expected.clone(),
-                    WikiHeadRetirement::ExpectedHead {
-                        head_id: head,
-                        expected_revision: expected,
-                    },
-                )
-            }
-        };
-
-        // The retired event must actually read back absent at this exact
-        // coordinate. A failed query is Unknown, never proof.
-        let head_d = format!("{}/_toc", self.repo_d);
-        let retired = self
-            .query(
-                Some(operation),
-                json!({
-                    "kinds":[WIKI_KIND],
-                    "authors":[self.owner.to_hex()],
-                    "ids":[retired_event_id],
-                    "#d":[head_d],
-                    "limit":2
-                }),
-            )
-            .await
-            .map_err(|query_error| WikiPublishError::Unknown(query_error.to_string()))?;
-        if !retired.is_empty() {
-            return Ok(None);
-        }
-
-        // Read the current head as well. A live desired head contradicts the
-        // retirement claim; any other current head is retained as metadata.
-        let current = self
-            .query_head(Some(operation))
-            .await
-            .map_err(WikiPublishError::Unknown)?;
-        if current
-            .as_ref()
-            .is_some_and(|head| head.id == record.head.id)
-        {
-            return Ok(None);
-        }
-        Ok(Some(WikiHeadRetirementProof {
-            retirement,
-            current_head_id: current.map(|head| head.id.to_hex()),
-        }))
+        validate_head_retirement_refusal(self, operation, record, event, error).await
     }
+}
+
+/// The two scoped reads the head-retirement decision depends on.
+///
+/// Both implementations go through the captured runtime's guarded query path,
+/// which re-checks the owner/community/generation, the operation revision and
+/// the worker lease immediately before *and* after each transport await. The
+/// trait exists so the decision below can be exercised directly without an
+/// `AppHandle`; it is not a second decision, and it adds no public API.
+pub(super) trait HeadRetirementReads {
+    /// Scoped read of one exact event ID at this repository's `_toc` address.
+    async fn read_exact_toc_event(
+        &self,
+        operation: &Operation,
+        event_id: &str,
+    ) -> Result<Vec<Event>, String>;
+    /// Scoped read of the coordinate's current `_toc` head.
+    async fn read_current_toc(&self, operation: &Operation) -> Result<Option<Event>, String>;
+}
+
+impl HeadRetirementReads for NativeWikiPublication {
+    async fn read_exact_toc_event(
+        &self,
+        operation: &Operation,
+        event_id: &str,
+    ) -> Result<Vec<Event>, String> {
+        let head_d = format!("{}/_toc", self.repo_d);
+        self.query(
+            Some(operation),
+            json!({
+                "kinds":[WIKI_KIND],
+                "authors":[self.owner.to_hex()],
+                "ids":[event_id],
+                "#d":[head_d],
+                "limit":2
+            }),
+        )
+        .await
+    }
+
+    async fn read_current_toc(&self, operation: &Operation) -> Result<Option<Event>, String> {
+        self.query_head(Some(operation)).await
+    }
+}
+
+/// Validate a relay head/precondition retirement refusal for the exact head
+/// this operation is submitting (D-079; accepted, pending acceptance).
+///
+/// This is the single production decision `NativeWikiPublication::publish`
+/// uses. Every one of these must hold or the outcome stays `Unknown` with a
+/// retryable claim: the captured relay answered HTTP 400, the machine reason
+/// parses exactly, its IDs bind this exact signed head (and, for the
+/// precondition form, this exact non-absent `expected_revision`), the
+/// owner/community/generation/revision/lease fences still pass on both reads,
+/// the exact allegedly retired event really reads back absent, and the current
+/// `_toc` read succeeds without contradicting the claim.
+pub(super) async fn validate_head_retirement_refusal<R: HeadRetirementReads>(
+    reads: &R,
+    operation: &Operation,
+    record: &WikiPublicationRecord,
+    event: &Event,
+    error: &OperationTransportError,
+) -> Result<Option<WikiHeadRetirementProof>, WikiPublishError> {
+    let OperationTransportError::RelayResponse {
+        status: 400,
+        reason,
+    } = error
+    else {
+        return Ok(None);
+    };
+    // Only the head write can carry a head-retirement proof. A page or
+    // manifest refusal is a different fact and is never reinterpreted here.
+    if event.id != record.head.id {
+        return Ok(None);
+    }
+    let head_id = record.head.id.to_hex();
+    let Some(parsed) = parse_retired_head_reason(reason) else {
+        return Ok(None);
+    };
+    let (retired_event_id, retirement) = match parsed {
+        ParsedHeadRetirement::Head { head } => {
+            if head != head_id {
+                return Ok(None);
+            }
+            (head.clone(), WikiHeadRetirement::Head { head_id: head })
+        }
+        ParsedHeadRetirement::ExpectedHead { head, expected } => {
+            if head != head_id
+                || record.expected_revision == "absent"
+                || expected != record.expected_revision
+            {
+                return Ok(None);
+            }
+            (
+                expected.clone(),
+                WikiHeadRetirement::ExpectedHead {
+                    head_id: head,
+                    expected_revision: expected,
+                },
+            )
+        }
+    };
+
+    // The allegedly retired event must actually read back absent at this exact
+    // coordinate. A failed query is Unknown, never proof.
+    let retired = reads
+        .read_exact_toc_event(operation, &retired_event_id)
+        .await
+        .map_err(WikiPublishError::Unknown)?;
+    if !retired.is_empty() {
+        return Ok(None);
+    }
+
+    // Read the current head as well. Two different facts contradict the claim
+    // and both must be rejected: a live desired head H means the attempt did
+    // land, and a live copy of the allegedly retired event — H for the head
+    // form, E for the precondition form — means it was never retired at all.
+    // Either way this stays Unknown with the claim intact. Any *other* current
+    // head is legitimate and is retained as Superseded metadata.
+    let current = reads
+        .read_current_toc(operation)
+        .await
+        .map_err(WikiPublishError::Unknown)?;
+    if let Some(current) = current.as_ref() {
+        let current_id = current.id.to_hex();
+        if current_id == head_id || current_id == retired_event_id {
+            return Ok(None);
+        }
+    }
+    Ok(Some(WikiHeadRetirementProof {
+        retirement,
+        current_head_id: current.map(|head| head.id.to_hex()),
+    }))
 }
 
 impl WikiPublicationRuntime for NativeWikiPublication {

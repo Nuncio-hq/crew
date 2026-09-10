@@ -32,6 +32,18 @@ pub(super) const DEPENDENCIES_VERIFIED: u8 = 0;
 pub(super) const DEPENDENCIES_MISSING_UNTIL_REPAIR: u8 = 1;
 pub(super) const DEPENDENCIES_ALWAYS_MISSING: u8 = 2;
 
+/// A real fence that can move while a head-retirement proof is in flight.
+///
+/// Each variant mutates the fixture's actual scope generation, durable row or
+/// clock, so the settle that follows is refused by the production
+/// checkpoint/CAS rather than by a fabricated boolean.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum ProofTimeFence {
+    OwnerGeneration,
+    Revision,
+    Lease,
+}
+
 /// One temporary owner-operation journal plus the fake relay outcomes.
 pub(super) struct Journal {
     _dir: TempDir,
@@ -56,6 +68,18 @@ pub(super) struct Journal {
     /// Validated relay head/precondition retirement proof this fixture returns
     /// from the head publish, standing in for the real transport validation.
     pub(super) retire_head: Mutex<Option<WikiHeadRetirementProof>>,
+    /// Refuse the next terminal save, standing in for a moved owner/workspace
+    /// generation or a lost revision race at the settling CAS.
+    pub(super) reject_terminal_save: AtomicBool,
+    /// Apply a real fence change at the moment the head-retirement proof is
+    /// returned, so the settle that follows meets the production guard.
+    pub(super) fence_at_head_proof: Mutex<Option<ProofTimeFence>>,
+    /// Scoped relay reads, counted separately from sends so a test can prove
+    /// an accepted typed result performs no further network step.
+    pub(super) reads: AtomicUsize,
+    /// Signing key for this fixture's coordinate, so a test can build a second
+    /// valid publication through the production builder.
+    keys: Keys,
     /// Durable phase read back from SQLite at the instant each head event was
     /// submitted. Capturing it inside the publish seam is the only way to
     /// prove the pre-send CAS landed *before* the send rather than after it.
@@ -120,6 +144,10 @@ impl Journal {
             sent: AtomicUsize::new(0),
             sent_ids: Mutex::new(Vec::new()),
             retire_head: Mutex::new(None),
+            reject_terminal_save: AtomicBool::new(false),
+            fence_at_head_proof: Mutex::new(None),
+            reads: AtomicUsize::new(0),
+            keys: keys.clone(),
             head_send_phase: Mutex::new(Vec::new()),
         };
         (journal, operation)
@@ -133,6 +161,42 @@ impl Journal {
     /// then read the durable row back.
     pub(super) fn reopened(&self, id: &str) -> Operation {
         self.store().load(&self.scope, id).expect("durable row")
+    }
+
+    /// A second, different, fully valid signed publication for this fixture's
+    /// coordinate, built through the production builder and record validator.
+    pub(super) fn fresh_publication_intent(&self, repo_d: &str) -> NewOperation {
+        let coordinate = fixture::coordinate(&self.keys, repo_d);
+        let record = fixture::record(
+            fixture::publication(&self.keys, repo_d, None),
+            &coordinate,
+            &self.keys,
+        );
+        NewOperation {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: OperationKind::WikiPublication,
+            resource_key: coordinate,
+            payload: serde_json::to_value(&record).expect("record JSON"),
+        }
+    }
+
+    /// Reserve an intent through the real store, reopening the SQLite file the
+    /// way a restarted process would.
+    pub(super) fn try_create(
+        &self,
+        intent: &NewOperation,
+    ) -> Result<Operation, crate::owner_operations::StoreError> {
+        let replay = NewOperation {
+            id: intent.id.clone(),
+            kind: intent.kind,
+            resource_key: intent.resource_key.clone(),
+            payload: intent.payload.clone(),
+        };
+        self.store()
+            .create(&self.scope, replay, self.clock.load(Ordering::SeqCst))
+            .map(|result| match result {
+                CreateResult::Created(operation) | CreateResult::Existing(operation) => operation,
+            })
     }
 
     pub(super) fn stored_record(&self, id: &str) -> WikiPublicationRecord {
@@ -218,6 +282,11 @@ impl WikiPublicationRuntime for Journal {
         if !self.scope_is_current() {
             return Err(crate::app_state::owner_scope::OWNER_SCOPE_STALE.into());
         }
+        // A terminal settle is exactly where a lost revision race or a moved
+        // owner generation must leave the durable claim untouched.
+        if reconciled && self.reject_terminal_save.load(Ordering::SeqCst) {
+            return Err(crate::app_state::owner_scope::OWNER_SCOPE_STALE.into());
+        }
         record.validate_intent(self.owner)?;
         self.store()
             .compare_and_swap(
@@ -245,6 +314,7 @@ impl WikiPublicationRuntime for Journal {
         _record: &mut WikiPublicationRecord,
         _worker: &str,
     ) -> Result<WikiHead, String> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         self.checkpoint(operation).await?;
         Ok(match self.head.load(Ordering::SeqCst) {
             HEAD_ORIGINAL => WikiHead::Original,
@@ -261,6 +331,7 @@ impl WikiPublicationRuntime for Journal {
         _record: &mut WikiPublicationRecord,
         _worker: &str,
     ) -> Result<WikiDependencyState, String> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         self.checkpoint(operation).await?;
         Ok(
             if self.dependencies.load(Ordering::SeqCst) == DEPENDENCIES_VERIFIED {
@@ -300,6 +371,35 @@ impl WikiPublicationRuntime for Journal {
                 self.rotate_owner();
             }
             if let Some(proof) = self.retire_head.lock().expect("head retirement").clone() {
+                // Apply a real fence change *before* handing the typed proof
+                // back, so the guarded terminal save that follows meets the
+                // production checkpoint/CAS exactly as it would in the field.
+                match self.fence_at_head_proof.lock().expect("proof fence").take() {
+                    Some(ProofTimeFence::OwnerGeneration) => self.rotate_owner(),
+                    Some(ProofTimeFence::Revision) => {
+                        // A concurrent writer advances the durable row, so the
+                        // in-flight operation's revision is now stale.
+                        let current = self.reopened(&operation.id);
+                        self.store()
+                            .compare_and_swap(
+                                &self.scope,
+                                &current.id,
+                                current.revision,
+                                OperationUpdate {
+                                    status: current.status,
+                                    reconciled: false,
+                                    payload: current.payload.clone(),
+                                },
+                                self.clock.load(Ordering::SeqCst),
+                            )
+                            .expect("concurrent revision advance");
+                    }
+                    Some(ProofTimeFence::Lease) => {
+                        // Time passes beyond this worker's lease.
+                        self.clock.fetch_add(600, Ordering::SeqCst);
+                    }
+                    None => {}
+                }
                 return Err(WikiPublishError::HeadRetired(Box::new(proof)));
             }
             if self.lost_head_ack.load(Ordering::SeqCst) {

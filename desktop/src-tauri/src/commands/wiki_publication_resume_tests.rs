@@ -10,7 +10,8 @@ use super::*;
 use crate::commands::wiki_publication_commands::{
     cancel_intent, may_cancel, RETIRED_CANCEL_REFUSAL,
 };
-use crate::commands::wiki_publication_driver::may_resume;
+use crate::commands::wiki_publication_driver::{may_resume, WikiHeadRetirementProof};
+use crate::commands::wiki_publication_record::WikiHeadRetirement;
 use crate::commands::wiki_publication_record::WikiPublicationReconciliation;
 
 /// Drive one ordinary attempt whose head ACK is lost, then cancel it. The row
@@ -318,6 +319,105 @@ async fn driver_typed_retirement_proof_is_not_cleared_by_an_explicit_resume() {
     let record = journal.stored_record(&id);
     assert_eq!(record.reconciliation, proof, "the typed proof is preserved");
     assert!(record.reconcile_only, "the row stays Regenerate-only");
+}
+
+/// Item 4: a canceled ambiguous attempt whose head reads Missing stays
+/// unresolved and silent under Reconcile and automatic restart; only explicit
+/// Resume can reach the relay, and it may then obtain a retirement proof.
+#[tokio::test]
+async fn canceled_missing_reconcile_sends_nothing_then_resume_settles_on_proof() {
+    let (journal, operation) = Journal::fixture_for("crew.cancel.missing");
+    let id = operation.id.clone();
+    let saved = journal.stored_record(&id);
+    let head_id = saved.head.id.to_hex();
+    let canceled = ambiguous_cancellation(&journal, operation).await;
+
+    // The coordinate now reads empty. Absence alone proves nothing.
+    journal.head.store(HEAD_MISSING, Ordering::SeqCst);
+    let sent_after_cancel = journal.sent.load(Ordering::SeqCst);
+    let reopened = reconcile_read_only(&journal, canceled).await;
+    assert_eq!(journal.sent.load(Ordering::SeqCst), sent_after_cancel);
+
+    // An automatic restart is equally read-only and equally unresolved.
+    let automatic = drive(&journal, reopened, journal.owner, false, false)
+        .await
+        .expect("automatic recovery stays read-only");
+    assert!(!automatic.reconciled, "absence never releases the claim");
+    assert_eq!(journal.sent.load(Ordering::SeqCst), sent_after_cancel);
+    let still = journal.stored_record(&id);
+    assert!(still.cancel_requested && still.reconcile_only);
+    assert!(still.reconciliation.is_none(), "no invented retirement");
+
+    // The owner explicitly resumes; the relay now refuses with proof.
+    *journal.retire_head.lock().expect("head retirement") = Some(WikiHeadRetirementProof {
+        retirement: WikiHeadRetirement::Head {
+            head_id: head_id.clone(),
+        },
+        current_head_id: None,
+    });
+    let settled = drive(&journal, journal.reopened(&id), journal.owner, true, false)
+        .await
+        .expect("explicit resume can obtain the proof");
+    assert_eq!(settled.status, OperationStatus::Superseded);
+    assert!(settled.reconciled);
+    let record = journal.stored_record(&id);
+    assert!(matches!(
+        record.reconciliation,
+        Some(WikiPublicationReconciliation::Superseded {
+            head_retirement: Some(WikiHeadRetirement::Head { .. }),
+            ..
+        })
+    ));
+    assert_eq!(record.head, saved.head, "the signed graph is unchanged");
+    assert_eq!(record.manifest, saved.manifest);
+    assert_eq!(record.pages, saved.pages);
+    assert_eq!(record.expected_revision, saved.expected_revision);
+}
+
+/// Item 4: with `expected-revision: absent` and a head that was never
+/// accepted, absence stays unresolved and Resume simply applies H under the
+/// original precondition — it must never receive an invented retirement.
+#[tokio::test]
+async fn absent_precondition_never_accepted_head_resumes_under_its_original_cas() {
+    let (journal, operation) = Journal::fixture_for("crew.cancel.absent");
+    let id = operation.id.clone();
+    let saved = journal.stored_record(&id);
+    assert_eq!(saved.expected_revision, "absent");
+    let canceled = ambiguous_cancellation(&journal, operation).await;
+
+    journal.head.store(HEAD_MISSING, Ordering::SeqCst);
+    let reopened = reconcile_read_only(&journal, canceled).await;
+    assert!(
+        journal.stored_record(&id).reconciliation.is_none(),
+        "an absent precondition with no history is not retirement"
+    );
+
+    // Resume re-sends the exact saved head, which now lands.
+    journal.lost_head_ack.store(false, Ordering::SeqCst);
+    journal
+        .late_commit_after_head_publish
+        .store(true, Ordering::SeqCst);
+    let sent_before = journal.sent.load(Ordering::SeqCst);
+    let applied = drive(&journal, reopened, journal.owner, true, false)
+        .await
+        .expect("resume may publish the exact head");
+    assert_eq!(applied.status, OperationStatus::Complete);
+    assert!(applied.reconciled);
+    assert_eq!(
+        journal.sent.load(Ordering::SeqCst),
+        sent_before + 1,
+        "exactly one further send, of the persisted head"
+    );
+    let record = journal.stored_record(&id);
+    assert!(matches!(
+        record.reconciliation,
+        Some(WikiPublicationReconciliation::Applied { .. })
+    ));
+    assert_eq!(record.head, saved.head);
+    assert_eq!(
+        record.expected_revision, saved.expected_revision,
+        "the original CAS precondition is reused verbatim"
+    );
 }
 
 #[tokio::test]

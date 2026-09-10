@@ -3,6 +3,7 @@
 use super::*;
 use crate::commands::wiki_publication_commands::projected_job;
 use crate::commands::wiki_publication_record::{WikiHeadRetirement, WikiPublicationReconciliation};
+use crate::owner_operations::StoreError;
 
 fn retirement_proof(record: &WikiPublicationRecord) -> Option<String> {
     match &record.reconciliation {
@@ -325,4 +326,182 @@ async fn driver_head_retirement_proof_settles_superseded_and_releases_the_claim(
     assert_eq!(after.head, before.head);
     assert_eq!(after.manifest, before.manifest);
     assert_eq!(after.pages, before.pages);
+}
+
+/// Item 3: the point of settling is that the owner can move on. A different
+/// valid signed intent must be able to claim the same resource afterwards —
+/// and must NOT be able to before, while the claim is still unresolved.
+#[tokio::test]
+async fn head_retirement_releases_the_resource_claim_for_a_fresh_intent() {
+    let (journal, operation) = Journal::fixture_for("crew.release");
+    let id = operation.id.clone();
+    let resource = operation.resource_key.clone();
+    let head_id = journal.stored_record(&id).head.id.to_hex();
+
+    // A different valid publication for the same coordinate, built and signed
+    // by the production builder rather than hand-assembled.
+    let successor = journal.fresh_publication_intent("crew.release");
+
+    // While the original claim is unresolved the store refuses the new intent.
+    assert_eq!(
+        journal.try_create(&successor),
+        Err(StoreError::Conflict),
+        "an unresolved claim must block a different draft"
+    );
+
+    *journal.retire_head.lock().expect("head retirement") = Some(WikiHeadRetirementProof {
+        retirement: WikiHeadRetirement::Head {
+            head_id: head_id.clone(),
+        },
+        current_head_id: None,
+    });
+    let settled = drive(&journal, operation, journal.owner, false, false)
+        .await
+        .expect("proven retirement settles");
+    assert!(settled.reconciled);
+    let reads_after = journal.reads.load(Ordering::SeqCst);
+    let sends_after = journal.sent.load(Ordering::SeqCst);
+
+    // Reopen the journal the way a restarted process would, then claim it.
+    let created = journal
+        .try_create(&successor)
+        .expect("a released resource accepts a different intent");
+    assert_eq!(created.resource_key, resource);
+    assert_ne!(created.id, id);
+    assert!(!created.reconciled);
+
+    // The terminal proof survives the reopen and the new sibling row.
+    let record = journal.stored_record(&id);
+    assert!(matches!(
+        record.reconciliation,
+        Some(WikiPublicationReconciliation::Superseded {
+            head_retirement: Some(WikiHeadRetirement::Head { .. }),
+            ..
+        })
+    ));
+    assert_eq!(
+        (
+            journal.reads.load(Ordering::SeqCst),
+            journal.sent.load(Ordering::SeqCst)
+        ),
+        (reads_after, sends_after),
+        "an accepted typed result performs no further relay read or send"
+    );
+}
+
+/// Item 3/6: a fence that really moves while the proof is in flight — the
+/// owner generation, the durable revision, or the worker lease — must refuse
+/// the terminal settlement through the production guard, keep the exact signed
+/// graph and the unresolved claim, and perform no further relay work.
+#[tokio::test]
+async fn a_moved_fence_at_proof_time_refuses_settlement_and_keeps_the_claim() {
+    for fence in [
+        ProofTimeFence::OwnerGeneration,
+        ProofTimeFence::Revision,
+        ProofTimeFence::Lease,
+    ] {
+        let (journal, operation) = Journal::fixture_for("crew.prooffence");
+        let id = operation.id.clone();
+        let before = journal.stored_record(&id);
+        let head_id = before.head.id.to_hex();
+        let successor = journal.fresh_publication_intent("crew.prooffence");
+        *journal.retire_head.lock().expect("head retirement") = Some(WikiHeadRetirementProof {
+            retirement: WikiHeadRetirement::Head {
+                head_id: head_id.clone(),
+            },
+            current_head_id: None,
+        });
+        *journal.fence_at_head_proof.lock().expect("proof fence") = Some(fence);
+
+        let error = drive(&journal, operation, journal.owner, false, false)
+            .await
+            .expect_err("a moved fence must refuse the settlement");
+        assert!(!error.is_empty(), "{fence:?}");
+        let reads_after = journal.reads.load(Ordering::SeqCst);
+        let sends_after = journal.sent.load(Ordering::SeqCst);
+
+        let durable = journal.reopened(&id);
+        assert!(
+            !durable.reconciled,
+            "{fence:?}: a refused settlement keeps the claim retryable"
+        );
+        let after = journal.stored_record(&id);
+        assert_eq!(after.head, before.head, "{fence:?}");
+        assert_eq!(after.manifest, before.manifest, "{fence:?}");
+        assert_eq!(after.pages, before.pages, "{fence:?}");
+        assert_eq!(
+            after.expected_revision, before.expected_revision,
+            "{fence:?}"
+        );
+        assert!(
+            after.reconciliation.is_none(),
+            "{fence:?}: no proof is stored by a refused settlement"
+        );
+        assert_eq!(
+            journal.try_create(&successor),
+            Err(StoreError::Conflict),
+            "{fence:?}: the resource stays claimed"
+        );
+        assert_eq!(
+            (
+                journal.reads.load(Ordering::SeqCst),
+                journal.sent.load(Ordering::SeqCst)
+            ),
+            (reads_after, sends_after),
+            "{fence:?}: no further relay work after the typed result"
+        );
+    }
+}
+
+/// Item 3: a rejected terminal save keeps the old durable claim intact, and a
+/// later attempt can reproduce the same relay refusal and settle.
+#[tokio::test]
+async fn a_failed_terminal_save_keeps_the_claim_and_the_exact_graph() {
+    let (journal, operation) = Journal::fixture_for("crew.failedcas");
+    let id = operation.id.clone();
+    let before = journal.stored_record(&id);
+    let head_id = before.head.id.to_hex();
+    let successor = journal.fresh_publication_intent("crew.failedcas");
+    *journal.retire_head.lock().expect("head retirement") = Some(WikiHeadRetirementProof {
+        retirement: WikiHeadRetirement::Head {
+            head_id: head_id.clone(),
+        },
+        current_head_id: None,
+    });
+
+    // The owner/workspace generation moves while the proof is being settled,
+    // so the guarded terminal CAS is refused.
+    journal.reject_terminal_save.store(true, Ordering::SeqCst);
+    let error = drive(&journal, operation, journal.owner, false, false)
+        .await
+        .expect_err("a refused terminal save is not a settlement");
+    assert!(!error.is_empty());
+
+    let durable = journal.reopened(&id);
+    assert!(
+        !durable.reconciled,
+        "a failed settlement must leave the claim retryable"
+    );
+    let after = journal.stored_record(&id);
+    assert_eq!(after.head, before.head, "the signed head is untouched");
+    assert_eq!(after.manifest, before.manifest);
+    assert_eq!(after.pages, before.pages);
+    assert_eq!(after.expected_revision, before.expected_revision);
+    assert_eq!(
+        journal.try_create(&successor),
+        Err(StoreError::Conflict),
+        "the resource stays claimed after a failed settlement"
+    );
+
+    // The same refusal is obtainable again and now settles.
+    journal.reject_terminal_save.store(false, Ordering::SeqCst);
+    *journal.retire_head.lock().expect("head retirement") = Some(WikiHeadRetirementProof {
+        retirement: WikiHeadRetirement::Head { head_id },
+        current_head_id: None,
+    });
+    let settled = drive(&journal, journal.reopened(&id), journal.owner, true, false)
+        .await
+        .expect("an explicit retry reproduces the proof");
+    assert!(settled.reconciled);
+    assert!(journal.try_create(&successor).is_ok());
 }
