@@ -351,9 +351,16 @@ outer record retains every unresolved channel step, key/tombstone step and
 failure for startup recovery. Only unchanged or applied channel outcomes mark
 the deletion complete; conflicts and exhausted retries remain reviewable.
 The native journal validates this progression on every create and compare-and-
-swap, so a renderer cannot forge completion and release the app-global
-instance claim. Spawn, restart, lazy reconcile and launch restore all check the
-claim while holding the same transition/store fence used to reserve deletion.
+swap, while the renderer-facing generic create/update adapter rejects
+managed-delete records entirely; only the native deletion coordinator can
+advance them. A provider deployment checks the claim before invoking the
+provider and again, under the transition/store fence, before persisting its
+receipt, so a delete claimed during provider I/O cannot be overwritten by a
+stale completion. Deletion also waits on the same per-agent provider lock
+before capturing a remote record, so an in-flight deployment either finishes
+before the deletion fence or is blocked by it. Spawn, restart, lazy reconcile
+and launch restore all check the claim while holding the same transition/store
+fence used to reserve deletion.
 Canvas discovery pages signed kind 40100 history with the relay's composite
 cursor and fails closed when the bounded scan cannot prove exhaustion. The
 native recovery list exposes redacted unresolved summaries across communities;

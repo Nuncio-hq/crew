@@ -13,7 +13,7 @@ use crate::{
     },
     channel_crew_config::{self, CrewSaveResult},
     commands::{
-        owner_operation_list, owner_operation_load, owner_operation_update,
+        owner_operation_list, owner_operation_load, owner_operation_update_native,
         run_managed_agent_deletion,
     },
     managed_agents::{
@@ -350,7 +350,7 @@ async fn persist(
     reconciled: bool,
 ) -> Result<Operation, String> {
     validate_operation(operation, payload)?;
-    let result = owner_operation_update(
+    let result = owner_operation_update_native(
         app.clone(),
         token.clone(),
         operation.id.clone(),
@@ -667,6 +667,25 @@ async fn begin(
     record: ManagedAgentRecord,
     force_remote_delete: bool,
 ) -> Result<Operation, String> {
+    validate_delete_target(&record, force_remote_delete)?;
+    // Provider deployment and deletion share one per-agent async lock. If a
+    // provider call is already in flight, wait for it to persist its receipt
+    // before capturing the deletion fence. Once this function claims the
+    // journal row, later provider starts observe the pending-delete fence.
+    let provider_guard = if record.backend != BackendKind::Local {
+        Some(
+            crate::commands::acquire_provider_deploy_lock(&app.state::<AppState>(), &record.pubkey)
+                .await?,
+        )
+    } else {
+        None
+    };
+    let record = if provider_guard.is_some() {
+        current_record(app, &record.pubkey)?
+            .ok_or_else(|| format!("agent {} not found", record.pubkey))?
+    } else {
+        record
+    };
     validate_delete_target(&record, force_remote_delete)?;
     if let Some(operation) = existing_operation(app, &token, &record.pubkey).await? {
         let payload: Payload = serde_json::from_value(operation.payload.clone())

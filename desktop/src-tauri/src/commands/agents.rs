@@ -16,6 +16,7 @@ use crate::{
 };
 #[path = "agents/provider-deployment.rs"]
 mod provider_deployment;
+pub(crate) use provider_deployment::acquire_provider_deploy_lock;
 #[path = "agents/start-scope.rs"]
 mod start_scope;
 use start_scope::AgentStartScope;

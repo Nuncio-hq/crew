@@ -188,3 +188,85 @@ async fn owner_scope_adapter_dispatch_binds_revision_scope_and_signer() {
         matches!(load_owner_operation_for_dispatch_at_path(app.handle().clone(), path, stale, id, 0).await, Err(ref error) if error == STALE)
     );
 }
+
+#[tokio::test]
+async fn renderer_cannot_create_managed_agent_delete_claim() {
+    let (app, _dir, path) = fixture();
+    let expected = capture(app.handle().clone()).await.unwrap().token;
+    let result = owner_operation_create_at_path(
+        app.handle().clone(),
+        path.clone(),
+        expected,
+        NewOperation {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: crate::owner_operations::OperationKind::ManagedAgentDelete,
+            resource_key: "c".repeat(64),
+            payload: serde_json::json!({"forged": true}),
+        },
+    )
+    .await;
+    assert!(matches!(result, Err(error) if error.contains("native-only")));
+    assert!(
+        !path.exists(),
+        "renderer rejection must happen before storage"
+    );
+}
+
+#[tokio::test]
+async fn renderer_cannot_update_managed_agent_delete_claim() {
+    let (app, _dir, path) = fixture();
+    let token = capture(app.handle().clone()).await.unwrap().token;
+    let mut store = OperationStore::open(&path, Limits::default()).unwrap();
+    let pubkey = "d".repeat(64);
+    let created = store
+        .create(
+            &token.scope,
+            NewOperation {
+                id: uuid::Uuid::new_v4().to_string(),
+                kind: crate::owner_operations::OperationKind::ManagedAgentDelete,
+                resource_key: pubkey.clone(),
+                payload: serde_json::json!({
+                    "version": 1,
+                    "fence": {
+                        "pubkey": pubkey,
+                        "name": "agent",
+                        "created_at": "created",
+                        "relay_url": "wss://relay.example",
+                        "backend_agent_id": null
+                    },
+                    "channels": [],
+                    "local_removed": false,
+                    "key_removed": false,
+                    "tombstone_enqueued": false,
+                    "failures": 0,
+                    "last_error": null
+                }),
+            },
+            1,
+        )
+        .unwrap();
+    let CreateResult::Created(created) = created else {
+        panic!("expected a new deletion intent");
+    };
+    drop(store);
+
+    let result = owner_operation_update_at_path(
+        app.handle().clone(),
+        path.clone(),
+        token.clone(),
+        created.id.clone(),
+        created.revision,
+        OperationUpdate {
+            status: crate::owner_operations::OperationStatus::Complete,
+            reconciled: true,
+            payload: created.payload.clone(),
+        },
+        false,
+    )
+    .await;
+    assert!(matches!(result, Err(error) if error.contains("native-only")));
+    let reopened = OperationStore::open(&path, Limits::default()).unwrap();
+    let stored = reopened.load(&token.scope, &created.id).unwrap();
+    assert_eq!(stored.revision, 0);
+    assert!(!stored.reconciled);
+}
