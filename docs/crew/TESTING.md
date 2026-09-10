@@ -382,3 +382,22 @@ draft/scroll and returns focus without closing the outer thread. Observe zero
 native activation commands from selection/restoration, while existing hide and
 sim-visible-false cleanup still executes. Preserve channel-to-channel remount
 compatibility. Mock checks do not satisfy native #348/#357 evidence.
+
+
+### Strict selected-run adapter proof (#354, not yet executed)
+
+`crates/buzz-agent/tests/crew/strict_steer.rs`, registered by the existing
+`fake_llm` integration target, drives the actual subprocess and gated provider.
+The source-stage RED cases require an append-only acknowledgment at a real round
+boundary, a bounded pending duplicate that keeps ACP dispatch responsive,
+finish-before-drain settlement without another provider request, and rejection
+of a different invocation without canceling current work. These tests are not
+native RED/GREEN evidence until the allocated build run is recorded in the task.
+
+Before advertising the capability defined in [architecture](ARCHITECTURE.md),
+add/run actual handler/drain lifecycle cases for deadline and cancellation
+ordering, full queue and dedup caps, conflicting request bodies, terminal replay,
+run replacement, errors/round limits, and task-drop cleanup. Remove each guard to
+prove its test fails, restore it, and run the unchanged ordinary steering suite.
+`appended` only certifies history append; provider-call and execution evidence
+are separate assertions. No unsupported installed runtime may inherit the flag.

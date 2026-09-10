@@ -280,3 +280,46 @@ remain authoritative. Preserve `browserClose`/sim visibility cleanup; fence
 `browserOpen` and `simEnsureDevice` mount activation. The existing channel-only
 popout has independent window state and remains outside #354; governor resource
 identity/leases remain shared. D-078 records the bounded approved decision.
+
+
+### Selected-run strict steering protocol (#354, accepted but unimplemented)
+
+This contract is a source-stage proposal for the repo-owned `buzz-agent` adapter.
+No runtime currently advertises this strict capability. Existing ordinary Goose
+steering and callers without the optional metadata retain their behavior.
+
+`session/prompt` may carry `_meta.crew.invocationId`, the immutable harness
+`turnId` UUID, bound only when the adapter acquires that invocation. A future proven
+adapter may advertise `_meta.steering.strictTurnTarget: true`. Its strict
+`_session/steering` request requires `sessionId`, `expectedTurnId`, `requestId`
+(both IDs are UUIDs) and a nonempty text-only `prompt`. Names are fixed for the #354 proof; this is
+not a capability assertion for installed Codex, Hermes, or external Goose.
+The result echoes `requestId` and `turnId`, with `outcome` one of `appended`,
+`stale_target`, `rejected`, `busy`, or `expired`. `appended` means text was
+appended to the selected invocation's history; it makes no claim about a later
+provider call or completed execution. Missing/malformed identity rejects without
+fallback, queue-to-next-turn, cancel/merge, or starting a new turn.
+
+Admission matches the bound invocation under the existing sessions mutex and
+uses a bounded strict queue attached to that invocation: at most eight entries,
+16 KiB UTF-8 text per entry, and 128 dedup IDs for the invocation lifetime.
+No network write or response wait occurs while holding that mutex. A pending
+duplicate with identical canonical text returns `busy` and the same request ID;
+it neither adds a waiter nor extends the original ten-second monotonic deadline.
+A terminal duplicate returns its original result. Reusing an ID with different
+text rejects. Full queue/map rejects admission; live dedup IDs are never evicted.
+A completed invocation rejects new IDs and cannot transfer requests to a successor.
+
+Commit occurs in the selected `RunCtx` at the existing round boundary. The
+synchronous strict drain first observes cancellation and deadline, then validates
+and appends text and records/settles the result with no intervening await. A
+cancellation already observed at that check wins (`stale_target`, no append);
+a cancellation arriving after that check may follow an `appended` result, which
+truthfully describes the append and does not promise subsequent execution.
+The response path is per-turn bounded; the ACP dispatch loop never waits for the
+provider or a ten-second append deadline. Every normal return, error, cancel,
+round-limit return, unwind, and task drop closes/drains the remaining queue and
+settles uncommitted requests and their dedup entries. Deadline expiry cannot leave
+an envelope eligible for later append. A lost response is `unconfirmed` at the
+harness/UI; it must never be relabeled as proven zero delivery or retried as an
+ordinary message. The ordinary steering queue remains separate and unchanged.

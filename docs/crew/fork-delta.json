@@ -42,6 +42,13 @@
       ]
     },
     {
+      "area": "crates/buzz-agent/tests/fake_llm.rs",
+      "why": "#354 registers source-stage strict selected-invocation adapter wire regressions; no runtime capability advertisement.",
+      "resolve": "Retain the Crew test module registration and reuse the upstream gated provider harness; ordinary steering tests remain unchanged.",
+      "filesAtRecord": 1,
+      "fileHints": []
+    },
+    {
       "area": "crates/buzz-core/**",
       "why": "Crew kinds: KIND_ORG_ROSTER 30680 (inert, D-069), KIND_REPO_WIKI_PAGE 30623 (#200), KIND_AGENT_INSTRUMENT_OVERLAY 24201 (#197); observer context fields.",
       "resolve": "keep constants in ALL_KINDS / P_GATED_KINDS / parameterized asserts.",
