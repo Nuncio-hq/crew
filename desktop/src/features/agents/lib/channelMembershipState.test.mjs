@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyChannelMembershipObserverFrame,
+  getChannelMembershipState,
   hasNoChannelMembership,
   resetChannelMembershipState,
   deriveNoChannelMembershipBadge,
 } from "./channelMembershipState.ts";
+import { applyCrewLiveFrameSideEffects } from "../observerRelayStoreCrew.ts";
 const agent = "a".repeat(64);
 const frame = (
   count,
@@ -56,6 +58,23 @@ test("invalid payloads cannot manufacture no-channel readiness", () => {
     payload: { channel_count: 0 },
   });
   assert.equal(hasNoChannelMembership(agent), false);
+});
+test("explicitly unknown membership never becomes confirmed zero", () => {
+  applyChannelMembershipObserverFrame(agent, frame(null));
+  assert.equal(getChannelMembershipState(agent), "unknown");
+  assert.equal(hasNoChannelMembership(agent), false);
+  applyChannelMembershipObserverFrame(agent, frame(0, 2));
+  assert.equal(getChannelMembershipState(agent), "zero");
+  assert.equal(hasNoChannelMembership(agent), true);
+  applyChannelMembershipObserverFrame(agent, frame(null, 3));
+  assert.equal(getChannelMembershipState(agent), "unknown");
+  assert.equal(hasNoChannelMembership(agent), false);
+});
+test("observer dispatch preserves unknown membership state", () => {
+  applyCrewLiveFrameSideEffects(agent, frame(null));
+  assert.equal(getChannelMembershipState(agent), "unknown");
+  applyCrewLiveFrameSideEffects(agent, frame(0, 2));
+  assert.equal(getChannelMembershipState(agent), "zero");
 });
 test("no-channel status is independent of working and hidden when stopped", () => {
   assert.equal(deriveNoChannelMembershipBadge(true, "running"), true);

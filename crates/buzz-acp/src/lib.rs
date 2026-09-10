@@ -2058,6 +2058,12 @@ async fn tokio_main() -> Result<()> {
         );
     }
 
+    // Discovery and subscription confirmation have not happened yet. Keep
+    // this generation explicitly unknown so a failed startup cannot look like
+    // a confirmed zero-channel runtime in Desktop.
+    let mut membership_signal = channel_membership_signal::ChannelMembershipSignal::new();
+    membership_signal.report_unknown(observer.as_ref());
+
     let mut pool = if config.lazy_pool {
         AgentPool::from_slots((0..config.agents).map(|_| None).collect())
     } else {
@@ -2241,14 +2247,19 @@ async fn tokio_main() -> Result<()> {
     }
     let mut subscription_snapshots = relay.subscription_snapshots();
     let mut subscription_snapshots_open = true;
-    let mut initial_subscription_count = 0;
     for (channel_id, filter) in &channel_filters {
         if let Err(e) = relay.subscribe_channel(*channel_id, filter.clone()).await {
             tracing::warn!("failed to subscribe to channel {channel_id}: {e}");
         } else {
-            initial_subscription_count += 1;
             tracing::info!("subscribed to channel {channel_id}");
         }
+    }
+
+    // An empty filter set is a confirmed zero: there are no eligible channel
+    // subscriptions to await. Non-empty sets remain unknown until the
+    // background relay task publishes its actual subscription snapshot.
+    if channel_filters.is_empty() {
+        membership_signal.report(observer.as_ref(), 0);
     }
 
     if let Some((observer, publisher, keys, agent_pubkey, owner_pubkey, owner)) =
@@ -2263,9 +2274,6 @@ async fn tokio_main() -> Result<()> {
             owner,
         ));
     }
-
-    let mut membership_signal = channel_membership_signal::ChannelMembershipSignal::new();
-    membership_signal.report(observer.as_ref(), initial_subscription_count);
 
     let runtime_start_nonce = std::env::var("BUZZ_MANAGED_AGENT_START_NONCE").unwrap_or_default();
     let dedup_mode = config.dedup_mode;
@@ -2730,6 +2738,7 @@ async fn tokio_main() -> Result<()> {
                     } else {
                         // The relay event path handles background-task shutdown.
                         // Do not mistake a closed watch for zero memberships.
+                        membership_signal.report_unknown(observer.as_ref());
                         subscription_snapshots_open = false;
                     }
                     None

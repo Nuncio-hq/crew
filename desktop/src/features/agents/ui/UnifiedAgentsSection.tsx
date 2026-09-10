@@ -1,6 +1,6 @@
 import {
   deriveNoChannelMembershipBadge,
-  useNoChannelMembership,
+  useChannelMembershipState,
 } from "../lib/channelMembershipState";
 import { AgentChannelMembershipBadge } from "./AgentChannelMembershipBadge";
 import * as React from "react";
@@ -372,12 +372,20 @@ function AgentPersonaCard({
     managedAgentRuntime,
     isActive,
   );
+  const membershipState = useChannelMembershipState(agent?.pubkey);
+  const agentStatus = agent?.status ?? "stopped";
   const noChannels = deriveNoChannelMembershipBadge(
-    useNoChannelMembership(agent?.pubkey),
-    agent?.status ?? "stopped",
+    membershipState === "zero",
+    agentStatus,
   );
+  const unknownChannels =
+    membershipState === "unknown" &&
+    (agentStatus === "running" || agentStatus === "deployed");
   const hasStatusBadge =
-    noChannels || showSleepingBadge || Boolean(agent?.personaOrphaned);
+    noChannels ||
+    unknownChannels ||
+    showSleepingBadge ||
+    Boolean(agent?.personaOrphaned);
   const defaultRuntimeId = resolveAgentDefaultRuntimeId({
     agentRuntime: agent?.runtime,
     personaRuntime: persona.runtime,
@@ -440,7 +448,11 @@ function AgentPersonaCard({
       statusBadge={
         hasStatusBadge ? (
           <>
-            {noChannels ? <AgentChannelMembershipBadge /> : null}
+            {noChannels || unknownChannels ? (
+              <AgentChannelMembershipBadge
+                state={unknownChannels ? "unknown" : "zero"}
+              />
+            ) : null}
             {showSleepingBadge ? (
               <AgentSleepingStatusBadge
                 isActive={isActive}
@@ -507,12 +519,17 @@ function StandaloneAgentCard({
     managedAgentRuntime,
     isActive,
   );
+  const membershipState = useChannelMembershipState(agent.pubkey);
   const noChannels = deriveNoChannelMembershipBadge(
-    useNoChannelMembership(agent.pubkey),
+    membershipState === "zero",
     agent.status,
   );
+  const unknownChannels =
+    membershipState === "unknown" &&
+    (agent.status === "running" || agent.status === "deployed");
   const hasStatusBadge =
     noChannels ||
+    unknownChannels ||
     Boolean(agent.profileReadiness) ||
     showSleepingBadge ||
     agent.personaOrphaned;
@@ -562,7 +579,11 @@ function StandaloneAgentCard({
       statusBadge={
         hasStatusBadge ? (
           <>
-            {noChannels ? <AgentChannelMembershipBadge /> : null}
+            {noChannels || unknownChannels ? (
+              <AgentChannelMembershipBadge
+                state={unknownChannels ? "unknown" : "zero"}
+              />
+            ) : null}
             {agent.profileReadiness ? (
               <HermesProfileReadinessIndicator
                 readiness={agent.profileReadiness}

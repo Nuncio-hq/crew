@@ -353,8 +353,10 @@ User-facing thread recap is a separate proposed capability, default Off and gene
 Stage 0 #344 source audit: existing Project.projectChannelId, relatedChannelIds
 and buzz-related-channel already support home/related channel mapping; member
 repository channels are existing data. No one-project-only invariant is approved.
-Existing membership signals/badges need readiness repair (#337), not a parallel
-membership store. Receipt validation currently rejects mentionless direct triggers
+Existing membership signals/badges project one generation-fenced observer state:
+confirmed zero/nonzero counts stay distinct from explicit unknown during startup
+or a closed subscription watch. #337's staging recovery remains open; this is
+not a parallel membership store. Receipt validation currently rejects mentionless direct triggers
 (`receipt_parent_targets_agent`, ingest.rs); #355 must prove relay-authoritative
 routing and durable execution/replay before its approved successor can ship.
 Client-selected canvas/contact data alone cannot authorize a receipt.
