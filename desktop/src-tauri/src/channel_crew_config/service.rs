@@ -269,6 +269,9 @@ pub(crate) async fn list(
         let payload: Payload = serde_json::from_value(operation.payload.clone())
             .map_err(|_| "invalid canvas recovery record; manual review required")?;
         super::record::validate(&operation, &payload)?;
+        if !is_role_recovery(&payload) {
+            continue;
+        }
         progress.push(payload.progress(&operation.id, None, operation.reconciled));
     }
     assert_current(app, &expected).await?;
@@ -292,6 +295,10 @@ fn order_recovery_operations(operations: &mut [Operation]) {
             .then_with(|| right.updated_at.cmp(&left.updated_at))
             .then_with(|| left.id.cmp(&right.id))
     });
+}
+
+fn is_role_recovery(payload: &Payload) -> bool {
+    payload.cleanup_members.is_none()
 }
 
 #[cfg(test)]
@@ -399,5 +406,15 @@ mod visibility_tests {
                 "00000000-0000-0000-0000-000000000002",
             ]
         );
+    }
+
+    #[test]
+    fn role_list_excludes_same_channel_member_cleanup_records() {
+        let (_, operation) = crate::channel_crew_config::tests::Fixture::new();
+        let payload: Payload = serde_json::from_value(operation.payload).unwrap();
+        assert!(is_role_recovery(&payload));
+        let mut cleanup = payload;
+        cleanup.cleanup_members = Some(vec!["a".repeat(64)]);
+        assert!(!is_role_recovery(&cleanup));
     }
 }

@@ -95,7 +95,14 @@ async function mount({
         };
       if (command === "list_relay_agents") return [];
       if (command === "list_channel_crew_operations")
-        return { token, value: store.records.map((record) => record.progress) };
+        return {
+          token,
+          value: store.records
+            .filter(
+              (record) => record.operation.payload.cleanup_members == null,
+            )
+            .map((record) => record.progress),
+        };
       if (command === "owner_operation_load") {
         const id = args?.id;
         const record = store.records.find((entry) => entry.operation.id === id);
@@ -139,6 +146,7 @@ async function mount({
     requests,
     calls,
     applied,
+    token,
     store,
     reply: (outcome) => ({ token, value: { ...progress, outcome } }),
   };
@@ -214,6 +222,57 @@ test("recovery selection prefers an unresolved row over old terminal history", a
     assert.equal(h.result.current.conflict, false);
   } finally {
     h.unmount();
+  }
+});
+
+test("role recovery leaves a same-channel member-cleanup journal untouched", async () => {
+  const h = await mount({ pendingOutcome: "superseded" });
+  const role = h.store.records[0];
+  const cleanup = {
+    progress: {
+      ...role.progress,
+      operation_id: "cleanup-operation",
+      reconciled: true,
+      outcome: "superseded",
+    },
+    operation: {
+      ...role.operation,
+      id: "cleanup-operation",
+      payload: { cleanup_members: ["a".repeat(64)] },
+    },
+  };
+  h.store.records.push(cleanup);
+  try {
+    const { discardChannelCrewOperation } = await import(
+      "@/shared/api/channelCrewConfig.ts"
+    );
+    await assert.rejects(
+      () => discardChannelCrewOperation(h.token, cleanup.operation.id),
+      /member deletion flow/,
+    );
+    await h.act(async () => {
+      await h.result.current.loadLatest();
+    });
+    await h.act(async () => {
+      await h.result.current.replaceDraft();
+    });
+    assert.deepEqual(
+      h.store.records.map((entry) => entry.operation.id),
+      [cleanup.operation.id],
+    );
+    assert.deepEqual(
+      h.store.removed.map(({ id }) => id),
+      [role.operation.id],
+    );
+  } finally {
+    h.unmount();
+  }
+  const reopened = await mount({ store: h.store });
+  try {
+    assert.equal(reopened.result.current.operation, null);
+    assert.equal(reopened.result.current.progress, null);
+  } finally {
+    reopened.unmount();
   }
 });
 

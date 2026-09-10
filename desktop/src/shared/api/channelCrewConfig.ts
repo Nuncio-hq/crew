@@ -98,6 +98,8 @@ export async function discardChannelCrewOperation(
     !operation.reconciled
   )
     throw new Error("This recovery entry still needs reconciliation.");
+  if (isMemberCleanupOperation(operation.payload))
+    throw new Error("This recovery entry belongs to the member deletion flow.");
   const removed = await removeOwnerOperation(
     expected,
     operationId,
@@ -106,4 +108,10 @@ export async function discardChannelCrewOperation(
   if (!sameOwnerOperationScope(removed.token, expected))
     throw new Error("Recovery scope changed.");
   return removed;
+}
+
+function isMemberCleanupOperation(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) return false;
+  const cleanup = (payload as { cleanup_members?: unknown }).cleanup_members;
+  return cleanup !== undefined && cleanup !== null;
 }
