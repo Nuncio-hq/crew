@@ -179,17 +179,11 @@ export function repoKey(owner: string, repoD: string): string {
   return `${owner.toLowerCase()}:${repoD}`;
 }
 
-/** Prefer the exact owner:dtag key; fall back to any job whose key ends in `:dtag`. */
+/** Resolve jobs only for the exact repository owner and identifier. */
 export function jobForRepo(
   jobs: Map<string, WikiJobState>,
   owner: string,
   repoD: string,
 ): WikiJobState | undefined {
-  const exact = jobs.get(repoKey(owner, repoD));
-  if (exact) return exact;
-  const suffix = `:${repoD}`;
-  for (const job of jobs.values()) {
-    if (job.repoKey.endsWith(suffix)) return job;
-  }
-  return undefined;
+  return jobs.get(repoKey(owner, repoD));
 }

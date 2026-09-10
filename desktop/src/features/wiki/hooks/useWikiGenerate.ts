@@ -1,3 +1,4 @@
+import { validateWikiGenerationBatch } from "@/features/wiki/lib/wikiGenerationBatch";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -77,6 +78,7 @@ export function useWikiGenerate() {
           });
           return;
         }
+        validateWikiGenerationBatch(outcome, input);
         const drafts = outcome.drafts ?? [];
         const total = Math.max(drafts.length, outcome.pages, 1);
         setWikiJob({
@@ -104,9 +106,6 @@ export function useWikiGenerate() {
           });
           await queryClient.invalidateQueries({ queryKey: wikiEventsQueryKey });
         }
-        if (drafts.length === 0 && !outcome.tocContent && !outcome.pages) {
-          await publishFallback(input);
-        }
         setWikiJob({
           repoKey: input.repoKey,
           status: "idle",
@@ -117,38 +116,15 @@ export function useWikiGenerate() {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (message.toLowerCase().includes("in progress")) {
-          setWikiJob({
-            repoKey: input.repoKey,
-            status: "failed",
-            done: 0,
-            total: 0,
-            error: message,
-            costNote,
-          });
-          throw error;
-        }
-        try {
-          await publishFallback(input);
-          setWikiJob({
-            repoKey: input.repoKey,
-            status: "idle",
-            done: 1,
-            total: 1,
-            error: null,
-            costNote,
-          });
-        } catch {
-          setWikiJob({
-            repoKey: input.repoKey,
-            status: "failed",
-            done: 0,
-            total: 0,
-            error: message,
-            costNote,
-          });
-          throw error;
-        }
+        setWikiJob({
+          repoKey: input.repoKey,
+          status: "failed",
+          done: 0,
+          total: 0,
+          error: message,
+          costNote,
+        });
+        throw error;
       }
       await queryClient.invalidateQueries({ queryKey: wikiEventsQueryKey });
     },
@@ -165,40 +141,6 @@ async function publishWikiEvent(content: string, tags: string[][]) {
     event,
     "Timed out publishing wiki event.",
     "Failed to publish wiki event.",
-  );
-}
-
-async function publishFallback(input: { owner: string; repoD: string }) {
-  await publishWikiEvent(
-    JSON.stringify({
-      sections: [
-        {
-          id: "overview",
-          title: "Overview",
-          pages: [{ slug: "overview", title: "Platform Overview" }],
-        },
-      ],
-    }),
-    [
-      ["d", `${input.repoD}/_toc`],
-      ["a", `30617:${input.owner}:${input.repoD}`],
-      ["commit", "generated"],
-      ["branch", "main"],
-      ["cadence", "manual"],
-      ["title", "Wiki"],
-    ],
-  );
-  await publishWikiEvent(
-    `# Platform Overview\n\nGenerated wiki page.\n\n\`\`\`mermaid\nflowchart TD\n  A[Repo] --> B[Wiki]\n\`\`\`\n\nSee [README.md#L1-8](buzz://file?owner=${input.owner}&d=${input.repoD}&path=README.md&lines=1-8).\n`,
-    [
-      ["d", `${input.repoD}/overview`],
-      ["a", `30617:${input.owner}:${input.repoD}`],
-      ["title", "Platform Overview"],
-      ["commit", "generated"],
-      ["section", "overview"],
-      ["source", "README.md"],
-      ["language", "en"],
-    ],
   );
 }
 
