@@ -326,6 +326,32 @@ fn test_mark_synced_stale_version_leaves_flag_set() {
 }
 
 #[test]
+fn mark_synced_source_match_rejects_same_timestamp_and_content_with_new_raw_event() {
+    let conn = test_db();
+    let published = sample_event();
+    retain_event(&conn, &published).unwrap();
+
+    let mut replacement = published.clone();
+    replacement.raw_event = r#"{"id":"replacement"}"#.to_string();
+    retain_event(&conn, &replacement).unwrap();
+
+    assert!(!mark_synced_if_match(
+        &conn,
+        published.kind,
+        &published.pubkey,
+        &published.d_tag,
+        published.created_at,
+        &published.content,
+        Some(&published.raw_event),
+    )
+    .unwrap());
+    assert!(get_pending_sync(&conn)
+        .unwrap()
+        .iter()
+        .any(|row| row.pending_sync));
+}
+
+#[test]
 fn test_delete_retained_event_removes_row() {
     let conn = test_db();
     retain_event(&conn, &sample_event()).unwrap();

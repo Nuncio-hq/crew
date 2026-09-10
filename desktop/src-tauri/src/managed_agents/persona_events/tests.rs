@@ -5,6 +5,7 @@ use crate::managed_agents::{BackendKind, ManagedAgentRecord, RespondTo};
 /// state right after creation, before any snapshot apply.
 pub(super) fn sample_record() -> ManagedAgentRecord {
     ManagedAgentRecord {
+        instance_generation: None,
         provider_policy_pending: false,
         description: None,
         pubkey: "p".repeat(64),
@@ -191,6 +192,25 @@ fn monotonic_created_at_bumps_past_head() {
     // Head in the PAST: now already exceeds it, so now wins.
     let past = monotonic_created_at(Some(now - 1000)).as_secs() as i64;
     assert!(past >= now, "past head must not drag created_at backward");
+}
+
+#[test]
+fn archive_refresh_uses_the_captured_owner_keys() {
+    let original_owner = nostr::Keys::generate();
+    let captured_owner = nostr::Keys::generate();
+    let target = nostr::Keys::generate().public_key().to_hex();
+    let event = nostr::EventBuilder::new(nostr::Kind::Custom(9035), "{}")
+        .tags([nostr::Tag::parse(["p", target.as_str()]).unwrap()])
+        .allow_self_tagging()
+        .sign_with_keys(&original_owner)
+        .unwrap();
+
+    let refreshed = resign_with_fresh_timestamp(&event, &captured_owner).unwrap();
+
+    assert_eq!(refreshed.pubkey, captured_owner.public_key());
+    assert_eq!(refreshed.kind, event.kind);
+    assert_eq!(refreshed.content, event.content);
+    assert_eq!(refreshed.tags, event.tags);
 }
 
 #[test]
@@ -905,10 +925,7 @@ mod flush_barrier {
         .custom_created_at(nostr::Timestamp::from(1))
         .sign_with_keys(&keys)
         .unwrap();
-        let state = build_app_state();
-        *state.keys.lock().unwrap() = keys;
-
-        let fresh = resign_with_fresh_timestamp(&stale, &state).unwrap();
+        let fresh = resign_with_fresh_timestamp(&stale, &keys).unwrap();
 
         assert!(fresh.created_at.as_secs() > stale.created_at.as_secs());
         assert_eq!(fresh.kind, stale.kind);

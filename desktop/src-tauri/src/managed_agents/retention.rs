@@ -520,15 +520,45 @@ pub fn mark_synced(
     created_at: i64,
     content: &str,
 ) -> Result<(), String> {
-    conn.execute(
-        "UPDATE persona_events SET pending_sync = 0
-         WHERE kind = ?1 AND pubkey = ?2 AND d_tag = ?3
-           AND created_at = ?4 AND content = ?5",
-        params![kind, pubkey, d_tag, created_at, content],
-    )
-    .map_err(|e| format!("failed to mark event synced: {e}"))?;
+    let _ = mark_synced_if_match(conn, kind, pubkey, d_tag, created_at, content, None)?;
 
     Ok(())
+}
+
+/// Clear `pending_sync` only when the retained source row is unchanged.
+///
+/// A same-second rewrite can preserve `created_at` and `content` while
+/// changing tags, signatures, or another serialized field. Callers that have
+/// the source JSON must compare it too, otherwise an acknowledgement for an
+/// older attempt could clear a newer retained intent. `None` preserves the
+/// timestamp/content-only behavior used by older call sites.
+pub fn mark_synced_if_match(
+    conn: &Connection,
+    kind: u32,
+    pubkey: &str,
+    d_tag: &str,
+    created_at: i64,
+    content: &str,
+    raw_event: Option<&str>,
+) -> Result<bool, String> {
+    let changed = match raw_event {
+        Some(raw_event) => conn.execute(
+            "UPDATE persona_events SET pending_sync = 0
+             WHERE kind = ?1 AND pubkey = ?2 AND d_tag = ?3
+               AND created_at = ?4 AND content = ?5 AND raw_event = ?6
+               AND pending_sync = 1",
+            params![kind, pubkey, d_tag, created_at, content, raw_event],
+        ),
+        None => conn.execute(
+            "UPDATE persona_events SET pending_sync = 0
+             WHERE kind = ?1 AND pubkey = ?2 AND d_tag = ?3
+               AND created_at = ?4 AND content = ?5
+               AND pending_sync = 1",
+            params![kind, pubkey, d_tag, created_at, content],
+        ),
+    }
+    .map_err(|e| format!("failed to mark event synced: {e}"))?;
+    Ok(changed > 0)
 }
 
 /// Delete a retained event by its coordinate.

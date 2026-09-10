@@ -433,6 +433,11 @@ pub async fn create_team(input: CreateTeamRequest, app: AppHandle) -> Result<Tea
             .map_err(|error| error.to_string())?;
         let personas = load_personas(&app)?;
         ensure_persona_ids_are_active(&personas, &input.persona_ids)?;
+        for persona_id in &input.persona_ids {
+            crate::managed_agents::instance_identity::assert_persona_instances_available(
+                &app, persona_id,
+            )?;
+        }
         let mut teams = load_teams(&app)?;
         let team = TeamRecord {
             id: Uuid::new_v4().to_string(),
@@ -482,6 +487,11 @@ pub async fn update_team(input: UpdateTeamRequest, app: AppHandle) -> Result<Tea
             .map_err(|error| error.to_string())?;
         let personas = load_personas(&app)?;
         ensure_persona_ids_are_active(&personas, &input.persona_ids)?;
+        for persona_id in &input.persona_ids {
+            crate::managed_agents::instance_identity::assert_persona_instances_available(
+                &app, persona_id,
+            )?;
+        }
         let mut teams = load_teams(&app)?;
         pending::project_active_team_sharing(&app, &state, &mut teams);
         let updated = commit_team_update(
@@ -521,6 +531,7 @@ pub async fn delete_team(id: String, app: AppHandle) -> Result<(), String> {
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
+        crate::managed_agents::instance_identity::assert_team_instances_available(&app, &id)?;
         let cascaded_persona_d_tags = delete_team_with_cascade(&app, &id)?;
         // delete_team_with_cascade rejects built-in teams via validate_team_deletion,
         // so reaching here means this team was owner-published — tombstone it. The
