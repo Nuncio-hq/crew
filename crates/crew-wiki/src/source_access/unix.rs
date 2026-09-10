@@ -132,13 +132,12 @@ fn folder(root: &Root, path: &str, deadline: Instant) -> Result<Vec<u8>, WikiErr
     Err(unavailable())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use std::process::Command;
     use std::time::Duration;
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn production_git_runner_chdirs_through_retained_fd_after_path_replacement() {
         let temp = std::env::temp_dir().join(format!("crew-source-fd-{}", std::process::id()));
