@@ -50,6 +50,7 @@ pub struct ManagedAgentPairRuntime {
     /// Unpredictable identity for this exact harness generation. Lifecycle
     /// frames from prior processes are rejected even when the pair is live.
     pub start_nonce: String,
+    pub(crate) transport: Option<super::transport_status::Monitor>,
 }
 
 impl std::ops::Deref for ManagedAgentPairRuntime {
@@ -74,6 +75,7 @@ impl ManagedAgentPairRuntime {
             lifecycle: ManagedAgentRuntimeLifecycle::Starting,
             error: None,
             start_nonce,
+            transport: None,
         }
     }
 }
@@ -94,6 +96,10 @@ pub struct ManagedAgentRuntimeStatus {
     pub pid: Option<u32>,
     pub error: Option<String>,
     pub log_path: Option<String>,
+    /// Local connection health, independent of process lifecycle.
+    pub transport: buzz_core_pkg::transport_status::TransportStatus,
+    /// Diagnostic belongs to an explicitly retired generation.
+    pub transport_retired: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

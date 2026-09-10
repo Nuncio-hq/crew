@@ -194,6 +194,8 @@ type MockManagedAgentRuntimeSeed = {
   pubkey: string;
   relayUrl: string;
   lifecycle?: MockManagedAgentRuntimeRow["lifecycle"];
+  transport?: import("@/shared/api/types").ManagedAgentRuntimeStatus["transport"];
+  transportRetired?: boolean;
 };
 
 type MockRelayAgentSeed = {
@@ -401,6 +403,8 @@ type E2eConfig = {
     /** Per agent+relay runtime rows for the pair-scoped lifecycle commands
      *  (`list/start/stop/restart_managed_agent_runtime`). */
     managedAgentRuntimes?: MockManagedAgentRuntimeSeed[];
+    /** Fail successive pair-scoped starts to exercise recovery after stop. */
+    managedAgentRuntimeStartErrors?: string[];
     personas?: MockPersonaSeed[];
     /** Community catalog replaceable-event heads returned by relay queries. */
     personaCatalogEvents?: RelayEvent[];
@@ -1193,6 +1197,8 @@ type MockManagedAgentRuntimeRow = {
   pid: number | null;
   error: string | null;
   logPath: string | null;
+  transport?: import("@/shared/api/types").ManagedAgentRuntimeStatus["transport"];
+  transportRetired?: boolean;
 };
 
 type WsHandler = (message: unknown) => void;
@@ -2835,9 +2841,14 @@ function resetMockManagedAgents(config?: E2eConfig) {
       relayUrl: seed.relayUrl,
       localSetup: true,
       lifecycle: seed.lifecycle ?? "ready",
-      pid: seed.lifecycle === "stopped" ? null : 43000,
+      pid:
+        seed.lifecycle === "stopped" || seed.lifecycle === "failed"
+          ? null
+          : 43000,
       error: null,
       logPath: null,
+      transport: seed.transport,
+      transportRetired: seed.transportRetired,
     }),
   );
 
@@ -15486,6 +15497,8 @@ export function maybeInstallE2eTauriMocks() {
         );
       case "list_managed_agent_runtimes":
         return mockManagedAgentRuntimes.map((row) => ({ ...row }));
+      case "set_managed_transport_eligibility":
+        return undefined;
       case "get_bestie_assignment":
         return mockBestieAssignment ? { ...mockBestieAssignment } : null;
       case "assign_bestie": {
@@ -15513,6 +15526,11 @@ export function maybeInstallE2eTauriMocks() {
         return channel;
       }
       case "start_managed_agent_runtime":
+        if (activeConfig?.mock?.managedAgentRuntimeStartErrors?.length) {
+          throw new Error(
+            activeConfig.mock.managedAgentRuntimeStartErrors.shift(),
+          );
+        }
         return handleManagedAgentRuntimeAction(
           "start",
           payload as { pubkey: string; relayUrl: string },

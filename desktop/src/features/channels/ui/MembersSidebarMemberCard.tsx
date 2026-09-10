@@ -1,4 +1,8 @@
 import {
+  managedAgentProcessLabel,
+  managedAgentTransportPresentation,
+} from "@/features/agents/managedAgentTransportStatus";
+import {
   Activity,
   Ban,
   Bot,
@@ -22,7 +26,6 @@ import { AgentManagementMarker } from "@/features/agents/ui/OtherSetupAgentMarke
 import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import { PresenceDot } from "@/features/presence/ui/PresenceBadge";
 import {
-  agentCommunityAvailability,
   MANAGED_AGENT_PAIR_ACTION_LABELS,
   type ManagedAgentPairAction,
 } from "@/features/agents/managedAgentRuntimeStatus";
@@ -66,6 +69,7 @@ type MembersSidebarMemberCardProps = {
   onChangeRole: (member: ChannelMember, role: string) => void;
   onEditRespondTo?: (agent: ManagedAgent) => void;
   onManagedAgentAction: (agent: ManagedAgent) => void;
+  onRetryTransport?: (agent: ManagedAgent) => void;
   onOpenProfile?: (pubkey: string) => void;
   onRemoveMember: (member: ChannelMember) => void;
   onTimeout: (member: ChannelMember, expiresAtSecs: number) => void;
@@ -135,6 +139,7 @@ export function MembersSidebarMemberCard({
   onChangeRole,
   onEditRespondTo,
   onManagedAgentAction,
+  onRetryTransport,
   onOpenProfile,
   onRemoveMember,
   onTimeout,
@@ -146,6 +151,7 @@ export function MembersSidebarMemberCard({
   profileOwnerPubkey,
   viewerIsOwner,
 }: MembersSidebarMemberCardProps) {
+  const transport = managedAgentTransportPresentation(managedAgentRuntime);
   const roleLabel = formatRoleLabel(member, memberIsBot);
   const disabled = isActionPending || isArchived;
   const canViewActivity =
@@ -222,7 +228,7 @@ export function MembersSidebarMemberCard({
             data-testid={`sidebar-managed-agent-status-${member.pubkey}`}
             variant={
               managedAgentRuntime
-                ? agentCommunityAvailability(managedAgentRuntime) === "Here"
+                ? managedAgentProcessLabel(managedAgentRuntime) === "Here"
                   ? "default"
                   : "secondary"
                 : managedAgent && isManagedAgentActive(managedAgent)
@@ -231,11 +237,25 @@ export function MembersSidebarMemberCard({
             }
           >
             {managedAgentRuntime
-              ? agentCommunityAvailability(managedAgentRuntime)
+              ? managedAgentProcessLabel(managedAgentRuntime)
               : managedAgent && isManagedAgentActive(managedAgent)
                 ? "Running"
                 : "Stopped"}
           </Badge>
+        ) : null}
+        {transport ? (
+          <div
+            className="mt-1 text-xs"
+            role="status"
+            data-testid={`sidebar-agent-transport-${member.pubkey}`}
+          >
+            <span className="block font-medium">{transport.label}</span>
+            {transport.detail ? (
+              <span className="block text-muted-foreground">
+                {transport.detail}
+              </span>
+            ) : null}
+          </div>
         ) : null}
         {managedAgent ? (
           <span
@@ -284,6 +304,8 @@ export function MembersSidebarMemberCard({
           onChangeRole={onChangeRole}
           onEditRespondTo={onEditRespondTo}
           onManagedAgentAction={onManagedAgentAction}
+          onRetryTransport={onRetryTransport}
+          needsTransportRetry={transport?.needsRetry ?? false}
           onRemoveMember={onRemoveMember}
           onTimeout={onTimeout}
           onUnban={onUnban}
@@ -313,15 +335,18 @@ function MemberActionsMenu({
   onChangeRole,
   onEditRespondTo,
   onManagedAgentAction,
+  onRetryTransport,
   onRemoveMember,
   onTimeout,
   onUnban,
   onUntimeout,
   onViewActivity,
   pairAction,
+  needsTransportRetry,
 }: {
   canChangeRole: boolean;
   availability: PresenceStatus | undefined;
+  needsTransportRetry: boolean;
   canModerateMember: boolean;
   canRemoveMember: boolean;
   canViewActivity: boolean;
@@ -334,6 +359,7 @@ function MemberActionsMenu({
   onChangeRole: (member: ChannelMember, role: string) => void;
   onEditRespondTo?: (agent: ManagedAgent) => void;
   onManagedAgentAction: (agent: ManagedAgent) => void;
+  onRetryTransport?: (agent: ManagedAgent) => void;
   onRemoveMember: (member: ChannelMember) => void;
   onTimeout: (member: ChannelMember, expiresAtSecs: number) => void;
   onUnban: (member: ChannelMember) => void;
@@ -373,6 +399,18 @@ function MemberActionsMenu({
         {memberIsBot && managedAgent ? (
           <>
             {canViewActivity ? <DropdownMenuSeparator /> : null}
+            {needsTransportRetry &&
+            pairAction !== "restart" &&
+            onRetryTransport ? (
+              <DropdownMenuItem
+                data-testid={`sidebar-agent-retry-${member.pubkey}`}
+                disabled={disabled}
+                onClick={() => onRetryTransport(managedAgent)}
+              >
+                <RotateCcw aria-hidden="true" className="h-4 w-4" />
+                Retry by restarting
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem
               data-testid={`sidebar-agent-action-${member.pubkey}`}
               disabled={disabled}
@@ -383,9 +421,11 @@ function MemberActionsMenu({
               {pairAction
                 ? getPairActionIcon(pairAction)
                 : getManagedAgentActionIcon(managedAgent)}
-              {pairAction
-                ? MANAGED_AGENT_PAIR_ACTION_LABELS[pairAction]
-                : getManagedAgentPrimaryActionLabel(managedAgent)}
+              {needsTransportRetry && pairAction === "restart"
+                ? "Retry by restarting"
+                : pairAction
+                  ? MANAGED_AGENT_PAIR_ACTION_LABELS[pairAction]
+                  : getManagedAgentPrimaryActionLabel(managedAgent)}
             </DropdownMenuItem>
             {onEditRespondTo ? (
               <DropdownMenuItem

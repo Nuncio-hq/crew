@@ -152,6 +152,12 @@ pub(crate) fn shutdown_managed_agents(app: &tauri::AppHandle) -> Result<(), Stri
         &managed_agents::current_instance_id(app),
     );
 
+    state
+        .managed_transport_diagnostics
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
+
     // Stop all tracked agents. Send SIGTERM to all process
     // groups first, then wait for exits in parallel to avoid serial 1s waits.
     struct AgentToStop {

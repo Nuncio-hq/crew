@@ -663,6 +663,17 @@ export function MembersSidebar({
         onManagedAgentAction={(agent) => {
           void handleAgentLifecycleAction(agent, managedAgentRuntime);
         }}
+        onRetryTransport={
+          pairAction
+            ? (agent) => {
+                void handleAgentLifecycleAction(
+                  agent,
+                  managedAgentRuntime,
+                  "restart",
+                );
+              }
+            : undefined
+        }
         onOpenProfile={handleOpenProfile}
         onRemoveMember={handleRemoveMember}
         onTimeout={onTimeout}

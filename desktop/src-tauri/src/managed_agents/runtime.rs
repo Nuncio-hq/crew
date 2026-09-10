@@ -799,6 +799,22 @@ pub fn spawn_agent_child(
     command
         .env("BUZZ_MANAGED_AGENT", current_instance_id(app))
         .env("BUZZ_MANAGED_AGENT_START_NONCE", &start_nonce);
+    let transport_storage_available = super::transport_status::preflight_child(
+        app,
+        &runtime_key,
+        &log_path,
+        &start_nonce,
+        owner_hex,
+        spawned_setup_mode,
+    )?;
+    super::transport_status::configure_child_with_storage(
+        &mut command,
+        &log_path,
+        &start_nonce,
+        owner_hex,
+        spawned_setup_mode,
+        transport_storage_available,
+    );
 
     // Stamp spawn config from values above, BEFORE spawning — a post-spawn
     // re-resolve races config edits and would stamp the wrong values.
@@ -920,15 +936,19 @@ fn start_managed_agent_process_supported(
 ) -> Result<(), String> {
     let key = ManagedAgentRuntimeKey::new(record.pubkey.clone(), workspace_relay_url)?;
     if let Some(runtime) = runtimes.get_mut(&key) {
-        if runtime
-            .child
-            .try_wait()
-            .map_err(|error| format!("failed to inspect running process: {error}"))?
-            .is_none()
-        {
+        let status = runtime.child.try_wait().map_err(|_| {
+            runtime.error = Some(super::transport_status::PROCESS_INSPECTION_ERROR.into());
+            if let Some(monitor) = runtime.transport.as_mut() {
+                monitor.inspection_failed();
+            }
+            super::transport_status::PROCESS_INSPECTION_ERROR.to_string()
+        })?;
+        let Some(status) = status else {
             return Ok(());
+        };
+        if let Some(monitor) = runtime.transport.as_mut() {
+            monitor.retire(!status.success(), std::time::Instant::now());
         }
-
         runtimes.remove(&key);
         super::remove_agent_runtime_receipt(app, &key);
     }
@@ -964,7 +984,9 @@ fn start_managed_agent_process_supported(
     record.last_error = None;
     record.last_error_code = None;
 
-    runtimes.insert(key, ManagedAgentPairRuntime::starting(process));
+    let mut runtime = ManagedAgentPairRuntime::starting(process);
+    super::transport_status::bind_registered(app, &key, &mut runtime, owner_hex);
+    runtimes.insert(key, runtime);
     Ok(())
 }
 

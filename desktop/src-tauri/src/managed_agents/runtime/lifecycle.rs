@@ -71,8 +71,12 @@ pub fn sync_managed_agent_processes(
                     record.last_error = Some(format!("failed to inspect process state: {error}"));
                     record.last_error_code = None;
                 }
+                runtime.error =
+                    Some(super::super::transport_status::PROCESS_INSPECTION_ERROR.into());
+                if let Some(monitor) = runtime.transport.as_mut() {
+                    monitor.inspection_failed();
+                }
                 changed = true;
-                exited.push(key.clone());
                 continue;
             }
         };
@@ -103,6 +107,9 @@ pub fn sync_managed_agent_processes(
             record.last_error_code = log_err.as_ref().and_then(|e| e.code);
         }
 
+        if let Some(monitor) = runtime.transport.as_mut() {
+            monitor.retire(!status.success(), std::time::Instant::now());
+        }
         changed = true;
         exited.push(key.clone());
     }
@@ -122,4 +129,96 @@ pub fn sync_managed_agent_processes(
     }
 
     (changed, exited_pubkeys)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::managed_agents::spawn_snapshot::SpawnConfigSnapshot;
+    use crate::managed_agents::transport_status::{Diagnostics, Monitor, ReadTicket};
+    use crate::managed_agents::ManagedAgentProcess;
+    use buzz_core_pkg::transport_status::TransportState;
+    use std::collections::{BTreeMap, HashMap};
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    fn test_spawn_snapshot() -> SpawnConfigSnapshot {
+        SpawnConfigSnapshot {
+            acp_command: "buzz-acp".into(),
+            command: "/usr/bin/false".into(),
+            args: Vec::new(),
+            mcp_command: String::new(),
+            env: BTreeMap::new(),
+            relay_url: "ws://fixture".into(),
+            team_instructions: None,
+            system_prompt: None,
+            model: None,
+            provider: None,
+            session_title: None,
+            auth_tag: None,
+            respond_to: "owner-only".into(),
+            respond_to_allowlist: None,
+            idle_timeout_seconds: None,
+            max_turn_duration_seconds: None,
+            parallelism: 1,
+            effort_level: None,
+            session_policy: "channel".into(),
+        }
+    }
+
+    #[test]
+    fn sync_retires_an_exited_generation_through_the_lifecycle_seam() {
+        let key = ManagedAgentRuntimeKey::new("a".repeat(64), "ws://fixture").unwrap();
+        let owner = "b".repeat(64);
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let child = Command::new("/usr/bin/false")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn the short-lived lifecycle fixture");
+        let process = ManagedAgentProcess {
+            child,
+            log_path: PathBuf::new(),
+            spawn_config: test_spawn_snapshot(),
+            setup_mode: false,
+            adapter_availability: None,
+            start_nonce: nonce.clone(),
+        };
+        let diagnostics = Arc::new(Mutex::new(Diagnostics::default()));
+        let ticket = ReadTicket {
+            key: key.clone(),
+            nonce,
+            path: PathBuf::from("/fixture/status.json"),
+            owner: owner.clone(),
+            epoch: 0,
+        };
+        let mut runtime = ManagedAgentPairRuntime::starting(process);
+        runtime.transport = Some(Monitor::new(ticket, &diagnostics));
+        let mut runtimes = HashMap::from([(key.clone(), runtime)]);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut exited = Vec::new();
+        while Instant::now() < deadline {
+            let (_, keys) = sync_managed_agent_processes(&mut [], &mut runtimes, "test");
+            if !keys.is_empty() {
+                exited = keys;
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        assert_eq!(exited, vec![key.pubkey.clone()]);
+        assert!(runtimes.is_empty());
+        let (status, failed) = diagnostics
+            .lock()
+            .unwrap()
+            .projection(&key, &owner, Instant::now())
+            .expect("the production lifecycle seam must retire the monitor");
+        assert!(failed);
+        assert_eq!(status.state, TransportState::Unknown);
+    }
 }

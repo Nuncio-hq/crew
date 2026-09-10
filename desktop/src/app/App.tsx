@@ -1,3 +1,7 @@
+import {
+  completeCommunityRemoval,
+  setManagedTransportEligibility,
+} from "@/features/communities/managedTransportEligibility";
 import { isTauri } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -375,6 +379,7 @@ function CommunityApp({
   // current connecting transaction. Prevents the effect from launching a
   // second request if it re-runs while a fetch is in flight.
   const profileCheckTransactionRef = useRef<string | null>(null);
+  const cancellingTransactionRef = useRef<string | null>(null);
   // Always reflects the live transaction object so async callbacks can perform
   // an atomic check of both ID and stage before mutating state.
   const transactionRef = useRef(communityOnboarding.transaction);
@@ -492,26 +497,49 @@ function CommunityApp({
 
   const handleCommunityOnboardingCancel = useCallback(async () => {
     const transaction = communityOnboarding.transaction;
-    communityOnboarding.clear();
-
-    if (!transaction?.communityId) return;
+    if (!transaction?.communityId) {
+      communityOnboarding.clear();
+      return;
+    }
     if (!transaction.addedCommunity) {
-      if (transaction.previousCommunityId) {
+      communityOnboarding.clear();
+      if (transaction.previousCommunityId)
         await transitionCommunity(transaction.previousCommunityId);
-      }
       return;
     }
-    if (communities.length === 1) {
-      if (transaction.source === "first-community") {
-        setResumeFirstCommunityPage(transaction.firstCommunityPage ?? "join");
-      }
-      clearCommunities();
-      return;
+    // Fence late profile completion while retaining the visible retry context.
+    const communityId = transaction.communityId;
+    cancellingTransactionRef.current = transaction.id;
+    try {
+      await completeCommunityRemoval(
+        async () => undefined,
+        () => setManagedTransportEligibility(transaction.relayUrl, false),
+        async () => {
+          if (transactionRef.current?.id !== transaction.id) return;
+          if (communities.length === 1) {
+            if (transaction.source === "first-community")
+              setResumeFirstCommunityPage(
+                transaction.firstCommunityPage ?? "join",
+              );
+            clearCommunities();
+          } else {
+            if (transaction.previousCommunityId)
+              await transitionCommunity(transaction.previousCommunityId);
+            removeCommunity(communityId);
+          }
+          if (transactionRef.current?.id === transaction.id)
+            communityOnboarding.clear();
+        },
+      );
+    } catch (error) {
+      communityOnboarding.update(
+        { error: error instanceof Error ? error.message : String(error) },
+        transaction.id,
+      );
+    } finally {
+      if (cancellingTransactionRef.current === transaction.id)
+        cancellingTransactionRef.current = null;
     }
-    if (transaction.previousCommunityId) {
-      await transitionCommunity(transaction.previousCommunityId);
-    }
-    removeCommunity(transaction.communityId);
   }, [
     clearCommunities,
     communities.length,
@@ -534,7 +562,12 @@ function CommunityApp({
     community.isReady &&
     community.appliedKey === communityKey;
   useEffect(() => {
-    if (transaction?.stage !== "connecting" || !targetIsReady) return;
+    if (
+      transaction?.stage !== "connecting" ||
+      transaction.error ||
+      !targetIsReady
+    )
+      return;
     const transactionId = transaction.id;
     const relayUrl = transaction.relayUrl;
     if (profileCheckTransactionRef.current === transactionId) return;
@@ -542,27 +575,57 @@ function CommunityApp({
 
     // resolveProfileCheckAction resolves exactly once (Promise.race + timer
     // cleared on settle), so no settled flag is needed here.
-    void resolveProfileCheckAction(getProfile, 10_000).then((result) => {
-      // Atomic staleness guard via isTransactionStillConnecting: the
-      // transaction must still be the same one that launched this request
-      // AND still be in connecting. Covers cancel+replacement (B's ID !== A's)
-      // and cancel-without-replacement (transactionRef.current is null).
-      if (!isTransactionStillConnecting(transactionRef.current, transactionId))
-        return;
+    void resolveProfileCheckAction(getProfile, 10_000)
+      .then(async (result) => {
+        // Atomic staleness guard via isTransactionStillConnecting: the
+        // transaction must still be the same one that launched this request
+        // AND still be in connecting. Covers cancel+replacement (B's ID !== A's)
+        // and cancel-without-replacement (transactionRef.current is null).
+        if (
+          !isTransactionStillConnecting(
+            transactionRef.current,
+            transactionId,
+          ) ||
+          cancellingTransactionRef.current === transactionId
+        )
+          return;
+        // This is explicit successful add/rejoin, not ordinary workspace switching
+        // or the automatic reconcile path. Queueing is synchronous before await.
+        await setManagedTransportEligibility(relayUrl, true);
+        if (
+          !isTransactionStillConnecting(
+            transactionRef.current,
+            transactionId,
+          ) ||
+          cancellingTransactionRef.current === transactionId
+        )
+          return;
 
-      if (result.action === "skip") {
-        markCommunityOnboardingComplete(result.profile.pubkey, relayUrl);
-        communityOnboarding.clear();
-      } else {
+        if (result.action === "skip") {
+          markCommunityOnboardingComplete(result.profile.pubkey, relayUrl);
+          communityOnboarding.clear();
+        } else {
+          communityOnboarding.update(
+            { stage: "profile", error: undefined },
+            transactionId,
+          );
+        }
+      })
+      .catch((error) => {
+        if (
+          !isTransactionStillConnecting(transactionRef.current, transactionId)
+        )
+          return;
+        profileCheckTransactionRef.current = null;
         communityOnboarding.update(
-          { stage: "profile", error: undefined },
+          { error: error instanceof Error ? error.message : String(error) },
           transactionId,
         );
-      }
-    });
+      });
   }, [
     communityOnboarding,
     targetIsReady,
+    transaction?.error,
     transaction?.stage,
     transaction?.id,
     transaction?.relayUrl,

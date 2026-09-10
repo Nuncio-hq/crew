@@ -61,6 +61,18 @@ pub(crate) async fn measure_secure_directory(
         .await
 }
 
+/// Inspect one flat private namespace without following links or scanning past
+/// the entry cap. Unlike recursive spool measurement, bytes are per-file here.
+pub(crate) async fn list_secure_flat_names(
+    path: &Path,
+    max_entry_bytes: u64,
+    max_entries: usize,
+) -> Result<Vec<OsString>, String> {
+    let path = path.to_owned();
+    run_blocking(move || platform::list_secure_flat_names(&path, max_entry_bytes, max_entries))
+        .await
+}
+
 pub(crate) async fn lock_secure_directory(path: &Path) -> Result<SecureSpoolDirectoryLock, String> {
     let path = path.to_owned();
     run_blocking(move || {
@@ -728,6 +740,70 @@ mod platform {
         )
     }
 
+    pub(super) fn list_secure_flat_names(
+        path: &Path,
+        max_entry_bytes: u64,
+        max_entries: usize,
+    ) -> Result<Vec<OsString>, String> {
+        let mut directory = open_validated_directory(path)?;
+        let lock = nix::fcntl::openat(
+            &directory,
+            OsStr::new(".spool.lock"),
+            OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(|_| "private flat directory lock is unsafe")?;
+        let lock_metadata =
+            fstat(&lock).map_err(|_| "cannot inspect private flat directory lock")?;
+        if SFlag::from_bits_truncate(lock_metadata.st_mode) != SFlag::S_IFREG
+            || lock_metadata.st_uid != geteuid().as_raw()
+            || lock_metadata.st_mode & 0o777 != 0o600
+            || lock_metadata.st_nlink != 1
+            || lock_metadata.st_size != 0
+        {
+            return Err(
+                "private flat directory lock must be a single-link owner-owned empty 0600 file"
+                    .into(),
+            );
+        }
+        let mut names = Vec::new();
+        for entry in directory.iter() {
+            let entry = entry.map_err(|_| "cannot enumerate private flat directory")?;
+            let name = entry.file_name().to_bytes();
+            if name == b"." || name == b".." || name == b".spool.lock" {
+                continue;
+            }
+            if names.len() >= max_entries {
+                return Err("private flat directory exceeds entry capacity".into());
+            }
+            names.push(OsString::from_vec(name.to_vec()));
+        }
+        for name in &names {
+            let descriptor = nix::fcntl::openat(
+                &directory,
+                name.as_os_str(),
+                OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK,
+                Mode::empty(),
+            )
+            .map_err(|_| "private flat directory entry is unsafe")?;
+            let metadata =
+                fstat(&descriptor).map_err(|_| "cannot inspect private flat directory entry")?;
+            if SFlag::from_bits_truncate(metadata.st_mode) != SFlag::S_IFREG
+                || metadata.st_uid != geteuid().as_raw()
+                || metadata.st_mode & 0o777 != 0o600
+                || metadata.st_nlink != 1
+                || metadata.st_size < 0
+                || metadata.st_size as u64 > max_entry_bytes
+            {
+                return Err(
+                    "private flat directory requires bounded owner-owned single-link 0600 files"
+                        .into(),
+                );
+            }
+        }
+        Ok(names)
+    }
+
     pub(super) fn lock_secure_directory(path: &Path) -> Result<File, String> {
         lock_secure_named_file(path, OsStr::new(".spool.lock"))
     }
@@ -1072,6 +1148,14 @@ mod platform {
         _max_entries: usize,
     ) -> Result<(usize, u64), String> {
         unsupported()
+    }
+
+    pub(super) fn list_secure_flat_names(
+        _path: &Path,
+        _max_entry_bytes: u64,
+        _max_entries: usize,
+    ) -> Result<Vec<OsString>, String> {
+        Err("secure flat-directory inspection is unavailable on this platform".into())
     }
 
     pub(super) fn lock_secure_directory(_path: &Path) -> Result<std::fs::File, String> {

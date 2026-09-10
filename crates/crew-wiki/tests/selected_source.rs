@@ -2,7 +2,10 @@
 #![cfg(unix)]
 use crew_wiki::source_access::SelectedSourceRoot;
 use crew_wiki::source_snapshot::{source_hash, SourceReference};
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::path::Path;
+use std::path::PathBuf;
+#[cfg(target_os = "linux")]
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};

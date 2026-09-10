@@ -91,7 +91,7 @@ async fn unrelated_positive_ok_cannot_hide_exact_auth_denial() {
     )
     .await;
     assert!(
-        matches!(result, Err(RelayError::AuthFailed(ref message)) if message == "blocked: fixture identity")
+        matches!(result, Err(RelayError::AuthDenied(ref message)) if message == "blocked: fixture identity")
     );
 }
 
@@ -118,7 +118,7 @@ async fn exact_auth_denial_is_terminal_but_dependency_error_is_retryable() {
             .await
             .err()
             .unwrap();
-        assert!(matches!(error, RelayError::AuthFailed(_)));
+        assert!(matches!(error, RelayError::AuthDenied(_)));
         assert_eq!(is_terminal_connect_error(&error), terminal);
     }
 }

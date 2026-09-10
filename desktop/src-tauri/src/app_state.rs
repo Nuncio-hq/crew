@@ -53,6 +53,9 @@ pub struct AppState {
     pub provider_deploy_locks: Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     pub channel_templates_store_lock: Mutex<()>,
     pub managed_agent_processes: Mutex<HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>>,
+    /// Bounded retired-generation diagnostics, never active process authority.
+    pub(crate) managed_transport_diagnostics:
+        Arc<Mutex<crate::managed_agents::transport_status::Diagnostics>>,
     pub huddle_state: Mutex<HuddleState>,
     pub huddle_audio: crate::huddle::tts_settings::HuddleAudioSettingsState,
     /// Tauri app handle — stored after setup so huddle commands can emit
@@ -232,6 +235,7 @@ pub fn build_app_state() -> AppState {
         provider_deploy_locks: Mutex::new(HashMap::new()),
         channel_templates_store_lock: Mutex::new(()),
         managed_agent_processes: Mutex::new(HashMap::new()),
+        managed_transport_diagnostics: Arc::new(Mutex::new(Default::default())),
         session_config_cache: Mutex::new(HashMap::new()),
         huddle_state: Mutex::new(HuddleState::default()),
         huddle_audio: Default::default(),
