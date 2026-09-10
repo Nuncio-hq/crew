@@ -150,7 +150,14 @@ pub fn validate_wiki_page_envelope(
     }
     if !parsed.is_toc() {
         let commit = first_tag(tags, "commit").ok_or(WikiPageError::MissingCommit)?;
-        if commit.is_empty() || commit.len() > 64 {
+        // Git commits are 40 or 64 hex characters; folder snapshots bind a
+        // synthetic `folder:` prefix to a 64-character digest. The relay's
+        // source-bound validator checks the exact source-kind shape later,
+        // while this generic envelope seam must admit both forms.
+        let valid_folder_revision = commit.strip_prefix("folder:").is_some_and(|digest| {
+            digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit())
+        });
+        if commit.is_empty() || (commit.len() > 64 && !valid_folder_revision) {
             return Err(WikiPageError::InvalidCommit);
         }
     }

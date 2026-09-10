@@ -297,6 +297,10 @@ pub(crate) async fn nip11_document(state: &crate::state::AppState, raw_host: &st
         &mut info.supported_extensions,
         state.config.crew_atomic_channel_create,
     );
+    crate::handlers::source_publication::advertise(
+        &mut info.supported_extensions,
+        state.config.crew_conditional_publication_v1,
+    );
     let tenant_host = if state.config.push_enabled {
         crate::tenant::bind_community(&state.db, raw_host)
             .await

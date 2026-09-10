@@ -80,6 +80,11 @@ pub enum DbError {
     /// Operator before demoting or deleting the current one.
     #[error("operation would remove the last relay operator")]
     LastOperator,
+
+    /// The live Wiki storage bound for one owner in one community would be
+    /// exceeded. The replacement transaction preserves the current head.
+    #[error("Wiki storage quota exceeded")]
+    WikiStorageQuotaExceeded,
 }
 
 /// Convenience alias for `Result<T, DbError>`.

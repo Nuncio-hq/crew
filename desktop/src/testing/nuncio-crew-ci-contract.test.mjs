@@ -58,6 +58,12 @@ test("automatic Crew CI is macOS ARM and desktop only", () => {
 
 test("relay-native Project behavior remains an automatic conditional gate", () => {
   const ci = workflow("nuncio-crew-ci.yml");
+  const projectStart = ci.indexOf("\n  project-relay:");
+  const nextJob = ci.indexOf("\n  buzz-acp:", projectStart);
+  const project = ci.slice(
+    projectStart,
+    nextJob > projectStart ? nextJob : undefined,
+  );
 
   assert.match(ci, /name:\s*Project Relay/);
   assert.match(ci, /project-local-workspace-live-relay\.test\.mjs/);
@@ -67,7 +73,19 @@ test("relay-native Project behavior remains an automatic conditional gate", () =
   assert.match(ci, /- 'docker-compose\.yml'/);
   assert.match(ci, /- 'scripts\/reconcile-schema-after-pgschema\.sql'/);
   assert.match(ci, /CREW_LIVE_RELAY_URL:\s*ws:\/\/localhost:3000/);
+  assert.match(project, /cargo-nextest@0\.9\.136/);
+  assert.match(project, /run:\s*just wiki-contract/);
   assert.match(ci, /needs\.project-relay\.result/);
+
+  const justfile = readFileSync(resolve(repoRoot, "Justfile"), "utf8");
+  assert.match(
+    justfile,
+    /wiki-contract:\s*\n[\s\S]*--cargo-profile ci -p crew-wiki/,
+  );
+  assert.match(
+    justfile,
+    /wiki-contract:[\s\S]*--cargo-profile ci -p buzz-relay --lib[\s\S]*handlers::source_publication::[\s\S]*handlers::wiki_page::[\s\S]*api::git::manifest_event::/,
+  );
 });
 
 test("isolated CI relay launches provide an ephemeral signing key", () => {

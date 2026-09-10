@@ -1,4 +1,5 @@
 import type { RelayEvent } from "@/shared/api/types";
+import type { OwnerOperationScope } from "@/shared/api/ownerOperations";
 import {
   KIND_LONG_FORM,
   KIND_REPO_STATE,
@@ -32,6 +33,8 @@ export type WikiToc = {
   generatedAt: number;
 };
 
+export type WikiFreshness = "never" | "fresh" | "stale" | "unknown";
+
 export type WikiPage = {
   event: RelayEvent;
   repoD: string;
@@ -56,12 +59,91 @@ export type CompanyWikiPage = {
 
 export type WikiJobState = {
   repoKey: string;
+  /** Native owner/community/generation fence for renderer job projections. */
+  scope?: OwnerOperationScope;
+  /** Durable native journal identity used by explicit recovery controls. */
+  operationId?: string;
+  operationRevision?: number;
+  nativeStatus?: string;
+  reconciled?: boolean;
+  attempts?: number;
+  retryAt?: number;
+  headAttempted?: boolean;
+  cancelRequested?: boolean;
+  reconcileOnly?: boolean;
+  /** Exact dependency ID for the typed immutable-retired proof. */
+  retiredDependencyId?: string;
+  snapshotId?: string;
+  sourceRevision?: string;
+  cadence?: WikiCadence;
   status: "idle" | "generating" | "failed";
   done: number;
   total: number;
   error: string | null;
   costNote: string | null;
 };
+
+/**
+ * The one explicit recovery action a durable Wiki row may offer.
+ *
+ * `resume` and `retry` both reach native through the same `retry` command
+ * (`explicitRetry: true`); they differ only in what the user is being told,
+ * and native decides what that explicit action is allowed to revoke.
+ */
+export type WikiRecoveryAffordance = "none" | "retry" | "resume" | "regenerate";
+
+/**
+ * Pick the accurate action for a durable recovery row.
+ *
+ * Order matters and mirrors the native rules:
+ * - a reconciled row is terminal, so it offers no publication action at all;
+ * - a typed immutable-retired proof is Regenerate-only — offering "Retry" or
+ *   "Resume" there would promise a resubmission native will never perform;
+ * - an unresolved cancelled / read-only row needs its cancellation revoked
+ *   before anything can be submitted, which is Resume, not an ordinary Retry;
+ * - anything else unresolved is an ordinary bounded retry.
+ */
+export function wikiRecoveryAffordance(
+  job: WikiJobState | undefined,
+): WikiRecoveryAffordance {
+  if (!job?.operationId || job.reconciled) return "none";
+  if (job.retiredDependencyId) return "regenerate";
+  if (job.cancelRequested || job.reconcileOnly) return "resume";
+  return "retry";
+}
+
+/** Button text for an affordance; `null` when no action should be offered. */
+export function wikiRecoveryActionLabel(
+  affordance: WikiRecoveryAffordance,
+): string | null {
+  switch (affordance) {
+    case "retry":
+      return "Retry publication";
+    case "resume":
+      return "Resume publication";
+    case "regenerate":
+      return "Regenerate from source";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether Cancel should be offered for a durable row.
+ *
+ * Cancel stops automatic attempts, so it only applies where attempts are still
+ * possible: a terminal row, a non-durable row and an already cancelled row
+ * have nothing left to stop. A typed retired dependency is excluded by the
+ * same affordance rule — it is already read-only and Regenerate-only, and
+ * native refuses a Cancel there rather than overwrite the retirement proof the
+ * successor flow depends on.
+ */
+export function wikiCanCancelRecovery(job: WikiJobState | undefined): boolean {
+  const affordance = wikiRecoveryAffordance(job);
+  return (
+    (affordance === "retry" || affordance === "resume") && !job?.cancelRequested
+  );
+}
 
 function tagValue(event: RelayEvent, name: string): string | undefined {
   return event.tags.find((tag) => tag[0] === name)?.[1];
@@ -155,24 +237,88 @@ export function defaultBranchCommit(stateEvent: RelayEvent | undefined): {
   commit: string;
 } | null {
   if (!stateEvent || stateEvent.kind !== KIND_REPO_STATE) return null;
-  const head = tagValue(stateEvent, "HEAD") ?? "ref: refs/heads/main";
-  const branch = head.replace(/^ref: refs\/heads\//, "");
-  const commit =
-    tagValue(stateEvent, `refs/heads/${branch}`) ??
-    stateEvent.tags.find((tag) => tag[0]?.startsWith("refs/heads/"))?.[1] ??
-    "";
-  return { branch, commit };
+
+  let head: string | null = null;
+  const refs = new Map<string, string>();
+  for (const tag of stateEvent.tags) {
+    const name = tag[0];
+    if (!name) continue;
+    if (name === "HEAD") {
+      if (head !== null || tag.length !== 2 || !validDefaultHead(tag[1])) {
+        return null;
+      }
+      head = tag[1];
+      continue;
+    }
+    if (name.startsWith("refs/heads/") || name.startsWith("refs/tags/")) {
+      if (
+        tag.length !== 2 ||
+        !validRefName(name) ||
+        !validRefOid(tag[1]) ||
+        refs.has(name)
+      ) {
+        return null;
+      }
+      refs.set(name, tag[1]);
+    }
+  }
+
+  if (!head) return null;
+  const branch = head.slice("ref: refs/heads/".length);
+  const ref = `refs/heads/${branch}`;
+  const commit = refs.get(ref);
+  return commit ? { branch, commit } : null;
 }
 
 export function wikiFreshness(
   toc: WikiToc | null,
   state: RelayEvent | undefined,
-): "never" | "fresh" | "stale" {
+): WikiFreshness {
   if (!toc) return "never";
   const tip = defaultBranchCommit(state);
-  if (!tip?.commit) return "fresh";
+  if (!tip?.commit) return "unknown";
   if (toc.commit && tip.commit && toc.commit !== tip.commit) return "stale";
   return "fresh";
+}
+
+function validDefaultHead(value: string | undefined): value is string {
+  return (
+    typeof value === "string" &&
+    value.startsWith("ref: refs/heads/") &&
+    validRefTail(value.slice("ref: refs/heads/".length))
+  );
+}
+
+function validRefName(value: string): boolean {
+  const prefix = value.startsWith("refs/heads/")
+    ? "refs/heads/"
+    : value.startsWith("refs/tags/")
+      ? "refs/tags/"
+      : null;
+  return (
+    prefix !== null &&
+    !value.endsWith("/") &&
+    !value.includes("//") &&
+    !value.includes("..") &&
+    validRefTail(value.slice(prefix.length))
+  );
+}
+
+function validRefTail(value: string): boolean {
+  return (
+    value.length > 0 &&
+    !value.startsWith(".") &&
+    !value.endsWith(".") &&
+    /^[A-Za-z0-9/_.-]+$/.test(value)
+  );
+}
+
+function validRefOid(value: string | undefined): value is string {
+  return (
+    typeof value === "string" &&
+    (value.length === 40 || value.length === 64) &&
+    /^[0-9a-f]+$/.test(value)
+  );
 }
 
 export function repoKey(owner: string, repoD: string): string {

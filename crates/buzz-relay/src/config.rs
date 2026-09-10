@@ -313,6 +313,11 @@ pub struct Config {
     /// Enable atomic channel creation only after every relay writer is upgraded
     /// or quiesced. Default off; advertises crew-atomic-channel-create.
     pub crew_atomic_channel_create: bool,
+    /// Enable the conditional publication v1 transaction for repository,
+    /// Project, and Wiki replaceable events. Default off; when disabled,
+    /// writers that opt into the conditional contract are rejected instead of
+    /// falling back to the legacy replaceable path.
+    pub crew_conditional_publication_v1: bool,
 
     /// Root directory for the relay's local git scratch. No authoritative
     /// repository state lives here — runtime reads/writes hydrate ephemeral
@@ -917,6 +922,8 @@ impl Config {
         let crew_atomic_channel_create = std::env::var("BUZZ_CREW_ATOMIC_CHANNEL_CREATE")
             .map(|value| value == "true")
             .unwrap_or(false);
+        let crew_conditional_publication_v1 =
+            parse_bool("BUZZ_CREW_CONDITIONAL_PUBLICATION_V1", false)?;
 
         if let Some(ttl) = ephemeral_ttl_override {
             warn!(
@@ -1247,6 +1254,7 @@ impl Config {
             audit_enabled,
             ephemeral_ttl_override,
             crew_atomic_channel_create,
+            crew_conditional_publication_v1,
             git_repo_path,
             git_pack_cache_path,
             git_max_pack_bytes,
