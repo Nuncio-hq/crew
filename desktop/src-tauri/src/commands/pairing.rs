@@ -481,7 +481,7 @@ async fn import_recovered_identity(
                 .map_err(|e| format!("app data dir: {e}"))?;
             std::fs::create_dir_all(&data_dir).map_err(|e| format!("create app data dir: {e}"))?;
             let key_path = data_dir.join("identity.key");
-            crate::commands::identity::commit_imported_identity(&state, &data_dir, keys, |keys| {
+            commit_recovered_keys(&state, &_mutation_guard, &data_dir, keys, |keys| {
                 let store =
                     crate::secret_store::SecretStore::shared(crate::app_state::keyring_service());
                 crate::app_state::persist_imported_identity(store, keys, &key_path, &data_dir)
@@ -510,6 +510,22 @@ fn invalidate_pairing_generation(
 ) -> Result<u64, String> {
     let _fence = generation_fence.lock().map_err(|e| e.to_string())?;
     Ok(generation.fetch_add(1, Ordering::SeqCst).wrapping_add(1))
+}
+
+fn commit_recovered_keys(
+    state: &AppState,
+    mutation_guard: &std::sync::MutexGuard<'_, ()>,
+    data_dir: &std::path::Path,
+    keys: nostr::Keys,
+    persist: impl FnOnce(&nostr::Keys) -> Result<crate::app_state::IdentityStorage, String>,
+) -> Result<(nostr::PublicKey, crate::app_state::IdentityStorage), String> {
+    crate::commands::identity::commit_imported_identity(
+        state,
+        mutation_guard,
+        data_dir,
+        keys,
+        persist,
+    )
 }
 
 fn commit_recovery_if_current<T>(
@@ -791,3 +807,24 @@ mod pairing_generation_tests;
 #[cfg(test)]
 #[path = "pairing_relay_tests.rs"]
 mod pairing_relay_tests;
+
+#[cfg(test)]
+mod owner_scope_tests {
+    use super::*;
+    #[test]
+    fn owner_scope_pairing_commit_advances_identity_epoch() {
+        let state = crate::app_state::build_app_state();
+        let directory = tempfile::tempdir().unwrap();
+        let _guard = state.identity_mutation.lock().unwrap();
+        let before = state.identity_generation.load(Ordering::Acquire);
+        commit_recovered_keys(
+            &state,
+            &_guard,
+            directory.path(),
+            nostr::Keys::generate(),
+            |_| Ok(crate::app_state::IdentityStorage::LocalFile),
+        )
+        .unwrap();
+        assert!(state.identity_generation.load(Ordering::Acquire) > before);
+    }
+}

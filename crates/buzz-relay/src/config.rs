@@ -290,6 +290,13 @@ pub struct Config {
     /// and its proxy routes return 404.
     pub klipy: Option<KlipyConfig>,
 
+    /// Operator attestation that every writer implements conditional publication.
+    /// Default false; enable only after quiescing all older relay writers.
+    pub crew_conditional_publication_v1: bool,
+    /// Operator attestation for transactional conditional Project associations.
+    /// Default false; requires conditional publication and quiesced older writers.
+    pub crew_project_channel_link_v1: bool,
+
     /// Media storage configuration (S3/MinIO).
     pub media: buzz_media::MediaConfig,
     /// Maximum concurrent media uploads handled by one relay process.
@@ -1234,6 +1241,11 @@ impl Config {
             relay_operator_pubkeys,
             allow_nip_oa_auth,
             klipy,
+            crew_conditional_publication_v1: parse_bool(
+                "BUZZ_CREW_CONDITIONAL_PUBLICATION_V1",
+                false,
+            )?,
+            crew_project_channel_link_v1: parse_bool("BUZZ_CREW_PROJECT_CHANNEL_LINK_V1", false)?,
             media,
             media_max_concurrent_uploads,
             media_max_concurrent_uploads_per_pubkey,
@@ -1274,6 +1286,47 @@ mod tests {
         let debug = format!("{config:?}");
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("private-klipy-key"));
+    }
+
+    #[test]
+    fn conditional_project_flags_default_off_and_parse_all_combinations() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        struct Restore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                for (name, value) in &self.0 {
+                    match value {
+                        Some(value) => std::env::set_var(name, value),
+                        None => std::env::remove_var(name),
+                    }
+                }
+            }
+        }
+        let names = [
+            "BUZZ_CREW_CONDITIONAL_PUBLICATION_V1",
+            "BUZZ_CREW_PROJECT_CHANNEL_LINK_V1",
+        ];
+        let _restore = Restore(
+            names
+                .iter()
+                .map(|name| (*name, std::env::var_os(name)))
+                .collect(),
+        );
+        for name in names {
+            std::env::remove_var(name);
+        }
+        let defaults = Config::from_env().expect("default config");
+        assert!(!defaults.crew_conditional_publication_v1);
+        assert!(!defaults.crew_project_channel_link_v1);
+        for conditional in [false, true] {
+            for project in [false, true] {
+                std::env::set_var(names[0], conditional.to_string());
+                std::env::set_var(names[1], project.to_string());
+                let config = Config::from_env().expect("flags config");
+                assert_eq!(config.crew_conditional_publication_v1, conditional);
+                assert_eq!(config.crew_project_channel_link_v1, project);
+            }
+        }
     }
 
     // Mutex to serialize tests that mutate environment variables.

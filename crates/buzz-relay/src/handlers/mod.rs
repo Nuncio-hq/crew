@@ -1,3 +1,7 @@
+/// Shared conditional persistence and repository reconciliation.
+pub(crate) mod conditional_persistence;
+/// Conditional Crew publication on the NIP-33 transaction seam.
+pub(crate) mod conditional_publication;
 /// NIP-42 authentication handler.
 pub mod admin_action_worker;
 pub mod admin_outbox_worker;

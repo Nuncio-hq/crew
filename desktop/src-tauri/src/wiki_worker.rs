@@ -8,14 +8,11 @@
 use crew_wiki::cadence::GenerateLock;
 use crew_wiki::cluster::plan_pages;
 use crew_wiki::generate::{generate_page, HeuristicGenerator};
-use crew_wiki::generate_root::{
-    classify_from_git_failure, resolve_wiki_generate_root, WikiGenerateRoot, WikiLocalSnapshotError,
-};
+use crew_wiki::generate_root::{resolve_wiki_generate_root, WikiGenerateRoot};
 use crew_wiki::git_snapshot::RepoSnapshot;
 use crew_wiki::publish::{page_event_tags, toc_content, toc_event_tags, PageDraft, TocManifest};
-use crew_wiki::steering::load_steering;
+use crew_wiki::steering::load_captured_steering;
 use serde::Serialize;
-use std::path::Path;
 use std::sync::OnceLock;
 
 fn generate_lock() -> &'static GenerateLock {
@@ -97,23 +94,20 @@ pub async fn wiki_generate(
     };
 
     let snapshot = match RepoSnapshot::from_git(&root) {
-        Ok(snapshot) if snapshot.files.is_empty() => {
+        Ok(snapshot) if snapshot.is_empty_tree() => {
             return Ok(empty_outcome(&owner, &repo_d, cost_note));
         }
-        Ok(snapshot) => hydrate_contents(snapshot, &root),
-        Err(err) => {
-            return Ok(
-                match classify_from_git_failure(&root, &err.to_string(), true) {
-                    WikiLocalSnapshotError::MissingLocalPath => {
-                        missing_local_outcome(&owner, &repo_d, cost_note)
-                    }
-                    WikiLocalSnapshotError::EmptyTree => empty_outcome(&owner, &repo_d, cost_note),
-                },
-            );
+        Ok(snapshot) if snapshot.files.is_empty() => {
+            return Err(format!(
+                "Source coverage unavailable: no supported source files ({} omitted paths)",
+                snapshot.omissions.len()
+            ));
         }
+        Ok(snapshot) => snapshot,
+        Err(err) => return Err(err.to_string()),
     };
 
-    let steering = load_steering(&root);
+    let steering = load_captured_steering(&snapshot).map_err(|err| err.to_string())?;
     let plan = plan_pages(&snapshot, steering.as_ref()).map_err(|err| err.to_string())?;
     let generator = HeuristicGenerator;
     let mut drafts = Vec::new();
@@ -158,17 +152,6 @@ fn dto_from_draft(draft: PageDraft, tags: Vec<Vec<String>>) -> WikiDraftDto {
         content: draft.content,
         tags,
     }
-}
-
-fn hydrate_contents(mut snapshot: RepoSnapshot, root: &Path) -> RepoSnapshot {
-    let paths = snapshot.files.clone();
-    for path in paths.iter().take(80) {
-        let body = snapshot.read(path, Some(root));
-        if !body.is_empty() {
-            snapshot.contents.insert(path.clone(), body);
-        }
-    }
-    snapshot
 }
 
 fn empty_outcome(owner: &str, repo_d: &str, cost_note: String) -> WikiGenerateOutcome {

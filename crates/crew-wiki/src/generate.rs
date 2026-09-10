@@ -126,6 +126,7 @@ mod tests {
             branch: "main".into(),
             files: vec!["README.md".into()],
             contents: BTreeMap::from([("README.md".into(), "# hi\n".into())]),
+            ..RepoSnapshot::default()
         };
         let en = HeuristicGenerator.generate(&page, &snap, "en").expect("en");
         assert!(en.contains("```mermaid"));

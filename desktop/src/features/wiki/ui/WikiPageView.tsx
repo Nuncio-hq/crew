@@ -132,6 +132,7 @@ export function WikiPageView({
               <WikiSourceFiles
                 files={shown.sourceFiles}
                 owner={owner ?? toc?.owner ?? ""}
+                pageEvent={shown.event}
                 repoD={shown.repoD}
               />
               <WikiMarkdown

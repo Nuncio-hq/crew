@@ -451,8 +451,8 @@
     },
     {
       "area": "desktop/src-tauri/**",
-      "why": "managed_agents: Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json.",
-      "resolve": "register module + invoke entries only; impl in Crew files; keep `manage(ResourceGovernorHandle)`.",
+      "why": "managed_agents: Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json. D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362).",
+      "resolve": "register module + invoke entries only; impl in Crew files; keep `manage(ResourceGovernorHandle)`. Preserve the shared guarded key-replacement and native scope capture seams; relay events remain domain authority.",
       "filesAtRecord": 88,
       "fileHints": [
         {
@@ -509,6 +509,31 @@
           "path": "desktop/src-tauri/src/shutdown.rs",
           "why": "#196 `quit_governor` on app quit and signals",
           "resolve": "keep next to `TerminalSessions::shutdown_all`"
+        },
+        {
+          "path": "desktop/src-tauri/src/app_state.rs",
+          "why": "D-079 identity generation and startup resolution through the guarded replacement helper",
+          "resolve": "Keep the small production seam; recovery implementation lives in Crew-owned modules."
+        },
+        {
+          "path": "desktop/src-tauri/src/commands/identity.rs",
+          "why": "D-079 imports advance identity generation under the held identity mutation guard",
+          "resolve": "Keep the small production seam; recovery implementation lives in Crew-owned modules."
+        },
+        {
+          "path": "desktop/src-tauri/src/commands/pairing.rs",
+          "why": "D-079 pairing recovery uses the same guarded import commit",
+          "resolve": "Keep the small production seam; recovery implementation lives in Crew-owned modules."
+        },
+        {
+          "path": "desktop/src-tauri/src/commands/workspace.rs",
+          "why": "D-079 short relay/key mutation block serializes against native scope capture",
+          "resolve": "Keep the small production seam; recovery implementation lives in Crew-owned modules."
+        },
+        {
+          "path": "desktop/src-tauri/src/invoke.rs",
+          "why": "D-079 register scoped recovery metadata commands with fixed native path and limits",
+          "resolve": "Keep the small production seam; recovery implementation lives in Crew-owned modules."
         }
       ]
     },

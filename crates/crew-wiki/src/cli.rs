@@ -5,7 +5,7 @@ use crate::generate::{generate_page, HeuristicGenerator};
 use crate::git_snapshot::RepoSnapshot;
 use crate::incremental::{material_file_set_change, regen_plan};
 use crate::publish::{pages_to_publish, toc_content, PageDraft, TocManifest};
-use crate::steering::load_steering;
+use crate::steering::load_captured_steering;
 use crate::types::WikiPlan;
 use std::path::Path;
 
@@ -129,6 +129,6 @@ fn generate_cmd(args: Vec<String>) -> i32 {
 
 fn plan_at(root: &Path) -> Result<WikiPlan, crate::WikiError> {
     let snapshot = RepoSnapshot::from_git(root)?;
-    let steering = load_steering(root);
+    let steering = load_captured_steering(&snapshot)?;
     plan_pages(&snapshot, steering.as_ref())
 }

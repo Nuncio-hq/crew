@@ -58,6 +58,7 @@ mod util;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
 mod wiki_worker;
+mod owner_operations;
 use agent_control::{
     agent_control_note_human, agent_control_origin_decision, agent_control_release,
     agent_control_status, agent_control_take_over,
@@ -221,6 +222,7 @@ pub fn run() {
             });
         })
         .manage(build_app_state())
+        .manage(commands::SourceState::default())
         .manage(ClipboardState::new())
         .manage(PendingCommunityDeepLinks::default())
         .manage(PendingNavigationDeepLinks::default())

@@ -29,6 +29,10 @@ pub enum DbError {
     #[error("member not found in channel {0}")]
     MemberNotFound(uuid::Uuid),
 
+    /// Immutable Wiki live storage has reached its owner/community admission bound.
+    #[error("wiki-storage-quota")]
+    WikiStorageQuota,
+
     /// A generic not-found error.
     #[error("not found: {0}")]
     NotFound(String),

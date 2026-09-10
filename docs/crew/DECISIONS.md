@@ -1364,6 +1364,8 @@ See spikes 0035–0038.
 
 ## D-061 — Crew Wiki is a separable engine on relay events
 
+Publication and recovery are amended by [D-079](#d-079--owner-recovery-and-conditional-publication): immutable revision members and a conditional TOC head replace independent page overwrites. Relay events remain authoritative; the native journal holds operation recovery metadata only.
+
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** #200
@@ -1766,3 +1768,50 @@ upstream's `session_owners` model from `buzz-acp`.
    chunk backlog. Constraints: keep the 120/min quota ceiling, the byte
    budget and drop accounting; add a falsifiable test; docs only until the
    Focus-grain work picks it up (see `PRODUCT.md`, "Watching agents work").
+
+
+## D-079 — Owner recovery and conditional publication
+
+- **Status:** Accepted architecture; implementation in progress, not shipped
+- **Date:** 2026-09-09
+- **Issues:** #362, #363, #364; shared Project recovery consumer
+- **Seams:** existing addressable-event replacement transaction and coordinate lock, kind 30623 Wiki, kinds 30617/30621 Project, native identity/workspace state, and existing rusqlite dependency
+
+The relay remains domain authority. A native SQLite recovery journal records exact signed events and unresolved side effects before publication. It does not become a page cache, Project registry, or second domain database.
+
+**Conditional relay contract.** NIP-11 extension `crew-conditional-publication-v1` covers kinds 30617, 30621, and 30623. Exactly one signed `expected-revision` tag names a 64-character lowercase live event ID, or literal `absent` for initial creation. Compare and write share the existing community/kind/author/d coordinate lock. Only insertion or exact *current* signed-event replay succeeds; non-live replay, superseded writes, and mismatched preconditions conflict. Ambiguous ACKs retain the operation and reconcile exact live state without re-signing. Conditional repository announcements rerun their existing idempotent side-effect ensure before success ACK, including exact live replay; post-commit ensure failure is `error: side-effect-pending`. Project separately proves channel binding and authenticated git transport readiness. Channel kind 9007 recovery is an independent Project contract.
+
+**Deployment and rollback.** `BUZZ_CREW_CONDITIONAL_PUBLICATION_V1` defaults false. Enable advertisement only after all guarantees pass and the operator attests that all writers are upgraded and old pods quiesced. Mixed-version writers are unsupported. With the flag off, opt-in conditional/versioned writes explicitly reject; clients never fall back to unconditional writes. Reserved immutable-address and existing-v1 downgrade protections remain active when advertisement is disabled, including rollback. Legacy unconditioned Project events retain legacy semantics.
+
+**Wiki commit boundary.** Keep kind 30623 and `a=30617:<owner>:<repoD>`; the event author must equal the repository owner. A v1 `_toc` carries `wiki-version=1`, a `wiki-snapshot` UUID, and an exact immutable manifest reference. Pages use `repoD/p1-<SHA256>` and manifests `repoD/m1-<SHA256>`; fixed-order canonical envelopes bind the snapshot UUID, source revision, owner, and content. Reserved addresses allow creation or exact current replay, never independent replacement, even without version tags. Prepare the complete signed batch durably; publish and verify pages, then manifest, then CAS the TOC. Legacy sections point to encoded immutable slugs. Once v1 is live, the locked replacement path rejects unconditioned or legacy downgrade. Readers verify exact authors, IDs, digests, membership, and source revision in bounded queries; incomplete revisions never mix with an earlier verified snapshot. Generic owner deletion remains possible and must produce an incomplete-read state.
+
+**Bounds and retention.** Each entire signed Wiki event is at most 192 KiB UTF-8; a publication has at most 256 pages and 64 MiB. Relay admission limits reserved live Wiki rows to 512 MiB and 4096 events per owner/community under owner-then-coordinate locks; exact replay adds no usage. This bounds logical live data, not physical soft-deleted/audit storage. There is no prune/GC API or control in the first release. Failed uploads also consume quota. `restricted: wiki-storage-quota` preserves the current head and explains that safe reclamation is unsupported, requiring administrator remediation or future reviewed tooling. Neither historical lineage nor local preflight proves cross-client deletion safety.
+
+**Native operation recovery.** `owner-operations/recovery.db` uses private directories/files, canonicalizes the trusted existing platform app-data anchor, rejects symlink paths below that anchor, and fails visibly on corrupt or future schemas without reset. `BEGIN IMMEDIATE`, `synchronous=FULL`, `journal_mode=DELETE`, `temp_store=MEMORY`, and a 250 ms busy limit protect whole-record CAS and owner-wide quota. No transaction spans external IO. Scope is native owner plus canonical HTTP community origin; an unresolved `(owner, community, kind, resource_key)` claim remains unique regardless of status. Same ID/equal payload is replay, same ID/different intent conflicts, and competing resource creation returns the existing operation. Only domain-reconciled records can be removed. Fixed native admission permits 100 unresolved `ChannelCrewConfig` operations per owner/community at 1 MiB per complete serialized record (including event envelopes). Other kinds collectively retain 16 unresolved operations per owner and 64 MiB per record. All kinds share the 256 MiB owner cap. Kind size applies to creation intent, encode/update, and load before allocation; callers cannot override policy. Reconciled history remains at most 100 entries/30 days; the admission transaction also evicts oldest reconciled history under byte pressure including the incoming snapshot. Unresolved rows are never evicted. Update timestamps clamp to the previous timestamp when the wall clock moves backward. A resource claim is not an execution lease; the domain owns timed worker-token/revision recovery. Automatic retry is bounded to five attempts before explicit recovery.
+
+**Scope fencing.** Native capture and revalidation bind workspace generation, identity generation, owner, and canonical origin, including A→B→A. Every committed key replacement increments identity generation with Release before swap through a helper requiring the held identity-mutation guard. Capture takes the workspace lock without advancing its generation, then the identity lock off the executor; `signing_keys()` retains recovery failures. Workspace relay/key mutation holds the identity lock only for the short mutation block, never filesystem IO or await. Field locks use keys-then-relay order, matching the existing workspace reader; acquire every needed field lock before changing either field. Startup resolution, runtime import, pairing import, and workspace key replacement all use the shared seam. Returned tokens also fence consumer application and subsequent side effects.
+
+Private answer storage remains separate encrypted native records with its own quota; shared publication records never carry private history. Any larger-answer integration must atomically bind encrypted chunks and manifest to scope/revision/order/digests and prove a greater-than-256-KiB roundtrip, crash atomicity, and no plaintext persistence. This decision does not claim shipped private history or lower its logical limits.
+
+Shipping still requires production-bound race/crash/mutation tests, isolated real relay/app evidence, repository gates, and exact-head independent review.
+
+**Native source permission (design accepted; implementation unverified).** A signed
+`buzz-location` path or a matching checkout name does not authorize local file
+access. Reuse the native dialog plugin to issue an ephemeral, opaque selected-root
+grant attached to the existing 30617 coordinate and captured native viewer,
+community, identity and workspace generations. Retain a directory capability;
+renderer Source requests carry the opaque grant and signed page identity, never
+an authoritative filesystem path. Bound grants and pending pickers; restart,
+explicit revocation, scope mismatch, repository removal or changed repository
+anchor invalidates access. Keep **Choose folder** and **Forget folder** reachable
+when local source is unavailable. This is local permission, not another
+repository registry. The grant does not replace signed snapshot membership,
+current relay acceptance/access, or complete source-byte and line-range checks;
+it does not authorize a generator, provider or publication.
+Chooser admission stays owned by the actual native callback until it terminates,
+even if its IPC waiter is canceled; cancellation cannot permit another still-open
+picker or issue a delayed grant. Source admission and handles stay with the actual
+blocking worker until it exits. Its remaining 30-second deadline reaches the Git
+reader and process runner rather than wrapping a fresh 180-second capture. Peak
+retained roots are eight stored grants, two retired in-flight roots and one new
+selection. Canceled-waiter and admission-saturation tests must bind these paths.

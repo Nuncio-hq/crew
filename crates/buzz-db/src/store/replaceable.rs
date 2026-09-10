@@ -9,33 +9,9 @@ use uuid::Uuid;
 use crate::observability::{self, LockType, TransactionOperation};
 use crate::{Db, DbError, Result};
 
-/// Result category for a parameterized-replaceable event write.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ParameterizedReplaceStatus {
-    /// The incoming event was inserted as the coordinate's live head.
-    Inserted,
-    /// The exact event was already accepted.
-    Duplicate,
-    /// A newer event, or lower-ID same-second event, already dominates it.
-    Superseded,
-    /// A requested current revision has no live coordinate head.
-    RevisionMissing,
-    /// The live coordinate head differs from the requested revision.
-    RevisionMismatch,
-    /// An exact replay was required, but the event is not the live head.
-    ReplayOnlyMiss,
-}
-
-/// Structural precondition for a parameterized-replaceable write.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ParameterizedReplacePrecondition<'a> {
-    /// Apply normal NIP-33 ordering without a revision precondition.
-    Unconditional,
-    /// Require the live head to match this validated event ID.
-    ExpectedRevision(&'a [u8]),
-    /// Accept only an exact live-head replay and perform no mutation otherwise.
-    ExactReplayOnly,
-}
+#[path = "replaceable_conditions.rs"]
+mod conditions;
+pub use conditions::{ParameterizedReplacePrecondition, ParameterizedReplaceStatus};
 
 /// Result of a transaction-bound parameterized-replaceable event write.
 #[derive(Clone, Debug)]
@@ -166,8 +142,14 @@ async fn replace_parameterized_event_in_transaction_impl(
         });
     let hard_delete_superseded = is_nip_rs || is_buzz_mesh_status;
 
-    let existing: Option<(DateTime<Utc>, Vec<u8>)> = sqlx::query_as(
-        "SELECT created_at, id FROM events \
+    let (guard_name, guard_value) = match precondition {
+        ParameterizedReplacePrecondition::RejectIfLiveHeadHasTag(name, value) => {
+            (Some(name), Some(value))
+        }
+        _ => (None, None),
+    };
+    let existing_row: Option<(DateTime<Utc>, Vec<u8>, bool)> = sqlx::query_as(
+        "SELECT created_at, id, EXISTS(SELECT 1 FROM jsonb_array_elements(tags) tag WHERE tag->>0=$5 AND tag->>1=$6) FROM events \
          WHERE community_id = $1 AND kind = $2 AND pubkey = $3 AND d_tag = $4 AND deleted_at IS NULL \
          ORDER BY created_at DESC, id ASC LIMIT 1",
     )
@@ -175,8 +157,14 @@ async fn replace_parameterized_event_in_transaction_impl(
     .bind(kind_i32)
     .bind(pubkey_bytes.as_slice())
     .bind(d_tag)
+    .bind(guard_name)
+    .bind(guard_value)
     .fetch_optional(&mut **tx)
     .await?;
+    let blocked_live_tag = existing_row
+        .as_ref()
+        .is_some_and(|(_, _, blocked)| *blocked);
+    let existing = existing_row.map(|(created_at, id, _)| (created_at, id));
     let watermark: Option<(DateTime<Utc>, Vec<u8>)> = if is_nip_rs {
         sqlx::query_as(
             "SELECT created_at, event_id FROM parameterized_event_watermarks \
@@ -205,6 +193,17 @@ async fn replace_parameterized_event_in_transaction_impl(
             received_at,
             channel_id,
             ParameterizedReplaceStatus::Duplicate,
+        ));
+    }
+
+    if (precondition == ParameterizedReplacePrecondition::ExpectedMissing && existing.is_some())
+        || blocked_live_tag
+    {
+        return Ok(ParameterizedReplaceResult::new(
+            event,
+            received_at,
+            channel_id,
+            ParameterizedReplaceStatus::RevisionMismatch,
         ));
     }
 
@@ -329,7 +328,7 @@ async fn replace_parameterized_event_in_transaction_impl(
             event,
             received_at,
             channel_id,
-            ParameterizedReplaceStatus::Duplicate,
+            ParameterizedReplaceStatus::DuplicateNotLive,
         ));
     }
 
@@ -1760,3 +1759,7 @@ mod postgres_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "conditional_publication_tests.rs"]
+pub(crate) mod conditional_publication_tests;

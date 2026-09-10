@@ -212,3 +212,18 @@ A meeting is a resumable session:
 
 Session persistence and board/card persistence are related but separate. A card
 must remain understandable even if a provider session cannot be resumed.
+
+## Wiki generation failure boundary
+
+The desktop generation hook validates the worker's complete page batch and TOC
+membership before signing, including a 192 KiB UTF-8 content limit on each
+page and the TOC. A failed invocation, malformed response or failed
+publication stays failed; no generic overview or invented source revision is
+published as recovery. Missing local workspace and empty-tree outcomes remain
+explicit. Job lookup requires the exact repository owner and identifier.
+
+This boundary does not yet make legacy publication atomic: ordinary 30623
+page addresses and the TOC are still replaced independently. Coherent retained
+snapshots, community-scoped durable recovery and installed-runtime generation
+remain the separately gated work in #362 and #363. A successful focused hook
+test is not evidence of cross-client retention or crash recovery.

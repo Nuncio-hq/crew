@@ -95,6 +95,8 @@ pub struct AppState {
     /// `keys` so readers (signing, get_identity, etc.) are not blocked during
     /// keyring I/O.
     pub identity_mutation: Mutex<()>,
+    /// Advances before each committed identity replacement, including A-B-A.
+    pub(crate) identity_generation: AtomicU64,
     /// Set when the boot-time Phase 2 reset attempted a wipe but verification
     /// failed. The sentinel is preserved so the next relaunch retries. All
     /// identity-dependent setup is skipped; the frontend shows a reset-failed
@@ -225,6 +227,7 @@ pub fn build_app_state() -> AppState {
         shutdown_started: AtomicBool::new(false),
         managed_agent_runtime_transition: Mutex::new(()),
         identity_mutation: Mutex::new(()),
+        identity_generation: AtomicU64::new(0),
         managed_agents_store_lock: Mutex::new(()),
         provider_deploy_locks: Mutex::new(HashMap::new()),
         channel_templates_store_lock: Mutex::new(()),
@@ -250,6 +253,8 @@ pub fn build_app_state() -> AppState {
     }
 }
 
+#[path = "app_state_scope.rs"]
+pub(crate) mod owner_scope;
 #[path = "app-state-accessors.rs"]
 mod accessors;
 
@@ -283,22 +288,7 @@ pub fn resolve_persisted_identity(app: &AppHandle, state: &AppState) -> Result<(
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("create app data dir: {e}"))?;
 
     let resolved = load_or_create_identity(&data_dir)?;
-    // Write keys and storage before setting the recovery flags (Release) so
-    // any thread that reads a flag as false with Acquire sees consistent data.
-    {
-        let mut active_keys = state.keys.lock().map_err(|e| e.to_string())?;
-        *active_keys = resolved.keys;
-        state.set_identity_storage(resolved.storage);
-    }
-    state.identity_lost.store(
-        resolved.recovery == RecoveryState::Lost,
-        std::sync::atomic::Ordering::Release,
-    );
-    state.keyring_locked.store(
-        resolved.recovery == RecoveryState::KeyringLocked,
-        std::sync::atomic::Ordering::Release,
-    );
-    Ok(())
+    state.install_resolved_identity(resolved)
 }
 
 #[path = "app_state_keyring.rs"]

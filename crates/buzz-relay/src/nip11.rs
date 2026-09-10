@@ -293,6 +293,11 @@ pub(crate) async fn nip11_document(state: &crate::state::AppState, raw_host: &st
         admin_api.as_deref(),
         state.config.klipy.as_ref().map(|_| "klipy"),
     );
+    add_conditional_extensions(
+        &mut info,
+        state.config.crew_conditional_publication_v1,
+        state.config.crew_project_channel_link_v1,
+    );
     let tenant_host = if state.config.push_enabled {
         crate::tenant::bind_community(&state.db, raw_host)
             .await
@@ -399,9 +404,45 @@ const _RELAY_INFO_BUILD_STATIC_INPUT_FENCE: fn(
     Option<&str>,
 ) -> RelayInfo = RelayInfo::build;
 
+// Keep production advertisement and its flag truth table on one seam.
+fn add_conditional_extensions(info: &mut RelayInfo, conditional: bool, project: bool) {
+    if conditional {
+        let extensions = info.supported_extensions.get_or_insert_default();
+        extensions.push(crate::handlers::conditional_publication::EXTENSION.into());
+        if project {
+            extensions.push(crate::handlers::conditional_publication::PROJECT_EXTENSION.into());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conditional_project_extension_requires_both_flags() {
+        for conditional in [false, true] {
+            for project in [false, true] {
+                let mut info =
+                    RelayInfo::build(None, None, false, DEFAULT_MAX_FRAME_BYTES, None, None, None);
+                add_conditional_extensions(&mut info, conditional, project);
+                let extensions = info.supported_extensions.as_ref().unwrap();
+                assert_eq!(
+                    extensions
+                        .iter()
+                        .any(|v| v == crate::handlers::conditional_publication::EXTENSION),
+                    conditional
+                );
+                assert_eq!(
+                    extensions
+                        .iter()
+                        .any(|v| v == crate::handlers::conditional_publication::PROJECT_EXTENSION),
+                    conditional && project
+                );
+                assert!(extensions.iter().any(|v| v == "nip-er"));
+            }
+        }
+    }
 
     #[test]
     fn push_descriptor_is_gated_by_gateway_configuration_and_tenant_binding() {
