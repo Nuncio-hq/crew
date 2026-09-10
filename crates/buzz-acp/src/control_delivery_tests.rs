@@ -98,9 +98,16 @@ async fn closed_receiver_cancel_drains_only_its_queued_conversation() {
             None,
             Some(&observer),
         );
-        assert_eq!(result(&observer, "cancelled_queued")["drainedCount"], 1);
-        assert_eq!(queue.queued_event_count(&conversation), 0);
-        assert_eq!(queue.queued_event_count(&sibling), 1);
+        if exact {
+            // An exact stale/closed target cannot fall back to queue draining.
+            assert_eq!(result(&observer, "no_active_turn")["drainedCount"], 0);
+            assert_eq!(queue.queued_event_count(&conversation), 1);
+            assert_eq!(queue.queued_event_count(&sibling), 1);
+        } else {
+            assert_eq!(result(&observer, "cancelled_queued")["drainedCount"], 1);
+            assert_eq!(queue.queued_event_count(&conversation), 0);
+            assert_eq!(queue.queued_event_count(&sibling), 1);
+        }
     }
 }
 
@@ -135,8 +142,14 @@ async fn open_receiver_cancel_sends_once_and_preserves_queued_work_until_fallbac
         assert_eq!(rx.await.expect("control received"), ControlSignal::Cancel);
         assert_eq!(queue.queued_event_count(&conversation), 1);
         handle_cancel_turn_control(&payload, &mut pool, &mut queue, None, Some(&observer));
-        assert_eq!(result(&observer, "cancelled_queued")["drainedCount"], 1);
-        assert_eq!(queue.queued_event_count(&conversation), 0);
+        if exact {
+            // A repeated exact target remains scoped to the retired turn.
+            assert_eq!(result(&observer, "no_active_turn")["drainedCount"], 0);
+            assert_eq!(queue.queued_event_count(&conversation), 1);
+        } else {
+            assert_eq!(result(&observer, "cancelled_queued")["drainedCount"], 1);
+            assert_eq!(queue.queued_event_count(&conversation), 0);
+        }
     }
 }
 
