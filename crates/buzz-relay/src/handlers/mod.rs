@@ -14,6 +14,10 @@ pub mod close;
 pub mod command_executor;
 /// Relay-operator community provisioning HTTP support.
 pub mod community_provisioning;
+/// Shared conditional persistence and repository reconciliation.
+pub(crate) mod conditional_persistence;
+/// Conditional Crew publication on the NIP-33 transaction seam.
+pub(crate) mod conditional_publication;
 /// NIP-45 COUNT handler.
 pub mod count;
 /// EVENT handler — WS dispatcher → ingest pipeline → fan-out.

@@ -58,5 +58,7 @@ pub mod thread;
 pub mod usage;
 /// User profile persistence.
 pub mod user;
+/// Owner-scoped immutable Wiki admission on existing event coordinates.
+pub mod wiki_publication;
 /// Workflow, run, and approval persistence.
 pub mod workflow;

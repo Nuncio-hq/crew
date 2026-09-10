@@ -1,8 +1,4 @@
-//! Fail-closed admission for source-bound Wiki publications.
-//!
-//! The conditional NIP-33 transaction is not available on this relay head.
-//! Rejecting source-bound events here prevents the generic replaceable path
-//! from presenting an unsafe legacy write as a successful v1 publication.
+//! Capability gate for source-bound Wiki publications.
 
 use buzz_core::kind::KIND_REPO_WIKI_PAGE;
 use nostr::Event;
@@ -19,18 +15,23 @@ const SOURCE_BOUND_TAGS: &[&str] = &[
     "wiki-version",
 ];
 
-/// Reject v1/source-bound Wiki events before any persistence or side effect.
+/// Gate source-bound Wiki events before persistence.
 ///
-/// Legacy unmarked Wiki events remain on the existing path. Once a source
-/// marker or immutable v1 address appears, this relay has no safe conditional
-/// transaction to apply, so accepting the event would be an unsafe fallback.
-pub(crate) fn validate(event: &Event) -> Result<(), IngestError> {
+/// Legacy unmarked Wiki events remain on the existing path. Once conditional
+/// publication is enabled, the transactional policy performs the complete
+/// source-bound validation. With the capability disabled, explicit source
+/// markers are rejected rather than falling through to legacy LWW; reserved
+/// immutable addresses remain available to the guarded create/replay path,
+/// including its exact-replay marker when the capability is rolled back.
+pub(crate) fn validate(event: &Event, conditional_enabled: bool) -> Result<(), IngestError> {
     if u32::from(event.kind.as_u16()) != KIND_REPO_WIKI_PAGE {
         return Ok(());
     }
-    let source_bound =
-        SOURCE_BOUND_TAGS.iter().any(|name| has_tag(event, name)) || has_reserved_address(event);
-    if !source_bound {
+    let explicit_source_marker = SOURCE_BOUND_TAGS.iter().any(|name| has_tag(event, name));
+    if !explicit_source_marker && !has_reserved_address(event) {
+        return Ok(());
+    }
+    if !conditional_enabled && !explicit_source_marker {
         return Ok(());
     }
     let bytes = serde_json::to_vec(event).map_err(|_| {
@@ -41,7 +42,14 @@ pub(crate) fn validate(event: &Event) -> Result<(), IngestError> {
             "invalid: source-bound Wiki event exceeds 192 KiB".into(),
         ));
     }
-    Err(IngestError::Rejected(UNSUPPORTED.into()))
+    // Reserved immutable addresses are guarded by the always-on create/replay
+    // transaction, so rollback must not disable their exact-replay path even
+    // when the advertised conditional capability is off.
+    if conditional_enabled || has_reserved_address(event) {
+        Ok(())
+    } else {
+        Err(IngestError::Rejected(UNSUPPORTED.into()))
+    }
 }
 
 fn has_tag(event: &Event, name: &str) -> bool {
@@ -92,12 +100,12 @@ mod tests {
 
     #[test]
     fn legacy_unmarked_wiki_and_other_kinds_keep_the_existing_path() {
-        assert!(validate(&wiki(vec![], "legacy")).is_ok());
+        assert!(validate(&wiki(vec![], "legacy"), false).is_ok());
         let keys = Keys::generate();
         let event = EventBuilder::new(Kind::TextNote, "ordinary")
             .sign_with_keys(&keys)
             .expect("signed test event");
-        assert!(validate(&event).is_ok());
+        assert!(validate(&event, false).is_ok());
     }
 
     #[test]
@@ -105,7 +113,7 @@ mod tests {
         for name in SOURCE_BOUND_TAGS {
             let event = wiki(vec![vec![*name, "1"]], "source");
             assert!(matches!(
-                validate(&event),
+                validate(&event, false),
                 Err(IngestError::Rejected(reason)) if reason == UNSUPPORTED
             ));
         }
@@ -116,10 +124,18 @@ mod tests {
             ]],
             "page",
         );
-        assert!(matches!(
-            validate(&reserved),
-            Err(IngestError::Rejected(reason)) if reason == UNSUPPORTED
-        ));
+        assert!(validate(&reserved, false).is_ok());
+        let reserved_replay = wiki(
+            vec![
+                vec![
+                    "d",
+                    "repo/p1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                ],
+                vec!["expected-revision", "b"],
+            ],
+            "replay",
+        );
+        assert!(validate(&reserved_replay, false).is_ok());
     }
 
     #[test]
@@ -129,15 +145,12 @@ mod tests {
                 vec![vec!["d", &format!("repo/{prefix}{}", "a".repeat(64))]],
                 "page",
             );
-            assert!(matches!(
-                validate(&valid),
-                Err(IngestError::Rejected(reason)) if reason == UNSUPPORTED
-            ));
+            assert!(validate(&valid, false).is_ok());
         }
 
         for suffix in ["short".to_owned(), "a".repeat(63), "g".repeat(64)] {
             let event = wiki(vec![vec!["d", &format!("repo/p1-{suffix}")]], "legacy slug");
-            assert!(validate(&event).is_ok());
+            assert!(validate(&event, false).is_ok());
         }
     }
 
@@ -148,7 +161,7 @@ mod tests {
             &"x".repeat(MAX_SIGNED_EVENT_BYTES),
         );
         assert!(matches!(
-            validate(&event),
+            validate(&event, false),
             Err(IngestError::Rejected(reason))
                 if reason == "invalid: source-bound Wiki event exceeds 192 KiB"
         ));

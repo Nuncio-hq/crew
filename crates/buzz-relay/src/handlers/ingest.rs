@@ -3675,20 +3675,7 @@ async fn ingest_event_inner(
             .await
             .map_err(|e| IngestError::Internal(format!("error: {e}")))?
     } else if is_parameterized_replaceable(kind_u32) {
-        // NIP-33 parameterized replaceable — keyed by (kind, pubkey, d_tag).
-        let d_tag = buzz_db::event::extract_d_tag(&event).unwrap_or_default();
-        if d_tag.len() > buzz_db::event::D_TAG_MAX_LEN {
-            return Err(IngestError::Rejected(format!(
-                "invalid: d tag too long ({} bytes, max {})",
-                d_tag.len(),
-                buzz_db::event::D_TAG_MAX_LEN,
-            )));
-        }
-        state
-            .db
-            .replace_parameterized_event(tenant.community(), &event, &d_tag, channel_id)
-            .await
-            .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+        super::conditional_persistence::persist(state, tenant, &event, channel_id).await?
     } else {
         let thread_params = thread_meta.as_ref().map(|m| m.as_params());
         match state
@@ -3725,7 +3712,10 @@ async fn ingest_event_inner(
         }
     };
 
+    let repository_ensure =
+        super::conditional_persistence::ensure_repository(tenant, &event, state).await;
     if !was_inserted {
+        repository_ensure?;
         return Ok(IngestResult {
             event_id: event_id_hex,
             accepted: true,
@@ -3733,7 +3723,9 @@ async fn ingest_event_inner(
         });
     }
 
-    if crate::handlers::side_effects::is_side_effect_kind(kind_u32) {
+    if matches!(&repository_ensure, Ok(false))
+        && crate::handlers::side_effects::is_side_effect_kind(kind_u32)
+    {
         if let Err(e) =
             crate::handlers::side_effects::handle_side_effects(tenant, kind_u32, &event, state)
                 .await
@@ -3806,6 +3798,7 @@ async fn ingest_event_inner(
     )
     .await;
 
+    repository_ensure?;
     info!(event_id = %event_id_hex, kind = kind_u32, "Event ingested via pipeline");
 
     Ok(IngestResult {

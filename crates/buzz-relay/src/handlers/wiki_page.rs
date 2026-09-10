@@ -9,7 +9,10 @@ use super::ingest::IngestError;
 use crate::state::AppState;
 
 /// Pre-storage envelope check. LWW replace is NIP-33.
-pub(crate) fn validate_wiki_page_ingest(event: &Event) -> Result<(), IngestError> {
+pub(crate) fn validate_wiki_page_ingest(
+    event: &Event,
+    conditional_enabled: bool,
+) -> Result<(), IngestError> {
     let tags: Vec<Vec<String>> = event
         .tags
         .iter()
@@ -17,7 +20,7 @@ pub(crate) fn validate_wiki_page_ingest(event: &Event) -> Result<(), IngestError
         .collect();
     validate_wiki_page_envelope(event.kind.as_u16() as u32, &tags)
         .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
-    super::source_publication::validate(event)?;
+    super::source_publication::validate(event, conditional_enabled)?;
     Ok(())
 }
 
@@ -32,7 +35,7 @@ pub(crate) async fn validate_roster_or_wiki(
         return super::org_roster::validate_org_roster_ingest(tenant, event, state).await;
     }
     if kind == KIND_REPO_WIKI_PAGE {
-        return validate_wiki_page_ingest(event);
+        return validate_wiki_page_ingest(event, state.config.crew_conditional_publication_v1);
     }
     Ok(())
 }
@@ -59,7 +62,7 @@ mod tests {
             ])
             .sign_with_keys(&keys)
             .expect("sign");
-        assert!(validate_wiki_page_ingest(&event).is_ok());
+        assert!(validate_wiki_page_ingest(&event, false).is_ok());
     }
 
     #[tokio::test]
@@ -72,7 +75,7 @@ mod tests {
             ])
             .sign_with_keys(&keys)
             .expect("sign");
-        assert!(validate_wiki_page_ingest(&event).is_err());
+        assert!(validate_wiki_page_ingest(&event, false).is_err());
     }
 
     #[tokio::test]
@@ -89,7 +92,7 @@ mod tests {
             .expect("sign");
 
         assert!(matches!(
-            validate_wiki_page_ingest(&event),
+            validate_wiki_page_ingest(&event, false),
             Err(IngestError::Rejected(reason))
                 if reason == "unsupported: crew-conditional-publication-v1"
         ));
