@@ -31,9 +31,9 @@ impl SelectedSourceRoot {
     pub fn open_native_selection(_selected: &Path) -> Result<Self, WikiError> {
         #[cfg(unix)]
         {
-            return Ok(Self {
+            Ok(Self {
                 root: crate::source_folder_walk::Root::open(_selected)?,
-            });
+            })
         }
         #[cfg(not(unix))]
         Err(unavailable())
@@ -49,7 +49,7 @@ impl SelectedSourceRoot {
     ) -> Result<VerifiedSourceFile, WikiError> {
         #[cfg(unix)]
         {
-            return unix::read(&self.root, _revision, _reference, _deadline);
+            unix::read(&self.root, _revision, _reference, _deadline)
         }
         #[cfg(not(unix))]
         Err(unavailable())
