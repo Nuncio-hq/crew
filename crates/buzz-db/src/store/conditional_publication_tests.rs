@@ -785,28 +785,33 @@ async fn conditional_publication_reserved_quota_enforces_jsonb_bytes_below_row_c
     // quota group so the disposable service does not multiply that peak.
     const SEED_ROWS: i64 = 3_000;
     const SEED_REPEAT: i64 = 44_625;
+    const SEED_CHUNK_ROWS: i64 = 250;
     const MAX_SIGNED_EVENT_BYTES: i64 = 192 * 1024;
 
     scenario(|db, community, keys| async move {
         let owner = keys.public_key().to_bytes();
-        sqlx::query(
-            "INSERT INTO events \
-             (community_id,id,pubkey,created_at,kind,tags,content,sig,d_tag) \
-             SELECT $1, decode(lpad(to_hex(i),64,'0'),'hex'), $2, \
-                    now() - (i * interval '1 second'), 30623, \
-                    jsonb_build_array(jsonb_build_array('d', concat('repo/p1-', lpad(to_hex(i),64,'0')))), \
-                    repeat($4, $5::int), decode(repeat('00',64),'hex'), \
-                    concat('repo/p1-', lpad(to_hex(i),64,'0')) \
-             FROM generate_series(1::bigint, $3::bigint) AS series(i)",
-        )
-        .bind(community.as_uuid())
-        .bind(owner.as_slice())
-        .bind(SEED_ROWS)
-        .bind("seed")
-        .bind(SEED_REPEAT)
-        .execute(&db.pool)
-        .await
-        .expect("seed TOAST-backed Wiki rows");
+        for start in (1..=SEED_ROWS).step_by(SEED_CHUNK_ROWS as usize) {
+            let end = (start + SEED_CHUNK_ROWS - 1).min(SEED_ROWS);
+            sqlx::query(
+                "INSERT INTO events \
+                 (community_id,id,pubkey,created_at,kind,tags,content,sig,d_tag) \
+                 SELECT $1, decode(lpad(to_hex(i),64,'0'),'hex'), $2, \
+                        now() - (i * interval '1 second'), 30623, \
+                        jsonb_build_array(jsonb_build_array('d', concat('repo/p1-', lpad(to_hex(i),64,'0')))), \
+                        repeat($4, $5::int), decode(repeat('00',64),'hex'), \
+                        concat('repo/p1-', lpad(to_hex(i),64,'0')) \
+                 FROM generate_series($3::bigint, $6::bigint) AS series(i)",
+            )
+            .bind(community.as_uuid())
+            .bind(owner.as_slice())
+            .bind(start)
+            .bind("seed")
+            .bind(SEED_REPEAT)
+            .bind(end)
+            .execute(&db.pool)
+            .await
+            .expect("seed TOAST-backed Wiki rows");
+        }
 
         let before = reserved_live_usage(&db, community, owner.as_slice()).await;
         assert_eq!(before.0, SEED_ROWS);

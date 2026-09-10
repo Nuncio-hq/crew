@@ -482,11 +482,15 @@ async fn retirement_is_scoped_to_owner_community_kind_and_conditional_toc() {
             ParameterizedReplaceStatus::RevisionMissing,
             "a retired event in another community proves nothing here"
         );
-        assert_ne!(
+        assert_eq!(
             expect_missing_write(&db, community, &elsewhere, d).await,
-            ParameterizedReplaceStatus::WikiHeadRetired,
+            ParameterizedReplaceStatus::Inserted,
             "nor does it retire the same head identity in this community"
         );
+        assert!(db
+            .soft_delete_event(community, elsewhere.id.as_bytes())
+            .await
+            .expect("clean up the same-coordinate scope probe"));
 
         // A non-Wiki kind never carries this classification. Vary ONLY the
         // kind: this event keeps the v1 tag and the `_toc` address, so the
@@ -635,11 +639,12 @@ async fn deletion_first_then_a_waiting_exact_writer_observes_retirement() {
         let _ = waiting.rollback().await;
         holder.commit().await.expect("commit competing head");
 
-        // Once unblocked, the retired head is classified as retired and the
-        // competing live head survives the rejected write untouched.
+        // Once unblocked, the competing live head takes the ordinary conflict
+        // branch, while the rejected write leaves that head untouched.
         assert_eq!(
             expect_missing_write(&db, community, &head, d).await,
-            ParameterizedReplaceStatus::WikiHeadRetired
+            ParameterizedReplaceStatus::RevisionMismatch,
+            "a live competing head is an ordinary conflict, not retirement proof"
         );
         assert_eq!(live_rows(&db, community, &owner, d).await, 1);
         let live: Vec<u8> = sqlx::query_scalar(
