@@ -144,6 +144,16 @@ Persistent Hermes profiles provide employee persona, memory, skills, and tools.
 Crew owns company coordination and visibility; the runtime executes the work.
 
 Use existing channel roles and named-agent calls (D-043/D-044/D-071) first.
+The #350 role editor lets the founder change definitions, assign several agents
+to one role, and choose an optional channel contact in one save. Each agent
+still holds at most one role per channel. A partial save remains visibly pending
+until its working-agreement announcement is confirmed; conflicting edits require
+review. Discarding a superseded draft removes only its reconciled recovery entry
+after the native revision check; a failed removal leaves the draft available for
+retry. Saving a contact does not enable automatic routing (#355), and saving
+roles does not reset existing agent sessions. Full relay/session acceptance for
+this editor remains tracked by #350.
+
 A channel template is a candidate setup mechanism, not an approved complete
 department implementation. D-069 still prohibits reviving the removed Org
 roster and ORG-CHECK as a shortcut. Functional hierarchy does not by itself

@@ -211,6 +211,46 @@ fn durable_core_reconciliation_releases_claim_and_allows_explicit_removal() {
 }
 
 #[test]
+fn durable_core_remove_reconciled_targets_one_id_and_keeps_unrelated_records() {
+    let (_dir, mut store) = fixture(Limits::default());
+    let owner = scope('a', "https://one.example");
+    let first = created(store.create(&owner, request("first"), 100).unwrap());
+    let second = created(store.create(&owner, request("second"), 101).unwrap());
+    let first = store
+        .compare_and_swap(
+            &owner,
+            &first.id,
+            0,
+            OperationUpdate {
+                status: OperationStatus::Superseded,
+                reconciled: true,
+                payload: first.payload,
+            },
+            102,
+        )
+        .unwrap();
+    let second = store
+        .compare_and_swap(
+            &owner,
+            &second.id,
+            0,
+            OperationUpdate {
+                status: OperationStatus::Superseded,
+                reconciled: true,
+                payload: second.payload,
+            },
+            103,
+        )
+        .unwrap();
+
+    store
+        .remove_reconciled(&owner, &first.id, first.revision)
+        .unwrap();
+    assert_eq!(store.load(&owner, &first.id), Err(StoreError::Missing));
+    assert_eq!(store.load(&owner, &second.id).unwrap(), second);
+}
+
+#[test]
 fn durable_core_create_distinguishes_id_replay_and_id_conflict() {
     let (_dir, mut store) = fixture(Limits::default());
     let owner = scope('a', "https://one.example");
@@ -236,6 +276,27 @@ fn durable_core_create_distinguishes_id_replay_and_id_conflict() {
         store.create(&owner, different, 102),
         Err(StoreError::Conflict)
     );
+}
+
+#[test]
+fn durable_core_does_not_adopt_a_different_unresolved_resource_intent() {
+    let (_dir, mut store) = fixture(Limits::default());
+    let owner = scope('a', "https://one.example");
+    let first = request("channel");
+    let first_id = first.id.clone();
+    let first_operation = created(store.create(&owner, first, 100).unwrap());
+
+    let mut second = request("channel");
+    second.payload = json!({
+        "signedEvent": {"id": "different-event", "sig": "different-signature"},
+        "step": "a-different-draft"
+    });
+    assert_eq!(
+        store.create(&owner, second, 101),
+        Err(StoreError::Conflict),
+        "a resource claim must not transfer the first draft to a second save"
+    );
+    assert_eq!(store.load(&owner, &first_id).unwrap(), first_operation);
 }
 
 #[test]

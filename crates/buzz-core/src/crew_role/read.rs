@@ -2,6 +2,11 @@
 
 use super::{parse_canvas_assignments, same_pubkey};
 use serde::Serialize;
+use std::collections::BTreeMap;
+
+#[cfg(test)]
+#[path = "editor_tests.rs"]
+mod editor_tests;
 
 /// Additional editable fields on the existing canvas response.
 #[derive(Debug, Serialize)]
@@ -14,6 +19,12 @@ pub struct CanvasCrewMetadata {
     pub crew_authority: &'static str,
     /// Whether the first Crew fence is absent, valid, or invalid.
     pub crew_parse_state: &'static str,
+    /// Stored assignment spellings, including unresolved entries; display only.
+    pub stored_assignments: BTreeMap<String, String>,
+    /// Existing work-type references for explicit deletion resolution.
+    pub stored_routing: BTreeMap<String, String>,
+    /// Existing capability references for explicit deletion resolution.
+    pub stored_capabilities: BTreeMap<String, Vec<String>>,
 }
 
 /// A normalized lookup key's retained display label and definition.
@@ -37,6 +48,9 @@ pub fn read_canvas_crew_metadata(
         contact_pubkey: None,
         crew_authority: "absent",
         crew_parse_state: "absent",
+        stored_assignments: BTreeMap::new(),
+        stored_routing: BTreeMap::new(),
+        stored_capabilities: BTreeMap::new(),
     };
     let Some(content) = content else {
         return metadata;
@@ -51,6 +65,26 @@ pub fn read_canvas_crew_metadata(
         Ok(Some(block)) => {
             metadata.crew_parse_state = "valid";
             metadata.contact_pubkey = block.contact_pubkey;
+            // Execution parsing trims keys/labels. Editor preservation must use
+            // original spellings, including distinct trim-equivalent entries.
+            let raw = super::bulk::split_fence(content).and_then(|parts| match parts {
+                Some((_, yaml, _)) => super::document::parse_document(yaml).map(Some),
+                None => Ok(None),
+            });
+            match raw {
+                Ok(Some(document)) => {
+                    if let Some(mapping) = document.as_mapping() {
+                        metadata.stored_assignments = super::document::assignment_entries(mapping);
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    metadata.crew_parse_state = "invalid";
+                    return metadata;
+                }
+            }
+            metadata.stored_routing = block.routing;
+            metadata.stored_capabilities = block.capabilities;
             metadata.definitions = block
                 .definitions
                 .into_iter()

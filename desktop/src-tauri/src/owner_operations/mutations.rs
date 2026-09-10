@@ -149,6 +149,16 @@ impl OperationStore {
         }
         let claimed: Option<String> = tx.query_row("SELECT id FROM operations WHERE owner=?1 AND community=?2 AND kind=?3 AND resource_key=?4 AND reconciled=0", params![scope.owner,scope.community,kind_key(new.kind),new.resource_key], |row|row.get(0)).optional().map_err(sql_error)?;
         if let Some(id) = claimed {
+            let stored_digest: Option<Vec<u8>> = tx.query_row(
+                "SELECT CASE WHEN length(initial_digest)=32 THEN initial_digest END FROM operations WHERE owner=?1 AND community=?2 AND id=?3",
+                params![scope.owner, scope.community, id],
+                |row| row.get(0),
+            ).map_err(sql_error)?;
+            if stored_digest.ok_or(StoreError::Corrupt)? != creation_digest {
+                // A resource claim serializes unresolved work, but it does not
+                // transfer ownership of a different draft to this request.
+                return Err(StoreError::Conflict);
+            }
             return Ok(CreateResult::Existing(
                 read(&tx, scope, &id, limits.bytes_per_operation)?.ok_or(StoreError::Corrupt)?,
             ));

@@ -82,6 +82,9 @@ export type CanvasResponse = {
   contactPubkey: string | null;
   crewAuthority: "absent" | "owner" | "foreign";
   crewParseState: "absent" | "valid" | "invalid";
+  storedAssignments: Record<string, string>;
+  storedRouting: Record<string, string>;
+  storedCapabilities: Record<string, string[]>;
   updatedAt: number | null;
   author: string | null;
   routing: CanvasRoutingPreset[];

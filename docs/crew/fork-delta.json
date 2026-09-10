@@ -43,7 +43,7 @@
     },
     {
       "area": "crates/buzz-core/**",
-      "why": "Crew kinds: KIND_ORG_ROSTER 30680 (inert, D-069), KIND_REPO_WIKI_PAGE 30623 (#200), KIND_AGENT_INSTRUMENT_OVERLAY 24201 (#197); observer context fields.",
+      "why": "Crew kinds: KIND_ORG_ROSTER 30680 (inert, D-069), KIND_REPO_WIKI_PAGE 30623 (#200), KIND_AGENT_INSTRUMENT_OVERLAY 24201 (#197); observer context fields; Crew-owned role parser/read/bulk mutation and cleanup contracts (#350).",
       "resolve": "keep constants in ALL_KINDS / P_GATED_KINDS / parameterized asserts.",
       "filesAtRecord": 4,
       "fileHints": [
@@ -452,7 +452,7 @@
     {
       "area": "desktop/src-tauri/**",
 
-      "why": "managed_agents: default-off recap capability/state/ownership proof (#351) and bounded discovery stdin/cancel/capture policy; Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json. D-078 exact selected-folder/Git-root probe with existing bounded command helper (#361). D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362).",
+      "why": "managed_agents: default-off recap capability/state/ownership proof (#351) and bounded discovery stdin/cancel/capture policy; Hermes runtime + readiness + profile ops, cowork history env, governor snapshot, agent-control URL/token, reserved env keys; commands: worktree storage/reclaim/registry (#174/#187), canvas tooling (#196), wiki_generate (#200), Cowork Versions (#188), agent_control (#197); lib.rs start_background + invoke.rs table; Cargo tauri `unstable`; capabilities window labels; product identity in tauri.nuncio-crew*.conf.json. D-078 exact selected-folder/Git-root probe with existing bounded command helper (#361). D-079 owner-operation recovery and native identity/workspace generation fences (#350/#362); #350 bulk canvas command registration and startup recovery worker.",
       "resolve": "retain default-off recap catalog metadata and the null-stdin aggregate discovery wrapper; keep selected path separate from Git ancestor, bound probe output/time, and report unavailable access as an error; register module/invoke seams with implementations in Crew files; keep `manage(ResourceGovernorHandle)`. Preserve the shared guarded key-replacement and native scope capture seams; relay events remain domain authority.",
 
       "filesAtRecord": 88,
@@ -469,8 +469,8 @@
         },
         {
           "path": "desktop/src-tauri/src/commands/canvas.rs",
-          "why": "#196 `pub(crate)` on `fenced_crew_block` / `ensure_canvas_author`",
-          "resolve": "visibility only; do not move YAML parse here"
+          "why": "#196 `pub(crate)` on `fenced_crew_block` / `ensure_canvas_author`; #350 shared parser metadata and raw unresolved entries in the existing canvas read response",
+          "resolve": "retain visibility and shared-parser read metadata; do not move YAML parsing here"
         },
         {
           "path": "desktop/src-tauri/src/commands/channels.rs",
@@ -541,8 +541,8 @@
     },
     {
       "area": "desktop/tests/**",
-      "why": "Crew Playwright specs + test-match globs; Crew snapshot images. D-078 workspace-menu navigation and preserved Inbox/thread recovery coverage (#349).",
-      "resolve": "retain narrow additions to playwright.config.ts; do not reorder. Channel-entry tests use the real Workspace Browse menu; preserve steering, user-input response and history assertions.",
+      "why": "Crew Playwright specs + test-match globs; Crew snapshot images. D-078 workspace-menu navigation and preserved Inbox/thread recovery coverage (#349); #350 channel role editor recovery coverage.",
+      "resolve": "retain narrow additions to playwright.config.ts; do not reorder. Channel-entry tests use the real Workspace Browse menu; preserve steering, user-input response and history assertions; role-editor tests use scoped member/canvas fixtures and keep drafts through recovery outcomes.",
       "filesAtRecord": 62,
       "fileHints": [
         {
