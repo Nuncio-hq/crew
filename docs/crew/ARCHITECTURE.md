@@ -314,10 +314,15 @@ section. It loads current canvas and member data between native scope captures,
 keeps role/contact edits in temporary form state, and fences queued results on
 scope changes. It retains the draft on conflict or partial delivery, exposes
 read-only status checks and explicit manual retry, and requires explicit draft
-replacement after reviewing a newer canvas. Raw unresolved assignments remain
-visible and preserved until explicitly removed. Multi-holder roles still use
-the existing one-role-per-agent assignment map; checking a different role moves
-that agent, and removing an in-use role requires explicit reference cleanup.
+replacement after reviewing a newer canvas. Replacing a superseded draft first
+removes that exact reconciled journal row through the owner-operation revision
+fence; a failed removal keeps the recovery and draft available for retry.
+Recovery lists put unresolved or partial operations ahead of reconciled
+superseded history with a stable updated-time/ID tie-break. Raw unresolved
+assignments remain visible and preserved until explicitly removed. Multi-holder
+roles still use the existing one-role-per-agent assignment map; checking a
+different role moves that agent, and removing an in-use role requires explicit
+reference cleanup.
 The existing raw `set_canvas` command remains a separate review/edit path without
 an expected-head guard. Existing ACP sessions keep their cached canvas until
 explicit restart; configuration saves do not hot-refresh those sessions. Full

@@ -32,7 +32,7 @@ pub(super) async fn resume<B: Backend>(
         if current.as_deref() != Some(&payload.canvas.id.to_hex()) {
             payload.outcome = Outcome::Superseded;
         }
-        return Ok(payload.progress(&operation.id, current));
+        return Ok(payload.progress(&operation.id, current, operation.reconciled));
     }
     let now = backend.now()?;
     if payload
@@ -64,7 +64,7 @@ pub(super) async fn resume<B: Backend>(
         .persist(&operation, &payload, OperationStatus::Reconciling, false)
         .await?;
     match attempt(backend, &mut operation, &mut payload, &worker).await {
-        Ok(current) => Ok(payload.progress(&operation.id, current)),
+        Ok(current) => Ok(payload.progress(&operation.id, current, operation.reconciled)),
         Err(_) => {
             // Attempt intent was persisted before each send. If this final CAS
             // itself fails, the older intent and lease still survive restart.
@@ -92,7 +92,7 @@ pub(super) async fn resume<B: Backend>(
             backend
                 .persist(&operation, &payload, OperationStatus::Failed, false)
                 .await?;
-            Ok(payload.progress(&operation.id, None))
+            Ok(payload.progress(&operation.id, None, operation.reconciled))
         }
     }
 }

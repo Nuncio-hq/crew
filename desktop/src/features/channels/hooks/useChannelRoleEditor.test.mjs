@@ -28,6 +28,8 @@ async function mount({
   pending = true,
   pendingOutcome = "not_committed",
   pendingDraft = null,
+  pendingEntries = null,
+  store: suppliedStore = null,
 } = {}) {
   const { act, renderHook } = await import("@testing-library/react");
   const { useChannelRoleEditor } = await import("./useChannelRoleEditor.ts");
@@ -38,6 +40,7 @@ async function mount({
   };
   const progress = {
     operation_id: "operation-one",
+    reconciled: pendingOutcome === "superseded",
     canvas_event_id: "saved-head",
     current_event_id: "saved-head",
     outcome: pendingOutcome,
@@ -45,11 +48,31 @@ async function mount({
     manual_retry_required: true,
     draft: pendingDraft,
   };
+  const operationFor = (value) => ({
+    version: 1,
+    scope: token.scope,
+    id: value.operation_id,
+    kind: "channel-crew-config",
+    resource_key: "channel",
+    revision: 1,
+    created_at: 1,
+    updated_at: 1,
+    status: value.outcome === "superseded" ? "superseded" : "pending",
+    reconciled: value.reconciled,
+    payload: {},
+  });
+  const store = suppliedStore ?? {
+    records: (pending ? (pendingEntries ?? [progress]) : []).map((value) => ({
+      progress: value,
+      operation: operationFor(value),
+    })),
+    removed: [],
+  };
   const requests = [];
   const applied = [];
   const calls = [];
   window.__TAURI_INTERNALS__ = {
-    invoke: async (command) => {
+    invoke: async (command, args) => {
       calls.push(command);
       if (command === "owner_operation_scope") return token;
       if (command === "get_canvas")
@@ -72,7 +95,25 @@ async function mount({
         };
       if (command === "list_relay_agents") return [];
       if (command === "list_channel_crew_operations")
-        return { token, value: pending ? [progress] : [] };
+        return { token, value: store.records.map((record) => record.progress) };
+      if (command === "owner_operation_load") {
+        const id = args?.id;
+        const record = store.records.find((entry) => entry.operation.id === id);
+        if (!record) throw new Error("Recovery operation is missing");
+        return { token, value: record.operation };
+      }
+      if (command === "owner_operation_remove") {
+        if (store.failRemove) throw new Error("Recovery storage is busy");
+        const index = store.records.findIndex(
+          (entry) =>
+            entry.operation.id === args.id &&
+            entry.operation.revision === args.revision,
+        );
+        if (index < 0) throw new Error("Recovery operation changed");
+        store.removed.push(args);
+        store.records.splice(index, 1);
+        return { token, value: null };
+      }
       if (
         [
           "get_channel_crew_operation",
@@ -98,6 +139,7 @@ async function mount({
     requests,
     calls,
     applied,
+    store,
     reply: (outcome) => ({ token, value: { ...progress, outcome } }),
   };
 }
@@ -135,8 +177,48 @@ test("reopened recovery restores the journaled draft, including superseded saves
   }
 });
 
+test("recovery selection prefers an unresolved row over old terminal history", async () => {
+  const terminal = {
+    operation_id: "00000000-0000-0000-0000-000000000001",
+    reconciled: true,
+    canvas_event_id: "old-head",
+    current_event_id: "old-head",
+    outcome: "superseded",
+    automatic_retry_at: null,
+    manual_retry_required: false,
+    draft: {
+      definitions: [{ label: "Old draft", definition: "Old boundary" }],
+      assignments: {},
+      contact: null,
+      renames: {},
+      preserved_assignments: {},
+      remove_routing: [],
+      remove_capabilities: [],
+    },
+  };
+  const unresolved = {
+    ...terminal,
+    operation_id: "00000000-0000-0000-0000-000000000002",
+    reconciled: false,
+    outcome: "canvas_committed_announcement_pending",
+    draft: {
+      ...terminal.draft,
+      definitions: [{ label: "Current draft", definition: "Current boundary" }],
+    },
+  };
+  const h = await mount({ pendingEntries: [terminal, unresolved] });
+  try {
+    assert.equal(h.result.current.operation, unresolved.operation_id);
+    assert.equal(h.result.current.progress.outcome, unresolved.outcome);
+    assert.equal(h.result.current.draft.roles[0].label, "Current draft");
+    assert.equal(h.result.current.conflict, false);
+  } finally {
+    h.unmount();
+  }
+});
+
 test("late status cannot restore an old operation after reviewed draft replacement", async () => {
-  const h = await mount();
+  const h = await mount({ pendingOutcome: "superseded" });
   try {
     let first;
     await h.act(async () => {
@@ -155,7 +237,7 @@ test("late status cannot restore an old operation after reviewed draft replaceme
       await h.result.current.loadLatest();
     });
     await h.act(async () => {
-      h.result.current.replaceDraft();
+      await h.result.current.replaceDraft();
     });
     await h.act(async () => {
       h.result.current.setDraft((draft) => ({
@@ -262,7 +344,7 @@ test("a retired operation cannot surface a late read failure in the replacement 
       await h.result.current.loadLatest();
     });
     await h.act(async () => {
-      h.result.current.replaceDraft();
+      await h.result.current.replaceDraft();
     });
     await h.act(async () => {
       h.requests[0].reject(new Error("stale read failed"));
@@ -291,6 +373,61 @@ test("same-tick manual retries claim one action while status reads remain read-o
       await Promise.all([first, second, read]);
     });
     assert.equal(h.result.current.busy, false);
+  } finally {
+    h.unmount();
+  }
+});
+
+test("discard removes only the superseded journal before a later reopen", async () => {
+  const h = await mount({ pendingOutcome: "superseded" });
+  const store = h.store;
+  store.unrelated = { id: "unrelated-owner-operation" };
+  try {
+    await h.act(async () => {
+      await h.result.current.loadLatest();
+    });
+    await h.act(async () => {
+      await h.result.current.replaceDraft();
+    });
+    assert.deepEqual(
+      store.removed.map(({ id, revision }) => ({ id, revision })),
+      [{ id: "operation-one", revision: 1 }],
+    );
+  } finally {
+    h.unmount();
+  }
+  assert.equal(store.records.length, 0, "the discarded journal is removed");
+  assert.equal(
+    store.unrelated.id,
+    "unrelated-owner-operation",
+    "discard does not sweep unrelated owner operations",
+  );
+  const reopened = await mount({ store });
+  try {
+    assert.equal(reopened.result.current.operation, null);
+    assert.equal(reopened.result.current.progress, null);
+  } finally {
+    reopened.unmount();
+  }
+});
+
+test("failed durable discard keeps the draft and recovery action available", async () => {
+  const h = await mount({ pendingOutcome: "superseded" });
+  const store = h.store;
+  store.failRemove = true;
+  try {
+    await h.act(async () => {
+      await h.result.current.loadLatest();
+    });
+    const before = h.result.current.draft.roles[0].label;
+    await h.act(async () => {
+      await h.result.current.replaceDraft();
+    });
+    assert.equal(h.result.current.operation, "operation-one");
+    assert.equal(h.result.current.draft.roles[0].label, before);
+    assert.match(h.result.current.error, /Recovery storage is busy/);
+    assert.equal(store.records.length, 1);
+    assert.equal(store.removed.length, 0);
   } finally {
     h.unmount();
   }

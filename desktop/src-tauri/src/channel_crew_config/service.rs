@@ -219,7 +219,7 @@ pub(crate) async fn status(
     if operation.reconciled && current.as_deref() != Some(&payload.canvas.id.to_hex()) {
         payload.outcome = super::record::Outcome::Superseded;
     }
-    let progress = payload.progress(&operation.id, current);
+    let progress = payload.progress(&operation.id, current, operation.reconciled);
     assert_current(app, &expected).await?;
     scoped(expected, progress)
 }
@@ -258,16 +258,18 @@ pub(crate) async fn list(
     channel_id: String,
 ) -> Result<Value, String> {
     super::worker::start(app.clone());
-    let operations = operations(app.clone(), expected.clone()).await?;
-    let mut progress = Vec::<Progress>::new();
-    for operation in operations
+    let mut operations: Vec<_> = operations(app.clone(), expected.clone())
+        .await?
         .into_iter()
         .filter(|operation| operation.resource_key == channel_id)
-    {
+        .collect();
+    order_recovery_operations(&mut operations);
+    let mut progress = Vec::<Progress>::new();
+    for operation in operations {
         let payload: Payload = serde_json::from_value(operation.payload.clone())
             .map_err(|_| "invalid canvas recovery record; manual review required")?;
         super::record::validate(&operation, &payload)?;
-        progress.push(payload.progress(&operation.id, None));
+        progress.push(payload.progress(&operation.id, None, operation.reconciled));
     }
     assert_current(app, &expected).await?;
     scoped(expected, progress)
@@ -278,9 +280,24 @@ fn is_recovery_visible(summary: &OperationSummary) -> bool {
         && (!summary.reconciled || summary.status == OperationStatus::Superseded)
 }
 
+/// Put operations that can still make progress ahead of reconciled terminal
+/// superseded records. Updated time and ID make equal-priority ordering stable
+/// across SQLite pagination and reopen.
+fn order_recovery_operations(operations: &mut [Operation]) {
+    operations.sort_by(|left, right| {
+        let left_actionable = !left.reconciled;
+        let right_actionable = !right.reconciled;
+        right_actionable
+            .cmp(&left_actionable)
+            .then_with(|| right.updated_at.cmp(&left.updated_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
 #[cfg(test)]
 mod visibility_tests {
     use super::*;
+    use crate::owner_operations::OperationScope;
 
     fn summary(status: OperationStatus, reconciled: bool) -> OperationSummary {
         OperationSummary {
@@ -308,5 +325,79 @@ mod visibility_tests {
             OperationStatus::Complete,
             true
         )));
+    }
+
+    fn operation(
+        id: &str,
+        status: OperationStatus,
+        reconciled: bool,
+        updated_at: i64,
+    ) -> Operation {
+        Operation {
+            version: 1,
+            scope: OperationScope {
+                owner: "a".repeat(64),
+                community: "https://example.com".into(),
+            },
+            id: id.into(),
+            kind: OperationKind::ChannelCrewConfig,
+            resource_key: "channel".into(),
+            revision: 1,
+            created_at: updated_at,
+            updated_at,
+            status,
+            reconciled,
+            payload: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn recovery_order_prefers_unresolved_over_reconciled_superseded() {
+        let mut operations = vec![
+            operation(
+                "00000000-0000-0000-0000-000000000001",
+                OperationStatus::Superseded,
+                true,
+                20,
+            ),
+            operation(
+                "00000000-0000-0000-0000-000000000002",
+                OperationStatus::Pending,
+                false,
+                1,
+            ),
+        ];
+        order_recovery_operations(&mut operations);
+        assert_eq!(operations[0].id, "00000000-0000-0000-0000-000000000002");
+        assert_eq!(operations[1].status, OperationStatus::Superseded);
+    }
+
+    #[test]
+    fn recovery_order_is_stable_for_equal_priority() {
+        let mut operations = vec![
+            operation(
+                "00000000-0000-0000-0000-000000000002",
+                OperationStatus::Pending,
+                false,
+                20,
+            ),
+            operation(
+                "00000000-0000-0000-0000-000000000001",
+                OperationStatus::Pending,
+                false,
+                20,
+            ),
+        ];
+        order_recovery_operations(&mut operations);
+        assert_eq!(
+            operations
+                .iter()
+                .map(|operation| operation.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "00000000-0000-0000-0000-000000000001",
+                "00000000-0000-0000-0000-000000000002",
+            ]
+        );
     }
 }

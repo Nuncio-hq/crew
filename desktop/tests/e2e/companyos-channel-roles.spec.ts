@@ -49,6 +49,7 @@ async function openEditor(page: Page) {
     win.__TAURI_INTERNALS__.invoke = async (cmd, args) => {
       const progress = {
         operation_id: "role-save",
+        reconciled: false,
         canvas_event_id: "new-head",
         current_event_id: win.roleFixture.currentHead,
         outcome: win.roleFixture.outcome,

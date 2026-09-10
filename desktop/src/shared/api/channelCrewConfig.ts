@@ -3,6 +3,11 @@ import type {
   OwnerOperationScope,
   ScopedOwnerOperation,
 } from "./ownerOperations";
+import {
+  loadOwnerOperation,
+  removeOwnerOperation,
+  sameOwnerOperationScope,
+} from "./ownerOperations";
 
 export type CrewConfigDraft = {
   definitions: { label: string; definition: string }[];
@@ -16,6 +21,7 @@ export type CrewConfigDraft = {
 
 export type CrewSaveProgress = {
   operation_id: string;
+  reconciled: boolean;
   outcome:
     | "not_committed"
     | "commit_uncertain"
@@ -71,4 +77,33 @@ export function getChannelCrewOperation(
   operationId: string,
 ): Promise<ScopedOwnerOperation<CrewSaveProgress>> {
   return invokeTauri("get_channel_crew_operation", { expected, operationId });
+}
+
+/**
+ * Remove one reconciled, superseded role-save journal entry after the user
+ * explicitly discards its draft. The native revision fence makes the
+ * load/remove pair safe if another worker advances the record in between.
+ */
+export async function discardChannelCrewOperation(
+  expected: OwnerOperationScope,
+  operationId: string,
+): Promise<ScopedOwnerOperation<null>> {
+  const loaded = await loadOwnerOperation<unknown>(expected, operationId);
+  if (!sameOwnerOperationScope(loaded.token, expected))
+    throw new Error("Recovery scope changed.");
+  const operation = loaded.value;
+  if (
+    operation.kind !== "channel-crew-config" ||
+    operation.status !== "superseded" ||
+    !operation.reconciled
+  )
+    throw new Error("This recovery entry still needs reconciliation.");
+  const removed = await removeOwnerOperation(
+    expected,
+    operationId,
+    operation.revision,
+  );
+  if (!sameOwnerOperationScope(removed.token, expected))
+    throw new Error("Recovery scope changed.");
+  return removed;
 }

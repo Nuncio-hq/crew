@@ -470,6 +470,14 @@ channel navigation specs use `openWorkspaceChannel` to exercise Browse
 channels through the real menu. These mock-bridge cases establish UI routing,
 not installed runtime or Project-operation recovery acceptance.
 
+The #350 role editor unit lane binds reopen, durable discard and recovery
+selection to the native seams. It proves that a discarded reconciled
+superseded journal is absent after reopen, unrelated owner-operation rows stay
+intact, and an unresolved or partial row wins deterministically over older
+superseded history. Removal failures retain the draft and recovery action; the
+registered `companyos-channel-roles.spec.ts` covers the corresponding
+review/replacement UI path.
+
 For #361, run the native `project_git_workspace_probe` tests separately from
 the root Rust workspace. The probe must preserve the exact selected path,
 distinguish a Git root from a subdirectory, and propagate inaccessible-path or

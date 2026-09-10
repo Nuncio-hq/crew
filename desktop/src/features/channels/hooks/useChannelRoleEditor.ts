@@ -7,6 +7,7 @@ import {
   type OwnerOperationScope,
 } from "@/shared/api/ownerOperations";
 import {
+  discardChannelCrewOperation,
   getChannelCrewOperation,
   listChannelCrewOperations,
   retryChannelCrewConfig,
@@ -26,6 +27,26 @@ type Snapshot = {
   canvas: CanvasResponse;
   members: RelayAgent[];
 };
+
+function recoveryPriority(progress: CrewSaveProgress): number {
+  if (!progress.reconciled) return 0;
+  return progress.outcome === "superseded" ? 1 : 2;
+}
+
+/** Choose one recovery row without letting terminal history hide live work. */
+function selectRecoveryProgress(
+  values: readonly CrewSaveProgress[],
+): CrewSaveProgress | undefined {
+  return [...values].sort(
+    (left, right) =>
+      recoveryPriority(left) - recoveryPriority(right) ||
+      (left.operation_id < right.operation_id
+        ? -1
+        : left.operation_id > right.operation_id
+          ? 1
+          : 0),
+  )[0];
+}
 
 /** Captures both sides of unscoped legacy reads before exposing a draft. */
 export async function loadRoleSnapshot(channelId: string): Promise<Snapshot> {
@@ -88,8 +109,8 @@ export function useChannelRoleEditor(
           throw new Error("Recovery belongs to another community or identity.");
         setSnapshot(loaded);
         const currentMembers = loaded.members.map((member) => member.pubkey);
-        if (pending.value.length) {
-          const recovery = pending.value[0];
+        const recovery = selectRecoveryProgress(pending.value);
+        if (recovery) {
           setDraft(
             recovery.draft
               ? createRoleDraftFromSubmitted(
@@ -267,28 +288,40 @@ export function useChannelRoleEditor(
     }
   }
 
-  function replaceDraft() {
+  async function replaceDraft() {
     if (
       !review ||
       actionClaimed.current ||
       (operation && progress?.outcome !== "superseded")
     )
       return;
-    ticket.current++;
+    actionClaimed.current = true;
     statusRequest.current++;
-    activeOperation.current = null;
-    setSnapshot(review);
-    setDraft(
-      createRoleDraft(
-        review.canvas,
-        review.members.map((member) => member.pubkey),
-      ),
-    );
-    setReview(null);
-    setConflict(false);
+    const run = ticket.current;
+    setBusy(true);
     setError(null);
-    setOperation(null);
-    setProgress(null);
+    try {
+      if (!(await verify(review.scope, run))) return;
+      if (operation) await discardChannelCrewOperation(review.scope, operation);
+      if (!(await verify(review.scope, run))) return;
+      setSnapshot(review);
+      setDraft(
+        createRoleDraft(
+          review.canvas,
+          review.members.map((member) => member.pubkey),
+        ),
+      );
+      setReview(null);
+      setConflict(false);
+      setOperation(null);
+      setProgress(null);
+      activeOperation.current = null;
+    } catch (cause) {
+      if (run === ticket.current) setError(String(cause));
+    } finally {
+      actionClaimed.current = false;
+      if (run === ticket.current) setBusy(false);
+    }
   }
 
   return {

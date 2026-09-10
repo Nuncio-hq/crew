@@ -375,7 +375,9 @@ export function ChannelRolesDialog({
               disabled={
                 !!editor.operation && progress?.outcome !== "superseded"
               }
-              onClick={editor.replaceDraft}
+              onClick={() => {
+                void editor.replaceDraft();
+              }}
             >
               Discard my draft and use this version
             </Button>

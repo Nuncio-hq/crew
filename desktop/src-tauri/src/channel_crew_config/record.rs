@@ -52,6 +52,8 @@ pub(crate) enum Outcome {
 #[derive(Debug, Serialize)]
 pub(crate) struct Progress {
     pub operation_id: String,
+    /// Whether all external effects for this journal row are reconciled.
+    pub reconciled: bool,
     pub outcome: Outcome,
     pub canvas_event_id: String,
     pub current_event_id: Option<String>,
@@ -63,9 +65,10 @@ pub(crate) struct Progress {
 }
 
 impl Payload {
-    pub fn progress(&self, id: &str, current: Option<String>) -> Progress {
+    pub fn progress(&self, id: &str, current: Option<String>, reconciled: bool) -> Progress {
         Progress {
             operation_id: id.to_string(),
+            reconciled,
             outcome: self.outcome.clone(),
             canvas_event_id: self.canvas.id.to_hex(),
             current_event_id: current,
