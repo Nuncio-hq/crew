@@ -125,12 +125,30 @@ pub(super) async fn dispatch_prepared(
             )
             .await?;
             match created.value {
-                CreateResult::Existing(operation) => Ok(crate::commands::ScopedOperationResult {
-                    token: expected,
-                    value: CrewSaveResult::RecoveryPending {
-                        operation_id: operation.id,
-                    },
-                }),
+                CreateResult::Existing(operation) => {
+                    // OperationStore only returns an existing resource claim
+                    // when its immutable creation digest matches. Keep this
+                    // domain check beside the recovery hand-off as a second
+                    // identity fence: a malformed or legacy record must
+                    // never make a different draft appear recoverable.
+                    let existing: Payload = serde_json::from_value(operation.payload)
+                        .map_err(|_| "invalid canvas recovery payload")?;
+                    if existing.channel_id != payload.channel_id
+                        || existing.canvas.id != payload.canvas.id
+                        || existing.announcement.id != payload.announcement.id
+                    {
+                        return Err(
+                            "another canvas recovery is pending for this channel; review it before saving"
+                                .into(),
+                        );
+                    }
+                    Ok(crate::commands::ScopedOperationResult {
+                        token: expected,
+                        value: CrewSaveResult::RecoveryPending {
+                            operation_id: operation.id,
+                        },
+                    })
+                }
                 CreateResult::Created(operation) => {
                     let id = operation.id.clone();
                     let result = driver::resume(backend, operation, false).await;

@@ -87,6 +87,7 @@ impl Fixture {
             next_retry_at: None,
             lease: None,
             outcome: Outcome::NotCommitted,
+            draft: None,
             cleanup_members: None,
         };
         let operation = match store

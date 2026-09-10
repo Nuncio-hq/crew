@@ -24,7 +24,7 @@ pub(super) struct Input<'a> {
 }
 
 pub(super) fn prepare(input: Input<'_>, draft: &CrewConfigDraft) -> Result<Preparation, String> {
-    prepare_with(input, |content, known| {
+    let prepared = prepare_with(input, |content, known| {
         let updated = buzz_core_pkg::crew_role::update_canvas_crew_config(content, draft, 65536)
             .map_err(|error| error.to_string())?;
         for selected in draft.assignments.keys().chain(draft.contact.iter()) {
@@ -38,6 +38,13 @@ pub(super) fn prepare(input: Input<'_>, draft: &CrewConfigDraft) -> Result<Prepa
             }
         }
         Ok(updated)
+    })?;
+    Ok(match prepared {
+        Preparation::Ready(mut payload) => {
+            payload.draft = Some(draft.clone());
+            Preparation::Ready(payload)
+        }
+        other => other,
     })
 }
 
@@ -183,6 +190,7 @@ fn prepare_with(
         next_retry_at: None,
         lease: None,
         outcome: Outcome::NotCommitted,
+        draft: None,
         cleanup_members: None,
     })))
 }
@@ -325,6 +333,10 @@ mod tests {
         let Preparation::Ready(payload) = prepare(input(&known), &draft).unwrap() else {
             panic!("ready")
         };
+        assert_eq!(
+            serde_json::to_value(payload.draft.as_ref()).unwrap(),
+            serde_json::to_value(Some(&draft)).unwrap()
+        );
         assert_eq!(payload.canvas.created_at.as_secs(), 1000);
         assert_eq!(payload.canvas.pubkey, keys.public_key());
         assert_eq!(payload.announcement.kind.as_u16(), 9);

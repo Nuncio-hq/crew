@@ -1,3 +1,4 @@
+use buzz_core_pkg::crew_role::CrewConfigDraft;
 use nostr::Event;
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +23,10 @@ pub(super) struct Payload {
     pub next_retry_at: Option<i64>,
     pub lease: Option<Lease>,
     pub outcome: Outcome,
+    /// The exact renderer form that produced the signed events. This is
+    /// recovery metadata only; the signed canvas remains domain authority.
+    #[serde(default)]
+    pub draft: Option<CrewConfigDraft>,
     /// Canonical deletion intent supplied by the durable outer deletion journal.
     #[serde(default)]
     pub cleanup_members: Option<Vec<String>>,
@@ -52,6 +57,9 @@ pub(crate) struct Progress {
     pub current_event_id: Option<String>,
     pub automatic_retry_at: Option<i64>,
     pub manual_retry_required: bool,
+    /// Submitted form state retained across dialog close/reopen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<CrewConfigDraft>,
 }
 
 impl Payload {
@@ -63,6 +71,7 @@ impl Payload {
             current_event_id: current,
             automatic_retry_at: self.next_retry_at,
             manual_retry_required: self.failures >= 5,
+            draft: self.draft.clone(),
         }
     }
 }

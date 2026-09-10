@@ -29,8 +29,8 @@ export default defineConfig({
     {
       name: "smoke",
       testMatch: [
-        "**/companyos-shell-navigation.spec.ts",
         "**/companyos-channel-roles.spec.ts",
+        "**/companyos-shell-navigation.spec.ts",
         "**/projects-v3-screenshots.spec.ts",
         "**/appearance-previews.spec.ts",
         "**/smoke.spec.ts",

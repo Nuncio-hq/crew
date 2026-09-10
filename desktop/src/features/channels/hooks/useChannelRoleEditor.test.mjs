@@ -27,6 +27,7 @@ function deferred() {
 async function mount({
   pending = true,
   pendingOutcome = "not_committed",
+  pendingDraft = null,
 } = {}) {
   const { act, renderHook } = await import("@testing-library/react");
   const { useChannelRoleEditor } = await import("./useChannelRoleEditor.ts");
@@ -42,6 +43,7 @@ async function mount({
     outcome: pendingOutcome,
     automatic_retry_at: null,
     manual_retry_required: true,
+    draft: pendingDraft,
   };
   const requests = [];
   const applied = [];
@@ -99,6 +101,31 @@ async function mount({
     reply: (outcome) => ({ token, value: { ...progress, outcome } }),
   };
 }
+
+test("reopened recovery restores the journaled draft instead of the old canvas", async () => {
+  const h = await mount({
+    pendingDraft: {
+      definitions: [{ label: "Submitted", definition: "Updated boundary" }],
+      assignments: {},
+      contact: null,
+      renames: { Review: "Submitted" },
+      preserved_assignments: {},
+      remove_routing: [],
+      remove_capabilities: [],
+    },
+  });
+  try {
+    assert.equal(h.result.current.operation, "operation-one");
+    assert.equal(h.result.current.draft.roles[0].label, "Submitted");
+    assert.equal(
+      h.result.current.draft.roles[0].definition,
+      "Updated boundary",
+    );
+    assert.equal(h.result.current.draft.roles[0].originalLabel, "Review");
+  } finally {
+    h.unmount();
+  }
+});
 
 test("late status cannot restore an old operation after reviewed draft replacement", async () => {
   const h = await mount();

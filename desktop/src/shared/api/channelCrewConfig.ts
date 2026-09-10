@@ -26,6 +26,8 @@ export type CrewSaveProgress = {
   current_event_id: string | null;
   automatic_retry_at: number | null;
   manual_retry_required: boolean;
+  /** Submitted form retained by the native journal for reopen/recovery. */
+  draft?: CrewConfigDraft | null;
 };
 
 export type CrewSaveResult =

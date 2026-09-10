@@ -16,6 +16,7 @@ import {
 import type { CanvasResponse, RelayAgent } from "@/shared/api/types";
 import {
   createRoleDraft,
+  createRoleDraftFromSubmitted,
   serializeRoleDraft,
   type ChannelRoleDraft,
 } from "../lib/channelRoleDraft";
@@ -86,17 +87,24 @@ export function useChannelRoleEditor(
         if (!sameOwnerOperationScope(pending.token, loaded.scope))
           throw new Error("Recovery belongs to another community or identity.");
         setSnapshot(loaded);
-        setDraft(
-          createRoleDraft(
-            loaded.canvas,
-            loaded.members.map((member) => member.pubkey),
-          ),
-        );
+        const currentMembers = loaded.members.map((member) => member.pubkey);
         if (pending.value.length) {
-          activeOperation.current = pending.value[0].operation_id;
-          setOperation(pending.value[0].operation_id);
-          setProgress(pending.value[0]);
-          setConflict(pending.value[0].outcome === "superseded");
+          const recovery = pending.value[0];
+          setDraft(
+            recovery.draft
+              ? createRoleDraftFromSubmitted(
+                  loaded.canvas,
+                  currentMembers,
+                  recovery.draft,
+                )
+              : createRoleDraft(loaded.canvas, currentMembers),
+          );
+          activeOperation.current = recovery.operation_id;
+          setOperation(recovery.operation_id);
+          setProgress(recovery);
+          setConflict(recovery.outcome === "superseded");
+        } else {
+          setDraft(createRoleDraft(loaded.canvas, currentMembers));
         }
       } catch (cause) {
         if (run === ticket.current) setError(String(cause));

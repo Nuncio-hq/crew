@@ -1,10 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { installMockBridge } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 async function openEditor(page: Page) {
   await installMockBridge(page);
   await page.goto("/");
-  await expect(page.getByTestId("channel-general")).toBeVisible();
+  await expect(page.getByTestId("app-sidebar")).toBeVisible();
   await page.evaluate(() => {
     const win = window as unknown as {
       __TAURI_INTERNALS__: {
@@ -116,7 +117,7 @@ async function openEditor(page: Page) {
       return original(cmd, args);
     };
   });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await page.getByTestId("channel-management-trigger").click();
   await page.getByTestId("channel-canvas-ingress").click();
   await page.getByTestId("channel-manage-roles").click();

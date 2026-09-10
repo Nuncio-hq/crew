@@ -62,6 +62,50 @@ export function createRoleDraft(
   };
 }
 
+/**
+ * Rehydrates the exact form submitted with a durable native operation.
+ *
+ * The relay canvas may still be the pre-save head when the dialog is opened
+ * again. Rebuilding from that head would silently discard the submitted role
+ * edits, so the journaled CrewConfigDraft owns the temporary form until the
+ * operation is resolved.
+ */
+export function createRoleDraftFromSubmitted(
+  canvas: CanvasResponse,
+  members: readonly string[],
+  submitted: CrewConfigDraft,
+): ChannelRoleDraft {
+  const current = createRoleDraft(canvas, members);
+  const roles = submitted.definitions.map((definition, index) => {
+    const currentRole = canvas.definitions.find(
+      (entry) => roleKey(entry.roleLabel) === roleKey(definition.label),
+    );
+    const renamedFrom = Object.entries(submitted.renames).find(
+      ([, to]) => roleKey(to) === roleKey(definition.label),
+    )?.[0];
+    return {
+      id: `recovered-${index}`,
+      originalLabel: currentRole?.roleLabel ?? renamedFrom ?? null,
+      label: definition.label,
+      definition: definition.definition,
+    };
+  });
+  const assignments: Record<string, string> = {};
+  for (const [agent, label] of Object.entries(submitted.assignments)) {
+    const role = roles.find((entry) => roleKey(entry.label) === roleKey(label));
+    if (role) assignments[agent] = role.id;
+  }
+  return {
+    ...current,
+    roles,
+    assignments,
+    preservedAssignments: { ...submitted.preserved_assignments },
+    contact: submitted.contact,
+    removeRouting: [...submitted.remove_routing],
+    removeCapabilities: [...submitted.remove_capabilities],
+  };
+}
+
 export function roleDraftError(draft: ChannelRoleDraft): string | null {
   const labels = new Set<string>();
   for (const role of draft.roles) {

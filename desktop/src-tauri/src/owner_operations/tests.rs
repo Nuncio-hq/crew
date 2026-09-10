@@ -239,6 +239,27 @@ fn durable_core_create_distinguishes_id_replay_and_id_conflict() {
 }
 
 #[test]
+fn durable_core_does_not_adopt_a_different_unresolved_resource_intent() {
+    let (_dir, mut store) = fixture(Limits::default());
+    let owner = scope('a', "https://one.example");
+    let first = request("channel");
+    let first_id = first.id.clone();
+    let first_operation = created(store.create(&owner, first, 100).unwrap());
+
+    let mut second = request("channel");
+    second.payload = json!({
+        "signedEvent": {"id": "different-event", "sig": "different-signature"},
+        "step": "a-different-draft"
+    });
+    assert_eq!(
+        store.create(&owner, second, 101),
+        Err(StoreError::Conflict),
+        "a resource claim must not transfer the first draft to a second save"
+    );
+    assert_eq!(store.load(&owner, &first_id).unwrap(), first_operation);
+}
+
+#[test]
 fn durable_core_large_update_rolls_back_whole_record() {
     let (_dir, mut store) = fixture(Limits {
         bytes_per_operation: 1024,
