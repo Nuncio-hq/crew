@@ -552,7 +552,7 @@ mod tests {
         let keys = Keys::generate();
         let tags = tags
             .iter()
-            .map(|parts| Tag::parse(*parts).expect("test tag"))
+            .map(|parts| Tag::parse(parts.iter().copied()).expect("test tag"))
             .collect::<Vec<_>>();
         EventBuilder::new(Kind::Custom(kind as u16), "")
             .tags(tags)
