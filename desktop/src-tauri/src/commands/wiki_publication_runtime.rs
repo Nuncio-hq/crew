@@ -370,7 +370,7 @@ impl NativeWikiPublication {
             || record
                 .pages
                 .iter()
-                .any(|event| by_id.get(&event.id.to_hex()).is_none())
+                .any(|event| !by_id.contains_key(&event.id.to_hex()))
         {
             return Ok(WikiDependencyState::Missing);
         }
@@ -389,7 +389,7 @@ impl NativeWikiPublication {
             .collect::<Result<Vec<_>, _>>()?;
         let head = serde_json::to_value(&record.head)
             .map_err(|_| "Wiki head is not serializable.".to_string())?;
-        let manifest_value = serde_json::to_value(&manifest)
+        let manifest_value = serde_json::to_value(manifest)
             .map_err(|_| "Wiki manifest is not serializable.".to_string())?;
         crew_wiki::snapshot_v1::verify_snapshot(
             &self.owner.to_hex(),

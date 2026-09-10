@@ -67,8 +67,13 @@ enum HeadRead {
 
 #[derive(Debug)]
 enum ResolvedDependencies {
-    Complete { manifest: Event, pages: Vec<Event> },
-    Legacy { pages: Vec<Event> },
+    Complete {
+        manifest: Box<Event>,
+        pages: Vec<Event>,
+    },
+    Legacy {
+        pages: Vec<Event>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -251,7 +256,7 @@ async fn read_snapshot<R: Runtime>(
         ResolvedDependencies::Complete { manifest, pages } => WikiSnapshotRead {
             state: WikiSnapshotReadState::Complete,
             head: Some(head_event),
-            manifest: Some(manifest),
+            manifest: Some(*manifest),
             pages,
             error: None,
             repo_state,
@@ -357,7 +362,7 @@ async fn resolve_v1<R: Runtime>(
     }
     let pages: Vec<Value> = raw_pages
         .into_iter()
-        .map(|event| serde_json::to_value(event))
+        .map(serde_json::to_value)
         .collect::<Result<_, _>>()
         .map_err(|_| ReadError::Failed("Wiki page is not serializable".into()))?;
     crew_wiki::snapshot_v1::verify_snapshot(owner, repo_d, &head_value, &manifest_value, &pages)
@@ -384,7 +389,10 @@ async fn resolve_v1<R: Runtime>(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(ResolvedDependencies::Complete { manifest, pages })
+    Ok(ResolvedDependencies::Complete {
+        manifest: Box::new(manifest),
+        pages,
+    })
 }
 
 async fn resolve_legacy<R: Runtime>(
@@ -398,7 +406,7 @@ async fn resolve_legacy<R: Runtime>(
     let toc: LegacyToc = serde_json::from_str(&head.content)
         .map_err(|_| ReadError::Failed("Legacy Wiki TOC is malformed".into()))?;
     let signed_commit =
-        legacy_commit_for_head(&head, toc.commit.as_deref()).map_err(ReadError::Failed)?;
+        legacy_commit_for_head(head, toc.commit.as_deref()).map_err(ReadError::Failed)?;
     let mut slugs = Vec::new();
     let mut seen = BTreeSet::new();
     for section in toc.sections {
@@ -568,7 +576,7 @@ async fn scoped_query<R: Runtime>(
     Ok(events)
 }
 
-fn exact_event<'a>(events: &'a [Event], kind: u16, owner: &str, d: &str) -> Result<Event, String> {
+fn exact_event(events: &[Event], kind: u16, owner: &str, d: &str) -> Result<Event, String> {
     let [event] = events else {
         return Err("Wiki query returned an unexpected number of events".into());
     };
@@ -878,14 +886,13 @@ fn validate_ref_state_tags(event: &Event) -> Result<(), String> {
             seen_head = true;
             continue;
         }
-        if name.starts_with("refs/heads/") || name.starts_with("refs/tags/") {
-            if values.len() != 2
+        if (name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+            && (values.len() != 2
                 || !valid_ref_name(name)
                 || !valid_ref_oid(&values[1])
-                || !seen_refs.insert(name)
-            {
-                return Err("Repository state has an invalid ref".into());
-            }
+                || !seen_refs.insert(name))
+        {
+            return Err("Repository state has an invalid ref".into());
         }
     }
     Ok(())

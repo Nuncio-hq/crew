@@ -28,16 +28,22 @@ fn owner_and_relay_state_selection_bind_to_their_signing_identity() {
         11,
     );
 
-    assert!(
-        select_owner_state(&[owner_event.clone()], &owner, "repo", &coordinate)
-            .expect("owner state")
-            .is_some()
-    );
-    assert!(
-        select_owner_state(&[relay_event.clone()], &owner, "repo", &coordinate)
-            .expect("foreign owner state")
-            .is_none()
-    );
+    assert!(select_owner_state(
+        std::slice::from_ref(&owner_event),
+        &owner,
+        "repo",
+        &coordinate
+    )
+    .expect("owner state")
+    .is_some());
+    assert!(select_owner_state(
+        std::slice::from_ref(&relay_event),
+        &owner,
+        "repo",
+        &coordinate
+    )
+    .expect("foreign owner state")
+    .is_none());
     assert!(
         select_relay_state(&[relay_event], &relay, "repo", &coordinate)
             .expect("relay state")

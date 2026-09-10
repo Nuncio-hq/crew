@@ -46,13 +46,13 @@ enum Fence {
 enum When {
     /// Before anything is sent: the pre-send guard must refuse and no request
     /// may reach the relay at all.
-    BeforeFirstRequest,
+    BeforeFirst,
     /// While the absence request is at the relay, before its reply is
     /// released: the post-response guard must refuse and the second read must
     /// never be issued.
-    DuringFirstRequest,
+    DuringFirst,
     /// While the current-head request is held: the proof must not be accepted.
-    DuringSecondRequest,
+    DuringSecond,
 }
 
 /// A barrier owned by ONE request index.
@@ -511,11 +511,7 @@ async fn unchanged_state_proves_expected_precondition_retirement() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_moved_native_fence_refuses_the_read_at_its_own_await_position() {
     for fence in [Fence::IdentityGeneration, Fence::Revision, Fence::Lease] {
-        for when in [
-            When::BeforeFirstRequest,
-            When::DuringFirstRequest,
-            When::DuringSecondRequest,
-        ] {
+        for when in [When::BeforeFirst, When::DuringFirst, When::DuringSecond] {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
             let address = listener.local_addr().expect("address");
             let repo_d = "crew.fence.case";
@@ -529,9 +525,9 @@ async fn a_moved_native_fence_refuses_the_read_at_its_own_await_position() {
             // The barrier belongs to ONE request index, so "during the second
             // read" really holds request 1 and lets request 0 through.
             let hold = match when {
-                When::BeforeFirstRequest => None,
-                When::DuringFirstRequest => Some(0),
-                When::DuringSecondRequest => Some(1),
+                When::BeforeFirst => None,
+                When::DuringFirst => Some(0),
+                When::DuringSecond => Some(1),
             }
             .map(|index| {
                 Arc::new(HoldAt {
@@ -548,7 +544,7 @@ async fn a_moved_native_fence_refuses_the_read_at_its_own_await_position() {
                 hold,
             })));
 
-            if when == When::BeforeFirstRequest {
+            if when == When::BeforeFirst {
                 state.apply(fence);
             }
 
@@ -569,7 +565,7 @@ async fn a_moved_native_fence_refuses_the_read_at_its_own_await_position() {
 
             let label = format!("{fence:?}/{when:?}");
             let observed_before_release = Arc::new(AtomicUsize::new(usize::MAX));
-            let outcome = if when == When::BeforeFirstRequest {
+            let outcome = if when == When::BeforeFirst {
                 bounded(validation).await
             } else {
                 let seen = observed_before_release.clone();
@@ -605,15 +601,15 @@ async fn a_moved_native_fence_refuses_the_read_at_its_own_await_position() {
             // Exact request counts at every position.
             let requests_made = requests.load(Ordering::SeqCst);
             match when {
-                When::BeforeFirstRequest => assert_eq!(
+                When::BeforeFirst => assert_eq!(
                     requests_made, 0,
                     "{label}: the pre-send guard must refuse before any request"
                 ),
-                When::DuringFirstRequest => assert_eq!(
+                When::DuringFirst => assert_eq!(
                     requests_made, 1,
                     "{label}: a refused first read must not issue the second"
                 ),
-                When::DuringSecondRequest => {
+                When::DuringSecond => {
                     assert_eq!(
                         requests_made, 2,
                         "{label}: the second read must actually have been issued"

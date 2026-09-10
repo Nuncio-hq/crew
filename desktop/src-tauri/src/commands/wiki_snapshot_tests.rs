@@ -56,10 +56,7 @@ fn v1_fixture_with_page_count(keys: &Keys, page_count: usize) -> SnapshotPublica
         .map(|file| {
             (
                 file.clone(),
-                format!(
-                    "fn {}() {{}}\n",
-                    file.replace('/', "_").replace('-', "_").replace('.', "_")
-                ),
+                format!("fn {}() {{}}\n", file.replace(['/', '-', '.'], "_")),
             )
         })
         .collect();
@@ -184,6 +181,7 @@ fn event_d(event: &Event) -> Option<String> {
         .and_then(|tag| tag.as_slice().get(1).cloned())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn snapshot_relay(
     listener: TcpListener,
     head: Event,

@@ -502,8 +502,15 @@ test("a regeneration dispatch failure keeps the known successor identity", async
     });
 
     assert.match(outcome.error?.message ?? "", /successor dispatch failed/);
+    // Recovery's first status projection bootstraps media URL helpers after
+    // dispatch fails. Keep those expected infrastructure calls out of the
+    // operation ordering assertion while still failing on any other command.
+    const operationCalls = calls.filter(
+      ({ command }) =>
+        command !== "get_relay_http_url" && command !== "get_media_proxy_port",
+    );
     assert.deepEqual(
-      calls.map(({ command }) => command),
+      operationCalls.map(({ command }) => command),
       ["wiki_publication_regenerate", "wiki_publication_dispatch"],
     );
     const row = getWikiJobs().get(repoKeyValue);
