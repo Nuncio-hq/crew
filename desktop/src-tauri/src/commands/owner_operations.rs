@@ -51,7 +51,7 @@ where
     Ok(ScopedOperationResult { token, value })
 }
 
-fn journal_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+pub(crate) fn journal_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let base = app
         .path()
         .app_data_dir()

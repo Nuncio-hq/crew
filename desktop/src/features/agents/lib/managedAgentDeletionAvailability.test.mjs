@@ -240,7 +240,6 @@ for (const owner of ["agents", "profile"]) {
         [
           ...(shouldShutdown ? ["send_channel_message"] : []),
           "delete_managed_agent",
-          "remove_channel_member",
         ],
       );
       if (shouldShutdown) {
@@ -414,7 +413,7 @@ test("Agents deletion rechecks availability after channel discovery, not the cli
   });
   assert.deepEqual(
     effects().map(([name]) => name),
-    ["send_channel_message", "delete_managed_agent", "remove_channel_member"],
+    ["send_channel_message", "delete_managed_agent"],
   );
   assert.match(confirms[0], /availability is unknown/);
 });

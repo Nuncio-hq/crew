@@ -4,12 +4,12 @@ use crate::{
         bestie_assignment::{recover_pending_assignment_cleanup, with_agent_assignments_cleared},
         build_managed_agent_summary, current_instance_id, ensure_persona_is_active,
         find_managed_agent_mut, load_managed_agents, load_personas, load_teams,
-        managed_agents_base_dir, normalize_agent_args, resolve_provider_binary,
-        save_managed_agents, start_managed_agent_process, stop_managed_agent_process,
-        stop_managed_agent_workspace_pair, sync_managed_agent_processes, try_regenerate_nest,
-        validate_provider_config, BackendKind, CreateManagedAgentRequest,
-        CreateManagedAgentResponse, ManagedAgentRecord, ManagedAgentSummary, RelayMeshConfig,
-        DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM, DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
+        normalize_agent_args, resolve_provider_binary, save_managed_agents,
+        start_managed_agent_process, stop_managed_agent_workspace_pair,
+        sync_managed_agent_processes, try_regenerate_nest, validate_provider_config, BackendKind,
+        CreateManagedAgentRequest, CreateManagedAgentResponse, ManagedAgentRecord,
+        ManagedAgentSummary, RelayMeshConfig, DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM,
+        DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
     },
     relay::relay_ws_url_with_override,
     util::now_iso,
@@ -33,7 +33,9 @@ pub(super) fn workspace_owner_hex(state: &AppState) -> Result<String, String> {
 mod pending;
 #[cfg(test)]
 use pending::build_agent_archive_request;
-pub(crate) use pending::{retain_managed_agent_pending, tombstone_managed_agent_pending};
+pub(crate) use pending::{
+    retain_managed_agent_pending, tombstone_managed_agent_at, tombstone_managed_agent_pending,
+};
 
 /// Build a summary from fresh disk state (personas, teams, global config).
 /// For one-shot command paths only — the 5s list poll calls
@@ -205,6 +207,14 @@ async fn start_local_agent_with_preflight(
     ensure_relay_mesh_for_record(app, mesh_model_id.as_deref(), allow_fresh_create_start).await?;
     let (bound_relay, bound_owner) = scope.bind(state)?;
 
+    // The journal connection is opened before the runtime/store locks. The
+    // transition lock then serializes this check with the native deletion
+    // claim, so a deletion cannot be claimed between the check and spawn.
+    let journal = crate::managed_agent_delete::open_journal_store(app)?;
+    let _transition_guard = state
+        .managed_agent_runtime_transition
+        .lock()
+        .map_err(|e| e.to_string())?;
     let _store_guard = state
         .managed_agents_store_lock
         .lock()
@@ -217,6 +227,12 @@ async fn start_local_agent_with_preflight(
     let record = find_managed_agent_mut(&mut records, pubkey)?;
     if record.backend != BackendKind::Local {
         return Err(format!("agent {pubkey} is no longer a local agent"));
+    }
+    if crate::managed_agent_delete::pending_in_store(&journal, pubkey)? {
+        return Err(
+            "agent deletion is still unresolved; retry the durable deletion before starting it"
+                .into(),
+        );
     }
     // Re-snapshot the persona onto the record at every spawn so the agent always
     // starts with the current persona config (system_prompt, model, provider,
@@ -860,6 +876,12 @@ pub async fn start_managed_agent(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ManagedAgentSummary, String> {
+    if crate::managed_agent_delete::has_pending_any_scope(&app, &pubkey)? {
+        return Err(
+            "agent deletion is still unresolved; retry the durable deletion before starting it"
+                .into(),
+        );
+    }
     // Snapshot the workspace owner pubkey for the legacy auth_tag fallback.
     // Read outside the records lock to keep lock ordering simple.
     let owner_hex = workspace_owner_hex(&state)?;
@@ -1055,7 +1077,7 @@ pub async fn stop_managed_agent(
 
 // Async so the blocking body (disk reads/writes, process termination, keyring
 // delete, nest regeneration) runs off the main UI thread via spawn_blocking.
-fn run_managed_agent_deletion<T>(
+pub(crate) fn run_managed_agent_deletion<T>(
     base_dir: &std::path::Path,
     pubkey: &str,
     records: &mut Vec<ManagedAgentRecord>,
@@ -1075,78 +1097,33 @@ pub async fn delete_managed_agent(
     force_remote_delete: Option<bool>,
     app: AppHandle,
 ) -> Result<(), String> {
-    use tauri::Manager;
-    tokio::task::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        {
-            let _store_guard = state
-                .managed_agents_store_lock
-                .lock()
-                .map_err(|error| error.to_string())?;
-            let mut records = load_managed_agents(&app)?;
-            let base_dir = managed_agents_base_dir(&app)?;
-            recover_pending_assignment_cleanup(&base_dir, |pending_pubkey| {
-                records
-                    .iter()
-                    .any(|record| record.pubkey.eq_ignore_ascii_case(pending_pubkey))
-            })?;
-            let mut runtimes = state
-                .managed_agent_processes
-                .lock()
-                .map_err(|error| error.to_string())?;
+    crate::managed_agent_delete::delete(app, pubkey, force_remote_delete.unwrap_or(false)).await
+}
 
-            let (sync_changed, exited_pubkeys) = sync_managed_agent_processes(
-                &mut records,
-                &mut runtimes,
-                &current_instance_id(&app),
-            );
-            if sync_changed {
-                save_managed_agents(&app, &records)?;
-            }
-            for pubkey in &exited_pubkeys {
-                state.clear_agent_session_caches(pubkey);
-            }
-            // Guard: reject deletion of deployed remote agents unless explicitly forced.
-            // This turns "don't orphan remote infra" from a UI convention into a backend
-            // invariant — a buggy or compromised IPC caller cannot silently orphan a live
-            // remote deployment. The frontend sends force_remote_delete: true only after
-            // the user confirms the orphan warning.
-            if let Some(record) = records.iter().find(|r| r.pubkey == pubkey) {
-                if record.backend != BackendKind::Local
-                    && record.backend_agent_id.is_some()
-                    && !force_remote_delete.unwrap_or(false)
-                {
-                    return Err(
-                        "cannot delete a deployed remote agent without force_remote_delete: true"
-                            .to_string(),
-                    );
-                }
-            }
+/// Retry one unresolved managed-agent deletion by its durable operation ID.
+#[tauri::command]
+pub async fn retry_managed_agent_delete(
+    operation_id: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    crate::managed_agent_delete::retry(app, operation_id).await
+}
 
-            if !records.iter().any(|record| record.pubkey == pubkey) {
-                return Err(format!("agent {pubkey} not found"));
-            }
-            run_managed_agent_deletion(&base_dir, &pubkey, &mut records, |records| {
-                if let Some(record) = records.iter_mut().find(|record| record.pubkey == pubkey) {
-                    stop_managed_agent_process(&app, record, &mut runtimes)?;
-                }
-                state.clear_agent_session_caches(&pubkey);
-                records.retain(|record| record.pubkey != pubkey);
-                save_managed_agents(&app, records)
-            })?;
-            crate::managed_agents::delete_agent_key(&pubkey);
-            // Tombstone after confirmed removal (inside lock; every published
-            // agent tombstones). The NIP-IA kind:9035 archive request — which
-            // stops the identity appearing in member pickers and autocomplete —
-            // is enqueued in the SAME transaction, its `persona_id` derived from
-            // the retained 30177 head.
-            tombstone_managed_agent_pending(&app, &state, &pubkey);
-        }
-        try_regenerate_nest(&app);
-        Ok(())
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+/// List unresolved managed-agent deletion records across local owner scopes.
+#[tauri::command]
+pub async fn list_managed_agent_deletions(
+    app: AppHandle,
+) -> Result<Vec<crate::owner_operations::ManagedAgentDeletionSummary>, String> {
+    crate::managed_agent_delete::list(app).await
+}
+
+/// Read one managed-agent deletion record for a native recovery/status UI.
+#[tauri::command]
+pub async fn get_managed_agent_deletion(
+    operation_id: String,
+    app: AppHandle,
+) -> Result<crate::owner_operations::Operation, String> {
+    crate::managed_agent_delete::status(app, operation_id).await
 }
 
 // Remote agent shutdown is handled entirely by the frontend:
