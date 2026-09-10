@@ -275,6 +275,9 @@ const EVENTS_INVENTORY: &[(&str, usize, usize)] = &[
     ("src/archive/mod_tests.rs", 1, 0),
     ("src/managed_agents/persona_events/tests.rs", 1, 0),
     ("src/commands/team_snapshot/tests.rs", 1, 0),
+    // Mock relay route in scoped observer-control tests; production Stop
+    // publication goes through the guarded owner-operation transport.
+    ("src/commands/scoped_observer_control_tests.rs", 1, 0),
     // Mock-relay route in its in-file tests; production publish goes through
     // the guarded boundary-1 funnel (`submit_signed_event_at_with_keys`).
     ("src/commands/personas/sharing.rs", 1, 0),
