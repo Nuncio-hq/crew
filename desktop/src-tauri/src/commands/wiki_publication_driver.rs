@@ -485,6 +485,23 @@ pub(super) async fn drive<R: WikiPublicationRuntime>(
                         WikiPublishError::ImmutableDependencyRetired { event_id } => {
                             record_retirement(runtime, &operation, &mut record, event_id).await
                         }
+                        // `HeadRetired` is only valid for the conditional
+                        // head event. Keep an unexpected typed proof on the
+                        // retryable claim with its proof-specific message;
+                        // this dependency phase must not settle it as either
+                        // an immutable-dependency retirement or a terminal
+                        // head outcome.
+                        WikiPublishError::HeadRetired(proof) => {
+                            fail(
+                                runtime,
+                                &operation,
+                                &mut record,
+                                WikiPublishError::HeadRetired(proof).to_string(),
+                                false,
+                                false,
+                            )
+                            .await
+                        }
                         WikiPublishError::Unknown(reason) => {
                             fail(runtime, &operation, &mut record, reason, false, false).await
                         }
@@ -507,6 +524,20 @@ pub(super) async fn drive<R: WikiPublicationRuntime>(
                 return match error {
                     WikiPublishError::ImmutableDependencyRetired { event_id } => {
                         record_retirement(runtime, &operation, &mut record, event_id).await
+                    }
+                    // The runtime's head-retirement validator rejects page
+                    // and manifest events, so this remains retryable if a
+                    // custom runtime ever returns the typed proof here.
+                    WikiPublishError::HeadRetired(proof) => {
+                        fail(
+                            runtime,
+                            &operation,
+                            &mut record,
+                            WikiPublishError::HeadRetired(proof).to_string(),
+                            false,
+                            false,
+                        )
+                        .await
                     }
                     WikiPublishError::Unknown(reason) => {
                         fail(runtime, &operation, &mut record, reason, false, false).await
