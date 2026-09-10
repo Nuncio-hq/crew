@@ -280,3 +280,24 @@ remain authoritative. Preserve `browserClose`/sim visibility cleanup; fence
 `browserOpen` and `simEnsureDevice` mount activation. The existing channel-only
 popout has independent window state and remains outside #354; governor resource
 identity/leases remain shared. D-078 records the bounded approved decision.
+
+The #354 first slice implements the presentation in those seams: explicit Tools
+opens Context, Activity reads the existing exact-conversation observer archive/live
+merge, and Agent plans renders the unchanged D-056 projection in its own tab.
+Recap remains visibly Off/unavailable. Activity is read-only; current-generation
+Stop/Steer/Need-you integration and additional workspace instruments remain the
+second slice. A retained plan without retained observer events displays unavailable
+transcript history rather than fabricated activity.
+
+Selection is an in-memory LRU of at most 128 canonical relay/viewer/channel/root
+keys. Navigation closes the presentation; explicit return restores only selection.
+Community reset and confirmed channel/root removal invalidate it, while failed
+channel queries preserve it. Narrow presentation uses the shared modal dialog and
+the existing drawer Escape gate; the conversation DOM remains mounted. Browser
+and existing simulator presentation require explicit activation per mounted thread
+view, including after a scope round trip. Native cleanup remains channel-owned.
+Native presentation attempts fence late errors by generation; failed hide cleanup
+stays visible in a channel-specific notice without disabling a newer activation.
+The channel tool pane retains its mount/popout compatibility. Unit and mock-bridge
+coverage establish view behavior only; installed staging evidence is still required
+by #348/#357 before #354 is complete.

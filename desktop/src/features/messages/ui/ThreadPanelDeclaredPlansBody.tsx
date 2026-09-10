@@ -5,27 +5,15 @@ import type { ProjectThreadWorkspaceModel } from "@/features/messages/ui/useProj
 import { setThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
-import {
-  useElementWidth,
-  useIsThreadPanelOverlay,
-} from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
 import {
   getAuxiliaryPanelBodyClass,
   type AuxiliaryPanelMode,
 } from "@/shared/layout/AuxiliaryPanel";
-import { shouldStackDeclaredPlansRail } from "@/shared/layout/responsiveContract";
+import { openToolPane } from "@/features/tool-pane/toolPaneStore";
+import { setThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 
-import { DeclaredPlansRail } from "./DeclaredPlansRail";
-import { useDeclaredPlansForThread } from "./useDeclaredPlansForThread";
-
-/**
- * Thread-panel body with declared-plans rail (#205).
- *
- * Auxiliary panel min 300px, max 720px. At ≤340px (and whenever a `w-72`
- * side rail would squeeze the transcript) the rail **stacks** between the
- * header and the scroll region — never overlaps chrome, never letter-soup.
- */
+/** Conversation body; declared plans live in the explicit Agent plans tab. */
 export function ThreadPanelDeclaredPlansBody({
   channelId,
   children,
@@ -47,43 +35,39 @@ export function ThreadPanelDeclaredPlansBody({
   threadMessages: TimelineMessage[];
   workspaceModel: ProjectThreadWorkspaceModel | null;
 }) {
-  const isOverlay = useIsThreadPanelOverlay();
-  const [bodyRef, paneWidthPx] = useElementWidth<HTMLDivElement>();
-  const { plans } = useDeclaredPlansForThread({
-    channelId,
-    profiles,
-    threadHead,
-    threadMessages,
-  });
-  const showRail = !isHuddleTranscript && !isOverlay && plans.length > 0;
-  const stacked =
-    showRail &&
-    (paneWidthPx === 0 || shouldStackDeclaredPlansRail(paneWidthPx));
-
   useEffect(() => {
     setThreadForgeViewContext({
       channelId,
       rootEventId: threadHead.id,
       messages: [threadHead, ...threadMessages],
+      profiles,
     });
     return () => {
       setThreadForgeViewContext(null);
     };
-  }, [channelId, threadHead, threadMessages]);
+  }, [channelId, profiles, threadHead, threadMessages]);
 
   return (
     <div
       className={cn(
-        "@container flex min-h-0 min-w-0 flex-1",
-        stacked ? "flex-col" : showRail ? "flex-row" : "flex-col",
+        "@container flex min-h-0 min-w-0 flex-1 flex-col",
         getAuxiliaryPanelBodyClass({ mode: panelChromeMode }),
       )}
-      data-plans-layout={stacked ? "stacked" : showRail ? "side" : "none"}
+      data-plans-layout="none"
       data-testid="declared-plans-body"
-      ref={bodyRef}
     >
-      {stacked ? (
-        <DeclaredPlansRail layout="stacked" plans={plans} profiles={profiles} />
+      {!isHuddleTranscript ? (
+        <button
+          aria-label="Open thread tools"
+          className="self-end rounded-md px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
+          onClick={() => {
+            setThreadViewMode("focus");
+            openToolPane();
+          }}
+          type="button"
+        >
+          Tools
+        </button>
       ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <ProjectThreadWorkspacePanel
@@ -94,9 +78,6 @@ export function ThreadPanelDeclaredPlansBody({
         />
         {children}
       </div>
-      {showRail && !stacked ? (
-        <DeclaredPlansRail layout="side" plans={plans} profiles={profiles} />
-      ) : null}
     </div>
   );
 }

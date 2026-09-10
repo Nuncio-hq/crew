@@ -2,17 +2,19 @@ import * as React from "react";
 
 import { closeToolPane, openToolPane } from "./toolPaneStore";
 
-export function useToolPaneShortcuts() {
+export function useToolPaneShortcuts(channelId: string | null) {
   React.useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.altKey || event.isComposing) return;
+      if (event.defaultPrevented || event.altKey || event.isComposing) return;
       const meta = event.metaKey || event.ctrlKey;
       if (meta && event.shiftKey && event.code === "KeyB") {
+        if (!channelId) return;
         event.preventDefault();
         openToolPane("browser");
         return;
       }
       if (meta && event.shiftKey && event.code === "KeyM") {
+        if (!channelId) return;
         event.preventDefault();
         openToolPane("sim");
         return;
@@ -32,5 +34,5 @@ export function useToolPaneShortcuts() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [channelId]);
 }

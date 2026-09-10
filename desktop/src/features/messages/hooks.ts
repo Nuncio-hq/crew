@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent } from "react";
+import { useThreadToolPaneRemoval } from "@/features/tool-pane/useThreadToolPaneScope";
 import {
   type QueryClient,
   useMutation,
@@ -876,6 +877,7 @@ export function useToggleReactionMutation() {
 
 export function useDeleteMessageMutation(channel: Channel | null) {
   const queryClient = useQueryClient();
+  const removePaneSelection = useThreadToolPaneRemoval();
 
   return useMutation<void, Error, { eventId: string }>({
     mutationFn: async ({ eventId }) => {
@@ -886,6 +888,7 @@ export function useDeleteMessageMutation(channel: Channel | null) {
     },
     onSuccess: (_data, { eventId }) => {
       if (!channel) return;
+      removePaneSelection(channel.id, eventId);
       queryClient.setQueryData<RelayEvent[]>(
         channelMessagesKey(channel.id),
         (current = []) => current.filter((message) => message.id !== eventId),

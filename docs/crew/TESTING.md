@@ -382,3 +382,20 @@ draft/scroll and returns focus without closing the outer thread. Observe zero
 native activation commands from selection/restoration, while existing hide and
 sim-visible-false cleanup still executes. Preserve channel-to-channel remount
 compatibility. Mock checks do not satisfy native #348/#357 evidence.
+
+The first #354 slice adds production-bound `threadToolPaneSelection`,
+`threadToolPaneInvalidation`, `threadToolPanePresentation`,
+`threadPaneChatPreservation`, `threadNativeActivation`, and `toolPaneKeyboard`
+Node suites under `desktop/src/features/tool-pane/`. They exercise the real store,
+confirmed refresh seam, components and shared Radix dialog, stubbing native IPC
+and unrelated dependencies. `threadPlansPlacement` binds the conversation body;
+`threadTranscriptLiveness` covers optional exact-conversation live projection.
+Existing declared-plan and anchored-scroll suites remain the parser/generation
+and paused-reader contracts. The registered `companyos-thread-workspace.spec.ts`
+adds mock-bridge workflow coverage; running it requires the owned E2E build slot.
+Its Tools entry cases cover both side-thread and focus-thread modes. Deferred
+native promises cover old Browser bounds/hide and simulator visibility failures
+after a newer presentation, plus visible current-attempt failures and retry.
+These checks do not cover the second slice's action-time control generation or
+claim/publication failure cases, and do not replace final `just ci` or real
+installed staging screenshots.

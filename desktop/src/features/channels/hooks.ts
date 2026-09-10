@@ -9,6 +9,11 @@ export {
 } from "./channel-snapshot-measurements";
 import * as React from "react";
 import {
+  getThreadToolPaneEpoch,
+  reconcileThreadToolPaneChannels,
+} from "@/features/tool-pane/toolPaneStore";
+import { useThreadToolPaneRemoval } from "@/features/tool-pane/useThreadToolPaneScope";
+import {
   useMutation,
   useQuery,
   useQueryClient,
@@ -289,6 +294,7 @@ export async function refreshChannelsQuery({
   fetchChannels = getChannels,
   persistSnapshot = writeChannelSnapshot,
 }: RefreshChannelsQueryOptions): Promise<Channel[]> {
+  const paneEpoch = getThreadToolPaneEpoch();
   // Revalidation uses only an authoritative list/hash pair. The displayed
   // channels cache is intentionally ignored because successful mutations
   // patch it before the relay's list/hash has necessarily caught up.
@@ -334,6 +340,7 @@ export async function refreshChannelsQuery({
     const pair = { channels: authoritativeChannels, hash: full.hash };
     queryClient.setQueryData(channelsSnapshotPairKey, pair);
     if (relayUrl && ownerPubkey) {
+      reconcileThreadToolPaneChannels(relayUrl, ownerPubkey, sorted, paneEpoch);
       persistSnapshot(relayUrl, ownerPubkey, pair.channels, pair.hash);
     }
     return sorted;
@@ -369,6 +376,7 @@ export async function refreshChannelsQuery({
     ),
   );
   if (relayUrl && ownerPubkey) {
+    reconcileThreadToolPaneChannels(relayUrl, ownerPubkey, sorted, paneEpoch);
     persistSnapshot(relayUrl, ownerPubkey, pair.channels, pair.hash);
   }
   return sorted;
@@ -733,6 +741,7 @@ export function useUnarchiveChannelMutation(channelId: string | null) {
 
 export function useDeleteChannelMutation(channelId: string | null) {
   const queryClient = useQueryClient();
+  const removePaneSelection = useThreadToolPaneRemoval();
 
   return useMutation({
     mutationFn: async () => {
@@ -746,6 +755,7 @@ export function useDeleteChannelMutation(channelId: string | null) {
       if (!channelId) {
         return;
       }
+      removePaneSelection(channelId);
 
       queryClient.setQueryData<Channel[]>(channelsQueryKey, (current = []) =>
         current.filter((channel) => channel.id !== channelId),
@@ -810,6 +820,7 @@ export function useAddChannelMembersMutation(channelId: string | null) {
 
 export function useRemoveChannelMemberMutation(channelId: string | null) {
   const queryClient = useQueryClient();
+  const removePaneSelection = useThreadToolPaneRemoval();
 
   return useMutation({
     mutationFn: async (pubkey: string) => {
@@ -819,6 +830,8 @@ export function useRemoveChannelMemberMutation(channelId: string | null) {
 
       await removeChannelMember(channelId, pubkey);
     },
+    onSuccess: (_data, pubkey) =>
+      removePaneSelection(channelId, undefined, pubkey),
     onSettled: async () => {
       await Promise.all([
         invalidateChannelState(queryClient, channelId),
@@ -848,6 +861,7 @@ export function useJoinChannelMutation(channelId: string | null) {
 
 export function useLeaveChannelMutation(channelId: string | null) {
   const queryClient = useQueryClient();
+  const removePaneSelection = useThreadToolPaneRemoval();
 
   return useMutation({
     mutationFn: async () => {
@@ -857,6 +871,7 @@ export function useLeaveChannelMutation(channelId: string | null) {
 
       await leaveChannel(channelId);
     },
+    onSuccess: () => removePaneSelection(channelId),
     onSettled: async () => {
       await invalidateChannelState(queryClient, channelId);
     },

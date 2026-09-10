@@ -2,14 +2,6 @@ import * as React from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { CheckCheck, Clock, Radio } from "lucide-react";
 
-import {
-  useActiveAgentTurns,
-  type ActiveTurnSummary,
-} from "@/features/agents/activeAgentTurnsStore";
-import {
-  subscribeAgentObserverStore,
-  getLatestLiveSessionId,
-} from "@/features/agents/observerRelayStore";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
@@ -60,6 +52,8 @@ import { shouldShowTranscriptRowTimestamp } from "./agentSessionTranscriptPresen
 import { formatTranscriptTimestampTitle } from "./agentSessionUtils";
 import { hasFileEditLineDiff } from "./FileEditDiffView";
 import { UserMessageBubble } from "./activityRenderClasses/UserMessageBubble";
+
+import { useTranscriptLiveScope } from "./useTranscriptLiveScope";
 
 const TRANSCRIPT_ACP_SOURCE_STORAGE_KEY = "buzz:show-transcript-acp-source";
 
@@ -117,6 +111,7 @@ export function AgentSessionTranscriptList({
   agentPubkey,
   autoTail = false,
   channelId = null,
+  conversationId,
   emptyDescription,
   emptyState = "idle",
   items,
@@ -127,6 +122,7 @@ export function AgentSessionTranscriptList({
 }: AgentTranscriptIdentityProps & {
   autoTail?: boolean;
   channelId?: string | null;
+  conversationId?: string | null;
   emptyDescription: string;
   emptyState?: AgentSessionTranscriptEmptyState;
   items: TranscriptItem[];
@@ -135,21 +131,10 @@ export function AgentSessionTranscriptList({
   scrollScopeKey?: string | null;
   variant?: AgentSessionTranscriptVariant;
 }) {
-  const activeTurns = useActiveAgentTurns(agentPubkey);
-  const isTurnLive = React.useMemo(
-    () => isAgentTurnLive(activeTurns, channelId),
-    [activeTurns, channelId],
-  );
-
-  // Subscribe to the observer relay store so we read the latest-live-session-id
-  // reactively. We don't need the full snapshot — only the key for boundary labeling.
-  const getLatestLive = React.useCallback(
-    () => getLatestLiveSessionId(agentPubkey, channelId),
-    [agentPubkey, channelId],
-  );
-  const latestLiveSessionId = React.useSyncExternalStore(
-    subscribeAgentObserverStore,
-    getLatestLive,
+  const { isTurnLive, latestLiveSessionId } = useTranscriptLiveScope(
+    agentPubkey,
+    channelId,
+    conversationId,
   );
 
   const displayBlocks = React.useMemo(
@@ -283,19 +268,6 @@ export function AgentSessionTranscriptList({
       </div>
     </motion.div>
   );
-}
-
-function isAgentTurnLive(
-  activeTurns: ActiveTurnSummary[],
-  channelId: string | null,
-) {
-  if (activeTurns.length === 0) {
-    return false;
-  }
-  if (!channelId) {
-    return true;
-  }
-  return activeTurns.some((turn) => turn.channelId === channelId);
 }
 
 function hasRenderableDisplayContent(

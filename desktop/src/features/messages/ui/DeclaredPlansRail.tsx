@@ -20,7 +20,7 @@ export function DeclaredPlansRail({
   profiles,
 }: {
   className?: string;
-  layout?: "side" | "stacked";
+  layout?: "side" | "stacked" | "pane";
   plans: readonly AgentDeclaredPlan[];
   profiles?: UserProfileLookup;
 }) {
@@ -34,7 +34,9 @@ export function DeclaredPlansRail({
         "flex min-w-0 shrink-0 flex-col overflow-y-auto overflow-x-hidden bg-background/40 px-2.5 py-3",
         layout === "side"
           ? "border-l border-border/60"
-          : "max-h-48 border-b border-border/60",
+          : layout === "stacked"
+            ? "max-h-48 border-b border-border/60"
+            : "min-h-0 flex-1",
         className,
       )}
       data-layout={layout}

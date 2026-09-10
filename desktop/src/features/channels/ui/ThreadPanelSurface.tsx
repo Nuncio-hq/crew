@@ -3,6 +3,7 @@ import * as React from "react";
 
 import { FocusThreadDrawer } from "@/features/channels/ui/FocusThreadDrawer";
 import { usePresenceCoverage } from "@/features/channels/ui/useFocusDrawerPresence";
+import { useBindThreadToolPaneView } from "@/features/tool-pane/useThreadToolPaneScope";
 
 type ThreadPanelSurfaceProps = {
   channelName: string;
@@ -34,6 +35,7 @@ export const ThreadPanelSurface = React.forwardRef<
   },
   ref,
 ) {
+  useBindThreadToolPaneView(channelId, threadRootId);
   return (
     <div
       aria-hidden={covered ? true : undefined}
