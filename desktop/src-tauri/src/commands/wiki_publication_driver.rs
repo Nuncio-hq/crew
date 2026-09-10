@@ -483,6 +483,14 @@ pub(super) async fn drive<R: WikiPublicationRuntime>(
         .await;
     }
     runtime.checkpoint(&operation).await?;
+    // Every dependency has just verified, so the conditional head is the phase
+    // this attempt is actually in. Record it in the *same* pre-send CAS as
+    // `head_attempted`: an attempt that reached the head can never be described
+    // as `Preparing`, and the repair branch above already arrived here with
+    // `Head` set. Writing only `head_attempted` leaves the pair unrepresentable
+    // and the durable save refuses it, so a snapshot whose dependencies were
+    // already present could never reach its head write at all.
+    record.progress = WikiPublicationProgress::Head;
     record.head_attempted = true;
     renew(&mut record, runtime.now()?, &worker)?;
     operation = runtime

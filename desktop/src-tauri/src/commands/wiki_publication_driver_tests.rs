@@ -52,6 +52,10 @@ pub(super) struct Journal {
     pub(super) rotate_owner_on_head_publish: AtomicBool,
     pub(super) sent: AtomicUsize,
     pub(super) sent_ids: Mutex<Vec<String>>,
+    /// Durable phase read back from SQLite at the instant each head event was
+    /// submitted. Capturing it inside the publish seam is the only way to
+    /// prove the pre-send CAS landed *before* the send rather than after it.
+    pub(super) head_send_phase: Mutex<Vec<(WikiPublicationProgress, bool)>>,
 }
 
 impl Journal {
@@ -111,6 +115,7 @@ impl Journal {
             rotate_owner_on_head_publish: AtomicBool::new(false),
             sent: AtomicUsize::new(0),
             sent_ids: Mutex::new(Vec::new()),
+            head_send_phase: Mutex::new(Vec::new()),
         };
         (journal, operation)
     }
@@ -276,6 +281,13 @@ impl WikiPublicationRuntime for Journal {
             .expect("sent ids")
             .push(event.id.to_hex());
         if event.id == record.head.id {
+            // Read the durable row back *now*, while the head is going out, so
+            // a test can prove the pre-send CAS already recorded the phase.
+            let durable = self.stored_record(&operation.id);
+            self.head_send_phase
+                .lock()
+                .expect("head send phase")
+                .push((durable.progress, durable.head_attempted));
             if self.late_commit_after_head_publish.load(Ordering::SeqCst) {
                 self.head.store(HEAD_APPLIED, Ordering::SeqCst);
             }
@@ -298,6 +310,71 @@ impl WikiPublicationRuntime for Journal {
         }
         Ok(())
     }
+}
+
+/// The common path: a freshly prepared snapshot whose immutable dependencies
+/// are *already* present never enters the repair branch, so it is the only
+/// path that has to record the conditional-head phase on its own. The durable
+/// record must carry `Head` + `head_attempted` before the head is submitted —
+/// a bare `head_attempted` on a `Preparing` row is unrepresentable and the
+/// save refuses it, which would strand this attempt before its head write.
+#[tokio::test]
+async fn driver_records_the_head_phase_durably_before_sending_the_head() {
+    let (journal, operation) = Journal::fixture_for("crew.headphase");
+    let id = operation.id.clone();
+    let before = journal.stored_record(&id);
+    assert!(matches!(
+        before.progress,
+        WikiPublicationProgress::Preparing
+    ));
+    assert!(!before.head_attempted);
+    assert_eq!(
+        journal.dependencies.load(Ordering::SeqCst),
+        DEPENDENCIES_VERIFIED,
+        "this fixture starts with every dependency already present"
+    );
+    journal
+        .late_commit_after_head_publish
+        .store(true, Ordering::SeqCst);
+
+    let result = drive(&journal, operation, journal.owner, false, false)
+        .await
+        .expect("an already verified snapshot reaches its head write");
+    assert_eq!(result.status, OperationStatus::Complete);
+    assert!(result.reconciled);
+
+    // Captured inside the publish seam, from the reopened SQLite row: the
+    // phase was durable *before* the event went out, not only afterwards.
+    assert_eq!(
+        journal
+            .head_send_phase
+            .lock()
+            .expect("head send phase")
+            .as_slice(),
+        [(WikiPublicationProgress::Head, true)],
+        "the pre-send CAS must land before the head is submitted"
+    );
+
+    // Exactly the original signed head, exactly once.
+    assert_eq!(journal.sent.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        journal.sent_ids.lock().expect("sent ids").as_slice(),
+        [before.head.id.to_hex()],
+        "only the persisted head may be sent"
+    );
+
+    // The signed graph and its conditional precondition are untouched, and the
+    // reopened record still validates.
+    let after = journal.stored_record(&id);
+    assert_eq!(after.head, before.head);
+    assert_eq!(after.manifest, before.manifest);
+    assert_eq!(after.pages, before.pages);
+    assert_eq!(after.snapshot_id, before.snapshot_id);
+    assert_eq!(after.source_revision, before.source_revision);
+    assert_eq!(after.expected_revision, before.expected_revision);
+    assert!(matches!(after.progress, WikiPublicationProgress::Head));
+    assert!(after.head_attempted);
+    assert!(journal.reopened(&id).reconciled);
 }
 
 #[tokio::test]

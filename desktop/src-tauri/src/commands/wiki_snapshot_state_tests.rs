@@ -108,7 +108,6 @@ fn newest_owner_or_relay_state_wins_by_created_at_then_id() {
     let owner_keys = keys(9);
     let relay_keys = keys(10);
     let owner = owner_keys.public_key().to_hex();
-    let relay = relay_keys.public_key().to_hex();
     let coordinate = coordinate(&owner);
     let owner_event = state(
         &owner_keys,

@@ -19,9 +19,8 @@ use crate::{
     events,
     managed_agents::try_regenerate_nest,
     relay::{
-        classify_request_error, query_relay, query_relay_at, relay_api_base_url,
-        relay_http_base_url, relay_ws_url, relay_ws_url_with_override, submit_event,
-        workspace_relay_override, SubmitEventResponse,
+        query_relay, query_relay_at, relay_api_base_url, relay_http_base_url, relay_ws_url,
+        submit_event, workspace_relay_override, SubmitEventResponse,
     },
 };
 
