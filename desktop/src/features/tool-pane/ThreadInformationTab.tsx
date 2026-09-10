@@ -68,6 +68,7 @@ function ThreadDeclaredInformation({
     [context.messages],
   );
   const { archivePaging, plans, conversationId } = useDeclaredPlansForThread({
+    archivePaging: context.archivePaging,
     channelId,
     threadHead: context.messages[0],
     threadMessages: messages ?? EMPTY_MESSAGES,

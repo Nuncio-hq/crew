@@ -1,8 +1,9 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useMemo, useRef } from "react";
 
+import { useLoadArchivedObserverEvents } from "@/features/agents/ui/useObserverEvents";
+import { setThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
 import { ProjectThreadWorkspacePanel } from "@/features/messages/ui/ProjectThreadWorkspacePanel";
 import type { ProjectThreadWorkspaceModel } from "@/features/messages/ui/useProjectThreadWorkspaceModel";
-import { setThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { cn } from "@/shared/lib/cn";
@@ -10,7 +11,10 @@ import {
   getAuxiliaryPanelBodyClass,
   type AuxiliaryPanelMode,
 } from "@/shared/layout/AuxiliaryPanel";
-import { openThreadToolPane } from "@/features/tool-pane/toolPaneStore";
+import {
+  openThreadToolPane,
+  useToolPane,
+} from "@/features/tool-pane/toolPaneStore";
 
 /** Conversation body; declared plans live in the explicit Agent plans tab. */
 export function ThreadPanelDeclaredPlansBody({
@@ -34,17 +38,50 @@ export function ThreadPanelDeclaredPlansBody({
   threadMessages: TimelineMessage[];
   workspaceModel: ProjectThreadWorkspaceModel | null;
 }) {
+  const toolPane = useToolPane();
+  const archiveScope = channelId;
+  const archiveRequestRef = useRef({ requested: false, scope: archiveScope });
+  if (archiveRequestRef.current.scope !== archiveScope) {
+    archiveRequestRef.current = { requested: false, scope: archiveScope };
+  }
+  if (
+    workspaceModel?.activePubkey ||
+    (toolPane.open && (toolPane.tab === "activity" || toolPane.tab === "plans"))
+  ) {
+    // Keep one mounted owner active after its first consumer appears. Disabling
+    // it when the pane closes would cancel an eager hydration pass and a later
+    // reopen would have to start again from a second paging state.
+    archiveRequestRef.current.requested = true;
+  }
+  const loadedArchivePaging = useLoadArchivedObserverEvents(
+    Boolean(channelId && archiveRequestRef.current.requested),
+    channelId,
+  );
+  const { fetchOlderArchived, hasOlderArchived } = loadedArchivePaging;
+  const archivePaging = useMemo(
+    () => ({
+      fetchOlderArchived,
+      hasOlderArchived,
+    }),
+    [fetchOlderArchived, hasOlderArchived],
+  );
+
   useEffect(() => {
     setThreadForgeViewContext({
+      archivePaging,
       channelId,
       rootEventId: threadHead.id,
       messages: [threadHead, ...threadMessages],
       profiles,
     });
-    return () => {
+  }, [archivePaging, channelId, profiles, threadHead, threadMessages]);
+
+  useEffect(
+    () => () => {
       setThreadForgeViewContext(null);
-    };
-  }, [channelId, profiles, threadHead, threadMessages]);
+    },
+    [],
+  );
 
   return (
     <div

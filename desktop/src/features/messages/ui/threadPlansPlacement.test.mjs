@@ -17,6 +17,12 @@ test("thread body no longer mounts an extra declared-plan rail", () => {
     "@/features/messages/ui/ProjectThreadWorkspacePanel": {
       ProjectThreadWorkspacePanel: noop,
     },
+    "@/features/agents/ui/useObserverEvents": {
+      useLoadArchivedObserverEvents: () => ({
+        fetchOlderArchived: async () => {},
+        hasOlderArchived: false,
+      }),
+    },
     "@/features/messages/lib/threadForgeViewContextStore": {
       setThreadForgeViewContext: noop,
     },
@@ -46,6 +52,7 @@ test("thread body no longer mounts an extra declared-plan rail", () => {
     },
     "@/features/tool-pane/toolPaneStore": {
       openThreadToolPane: noop,
+      useToolPane: () => ({ open: false, tab: "context" }),
     },
     "@/features/channels/lib/threadViewModePreference": {
       setThreadViewMode: noop,

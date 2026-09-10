@@ -465,10 +465,12 @@ and existing simulator presentation require explicit activation per mounted thre
 view, including after a scope round trip. Keyboard Browser/Sim shortcuts follow
 the mounted thread's focus transition before opening its host, matching the Tools
 button. The absent-simulator Create action reports pending/failure state and
-activates the current thread scope after a successful boot. Activity reuses the
-single channel archive-paging owner returned by the plans projection when agents
-switch; the always-mounted activity peek yields while that owner is active. Native
-cleanup remains channel-owned.
+activates the current thread scope after a successful boot. The mounted conversation
+body owns one stable channel archive pager shared through the thread context with
+Activity and Plans; the always-mounted activity peek reads the same observer store
+without starting another pager. Once requested, hydration remains active for that
+mounted thread across pane close and agent switches. Native cleanup remains
+channel-owned.
 Native presentation attempts fence late errors by generation; failed hide cleanup
 stays visible in a channel-specific notice without disabling a newer activation.
 The channel tool pane retains its mount/popout compatibility. Unit and mock-bridge

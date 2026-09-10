@@ -1,9 +1,11 @@
 import * as React from "react";
 
+import type { ArchivedObserverPaging } from "@/features/agents/ui/useObserverEvents";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 
 export type ThreadForgeViewContext = {
+  archivePaging: ArchivedObserverPaging;
   channelId: string | null;
   rootEventId: string | null;
   messages: TimelineMessage[];

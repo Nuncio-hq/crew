@@ -25,10 +25,7 @@ import {
 } from "@/features/agents/observerRelayStore";
 import { mergeObserverEventWindows } from "@/features/agents/ui/agentSessionPanelLayout";
 import type { ObserverEvent } from "@/features/agents/ui/agentSessionTypes";
-import {
-  useLoadArchivedObserverEvents,
-  type ArchivedObserverPaging,
-} from "@/features/agents/ui/useObserverEvents";
+import type { ArchivedObserverPaging } from "@/features/agents/ui/useObserverEvents";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { useCommunities } from "@/features/communities/useCommunities";
 import type { TimelineMessage } from "@/features/messages/types";
@@ -36,6 +33,7 @@ import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 
 export function useDeclaredPlansForThread(args: {
+  archivePaging: ArchivedObserverPaging;
   channelId: string | null;
   profiles?: UserProfileLookup;
   threadHead: TimelineMessage | null | undefined;
@@ -45,7 +43,8 @@ export function useDeclaredPlansForThread(args: {
   conversationId: string | null;
   plans: AgentDeclaredPlan[];
 } {
-  const { channelId, profiles, threadHead, threadMessages } = args;
+  const { archivePaging, channelId, profiles, threadHead, threadMessages } =
+    args;
   const conversationId = React.useMemo(
     () => deriveAgentConversationIdOrNull(channelId, threadHead?.id),
     [channelId, threadHead?.id],
@@ -57,10 +56,6 @@ export function useDeclaredPlansForThread(args: {
     enabled: Boolean(activeCommunity?.relayUrl),
   });
   const summaries = useActiveTurnSummariesForConversation(conversationId);
-  const archivePaging = useLoadArchivedObserverEvents(
-    Boolean(channelId),
-    channelId,
-  );
   const subscribeToObserverStore = React.useCallback(
     (onStoreChange: () => void) =>
       subscribeAgentObserverProjections(knownAgentPubkeys, onStoreChange),

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
-import { after, afterEach, before, test } from "node:test";
+import { after, afterEach, before, beforeEach, test } from "node:test";
 import { JSDOM } from "jsdom";
 import * as React from "react";
 import * as jsx from "react/jsx-runtime";
@@ -20,7 +20,7 @@ before(() =>
     IS_REACT_ACT_ENVIRONMENT: true,
   }),
 );
-before(() => {
+beforeEach(() => {
   forgeContext.resetThreadForgeViewContext();
   toolPaneStore.resetToolPaneForTests();
 });
@@ -54,22 +54,32 @@ function load(sourcePath, dependencies) {
   return exports;
 }
 
-function makeLoader(calls, sharedPaging) {
+function makeLoader(calls) {
   return function useLoadArchivedObserverEvents(enabled, channelId) {
-    calls.invocations.push({ channelId, enabled });
-    const lifecycle = React.useRef(false);
-    if (enabled && !lifecycle.current) {
-      lifecycle.current = true;
-      calls.starts += 1;
-    } else if (!enabled) {
-      lifecycle.current = false;
+    const owner = React.useRef(null);
+    if (!owner.current) {
+      const id = ++calls.instances;
+      owner.current = {
+        id,
+        paging: {
+          fetchOlderArchived: async () => calls.fetches.push(id),
+          hasOlderArchived: true,
+        },
+      };
+      calls.paging.push(owner.current.paging);
     }
-    return sharedPaging;
+    React.useEffect(() => {
+      calls.enables.push({ channelId, enabled, owner: owner.current.id });
+      if (!enabled) return;
+      calls.starts.push(owner.current.id);
+      return () => calls.stops.push(owner.current.id);
+    }, [channelId, enabled]);
+    return owner.current.paging;
   };
 }
 
-function loadSharedModules(calls, sharedPaging) {
-  const useLoadArchivedObserverEvents = makeLoader(calls, sharedPaging);
+function loadSharedModules(calls) {
+  const useLoadArchivedObserverEvents = makeLoader(calls);
   const observerHooks = {
     useArchivedChannelEvents: () => [],
     useLoadArchivedObserverEvents,
@@ -172,11 +182,28 @@ function loadSharedModules(calls, sharedPaging) {
       ThreadActivityRunControls: () => null,
     },
     "./ThreadAgentTranscript": {
-      ThreadAgentTranscript: ({ agent }) =>
-        React.createElement("p", null, agent.agentName),
+      ThreadAgentTranscript: ({ agent, archivePaging }) => {
+        calls.transcriptPaging.push(archivePaging);
+        return React.createElement("p", null, agent.agentName);
+      },
     },
   });
+  const bodyModule = load("./ThreadPanelDeclaredPlansBody.tsx", {
+    react: React,
+    "react/jsx-runtime": jsx,
+    "@/features/agents/ui/useObserverEvents": observerHooks,
+    "@/features/messages/ui/ProjectThreadWorkspacePanel": {
+      ProjectThreadWorkspacePanel: () => null,
+    },
+    "@/features/messages/lib/threadForgeViewContextStore": forgeContext,
+    "@/shared/lib/cn": { cn: (...values) => values.filter(Boolean).join(" ") },
+    "@/shared/layout/AuxiliaryPanel": {
+      getAuxiliaryPanelBodyClass: () => "",
+    },
+    "@/features/tool-pane/toolPaneStore": toolPaneStore,
+  });
   return {
+    Body: bodyModule.ThreadPanelDeclaredPlansBody,
     Peek: peekModule.ProjectThreadActivityPeek,
     Information: infoModule.ThreadInformationTab,
   };
@@ -189,27 +216,39 @@ const model = {
   steps: [{ status: "working" }],
 };
 
-test("composed Activity owns one archive lifecycle while the peek yields", async () => {
+test("composed thread keeps one archive owner through Activity transitions", async () => {
   const { render, fireEvent, act } = await import("@testing-library/react");
-  const calls = { invocations: [], starts: 0 };
-  const sharedPaging = {
-    fetchOlderArchived: async () => {},
-    hasOlderArchived: true,
+  const calls = {
+    enables: [],
+    fetches: [],
+    instances: 0,
+    paging: [],
+    starts: [],
+    stops: [],
+    transcriptPaging: [],
   };
-  const { Peek, Information } = loadSharedModules(calls, sharedPaging);
-  forgeContext.setThreadForgeViewContext({
-    channelId: "channel",
-    rootEventId: "root",
-    messages: [{ id: "root", body: "Task" }],
-    profiles: {},
-  });
+  const { Body, Peek, Information } = loadSharedModules(calls);
+  const threadHead = { id: "root", body: "Task" };
 
   function ComposedThread() {
     const pane = toolPaneStore.useToolPane();
     return React.createElement(
       React.Fragment,
       null,
-      React.createElement(Peek, { channelId: "channel", model }),
+      React.createElement(
+        Body,
+        {
+          channelId: "channel",
+          isFocusMode: true,
+          isHuddleTranscript: false,
+          panelChromeMode: "embedded",
+          profiles: {},
+          threadHead,
+          threadMessages: [],
+          workspaceModel: model,
+        },
+        React.createElement(Peek, { channelId: "channel", model }),
+      ),
       pane.open && pane.tab === "activity"
         ? React.createElement(Information, {
             channelId: "channel",
@@ -221,16 +260,31 @@ test("composed Activity owns one archive lifecycle while the peek yields", async
   }
 
   const view = render(React.createElement(ComposedThread));
-  calls.starts = 0;
-  calls.invocations.length = 0;
+  assert.equal(calls.instances, 1);
+  assert.deepEqual(calls.starts, [1]);
+
   await act(async () => toolPaneStore.openToolPane("activity"));
-  assert.equal(calls.starts, 1);
-  assert.deepEqual(
-    calls.invocations.map(({ enabled }) => enabled),
-    [false, true],
+  assert.equal(calls.instances, 1);
+  assert.deepEqual(calls.starts, [1]);
+  const sharedPaging = calls.transcriptPaging.at(-1);
+  assert.equal(
+    sharedPaging.fetchOlderArchived,
+    calls.paging[0].fetchOlderArchived,
   );
+
   fireEvent.change(view.getByRole("combobox", { name: "Activity agent" }), {
     target: { value: AGENT_B },
   });
-  assert.equal(calls.starts, 1);
+  assert.equal(calls.instances, 1);
+  assert.deepEqual(calls.starts, [1]);
+  assert.equal(calls.transcriptPaging.at(-1), sharedPaging);
+
+  await act(async () => toolPaneStore.closeToolPane());
+  assert.equal(calls.instances, 1);
+  assert.deepEqual(calls.starts, [1]);
+  assert.deepEqual(calls.stops, []);
+  assert.equal(view.queryByRole("combobox", { name: "Activity agent" }), null);
+
+  view.unmount();
+  assert.deepEqual(calls.stops, [1]);
 });

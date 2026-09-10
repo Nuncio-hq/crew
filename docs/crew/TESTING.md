@@ -590,9 +590,10 @@ dialog, stubbing native IPC and unrelated dependencies. `toolPaneKeyboard` also
 proves that thread Browser/Sim shortcuts enter the focus host before selecting a
 tab. `ThreadAgentTranscript` binds the shared channel archive-paging prop and
 proves agent switching does not start another loader. The composed
-`threadArchiveOwnerComposition` suite opens Activity with the always-mounted peek
-and proves that only one channel hydration lifecycle remains while agents switch.
-`threadPlansPlacement`
+`threadArchiveOwnerComposition` suite executes the real conversation body, Activity
+peek, declared-plans hook, and information tab. It counts the archive-hook boundary
+from initial mount through Activity open, agent switch, and close, and requires one
+stable paging object and one uninterrupted hydration lifecycle. `threadPlansPlacement`
 binds the conversation body; `threadTranscriptLiveness` covers optional
 exact-conversation live projection.
 Existing declared-plan and anchored-scroll suites remain the parser/generation
