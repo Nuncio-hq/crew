@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { FEATURE_OVERRIDES_STORAGE_KEY } from "../helpers/features";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const MOCK_IDENTITY_PUBKEY = "deadbeef".repeat(8);
@@ -91,7 +92,7 @@ test("selector is only in git Project channels and default send matches today", 
     ],
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(page.getByTestId("chat-title")).toContainText("general");
   const selector = page.getByTestId("composer-workspace-selector");
   await expect(selector).toBeVisible();
@@ -134,11 +135,11 @@ test("selector is only in git Project channels and default send matches today", 
   await page.getByTestId("composer-workspace-base-release").click();
   await expect(selector).toHaveText(/release/);
 
-  await page.getByTestId("channel-engineering").click();
+  await openWorkspaceChannel(page, "engineering");
   await expect(page.getByTestId("chat-title")).toContainText("engineering");
   await expect(page.getByTestId("composer-workspace-selector")).toHaveCount(0);
 
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect(selector).toBeVisible();
   await selector.click();
   await page.getByTestId("composer-workspace-new").click();
@@ -198,7 +199,7 @@ test("thread chips render each workspace binding", async ({ page }) => {
   await seedGitProjectChannel(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   await expect
     .poll(() =>
       page.evaluate(

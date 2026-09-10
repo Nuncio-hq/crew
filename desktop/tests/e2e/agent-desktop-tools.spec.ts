@@ -4,6 +4,7 @@ import type { SimHolding } from "../../src/features/tool-pane/types";
 import type { AgentControlUi } from "../../src/features/tool-pane/agentControlStore";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const GENERAL = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const SHOTS = "test-results/agent-desktop-tools";
@@ -49,7 +50,7 @@ test.describe("agent desktop tools (#197)", () => {
   test("snapshot click overlay and take-over banner", async ({ page }) => {
     await installMockBridge(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "general");
     await openTools(page, "browser");
     await seedControl(page, {
       leases: [
@@ -123,7 +124,7 @@ test.describe("agent desktop tools (#197)", () => {
       path: `${SHOTS}/03-sidebar-dot-pane-closed.png`,
     });
 
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "general");
     await openTools(page, "sim");
     await expect(page.getByTestId("sim-driving-banner")).toContainText(
       "Hermes is driving",
@@ -140,7 +141,7 @@ test.describe("agent desktop tools (#197)", () => {
   }) => {
     await installMockBridge(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "general");
     await openTools(page, "browser");
     await seedControl(page, {
       leases: [
@@ -199,7 +200,7 @@ test.describe("agent desktop tools (#197)", () => {
   }) => {
     await installMockBridge(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "general");
     await openTools(page, "sim");
     await page.evaluate(
       (holding) => {
@@ -233,7 +234,7 @@ test.describe("agent desktop tools (#197)", () => {
   test("post_evidence tagged message uses mocksig", async ({ page }) => {
     await installMockBridge(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByTestId("channel-general").click();
+    await openWorkspaceChannel(page, "general");
     await page.waitForFunction(
       () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
     );
