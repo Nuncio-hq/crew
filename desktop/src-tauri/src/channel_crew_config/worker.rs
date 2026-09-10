@@ -123,6 +123,12 @@ async fn run_due(
             }
             continue;
         }
+        // Superseded records stay visible for explicit review, but their
+        // external effects are already reconciled and must never be retried
+        // by the automatic worker.
+        if operation.reconciled {
+            continue;
+        }
         let backend = NativeBackend::new(app.clone(), &scope).await?;
         driver::resume(&backend, operation, false).await?;
         processed += 1;

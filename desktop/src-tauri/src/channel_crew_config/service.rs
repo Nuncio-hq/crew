@@ -15,7 +15,9 @@ use crate::{
         load_owner_operation_for_dispatch, owner_operation_create, owner_operation_list,
         owner_operation_load,
     },
-    owner_operations::{CreateResult, NewOperation, Operation, OperationKind},
+    owner_operations::{
+        CreateResult, NewOperation, Operation, OperationKind, OperationStatus, OperationSummary,
+    },
 };
 use buzz_core_pkg::crew_role::CrewConfigDraft;
 use serde_json::{json, Value};
@@ -235,7 +237,7 @@ pub(super) async fn operations(
         let done = page.len() < 100;
         after = page.last().map(|item| item.id.clone());
         for summary in page {
-            if summary.kind == OperationKind::ChannelCrewConfig && !summary.reconciled {
+            if is_recovery_visible(&summary) {
                 result.push(
                     owner_operation_load(app.clone(), expected.clone(), summary.id, None)
                         .await?
@@ -269,4 +271,42 @@ pub(crate) async fn list(
     }
     assert_current(app, &expected).await?;
     scoped(expected, progress)
+}
+
+fn is_recovery_visible(summary: &OperationSummary) -> bool {
+    summary.kind == OperationKind::ChannelCrewConfig
+        && (!summary.reconciled || summary.status == OperationStatus::Superseded)
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+
+    fn summary(status: OperationStatus, reconciled: bool) -> OperationSummary {
+        OperationSummary {
+            id: "00000000-0000-0000-0000-000000000001".into(),
+            kind: OperationKind::ChannelCrewConfig,
+            resource_key: "channel".into(),
+            revision: 1,
+            status,
+            reconciled,
+            updated_at: 1,
+        }
+    }
+
+    #[test]
+    fn superseded_channel_recovery_remains_visible_after_reconciliation() {
+        assert!(is_recovery_visible(&summary(
+            OperationStatus::Superseded,
+            true
+        )));
+    }
+
+    #[test]
+    fn completed_channel_recovery_is_not_visible() {
+        assert!(!is_recovery_visible(&summary(
+            OperationStatus::Complete,
+            true
+        )));
+    }
 }
