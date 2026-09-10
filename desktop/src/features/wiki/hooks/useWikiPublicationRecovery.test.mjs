@@ -430,8 +430,16 @@ test("a scope change during regeneration writes no successor row and invalidates
     await flush();
 
     assert.match(outcome.error?.message ?? "", /active owner or community/);
+    // The first status projection may bootstrap media URL helpers while this
+    // recovery is in flight. Keep those expected infrastructure calls out of
+    // the operation ordering assertion while still failing on any other
+    // command.
+    const operationCalls = calls.filter(
+      ({ command }) =>
+        command !== "get_relay_http_url" && command !== "get_media_proxy_port",
+    );
     assert.deepEqual(
-      calls.map(({ command }) => command),
+      operationCalls.map(({ command }) => command),
       ["wiki_publication_regenerate"],
     );
     // No prepared projection, no failure projection, no content invalidation.
