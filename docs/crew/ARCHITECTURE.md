@@ -433,22 +433,31 @@ unknown-entry flooding can delay reclamation, and pending-process roots require
 separate verified ownership recovery. Non-Unix private-state ACLs are unproved
 and rejected.
 
-### Bounded inventory limits (2026-09-09)
+### Bounded inventory limits (2026-09-10)
 
-These observations describe the installed artifacts examined for #351, not
-permanent limitations of the products. None is a successful recap generation.
+These observations describe the installed artifacts statically revalidated for
+#351 at Crew HEAD `a179fc99e0558eda2b1ad35eab54b2d26c335336`, not permanent
+limitations of the products. Earlier executed evidence is called out in the
+rows; none is a successful recap generation. The #375 foundation is unchanged:
+`classify_recap` returns failure states only; there is no positive capability
+cache or recap executor.
 
-| Candidate inspected | Evidence scope | Current blocker |
+| Candidate inspected | Static identity and evidence scope | Current blocker / execution status |
 | --- | --- | --- |
-| Claude Code 2.1.266, native macOS arm64 image, SHA-256 `553d1b9e9e7068b275c0a783c7e139ff6503096f286e674c8c919379fb0eca62` | Isolated help/version and exact-image hook selection inspection | `unsupported_tool_isolation`: managed hooks survive safe mode/user hook-disable settings, including in-process HTTP hooks. |
-| Codex CLI 0.153.4, native macOS arm64 image, SHA-256 `b973d440acac501fd2594a43e7ca9ce41e0a65b9dfb28d0d7a7837c99e1261e3` | Isolated help/version/exec help and locally generated app-server JSON schema | `unsupported_tool_isolation`: exhaustive native tool denial was not proved by the available controls/schema. |
-| Hermes installed source declaring 0.21.1 in `pyproject.toml` | Read-only source inventory; no Hermes process executed | `unsupported_state_isolation`: CLI import enters installation repair; both CLI and `run_agent.AIAgent` import paths load the installation `.env` independently of disposable HOME. `hermes_cli/oneshot.py` imports the same AIAgent. |
+| Claude Code image label 2.1.266, native macOS arm64 image, SHA-256 `553d1b9e9e7068b275c0a783c7e139ff6503096f286e674c8c919379fb0eca62` | Static hash matches the 2026-09-09 image; earlier isolated help/version and exact-image hook selection remain the executed evidence. | `unsupported_tool_isolation`: exact-image source shows managed hooks retained under safe mode/user hook-disable settings, with an in-process HTTP execution path; no native hook-denial test was run. |
+| Codex CLI release-directory label 0.154.0, native macOS arm64 artifact, SHA-256 `4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc` | Static hash only; no version/help ran on 2026-09-10. The historical 0.153.4 help/exec-help/schema observation is retired and not reused. | No certification for this artifact; one-shot/tool isolation remains unproved. |
+| Goose, Mach-O `x86_64` artifact on the native macOS arm64 host, SHA-256 `8c38970cf68dd45df63f38d855ec00e215bc591a9aad547672c0b7a179c6f4c1` | Static hash only; version unprobed, with no native tool or descendant-containment proof. | No certification; native tool and containment behavior remain unproved. |
+| Hermes installed mutable source declaring 0.21.1 in `pyproject.toml` | Read-only source inspection: `run_agent.py:95` calls `load_hermes_dotenv` with the installation `.env`; `env_loader.py:346-362` sanitizes/loads it even with isolated `HOME`. No Hermes process executed. | `unsupported_state_isolation`: the source declaration is not an executed version result; `hermes_cli/oneshot.py` imports the same AIAgent path. |
 
-The installed Hermes source location was the user's `.hermes/hermes-agent`
-checkout; its declared package version is not a binary fingerprint or an
-executed version result. Mutable source, wrappers, executable upgrades, model,
-profile, platform or enforcement changes invalidate any future positive proof.
+Mutable source, wrappers, executable upgrades, model, profile, platform or
+enforcement changes invalidate any future positive proof.
 Exact local path observations and one-run logs belong to #351/task evidence.
+
+No candidate has an allocated recap profile, requested/effective model, or auth
+grant; no strict descendant containment or recap generation was exercised. The
+#348 ownership receipt remains inert and is not a runtime-ready grant. The
+catalog still includes `buzz-agent`, but its `recap_contract()` exposes no
+native one-shot command; no additional frontend/runtime list is inferred.
 
 G-THREAD-1 v3 extends `toolPaneStore` with bounded scoped view selection, not a
 second resource/session store. `ThreadFocusForgeSplit` and `ChannelToolPane`
