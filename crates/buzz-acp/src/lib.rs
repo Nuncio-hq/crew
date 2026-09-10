@@ -2058,10 +2058,15 @@ async fn tokio_main() -> Result<()> {
         );
     }
 
+    // Read once here: the membership generation must be the same runtime
+    // identity Desktop already fences lifecycle frames with.
+    let runtime_start_nonce = std::env::var("BUZZ_MANAGED_AGENT_START_NONCE").unwrap_or_default();
+
     // Discovery and subscription confirmation have not happened yet. Keep
     // this generation explicitly unknown so a failed startup cannot look like
     // a confirmed zero-channel runtime in Desktop.
-    let mut membership_signal = channel_membership_signal::ChannelMembershipSignal::new();
+    let mut membership_signal =
+        channel_membership_signal::ChannelMembershipSignal::new(&runtime_start_nonce);
     membership_signal.report_unknown(observer.as_ref());
 
     let mut pool = if config.lazy_pool {
@@ -2254,13 +2259,13 @@ async fn tokio_main() -> Result<()> {
             tracing::info!("subscribed to channel {channel_id}");
         }
     }
-
-    // An empty filter set is a confirmed zero: there are no eligible channel
-    // subscriptions to await. Non-empty sets remain unknown until the
-    // background relay task publishes its actual subscription snapshot.
-    if channel_filters.is_empty() {
-        membership_signal.report(observer.as_ref(), 0);
-    }
+    // This command is a FIFO barrier behind every startup channel command,
+    // including the empty-set case. The background task must apply it before
+    // the membership snapshot can become a confirmed zero or nonzero count.
+    relay
+        .mark_startup_subscriptions_ready()
+        .await
+        .map_err(|e| anyhow::anyhow!("startup subscription barrier error: {e}"))?;
 
     if let Some((observer, publisher, keys, agent_pubkey, owner_pubkey, owner)) =
         relay_observer_publisher.take()
@@ -2275,7 +2280,6 @@ async fn tokio_main() -> Result<()> {
         ));
     }
 
-    let runtime_start_nonce = std::env::var("BUZZ_MANAGED_AGENT_START_NONCE").unwrap_or_default();
     let dedup_mode = config.dedup_mode;
     let mut queue = EventQueue::new(dedup_mode)
         .with_in_flight_deadline(config.max_turn_duration_secs)
@@ -2733,8 +2737,18 @@ async fn tokio_main() -> Result<()> {
                 }
                 changed = subscription_snapshots.changed(), if subscription_snapshots_open => {
                     if changed.is_ok() {
-                        let count = subscription_snapshots.borrow_and_update().len();
-                        membership_signal.report(observer.as_ref(), count);
+                        // Intent is not a count: report a number only once the
+                        // background task has applied every intended
+                        // subscription and written the corresponding REQs on
+                        // the current authenticated socket.
+                        let confirmed_count = {
+                            let snapshot = subscription_snapshots.borrow_and_update();
+                            snapshot.confirmed.then(|| snapshot.channels.len())
+                        };
+                        match confirmed_count {
+                            Some(count) => membership_signal.report(observer.as_ref(), count),
+                            None => membership_signal.report_unknown(observer.as_ref()),
+                        }
                     } else {
                         // The relay event path handles background-task shutdown.
                         // Do not mistake a closed watch for zero memberships.
@@ -2915,7 +2929,7 @@ async fn tokio_main() -> Result<()> {
                                     // notification, while honoring queued removal ordering.
                                     let needs_subscription = channel_subscription_updates::membership_add_needs_subscribe(
                                         ch,
-                                        &subscription_snapshots.borrow(),
+                                        &subscription_snapshots.borrow().channels,
                                         &mut removed_channels,
                                     );
                                     if !needs_subscription {

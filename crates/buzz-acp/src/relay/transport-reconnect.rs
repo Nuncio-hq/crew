@@ -53,6 +53,9 @@ where
     Fut: std::future::Future<Output = Result<(WsStream, VecDeque<RelayMessage>), RelayError>>,
 {
     state.requeue_observer_in_flight();
+    // Retained subscription intent is not a live subscription while the socket
+    // is being rebuilt.
+    state.set_connected(false);
     let backoffs = STARTUP_CONNECT_BACKOFFS;
     let mut legacy_dns_retries = 0;
     let mut attempt = 0usize;
@@ -99,6 +102,7 @@ where
                         .await
                     {
                         ResubscribeResult::Ok => {
+                            state.set_connected(true);
                             state.health.recovered().await;
                             return ReconnectOutcome::Ok;
                         }
@@ -190,6 +194,9 @@ where
     Fut: std::future::Future<Output = Result<(WsStream, VecDeque<RelayMessage>), RelayError>>,
 {
     state.requeue_observer_in_flight();
+    // Retained subscription intent is not a live subscription while the socket
+    // is being rebuilt.
+    state.set_connected(false);
     if !skip_drain {
         // Drain commands until we get Reconnect (or Shutdown).
         // Other commands update state so reconnect reflects latest intent.
@@ -245,6 +252,7 @@ where
                         .await
                     {
                         ResubscribeResult::Ok => {
+                            state.set_connected(true);
                             return finish_reconnect(ws, cmd_rx, state, agent_pubkey_hex).await;
                         }
                         ResubscribeResult::Shutdown => return ReconnectOutcome::Shutdown,

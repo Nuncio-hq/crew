@@ -15,9 +15,18 @@ enum MembershipState {
 }
 
 impl ChannelMembershipSignal {
-    pub(crate) fn new() -> Self {
+    /// Bind the generation to the runtime start nonce so a consumer can fence a
+    /// stale frame against the live runtime instead of comparing wall clocks.
+    /// An unmanaged harness has no nonce; a local uuid keeps generations
+    /// distinct per process without pretending to be a runtime identity.
+    pub(crate) fn new(runtime_start_nonce: &str) -> Self {
+        let generation = if runtime_start_nonce.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            runtime_start_nonce.to_string()
+        };
         Self {
-            generation: uuid::Uuid::new_v4().to_string(),
+            generation,
             started_at: chrono::Utc::now().to_rfc3339(),
             previous_state: None,
         }
@@ -61,7 +70,7 @@ mod tests {
     #[tokio::test]
     async fn startup_and_membership_changes_publish_ordered_readiness() {
         let observer = ObserverHandle::in_process();
-        let mut signal = ChannelMembershipSignal::new();
+        let mut signal = ChannelMembershipSignal::new("");
         for count in [0, 0, 1, 2, 0] {
             signal.report(Some(&observer), count);
         }
@@ -76,7 +85,7 @@ mod tests {
             |e| e.kind == "channel_membership" && e.payload["generation"] == signal.generation
         ));
         assert!(chrono::DateTime::parse_from_rfc3339(&signal.started_at).is_ok());
-        let mut next = ChannelMembershipSignal::new();
+        let mut next = ChannelMembershipSignal::new("");
         next.report(Some(&observer), 1);
         assert_ne!(next.generation, signal.generation);
         assert_eq!(
@@ -88,7 +97,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_snapshots_are_distinct_from_confirmed_zero() {
         let observer = ObserverHandle::in_process();
-        let mut signal = ChannelMembershipSignal::new();
+        let mut signal = ChannelMembershipSignal::new("");
         signal.report_unknown(Some(&observer));
         signal.report_unknown(Some(&observer));
         signal.report(Some(&observer), 0);
@@ -101,5 +110,28 @@ mod tests {
             .map(|event| event.payload["channel_count"].as_u64())
             .collect();
         assert_eq!(states, [None, Some(0), None]);
+    }
+
+    /// The published generation must be the runtime start nonce itself, so a
+    /// consumer can fence a frame against the live runtime. A self-minted id
+    /// would be unrelated to the nonce and fail both assertions.
+    #[tokio::test]
+    async fn generation_is_the_runtime_start_nonce() {
+        let observer = ObserverHandle::in_process();
+        let nonce = "runtime-start-nonce-337";
+        let mut signal = ChannelMembershipSignal::new(nonce);
+        signal.report(Some(&observer), 2);
+
+        assert_eq!(
+            observer.snapshot().last().unwrap().payload["generation"],
+            nonce
+        );
+        // A restarted runtime frame carrying the same nonce stays the same
+        // generation; only a new nonce is a new generation.
+        assert_eq!(ChannelMembershipSignal::new(nonce).generation, nonce);
+        assert_ne!(
+            ChannelMembershipSignal::new("other-nonce").generation,
+            nonce
+        );
     }
 }

@@ -372,7 +372,10 @@ function AgentPersonaCard({
     managedAgentRuntime,
     isActive,
   );
-  const membershipState = useChannelMembershipState(agent?.pubkey);
+  const membershipState = useChannelMembershipState(
+    agent?.pubkey,
+    managedAgentRuntime,
+  );
   const agentStatus = agent?.status ?? "stopped";
   const noChannels = deriveNoChannelMembershipBadge(
     membershipState === "zero",
@@ -519,7 +522,10 @@ function StandaloneAgentCard({
     managedAgentRuntime,
     isActive,
   );
-  const membershipState = useChannelMembershipState(agent.pubkey);
+  const membershipState = useChannelMembershipState(
+    agent.pubkey,
+    managedAgentRuntime,
+  );
   const noChannels = deriveNoChannelMembershipBadge(
     membershipState === "zero",
     agent.status,

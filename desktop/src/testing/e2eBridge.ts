@@ -193,6 +193,7 @@ export type MockManagedAgentSeed = {
 type MockManagedAgentRuntimeSeed = {
   pubkey: string;
   relayUrl: string;
+  startNonce?: string;
   lifecycle?: MockManagedAgentRuntimeRow["lifecycle"];
   transport?: import("@/shared/api/types").ManagedAgentRuntimeStatus["transport"];
   transportRetired?: boolean;
@@ -1186,6 +1187,7 @@ type MockManagedAgent = RawManagedAgent & {
 type MockManagedAgentRuntimeRow = {
   pubkey: string;
   relayUrl: string;
+  startNonce?: string;
   localSetup: boolean;
   lifecycle:
     | "starting"
@@ -2839,6 +2841,7 @@ function resetMockManagedAgents(config?: E2eConfig) {
     (seed) => ({
       pubkey: seed.pubkey,
       relayUrl: seed.relayUrl,
+      startNonce: seed.startNonce,
       localSetup: true,
       lifecycle: seed.lifecycle ?? "ready",
       pid:

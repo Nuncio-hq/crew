@@ -353,11 +353,23 @@ User-facing thread recap is a separate proposed capability, default Off and gene
 Stage 0 #344 source audit: existing Project.projectChannelId, relatedChannelIds
 and buzz-related-channel already support home/related channel mapping; member
 repository channels are existing data. No one-project-only invariant is approved.
-Existing membership signals/badges project one generation-fenced observer state:
-confirmed zero/nonzero counts stay distinct from explicit unknown during startup
-or a closed subscription watch. #337's staging recovery remains open; this is
-not a parallel membership store. Receipt validation currently rejects mentionless direct triggers
-(`receipt_parent_targets_agent`, ingest.rs); #355 must prove relay-authoritative
+The existing ACP `channel_membership` signal remains the sole membership source.
+Its background subscription snapshot separates channel intent from readiness.
+Readiness stays unknown until the startup command batch is applied, the
+authenticated socket and membership watch are live, and channel/control replay
+queues have recovered. A successful REQ write is local socket evidence, not a
+relay acknowledgement, EOSE, or proof of work delivery.
+Desktop projects it through the live observer ingress, retaining bounded rows per
+normalized agent and harness generation. A row is readable only when the native
+runtime status matches the agent and canonical community relay, carries the same
+`startNonce`, is connected, and is not retired; missing, invalid, stale, or
+disconnected input stays `unknown`. Community changes clear the projection, so
+confirmed zero/nonzero counts stay distinct from startup or closed-watch
+unknown without creating a parallel membership store. Retired-generation replay
+fences are bounded and recyclable; the exact native nonce remains the authority
+that makes a fresh generation readable after repeated restarts. #337's staging
+recovery remains open. Receipt validation currently rejects mentionless direct
+triggers (`receipt_parent_targets_agent`, ingest.rs); #355 must prove relay-authoritative
 routing and durable execution/replay before its approved successor can ship.
 Client-selected canvas/contact data alone cannot authorize a receipt.
 

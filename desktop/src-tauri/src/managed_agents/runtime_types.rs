@@ -100,6 +100,11 @@ pub struct ManagedAgentRuntimeStatus {
     pub transport: buzz_core_pkg::transport_status::TransportStatus,
     /// Diagnostic belongs to an explicitly retired generation.
     pub transport_retired: bool,
+    /// Identity of the currently tracked harness generation, when one is
+    /// running. Desktop uses this to reject observer frames from a prior
+    /// process that happen to arrive after a restart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_nonce: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
