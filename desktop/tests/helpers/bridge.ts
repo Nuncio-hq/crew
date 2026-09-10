@@ -1,5 +1,9 @@
 import type { Page } from "@playwright/test";
-import type { ChannelTemplate, RelayEvent } from "../../src/shared/api/types";
+import type {
+  ChannelTemplate,
+  ManagedAgentTransportStatus,
+  RelayEvent,
+} from "../../src/shared/api/types";
 import type { MockManagedAgentSeed } from "../../src/testing/e2eBridge";
 import { FEATURE_OVERRIDES_STORAGE_KEY, PREVIEW_FEATURE_IDS } from "./features";
 
@@ -255,6 +259,9 @@ type MockBridgeOptions = {
   managedAgentRuntimes?: Array<{
     pubkey: string;
     relayUrl: string;
+    startNonce?: string;
+    transport?: ManagedAgentTransportStatus;
+    transportRetired?: boolean;
     lifecycle?:
       | "starting"
       | "listening"

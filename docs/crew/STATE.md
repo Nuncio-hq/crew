@@ -41,7 +41,10 @@ Thread Workbench route exists but has no door — Focus presentation is
 is [#352](https://github.com/Nuncio-hq/crew/issues/352). Tool Pane (PR · Browser · Sim) in thread focus. Crew
 Dark theme, text-only zoom, 1000-line ratchet. Mention send flow follows
 upstream's composer-revision security model with Crew context in
-`crewSendContext.ts`. Desktop unit suite: 7358 tests passing.
+`crewSendContext.ts`. Agent channel membership remains observer-derived: the
+bounded projection requires the matching native runtime `startNonce`, connected
+transport, and active community scope before exposing zero/nonzero; otherwise
+it stays unknown.
 
 ## Hermes
 
@@ -67,8 +70,9 @@ Crew migration numbering (0031 inserted; upstream 0031+ shift by one).
 
 ## Known gaps
 
-- #337 membership acceptance and #338 reconnect/status/receipt acceptance
-  remain open. Real staging verification depends on
+- #337's Desktop/fixture projection checks are covered, while membership
+  staging acceptance and #338 reconnect/status/receipt acceptance remain open.
+  Real staging verification depends on
   [#348](https://github.com/Nuncio-hq/crew/issues/348); fixture results do not
   establish live relay health.
 - Desktop Smoke / Integration E2E lanes are advisory only (D-032, D-047);

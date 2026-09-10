@@ -343,6 +343,8 @@ export type ManagedAgentRuntimeStatus = {
   /** Optional only for compatibility with older native/mock payloads. */
   transport?: ManagedAgentTransportStatus;
   transportRetired?: boolean;
+  /** Current native harness generation; absent for stopped/retired rows. */
+  startNonce?: string;
   lifecycle: ManagedAgentRuntimeLifecycle;
   pid: number | null;
   error: string | null;
