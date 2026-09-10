@@ -9,6 +9,8 @@ import {
 } from "@/features/agents/ui/useObserverEvents";
 
 import { cn } from "@/shared/lib/cn";
+import { useThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
+import { useToolPane } from "@/features/tool-pane/toolPaneStore";
 import {
   createProjectThreadPeekFeedSelector,
   formatProjectThreadPeekText,
@@ -40,10 +42,20 @@ export function ProjectThreadActivityPeek({
   const conversationId = model?.conversationId ?? null;
   const active =
     model?.steps.some((step) => step.status === "working") ?? false;
+  const toolPane = useToolPane();
+  const threadContext = useThreadForgeViewContext();
+  const declaredPlanPaneOpen =
+    toolPane.open &&
+    (toolPane.tab === "activity" || toolPane.tab === "plans") &&
+    threadContext?.channelId === channelId &&
+    Boolean(threadContext.rootEventId);
 
   const liveSnapshot = useObserverEvents(Boolean(agentPubkey), agentPubkey);
   const archivedEvents = useArchivedChannelEvents(agentPubkey, channelId);
-  useLoadArchivedObserverEvents(Boolean(agentPubkey && channelId), channelId);
+  useLoadArchivedObserverEvents(
+    Boolean(agentPubkey && channelId && !declaredPlanPaneOpen),
+    channelId,
+  );
 
   const conversationEvents = React.useMemo(
     () =>

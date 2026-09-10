@@ -2035,7 +2035,8 @@ not #354 implementation or native/runtime evidence.
   a thread key; no valid channel means no resource-opening shortcut. Thread
   shortcuts select/open UI through the mounted thread focus host and respect the
   explicit activation fence. The absent-simulator Create action is that thread
-  view's activation and keeps failure retryable.
+  view's activation and keeps failure retryable. The always-mounted Activity peek
+  yields its channel archive loader while the Activity/Plans owner is mounted.
 - **PR and popout.** PR subject availability/results must match current channel
   and root, including URL subjects, with community/viewer reset. A summary-card
   click explicitly opens PR. Remove forced-open and Close-to-PR visibility

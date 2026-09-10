@@ -467,7 +467,8 @@ the mounted thread's focus transition before opening its host, matching the Tool
 button. The absent-simulator Create action reports pending/failure state and
 activates the current thread scope after a successful boot. Activity reuses the
 single channel archive-paging owner returned by the plans projection when agents
-switch. Native cleanup remains channel-owned.
+switch; the always-mounted activity peek yields while that owner is active. Native
+cleanup remains channel-owned.
 Native presentation attempts fence late errors by generation; failed hide cleanup
 stays visible in a channel-specific notice without disabling a newer activation.
 The channel tool pane retains its mount/popout compatibility. Unit and mock-bridge
