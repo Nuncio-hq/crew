@@ -400,6 +400,70 @@ publishes a kind `30617`, links one path, reconnects for a cold read, relinks a
 Unicode path, and resolves the latest path into Project-channel agent context.
 Never point this test at a shared or production relay.
 
+## Desktop channel-membership projection (#337)
+
+The Desktop membership badge consumes the ACP `channel_membership` observer
+signal through the production live observer ingress. Its projection is bounded
+per normalized agent and generation, orders frames by sequence, and keeps a
+generation's start timestamp immutable. The reader requires the native runtime
+row for the same agent and canonical community relay, the exact `startNonce`, a
+connected transport, and a runtime that is not retired. Missing, invalid, stale,
+closed-watch, or transport-error input remains `unknown`; only an explicit
+current count of zero displays “No channels.” Both zero and unknown preserve
+the existing Add/Restart controls. Retired-generation replay fences are
+bounded and recyclable, so a valid fresh native nonce still recovers after
+long-running restart churn.
+
+Run the focused production-ingress suite with:
+
+```text
+cd desktop
+node --import ./test-loader.mjs --experimental-strip-types \
+  --test src/features/agents/lib/channelMembershipState.test.mjs
+```
+
+The suite covers unknown → zero → nonzero recovery, same-count generation
+notifications, sequence and start-timestamp fences, stale and evicted
+generations, community reset, normalized agent keys, and disconnected or
+retired runtime status. It calls `_testProcessLiveObserverEvents`, which is
+bound to `processLiveObserverEvents` in `observerRelayStore.ts`; direct calls
+to `applyCrewLiveFrameSideEffects` are not evidence of the live path.
+
+The corresponding ACP subscription tests exercise the startup FIFO barrier,
+membership-watch rejection/replay, parked channel retries, and stale CLOSED
+after removal through the actual background command and WebSocket handlers:
+
+```text
+cargo test -p buzz-acp --lib channel_membership_signal
+cargo test -p buzz-acp --lib relay::subscription_recovery_tests
+```
+
+The mock membership case lives in `agent-availability.spec.ts`, registered in
+the `integration` Playwright project but explicitly using `installMockBridge`.
+It verifies badge transitions, frame-before-runtime ordering, native transport
+and community fences, and keyboard access to the existing recovery controls:
+
+```text
+cd desktop
+pnpm build:e2e
+BUZZ_E2E_PORT=4337 pnpm exec playwright test --project=integration \
+  tests/e2e/agent-availability.spec.ts --grep 'membership stays unknown'
+```
+
+The native status constructor exposes the active generation's `startNonce` in
+`ManagedAgentRuntimeStatus`. Its focused Tauri test is
+`managed_agents::runtime_commands::tests::status_construction_exposes_the_active_runtime_start_nonce`;
+run it only with the sidecar prerequisite and an available Rust build slot:
+
+```text
+just _ensure-sidecar-stubs
+cargo test --manifest-path desktop/src-tauri/Cargo.toml \
+  managed_agents::runtime_commands::tests::status_construction_exposes_the_active_runtime_start_nonce
+```
+
+These fixture and mock-bridge checks do not establish installed Hermes staging,
+relay health, or receipt acceptance. Those remain separate #338/#348 gates.
+
 ## ACP transport recovery (#338)
 
 `cargo test -p buzz-acp --lib auth_correlation_tests` drives the actual

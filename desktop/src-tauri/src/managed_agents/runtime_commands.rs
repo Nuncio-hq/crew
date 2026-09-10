@@ -15,8 +15,8 @@ use crate::app_state::AppState;
 
 const STATUS_EVENT: &str = "managed-agent-runtime-status";
 
-fn status_for(
-    app: &AppHandle,
+fn status_for<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     record: &super::ManagedAgentRecord,
     key: &ManagedAgentRuntimeKey,
     runtime: Option<&ManagedAgentPairRuntime>,
@@ -44,8 +44,8 @@ pub(super) struct StatusInputs<'a> {
     pub(super) global: &'a super::GlobalAgentConfig,
 }
 
-pub(super) fn status_for_with(
-    app: &AppHandle,
+pub(super) fn status_for_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     record: &super::ManagedAgentRecord,
     key: &ManagedAgentRuntimeKey,
     runtime: Option<&ManagedAgentPairRuntime>,
@@ -89,6 +89,7 @@ pub(super) fn status_for_with(
     ManagedAgentRuntimeStatus {
         transport,
         transport_retired: retired.is_some(),
+        start_nonce: runtime.map(|runtime| runtime.start_nonce.clone()),
         pubkey: key.pubkey.clone(),
         relay_url: key.relay_url.clone(),
         requested_relay_url,
@@ -579,6 +580,7 @@ fn unkeyable_failed_status(
     ManagedAgentRuntimeStatus {
         transport: buzz_core_pkg::transport_status::TransportStatus::unknown(),
         transport_retired: false,
+        start_nonce: None,
         pubkey: record.pubkey.clone(),
         relay_url: requested.clone(),
         requested_relay_url: Some(requested),
@@ -720,6 +722,7 @@ pub async fn reconcile_managed_agent_runtimes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::{Command, Stdio};
 
     #[test]
     fn list_managed_agent_runtimes_returns_a_future() {
@@ -873,5 +876,78 @@ mod tests {
             Some("unexpected"),
         );
         assert!(observer_lifecycle_key(&ready_with_error.pubkey, &ready_with_error).is_err());
+    }
+
+    #[test]
+    fn status_construction_exposes_the_active_runtime_start_nonce() {
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        // `status_for_with` resolves the runtime log path as part of building
+        // the row. Give the mock a test-only identifier so that directory
+        // creation never targets the production Buzz/Crew data directory.
+        context.config_mut().identifier = "xyz.nuncio.crew.test.runtime-status".into();
+        let app = tauri::test::mock_builder()
+            .manage(crate::app_state::build_app_state())
+            .build(context)
+            .unwrap();
+        let app_handle = app.handle().clone();
+        let record = record_with_relay("wss://relay.example");
+        let key =
+            ManagedAgentRuntimeKey::new(record.pubkey.clone(), "wss://relay.example").unwrap();
+        let global = super::super::GlobalAgentConfig::default();
+        let spawn_config = super::super::spawn_snapshot::prospective_spawn_config_snapshot(
+            &record,
+            &[],
+            &[],
+            &key.relay_url,
+            &global,
+            false,
+            super::super::AcpSessionPolicy::Channel,
+        );
+        #[cfg(unix)]
+        let mut command = Command::new("/usr/bin/true");
+        #[cfg(windows)]
+        let mut command = Command::new("cmd");
+        #[cfg(windows)]
+        command.args(["/C", "exit", "0"]);
+        let child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let process = super::super::ManagedAgentProcess {
+            child,
+            log_path: Default::default(),
+            spawn_config,
+            setup_mode: false,
+            adapter_availability: None,
+            start_nonce: "generation-42".into(),
+            #[cfg(windows)]
+            job: None,
+        };
+        let mut runtime = super::super::ManagedAgentPairRuntime::starting(process);
+        // `/usr/bin/true` is intentionally used only to satisfy the runtime
+        // shape. Reap it before the status assertion so this test leaves no
+        // zombie behind on Unix.
+        runtime.process.child.wait().unwrap();
+        let status = status_for_with(
+            &app_handle,
+            &record,
+            &key,
+            Some(&runtime),
+            None,
+            StatusInputs {
+                personas: &[],
+                global: &global,
+            },
+        );
+
+        assert_eq!(status.start_nonce.as_deref(), Some("generation-42"));
+        assert_eq!(
+            serde_json::to_value(&status).unwrap()["startNonce"],
+            "generation-42"
+        );
+        assert_eq!(status.pubkey, key.pubkey);
+        assert_eq!(status.relay_url, key.relay_url);
     }
 }
