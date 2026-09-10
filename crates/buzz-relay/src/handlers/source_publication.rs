@@ -18,12 +18,6 @@ pub const PROJECT_LINK_EXTENSION: &str = "crew-project-channel-link-v1";
 
 /// Maximum serialized size of one signed Wiki event.
 pub const MAX_SIGNED_EVENT_BYTES: usize = 192 * 1024;
-/// Maximum number of pages in one verified Wiki publication.
-pub const MAX_PUBLICATION_PAGES: usize = 256;
-/// Maximum live reserved Wiki event bytes for one owner in one community.
-pub const MAX_WIKI_LIVE_BYTES: i64 = buzz_db::replaceable::MAX_WIKI_LIVE_BYTES;
-/// Maximum live reserved Wiki events for one owner in one community.
-pub const MAX_WIKI_LIVE_EVENTS: i64 = buzz_db::replaceable::MAX_WIKI_LIVE_EVENTS;
 
 const SOURCE_MARKER_TAGS: &[&str] = &[
     "source-kind",

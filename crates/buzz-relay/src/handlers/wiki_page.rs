@@ -81,15 +81,18 @@ mod tests {
         assert!(validate_wiki_page_ingest(&event, false).is_ok());
     }
 
-    #[tokio::test]
-    async fn accepts_v1_folder_snapshot_at_enabled_ingest_seam() {
+    /// A fully valid immutable v1 folder page: signed by the same repository
+    /// owner its `a` tag names, at a reserved `p1-<digest>` address, carrying
+    /// the complete v1 page metadata set. The enabled and disabled tests below
+    /// differ only in the capability flag, never in this shape.
+    fn valid_v1_folder_page() -> Event {
         let keys = nostr::Keys::generate();
-        let owner = keys.public_key().to_hex();
-        let a = format!("30617:{owner}:crew");
+        let a = format!("30617:{}:crew", keys.public_key().to_hex());
         let snapshot = uuid::Uuid::new_v4().to_string();
-        let event = EventBuilder::new(Kind::Custom(KIND_REPO_WIKI_PAGE as u16), "# Overview")
+        let d = format!("crew/p1-{}", "cd".repeat(32));
+        EventBuilder::new(Kind::Custom(KIND_REPO_WIKI_PAGE as u16), "# Overview")
             .tags([
-                Tag::parse(["d", "crew/overview"]).expect("d"),
+                Tag::parse(["d", &d]).expect("d"),
                 Tag::parse(["a", &a]).expect("a"),
                 Tag::parse(["wiki-version", "1"]).expect("version"),
                 Tag::parse(["wiki-snapshot", &snapshot]).expect("snapshot"),
@@ -103,9 +106,25 @@ mod tests {
                 Tag::parse(["wiki-source-files", "[\"README.md\"]"]).expect("source files"),
             ])
             .sign_with_keys(&keys)
-            .expect("sign");
+            .expect("sign")
+    }
 
+    #[tokio::test]
+    async fn accepts_v1_folder_snapshot_at_enabled_ingest_seam() {
+        let event = valid_v1_folder_page();
         assert!(validate_wiki_page_ingest(&event, true).is_ok());
+    }
+
+    #[tokio::test]
+    async fn rejects_the_same_valid_v1_page_when_the_capability_is_disabled() {
+        // Identical shape, capability off: a well-formed opt-in is refused as
+        // unsupported rather than silently falling back to legacy replacement.
+        let event = valid_v1_folder_page();
+        assert!(matches!(
+            validate_wiki_page_ingest(&event, false),
+            Err(IngestError::Rejected(reason))
+                if reason.starts_with("unsupported: crew-conditional-publication-v1")
+        ));
     }
 
     #[tokio::test]
@@ -123,21 +142,29 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_source_bound_page_at_the_ingest_validation_seam() {
+        // The `a` tag names the signer, so owner mismatch is not what is under
+        // test: the only defect is the partial v1 marker — a source-bound page
+        // carrying `wiki-source-files` but none of the required v1 metadata.
         let keys = nostr::Keys::generate();
         let event = EventBuilder::new(Kind::Custom(KIND_REPO_WIKI_PAGE as u16), "# Overview")
             .tags([
                 Tag::parse(["d", "crew/overview"]).expect("d"),
-                Tag::parse(["a", &format!("30617:{}:crew", owner())]).expect("a"),
+                Tag::parse(["a", &format!("30617:{}:crew", keys.public_key().to_hex())])
+                    .expect("a"),
                 Tag::parse(["commit", "abc123"]).expect("commit"),
                 Tag::parse(["wiki-source-files", "1"]).expect("source marker"),
             ])
             .sign_with_keys(&keys)
             .expect("sign");
 
+        // Strict shape validation intentionally precedes the capability gate,
+        // so a disabled relay still reports this as invalid rather than hiding
+        // a malformed signed request behind the generic unsupported response.
         assert!(matches!(
             validate_wiki_page_ingest(&event, false),
             Err(IngestError::Rejected(reason))
-                if reason.starts_with("unsupported: crew-conditional-publication-v1")
+                if reason.starts_with("invalid: conditional publication")
+                    && reason.contains("wiki-version")
         ));
     }
 }

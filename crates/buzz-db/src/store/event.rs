@@ -987,7 +987,7 @@ pub async fn soft_delete_by_coordinate(
 ) -> Result<bool> {
     let deletion_created_at = DateTime::from_timestamp(deletion_created_at_secs, 0)
         .ok_or(DbError::InvalidTimestamp(deletion_created_at_secs))?;
-    let mut connection = crate::observability::acquire_writer(
+    let connection = crate::observability::acquire_writer(
         pool,
         crate::observability::WriterOperation::EventWrite,
     )
