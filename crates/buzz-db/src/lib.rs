@@ -48,8 +48,8 @@ pub(crate) use runtime::{
 };
 pub use store::{
     admin_moderation, allowlist, api_token, archived_identities, channel, channel_discovery,
-    channel_members, community, deletion, dm, event, feed, git_repo, moderation, partition,
-    product_feedback, push, reaction, relay_admin_actions, relay_invite, relay_members,
+    channel_members, community, contact, deletion, dm, event, feed, git_repo, moderation,
+    partition, product_feedback, push, reaction, relay_admin_actions, relay_invite, relay_members,
     relay_operators, reminder, replaceable, thread, usage, user, workflow,
 };
 
@@ -60,6 +60,7 @@ pub use community::{
     CreatedCommunityRecord, EnsuredCommunityRecord, OwnedCommunityRecord,
     UnarchivedCommunityRecord,
 };
+pub use contact::ContactOriginalObservation;
 pub use error::{DbError, Result};
 pub use event::{EventQuery, DEFAULT_MAX_PAGE_LIMIT};
 pub use reaction::ReactionEventInsertOutcome;

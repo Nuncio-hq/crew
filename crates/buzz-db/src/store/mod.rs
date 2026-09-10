@@ -18,6 +18,8 @@ pub mod channel_members;
 mod channel_recovery_postgres_tests;
 /// Community lifecycle and host-map persistence.
 pub mod community;
+/// Read-only observation of persisted contact-original classifications.
+pub mod contact;
 /// Durable whole-community deletion lifecycle and PostgreSQL adapter.
 pub mod deletion;
 /// Direct message channel persistence.

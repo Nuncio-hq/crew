@@ -1,12 +1,14 @@
 //! R4 runs against the real partitioned event store in nextest-owned databases.
-//! No routing resolver, consumer, schema startup, or network service is enabled.
+//! No routing resolver, dispatch consumer, schema startup, or network service is enabled.
 
 use super::Fixture;
+use crate::contact::ContactOriginalObservation;
 use crate::event::contact_proof_insert::ContactClass;
 use crate::event::insert_event_with_thread_metadata_classified_tx;
 use chrono::{DateTime, Utc};
 use nostr::{Event, EventBuilder, Keys, Kind, Tag, Timestamp};
 use sqlx::{Postgres, Transaction};
+use uuid::Uuid;
 
 // Provisional local Crew allocation; no wire handler or capability is enabled.
 const CONTACT_PROOF: u16 = 46044;
@@ -44,18 +46,21 @@ async fn insert(
     event: &Event,
     class: Option<ContactClass>,
 ) -> bool {
+    insert_with_channel(f, tx, event, Some(f.channel), class).await
+}
+
+async fn insert_with_channel(
+    f: &Fixture,
+    tx: &mut Transaction<'_, Postgres>,
+    event: &Event,
+    channel_id: Option<Uuid>,
+    class: Option<ContactClass>,
+) -> bool {
     event.verify().expect("valid fixture signature");
-    insert_event_with_thread_metadata_classified_tx(
-        tx,
-        f.community,
-        event,
-        Some(f.channel),
-        None,
-        class,
-    )
-    .await
-    .expect("actual original INSERT with typed class")
-    .1
+    insert_event_with_thread_metadata_classified_tx(tx, f.community, event, channel_id, None, class)
+        .await
+        .expect("actual original INSERT with typed class")
+        .1
 }
 
 async fn classification(f: &Fixture, event: &Event) -> Option<i16> {
@@ -65,6 +70,26 @@ async fn classification(f: &Fixture, event: &Event) -> Option<i16> {
         .fetch_one(&f.pool)
         .await
         .expect("stored original classification")
+}
+
+async fn insert_raw_event_at(f: &Fixture, event: &Event, created_at: DateTime<Utc>) {
+    sqlx::query(
+        "INSERT INTO events \
+         (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    )
+    .bind(f.community.as_uuid())
+    .bind(event.id.as_bytes().as_slice())
+    .bind(event.pubkey.to_bytes().to_vec())
+    .bind(created_at)
+    .bind(event.kind.as_u16() as i32)
+    .bind(serde_json::to_value(&event.tags).expect("raw event tags"))
+    .bind(&event.content)
+    .bind(event.sig.serialize().to_vec())
+    .bind(f.channel)
+    .execute(&f.pool)
+    .await
+    .expect("raw duplicate event insert");
 }
 
 fn constraint_error(result: Result<(), sqlx::Error>, context: &str) {
@@ -431,6 +456,145 @@ async fn contact_proof_r4_partition_catalog_requires_enabled_exact_guards() {
             );
         }
     }
+}
+
+async fn restore_production_classification_trigger(f: &Fixture) {
+    // Fixture::new removes this trigger so the source counterexamples can
+    // emulate old writers. Re-arm the real migration trigger for the observer
+    // test; the test still calls the production event INSERT path.
+    sqlx::query(
+        "CREATE TRIGGER contact_classify_original_v1 \
+         BEFORE INSERT OR UPDATE ON events FOR EACH ROW \
+         EXECUTE FUNCTION contact_classify_original_v1()",
+    )
+    .execute(&f.pool)
+    .await
+    .expect("restore production classification trigger");
+}
+
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn contact_original_observer_is_scoped_and_keeps_tombstone_classification() {
+    let f = Fixture::new().await;
+    let legacy = message(&f, "legacy original", 1_800_030_000);
+    f.insert(&legacy).await;
+    install(&f).await;
+    restore_production_classification_trigger(&f).await;
+
+    let global_original = EventBuilder::new(Kind::Custom(9), "global kind-9 event")
+        .custom_created_at(Timestamp::from(1_800_030_003))
+        .sign_with_keys(&f.owner)
+        .expect("signed global original");
+    let mut tx = f.pool.begin().await.expect("global original insert");
+    assert!(insert_with_channel(&f, &mut tx, &global_original, None, None).await);
+    tx.commit().await.expect("global original commit");
+
+    let suppressed = message(&f, "suppressed original", 1_800_030_001);
+    f.insert(&suppressed).await;
+
+    let non_original = EventBuilder::new(Kind::TextNote, "not a contact original")
+        .tags([Tag::parse(["h", &f.channel.to_string()]).expect("channel tag")])
+        .custom_created_at(Timestamp::from(1_800_030_002))
+        .sign_with_keys(&f.owner)
+        .expect("signed note");
+    f.insert(&non_original).await;
+
+    let db = crate::Db::from_pool(f.pool.clone());
+    assert_eq!(
+        db.observe_contact_original(f.community, legacy.id.as_bytes())
+            .await
+            .expect("legacy observation"),
+        ContactOriginalObservation::Legacy
+    );
+    assert_eq!(
+        db.observe_contact_original(f.community, suppressed.id.as_bytes())
+            .await
+            .expect("suppressed observation"),
+        ContactOriginalObservation::Suppressed
+    );
+    assert_eq!(
+        db.observe_contact_original(f.community, non_original.id.as_bytes())
+            .await
+            .expect("non-original observation"),
+        ContactOriginalObservation::NotKind9
+    );
+    assert_eq!(
+        db.observe_contact_original(f.community, global_original.id.as_bytes())
+            .await
+            .expect("global kind-9 observation"),
+        ContactOriginalObservation::NotKind9,
+        "kind 9 without a channel binding is not a contact original"
+    );
+
+    assert!(
+        crate::event::soft_delete_event(&f.pool, f.community, suppressed.id.as_bytes())
+            .await
+            .expect("soft-delete suppressed original")
+    );
+    assert_eq!(
+        db.observe_contact_original(f.community, suppressed.id.as_bytes())
+            .await
+            .expect("historical suppressed observation"),
+        ContactOriginalObservation::Suppressed,
+        "soft-deleted originals remain historical no-route evidence"
+    );
+
+    let other_community = uuid::Uuid::new_v4();
+    assert_eq!(
+        db.observe_contact_original(
+            crate::CommunityId::from_uuid(other_community),
+            legacy.id.as_bytes()
+        )
+        .await
+        .expect("cross-community observation"),
+        ContactOriginalObservation::Missing,
+        "an event ID from another community must not leak into this lookup"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn contact_original_observer_rejects_unapproved_classifications() {
+    let f = Fixture::new().await;
+    let original = message(&f, "unsupported classification", 1_800_030_010);
+    let mut tx = f.pool.begin().await.expect("unsupported insert");
+    assert!(insert(&f, &mut tx, &original, Some(ContactClass::Routed)).await);
+    tx.commit().await.expect("unsupported commit");
+
+    let db = crate::Db::from_pool(f.pool.clone());
+    let error = db
+        .observe_contact_original(f.community, original.id.as_bytes())
+        .await
+        .expect_err("nonzero class must stay unavailable");
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported contact classification 1"),
+        "unexpected fail-closed error: {error}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn contact_original_observer_rejects_ambiguous_raw_id() {
+    let f = Fixture::new().await;
+    install(&f).await;
+    restore_production_classification_trigger(&f).await;
+
+    let original = message(&f, "duplicate raw id", 1_800_030_020);
+    let first_at = timestamp(&original);
+    insert_raw_event_at(&f, &original, first_at).await;
+    insert_raw_event_at(&f, &original, first_at + chrono::Duration::seconds(1)).await;
+
+    let db = crate::Db::from_pool(f.pool.clone());
+    let error = db
+        .observe_contact_original(f.community, original.id.as_bytes())
+        .await
+        .expect_err("duplicate raw IDs must not select an arbitrary history row");
+    assert!(
+        error.to_string().contains("ambiguous"),
+        "unexpected ambiguity error: {error}"
+    );
 }
 
 #[path = "contact_r4_next_support.rs"]

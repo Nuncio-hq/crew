@@ -308,6 +308,12 @@ The contact retention foundation stores tenant-scoped route evidence and quota
 in `contact_routes` and `contact_quota`. Community deletion treats both as
 ordinary scoped data: the catalog validates their write fences, and the purge
 removes route evidence before quota rows before tombstoning the community.
+The production `buzz_db::Db::observe_contact_original` reader currently uses
+only the event row (`kind`, channel binding, and `events.contact_class`) on the
+writer pool, preserving legacy and explicit suppressed states (including
+tombstones) while failing closed on any nonzero class. It has no route/proof,
+canvas, owner, receipt, or dispatch authority; automatic contact routing
+remains unavailable pending the approved #355 successor.
 
 Proposed behavior: human-authored channel messages and thread replies without explicit mention targets go to the selected contact; explicit mentions take priority and do not also wake the contact. Agent messages cannot trigger this fallback. The contact does not become the thread owner, gain a role, or gain tools. None leaves mention-only behavior. Missing, removed, or unavailable contacts require a visible unresolved state with no silent replacement. The real implementation must verify authors/structured mention targets, membership and canvas signer; retain kind/channel/access gates, deduplicate event delivery, fence stale subscriptions when contact changes, and handle acknowledgement/conflicts on save. Live validation must cover bot-loop prevention, mention priority, channel isolation, contact replacement/removal, reconnect and two-client edits. The prototype uses local atomic role/contact state and text matching for sample messages only.
 
