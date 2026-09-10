@@ -493,7 +493,25 @@ async fn a_failed_terminal_save_keeps_the_claim_and_the_exact_graph() {
         "the resource stays claimed after a failed settlement"
     );
 
-    // The same refusal is obtainable again and now settles.
+    // An explicit retry cannot bypass the active durable worker lease. The
+    // failed terminal CAS left the old claim intact, so a second worker must
+    // wait rather than race the first attempt's settling fence.
+    let blocked = drive(&journal, journal.reopened(&id), journal.owner, true, false)
+        .await
+        .expect_err("an active durable lease blocks an immediate explicit retry");
+    assert!(
+        blocked.contains("being processed"),
+        "the retry is blocked by the persisted lease: {blocked}"
+    );
+
+    // Once that persisted lease expires, the same typed refusal is obtainable
+    // again and now settles.
+    let lease_expiry = after
+        .lease
+        .as_ref()
+        .expect("the failed terminal save retains the worker lease")
+        .expires_at;
+    journal.clock.store(lease_expiry, Ordering::SeqCst);
     journal.reject_terminal_save.store(false, Ordering::SeqCst);
     *journal.retire_head.lock().expect("head retirement") = Some(WikiHeadRetirementProof {
         retirement: WikiHeadRetirement::Head { head_id },
