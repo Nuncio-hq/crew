@@ -2,8 +2,51 @@ import { expect, test, type Page } from "@playwright/test";
 import type { ManagedAgentRuntimeStatus } from "../../src/shared/api/types";
 import { installMockBridge } from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 const LOCAL = "d".repeat(64);
+
+async function waitForPresenceSnapshot(page: Page, pubkey: string) {
+  await expect
+    .poll(() =>
+      page.evaluate((target) => {
+        const client = window.__BUZZ_E2E_QUERY_CLIENT__ as typeof window & {
+          getQueryCache?: () => {
+            getAll: () =>
+              | Array<{
+                  queryKey: readonly unknown[];
+                  state: { status: string };
+                }>
+              | undefined;
+          };
+        };
+        return (
+          client
+            .getQueryCache?.()
+            .getAll?.()
+            ?.some(
+              (query) =>
+                query.queryKey[0] === "presence" &&
+                query.queryKey.slice(1).includes(target) &&
+                query.state.status === "success",
+            ) ?? false
+        );
+      }, pubkey.toLowerCase()),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (authorPubkey) =>
+          window.__BUZZ_E2E_HAS_MOCK_AUTHOR_KIND_SUBSCRIPTION__?.({
+            authorPubkey,
+            kind: 20001,
+          }) ?? false,
+        pubkey,
+      ),
+    )
+    .toBe(true);
+}
 
 const MEMBERSHIP_RELAY = "ws://membership.fixture:3370";
 const MEMBERSHIP_TRANSPORT = {
@@ -496,7 +539,7 @@ test("member menu starts a stopped local main runtime while a thread worker is p
     ],
   });
   await page.goto("/");
-  await page.getByTestId("channel-agents").click();
+  await openWorkspaceChannel(page, "agents");
   await page.getByTestId("channel-members-trigger").click();
   const row = page.getByTestId(`sidebar-member-${LOCAL}`);
   await expect(row).toBeVisible();
@@ -510,6 +553,7 @@ test("member menu starts a stopped local main runtime while a thread worker is p
       ),
     )
     .toBe(true);
+  await waitForPresenceSnapshot(page, LOCAL);
   await page.evaluate(
     (pubkey) =>
       window.__BUZZ_E2E_EMIT_MOCK_PRESENCE__?.({ pubkey, status: "away" }),
@@ -553,7 +597,7 @@ for (const surface of ["agents", "members"] as const) {
     });
     await page.goto(surface === "agents" ? "/#/agents" : "/");
     if (surface === "members") {
-      await page.getByTestId("channel-agents").click();
+      await openWorkspaceChannel(page, "agents");
       await page.getByTestId("channel-members-trigger").click();
     }
     for (const pubkey of keys) {
@@ -610,6 +654,7 @@ for (const surface of ["agents", "members"] as const) {
         ),
       )
       .toBe(true);
+    await waitForPresenceSnapshot(page, LOCAL);
     await page.evaluate(
       (pubkey) =>
         window.__BUZZ_E2E_EMIT_MOCK_PRESENCE__?.({ pubkey, status: "away" }),
@@ -649,7 +694,7 @@ test("hover profile preserves unknown availability and announces only establishe
     ],
   });
   await page.goto("/");
-  await page.getByTestId("channel-agents").click();
+  await openWorkspaceChannel(page, "agents");
   await expect(page.getByTestId("chat-title")).toHaveText("agents");
 
   // Hold the actual single-key IPC read pending before opening the lazy hover

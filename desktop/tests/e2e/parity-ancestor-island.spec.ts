@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { installRelayBridge } from "../helpers/bridge";
 import { assertRelaySeeded } from "../helpers/seed";
 import { ancestorIsland, seedScenario } from "../helpers/seedRelay";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 // =============================================================================
 // LIVE-RELAY parity — ancestor-island cursor poisoning (GUI read-model overhaul)
@@ -67,8 +68,7 @@ test("live relay: an ancestor island does not strand the history frontier", asyn
 
   await installRelayBridge(page, "tyler");
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
-  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await openWorkspaceChannel(page, "general");
 
   const timeline = page.getByTestId("message-timeline");
   await expect(timeline.locator("[data-message-id]").first()).toBeVisible();

@@ -361,7 +361,7 @@ test.beforeEach(async ({ page }, testInfo) => {
 
 test("agent owner label identifies the agent and owner", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
 
   const aliceMessage = page
     .getByTestId("message-row")

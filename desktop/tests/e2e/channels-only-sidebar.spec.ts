@@ -60,8 +60,8 @@ async function seedExclusiveProjectOnEngineering(page: Page) {
   );
 }
 
-test.describe("channels-only sidebar (#223)", () => {
-  test("rail is Inbox + channels + DMs; no Projects block or Workbench", async ({
+test.describe("CompanyOS workspace rail (#223)", () => {
+  test("rail is Inbox + Agents + Workflows + Projects + DMs", async ({
     page,
   }) => {
     await seedExclusiveProjectOnEngineering(page);
@@ -75,26 +75,39 @@ test.describe("channels-only sidebar (#223)", () => {
     await expect(
       primaryMenu.getByRole("button", { name: "Inbox" }),
     ).toBeVisible();
+    await expect(
+      primaryMenu.getByRole("button", { name: "Agents" }),
+    ).toBeVisible();
+    await expect(
+      primaryMenu.getByRole("button", { name: "Workflows" }),
+    ).toBeVisible();
 
-    await expect(page.getByTestId("work-tree-projects")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-projects-section")).toBeVisible();
+    await expect(page.getByTestId("sidebar-projects-section-label")).toHaveText(
+      "Projects",
+    );
     await expect(page.getByTestId("work-tree-folder-engineering")).toHaveCount(
       0,
     );
-    await expect(page.getByTestId("open-projects-view")).toHaveCount(0);
     await expect(page.getByTestId("open-workbench-view")).toHaveCount(0);
     await expect(
       primaryMenu.getByRole("button", { name: "Workbench" }),
     ).toHaveCount(0);
-    await expect(
-      primaryMenu.getByRole("button", { name: "Projects" }),
-    ).toHaveCount(0);
-
-    const channels = page.getByTestId("stream-list");
-    await expect(channels.getByTestId("channel-general")).toBeVisible();
-    await expect(channels.getByTestId("channel-engineering")).toBeVisible();
+    // Ordinary channels are intentionally not a flat sidebar section. They
+    // remain reachable from the workspace menu, including project-linked
+    // channels and channels with no project metadata.
+    await expect(page.getByTestId("stream-list")).toHaveCount(0);
     await expect(page.getByTestId("dm-list")).toBeVisible();
 
-    await page.getByTestId("channel-engineering").click();
+    await page.getByTestId("workspace-menu-trigger").click();
+    await expect(page.getByTestId("workspace-browse-channels")).toBeVisible();
+    await page.getByTestId("workspace-browse-channels").click();
+    await expect(page.getByTestId("channel-browser-dialog")).toBeVisible();
+    await page
+      .getByTestId("browse-channel-engineering")
+      .getByRole("button")
+      .first()
+      .click();
     await expect(page.getByTestId("chat-title")).toContainText("engineering");
     await expect(page).toHaveURL(new RegExp(`/channels/${ENGINEERING_ID}`));
 
