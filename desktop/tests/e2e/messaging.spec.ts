@@ -4,6 +4,7 @@ import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { expectCornerRadiusPx, expectSmoothCorners } from "../helpers/css";
 import { openSettings } from "../helpers/settings";
+import { openWorkspaceChannel } from "../helpers/workspaceNavigation";
 
 async function waitForReadyComposerSnapshots(
   page: import("@playwright/test").Page,
@@ -1112,7 +1113,7 @@ test("rapid Enter presses on a ready link preview send exactly once", async ({
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?rapid=1";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
   await input.fill(previewUrl);
 
@@ -1149,7 +1150,7 @@ test("pasting a link preview and immediately pressing Enter waits for resolution
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?fast=send";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
 
   // The fixture delays metadata, so Enter occurs before any snapshot exists.
@@ -1198,7 +1199,7 @@ test("a snapshot thumbnail upload failure preserves one metadata-only preview", 
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?upload=fail";
   await page.goto("/");
-  await page.getByTestId("channel-general").click();
+  await openWorkspaceChannel(page, "general");
   const input = page.getByTestId("message-input");
   await input.fill(previewUrl);
 
