@@ -46,6 +46,7 @@ export function useThreadNativeActivation(
       setFailure(null);
       setActivatedScope(scope);
     },
+    scope,
   };
 }
 

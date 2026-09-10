@@ -25,6 +25,12 @@ import {
 } from "./archivePagingState";
 export type { ArchivePagingState } from "./archivePagingState";
 
+/** Stable archive paging controls shared by all projections in one channel view. */
+export type ArchivedObserverPaging = {
+  fetchOlderArchived: () => Promise<void>;
+  hasOlderArchived: boolean;
+};
+
 export function useObserverEvents(
   enabled: boolean,
   agentPubkey?: string | null,
@@ -124,7 +130,7 @@ const INITIAL_HYDRATION_BUDGET_PAGES = 10;
 export function useLoadArchivedObserverEvents(
   enabled: boolean,
   channelId: string | null,
-) {
+): ArchivedObserverPaging {
   const identityQuery = useIdentityQuery();
   const identityPubkey = identityQuery.data?.pubkey ?? null;
 

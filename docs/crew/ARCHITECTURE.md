@@ -462,7 +462,12 @@ Community reset and confirmed channel/root removal invalidate it, while failed
 channel queries preserve it. Narrow presentation uses the shared modal dialog and
 the existing drawer Escape gate; the conversation DOM remains mounted. Browser
 and existing simulator presentation require explicit activation per mounted thread
-view, including after a scope round trip. Native cleanup remains channel-owned.
+view, including after a scope round trip. Keyboard Browser/Sim shortcuts follow
+the mounted thread's focus transition before opening its host, matching the Tools
+button. The absent-simulator Create action reports pending/failure state and
+activates the current thread scope after a successful boot. Activity reuses the
+single channel archive-paging owner returned by the plans projection when agents
+switch. Native cleanup remains channel-owned.
 Native presentation attempts fence late errors by generation; failed hide cleanup
 stays visible in a channel-specific notice without disabling a newer activation.
 The channel tool pane retains its mount/popout compatibility. Unit and mock-bridge

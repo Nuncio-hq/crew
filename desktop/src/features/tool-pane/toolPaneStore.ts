@@ -7,6 +7,7 @@ import {
   threadToolPaneScopeKey,
   type ThreadToolPaneScope,
 } from "./threadToolPaneScope";
+import { setThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 
 type Snapshot = {
   open: boolean;
@@ -180,6 +181,12 @@ export function openToolPane(tab?: ToolPaneTab, scope?: ThreadToolPaneScope) {
     open: true,
     tab: tab ?? snapshot.tab,
   });
+}
+
+/** Open tools from a thread workspace using the same focus transition as the Tools button. */
+export function openThreadToolPane(tab?: ToolPaneTab) {
+  setThreadViewMode("focus");
+  openToolPane(tab);
 }
 
 export function closeToolPane() {

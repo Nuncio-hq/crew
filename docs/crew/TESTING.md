@@ -583,11 +583,15 @@ Steer and native workflow evidence remain required before #354 is complete.
 
 The first #354 slice adds production-bound `threadToolPaneSelection`,
 `threadToolPaneInvalidation`, `threadToolPanePresentation`,
-`threadPaneChatPreservation`, `threadNativeActivation`, and `toolPaneKeyboard`
-Node suites under `desktop/src/features/tool-pane/`. They exercise the real store,
-confirmed refresh seam, components and shared Radix dialog, stubbing native IPC
-and unrelated dependencies. `threadPlansPlacement` binds the conversation body;
-`threadTranscriptLiveness` covers optional exact-conversation live projection.
+`threadPaneChatPreservation`, `threadNativeActivation`, `toolPaneKeyboard`, and
+`ThreadAgentTranscript` Node suites under `desktop/src/features/tool-pane/`.
+They exercise the real store, confirmed refresh seam, components and shared Radix
+dialog, stubbing native IPC and unrelated dependencies. `toolPaneKeyboard` also
+proves that thread Browser/Sim shortcuts enter the focus host before selecting a
+tab. `ThreadAgentTranscript` binds the shared channel archive-paging prop and
+proves agent switching does not start another loader. `threadPlansPlacement`
+binds the conversation body; `threadTranscriptLiveness` covers optional
+exact-conversation live projection.
 Existing declared-plan and anchored-scroll suites remain the parser/generation
 and paused-reader contracts. The registered `companyos-thread-workspace.spec.ts`
 adds mock-bridge workflow coverage; running it requires the owned E2E build slot.

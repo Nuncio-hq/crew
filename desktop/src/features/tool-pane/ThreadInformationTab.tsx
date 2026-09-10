@@ -67,7 +67,7 @@ function ThreadDeclaredInformation({
     () => context.messages.slice(1),
     [context.messages],
   );
-  const { plans, conversationId } = useDeclaredPlansForThread({
+  const { archivePaging, plans, conversationId } = useDeclaredPlansForThread({
     channelId,
     threadHead: context.messages[0],
     threadMessages: messages ?? EMPTY_MESSAGES,
@@ -126,6 +126,7 @@ function ThreadDeclaredInformation({
       ) : null}
       <ThreadAgentTranscript
         agent={agent}
+        archivePaging={archivePaging}
         channelId={channelId}
         conversationId={conversationId}
         key={`${conversationId}:${agent.agentPubkey}`}

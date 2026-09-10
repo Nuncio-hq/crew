@@ -44,7 +44,9 @@ test("thread body no longer mounts an extra declared-plan rail", () => {
         ],
       }),
     },
-    "@/features/tool-pane/toolPaneStore": { openToolPane: noop },
+    "@/features/tool-pane/toolPaneStore": {
+      openThreadToolPane: noop,
+    },
     "@/features/channels/lib/threadViewModePreference": {
       setThreadViewMode: noop,
     },

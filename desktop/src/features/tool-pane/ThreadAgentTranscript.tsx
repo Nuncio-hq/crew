@@ -4,27 +4,28 @@ import { AgentSessionTranscriptList } from "@/features/agents/ui/AgentSessionTra
 import { buildTranscriptState } from "@/features/agents/ui/agentSessionTranscript";
 import {
   useArchivedChannelEvents,
-  useLoadArchivedObserverEvents,
   useObserverEvents,
 } from "@/features/agents/ui/useObserverEvents";
+import type { ArchivedObserverPaging } from "@/features/agents/ui/useObserverEvents";
 import { mergeProjectThreadPeekEvents } from "@/features/messages/lib/projectThreadMissionControl";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 
 /** The existing transcript presenter owns expansion and near-end anchored scrolling. */
 export function ThreadAgentTranscript({
   agent,
+  archivePaging,
   channelId,
   conversationId,
   profiles,
 }: {
   agent: AgentDeclaredPlan;
+  archivePaging: ArchivedObserverPaging;
   channelId: string;
   conversationId: string;
   profiles?: UserProfileLookup;
 }) {
   const live = useObserverEvents(true, agent.agentPubkey);
   const archived = useArchivedChannelEvents(agent.agentPubkey, channelId);
-  const paging = useLoadArchivedObserverEvents(true, channelId);
   const events = React.useMemo(
     () =>
       mergeProjectThreadPeekEvents(
@@ -43,11 +44,11 @@ export function ThreadAgentTranscript({
       className="flex min-h-0 flex-1 flex-col p-2"
       data-testid="thread-agent-transcript"
     >
-      {paging.hasOlderArchived ? (
+      {archivePaging.hasOlderArchived ? (
         <button
           className="shrink-0 p-2 text-xs"
           onClick={() => {
-            void paging.fetchOlderArchived();
+            void archivePaging.fetchOlderArchived();
           }}
           type="button"
         >

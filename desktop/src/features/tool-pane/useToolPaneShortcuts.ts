@@ -1,6 +1,12 @@
 import * as React from "react";
 
-import { closeToolPane, openToolPane } from "./toolPaneStore";
+import { getThreadForgeViewContext } from "@/features/messages/lib/threadForgeViewContextStore";
+
+import {
+  closeToolPane,
+  openThreadToolPane,
+  openToolPane,
+} from "./toolPaneStore";
 
 export function useToolPaneShortcuts(channelId: string | null) {
   React.useEffect(() => {
@@ -10,13 +16,13 @@ export function useToolPaneShortcuts(channelId: string | null) {
       if (meta && event.shiftKey && event.code === "KeyB") {
         if (!channelId) return;
         event.preventDefault();
-        openToolPane("browser");
+        openTools("browser");
         return;
       }
       if (meta && event.shiftKey && event.code === "KeyM") {
         if (!channelId) return;
         event.preventDefault();
-        openToolPane("sim");
+        openTools("sim");
         return;
       }
       if (event.key === "Escape" && !event.metaKey && !event.ctrlKey) {
@@ -30,6 +36,18 @@ export function useToolPaneShortcuts(channelId: string | null) {
           return;
         }
         closeToolPane();
+      }
+    }
+    function openTools(tab: "browser" | "sim") {
+      const thread = getThreadForgeViewContext();
+      if (
+        thread?.channelId === channelId &&
+        typeof thread.rootEventId === "string" &&
+        thread.rootEventId.length > 0
+      ) {
+        openThreadToolPane(tab);
+      } else {
+        openToolPane(tab);
       }
     }
     window.addEventListener("keydown", onKey);

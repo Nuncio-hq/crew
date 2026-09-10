@@ -2033,7 +2033,9 @@ not #354 implementation or native/runtime evidence.
   presentations. Switching into/out of a thread closes the previous presentation.
   Channel mode retains Sim/Browser and valid-channel shortcuts, without minting
   a thread key; no valid channel means no resource-opening shortcut. Thread
-  shortcuts select/open UI but respect the explicit activation fence.
+  shortcuts select/open UI through the mounted thread focus host and respect the
+  explicit activation fence. The absent-simulator Create action is that thread
+  view's activation and keeps failure retryable.
 - **PR and popout.** PR subject availability/results must match current channel
   and root, including URL subjects, with community/viewer reset. A summary-card
   click explicitly opens PR. Remove forced-open and Close-to-PR visibility

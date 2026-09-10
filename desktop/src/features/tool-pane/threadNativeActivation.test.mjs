@@ -34,6 +34,7 @@ function loadInstrument(
   status = EMPTY_GOVERNOR_STATUS,
   overrides = {},
 ) {
+  const getStatus = typeof status === "function" ? status : () => status;
   const noop = () => null;
   const command =
     (name) =>
@@ -72,7 +73,7 @@ function loadInstrument(
     "@/shared/lib/cn": { cn: (...values) => values.filter(Boolean).join(" ") },
     "./governorClient": native,
     "./governorStore": {
-      useGovernorStatus: () => status,
+      useGovernorStatus: () => getStatus(),
       invokeGovernor: command("invokeGovernor"),
     },
     "./postEvidenceCapture": {
@@ -148,6 +149,151 @@ test("selecting thread Sim does not find or create a device", async () => {
   assert.deepEqual(activationCalls(calls), []);
 });
 
+test("thread Sim Create activates the new device and presents its mirror", async () => {
+  const { render, fireEvent, act } = await import("@testing-library/react");
+  const calls = [];
+  const available = {
+    ...EMPTY_GOVERNOR_STATUS,
+    bridge: { ...EMPTY_GOVERNOR_STATUS.bridge, availability: "available" },
+    sims: [],
+  };
+  const booted = {
+    ...available,
+    sims: [
+      {
+        channelId: props.channelId,
+        lifecycle: "booted",
+        udid: "sim-udid",
+        deviceType: "iPhone 16 Pro",
+        runtime: "iOS 18",
+        diskBytes: 0,
+      },
+    ],
+  };
+  const status = { current: available };
+  const Sim = loadInstrument("SimTab", calls, () => status.current, {
+    simBoot: async (...args) => {
+      calls.push(["simBoot", ...args]);
+      status.current = booted;
+      return booted;
+    },
+    simSetPaneVisible: async (...args) => {
+      calls.push(["simSetPaneVisible", ...args]);
+      return booted;
+    },
+  });
+  const view = render(React.createElement(Sim, props));
+  await act(async () => {
+    fireEvent.click(view.getByRole("button", { name: /Create/ }));
+  });
+  assert.ok(view.getByTestId("sim-face-mirroring"));
+  assert.equal(
+    view.queryByRole("button", { name: "Activate Simulator" }),
+    null,
+  );
+  assert.deepEqual(
+    calls.filter(([name]) => name === "simSetPaneVisible"),
+    [["simSetPaneVisible", props.channelId, true]],
+  );
+});
+
+test("thread Sim Create exposes a failure and keeps retry available", async () => {
+  const { render, fireEvent, act } = await import("@testing-library/react");
+  const calls = [];
+  const available = {
+    ...EMPTY_GOVERNOR_STATUS,
+    bridge: { ...EMPTY_GOVERNOR_STATUS.bridge, availability: "available" },
+    sims: [],
+  };
+  const booted = {
+    ...available,
+    sims: [
+      {
+        channelId: props.channelId,
+        lifecycle: "booted",
+        udid: "sim-udid",
+        deviceType: "iPhone 16 Pro",
+        runtime: "iOS 18",
+        diskBytes: 0,
+      },
+    ],
+  };
+  const status = { current: available };
+  let attempts = 0;
+  const Sim = loadInstrument("SimTab", calls, () => status.current, {
+    simBoot: async (...args) => {
+      calls.push(["simBoot", ...args]);
+      attempts += 1;
+      if (attempts === 1) throw new Error("create failed");
+      status.current = booted;
+      return booted;
+    },
+  });
+  const view = render(React.createElement(Sim, props));
+  await act(async () => {
+    fireEvent.click(view.getByRole("button", { name: /Create/ }));
+  });
+  assert.match(view.getByRole("alert").textContent, /create failed/);
+  assert.equal(view.getByRole("button", { name: /Create/ }).disabled, false);
+  await act(async () => {
+    fireEvent.click(view.getByRole("button", { name: /Create/ }));
+  });
+  assert.ok(view.getByTestId("sim-face-mirroring"));
+  assert.equal(view.queryByRole("alert"), null);
+});
+
+test("stale thread Sim Create completion cannot activate a scope round trip", async () => {
+  const { render, fireEvent, act } = await import("@testing-library/react");
+  const calls = [];
+  const available = {
+    ...EMPTY_GOVERNOR_STATUS,
+    bridge: { ...EMPTY_GOVERNOR_STATUS.bridge, availability: "available" },
+    sims: [],
+  };
+  const booted = {
+    ...available,
+    sims: [
+      {
+        channelId: props.channelId,
+        lifecycle: "booted",
+        udid: "sim-udid",
+        deviceType: "iPhone 16 Pro",
+        runtime: "iOS 18",
+        diskBytes: 0,
+      },
+    ],
+  };
+  const status = { current: available };
+  const boot = deferred();
+  const Sim = loadInstrument("SimTab", calls, () => status.current, {
+    simBoot: async (...args) => {
+      calls.push(["simBoot", ...args]);
+      return boot.promise;
+    },
+    simSetPaneVisible: async (...args) => {
+      calls.push(["simSetPaneVisible", ...args]);
+      return booted;
+    },
+  });
+  const view = render(React.createElement(Sim, props));
+  fireEvent.click(view.getByRole("button", { name: /Create/ }));
+  view.rerender(
+    React.createElement(Sim, { ...props, threadRootId: "b".repeat(64) }),
+  );
+  view.rerender(React.createElement(Sim, props));
+  status.current = booted;
+  await act(async () => boot.resolve(booted));
+  assert.ok(view.getByRole("button", { name: "Activate Simulator" }));
+  assert.deepEqual(
+    calls.filter(([name]) => name === "simSetPaneVisible"),
+    [],
+  );
+  await act(async () => {
+    fireEvent.click(view.getByRole("button", { name: "Activate Simulator" }));
+  });
+  assert.ok(view.getByTestId("sim-face-mirroring"));
+});
+
 test("explicit Browser activation opens Custom URL and closing still hides it", async () => {
   const { render, fireEvent } = await import("@testing-library/react");
   const calls = [];
@@ -218,11 +364,12 @@ test("channel Browser and Sim retain their existing mount behavior", async () =>
 });
 
 function deferred() {
-  let reject;
-  const promise = new Promise((_, fail) => {
+  let resolve, reject;
+  const promise = new Promise((pass, fail) => {
+    resolve = pass;
     reject = fail;
   });
-  return { promise, reject };
+  return { promise, reject, resolve };
 }
 
 test("old Browser bounds and close failures cannot disable a newer URL presentation", async () => {

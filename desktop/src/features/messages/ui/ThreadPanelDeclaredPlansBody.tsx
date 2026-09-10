@@ -10,8 +10,7 @@ import {
   getAuxiliaryPanelBodyClass,
   type AuxiliaryPanelMode,
 } from "@/shared/layout/AuxiliaryPanel";
-import { openToolPane } from "@/features/tool-pane/toolPaneStore";
-import { setThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
+import { openThreadToolPane } from "@/features/tool-pane/toolPaneStore";
 
 /** Conversation body; declared plans live in the explicit Agent plans tab. */
 export function ThreadPanelDeclaredPlansBody({
@@ -61,8 +60,7 @@ export function ThreadPanelDeclaredPlansBody({
           aria-label="Open thread tools"
           className="self-end rounded-md px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
           onClick={() => {
-            setThreadViewMode("focus");
-            openToolPane();
+            openThreadToolPane();
           }}
           type="button"
         >

@@ -3,6 +3,14 @@ import { after, afterEach, before, beforeEach, test } from "node:test";
 import { JSDOM } from "jsdom";
 import { useToolPaneShortcuts } from "./useToolPaneShortcuts.ts";
 import {
+  resetThreadForgeViewContext,
+  setThreadForgeViewContext,
+} from "@/features/messages/lib/threadForgeViewContextStore.ts";
+import {
+  getThreadViewMode,
+  setThreadViewMode,
+} from "@/features/channels/lib/threadViewModePreference.ts";
+import {
   getToolPaneSnapshot,
   openToolPane,
   resetToolPaneForTests,
@@ -19,9 +27,16 @@ before(() =>
     IS_REACT_ACT_ENVIRONMENT: true,
   }),
 );
-beforeEach(resetToolPaneForTests);
+beforeEach(() => {
+  resetToolPaneForTests();
+  resetThreadForgeViewContext();
+  setThreadViewMode("split");
+});
 afterEach(async () => (await import("@testing-library/react")).cleanup());
-after(() => dom.window.close());
+after(() => {
+  resetThreadForgeViewContext();
+  dom.window.close();
+});
 function key(options, target = window) {
   const event = new dom.window.KeyboardEvent("keydown", {
     bubbles: true,
@@ -55,6 +70,34 @@ test("channel Browser shortcut preserves modifier and composition ownership", as
   resetToolPaneForTests();
   key({ code: "KeyB", metaKey: true, shiftKey: true });
   assert.equal(getToolPaneSnapshot().open, false);
+});
+
+test("thread Browser and Sim shortcuts enter the focus tool host from split mode", async () => {
+  const { renderHook } = await import("@testing-library/react");
+  renderHook(() => useToolPaneShortcuts("channel"));
+  setThreadForgeViewContext({
+    channelId: "channel",
+    rootEventId: "root",
+    messages: [],
+  });
+
+  key({ code: "KeyB", metaKey: true, shiftKey: true });
+  assert.equal(getThreadViewMode(), "focus");
+  assert.deepEqual(getToolPaneSnapshot(), {
+    open: true,
+    tab: "browser",
+    poppedOut: false,
+  });
+
+  resetToolPaneForTests();
+  setThreadViewMode("split");
+  key({ code: "KeyM", ctrlKey: true, shiftKey: true });
+  assert.equal(getThreadViewMode(), "focus");
+  assert.deepEqual(getToolPaneSnapshot(), {
+    open: true,
+    tab: "sim",
+    poppedOut: false,
+  });
 });
 
 test("Escape claimed by a modal does not reach the global pane handler", async () => {
