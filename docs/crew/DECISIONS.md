@@ -1390,9 +1390,15 @@ MCP tools inside `buzz-dev-mcp` (still one `mcp_command`) and argv0
    filtered to that repo (Ask scoped, Generate mirror + freshness only).
 3. **Refresh.** Manual / on-push (kind 30618 debounce 30s, default branch)
    / daily / weekly. Incremental regen uses per-page `source` tags +
-   commit. Generator is caller-agnostic (`crew-wiki generate`). Day-one
-   model path: heuristic; OpenAI-compatible HTTP when `CREW_WIKI_API_KEY`
-   is set (`llm` feature). Agent-runtime generate is not day-one.
+   commit. Generator is caller-agnostic (`crew-wiki generate`). The unsigned
+   legacy preview may remain deterministic, but native publication requires a
+   persisted Wiki-only runtime selection: Hermes binds a named profile, while
+   Claude/Codex require an explicit model. The selection is scoped to the
+   authenticated owner, community, and repository and is independent of
+   employee sessions and Thread Recap. A selected runtime runs through a
+   bounded disposable `Generator` adapter; missing, unsupported, nonzero, or
+   malformed runtime output fails the job. There is no HTTP/API fallback or
+   provider claim inferred from an environment variable.
 4. **Ask.** Auto / Q&A / Plan. Plan ends with Start thread → prefilled
    kickoff in the repo channel (library door: channel picker).
 5. **Engram promotion.** `wiki_propose` drafts a 30023 `_proposal/<slug>`

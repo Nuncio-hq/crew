@@ -6,8 +6,8 @@
 //! `SIGTERM`, or a forked descendant that keeps a pipe open must not be able to
 //! stall discovery; that stall is what left "Check again" spinning forever.
 
-use std::io::{ErrorKind, Read};
-use std::process::{Command, Output, Stdio};
+use std::io::{ErrorKind, Read, Write};
+use std::process::{ChildStdin, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -20,6 +20,7 @@ pub(crate) use policy::{BoundedFailure, BoundedOutcome, BoundedPolicy, OutputBud
 #[path = "bounded_command/runner.rs"]
 mod runner;
 pub(crate) use runner::output_with_policy;
+pub(crate) use runner::output_with_policy_and_stdin;
 
 #[cfg(test)]
 #[path = "bounded_command/policy_tests.rs"]
@@ -36,7 +37,9 @@ const CLEANUP_BUDGET: Duration = Duration::from_secs(5);
 #[cfg(unix)]
 const DRAIN_IDLE_POLL: Duration = Duration::from_millis(5);
 
-/// Maximum bytes retained across stdout + stderr for one bounded probe.
+/// Maximum bytes retained across stdout + stderr for one bounded discovery
+/// probe. Wiki/runtime requests use the separately bounded per-stream policy
+/// below and must not widen this discovery contract.
 ///
 /// Discovery output is tiny — a version string, an auth-status word, a PATH
 /// lookup. A probe that emits more than this is noisy or hostile. The ceiling
@@ -48,6 +51,9 @@ const DRAIN_IDLE_POLL: Duration = Duration::from_millis(5);
 /// per-stream, so a probe cannot double it by splitting output across stdout
 /// and stderr.
 const CAPTURE_LIMIT: u64 = 1 << 20; // 1 MiB
+/// Maximum bytes retained by one stream when a caller explicitly opts into a
+/// per-stream budget (the Wiki adapter uses 2 MiB stdout + 256 KiB stderr).
+const PER_STREAM_CAPTURE_LIMIT: u64 = 2 << 20; // 2 MiB
 
 /// Grace period between the initial `SIGTERM` and the escalating `SIGKILL` for a
 /// timed-out process group. Long enough for a well-behaved child to flush and
@@ -107,6 +113,49 @@ fn set_nonblocking<F: std::os::unix::io::AsRawFd>(f: &F) -> bool {
         }
         libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) == 0
     }
+}
+
+/// Write a bounded prompt to a child without allowing a runtime that never
+/// reads stdin to wedge the owning worker. Unix uses a nonblocking pipe; the
+/// Windows job-object path relies on child-tree teardown to close the pipe.
+fn spawn_stdin_writer(
+    mut stdin: ChildStdin,
+    input: Vec<u8>,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<std::io::Result<()>> {
+    #[cfg(unix)]
+    let stdin_nonblocking = set_nonblocking(&stdin);
+    std::thread::spawn(move || {
+        #[cfg(unix)]
+        if !stdin_nonblocking {
+            return Err(std::io::Error::other("could not configure child stdin"));
+        }
+        let mut offset = 0usize;
+        while offset < input.len() {
+            if stop.load(Ordering::Relaxed) {
+                return Err(std::io::Error::new(
+                    ErrorKind::Interrupted,
+                    "bounded stdin writer stopped",
+                ));
+            }
+            match stdin.write(&input[offset..]) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        ErrorKind::BrokenPipe,
+                        "child stdin closed",
+                    ))
+                }
+                Ok(written) => offset += written,
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                #[cfg(unix)]
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    std::thread::sleep(DRAIN_IDLE_POLL);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    })
 }
 
 /// Drain one child stream on its own thread into a buffer capped by the shared

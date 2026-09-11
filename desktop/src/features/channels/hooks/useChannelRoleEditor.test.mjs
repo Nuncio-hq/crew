@@ -30,6 +30,7 @@ async function mount({
   pendingDraft = null,
   pendingEntries = null,
   store: suppliedStore = null,
+  initialReadDeferred = false,
 } = {}) {
   const { act, renderHook } = await import("@testing-library/react");
   const { useChannelRoleEditor } = await import("./useChannelRoleEditor.ts");
@@ -69,13 +70,19 @@ async function mount({
     removed: [],
   };
   const requests = [];
+  const initialReads = [];
   const applied = [];
   const calls = [];
   window.__TAURI_INTERNALS__ = {
     invoke: async (command, args) => {
       calls.push(command);
       if (command === "owner_operation_scope") return token;
-      if (command === "get_canvas")
+      if (command === "get_canvas") {
+        if (initialReadDeferred) {
+          const request = deferred();
+          initialReads.push({ command, ...request });
+          return request.promise;
+        }
         return {
           content: "# Latest",
           event_id: "latest-head",
@@ -93,6 +100,7 @@ async function mount({
           dev_mcp_granted: null,
           crew_parse_error: null,
         };
+      }
       if (command === "list_relay_agents") return [];
       if (command === "list_channel_crew_operations")
         return {
@@ -139,11 +147,13 @@ async function mount({
     useChannelRoleEditor("channel", (head) => applied.push(head)),
   );
   await act(async () => {});
-  assert.ok(hook.result.current.draft, "real hook finished its initial load");
+  if (!initialReadDeferred)
+    assert.ok(hook.result.current.draft, "real hook finished its initial load");
   return {
     ...hook,
     act,
     requests,
+    initialReads,
     calls,
     applied,
     token,
@@ -152,6 +162,38 @@ async function mount({
   };
 }
 
+test("initial loading is fenced when the dialog is dismissed before reads settle", async () => {
+  const h = await mount({ pending: false, initialReadDeferred: true });
+  try {
+    assert.equal(h.result.current.busy, true);
+    assert.equal(h.result.current.draft, null);
+    assert.equal(h.initialReads.length, 1);
+
+    // The production Dialog unmounts this hook when its newly-enabled Cancel,
+    // close button, or Escape path calls onClose. Its effect cleanup advances
+    // the ticket, so late reads must not recreate draft state.
+    h.unmount();
+    h.initialReads[0].resolve({
+      content: "# Late canvas",
+      event_id: "late-head",
+      definitions: [],
+      stored_assignments: {},
+      stored_routing: {},
+      stored_capabilities: {},
+      contact_pubkey: null,
+      crew_authority: "owner",
+      crew_parse_state: "valid",
+      routing: [],
+      assignments: [],
+      dev_mcp_granted: null,
+      crew_parse_error: null,
+    });
+    await h.act(async () => {});
+    assert.equal(h.result.current.draft, null);
+  } finally {
+    h.unmount();
+  }
+});
 test("reopened recovery restores the journaled draft, including superseded saves", async () => {
   for (const pendingOutcome of ["not_committed", "superseded"]) {
     const h = await mount({

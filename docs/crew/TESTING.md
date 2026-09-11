@@ -740,6 +740,29 @@ Use `scripts/post-screenshots.sh` on the resulting PR and copy its immutable
 image URLs with concise captions into the issue. Required final CI, independent
 exact-head review and installed release acceptance remain separate gates.
 
+## Wiki installed-runtime generation (#363)
+
+The production Wiki generation seam is covered by the native
+`managed_agents::wiki_runtime`, `wiki_runtime_settings`, and
+`managed_agents::discovery::bounded_command` lanes:
+
+```text
+cargo test --manifest-path desktop/src-tauri/Cargo.toml wiki_runtime --lib
+cargo test --manifest-path desktop/src-tauri/Cargo.toml bounded_command --lib
+```
+
+These tests bind explicit runtime/profile/model validation, owner/community
+preference persistence, immutable source prompt construction, Codex-style
+stdin delivery, isolated disposable state, nonzero failure, cancellation and
+bounded input/output/process cleanup. Native generation also has a 15-minute
+job budget around the 180-second per-page process bound. The legacy unsigned
+preview remains a heuristic fixture; a native publication call with no stored
+or supplied selection fails closed. Fake-process GREEN tests do not certify
+provider auth, effective generation model, or an installed runtime; #348 must
+run one exact staged runtime with a disposable copied profile/config and
+record source revision, runtime/model/profile, output and no employee-session
+mutation.
+
 ## Recap capability source proof (#351)
 
 The default-off native recap slice is tested through its production modules:
