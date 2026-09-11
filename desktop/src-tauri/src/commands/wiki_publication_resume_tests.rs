@@ -251,12 +251,15 @@ async fn cancel_refuses_a_typed_retired_dependency_and_preserves_its_proof() {
     // so the test is falsifiable: moving the cancellation signal above the
     // durable refusal would flip this token.
     let durable = journal.reopened(&id);
-    let generation_key =
-        crate::wiki_worker::generation_cancel_key(&durable.scope.community, &durable.resource_key);
+    let generation_key = crate::wiki_worker::generation_cancel_key(
+        &durable.scope.community,
+        &durable.resource_key,
+        &durable.id,
+        durable.revision,
+    );
     let token = crate::wiki_worker::begin_generation_cancel(&generation_key)
         .expect("active generation token");
-    let refusal = admit_cancel_generation(&durable, &generation_key)
-        .expect_err("Cancel must refuse a retired row");
+    let refusal = admit_cancel_generation(&durable).expect_err("Cancel must refuse a retired row");
     assert_eq!(refusal, RETIRED_CANCEL_REFUSAL);
     assert!(
         !token.load(Ordering::Acquire),

@@ -77,8 +77,13 @@ pub(crate) fn finish_generation_cancel(key: &str, token: &Arc<AtomicBool>) {
     }
 }
 
-pub(crate) fn generation_cancel_key(community: &str, coordinate: &str) -> String {
-    format!("{community}:{coordinate}")
+pub(crate) fn generation_cancel_key(
+    community: &str,
+    coordinate: &str,
+    operation_id: &str,
+    revision: u64,
+) -> String {
+    format!("{community}\u{0}{coordinate}\u{0}{operation_id}\u{0}{revision}")
 }
 
 /// One unsigned page the renderer signs and publishes.
@@ -405,6 +410,30 @@ fn missing_local_outcome(owner: &str, repo_d: &str, cost_note: String) -> WikiGe
 mod tests {
     use super::*;
     use std::process::Command;
+
+    #[test]
+    fn generation_cancel_key_is_bound_to_the_exact_operation_revision() {
+        let first = generation_cancel_key("https://relay.example", "30617:owner:repo", "one", 4);
+        assert_ne!(
+            first,
+            generation_cancel_key("https://relay.example", "30617:owner:repo", "two", 4)
+        );
+        assert_ne!(
+            first,
+            generation_cancel_key("https://relay.example", "30617:owner:repo", "one", 5)
+        );
+
+        let token = begin_generation_cancel(&first).expect("generation token");
+        let stale = generation_cancel_key("https://relay.example", "30617:owner:repo", "one", 5);
+        assert!(
+            !cancel_generation(&stale),
+            "a stale revision must not cancel the live generation"
+        );
+        assert!(!token.load(Ordering::Acquire));
+        assert!(cancel_generation(&first));
+        assert!(token.load(Ordering::Acquire));
+        finish_generation_cancel(&first, &token);
+    }
 
     #[tokio::test]
     async fn wiki_generate_reports_a_bound_non_git_directory_as_missing_local() {

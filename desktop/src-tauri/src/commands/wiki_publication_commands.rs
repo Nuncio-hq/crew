@@ -42,16 +42,13 @@ async fn generate_native_wiki(
     repo_path: Option<&str>,
     workspace_mode: Option<&str>,
     runtime_selection: WikiRuntimeSelection,
+    generation_key: String,
 ) -> Result<WikiGeneration, String> {
     let generation_owner = owner.to_owned();
     let generation_repo = repo_d.to_owned();
     let generation_path = repo_path.map(str::to_owned);
     let generation_mode = workspace_mode.map(str::to_owned);
     let generation_scope = expected.scope.community.clone();
-    let generation_key = super::super::wiki_worker::generation_cancel_key(
-        &generation_scope,
-        &format!("30617:{generation_owner}:{generation_repo}"),
-    );
     let generation_permit: OwnedSemaphorePermit = tokio::time::timeout(
         Duration::from_secs(5),
         generation_admission().acquire_owned(),
@@ -145,11 +142,20 @@ pub(super) use projection::{cancel_intent, wiki_operation_summaries, wiki_operat
 /// Regenerate-only refusal atomic with respect to the cancellation registry.
 pub(super) fn admit_cancel_generation(
     operation: &Operation,
-    generation_key: &str,
 ) -> Result<WikiPublicationRecord, String> {
-    let record = cancel_intent(operation)?;
+    cancel_intent(operation)
+}
+
+/// Signal a foreground generation only after its cancellation CAS succeeded.
+/// A failed durable update must leave the running generation untouched because
+/// recovery still owns the original journal row.
+pub(super) fn signal_generation_after_cancel<T>(
+    result: Result<T, String>,
+    generation_key: &str,
+) -> Result<T, String> {
+    let value = result?;
     super::super::wiki_worker::cancel_generation(generation_key);
-    Ok(record)
+    Ok(value)
 }
 
 // The Cancel guard's predicate and its exact refusal text are consumed by the
@@ -200,6 +206,13 @@ pub(crate) async fn wiki_publication_prepare(
     runtime_selection: Option<WikiRuntimeSelection>,
 ) -> Result<ScopedOperationResult<WikiPublicationPrepareResult>, String> {
     let (owner, repo_d) = coordinate_parts(&coordinate)?;
+    let operation_id = uuid::Uuid::new_v4().to_string();
+    let generation_key = super::super::wiki_worker::generation_cancel_key(
+        &expected.scope.community,
+        &coordinate,
+        &operation_id,
+        0,
+    );
     let runtime_selection =
         resolve_wiki_runtime_selection(app.clone(), &expected, &coordinate, runtime_selection)
             .await?;
@@ -216,6 +229,7 @@ pub(crate) async fn wiki_publication_prepare(
         repo_path.as_deref(),
         workspace_mode.as_deref(),
         runtime_selection,
+        generation_key,
     )
     .await?;
     // Long local capture/generation must never publish against a head that
@@ -278,7 +292,6 @@ pub(crate) async fn wiki_publication_prepare(
         .map_err(|_| "Wiki publication recovery serialization failed.".to_string())?;
     super::wiki_publication_worker::start(app.clone());
     super::wiki_publication_worker::reserve(&app, &expected, &coordinate);
-    let operation_id = uuid::Uuid::new_v4().to_string();
     let result = owner_operation_create(
         app.clone(),
         expected.clone(),
@@ -486,6 +499,12 @@ pub(crate) async fn wiki_publication_regenerate(
     let runtime =
         NativeWikiPublication::new(app.clone(), expected.clone(), &predecessor.resource_key)
             .await?;
+    let generation_key = super::super::wiki_worker::generation_cancel_key(
+        &expected.scope.community,
+        &predecessor.resource_key,
+        &predecessor.id,
+        predecessor.revision,
+    );
     runtime.repository_head().await?;
     let before_head = runtime.current_head().await?;
     let generation = generate_native_wiki(
@@ -495,6 +514,7 @@ pub(crate) async fn wiki_publication_regenerate(
         repo_path.as_deref(),
         workspace_mode.as_deref(),
         runtime_selection,
+        generation_key,
     )
     .await?;
     let after_head = runtime.current_head().await?;
@@ -744,13 +764,15 @@ pub(crate) async fn wiki_publication_cancel(
     let generation_key = super::super::wiki_worker::generation_cancel_key(
         &expected.scope.community,
         &operation.resource_key,
+        &operation.id,
+        operation.revision,
     );
     // A prepare/regenerate call may still own a local runtime while the
     // renderer submits Cancel. This flag only reaches the process registered
     // for this exact owner/community/repository; it never touches an employee
     // runtime or another community. The production seam validates the durable
     // row first, so a stale Cancel cannot stop an active Regenerate.
-    let mut record = admit_cancel_generation(&operation, &generation_key)?;
+    let mut record = admit_cancel_generation(&operation)?;
     let runtime =
         NativeWikiPublication::new(app.clone(), expected.clone(), &operation.resource_key).await?;
     let current_head = runtime.current_head().await?;
@@ -791,7 +813,8 @@ pub(crate) async fn wiki_publication_cancel(
             payload,
         },
     )
-    .await?;
+    .await;
+    let result = signal_generation_after_cancel(result, &generation_key)?;
     super::wiki_publication_worker::wake(&app);
     assert_current(app, &expected).await?;
     Ok(ScopedOperationResult {
