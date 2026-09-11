@@ -342,7 +342,32 @@ removes route evidence before quota rows before tombstoning the community.
 
 Proposed behavior: human-authored channel messages and thread replies without explicit mention targets go to the selected contact; explicit mentions take priority and do not also wake the contact. Agent messages cannot trigger this fallback. The contact does not become the thread owner, gain a role, or gain tools. None leaves mention-only behavior. Missing, removed, or unavailable contacts require a visible unresolved state with no silent replacement. The real implementation must verify authors/structured mention targets, membership and canvas signer; retain kind/channel/access gates, deduplicate event delivery, fence stale subscriptions when contact changes, and handle acknowledgement/conflicts on save. Live validation must cover bot-loop prevention, mention priority, channel isolation, contact replacement/removal, reconnect and two-client edits. The prototype uses local atomic role/contact state and text matching for sample messages only.
 
-The v0.8 prototype adds agent deletion, recap settings and an Agent plans tab. Deletion maps to the existing `delete_managed_agent` lifecycle in `commands/agents.rs`: stop the process under the managed-store/process locks, recover/clear Bestie assignments through its existing journal, remove the record/key and enqueue identity tombstone/archive. This journal does not yet perform relay canvas role/contact cleanup. Preserve the deployed-remote guard and the existing higher-level deletion orchestration. The prototype retains an identity tombstone for historical display and projects active pickers/roles/contact from it; this local projection does not establish successful relay cleanup. Canvas role/contact removal must join a durable cleanup/retry flow before agent deletion can claim that cleanup.
+Managed-agent deletion uses the existing `delete_managed_agent` command plus a
+bounded owner-operation record. The coordinator snapshots the exact managed
+record and channel membership, reserves one cleanup UUID per channel, then
+stops and removes the local record under the managed-store/process locks. It
+releases those locks before calling `save_channel_crew_member_cleanup`; the
+outer record retains every unresolved channel step, key/tombstone step and
+failure for startup recovery. Only unchanged or applied channel outcomes mark
+the deletion complete; conflicts and exhausted retries remain reviewable.
+The native journal validates this progression on every create and compare-and-
+swap, while the renderer-facing generic create/update adapter rejects
+managed-delete records entirely; only the native deletion coordinator can
+advance them. A provider deployment checks the claim before invoking the
+provider and again, under the transition/store fence, before persisting its
+receipt, so a delete claimed during provider I/O cannot be overwritten by a
+stale completion. Deletion also waits on the same per-agent provider lock
+before capturing a remote record, so an in-flight deployment either finishes
+before the deletion fence or is blocked by it. Spawn, restart, lazy reconcile
+and launch restore all check the claim while holding the same transition/store
+fence used to reserve deletion.
+Canvas discovery pages signed kind 40100 history with the relay's composite
+cursor and fails closed when the bounded scan cannot prove exhaustion. The
+native recovery list exposes redacted unresolved summaries across communities;
+status and retry require switching to the operation's captured community. The
+deployed-remote guard and the existing Bestie assignment journal remain active.
+The identity tombstone/archive is retained for historical display and active
+pickers; it does not replace relay-authoritative channel cleanup.
 
 The Agents directory reuses the existing persona and managed-instance queries. Each query failure exposes its own Retry action, retaining any cached cards while the failed query recovers. Instance Delete confirmation names the agent and is keyed by its public key: replacing the selected instance dismisses the confirmation, including same-name replacements. Renaming the same identity preserves its target. Cancel performs no removal. Relay-only rows use the existing policy-filtered relay query, exclude local instance keys and archived identities, and open the exact public-key profile without local management controls. Unknown local inventory blocks relay-only classification and offers Retry. Directory/profile Start and Restart, and profile Message, capture the community and signer for existing native scope assertions; component lifetime and target checks discard stale completions. Message pending state belongs to its captured scope, so changing scope permits a new operation and a retired completion cannot clear its pending state. These directory controls do not establish successful native process termination or canvas cleanup; those require separate runtime evidence.
 

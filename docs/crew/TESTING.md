@@ -563,6 +563,19 @@ identity; v4-specific cases cover tag-order/path preservation and pre-persist
 intent validation. This lane does not prove the relay's conditional capability
 advertisement or installed picker behavior.
 
+The managed-agent deletion coordinator has a focused native lane:
+
+```text
+cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml \
+  -p buzz-desktop --lib managed_agent_delete -- --test-threads=1
+```
+
+It binds the production deletion journal's payload validator, channel cleanup
+operation UUIDs, exact-record fence, key/tombstone ordering, UTF-8 error cap,
+review-state recovery rules, global claim/list behavior, and renderer-terminal
+mutation rejection. A passing local lane does not prove installed process
+termination or relay readback; those remain runtime acceptance gates.
+
 Related issues may reuse one unchanged build and owned real-data run; keep an
 explicit issue-to-case mapping and post evidence on each corresponding issue.
 Record candidate SHA/build, source revision, runtime/model/profile, test data

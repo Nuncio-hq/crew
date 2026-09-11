@@ -127,8 +127,27 @@ impl OperationStore {
         if new.resource_key.is_empty() || new.resource_key.len() > 512 || now < 0 {
             return Err(StoreError::Invalid);
         }
+        if new.kind == super::OperationKind::ManagedAgentDelete {
+            super::managed_delete_claim::validate_pubkey(&new.resource_key)?;
+        }
         let limits = self.limits;
         let creation_digest = initial_digest(&new, limits)?;
+        let candidate = Operation {
+            version: 1,
+            scope: scope.clone(),
+            id: new.id.clone(),
+            kind: new.kind,
+            resource_key: new.resource_key.clone(),
+            revision: 0,
+            created_at: now,
+            updated_at: now,
+            status: OperationStatus::Preparing,
+            reconciled: false,
+            payload: new.payload.clone(),
+        };
+        if candidate.kind == super::OperationKind::ManagedAgentDelete {
+            super::validate_managed_agent_delete_record(&candidate)?;
+        }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -145,7 +164,33 @@ impl OperationStore {
             {
                 return Err(StoreError::Conflict);
             }
+            if existing.kind == super::OperationKind::ManagedAgentDelete {
+                super::validate_managed_agent_delete_record(&existing)
+                    .map_err(|_| StoreError::Corrupt)?;
+            }
             return Ok(CreateResult::Existing(existing));
+        }
+        if new.kind == super::OperationKind::ManagedAgentDelete {
+            if let Some(existing) = super::managed_delete_claim::claim(
+                &tx,
+                &new.resource_key,
+                limits.bytes_per_operation,
+            )? {
+                if existing.scope != *scope {
+                    return Err(StoreError::Busy);
+                }
+                let stored_digest: Option<Vec<u8>> = tx
+                    .query_row(
+                        "SELECT CASE WHEN length(initial_digest)=32 THEN initial_digest END FROM operations WHERE owner=?1 AND community=?2 AND id=?3",
+                        params![scope.owner, scope.community, existing.id],
+                        |row| row.get(0),
+                    )
+                    .map_err(sql_error)?;
+                if stored_digest.ok_or(StoreError::Corrupt)? != creation_digest {
+                    return Err(StoreError::Conflict);
+                }
+                return Ok(CreateResult::Existing(existing));
+            }
         }
         let claimed: Option<String> = tx.query_row("SELECT id FROM operations WHERE owner=?1 AND community=?2 AND kind=?3 AND resource_key=?4 AND reconciled=0", params![scope.owner,scope.community,kind_key(new.kind),new.resource_key], |row|row.get(0)).optional().map_err(sql_error)?;
         if let Some(id) = claimed {
@@ -163,19 +208,7 @@ impl OperationStore {
                 read(&tx, scope, &id, limits.bytes_per_operation)?.ok_or(StoreError::Corrupt)?,
             ));
         }
-        let op = Operation {
-            version: 1,
-            scope: scope.clone(),
-            id: new.id,
-            kind: new.kind,
-            resource_key: new.resource_key,
-            revision: 0,
-            created_at: now,
-            updated_at: now,
-            status: OperationStatus::Preparing,
-            reconciled: false,
-            payload: new.payload,
-        };
+        let op = candidate;
         let json = encode(&op, limits)?;
         tx.execute("INSERT INTO operations(owner,community,id,kind,resource_key,revision,created_at,updated_at,status,reconciled,record_json,bytes,initial_digest) VALUES(?1,?2,?3,?4,?5,0,?6,?6,?7,0,?8,?9,?10)",
             params![scope.owner,scope.community,op.id,kind_key(op.kind),op.resource_key,now,serde_json::to_string(&op.status).map_err(|_|StoreError::Invalid)?,json,json.len() as i64,creation_digest]).map_err(sql_error)?;
@@ -227,6 +260,9 @@ impl OperationStore {
         op.status = update.status;
         op.reconciled = update.reconciled;
         op.payload = update.payload;
+        if op.kind == super::OperationKind::ManagedAgentDelete {
+            super::validate_managed_agent_delete_record(&op)?;
+        }
         let json = encode(&op, limits)?;
         tx.execute("UPDATE operations SET revision=?4,updated_at=?5,status=?6,reconciled=?7,record_json=?8,bytes=?9 WHERE owner=?1 AND community=?2 AND id=?3",
             params![scope.owner,scope.community,id,op.revision,now,serde_json::to_string(&op.status).map_err(|_|StoreError::Invalid)?,op.reconciled,json,json.len() as i64]).map_err(sql_error)?;

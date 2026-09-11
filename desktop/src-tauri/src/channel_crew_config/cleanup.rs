@@ -16,7 +16,7 @@ use tauri::AppHandle;
 /// The deletion coordinator must persist its channel-to-operation UUID before
 /// calling this helper, and must release managed-store/process locks first.
 /// Only applied or unchanged completes cleanup; partial/superseded stays durable.
-#[allow(dead_code)] // Entry point for the separately integrated durable deletion coordinator.
+/// Entry point for the durable managed-agent deletion coordinator.
 pub(crate) async fn save_channel_crew_member_cleanup(
     app: AppHandle,
     expected: OwnerScopeToken,
@@ -57,6 +57,11 @@ pub(crate) async fn save_channel_crew_member_cleanup(
     let backend = NativeBackend::new(app, &expected).await?;
     let _guard = super::save_lock::acquire(&expected, &channel_id).await?;
     let current = backend.head(&expected.scope.community, &channel_id).await?;
+    // A deletion coordinator may not have a canvas head at journal creation
+    // time. Bind a wildcard cleanup to the head read under the channel lock;
+    // passing `None` through to `prepare_cleanup` would always conflict when
+    // a canvas exists because its optimistic head check is exact.
+    let expected_head = expected_head.or_else(|| current.as_ref().map(|event| event.id.to_hex()));
     let known = BTreeSet::new();
     let prepared = prepare::prepare_cleanup(
         Input {

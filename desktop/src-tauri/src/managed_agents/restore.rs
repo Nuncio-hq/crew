@@ -100,7 +100,24 @@ pub async fn restore_managed_agents_on_launch(
         return Ok(());
     }
 
+    // Replay durable managed-agent deletions before restoring saved processes.
+    // The replay owns its own scoped/store locks and releases them before
+    // channel relay work, so a crashed deletion cannot be hidden by startup.
+    if let Err(error) = crate::managed_agent_delete::recover(app).await {
+        // A failed deletion may already have removed the local record while
+        // leaving relay/key cleanup unresolved. Do not restore any saved
+        // process after that failure: startup must remain fail-closed until a
+        // user explicitly retries the durable deletion operation.
+        return Err(format!(
+            "managed-agent deletion recovery requires attention: {error}"
+        ));
+    }
+
     let state = app.state::<AppState>();
+    // Open the journal before taking the managed-agent store lock. The native
+    // SQLite claim is then read under the existing store lock without changing
+    // the lock order used by spawn/delete transitions.
+    let journal = crate::managed_agent_delete::open_journal_store(app)?;
 
     // ── Phase A (under lock): housekeeping + collect agents to restore ──
     let mut agents_to_start: Vec<super::ManagedAgentRecord>;
@@ -171,9 +188,19 @@ pub async fn restore_managed_agents_on_launch(
         // replacing the three separate kernel enumerations.
         super::sweep_untracked_bundle_harnesses(&tracked_pids);
 
+        let mut blocked_by_pending_deletion = std::collections::HashSet::new();
+        for record in &records {
+            if crate::managed_agent_delete::pending_in_store(&journal, &record.pubkey)? {
+                blocked_by_pending_deletion.insert(record.pubkey.clone());
+            }
+        }
         let candidates: Vec<String> = records
             .iter()
-            .filter(|record| record.start_on_app_launch && record.backend == BackendKind::Local)
+            .filter(|record| {
+                record.start_on_app_launch
+                    && record.backend == BackendKind::Local
+                    && !blocked_by_pending_deletion.contains(&record.pubkey)
+            })
             .map(|record| record.pubkey.clone())
             .collect();
 
@@ -286,11 +313,32 @@ pub async fn restore_managed_agents_on_launch(
     // shutdown flag is rechecked after taking the lock so shutdown either
     // prevents this transition or waits until every child is tracked and can
     // be terminated.
+    // Open the journal before taking the transition/store locks. Once the
+    // transition lock is held, this second fence is atomic with deletion's
+    // final claim and one shared SQLite connection avoids N parallel opens.
+    let journal = crate::managed_agent_delete::open_journal_store(app)?;
     let restore_transition = state
         .managed_agent_runtime_transition
         .lock()
         .map_err(|error| error.to_string())?;
     if shutdown_started.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    let agents_to_start: Vec<_> = {
+        let _store_guard = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let mut allowed = Vec::with_capacity(agents_to_start.len());
+        for record in agents_to_start {
+            if !crate::managed_agent_delete::pending_in_store(&journal, &record.pubkey)? {
+                allowed.push(record);
+            }
+        }
+        allowed
+    };
+    if agents_to_start.is_empty() {
         return Ok(());
     }
 
