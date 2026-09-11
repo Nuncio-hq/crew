@@ -11,7 +11,8 @@ test.use({ video: "on", viewport: { width: 1280, height: 720 } });
 test.describe.configure({ timeout: 90_000 });
 
 async function openWiki(page: import("@playwright/test").Page) {
-  await page.getByTestId("open-wiki-view").click();
+  await page.getByTestId("workspace-menu-trigger").click();
+  await page.getByTestId("workspace-company-wiki").click();
   await expect(page).toHaveURL(/#\/wiki$/);
   await expect(page.getByTestId("wiki-library")).toBeVisible();
   await expect(page.getByText("Create company page")).toHaveCount(0);
@@ -24,9 +25,10 @@ test.describe("Crew Wiki (#200)", () => {
   }) => {
     await installMockBridge(page);
     await page.goto("/");
-    await expect(page.getByTestId("open-wiki-view")).toBeVisible();
+    await expect(page.getByTestId("workspace-menu-trigger")).toBeVisible();
 
     await openWiki(page);
+    await expect(page.getByTestId("wiki-recovery-error")).toHaveCount(0);
     await waitForAnimations(page);
     await page
       .getByTestId("wiki-library")
@@ -150,29 +152,27 @@ test.describe("Crew Wiki (#200)", () => {
 
     await page.getByTestId("wiki-ask-mode").selectOption("qa");
     await page.getByTestId("wiki-ask-input").fill("What is Crew Wiki?");
-    await page
-      .getByTestId("wiki-ask")
-      .getByRole("button", { name: "Ask" })
-      .click();
-    await expect(page.getByTestId("wiki-ask-answer")).toBeVisible();
+    await expect(page.getByTestId("wiki-ask-unavailable")).toBeVisible();
+    await expect(
+      page.getByTestId("wiki-ask").getByRole("button", { name: "Ask" }),
+    ).toBeDisabled();
+    await expect(page.getByTestId("wiki-ask-answer")).toHaveCount(0);
     await waitForAnimations(page);
     await page
       .getByTestId("wiki-ask")
-      .screenshot({ path: `${SHOTS}/08-ask-qa.png` });
+      .screenshot({ path: `${SHOTS}/08-ask-unavailable-qa.png` });
 
     await page.getByTestId("wiki-ask-mode").selectOption("plan");
     await page
       .getByTestId("wiki-ask-input")
       .fill("How should we document the relay?");
-    await page
-      .getByTestId("wiki-ask")
-      .getByRole("button", { name: "Ask" })
-      .click();
-    await expect(page.getByTestId("wiki-start-thread")).toBeVisible();
+    await page.getByTestId("wiki-ask-input").press("Enter");
+    await expect(page.getByTestId("wiki-ask-unavailable")).toBeVisible();
+    await expect(page.getByTestId("wiki-start-thread")).toHaveCount(0);
     await waitForAnimations(page);
     await page
       .getByTestId("wiki-ask")
-      .screenshot({ path: `${SHOTS}/09-ask-plan.png` });
+      .screenshot({ path: `${SHOTS}/09-ask-unavailable-plan.png` });
 
     await page
       .getByTestId("wiki-markdown")
@@ -222,7 +222,7 @@ test.describe("Crew Wiki (#200)", () => {
       .screenshot({ path: `${SHOTS}/11-project-wiki-tab.png` });
 
     await openWiki(page);
-    await page.getByTestId("wiki-company-card").click();
+    await page.getByTestId("wiki-company-card").getByRole("button").click();
     await expect(page.getByTestId("wiki-company-empty")).toBeVisible();
     await waitForAnimations(page);
     await page
@@ -248,18 +248,13 @@ test.describe("Crew Wiki (#200)", () => {
 
     await page.getByTestId("wiki-ask-mode").selectOption("plan");
     await page.getByTestId("wiki-ask-input").fill("plan a company wiki pass");
-    await page
-      .getByTestId("wiki-ask")
-      .getByRole("button", { name: "Ask" })
-      .click();
-    await page.getByTestId("wiki-plan-channel").selectOption({ index: 1 });
-    await page.getByTestId("wiki-start-thread").click();
-    await expect(page).toHaveURL(/#\/channels\//);
-    await expect(page.locator(".ProseMirror").first()).toContainText("Plan");
+    await page.getByTestId("wiki-ask-input").press("Enter");
+    await expect(page.getByTestId("wiki-ask-unavailable")).toBeVisible();
+    await expect(page.getByTestId("wiki-start-thread")).toHaveCount(0);
+    await expect(page).toHaveURL(/#\/wiki$/);
     await waitForAnimations(page);
     await page
-      .locator(".ProseMirror")
-      .first()
-      .screenshot({ path: `${SHOTS}/14-plan-thread.png` });
+      .getByTestId("wiki-ask")
+      .screenshot({ path: `${SHOTS}/14-company-ask-unavailable.png` });
   });
 });
