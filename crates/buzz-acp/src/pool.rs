@@ -4747,6 +4747,12 @@ impl ThreadWorkspaceProvisionError {
         {
             return format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {error}");
         }
+        if let Some(error) = self
+            .source
+            .downcast_ref::<crate::thread_workspace::ThreadWorkspaceConfigLockError>()
+        {
+            return format!("{THREAD_WORKSPACE_ERROR_MESSAGE} {error}");
+        }
         if let Some(error) = self.source.downcast_ref::<buzz_worktree::LeaseError>() {
             return format!(
                 "{THREAD_WORKSPACE_ERROR_MESSAGE} {}",
@@ -10838,6 +10844,30 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         assert!(message.contains(THREAD_WORKSPACE_ERROR_MESSAGE));
         assert!(message.contains("buzz/961330b91025"));
         assert!(message.contains("already exists"));
+    }
+
+    #[test]
+    fn thread_workspace_config_lock_is_protocol_retry_error_not_prepare_refusal() {
+        let root_id = "c".repeat(64);
+        let lock = crate::thread_workspace::ThreadWorkspaceConfigLockError {
+            path: PathBuf::from("/tmp/crew-config-lock/.git/config"),
+            branch: "buzz/cccccccccccc".into(),
+            root_event_id: root_id.clone(),
+            git_stderr: "fatal: could not lock config file .git/config: File exists".into(),
+            attempts: 6,
+        };
+        let provision = thread_workspace_provision_error(&root_id, lock.into());
+        let message = provision.protocol_message();
+        assert!(message.contains(THREAD_WORKSPACE_ERROR_MESSAGE));
+        assert!(message.contains("config.lock"));
+        assert!(message.contains("retry"));
+        assert!(
+            provision
+                .source
+                .downcast_ref::<crate::thread_workspace::ThreadWorkspacePrepareFailed>()
+                .is_none(),
+            "config-lock failures must stay on the retryable protocol path"
+        );
     }
 
     // ── ControlSignal::SwitchModel (Phase 3a, Option ii) ─────────────────────

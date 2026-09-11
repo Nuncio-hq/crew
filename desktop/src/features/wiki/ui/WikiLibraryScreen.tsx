@@ -145,6 +145,8 @@ export function WikiLibraryScreen() {
     );
     const selectedReadStatus =
       eventsQuery.data?.repositoryStatuses[selectedCoordinate];
+    const selectedSnapshot =
+      eventsQuery.data?.repositorySnapshots[selectedCoordinate] ?? null;
     const selectedJob = jobForRepo(jobs, selected.owner ?? "", selected.repoD);
     const selectedScope = eventsQuery.scopeQuery.error
       ? undefined
@@ -193,6 +195,7 @@ export function WikiLibraryScreen() {
         repoState={repoState}
         workspaceMode={repo?.workspaceMode}
         readStatus={selectedReadStatus}
+        snapshot={selectedSnapshot}
         onRetryRead={() => eventsQuery.retryRepository(selectedCoordinate)}
         recoveryJob={selectedJob}
         onRecoveryRetry={

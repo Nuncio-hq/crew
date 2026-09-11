@@ -1973,6 +1973,18 @@ async fn handle_bridge_search(
                 Some(au.iter().map(|a| a.to_bytes().to_vec()).collect::<Vec<_>>())
             }
         });
+        let ids = filter.ids.as_ref().and_then(|id_set| {
+            if id_set.is_empty() {
+                None
+            } else {
+                Some(
+                    id_set
+                        .iter()
+                        .map(|id| id.to_bytes().to_vec())
+                        .collect::<Vec<_>>(),
+                )
+            }
+        });
         let since = filter.since.map(|s| s.as_secs() as i64);
         let until = filter.until.map(|u| u.as_secs() as i64);
 
@@ -1991,7 +2003,7 @@ async fn handle_bridge_search(
 
         let search_result = state
             .search
-            .search(&search_query)
+            .search_with_ids(&search_query, ids.as_deref())
             .await
             .map_err(|e| internal_error(&format!("search error: {e}")))?;
 

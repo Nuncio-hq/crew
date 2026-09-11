@@ -57,6 +57,7 @@ export function WikiProjectTab({ project }: { project: Repository }) {
         )),
   );
   const readStatus = eventsQuery.data?.repositoryStatuses[coordinate];
+  const snapshot = eventsQuery.data?.repositorySnapshots[coordinate] ?? null;
   return (
     <WikiPageView
       admin={false}
@@ -72,6 +73,7 @@ export function WikiProjectTab({ project }: { project: Repository }) {
       workspaceMode={project.workspaceMode}
       repoState={repoState}
       readStatus={readStatus}
+      snapshot={snapshot}
       onRetryRead={() => eventsQuery.retryRepository(coordinate)}
       operationScope={operationScope}
       toc={toc}

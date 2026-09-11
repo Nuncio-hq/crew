@@ -451,6 +451,7 @@ macro_rules! desktop_invoke_handler {
             wiki_runtime_settings_set,
             wiki_runtime_settings_clear,
             wiki_snapshot_read,
+            wiki_search,
             project_change_link_prepare,
             project_change_attach_repository_prepare,
             project_change_link_workspace_prepare,

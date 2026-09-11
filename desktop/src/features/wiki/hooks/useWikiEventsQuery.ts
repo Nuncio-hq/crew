@@ -41,6 +41,8 @@ export type WikiEventsProjection = {
   pages: WikiPage[];
   company: CompanyWikiPage[];
   states: RelayEvent[];
+  /** Complete immutable snapshot per repository for scoped body search. */
+  repositorySnapshots: Record<string, WikiSnapshotRead | null>;
   repositoryStatuses: Record<string, WikiRepositoryReadStatus>;
   companyError: Error | null;
 };
@@ -89,9 +91,11 @@ function flattenRepositoryProjection(
   const tocs: WikiToc[] = [];
   const pages: WikiPage[] = [];
   const states: RelayEvent[] = [];
+  const repositorySnapshots: Record<string, WikiSnapshotRead | null> = {};
   const repositoryStatuses: Record<string, WikiRepositoryReadStatus> = {};
   for (const [coordinate, value] of projected) {
     repositoryStatuses[coordinate] = value.status;
+    repositorySnapshots[coordinate] = value.snapshot;
     if (value.repoStateFresh && value.repoState) states.push(value.repoState);
     const snapshot = value.snapshot;
     if (
@@ -120,7 +124,7 @@ function flattenRepositoryProjection(
       if (page) pages.push(page);
     }
   }
-  return { tocs, pages, states, repositoryStatuses };
+  return { tocs, pages, states, repositorySnapshots, repositoryStatuses };
 }
 
 function tagValue(event: RelayEvent, name: string): string | undefined {
@@ -156,6 +160,11 @@ function filterRepositoryProjection(
     states,
     repositoryStatuses: Object.fromEntries(
       Object.entries(projection.repositoryStatuses).filter(([coordinate]) =>
+        coordinates.has(coordinate),
+      ),
+    ),
+    repositorySnapshots: Object.fromEntries(
+      Object.entries(projection.repositorySnapshots).filter(([coordinate]) =>
         coordinates.has(coordinate),
       ),
     ),
@@ -391,6 +400,7 @@ export function useWikiEventsQuery(
       tocs: [],
       pages: [],
       states: [],
+      repositorySnapshots: {},
       repositoryStatuses: {},
     };
     const repositoryData =

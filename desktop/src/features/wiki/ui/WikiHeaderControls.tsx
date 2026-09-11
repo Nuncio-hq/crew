@@ -15,6 +15,7 @@ import {
 import type { OwnerOperationScope } from "@/shared/api/ownerOperations";
 import type { RelayEvent } from "@/shared/api/types";
 import { WikiRuntimeSettingsControl } from "@/features/wiki/ui/WikiRuntimeSettingsControl";
+import { MAX_WIKI_SEARCH_QUERY_CHARS } from "@/shared/api/wikiSearch";
 
 export function WikiHeaderControls({
   toc,
@@ -247,6 +248,7 @@ export function WikiHeaderControls({
           aria-label="Search wiki"
           className="h-7 w-32 rounded-md border border-border bg-background px-2 text-2xs"
           data-testid="wiki-page-search"
+          maxLength={MAX_WIKI_SEARCH_QUERY_CHARS}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder="Search"
           value={search ?? ""}
