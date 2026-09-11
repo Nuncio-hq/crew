@@ -497,6 +497,22 @@ cargo test --manifest-path desktop/src-tauri/Cargo.toml \
 These fixture and mock-bridge checks do not establish installed Hermes staging,
 relay health, or receipt acceptance. Those remain separate #338/#348 gates.
 
+## Wiki Ask unavailable placeholder
+
+The production `WikiAskBox` stays visible while Ask is unavailable. Its focused
+regression suite proves the accessible unavailable status, editable question and
+mode controls, and no answer, draft write, or channel navigation through pointer,
+keyboard, or IME submission paths:
+
+```text
+cd desktop
+node --import ./test-loader.mjs --experimental-strip-types --test \
+  src/features/wiki/ui/WikiAskBox.unavailable.test.mjs
+```
+
+This is a fail-closed UI guard; #366/#367's private runtime, history, durable
+draft, and explicit dispatch evidence remain pending.
+
 ## Wiki Protocol B live acceptance
 
 The independent Wiki protocol harness is also skipped by the normal desktop

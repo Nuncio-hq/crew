@@ -26,6 +26,9 @@ observer completion is [#352](https://github.com/Nuncio-hq/crew/issues/352). Too
 Crew Dark, text-only zoom, the 1000-line ratchet, and composer-revision mention
 flow are shipped. Agent membership is unknown unless runtime nonce, transport,
 and community scope match.
+The Project/Wiki Ask composer is visible but disabled with a plain unavailable
+message; its former sample answer and channel prefill are removed while
+#366/#367's private runtime, history, storage, and dispatch gates remain open.
 
 ## Hermes
 
