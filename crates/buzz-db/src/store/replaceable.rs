@@ -9,6 +9,8 @@ use uuid::Uuid;
 use crate::observability::{self, LockType, TransactionOperation};
 use crate::{Db, DbError, Result};
 
+type ExistingReplaceableRow = (DateTime<Utc>, Vec<u8>, bool, bool, bool, i64);
+
 #[path = "replaceable_conditions.rs"]
 mod conditions;
 pub use conditions::{ParameterizedReplacePrecondition, ParameterizedReplaceStatus};
