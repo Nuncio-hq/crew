@@ -9,7 +9,7 @@
 use crate::admission::AdmissionError;
 use crate::connection::{AuthState, ConnectionState};
 use crate::protocol::{ClientMessage, RelayMessage};
-use crate::state::AppState;
+use crate::state::{AppState, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT};
 use axum::extract::ws::Message as WsMessage;
 use buzz_auth::LimitType;
 
@@ -56,6 +56,21 @@ pub(crate) async fn reject_revoked_connection(
     target: RejectionTarget<'_>,
     reason: &str,
 ) {
+    // Self-leave holds this fence from before its durable delete through its
+    // event ACK and policy close. Wait for that finalization before evicting
+    // subscriptions or cancelling a request that raced with it; otherwise a
+    // late REQ/EVENT could cancel the origin before its leave ACK is queued.
+    // Bare test/teardown senders are not in the manager and retain the direct
+    // fallback behavior below.
+    let _revocation_guard = if state.conn_manager.has_connection(conn.conn_id) {
+        state
+            .conn_manager
+            .acquire_revocation_lock(conn.conn_id, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT)
+            .await
+    } else {
+        None
+    };
+
     let target_sub_id = match target {
         RejectionTarget::Subscription(sub_id) => Some(sub_id),
         RejectionTarget::Event(_) | RejectionTarget::Connection => None,
@@ -201,6 +216,7 @@ mod tests {
     //! connection's outbound channel.
 
     use std::sync::Arc;
+    use std::time::Duration;
 
     use axum::extract::ws::Message as WsMessage;
     use nostr::{EventBuilder, Keys, Kind};
@@ -401,5 +417,73 @@ mod tests {
             "a revoked REQ must settle on CLOSED before cancellation"
         );
         assert!(conn.cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn revoked_request_waits_for_self_leave_ack_before_cancelling() {
+        let state = crate::state::tests::test_state().await;
+        let (conn, _send_rx, mut ctrl_rx) = test_conn_with_auth_and_ctrl(authenticated_state());
+        state.conn_manager.register(
+            conn.conn_id,
+            conn.send_tx.clone(),
+            conn.ctrl_tx.clone(),
+            None,
+            conn.cancel.clone(),
+            conn.tenant.community(),
+            Arc::clone(&conn.backpressure_count),
+            Arc::clone(&conn.subscriptions),
+            conn.grace_limit,
+        );
+        let leave_guard = state
+            .conn_manager
+            .try_acquire_revocation_lock(conn.conn_id)
+            .expect("self-leave fence");
+
+        let rejection = tokio::spawn({
+            let state = Arc::clone(&state);
+            let conn = Arc::clone(&conn);
+            async move {
+                reject_revoked_connection(
+                    &state,
+                    &conn,
+                    RejectionTarget::Subscription("raced-req"),
+                    crate::state::RELAY_MEMBERSHIP_REVOKED_REASON,
+                )
+                .await;
+            }
+        });
+        let mut rejection = rejection;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut rejection)
+                .await
+                .is_err(),
+            "a request racing a self-leave must wait for the leave finalization"
+        );
+        assert!(!conn.cancel.is_cancelled());
+        assert!(matches!(
+            ctrl_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+
+        // Model the self-leave finalizer's already-queued successful event ACK.
+        conn.ctrl_tx
+            .try_send(WsMessage::Text(
+                RelayMessage::ok(&"a".repeat(64), true, "you left").into(),
+            ))
+            .expect("queue self-leave ACK");
+        drop(leave_guard);
+
+        tokio::time::timeout(Duration::from_secs(1), &mut rejection)
+            .await
+            .expect("revoked request should finish after the leave fence releases")
+            .expect("revoked request task should not panic");
+        let leave_ack = read_frame(&mut ctrl_rx);
+        assert_eq!(leave_ack[0], "OK");
+        assert_eq!(leave_ack[2], true);
+        let request_closed = read_frame(&mut ctrl_rx);
+        assert_eq!(request_closed[0], "CLOSED");
+        assert_eq!(request_closed[1], "raced-req");
+        assert!(conn.cancel.is_cancelled());
+        state.conn_manager.deregister(conn.conn_id);
     }
 }

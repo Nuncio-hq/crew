@@ -47,6 +47,11 @@ use crate::state::AppState;
 
 use super::event::dispatch_persistent_event;
 
+/// Stable rejection text for a leave that lost its durable membership row to
+/// a concurrent revocation. The WebSocket handler uses this exact value to
+/// retain ownership of the originating event's `OK false` response.
+pub(crate) const RELAY_MEMBERSHIP_NOT_FOUND_MESSAGE: &str = "invalid: you are not a relay member";
+
 use crate::conformance::{
     self as conf, channel_label, claimed_community_from_event, emit, msg_id_label,
     state_for_request, EmitGuard, TraceAction, Verdict,
@@ -3009,7 +3014,7 @@ async fn ingest_event_inner(
             }
             buzz_db::relay_members::RemoveResult::NotFound => {
                 return Err(IngestError::Rejected(
-                    "invalid: you are not a relay member".into(),
+                    RELAY_MEMBERSHIP_NOT_FOUND_MESSAGE.to_owned(),
                 ));
             }
             buzz_db::relay_members::RemoveResult::IsOwner => {

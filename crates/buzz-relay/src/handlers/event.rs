@@ -850,7 +850,7 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
     // durable sweep before ingest can delete the sender's membership row. A
     // second membership read after the bounded wait closes the race where a
     // competing admin removal completed while this handler was waiting.
-    let leave_revocation_guard = if is_relay_leave {
+    let mut leave_revocation_guard = if is_relay_leave {
         let Some(guard) = state
             .conn_manager
             .acquire_revocation_lock(conn_id, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT)
@@ -874,6 +874,10 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
         {
             Ok(true) => Some(guard),
             Ok(false) => {
+                // The second membership check can observe a competing
+                // revocation. Release the leave fence before the generic
+                // rejection path tries to acquire it for cleanup.
+                drop(guard);
                 reject_revoked_connection(
                     &state,
                     &conn,
@@ -885,6 +889,7 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
             }
             Err(error) => {
                 warn!(conn_id = %conn_id, "Current relay membership check failed before leave ingest: {error}");
+                drop(guard);
                 reject_revoked_connection(
                     &state,
                     &conn,
@@ -914,7 +919,7 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 .record(start.elapsed().as_secs_f64());
             let response = RelayMessage::ok(&result.event_id, result.accepted, &result.message);
             if is_relay_leave && result.accepted {
-                let Some(leave_revocation_guard) = leave_revocation_guard else {
+                let Some(leave_revocation_guard) = leave_revocation_guard.take() else {
                     reject("error");
                     conn.send(RelayMessage::ok(
                         &event_id_hex,
@@ -957,7 +962,42 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 IngestError::Internal(_) => ("error: internal server error".to_string(), "error"),
             };
             reject(reason);
-            conn.send(RelayMessage::ok(&event_id_hex, false, &msg));
+            let mut finalized = false;
+            if is_relay_leave
+                && matches!(
+                    &e,
+                    IngestError::Rejected(message)
+                        if message
+                            == crate::handlers::ingest::RELAY_MEMBERSHIP_NOT_FOUND_MESSAGE
+                )
+            {
+                if let Some(revocation_guard) = leave_revocation_guard.take() {
+                    let ack = RelayMessage::ok(&event_id_hex, false, &msg).into();
+                    if let Some(ack_delivered) = state
+                        .finalize_fenced_connection_revocation(
+                            &conn.tenant,
+                            conn_id,
+                            &event_id_hex,
+                            RELAY_MEMBERSHIP_REVOKED_REASON,
+                            ack,
+                            revocation_guard,
+                        )
+                        .await
+                    {
+                        finalized = true;
+                        if !ack_delivered {
+                            warn!(
+                                conn_id = %conn_id,
+                                event_id = %event_id_hex,
+                                "self-leave race rejection ACK could not be queued before the bounded deadline"
+                            );
+                        }
+                    }
+                }
+            }
+            if !finalized {
+                conn.send(RelayMessage::ok(&event_id_hex, false, &msg));
+            }
         }
     }
 }
