@@ -200,6 +200,7 @@ pub fn build_snapshot(input: SnapshotBuild<'_>) -> Result<SnapshotPublication, W
 /// cloned into the returned publication.  Only the head's existing `cadence`
 /// tag and `expected-revision` tag are changed; every other tag keeps its exact
 /// order and value, including tags unknown to this version of Crew.
+#[allow(clippy::too_many_arguments)]
 pub fn build_cadence_update(
     owner: &str,
     repo_d: &str,
@@ -328,7 +329,7 @@ fn index_drafts<'a>(
             || draft.title.is_empty()
             || draft.section.is_empty()
             || draft.content.trim().is_empty()
-            || draft.content.as_bytes().len() > MAX_EVENT_BYTES
+            || draft.content.len() > MAX_EVENT_BYTES
             || draft.content.contains('\0')
             || draft.source_files.iter().any(|path| path.contains('\0'))
         {
@@ -420,6 +421,7 @@ fn common_tags(
     Ok(tags)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn page_tags(
     owner: &str,
     repo_d: &str,
@@ -449,6 +451,7 @@ fn page_tags(
     Ok(tags)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn head_tags(
     owner: &str,
     repo_d: &str,
