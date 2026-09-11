@@ -9,7 +9,11 @@ import type {
 } from "@/features/wiki/lib/wikiEvents";
 import type { RelayEvent } from "@/shared/api/types";
 import type { OwnerOperationScope } from "@/shared/api/ownerOperations";
-import type { WikiRepositoryReadStatus } from "@/shared/api/wikiSnapshot";
+import type {
+  WikiRepositoryReadStatus,
+  WikiSnapshotRead,
+} from "@/shared/api/wikiSnapshot";
+import { wikiRepositoryCoordinate } from "@/shared/api/wikiSnapshot";
 import { WikiAskBox } from "@/features/wiki/ui/WikiAskBox";
 import { WikiCompanyEditor } from "@/features/wiki/ui/WikiCompanyEditor";
 import { WikiHeaderControls } from "@/features/wiki/ui/WikiHeaderControls";
@@ -17,6 +21,7 @@ import { WikiMarkdown } from "@/features/wiki/ui/WikiMarkdown";
 import { WikiSourceFiles } from "@/features/wiki/ui/WikiSourceFiles";
 import { WikiTocMenu } from "@/features/wiki/ui/WikiTocMenu";
 import { WikiTocRail } from "@/features/wiki/ui/WikiTocRail";
+import { useWikiSearch, type WikiSearchResult } from "@/shared/api/wikiSearch";
 import { OFFICE_SURFACE } from "@/shared/layout/officeChrome";
 import { TopChromeInsetHeader } from "@/shared/layout/TopChromeInsetHeader";
 
@@ -46,6 +51,7 @@ export function WikiPageView({
   repoPath,
   repoState,
   readStatus,
+  snapshot,
   toc,
   workspaceMode,
   recoveryJob,
@@ -77,6 +83,7 @@ export function WikiPageView({
   repoPath?: string | null;
   repoState?: RelayEvent;
   readStatus?: WikiRepositoryReadStatus;
+  snapshot?: WikiSnapshotRead | null;
   toc: WikiToc | null;
   workspaceMode?: "git" | "folder";
   recoveryJob?: WikiJobState;
@@ -97,6 +104,13 @@ export function WikiPageView({
   const emptyCompany = isCompany && !shown && !companyPending && !companyError;
   const readStale = readStatus?.stale ?? false;
   const readUnavailable = readStatus?.unavailable ?? false;
+  const searchQuery = useWikiSearch({
+    coordinate:
+      owner && repoD ? wikiRepositoryCoordinate(owner, repoD) : undefined,
+    query: search,
+    scope: isCompany ? undefined : operationScope,
+    snapshot: isCompany ? undefined : snapshot,
+  });
 
   return (
     <div
@@ -217,6 +231,17 @@ export function WikiPageView({
               <WikiCompanyEditor proposals={proposals ?? []} />
             </div>
           ) : null}
+          {!isCompany && search.trim() ? (
+            <WikiSearchResultsPanel
+              query={search}
+              searchQuery={searchQuery}
+              onSelect={(slug) => {
+                setActiveSlug(slug);
+                setSearch("");
+              }}
+              hasSnapshot={snapshot?.state === "complete"}
+            />
+          ) : null}
           {!shown &&
           !emptyCompany &&
           !isCompany &&
@@ -257,5 +282,128 @@ export function WikiPageView({
         />
       </div>
     </div>
+  );
+}
+
+function WikiSearchResultsPanel({
+  hasSnapshot,
+  onSelect,
+  query,
+  searchQuery,
+}: {
+  hasSnapshot: boolean;
+  onSelect: (slug: string) => void;
+  query: string;
+  searchQuery: ReturnType<typeof useWikiSearch>;
+}) {
+  if (!hasSnapshot) {
+    return (
+      <p
+        className="mb-4 rounded-md bg-muted/40 p-3 text-sm text-muted-foreground"
+        data-testid="wiki-search-unavailable"
+      >
+        Body search is available after this repository&apos;s verified Wiki
+        snapshot finishes loading.
+      </p>
+    );
+  }
+  if (searchQuery.isPending || searchQuery.isFetching) {
+    return (
+      <p
+        aria-live="polite"
+        className="mb-4 text-sm text-muted-foreground"
+        data-testid="wiki-search-loading"
+      >
+        Searching Wiki bodies…
+      </p>
+    );
+  }
+  if (searchQuery.isError) {
+    return (
+      <p
+        className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive"
+        data-testid="wiki-search-error"
+        role="alert"
+      >
+        Body search is unavailable:{" "}
+        {searchQuery.error?.message ?? "Wiki search failed."}
+      </p>
+    );
+  }
+  const data = searchQuery.data;
+  if (data?.truncated && data.results.length === 0) {
+    return (
+      <p
+        className="mb-4 rounded-md bg-muted/40 p-3 text-sm text-muted-foreground"
+        data-testid="wiki-search-limited"
+      >
+        Search returned more matches than can be shown. Refine the query before
+        treating this as a no-match result.
+      </p>
+    );
+  }
+  if (!data || data.results.length === 0) {
+    return (
+      <p
+        className="mb-4 text-sm text-muted-foreground"
+        data-testid="wiki-search-empty"
+      >
+        No Wiki page body contains “{query.trim()}”.
+      </p>
+    );
+  }
+  return (
+    <section
+      aria-label="Wiki body search results"
+      className="mb-5 rounded-lg border border-border bg-card p-3"
+      data-testid="wiki-search-results"
+    >
+      <div className="mb-2 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+        {data.results.length} matching{" "}
+        {data.results.length === 1 ? "page" : "pages"}
+      </div>
+      <div className="space-y-1">
+        {data.results.map((result) => (
+          <WikiSearchResultButton
+            key={result.pageEventId}
+            onSelect={onSelect}
+            result={result}
+          />
+        ))}
+      </div>
+      {data.truncated ? (
+        <p
+          className="mt-2 text-2xs text-attention"
+          data-testid="wiki-search-limited"
+        >
+          Showing the first {data.results.length} matches. Refine the query for
+          more.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function WikiSearchResultButton({
+  onSelect,
+  result,
+}: {
+  onSelect: (slug: string) => void;
+  result: WikiSearchResult;
+}) {
+  return (
+    <button
+      className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-muted"
+      data-testid={`wiki-search-result-${result.slug}`}
+      onClick={() => onSelect(result.slug)}
+      type="button"
+    >
+      <span className="block text-sm font-medium text-foreground">
+        {result.title}
+      </span>
+      <span className="block truncate text-2xs text-muted-foreground">
+        {result.section} · {result.excerpt}
+      </span>
+    </button>
   );
 }

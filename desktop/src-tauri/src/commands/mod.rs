@@ -115,10 +115,12 @@ mod wiki_publication_runtime;
 #[cfg(test)]
 mod wiki_publication_test_fixture;
 mod wiki_publication_worker;
+mod wiki_search;
 mod wiki_snapshot;
 mod wiki_source;
 pub(crate) use wiki_publication_commands::*;
 pub(crate) use wiki_publication_worker::start as start_wiki_publication_worker;
+pub(crate) use wiki_search::*;
 pub(crate) use wiki_snapshot::*;
 mod window_chrome;
 mod window_vibrancy;

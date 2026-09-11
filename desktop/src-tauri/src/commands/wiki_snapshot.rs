@@ -19,7 +19,7 @@ use crate::commands::identity_archive::fetch_relay_self_scoped;
 use crate::commands::owner_operation_transport::OwnerOperationTransport;
 use crate::commands::owner_operations::ScopedOperationResult;
 
-const WIKI_EVENT_KIND: u16 = 30623;
+pub(super) const WIKI_EVENT_KIND: u16 = 30623;
 const WIKI_STATE_KIND: u16 = 30618;
 const MAX_PAGE_QUERY_BATCH: usize = 4;
 const MAX_PAGES: usize = 256;
@@ -53,7 +53,7 @@ pub(crate) struct WikiSnapshotRead {
 }
 
 #[derive(Debug)]
-enum ReadError {
+pub(super) enum ReadError {
     Stale(String),
     Failed(String),
 }
@@ -549,7 +549,7 @@ async fn query_head<R: Runtime>(
     Ok(HeadRead::Found(event))
 }
 
-async fn scoped_query<R: Runtime>(
+pub(super) async fn scoped_query<R: Runtime>(
     app: AppHandle<R>,
     token: &OwnerScopeToken,
     transport: &OwnerOperationTransport,
@@ -612,7 +612,7 @@ fn exact_event_optional(
     }
 }
 
-fn exact_d_tag(event: &Event) -> Result<String, String> {
+pub(super) fn exact_d_tag(event: &Event) -> Result<String, String> {
     let tags: Vec<_> = event
         .tags
         .iter()
@@ -641,7 +641,11 @@ fn validate_optional_coordinate(event: &Event, owner: &str, repo_d: &str) -> Res
     }
 }
 
-fn exact_tag<'a>(event: &'a Event, name: &str, width: usize) -> Result<&'a [String], String> {
+pub(super) fn exact_tag<'a>(
+    event: &'a Event,
+    name: &str,
+    width: usize,
+) -> Result<&'a [String], String> {
     let mut tags = event.tags.iter().filter_map(|tag| {
         (tag.as_slice().first().is_some_and(|value| value == name)).then_some(tag.as_slice())
     });
@@ -662,7 +666,7 @@ fn has_any_tag(event: &Event, names: &[&str]) -> bool {
     })
 }
 
-fn coordinate_parts(coordinate: &str) -> Result<(&str, &str), String> {
+pub(super) fn coordinate_parts(coordinate: &str) -> Result<(&str, &str), String> {
     let mut parts = coordinate.splitn(3, ':');
     let kind = parts.next();
     let owner = parts.next().unwrap_or_default();
@@ -682,7 +686,7 @@ fn coordinate_parts(coordinate: &str) -> Result<(&str, &str), String> {
     Ok((owner, repo_d))
 }
 
-fn valid_legacy_slug(slug: &str) -> bool {
+pub(super) fn valid_legacy_slug(slug: &str) -> bool {
     !slug.is_empty()
         && slug.len() <= 80
         && slug != "_toc"

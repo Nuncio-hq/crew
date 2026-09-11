@@ -448,6 +448,7 @@ macro_rules! desktop_invoke_handler {
             wiki_publication_status,
             wiki_publication_list,
             wiki_snapshot_read,
+            wiki_search,
             project_change_link_prepare,
             project_change_attach_repository_prepare,
             project_change_link_workspace_prepare,
