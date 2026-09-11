@@ -66,6 +66,13 @@ pub(crate) async fn fetch_relay_self(state: &AppState) -> Result<Option<String>,
 /// TTL exists so even that rare rotation converges without an app restart.
 pub(crate) const RELAY_SELF_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// Bound the uncached NIP-11 read used by relay discovery. NIP-11 is a small
+/// metadata document; it must not inherit the shared HTTP client's unbounded
+/// timeout or body allocation policy (that client also serves long-running
+/// media/model downloads).
+pub(crate) const RELAY_SELF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub(crate) const RELAY_SELF_BODY_LIMIT: usize = 64 * 1024;
+
 /// Read a still-fresh cached `self` pubkey for `relay_url`, if any. Fails open
 /// (cache miss) on a poisoned lock — the fetch path never depends on the cache.
 fn cached_relay_self(state: &AppState, relay_url: &str) -> Option<String> {
@@ -86,27 +93,53 @@ pub(crate) async fn fetch_relay_self_at(
     state: &AppState,
     relay_url: &str,
 ) -> Result<Option<String>, String> {
+    fetch_relay_self_at_with_timeout(state, relay_url, RELAY_SELF_TIMEOUT).await
+}
+
+/// Fetch one uncached NIP-11 document with an explicit budget.
+///
+/// The timeout parameter is kept private so production callers cannot weaken
+/// the bound. Tests use a short budget to exercise the same request and body
+/// consumption path against a deliberately stalled loopback server.
+async fn fetch_relay_self_at_with_timeout(
+    state: &AppState,
+    relay_url: &str,
+    timeout: std::time::Duration,
+) -> Result<Option<String>, String> {
     if let Some(cached) = cached_relay_self(state, relay_url) {
         return Ok(Some(cached));
     }
 
     let http_url = relay_http_base_url(relay_url);
-    let response = state
-        .http_client
-        .get(&http_url)
-        .header("Accept", "application/nostr+json")
-        .send()
-        .await
-        .map_err(|e| classify_request_error(&e))?;
+    let deadline = tokio::time::Instant::now() + timeout;
+    let response = match tokio::time::timeout_at(
+        deadline,
+        state
+            .http_client
+            .get(&http_url)
+            .header("Accept", "application/nostr+json")
+            .timeout(timeout)
+            .send(),
+    )
+    .await
+    {
+        Ok(result) => result.map_err(|e| classify_request_error(&e))?,
+        Err(_) => return Err("relay unreachable: request timed out".to_string()),
+    };
 
     if !response.status().is_success() {
         return Ok(None);
     }
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|_| "relay returned malformed NIP-11 document".to_string())?;
+    let bytes = read_bounded_response_with_limit(
+        response,
+        deadline,
+        RELAY_SELF_BODY_LIMIT,
+        "relay returned malformed NIP-11 document",
+        "relay unreachable: request timed out",
+        "relay returned malformed NIP-11 document",
+    )
+    .await?;
     let relay_self = parse_relay_self_document(&bytes)?;
     if let Some(relay_self) = relay_self {
         if let Ok(mut cache) = state.relay_self_cache.lock() {
@@ -187,23 +220,50 @@ pub(crate) async fn fetch_relay_self_scoped<R: Runtime>(
 /// Read a response body with both a preflight and streaming bound. A relay may
 /// omit `Content-Length` or lie about it, so the cap is checked on every chunk.
 async fn read_bounded_response(
+    response: reqwest::Response,
+    deadline: tokio::time::Instant,
+) -> Result<Vec<u8>, String> {
+    read_bounded_response_with_limit(
+        response,
+        deadline,
+        SCOPED_RELAY_SELF_BODY_LIMIT,
+        "scoped relay identity document exceeds the size limit",
+        "scoped relay identity lookup timed out",
+        "scoped relay identity response could not be read",
+    )
+    .await
+}
+
+/// Read a response body without allocating beyond `limit`, while sharing the
+/// caller's deadline between the headers and every streamed chunk.
+async fn read_bounded_response_with_limit(
     mut response: reqwest::Response,
     deadline: tokio::time::Instant,
+    limit: usize,
+    too_large: &'static str,
+    timed_out: &'static str,
+    read_failed: &'static str,
 ) -> Result<Vec<u8>, String> {
     if response
         .content_length()
-        .is_some_and(|length| length > SCOPED_RELAY_SELF_BODY_LIMIT as u64)
+        .is_some_and(|length| length > limit as u64)
     {
-        return Err("scoped relay identity document exceeds the size limit".into());
+        return Err(too_large.into());
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = tokio::time::timeout_at(deadline, response.chunk())
         .await
-        .map_err(|_| "scoped relay identity lookup timed out".to_string())?
-        .map_err(|_| "scoped relay identity response could not be read".to_string())?
+        .map_err(|_| timed_out.to_string())?
+        .map_err(|error| {
+            if error.is_timeout() {
+                timed_out.to_string()
+            } else {
+                read_failed.to_string()
+            }
+        })?
     {
-        if bytes.len().saturating_add(chunk.len()) > SCOPED_RELAY_SELF_BODY_LIMIT {
-            return Err("scoped relay identity document exceeds the size limit".into());
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err(too_large.into());
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -299,6 +359,71 @@ mod tests {
             None
         );
         assert!(parse_relay_self_document(br#"{"self":null,"self":"not-a-key"}"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn regular_lookup_times_out_when_nip11_body_stalls() {
+        let app = app();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let relay_url = format!("ws://{}", listener.local_addr().expect("address"));
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            read_request(&mut socket).await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\nConnection: close\r\n\r\n{\"self\":\"")
+                .await
+                .expect("partial NIP-11 response");
+            release_rx.await.expect("release server");
+        });
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            fetch_relay_self_at_with_timeout(
+                &app.state::<AppState>(),
+                &relay_url,
+                Duration::from_millis(50),
+            ),
+        )
+        .await
+        .expect("bounded lookup should finish");
+        assert_eq!(
+            result.expect_err("a stalled NIP-11 body must fail"),
+            "relay unreachable: request timed out"
+        );
+        release_tx.send(()).expect("release server");
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn regular_lookup_rejects_a_body_over_the_streaming_bound() {
+        let app = app();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let relay_url = format!("ws://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            read_request(&mut socket).await;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                RELAY_SELF_BODY_LIMIT + 1
+            );
+            socket
+                .write_all(reply.as_bytes())
+                .await
+                .expect("oversize response");
+        });
+
+        let result = fetch_relay_self_at_with_timeout(
+            &app.state::<AppState>(),
+            &relay_url,
+            Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(
+            result.expect_err("an oversized NIP-11 body must fail"),
+            "relay returned malformed NIP-11 document"
+        );
+        server.await.expect("server");
     }
 
     #[tokio::test]
