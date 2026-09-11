@@ -110,6 +110,14 @@ identity once, and then verify a subsequent authenticated read and write. This
 admission is a staging control-plane operation; it does not grant channel
 membership, provider access, or generation permission.
 
+Membership removal is also a live-session boundary. After the operator runs
+`buzz-admin remove-member --pubkey <pubkey>` and the command commits, any
+NIP-42 sockets authenticated as that pubkey must receive the typed
+`restricted: not a relay member` rejection and close, including sockets held
+by another relay pod. A fresh connection must still complete the WebSocket
+handshake and then receive the same membership denial during AUTH; a relay
+restart is not required to make removal effective.
+
 ## Project Wiki read/search/source slice (#397)
 
 The merged [#397](https://github.com/Nuncio-hq/crew/pull/397) implementation

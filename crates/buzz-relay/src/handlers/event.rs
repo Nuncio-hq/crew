@@ -3,12 +3,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::body::Bytes;
+use axum::extract::ws::Message as WsMessage;
 use tracing::{debug, error, info, warn};
 
 use buzz_core::event::StoredEvent;
 use buzz_core::kind::{
     event_kind_u32, is_ephemeral, is_unshared_gated_event, AUTHOR_ONLY_KINDS,
-    KIND_AGENT_OBSERVER_FRAME, KIND_GIFT_WRAP, KIND_PRESENCE_UPDATE,
+    KIND_AGENT_OBSERVER_FRAME, KIND_GIFT_WRAP, KIND_NIP43_LEAVE_REQUEST, KIND_PRESENCE_UPDATE,
 };
 use buzz_core::observer::{
     content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -758,6 +759,7 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
         conn_id,
     };
 
+    let is_relay_leave = kind_u32 == KIND_NIP43_LEAVE_REQUEST;
     match super::ingest::ingest_event(&state, &conn.tenant, event, ingest_auth).await {
         Ok(result) => {
             if result.accepted {
@@ -772,11 +774,24 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
             }
             metrics::histogram!("buzz_event_processing_seconds")
                 .record(start.elapsed().as_secs_f64());
-            conn.send(RelayMessage::ok(
-                &result.event_id,
-                result.accepted,
-                &result.message,
-            ));
+            let response = RelayMessage::ok(&result.event_id, result.accepted, &result.message);
+            if is_relay_leave && result.accepted {
+                // Queue the success on the control channel before cancelling
+                // this socket. The disconnect path drains control frames after
+                // cancellation, so the caller that authorized its own leave
+                // receives `OK true` before the membership revocation closes
+                // the session. Other live sessions receive the normal
+                // `OK false restricted` revocation frame.
+                let _ = conn.ctrl_tx.try_send(WsMessage::Text(response.into()));
+                state.disconnect_pubkey_clusterwide(
+                    &conn.tenant,
+                    &pubkey_bytes,
+                    &event_id_hex,
+                    "restricted: not a relay member",
+                );
+            } else {
+                conn.send(response);
+            }
         }
         Err(e) => {
             // Sanitize internal errors — don't leak DB/system details over WS.

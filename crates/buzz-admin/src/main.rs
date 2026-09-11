@@ -28,7 +28,7 @@ use anyhow::Result;
 use buzz_core::kind::KIND_NIP43_MEMBERSHIP_LIST;
 use buzz_core::tenant::{relay_url_authority, TenantContext};
 use buzz_db::{Db, DbConfig};
-use buzz_pubsub::{EventTopic, PubSubManager};
+use buzz_pubsub::{conn_control::ConnControl, EventTopic, PubSubManager};
 use clap::{Parser, Subcommand};
 use nostr::{EventBuilder, Keys, Kind, Tag};
 use tracing::warn;
@@ -60,8 +60,9 @@ enum Command {
     /// Remove a pubkey from the relay membership list.
     ///
     /// Accepts a bech32 npub or 64-char hex pubkey. After removing the DB row,
-    /// publishes a kind:13534 membership roster via Redis. Cannot remove the
-    /// relay owner — change RELAY_OWNER_PUBKEY config instead.
+    /// publishes a kind:13534 membership roster via Redis and disconnects the
+    /// removed member's live relay sessions. Cannot remove the relay owner —
+    /// change RELAY_OWNER_PUBKEY config instead.
     RemoveMember {
         /// Nostr public key — bech32 npub or 64-char hex.
         #[arg(long)]
@@ -219,6 +220,8 @@ async fn cmd_remove_member(pubkey_arg: String, role_filter: Option<String>) -> R
             return Ok(1);
         }
     };
+    let pubkey_bytes =
+        hex::decode(&pubkey_hex).map_err(|e| anyhow::anyhow!("invalid normalized pubkey: {e}"))?;
 
     let (db, pubsub, relay_keypair) = connect_member_services().await?;
 
@@ -232,8 +235,11 @@ async fn cmd_remove_member(pubkey_arg: String, role_filter: Option<String>) -> R
             .await
     };
 
-    match result {
-        Ok(RemoveResult::Removed) => println!("removed {pubkey_hex}"),
+    let removed = match result {
+        Ok(RemoveResult::Removed) => {
+            println!("removed {pubkey_hex}");
+            true
+        }
         Ok(RemoveResult::NotFound) => {
             eprintln!("error: member not found: {pubkey_hex}");
             return Ok(2);
@@ -253,6 +259,21 @@ async fn cmd_remove_member(pubkey_arg: String, role_filter: Option<String>) -> R
         Err(e) => {
             eprintln!("error: DB write failed: {e}");
             return Ok(5);
+        }
+    };
+
+    if removed {
+        // `buzz-admin` runs outside the relay process, so publish the same
+        // tenant-scoped connection-control command the relay uses for an
+        // in-process NIP-43 removal. The all-zero id is a synthetic marker:
+        // this command has no client event to acknowledge.
+        let command = ConnControl::DisconnectPubkey {
+            pubkey: pubkey_bytes,
+            event_id: "0".repeat(64),
+            reason: "restricted: not a relay member".to_string(),
+        };
+        if let Err(e) = pubsub.publish_conn_control(&tenant, &command).await {
+            warn!(error = %e, "member removed from DB but live-session disconnect publish failed");
         }
     }
 

@@ -475,8 +475,9 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     tokio::spawn(async move { pubsub_for_cache.run_cache_invalidation_subscriber().await });
 
     // Spawn Redis pub/sub subscriber for cross-pod connection-control commands.
-    // Bans recorded on other pods are received here and applied to any local
-    // sockets (via the consumer loop below), enforcing live disconnect fan-out.
+    // Bans and relay-membership removals recorded on other pods are received
+    // here and applied to any local sockets (via the consumer loop below),
+    // enforcing live disconnect fan-out.
     let pubsub_for_conn_ctrl = Arc::clone(&pubsub);
     tokio::spawn(async move { pubsub_for_conn_ctrl.run_conn_control_subscriber().await });
 
@@ -1042,11 +1043,12 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     }
 
     // Cross-pod connection-control consumer: receive disconnect commands from
-    // Redis pub/sub (published by the pod that recorded a ban) and close any
-    // matching local sockets. A member's live connections may land on any pod,
-    // so this is how a ban reaches sockets the banning pod does not hold. The DB
-    // ban row is the durable backstop; even a dropped command still refuses the
-    // banned member's next auth attempt at the auth seam.
+    // Redis pub/sub (published by the pod that recorded a ban or membership
+    // removal) and close any matching local sockets. A principal's live
+    // connections may land on any pod, so this is how a revocation reaches
+    // sockets the origin pod does not hold. The durable authorization row is
+    // the backstop; even a dropped command still refuses the next auth attempt
+    // at the auth seam.
     {
         let state_for_conn_ctrl = Arc::clone(&state);
         let mut rx = state_for_conn_ctrl.pubsub.subscribe_conn_control();

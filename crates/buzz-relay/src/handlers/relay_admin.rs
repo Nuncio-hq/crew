@@ -307,6 +307,10 @@ async fn execute_relay_admin_command(
     let target_hex = extract_p_tag_hex(event)
         .ok_or_else(|| "missing or invalid p tag".to_string())?
         .to_ascii_lowercase();
+    // Decode before the DB mutation so a malformed target can never leave a
+    // committed removal without its live-session eviction.
+    let target_pubkey_bytes =
+        hex::decode(&target_hex).map_err(|e| format!("invalid target pubkey: {e}"))?;
 
     match kind {
         // kind:9030 — Add relay member
@@ -392,7 +396,20 @@ async fn execute_relay_admin_command(
             };
 
             match remove_result {
-                RemoveResult::Removed => {}
+                RemoveResult::Removed => {
+                    // Membership is a relay-wide admission boundary. Close the
+                    // target's already-authenticated sockets immediately after
+                    // the durable delete, and fan the same command to every
+                    // relay pod. Otherwise a NIP-42 session authenticated
+                    // before removal can continue issuing REQ/COUNT/EVENT
+                    // frames until it happens to reconnect.
+                    state.disconnect_pubkey_clusterwide(
+                        tenant,
+                        &target_pubkey_bytes,
+                        &event.id.to_hex(),
+                        "restricted: not a relay member",
+                    );
+                }
                 RemoveResult::IsOwner => {
                     return Err("cannot remove the relay owner".to_string());
                 }

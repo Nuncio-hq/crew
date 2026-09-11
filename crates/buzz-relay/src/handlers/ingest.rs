@@ -2984,7 +2984,22 @@ async fn ingest_event_inner(
             .map_err(|e| IngestError::Internal(format!("database error: {e}")))?;
 
         match remove_result {
-            buzz_db::relay_members::RemoveResult::Removed => {}
+            buzz_db::relay_members::RemoveResult::Removed => {
+                // For HTTP there is no current socket that needs an
+                // acknowledgement, so evict all existing sessions here. A
+                // WebSocket leave is completed by `event::handle_event` after
+                // it queues the successful leave acknowledgement; closing the
+                // socket first would turn a successful leave into an `OK false`
+                // response for the event that authorized it.
+                if auth.conn_id().is_none() {
+                    state.disconnect_pubkey_clusterwide(
+                        tenant,
+                        &event.pubkey.to_bytes(),
+                        &event_id_hex,
+                        "restricted: not a relay member",
+                    );
+                }
+            }
             buzz_db::relay_members::RemoveResult::NotFound => {
                 return Err(IngestError::Rejected(
                     "invalid: you are not a relay member".into(),

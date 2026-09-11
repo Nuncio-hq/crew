@@ -354,12 +354,12 @@ impl ConnectionManager {
     /// `community`**, delivering a final `OK false` frame carrying `reason`
     /// before closing.
     ///
-    /// Used for live ban enforcement (COMMUNITY_MODERATION_PLAN.md §0 decision
-    /// 4): a ban must take effect immediately on existing sessions, not just at
-    /// the next auth. The frame is sent on the control channel, which the send
-    /// loop drains ahead of both queued data and the biased cancel branch, so
-    /// the client learns *why* it was dropped. `event_id` labels the `OK` (the
-    /// ban has no triggering client event, so a synthetic all-zero id is used).
+    /// Used for live ban and relay-membership enforcement: the decision must
+    /// take effect immediately on existing sessions, not just at the next auth.
+    /// The frame is sent on the control channel, which the send loop drains
+    /// ahead of both queued data and the biased cancel branch, so the client
+    /// learns *why* it was dropped. `event_id` labels the `OK` (a decision with
+    /// no triggering client event uses a synthetic all-zero id).
     ///
     /// The `community` filter is the tenant fence: one pod holds sockets for
     /// many communities, and the same pubkey may be live in several. A ban in
@@ -1173,12 +1173,14 @@ impl AppState {
         }
     }
 
-    /// Enforce a live ban cluster-wide: close this pod's sockets for `pubkey`
-    /// now (fenced to `tenant`'s community) and fan the same disconnect out to
-    /// every other pod over the conn-control Redis channel.
+    /// Enforce a live ban or relay-membership revocation cluster-wide: close
+    /// this pod's sockets for `pubkey` now (fenced to `tenant`'s community) and
+    /// fan the same disconnect out to every other pod over the conn-control
+    /// Redis channel.
     ///
-    /// This is the single entry point for live ban enforcement (decision 4:
-    /// "a ban takes effect immediately, everywhere, including live sessions").
+    /// This is the single entry point for live authorization revocation (a ban
+    /// or membership removal takes effect immediately, everywhere, including
+    /// live sessions).
     /// Callers must not invoke the pod-local `conn_manager.disconnect_pubkey`
     /// directly — doing so closes sockets only on the pod that processed the
     /// ban and silently drops the cluster-wide half. Pairing both halves here
@@ -1187,9 +1189,9 @@ impl AppState {
     /// Returns the number of sockets closed on *this* pod only — remote pods
     /// close asynchronously and do not report back, so callers must not treat
     /// the count as cluster-wide truth. The cross-pod publish is fire-and-forget
-    /// (mirrors [`Self::spawn_cache_invalidation`]): the DB ban row is the
-    /// durable backstop, so a dropped publish still refuses the banned member's
-    /// next auth and next write.
+    /// (mirrors [`Self::spawn_cache_invalidation`]): the durable authorization
+    /// row is the backstop, so a dropped publish still refuses the revoked
+    /// principal's next auth.
     pub fn disconnect_pubkey_clusterwide(
         &self,
         tenant: &TenantContext,

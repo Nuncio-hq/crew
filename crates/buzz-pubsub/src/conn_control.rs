@@ -1,18 +1,18 @@
 //! Cross-pod connection-control commands over Redis pub/sub.
 //!
 //! Under horizontal scaling a member's live connections may land on any pod,
-//! so a moderation action taken on one pod (a ban) must reach the pod holding
-//! the victim's socket. This module carries connection-control intents — today
-//! only "disconnect this pubkey" — to every pod, which each apply locally
-//! against their own [`crate::ConnectionManager`].
+//! so a moderation or membership action taken on one pod must reach the pod
+//! holding the principal's socket. This module carries connection-control
+//! intents — today only "disconnect this pubkey" — to every pod, which each
+//! apply locally against their own [`crate::ConnectionManager`].
 //!
 //! This is deliberately a **separate** channel from `cache_invalidation`: a
 //! cache-key drop is a pure, idempotent hint (the DB is re-read on the next
 //! access), whereas a disconnect is an imperative, non-idempotent action on a
 //! live socket. Folding it into the cache-invalidation enum would break that
 //! module's stated invariant ("a pure cache-key drop, never an evict payload").
-//! The DB ban row remains the durable backstop: even if a disconnect message is
-//! dropped, the next auth attempt is refused at the auth seam.
+//! The durable authorization row remains the backstop: even if a disconnect
+//! message is dropped, the next auth attempt is refused at the auth seam.
 
 use buzz_core::{CommunityId, TenantContext};
 use futures_util::StreamExt;
@@ -57,13 +57,15 @@ pub enum ConnControl {
     /// Disconnect every live socket bound to the carrying community.
     DisconnectCommunity,
     /// Disconnect every live connection authenticated as `pubkey` in the
-    /// carrying community — live ban enforcement. `pubkey` is 32 raw bytes.
+    /// carrying community — live ban or membership-revocation enforcement.
+    /// `pubkey` is 32 raw bytes.
     /// `event_id` and `reason` reproduce the same NIP-01 `OK` frame the origin
     /// pod sent, so a member disconnected on any pod learns why.
     DisconnectPubkey {
-        /// Banned member's pubkey bytes.
+        /// Revoked principal's pubkey bytes.
         pubkey: Vec<u8>,
-        /// Id echoed in the closing `OK` frame (the ban event's id on origin).
+        /// Id echoed in the closing `OK` frame (the triggering event's id on
+        /// the origin pod, or a synthetic id for operator commands).
         event_id: String,
         /// Human-readable close reason for the `OK` frame.
         reason: String,
