@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -19,18 +19,35 @@ use super::recap_capability::admit_runtime_ready;
 use super::recap_service::{run_recap_sync_with_cancel, RecapRequest};
 use super::KNOWN_ACP_RUNTIMES;
 
+#[path = "recap_commands_settings.rs"]
+mod settings;
+#[path = "recap_commands_source.rs"]
+mod source;
+
+use settings::{capture_owner_scope, recoverable_settings, runtime_inventory, validate_settings};
+#[cfg(test)]
+use source::build_thread_source;
+use source::{
+    canonical_channel_id, canonical_event_id, collect_thread_source, settings_fingerprint,
+    sha256_hex, valid_generation_id,
+};
+
 const SETTINGS_FILENAME: &str = "recap-settings.json";
 const RECAPS_DIRECTORY: &str = "recaps";
 const MAX_SETTINGS_BYTES: usize = 32 * 1024;
 const MAX_RECAP_BYTES: usize = 512 * 1024;
 const MAX_SOURCE_EVENTS: usize = 256;
 const MAX_SOURCE_SCAN_EVENTS: usize = 4096;
+const MAX_SOURCE_SCAN_BYTES: usize = 16 * 1024 * 1024;
 const SOURCE_PAGE_LIMIT: usize = 500;
 const MAX_RECAP_ENTRIES: usize = 100;
+const MAX_RECAP_SCAN_ENTRIES: usize = 1024;
 const MAX_RECAP_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_GENERATION_ID_BYTES: usize = 128;
 const MAX_TEXT_FIELD_BYTES: usize = 256;
 const MAX_ACTIVE_GENERATIONS: usize = 2;
+const MAX_PENDING_CANCELLATIONS: usize = 64;
+const PENDING_CANCELLATION_TTL: std::time::Duration = std::time::Duration::from_secs(180);
 const RECAP_WALL_TIME_MS: u64 = 120_000;
 const RECAP_CLEANUP_GRACE_MS: u64 = 5_000;
 const RECAP_PROMPT_VERSION: u8 = 1;
@@ -187,9 +204,19 @@ struct ActiveGeneration {
     cancelled: Arc<AtomicBool>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PendingCancellation {
+    created_at: Instant,
+}
+
 fn active_generations() -> &'static Mutex<HashMap<String, ActiveGeneration>> {
     static ACTIVE: OnceLock<Mutex<HashMap<String, ActiveGeneration>>> = OnceLock::new();
     ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn pending_cancellations() -> &'static Mutex<HashMap<String, PendingCancellation>> {
+    static PENDING: OnceLock<Mutex<HashMap<String, PendingCancellation>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn default_bounds() -> RecapBounds {
@@ -321,10 +348,10 @@ fn prune_recap_artifacts(keep_path: &std::path::Path) -> Result<(), String> {
     let mut entries = Vec::new();
     let mut scanned = 0usize;
     for entry in std::fs::read_dir(directory).map_err(|_| "state_io".to_string())? {
-        if scanned >= MAX_RECAP_ENTRIES.saturating_mul(3) {
-            break;
-        }
         scanned = scanned.saturating_add(1);
+        if scanned > MAX_RECAP_SCAN_ENTRIES {
+            return Err("state_limit".to_string());
+        }
         let entry = entry.map_err(|_| "state_io".to_string())?;
         let path = entry.path();
         if path == keep_path || path.extension().and_then(|ext| ext.to_str()) != Some("json") {
@@ -513,10 +540,12 @@ fn load_artifact<R: tauri::Runtime>(
     let mut newest: Option<(u64, RecapArtifact)> = None;
     // Retention bounds the directory, and the scan has a separate hard cap so
     // a hostile or unrelated producer cannot turn a read into unbounded work.
-    for entry in std::fs::read_dir(directory)
-        .map_err(|_| "state_io".to_string())?
-        .take(MAX_RECAP_ENTRIES.saturating_mul(3))
-    {
+    let mut scanned = 0usize;
+    for entry in std::fs::read_dir(directory).map_err(|_| "state_io".to_string())? {
+        scanned = scanned.saturating_add(1);
+        if scanned > MAX_RECAP_SCAN_ENTRIES {
+            return Err("state_limit".to_string());
+        }
         let entry = entry.map_err(|_| "state_io".to_string())?;
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
@@ -567,172 +596,6 @@ fn load_artifact<R: tauri::Runtime>(
     Ok(newest.map(|(_, artifact)| artifact))
 }
 
-fn runtime_kind(id: &str) -> &'static str {
-    match id {
-        "hermes" => "hermes",
-        "claude" | "codex" => "cli",
-        _ => "unknown",
-    }
-}
-
-fn canonical_relay_origin(relay: &str) -> Result<String, String> {
-    let mut url = url::Url::parse(relay).map_err(|_| "invalid_relay".to_string())?;
-    if !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.host_str().is_none()
-    {
-        return Err("invalid_relay".to_string());
-    }
-    let scheme = match url.scheme() {
-        "ws" | "http" => "http",
-        "wss" | "https" => "https",
-        _ => return Err("invalid_relay".to_string()),
-    };
-    url.set_scheme(scheme)
-        .map_err(|_| "invalid_relay".to_string())?;
-    Ok(url.origin().ascii_serialization())
-}
-
-async fn capture_owner_scope<R: tauri::Runtime>(
-    app: &AppHandle<R>,
-) -> Result<
-    (
-        crate::app_state::owner_scope::CapturedOwnerScope,
-        String,
-        String,
-    ),
-    String,
-> {
-    let scope = crate::app_state::owner_scope::capture(app.clone()).await?;
-    let viewer_pubkey = scope.keys.public_key().to_hex();
-    let relay_origin = canonical_relay_origin(&scope.relay_url)?;
-    Ok((scope, viewer_pubkey, relay_origin))
-}
-
-fn runtime_inventory<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<RecapRuntimeOption> {
-    let proof = super::recap_ownership::VerifiedStagingOwnership::load(app)
-        .ok()
-        .and_then(|ownership| ownership.runtime_ready_proof().ok());
-
-    KNOWN_ACP_RUNTIMES
-        .iter()
-        .map(|runtime| {
-            let contract = runtime.recap_contract();
-            let service_wired = super::recap_service::contract_for_runtime(runtime.id).is_some();
-            let mut option = RecapRuntimeOption {
-                id: runtime.id.to_string(),
-                label: runtime.label.to_string(),
-                kind: runtime_kind(runtime.id).to_string(),
-                availability: "unsupported".to_string(),
-                reason: if !service_wired {
-                    Some("No native one-shot recap adapter is registered.".to_string())
-                } else if contract.command.is_some() {
-                    Some("A separately issued native runtime-ready grant is required.".to_string())
-                } else {
-                    Some("No native one-shot recap adapter is registered.".to_string())
-                },
-                capability_fingerprint: None,
-                profiles: Vec::new(),
-                models: Vec::new(),
-            };
-            if service_wired {
-                if let Some(proof) = proof.as_ref() {
-                    let requested = proof.selection_for_service();
-                    if let Ok(admission) =
-                        admit_runtime_ready(runtime.id, contract, proof, &requested)
-                    {
-                        option.availability = "supported".to_string();
-                        option.reason = None;
-                        option.capability_fingerprint = Some(sha256_hex(format!(
-                            "v1\0{}\0{}\0{}",
-                            admission.runtime_id,
-                            admission.executable.fingerprint,
-                            admission.selection.model,
-                        )));
-                        option.models.push(admission.selection.model);
-                    } else if contract.command.is_some() {
-                        option.reason = Some("runtime_not_ready".to_string());
-                    }
-                }
-            }
-            option
-        })
-        .collect()
-}
-
-fn valid_text_field(value: &Option<String>) -> bool {
-    value.as_deref().is_none_or(|value| {
-        !value.is_empty()
-            && value == value.trim()
-            && value.len() <= MAX_TEXT_FIELD_BYTES
-            && !value.chars().any(char::is_control)
-    })
-}
-
-fn validate_settings(
-    settings: &RecapSettings,
-    runtimes: &[RecapRuntimeOption],
-) -> Result<RecapSettings, String> {
-    if settings.version != 1
-        || settings.bounds != default_bounds()
-        || !valid_text_field(&settings.runtime_id)
-        || !valid_text_field(&settings.requested_model)
-        || !valid_text_field(&settings.profile_ref)
-        || !valid_text_field(&settings.capability_fingerprint)
-    {
-        return Err("invalid_settings".to_string());
-    }
-    let mut normalized = settings.clone();
-    if settings.mode == RecapMode::Off {
-        normalized.runtime_id = None;
-        normalized.requested_model = None;
-        normalized.profile_ref = None;
-        normalized.capability_fingerprint = None;
-        return Ok(normalized);
-    }
-    let Some(runtime_id) = settings.runtime_id.as_deref() else {
-        return Err("missing_selection".to_string());
-    };
-    let Some(runtime) = runtimes.iter().find(|runtime| runtime.id == runtime_id) else {
-        return Err("runtime_not_ready".to_string());
-    };
-    if runtime.availability != "supported" {
-        return Err("runtime_not_ready".to_string());
-    }
-    if settings.capability_fingerprint.as_deref() != runtime.capability_fingerprint.as_deref() {
-        return Err("capability_changed".to_string());
-    }
-    if runtime.kind == "hermes" {
-        if settings.profile_ref.is_none() {
-            return Err("missing_selection".to_string());
-        }
-    } else if settings.profile_ref.is_some() {
-        return Err("profile_mismatch".to_string());
-    }
-    let Some(model) = settings.requested_model.as_deref() else {
-        return Err("missing_selection".to_string());
-    };
-    if !runtime.models.iter().any(|candidate| candidate == model) {
-        return Err("invalid_model_selection".to_string());
-    }
-    Ok(normalized)
-}
-
-fn recoverable_settings(
-    settings: RecapSettings,
-    runtimes: &[RecapRuntimeOption],
-) -> (RecapSettings, bool) {
-    match validate_settings(&settings, runtimes) {
-        Ok(settings) => (settings, true),
-        Err(error) if error == "invalid_settings" => (default_settings(), false),
-        // Keep an otherwise well-shaped but currently unavailable selection in
-        // the snapshot so the UI can select Off and persist the recovery.
-        Err(_) => (settings, false),
-    }
-}
-
 /// Return the owner-local settings and current catalogued recap inventory.
 #[tauri::command]
 pub(crate) async fn get_recap_settings(app: AppHandle) -> Result<RecapSettingsSnapshot, String> {
@@ -755,298 +618,6 @@ pub(crate) async fn save_recap_settings(
     write_settings(&app, &viewer_pubkey, &relay_origin, &settings)?;
     cancel_scope_generations(&relay_origin, &viewer_pubkey);
     Ok(RecapSettingsSnapshot { settings, runtimes })
-}
-
-fn canonical_channel_id(value: &str) -> Result<String, String> {
-    if value != value.trim() {
-        return Err("invalid_thread".to_string());
-    }
-    uuid::Uuid::parse_str(value)
-        .map(|uuid| uuid.to_string())
-        .map_err(|_| "invalid_thread".to_string())
-}
-
-fn canonical_event_id(value: &str) -> Result<String, String> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("invalid_thread".to_string());
-    }
-    Ok(value.to_ascii_lowercase())
-}
-
-fn valid_generation_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_GENERATION_ID_BYTES
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-}
-
-fn event_in_channel(event: &nostr::Event, channel_id: &str) -> bool {
-    event.tags.iter().any(|tag| {
-        let fields = tag.as_slice();
-        fields.first().map(String::as_str) == Some("h")
-            && fields.get(1).map(String::as_str) == Some(channel_id)
-    })
-}
-
-fn sha256_hex(bytes: impl AsRef<[u8]>) -> String {
-    hex::encode(Sha256::digest(bytes))
-}
-
-fn settings_fingerprint(settings: &RecapSettings) -> Result<String, String> {
-    let bytes = serde_json::to_vec(settings).map_err(|_| "invalid_settings".to_string())?;
-    Ok(sha256_hex(bytes))
-}
-
-fn source_record(event: &nostr::Event) -> String {
-    format!(
-        "[{} @{}] {}\n",
-        event.id.to_hex(),
-        event.created_at.as_secs(),
-        event.content
-    )
-}
-
-fn source_manifest_event(event: &nostr::Event) -> Result<SourceManifestEvent, String> {
-    let tags = serde_json::to_vec(&event.tags).map_err(|_| "source_unavailable".to_string())?;
-    Ok(SourceManifestEvent {
-        event_id: event.id.to_hex(),
-        created_at: event.created_at.as_secs(),
-        kind: event.kind.as_u16() as u32,
-        content_sha256: sha256_hex(event.content.as_bytes()),
-        tags_sha256: sha256_hex(tags),
-    })
-}
-
-fn build_thread_source(
-    mut events: Vec<nostr::Event>,
-    auxiliary_events: Vec<nostr::Event>,
-    channel_id: &str,
-    root_event_id: &str,
-) -> Result<ThreadSource, String> {
-    let omitted_by_source_cap = events.len().saturating_sub(MAX_SOURCE_EVENTS) as u32;
-    if events.len() > MAX_SOURCE_EVENTS {
-        let root = events
-            .iter()
-            .find(|event| event.id.to_hex() == root_event_id)
-            .cloned()
-            .ok_or_else(|| "source_unavailable".to_string())?;
-        events = events.into_iter().rev().take(MAX_SOURCE_EVENTS).collect();
-        if !events
-            .iter()
-            .any(|event| event.id.to_hex() == root_event_id)
-        {
-            events.pop();
-            events.push(root);
-        }
-        events.sort_by(|left, right| {
-            left.created_at
-                .as_secs()
-                .cmp(&right.created_at.as_secs())
-                .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
-        });
-    }
-    let Some(root_index) = events
-        .iter()
-        .position(|event| event.id.to_hex() == root_event_id)
-    else {
-        return Err("source_unavailable".to_string());
-    };
-
-    let prefix = RECAP_PROMPT_PREFIX.as_bytes();
-    if prefix.len() > super::recap_adapter::RECAP_INPUT_LIMIT {
-        return Err("input_limit".to_string());
-    }
-    let root_bytes = source_record(&events[root_index]).into_bytes();
-    if root_bytes.len() > super::recap_adapter::RECAP_INPUT_LIMIT - prefix.len() {
-        return Err("input_limit".to_string());
-    }
-
-    // Keep the root and then choose the newest whole messages that fit. The
-    // final prompt is restored to chronological order before it is hashed and
-    // sent to the selected one-shot adapter.
-    let mut selected = vec![root_index];
-    let mut remaining = super::recap_adapter::RECAP_INPUT_LIMIT
-        .saturating_sub(prefix.len())
-        .saturating_sub(root_bytes.len());
-    let mut omitted_message_count = omitted_by_source_cap;
-    for index in (0..events.len()).rev() {
-        if index == root_index {
-            continue;
-        }
-        let record = source_record(&events[index]);
-        if record.len() <= remaining {
-            remaining -= record.len();
-            selected.push(index);
-        } else {
-            omitted_message_count = omitted_message_count.saturating_add(1);
-        }
-    }
-    selected.sort_unstable();
-
-    let mut prompt = prefix.to_vec();
-    let mut event_ids = Vec::with_capacity(selected.len());
-    for index in selected {
-        let event = &events[index];
-        prompt.extend_from_slice(source_record(event).as_bytes());
-        event_ids.push(event.id.to_hex());
-    }
-    if event_ids.is_empty() {
-        return Err("input_limit".to_string());
-    }
-
-    let mut manifest_source_events = events.clone();
-    manifest_source_events.extend(auxiliary_events);
-    manifest_source_events.sort_by(|left, right| {
-        left.created_at
-            .as_secs()
-            .cmp(&right.created_at.as_secs())
-            .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
-    });
-    manifest_source_events.dedup_by(|left, right| left.id == right.id);
-    let manifest_events = manifest_source_events
-        .iter()
-        .map(source_manifest_event)
-        .collect::<Result<Vec<_>, _>>()?;
-    let manifest = SourceManifest {
-        version: 1,
-        prompt_version: RECAP_PROMPT_VERSION,
-        channel_id: channel_id.to_string(),
-        root_event_id: root_event_id.to_string(),
-        events: manifest_events,
-        included_event_ids: event_ids.clone(),
-        omitted_message_count,
-        max_input_bytes: super::recap_adapter::RECAP_INPUT_LIMIT as u64,
-    };
-    let manifest_bytes =
-        serde_json::to_vec(&manifest).map_err(|_| "source_unavailable".to_string())?;
-    let manifest_hash = sha256_hex(manifest_bytes);
-    let oldest_included_event_id = event_ids.first().cloned();
-    let newest_included_event_id = event_ids.last().cloned();
-    Ok(ThreadSource {
-        prompt: String::from_utf8(prompt).map_err(|_| "source_unavailable".to_string())?,
-        manifest_hash,
-        event_ids,
-        omitted_message_count,
-        oldest_included_event_id,
-        newest_included_event_id,
-    })
-}
-
-async fn collect_thread_source(
-    state: &super::super::app_state::AppState,
-    owner_scope: &crate::app_state::owner_scope::CapturedOwnerScope,
-    channel_id: &str,
-    root_event_id: &str,
-) -> Result<ThreadSource, String> {
-    let relay_http = super::super::relay::relay_http_base_url(&owner_scope.relay_url);
-    let root_events = super::super::relay::query_relay_at_with_keys(
-        state,
-        &relay_http,
-        &[serde_json::json!({
-            "ids": [root_event_id],
-            "kinds": THREAD_SOURCE_KINDS,
-            "limit": 1,
-        })],
-        &owner_scope.keys,
-        None,
-    )
-    .await
-    .map_err(|_| "source_unavailable".to_string())?;
-    let Some(root) = root_events
-        .into_iter()
-        .find(|event| event.id.to_hex() == root_event_id && event_in_channel(event, channel_id))
-    else {
-        return Err("source_unavailable".to_string());
-    };
-
-    let mut replies = Vec::new();
-    let mut cursor: Option<(u64, String)> = None;
-    let mut scan_complete = false;
-    loop {
-        let mut filter = serde_json::json!({
-            "#e": [root_event_id],
-            "#h": [channel_id],
-            "kinds": THREAD_SOURCE_KINDS,
-            "depth_limit": 64,
-            "limit": SOURCE_PAGE_LIMIT as u32,
-        });
-        if let Some((created_at, event_id)) = cursor.as_ref() {
-            filter["thread_cursor"] = serde_json::json!(created_at);
-            filter["thread_cursor_id"] = serde_json::json!(event_id);
-        }
-        let page = super::super::relay::query_relay_at_with_keys(
-            state,
-            &relay_http,
-            &[filter],
-            &owner_scope.keys,
-            None,
-        )
-        .await
-        .map_err(|_| "source_unavailable".to_string())?;
-        let page_len = page.len();
-        let last = page
-            .last()
-            .map(|event| (event.created_at.as_secs(), event.id.to_hex()));
-        replies.extend(
-            page.into_iter()
-                .filter(|event| event_in_channel(event, channel_id)),
-        );
-        if page_len < SOURCE_PAGE_LIMIT {
-            scan_complete = true;
-            break;
-        }
-        if replies.len() >= MAX_SOURCE_SCAN_EVENTS {
-            break;
-        }
-        let Some(next_cursor) = last else {
-            break;
-        };
-        if cursor.as_ref() == Some(&next_cursor) {
-            break;
-        }
-        cursor = Some(next_cursor);
-    }
-    if !scan_complete {
-        return Err("source_limit".to_string());
-    }
-
-    let mut events = Vec::with_capacity(replies.len() + 1);
-    events.push(root);
-    events.extend(replies);
-    events.sort_by(|left, right| {
-        left.created_at
-            .as_secs()
-            .cmp(&right.created_at.as_secs())
-            .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
-    });
-    events.dedup_by(|left, right| left.id == right.id);
-    let target_ids = events
-        .iter()
-        .map(|event| event.id.to_hex())
-        .collect::<Vec<_>>();
-    let auxiliary_events = if target_ids.is_empty() {
-        Vec::new()
-    } else {
-        super::super::relay::query_relay_at_with_keys(
-            state,
-            &relay_http,
-            &[serde_json::json!({
-                "#e": target_ids,
-                "#h": [channel_id],
-                "kinds": THREAD_AUX_KINDS,
-                "limit": MAX_SOURCE_SCAN_EVENTS as u32,
-            })],
-            &owner_scope.keys,
-            None,
-        )
-        .await
-        .map_err(|_| "source_unavailable".to_string())?
-        .into_iter()
-        .filter(|event| event_in_channel(event, channel_id))
-        .collect()
-    };
-    build_thread_source(events, auxiliary_events, channel_id, root_event_id)
 }
 
 /// Read the latest owner-local artifact and compare it with the current thread
@@ -1109,6 +680,48 @@ fn active_generations_guard() -> MutexGuard<'static, HashMap<String, ActiveGener
     active_generations()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn pending_cancellations_guard() -> MutexGuard<'static, HashMap<String, PendingCancellation>> {
+    pending_cancellations()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn pending_cancellation_key(key: &str, generation_id: &str) -> String {
+    format!("{key}\0{generation_id}")
+}
+
+fn remember_pending_cancellation(key: &str, generation_id: &str) {
+    let mut pending = pending_cancellations_guard();
+    let now = Instant::now();
+    pending.retain(|_, entry| now.duration_since(entry.created_at) <= PENDING_CANCELLATION_TTL);
+    if pending.len() >= MAX_PENDING_CANCELLATIONS {
+        if let Some(oldest) = pending
+            .iter()
+            .min_by(|(left_key, left), (right_key, right)| {
+                left.created_at
+                    .cmp(&right.created_at)
+                    .then_with(|| left_key.cmp(right_key))
+            })
+            .map(|(key, _)| key.clone())
+        {
+            pending.remove(&oldest);
+        }
+    }
+    pending.insert(
+        pending_cancellation_key(key, generation_id),
+        PendingCancellation { created_at: now },
+    );
+}
+
+fn take_pending_cancellation(key: &str, generation_id: &str) -> bool {
+    let mut pending = pending_cancellations_guard();
+    let pending_key = pending_cancellation_key(key, generation_id);
+    let Some(entry) = pending.remove(&pending_key) else {
+        return false;
+    };
+    Instant::now().duration_since(entry.created_at) <= PENDING_CANCELLATION_TTL
 }
 
 fn register_generation(key: &str, generation_id: &str) -> Result<Arc<AtomicBool>, String> {
@@ -1215,6 +828,16 @@ pub(crate) async fn generate_thread_recap(
     };
     let key = generation_key(&relay_origin, &viewer_pubkey, &channel_id, &root_event_id);
     let cancelled = register_generation(&key, &generation_id)?;
+    // A renderer cancel can arrive while owner-scope/settings admission is
+    // still in flight, before the active-generation entry exists. Consume the
+    // bounded intent after registration so either ordering is cancellation
+    // safe: an active request sets its flag, while an early request prevents
+    // the provider from ever being invoked.
+    if take_pending_cancellation(&key, &generation_id) {
+        cancelled.store(true, Ordering::Release);
+        unregister_generation(&key, &generation_id);
+        return Err("cancelled".to_string());
+    }
     let model = settings
         .requested_model
         .clone()
@@ -1317,13 +940,15 @@ pub(crate) async fn cancel_thread_recap(
     let (_owner_scope, viewer_pubkey, relay_origin) = capture_owner_scope(&app).await?;
     let key = generation_key(&relay_origin, &viewer_pubkey, &channel_id, &root_event_id);
     let active = active_generations_guard();
-    let Some(entry) = active.get(&key) else {
-        return Err("generation_not_found".to_string());
-    };
-    if entry.generation_id != generation_id {
-        return Err("generation_mismatch".to_string());
+    if let Some(entry) = active.get(&key) {
+        if entry.generation_id != generation_id {
+            return Err("generation_mismatch".to_string());
+        }
+        entry.cancelled.store(true, Ordering::Release);
+        return Ok(());
     }
-    entry.cancelled.store(true, Ordering::Release);
+
+    remember_pending_cancellation(&key, &generation_id);
     Ok(())
 }
 
@@ -1335,148 +960,5 @@ fn now_millis() -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    static REGISTRY_TEST_MUTEX: Mutex<()> = Mutex::new(());
-
-    fn event(content: impl Into<String>, created_at: u64, channel_id: &str) -> nostr::Event {
-        nostr::EventBuilder::new(nostr::Kind::Custom(9), content)
-            .tags([nostr::Tag::parse(["h", channel_id]).unwrap()])
-            .custom_created_at(nostr::Timestamp::from_secs(created_at))
-            .sign_with_keys(&nostr::Keys::generate())
-            .unwrap()
-    }
-
-    #[test]
-    fn settings_default_off_and_bounds_are_fixed() {
-        let settings = default_settings();
-        assert_eq!(settings.mode, RecapMode::Off);
-        assert_eq!(settings.bounds, default_bounds());
-    }
-
-    #[test]
-    fn generation_registry_fences_stale_cancellation() {
-        let _guard = REGISTRY_TEST_MUTEX.lock().unwrap();
-        let key = "test-channel\0test-root";
-        let generation = register_generation(key, "g-1").unwrap();
-        assert!(generation_is_current(key, "g-1"));
-        assert!(!generation_is_current(key, "g-2"));
-        unregister_generation(key, "g-2");
-        assert!(generation_is_current(key, "g-1"));
-        generation.store(true, Ordering::Release);
-        unregister_generation(key, "g-1");
-        assert!(!generation_is_current(key, "g-1"));
-    }
-
-    #[test]
-    fn settings_change_cancels_only_the_current_owner_scope() {
-        let _guard = REGISTRY_TEST_MUTEX.lock().unwrap();
-        let owner_generation =
-            register_generation("https://relay\0viewer\0channel\0root", "g-owner").unwrap();
-        let other_generation =
-            register_generation("https://relay\0other\0channel\0root", "g-other").unwrap();
-        cancel_scope_generations("https://relay", "viewer");
-        assert!(owner_generation.load(Ordering::Acquire));
-        assert!(!other_generation.load(Ordering::Acquire));
-        unregister_generation("https://relay\0viewer\0channel\0root", "g-owner");
-        unregister_generation("https://relay\0other\0channel\0root", "g-other");
-    }
-
-    #[test]
-    fn cache_key_binds_source_and_settings_fingerprints() {
-        let base = recap_key_digest("https://relay", "viewer", "channel", "root", "a", "b");
-        assert_ne!(
-            base,
-            recap_key_digest("https://relay", "viewer", "channel", "root", "changed", "b")
-        );
-        assert_ne!(
-            base,
-            recap_key_digest("https://relay", "viewer", "channel", "root", "a", "changed")
-        );
-    }
-
-    #[test]
-    fn unavailable_saved_selection_remains_recoverable_in_settings() {
-        let settings = RecapSettings {
-            mode: RecapMode::Manual,
-            runtime_id: Some("claude".to_string()),
-            capability_fingerprint: Some("old".to_string()),
-            ..default_settings()
-        };
-        let runtimes = vec![RecapRuntimeOption {
-            id: "claude".to_string(),
-            label: "Claude".to_string(),
-            kind: "cli".to_string(),
-            availability: "unsupported".to_string(),
-            reason: Some("runtime_not_ready".to_string()),
-            capability_fingerprint: None,
-            profiles: Vec::new(),
-            models: Vec::new(),
-        }];
-        let (recovered, valid) = recoverable_settings(settings.clone(), &runtimes);
-        assert!(!valid);
-        assert_eq!(recovered, settings);
-        assert_eq!(recovered.mode, RecapMode::Manual);
-    }
-
-    #[test]
-    fn ids_and_generation_names_are_canonical_and_bounded() {
-        assert_eq!(
-            canonical_channel_id("550e8400-e29b-41d4-a716-446655440000").unwrap(),
-            "550e8400-e29b-41d4-a716-446655440000"
-        );
-        assert!(canonical_event_id(&"a".repeat(64)).is_ok());
-        assert!(!valid_generation_id("../escape"));
-        assert!(!valid_generation_id(
-            &"x".repeat(MAX_GENERATION_ID_BYTES + 1)
-        ));
-    }
-
-    #[test]
-    fn source_keeps_root_and_newest_fitting_whole_messages() {
-        let channel_id = "550e8400-e29b-41d4-a716-446655440000";
-        let root = event("root", 1, channel_id);
-        let older = event("older", 2, channel_id);
-        let newest_too_large = event(
-            "x".repeat(super::super::recap_adapter::RECAP_INPUT_LIMIT),
-            3,
-            channel_id,
-        );
-        let root_id = root.id.to_hex();
-        let source = build_thread_source(
-            vec![root, older, newest_too_large],
-            Vec::new(),
-            channel_id,
-            &root_id,
-        )
-        .unwrap();
-        assert_eq!(source.event_ids.len(), 2);
-        assert_eq!(source.omitted_message_count, 1);
-        assert!(source.prompt.contains("root"));
-        assert!(source.prompt.contains("older"));
-        assert!(!source.prompt.contains(&"x".repeat(1024)));
-    }
-
-    #[test]
-    fn source_manifest_changes_for_content_tags_and_scope() {
-        let channel_id = "550e8400-e29b-41d4-a716-446655440000";
-        let root = event("root", 1, channel_id);
-        let root_id = root.id.to_hex();
-        let first =
-            build_thread_source(vec![root.clone()], Vec::new(), channel_id, &root_id).unwrap();
-        let changed = event("changed", 1, channel_id);
-        let changed_id = changed.id.to_hex();
-        let changed_source =
-            build_thread_source(vec![changed], Vec::new(), channel_id, &changed_id).unwrap();
-        assert_ne!(first.manifest_hash, changed_source.manifest_hash);
-        let other_scope = build_thread_source(
-            vec![root],
-            Vec::new(),
-            "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
-            &root_id,
-        )
-        .unwrap();
-        assert_ne!(first.manifest_hash, other_scope.manifest_hash);
-    }
-}
+#[path = "recap_commands_tests.rs"]
+mod tests;
