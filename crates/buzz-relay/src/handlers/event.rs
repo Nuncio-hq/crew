@@ -23,7 +23,10 @@ use nostr::{Event, PublicKey};
 use crate::connection::{AuthState, ConnectionState};
 use crate::protocol::RelayMessage;
 use crate::rejection::{reject_revoked_connection, RejectionTarget};
-use crate::state::{AppState, RELAY_MEMBERSHIP_REVOKED_REASON};
+use crate::state::{
+    AppState, SelfLeaveRevocation, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT,
+    RELAY_MEMBERSHIP_REVOKED_REASON,
+};
 
 use super::ingest::{reject_with_transport, IngestAuth, IngestError};
 
@@ -843,6 +846,58 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
     };
 
     let is_relay_leave = kind_u32 == KIND_NIP43_LEAVE_REQUEST;
+    // Claim the same per-connection fence used by live revocation and the
+    // durable sweep before ingest can delete the sender's membership row. A
+    // second membership read after the bounded wait closes the race where a
+    // competing admin removal completed while this handler was waiting.
+    let leave_revocation_guard = if is_relay_leave {
+        let Some(guard) = state
+            .conn_manager
+            .acquire_revocation_lock(conn_id, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT)
+            .await
+        else {
+            reject("error");
+            conn.send(RelayMessage::ok(
+                &event_id_hex,
+                false,
+                "error: relay membership revocation is already in progress",
+            ));
+            return;
+        };
+        match crate::api::relay_members::current_relay_membership_for_auth(
+            &state,
+            conn.tenant.community(),
+            &pubkey_bytes,
+            agent_owner_pubkey.as_deref(),
+        )
+        .await
+        {
+            Ok(true) => Some(guard),
+            Ok(false) => {
+                reject_revoked_connection(
+                    &state,
+                    &conn,
+                    RejectionTarget::Event(event.id),
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                )
+                .await;
+                return;
+            }
+            Err(error) => {
+                warn!(conn_id = %conn_id, "Current relay membership check failed before leave ingest: {error}");
+                reject_revoked_connection(
+                    &state,
+                    &conn,
+                    RejectionTarget::Event(event.id),
+                    "error: internal server error",
+                )
+                .await;
+                return;
+            }
+        }
+    } else {
+        None
+    };
     match super::ingest::ingest_event(&state, &conn.tenant, event, ingest_auth).await {
         Ok(result) => {
             if result.accepted {
@@ -859,6 +914,15 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 .record(start.elapsed().as_secs_f64());
             let response = RelayMessage::ok(&result.event_id, result.accepted, &result.message);
             if is_relay_leave && result.accepted {
+                let Some(leave_revocation_guard) = leave_revocation_guard else {
+                    reject("error");
+                    conn.send(RelayMessage::ok(
+                        &event_id_hex,
+                        false,
+                        "error: relay membership revocation fence was lost",
+                    ));
+                    return;
+                };
                 // The revocation helper publishes before it cancels local
                 // sockets, then queues exactly one event-level ACK for this
                 // initiating connection. Other sessions receive correlated
@@ -870,8 +934,11 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                         &pubkey_bytes,
                         &event_id_hex,
                         "restricted: not a relay member",
-                        conn_id,
-                        &result.message,
+                        SelfLeaveRevocation {
+                            conn_id,
+                            success_message: result.message.clone(),
+                            revocation_guard: leave_revocation_guard,
+                        },
                     )
                     .await
                 {
