@@ -1,7 +1,7 @@
 #![cfg(unix)]
 use super::*;
-use std::io::Read;
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::io::{Read, Write};
+use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 
 fn canonical_tempdir() -> tempfile::TempDir {
     // macOS /var is an alias for /private/var; production accepts canonical bases only.
@@ -65,6 +65,87 @@ fn cleanup_removes_only_the_finished_owned_generation() {
     run.cleanup().unwrap();
     assert!(!path.exists());
     assert_eq!(std::fs::read(untouched).unwrap(), b"unchanged");
+}
+
+#[test]
+fn cleanup_restores_manifest_after_partial_recursive_remove() {
+    let base = canonical_tempdir();
+    let run = OwnedRecapRun::create(base.path(), 100).unwrap();
+    let path = run.path().to_owned();
+    let expected = run.manifest.clone();
+    let owner_path = path.join(MANIFEST);
+    let owner_inode = std::fs::metadata(&owner_path).unwrap().ino();
+    let payload = path.join("z-payload");
+    std::fs::create_dir(&payload).unwrap();
+    std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(payload.join("file"), b"payload").unwrap();
+    std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    assert_eq!(run.cleanup(), Err(RecapStateFailure::Io));
+    assert!(path.exists());
+    assert_ne!(
+        std::fs::metadata(&owner_path).unwrap().ino(),
+        owner_inode,
+        "remove_dir_all must have removed the manifest before the payload failure"
+    );
+    assert_eq!(read_manifest(&path).unwrap(), expected);
+    assert!(payload.join("file").exists());
+
+    std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn partial_cleanup_never_overwrites_a_foreign_manifest() {
+    let base = canonical_tempdir();
+    let run = OwnedRecapRun::create(base.path(), 100).unwrap();
+    let path = run.path().to_owned();
+    let payload = path.join("payload");
+    std::fs::write(&payload, b"payload").unwrap();
+    let mut foreign = run.manifest.clone();
+    foreign.run_id = "foreign-run".into();
+    let foreign_bytes = serde_json::to_vec(&foreign).unwrap();
+    let result = run.cleanup_with_remover(|path| {
+        std::fs::remove_file(path.join(MANIFEST)).unwrap();
+        std::fs::remove_file(path.join("payload")).unwrap();
+        let mut file = private_new_file(&path.join(MANIFEST)).unwrap();
+        file.write_all(&foreign_bytes).unwrap();
+        file.sync_all().unwrap();
+        Err(std::io::Error::other("partial cleanup"))
+    });
+    assert_eq!(result, Err(RecapStateFailure::Ownership));
+    assert_eq!(std::fs::read(path.join(MANIFEST)).unwrap(), foreign_bytes);
+    assert!(path.exists());
+}
+
+#[test]
+fn known_stopped_cleanup_accepts_finished_manifest_after_write_error() {
+    let base = canonical_tempdir();
+    let mut run = OwnedRecapRun::create(base.path(), 100).unwrap();
+    run.mark_process_pending().unwrap();
+    let path = run.path().to_owned();
+    let mut persisted = run.manifest.clone();
+    persisted.phase = Phase::Finished;
+    std::fs::write(path.join(MANIFEST), serde_json::to_vec(&persisted).unwrap()).unwrap();
+    run.cleanup_known_stopped().unwrap();
+    assert!(!path.exists());
+}
+
+#[test]
+fn known_stopped_cleanup_rejects_replaced_manifest() {
+    let base = canonical_tempdir();
+    let mut run = OwnedRecapRun::create(base.path(), 100).unwrap();
+    run.mark_process_pending().unwrap();
+    let path = run.path().to_owned();
+    let mut forged = run.manifest.clone();
+    forged.phase = Phase::Finished;
+    forged.run_id = "foreign-run".into();
+    std::fs::write(path.join(MANIFEST), serde_json::to_vec(&forged).unwrap()).unwrap();
+    assert_eq!(
+        run.cleanup_known_stopped(),
+        Err(RecapStateFailure::Ownership)
+    );
+    assert!(path.exists());
 }
 
 #[test]

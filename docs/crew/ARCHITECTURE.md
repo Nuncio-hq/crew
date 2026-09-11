@@ -461,6 +461,29 @@ proves private existing-agent Ask without employee-session stealing or task
 side effects; #366 consumes that proof and #367 owns explicit durable dispatch
 and ACL-safe origin links. These are gates, not source-handoff implementations.
 
+The default-off #365 adapter proof lives in
+`desktop/src-tauri/src/managed_agents/private_ask.rs`. It is an extension of
+the existing managed-agent catalog, executable identity, disposable-state and
+bounded-command seams; it does not add a Tauri command, relay kind, roster or
+session store. Admission binds `(community, relay, viewer, agent, project,
+repository)` plus the exact executable, effective model/profile, configuration
+hash, ACL hash and existing-session generation. A busy selected agent is
+rejected unless an independently owned invocation is already proven. Every
+discovered runtime starts with an inert capability receipt, so the adapter
+cannot turn static discovery or ACP readiness into a positive Ask capability.
+
+The fixed Hermes and Claude recipes run with a cleared environment, disposable
+state roots, bounded input/output/deadline and the existing process-tree
+runner. Source grounding is quoted with its exact revision, path, line range
+and complete-content hash; returned citations are the authenticated request
+grounding, not model-authored links. Hermes profile staging rejects the live
+`~/.hermes` tree and copies only a bounded, private staging root. A failed,
+canceled or unverified attempt leaves a typed state/process result and never
+publishes a relay event. Tool isolation, authentication, side-effect freedom,
+process containment and independent invocation remain `INCONCLUSIVE` until a
+matching #348 staging receipt and hostile real-runtime experiment are retained;
+the fixture tests prove the adapter's enforcement seam only.
+
 Coordinator-approved handbook compatibility (not a new founder claim): workspace-menu Company Wiki →
 existing `goWiki()` / `/wiki` / `WikiLibraryScreen` Company Wiki card. Reuse
 its kind 30023 content and ACL, with no new generator action, route migration

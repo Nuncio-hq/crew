@@ -115,6 +115,17 @@ impl VerifiedStagingOwnership {
         Ok(base)
     }
 
+    /// Resolve the profile export root recorded by the native staging
+    /// ownership receipt.  The caller cannot substitute another same-UID
+    /// directory: every invocation revalidates the receipt and all of its
+    /// private root identities.
+    pub(crate) fn hermes_profile_source(&self) -> Result<PathBuf, RecapStateFailure> {
+        self.validate()?;
+        let source = self.document.mac.roots.profiles.clone();
+        validate_private_root(&source, self.native.uid)?;
+        Ok(source)
+    }
+
     fn roots(&self) -> [&PathBuf; 5] {
         let roots = &self.document.mac.roots;
         [
@@ -204,6 +215,87 @@ impl VerifiedStagingOwnership {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+impl VerifiedStagingOwnership {
+    /// Build a real receipt-backed fixture for adapter tests without exposing
+    /// a production constructor for native identity.
+    pub(crate) fn for_test(root: &Path) -> Result<Self, RecapStateFailure> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let home = root.canonicalize().map_err(|_| RecapStateFailure::Io)?;
+        let uid = std::fs::metadata(&home)
+            .map_err(|_| RecapStateFailure::Io)?
+            .uid();
+        let config_base = home.join("config");
+        let app_data = config_base.join("com.nuncio.crew.staging-test");
+        let config_home = config_base.join("buzz-demo-staging-test");
+        let nest = home.join(".buzz-demo-staging-test");
+        let profiles = home.join("crew-staging-test/profiles");
+        let workspaces = home.join("crew-staging-test/workspaces");
+        let agents = app_data.join("agents");
+        for path in [
+            &app_data,
+            &config_home,
+            &nest,
+            &profiles,
+            &workspaces,
+            &agents,
+        ] {
+            std::fs::create_dir_all(path).map_err(|_| RecapStateFailure::Io)?;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+                .map_err(|_| RecapStateFailure::Io)?;
+        }
+        let excluded: Vec<_> = [".buzz", ".buzz-dev", ".codex", ".claude", ".hermes"]
+            .iter()
+            .map(|name| home.join(name))
+            .chain([config_base.join("com.nuncio.crew")])
+            .collect();
+        let document = serde_json::json!({
+            "schema": "crew-staging-ownership",
+            "version": 1,
+            "environment_id": "crew-staging-test",
+            "status": "OWNERSHIP_ONLY_NOT_RUNTIME_READY",
+            "mac": {
+                "owner_uid": uid,
+                "home": home,
+                "build_demo_slug": "staging-test",
+                "bundle_id": "com.nuncio.crew.staging-test",
+                "keyring_service": "buzz-desktop-demo.staging-test",
+                "deep_link_scheme": "buzz-demo-staging-test",
+                "runtime_generation_allowed": false,
+                "auth_references": [],
+                "excluded_roots": excluded,
+                "roots": {
+                    "app_data": app_data,
+                    "config_home": config_home,
+                    "nest": nest,
+                    "profiles": profiles,
+                    "workspaces": workspaces
+                }
+            }
+        });
+        let manifest = app_data.join(OWNERSHIP_FILENAME);
+        std::fs::write(
+            &manifest,
+            serde_json::to_vec(&document).map_err(|_| RecapStateFailure::Io)?,
+        )
+        .map_err(|_| RecapStateFailure::Io)?;
+        std::fs::set_permissions(manifest, std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| RecapStateFailure::Io)?;
+        Self::from_native(NativeIdentity {
+            home,
+            app_data,
+            config_home,
+            config_base,
+            slug: "staging-test".into(),
+            bundle_id: "com.nuncio.crew.staging-test".into(),
+            keyring_service: "buzz-desktop-demo.staging-test".into(),
+            scheme: "buzz-demo-staging-test".into(),
+            uid,
+        })
     }
 }
 

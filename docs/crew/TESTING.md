@@ -745,6 +745,29 @@ all those properties and #348 supplies a separate runtime-ready grant. Evidence
 screenshots must label a source/tooling summary as such; they cannot substitute
 for the designated staging runtime acceptance required by #351/#356.
 
+## Private Wiki Ask adapter proof (#365)
+
+The default-off `managed_agents::private_ask` module is the production seam
+for the bounded proof. Run its focused tests from the desktop crate after the
+heavy shared gate is free:
+
+```sh
+cd desktop/src-tauri
+cargo test managed_agents::private_ask -- --nocapture
+```
+
+The tests bind admission to the existing managed-agent scope and session
+generation, distinguish scope/ACL revocation, unbound and busy-agent states,
+and reject discovery-only capability receipts. They verify the exact quoted
+Wiki revision/source hash, fixed Hermes/Claude arguments, cleared relay and
+provider environment, private profile staging, model evidence, malformed or
+oversized output, pre-cancel and bounded process failure. The fake runtime is
+an enforcement-seam fixture: it does not certify provider authentication,
+native tool denial or process containment for an installed binary. A real
+staging run still needs two authenticated identities, an approved #348
+ownership receipt and a retained hostile-tool/descendant result before any
+positive capability may be recorded.
+
 The historical 2026-09-09 executed inventory used resolved native executables,
 not the user's updating wrapper. The Claude image matches the current
 Architecture row; the historical Codex 0.153.4 image used SHA-256

@@ -172,11 +172,86 @@ impl OwnedRecapRun {
 
     /// Remove exactly this disposable generation, never a profile or parent.
     pub(crate) fn cleanup(self) -> Result<(), RecapStateFailure> {
+        self.cleanup_with_remover(|path| std::fs::remove_dir_all(path))
+    }
+
+    /// Remove a generation after its runner is known to have stopped.
+    ///
+    /// A failed manifest rename can leave the durable file at either the
+    /// previous pending phase or `Finished` while the in-memory owner still
+    /// carries the previous phase.  Revalidate every ownership field and only
+    /// accept those two phases; a replaced or foreign manifest stays on disk.
+    pub(crate) fn cleanup_known_stopped(self) -> Result<(), RecapStateFailure> {
+        self.cleanup_with_expected_phase(Phase::ProcessMayBeRunning)
+    }
+
+    /// Remove a generation before any process has been spawned.
+    pub(crate) fn cleanup_before_spawn(self) -> Result<(), RecapStateFailure> {
+        self.cleanup_with_expected_phase(Phase::Prepared)
+    }
+
+    fn cleanup_with_expected_phase(self, expected: Phase) -> Result<(), RecapStateFailure> {
+        self.verify_directory()?;
+        let persisted = read_manifest(&self.path)?;
+        let phase_is_allowed = persisted.phase == expected || persisted.phase == Phase::Finished;
+        if persisted.format_version != self.manifest.format_version
+            || persisted.run_id != self.manifest.run_id
+            || persisted.created_at != self.manifest.created_at
+            || persisted.expires_at != self.manifest.expires_at
+            || persisted.directory != self.manifest.directory
+            || !phase_is_allowed
+        {
+            return Err(RecapStateFailure::Ownership);
+        }
+        self.remove_owned_tree(|path| std::fs::remove_dir_all(path))
+    }
+
+    fn cleanup_with_remover(
+        self,
+        remove: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> Result<(), RecapStateFailure> {
         self.verify()?;
         if self.manifest.phase == Phase::ProcessMayBeRunning {
             return Err(RecapStateFailure::ProcessPending);
         }
-        std::fs::remove_dir_all(&self.path).map_err(|_| RecapStateFailure::Io)
+        self.remove_owned_tree(remove)
+    }
+
+    fn remove_owned_tree(
+        self,
+        remove: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> Result<(), RecapStateFailure> {
+        if remove(&self.path).is_ok() {
+            return Ok(());
+        }
+        // remove_dir_all may have removed owner.json before a later child
+        // failed.  Restore the exact verified manifest while the owned root
+        // still exists so startup recovery retains a retry journal.
+        self.restore_manifest_after_failed_cleanup()?;
+        Err(RecapStateFailure::Io)
+    }
+
+    fn restore_manifest_after_failed_cleanup(&self) -> Result<(), RecapStateFailure> {
+        self.verify_directory()?;
+        let path = self.path.join(MANIFEST);
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => {
+                if read_manifest(&self.path)? != self.manifest {
+                    return Err(RecapStateFailure::Ownership);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let mut file = private_new_file(&path)?;
+                let bytes =
+                    serde_json::to_vec(&self.manifest).map_err(|_| RecapStateFailure::Io)?;
+                file.write_all(&bytes).map_err(|_| RecapStateFailure::Io)?;
+                file.sync_all().map_err(|_| RecapStateFailure::Io)?;
+            }
+            Err(_) => return Err(RecapStateFailure::Ownership),
+        }
+        File::open(&self.path)
+            .and_then(|file| file.sync_all())
+            .map_err(|_| RecapStateFailure::Io)
     }
 }
 

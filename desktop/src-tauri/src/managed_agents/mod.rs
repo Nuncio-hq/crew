@@ -52,6 +52,9 @@ pub(crate) mod recap_ownership;
 mod recap_ownership_native;
 #[allow(dead_code)]
 pub(crate) mod recap_state;
+// Default-off private Wiki Ask adapter proof; no UI or relay command is wired.
+#[allow(dead_code)]
+pub(crate) mod private_ask;
 pub(crate) mod reconcile;
 mod relay_mesh;
 mod repos;
