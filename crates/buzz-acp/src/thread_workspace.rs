@@ -4,6 +4,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(test)]
+use std::{
+    collections::HashSet,
+    sync::{Mutex, OnceLock},
+};
+
 use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 
@@ -23,6 +29,7 @@ use checkout::{
 const CONTEXT_URL_PREFIX: &str = "buzz://project-workspace?";
 const ROOT_CLAIM_DIRECTORY: &str = "buzz-thread-workspace-roots";
 const ROOT_CLAIM_READ_ATTEMPTS: usize = 10;
+const BRANCH_ROOT_CONFIG_RETRY_DELAYS_MS: [u64; 5] = [10, 20, 40, 80, 160];
 const IN_PROGRESS_MARKERS: [&str; 7] = [
     "MERGE_HEAD",
     "CHERRY_PICK_HEAD",
@@ -32,6 +39,38 @@ const IN_PROGRESS_MARKERS: [&str; 7] = [
     "rebase-merge",
     "rebase-apply",
 ];
+
+#[cfg(test)]
+static BRANCH_ROOT_CONFIG_ATTEMPTS: OnceLock<Mutex<HashSet<(PathBuf, String)>>> = OnceLock::new();
+
+#[cfg(test)]
+fn note_branch_root_config_attempt(common_git: &Path, root_event_id: &str) {
+    if let Ok(mut attempts) = BRANCH_ROOT_CONFIG_ATTEMPTS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+    {
+        attempts.insert((common_git.to_path_buf(), root_event_id.to_string()));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn clear_branch_root_config_attempts(common_git: &Path, root_event_id: &str) {
+    if let Ok(mut attempts) = BRANCH_ROOT_CONFIG_ATTEMPTS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+    {
+        attempts.remove(&(common_git.to_path_buf(), root_event_id.to_string()));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn branch_root_config_attempt_observed(common_git: &Path, root_event_id: &str) -> bool {
+    BRANCH_ROOT_CONFIG_ATTEMPTS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|attempts| attempts.contains(&(common_git.to_path_buf(), root_event_id.to_string())))
+        .unwrap_or(false)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CheckoutKind {
@@ -237,6 +276,34 @@ impl std::fmt::Display for ThreadWorkspacePrepareFailed {
 
 impl std::error::Error for ThreadWorkspacePrepareFailed {}
 
+/// Git's local config lock prevented durable branch/root metadata from being
+/// recorded after the worktree and root claim were prepared. The existing
+/// durable state must remain in place so a later retry can finish the record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ThreadWorkspaceConfigLockError {
+    pub(crate) path: PathBuf,
+    pub(crate) branch: String,
+    pub(crate) root_event_id: String,
+    pub(crate) git_stderr: String,
+    pub(crate) attempts: usize,
+}
+
+impl std::fmt::Display for ThreadWorkspaceConfigLockError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Git config at {} remained locked while updating isolated worktree branch '{}' for thread root '{}' after {} attempts. Any existing worktree and durable root claim were preserved; retry after config.lock is released. Git reported: {}",
+            self.path.display(),
+            self.branch,
+            self.root_event_id,
+            self.attempts,
+            self.git_stderr
+        )
+    }
+}
+
+impl std::error::Error for ThreadWorkspaceConfigLockError {}
+
 fn leftover_buzz_branch_exists(stderr: &str) -> bool {
     let compact = stderr.to_ascii_lowercase();
     compact.contains("a branch named") && compact.contains("already exists")
@@ -248,6 +315,31 @@ fn planned_worktree_path_is_absent(path: &Path) -> bool {
 
 fn git_stderr_text(stderr: &[u8]) -> String {
     String::from_utf8_lossy(stderr).trim().to_string()
+}
+
+fn is_known_config_lock_error(stderr: &str) -> bool {
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("could not lock config file")
+        || stderr.contains("cannot lock config file")
+        || stderr.contains("unable to lock config file")
+        || (stderr.contains("unable to create") && stderr.contains("config.lock"))
+}
+
+fn is_structural_verification_error(stderr: &str) -> bool {
+    let Some(diagnostic) = stderr
+        .lines()
+        .map(str::trim_start)
+        .find(|line| !line.is_empty())
+        .and_then(|line| line.strip_prefix("fatal: "))
+    else {
+        return false;
+    };
+
+    diagnostic.starts_with("not a git repository")
+        || diagnostic.starts_with("ref HEAD is not a symbolic ref")
+        || diagnostic
+            .strip_prefix("cannot change to ")
+            .is_some_and(|path| path.ends_with(": No such file or directory"))
 }
 
 fn canonicalize_project_workspace(path: &Path) -> Result<PathBuf> {
@@ -591,7 +683,7 @@ pub async fn ensure_planned_thread_worktree(
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         let branch_matches =
-            branch_root_matches(repo_root, common_git, branch, root_event_id).await;
+            branch_root_matches(repo_root, common_git, branch, root_event_id).await?;
         let mut branch_conflict = if branch_matches {
             foreign_branch_conflict(worktree_path, common_git, branch).await
         } else {
@@ -814,7 +906,7 @@ async fn verified_metadata(
         root_event_id,
         claim_exclusive_root,
     )
-    .await
+    .await?
     {
         return Ok(None);
     }
@@ -927,30 +1019,33 @@ async fn verify_worktree(
     expected_branch: &str,
     expected_root_event_id: &str,
     claim_exclusive_root: bool,
-) -> bool {
-    let Ok(root) = git_output(path, ["rev-parse", "--show-toplevel"]).await else {
-        return false;
+) -> Result<bool> {
+    let Some(root) = git_output_if_success(path, ["rev-parse", "--show-toplevel"]).await? else {
+        return Ok(false);
     };
-    let Ok(common) = git_output(path, ["rev-parse", "--git-common-dir"]).await else {
-        return false;
+    let Some(common) = git_output_if_success(path, ["rev-parse", "--git-common-dir"]).await? else {
+        return Ok(false);
     };
-    let Ok(root) = fs::canonicalize(root.trim()) else {
-        return false;
+    let Some(root) = canonicalize_for_verification(Path::new(root.trim()))? else {
+        return Ok(false);
     };
-    let Ok(common_path) = canonical_git_path(&root, common.trim()) else {
-        return false;
+    let common_path = match canonical_git_path(&root, common.trim()) {
+        Ok(path) => path,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
     };
-    let Ok(path) = fs::canonicalize(path) else {
-        return false;
+    let Some(path) = canonicalize_for_verification(path)? else {
+        return Ok(false);
     };
-    let Ok(branch) = git_output(&path, ["symbolic-ref", "--short", "HEAD"]).await else {
-        return false;
+    let Some(branch) = git_output_if_success(&path, ["symbolic-ref", "--short", "HEAD"]).await?
+    else {
+        return Ok(false);
     };
     if root != path || common_path != expected_common_git || branch.trim() != expected_branch {
-        return false;
+        return Ok(false);
     }
     if !claim_exclusive_root {
-        return true;
+        return Ok(true);
     }
     verify_or_claim_branch_root(
         &path,
@@ -961,14 +1056,48 @@ async fn verify_worktree(
     .await
 }
 
-async fn record_branch_root(repo_root: &Path, branch: &str, root_event_id: &str) -> Result<()> {
+async fn record_branch_root(
+    repo_root: &Path,
+    common_git: &Path,
+    branch: &str,
+    root_event_id: &str,
+) -> Result<()> {
     let key = branch_root_config_key(branch);
-    git_output(
-        repo_root,
-        ["config", "--local", "--add", key.as_str(), root_event_id],
-    )
-    .await?;
-    Ok(())
+    let config_path = common_git.join("config");
+    for attempt in 1..=BRANCH_ROOT_CONFIG_RETRY_DELAYS_MS.len() + 1 {
+        let output = Command::new("git")
+            .env("LC_ALL", "C")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["config", "--local", "--add", key.as_str(), root_event_id])
+            .kill_on_drop(true)
+            .output()
+            .await
+            .context("could not start git config")?;
+        #[cfg(test)]
+        note_branch_root_config_attempt(common_git, root_event_id);
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = git_stderr_text(&output.stderr);
+        if !is_known_config_lock_error(&stderr) {
+            bail!("{stderr}");
+        }
+        if let Some(delay_ms) = BRANCH_ROOT_CONFIG_RETRY_DELAYS_MS.get(attempt - 1) {
+            tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+        } else {
+            return Err(ThreadWorkspaceConfigLockError {
+                path: config_path,
+                branch: branch.to_string(),
+                root_event_id: root_event_id.to_string(),
+                git_stderr: stderr,
+                attempts: attempt,
+            }
+            .into());
+        }
+    }
+    unreachable!("branch root config retry loop always returns")
 }
 
 async fn branch_root_matches(
@@ -976,15 +1105,16 @@ async fn branch_root_matches(
     common_git: &Path,
     branch: &str,
     root_event_id: &str,
-) -> bool {
-    let Ok(recorded_roots) = read_branch_roots(repo_root, branch).await else {
-        return false;
-    };
-    !recorded_roots.is_empty()
-        && recorded_roots
+) -> Result<bool> {
+    let recorded_roots = read_branch_roots(repo_root, branch).await?;
+    if recorded_roots.is_empty()
+        || recorded_roots
             .iter()
-            .all(|recorded| recorded.eq_ignore_ascii_case(root_event_id))
-        && root_claim_matches(common_git, root_event_id).await
+            .any(|recorded| !recorded.eq_ignore_ascii_case(root_event_id))
+    {
+        return Ok(false);
+    }
+    root_claim_matches(common_git, root_event_id).await
 }
 
 async fn verify_or_claim_branch_root(
@@ -992,28 +1122,20 @@ async fn verify_or_claim_branch_root(
     common_git: &Path,
     branch: &str,
     root_event_id: &str,
-) -> bool {
-    let Ok(recorded_roots) = read_branch_roots(repo_root, branch).await else {
-        return false;
-    };
+) -> Result<bool> {
+    let recorded_roots = read_branch_roots(repo_root, branch).await?;
     if recorded_roots
         .iter()
         .any(|recorded| !recorded.eq_ignore_ascii_case(root_event_id))
     {
-        return false;
+        return Ok(false);
     }
-    let Ok(claimed) = claim_root(common_git, root_event_id).await else {
-        return false;
-    };
+    let claimed = claim_root(common_git, root_event_id).await?;
     if !claimed {
-        return false;
+        return Ok(false);
     }
-    if recorded_roots.is_empty()
-        && record_branch_root(repo_root, branch, root_event_id)
-            .await
-            .is_err()
-    {
-        return false;
+    if recorded_roots.is_empty() {
+        record_branch_root(repo_root, common_git, branch, root_event_id).await?;
     }
     branch_root_matches(repo_root, common_git, branch, root_event_id).await
 }
@@ -1049,10 +1171,8 @@ async fn claim_root(common_git: &Path, root_event_id: &str) -> Result<bool> {
     }
 }
 
-async fn root_claim_matches(common_git: &Path, root_event_id: &str) -> bool {
-    root_claim_matches_result(&root_claim_path(common_git, root_event_id), root_event_id)
-        .await
-        .unwrap_or(false)
+async fn root_claim_matches(common_git: &Path, root_event_id: &str) -> Result<bool> {
+    root_claim_matches_result(&root_claim_path(common_git, root_event_id), root_event_id).await
 }
 
 async fn root_claim_matches_result(claim_path: &Path, root_event_id: &str) -> Result<bool> {
@@ -1118,6 +1238,43 @@ fn canonical_git_path(repo_root: &Path, path: &str) -> std::io::Result<PathBuf> 
     })
 }
 
+fn canonicalize_for_verification(path: &Path) -> Result<Option<PathBuf>> {
+    match fs::canonicalize(path) {
+        Ok(path) => Ok(Some(path)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn git_output_if_success<I, S>(cwd: &Path, args: I) -> Result<Option<String>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let output = Command::new("git")
+        .env("LC_ALL", "C")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("could not start git")?;
+    if !output.status.success() {
+        let stderr = git_stderr_text(&output.stderr);
+        if is_structural_verification_error(&stderr) {
+            return Ok(None);
+        }
+        if stderr.is_empty() {
+            bail!("git exited with status {}", output.status);
+        }
+        bail!("{stderr}");
+    }
+    String::from_utf8(output.stdout)
+        .context("git returned non-UTF-8 output")
+        .map(Some)
+}
+
 async fn git_output<I, S>(cwd: &Path, args: I) -> Result<String>
 where
     I: IntoIterator<Item = S>,
@@ -1142,4 +1299,88 @@ fn validate_root_event_id(root_event_id: &str) -> Result<()> {
         bail!("thread root event ID must be 64 hex characters");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command as StdCommand;
+    use uuid::Uuid;
+
+    #[test]
+    fn structural_verification_classifier_requires_anchored_c_locale_form() {
+        assert!(is_structural_verification_error(
+            "fatal: not a git repository (or any of the parent directories): .git"
+        ));
+        assert!(is_structural_verification_error(
+            "fatal: ref HEAD is not a symbolic ref"
+        ));
+        assert!(is_structural_verification_error(
+            "fatal: cannot change to '/tmp/missing': No such file or directory"
+        ));
+        assert!(!is_structural_verification_error(
+            "fatal: bad config line 1 in file '/tmp/not a git repository/config'"
+        ));
+        assert!(!is_structural_verification_error(
+            "fatal: cannot change to '/tmp/missing': Permission denied"
+        ));
+        assert!(!is_structural_verification_error(
+            "Schwerwiegend: Kein Git-Repository (oder eines der übergeordneten Verzeichnisse): .git"
+        ));
+    }
+
+    #[tokio::test]
+    async fn verify_worktree_propagates_operational_git_stderr() {
+        let fixture = std::env::temp_dir().join(format!("buzz-worktree-verify-{}", Uuid::new_v4()));
+        let repo = fixture.join("project");
+        let worktree = fixture.join("worktree");
+        fs::create_dir_all(&repo).expect("fixture directory");
+        run_git(&repo, &["init", "-b", "main"]);
+        run_git(&repo, &["config", "user.email", "test@example.com"]);
+        run_git(&repo, &["config", "user.name", "Test"]);
+        fs::write(repo.join("README.md"), "fixture").expect("fixture file");
+        run_git(&repo, &["add", "README.md"]);
+        run_git(&repo, &["commit", "-m", "fixture"]);
+        let status = StdCommand::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["worktree", "add", "-b", "buzz/operational"])
+            .arg(&worktree)
+            .arg("HEAD")
+            .status()
+            .expect("git starts");
+        assert!(status.success(), "git worktree add failed");
+
+        let common_git = fs::canonicalize(repo.join(".git")).expect("common git directory");
+        let config = common_git.join("config");
+        let original_config = fs::read(&config).expect("read git config");
+        fs::write(&config, "[broken\n").expect("corrupt git config");
+        let result = verify_worktree(
+            &worktree,
+            &common_git,
+            "buzz/operational",
+            &"1".repeat(64),
+            false,
+        )
+        .await;
+        fs::write(&config, original_config).expect("restore git config");
+        fs::remove_dir_all(&fixture).expect("fixture cleanup");
+
+        let error = result.expect_err("malformed git config is operational, not structural");
+        let message = error.to_string().to_ascii_lowercase();
+        assert!(
+            message.contains("bad config") || message.contains("invalid section"),
+            "operational Git stderr must be preserved: {error}"
+        );
+    }
+
+    fn run_git(cwd: &Path, args: &[&str]) {
+        let status = StdCommand::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .status()
+            .expect("git starts");
+        assert!(status.success(), "git {args:?} failed");
+    }
 }
