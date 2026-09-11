@@ -2,6 +2,9 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+#[cfg(test)]
+use std::sync::OnceLock;
+
 use axum::body::Bytes;
 use tracing::{debug, error, info, warn};
 
@@ -24,8 +27,9 @@ use crate::connection::{AuthState, ConnectionState};
 use crate::protocol::RelayMessage;
 use crate::rejection::{reject_revoked_connection, RejectionTarget};
 use crate::state::{
-    AppState, SelfLeaveRevocation, RELAY_MEMBERSHIP_LEAVE_OPERATION_TIMEOUT,
-    RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT, RELAY_MEMBERSHIP_REVOKED_REASON,
+    AppState, SelfLeaveRevocation, RELAY_MEMBERSHIP_EVENT_ADMISSION_TIMEOUT,
+    RELAY_MEMBERSHIP_LEAVE_OPERATION_TIMEOUT, RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT,
+    RELAY_MEMBERSHIP_REVOKED_REASON,
 };
 
 use super::ingest::{reject_with_transport, IngestAuth, IngestError};
@@ -665,6 +669,66 @@ enum RelayLeavePreparation {
     CheckFailed(String),
 }
 
+/// Test-only gate placed inside the production EVENT admission seam. A
+/// stalled writer-backed read must time out before any event-specific work
+/// begins, rather than keeping the receive task occupied indefinitely.
+#[cfg(test)]
+pub(crate) struct EventMembershipTestHook {
+    pub(crate) entered: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+static EVENT_MEMBERSHIP_TEST_HOOK: OnceLock<
+    tokio::sync::Mutex<Option<Arc<EventMembershipTestHook>>>,
+> = OnceLock::new();
+
+#[cfg(test)]
+/// Install or clear the test gate for the production EVENT admission lookup.
+pub(crate) async fn install_event_membership_test_hook(hook: Option<Arc<EventMembershipTestHook>>) {
+    let slot = EVENT_MEMBERSHIP_TEST_HOOK.get_or_init(|| tokio::sync::Mutex::new(None));
+    *slot.lock().await = hook;
+}
+
+#[cfg(test)]
+async fn maybe_stall_event_membership_for_test() {
+    let Some(slot) = EVENT_MEMBERSHIP_TEST_HOOK.get() else {
+        return;
+    };
+    let hook = slot.lock().await.clone();
+    if let Some(hook) = hook {
+        hook.entered.notify_one();
+        hook.release.notified().await;
+    }
+}
+
+/// Revalidate the authenticated principal before accepting an EVENT. The
+/// writer-backed lookup covers both the direct member and NIP-OA owner paths;
+/// one application deadline therefore bounds the entire admission decision.
+async fn current_event_relay_membership(
+    state: &AppState,
+    community: CommunityId,
+    pubkey_bytes: &[u8],
+    agent_owner_pubkey: Option<&[u8]>,
+) -> Result<bool, String> {
+    let lookup = async {
+        #[cfg(test)]
+        maybe_stall_event_membership_for_test().await;
+
+        crate::api::relay_members::current_relay_membership_for_auth(
+            state,
+            community,
+            pubkey_bytes,
+            agent_owner_pubkey,
+        )
+        .await
+    };
+    match tokio::time::timeout(RELAY_MEMBERSHIP_EVENT_ADMISSION_TIMEOUT, lookup).await {
+        Ok(result) => result,
+        Err(_) => Err("current relay membership check timed out".to_owned()),
+    }
+}
+
 /// Handle an EVENT message from a WebSocket connection.
 ///
 /// Extracts auth from the WS connection, dispatches ordinary ephemeral
@@ -743,7 +807,7 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
     // NIP-42 admission is a point-in-time check. Revalidate the authenticated
     // principal before accepting any EVENT (including ephemeral events) so a
     // delayed or lost revocation command cannot leave this socket authorized.
-    match crate::api::relay_members::current_relay_membership_for_auth(
+    match current_event_relay_membership(
         &state,
         conn.tenant.community(),
         &pubkey_bytes,
@@ -2804,6 +2868,62 @@ mod tests {
                     .await;
             })
             .await;
+        }
+
+        #[tokio::test]
+        async fn event_membership_admission_times_out_before_event_work() {
+            let mut state = test_state().await;
+            let state_mut = Arc::get_mut(&mut state).expect("test state has one owner");
+            Arc::make_mut(&mut state_mut.config).require_relay_membership = true;
+
+            let community = buzz_core::tenant::CommunityId::from_uuid(Uuid::nil());
+            let tenant = TenantContext::resolved(community, "event-admission-timeout.test");
+            let keys = Keys::generate();
+            let (conn, _data_rx, mut ctrl_rx) = authenticated_conn(&state, &tenant, &keys).await;
+            let hook = Arc::new(crate::handlers::event::EventMembershipTestHook {
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            crate::handlers::event::install_event_membership_test_hook(Some(Arc::clone(&hook)))
+                .await;
+
+            let event = EventBuilder::new(Kind::TextNote, "stalled admission")
+                .sign_with_keys(&keys)
+                .expect("sign event");
+            let event_id = event.id.to_hex();
+            let started = std::time::Instant::now();
+            let task = tokio::spawn(crate::handlers::event::handle_event(
+                event,
+                Arc::clone(&conn),
+                Arc::clone(&state),
+            ));
+
+            crate::test_support::bounded(
+                "enter event membership test hook",
+                hook.entered.notified(),
+            )
+            .await;
+            crate::test_support::bounded("join timed-out EVENT handler", task)
+                .await
+                .expect("timed-out EVENT handler task");
+            crate::handlers::event::install_event_membership_test_hook(None).await;
+
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(1),
+                "EVENT admission must not wait for the stalled writer read"
+            );
+            let frame = ctrl_rx.try_recv().expect("timed-out EVENT rejection");
+            assert!(matches!(
+                frame,
+                axum::extract::ws::Message::Text(ref text)
+                    if text.contains(&event_id)
+                        && text.contains("OK")
+                        && text.contains("false")
+            ));
+            assert!(
+                conn.cancel.is_cancelled(),
+                "failed admission policy-closes the socket"
+            );
         }
 
         #[tokio::test]

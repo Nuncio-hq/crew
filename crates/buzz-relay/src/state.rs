@@ -923,6 +923,44 @@ const RELAY_MEMBERSHIP_SWEEP_CONCURRENCY: usize = 16;
 const RELAY_MEMBERSHIP_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 /// Overall deadline for one bounded reconciliation pass.
 const RELAY_MEMBERSHIP_SWEEP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+/// A self-leave must never wait indefinitely for local cleanup of other
+/// sessions. Work that does not fit this window is left live for the durable
+/// membership sweep, which owns eventual cleanup from the writer-backed row.
+const RELAY_MEMBERSHIP_LEAVE_LOCAL_FINALIZATION_TIMEOUT: std::time::Duration =
+    RELAY_MEMBERSHIP_SWEEP_DEADLINE;
+
+/// Test-only gate placed at the production self-leave bulk-cleanup seam. It
+/// makes the origin ACK ordering falsifiable without requiring a large live
+/// connection registry or a slow external service.
+#[cfg(test)]
+pub(crate) struct SelfLeaveBulkTestHook {
+    pub(crate) entered: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+static SELF_LEAVE_BULK_TEST_HOOK: std::sync::OnceLock<
+    tokio::sync::Mutex<Option<Arc<SelfLeaveBulkTestHook>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+/// Install or clear the test gate for the production self-leave bulk pass.
+pub(crate) async fn install_self_leave_bulk_test_hook(hook: Option<Arc<SelfLeaveBulkTestHook>>) {
+    let slot = SELF_LEAVE_BULK_TEST_HOOK.get_or_init(|| tokio::sync::Mutex::new(None));
+    *slot.lock().await = hook;
+}
+
+#[cfg(test)]
+async fn maybe_stall_self_leave_bulk_for_test() {
+    let Some(slot) = SELF_LEAVE_BULK_TEST_HOOK.get() else {
+        return;
+    };
+    let hook = slot.lock().await.clone();
+    if let Some(hook) = hook {
+        hook.entered.notify_one();
+        hook.release.notified().await;
+    }
+}
 /// Reserve half of every bounded pass for fresh identities whenever retry
 /// work and live identities coexist. A permanently failing writer lookup must
 /// therefore make progress through the fresh cursor ring instead of occupying
@@ -943,6 +981,10 @@ pub(crate) const RELAY_MEMBERSHIP_REVOCATION_LOCK_TIMEOUT: std::time::Duration =
 /// this deadline while the per-connection revocation fence remains held.
 pub(crate) const RELAY_MEMBERSHIP_LEAVE_OPERATION_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(10);
+/// A common EVENT admission read must not hold a receive task indefinitely
+/// while waiting for the writer-backed relay-membership roster.
+pub(crate) const RELAY_MEMBERSHIP_EVENT_ADMISSION_TIMEOUT: std::time::Duration =
+    RELAY_MEMBERSHIP_LOOKUP_TIMEOUT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MembershipLookupOutcome {
@@ -1753,21 +1795,31 @@ impl AppState {
         }
     }
 
-    /// Remove every subscription held by one connection, release its retained
-    /// Redis topics, and clear the connection-local subscription map. The
-    /// registry removal happens before any revocation publication so both
-    /// local fan-out and a raced REQ see an empty live subscription set.
-    pub(crate) async fn evict_connection_subscriptions(
+    /// Remove every subscription held by one connection and clear the
+    /// connection-local subscription map. The registry removal happens before
+    /// any revocation publication so both local fan-out and a raced REQ see an
+    /// empty live subscription set.
+    async fn detach_connection_subscriptions(
         &self,
-        tenant: &TenantContext,
         conn_id: Uuid,
     ) -> Vec<crate::subscription::RemovedSubscription> {
         let removed = self.sub_registry.remove_connection(conn_id);
         if let Some(subscriptions) = self.conn_manager.subscriptions_for(conn_id) {
             subscriptions.lock().await.clear();
         }
+        removed
+    }
 
-        for subscription in &removed {
+    /// Release the Redis topic retains belonging to a detached subscription
+    /// snapshot. This is kept separate from detachment so a self-leave can
+    /// queue its terminal event ACK and policy close before a large topic
+    /// cleanup runs.
+    async fn release_detached_subscription_topics(
+        &self,
+        tenant: &TenantContext,
+        removed: &[crate::subscription::RemovedSubscription],
+    ) {
+        for subscription in removed {
             if subscription.scope.is_global() {
                 self.pubsub
                     .release_topic(tenant, buzz_pubsub::EventTopic::Global)
@@ -1779,6 +1831,20 @@ impl AppState {
                     .await;
             }
         }
+    }
+
+    /// Remove every subscription held by one connection, release its retained
+    /// Redis topics, and clear the connection-local subscription map. The
+    /// registry removal happens before any revocation publication so both
+    /// local fan-out and a raced REQ see an empty live subscription set.
+    pub(crate) async fn evict_connection_subscriptions(
+        &self,
+        tenant: &TenantContext,
+        conn_id: Uuid,
+    ) -> Vec<crate::subscription::RemovedSubscription> {
+        let removed = self.detach_connection_subscriptions(conn_id).await;
+        self.release_detached_subscription_topics(tenant, &removed)
+            .await;
         removed
     }
 
@@ -1828,9 +1894,8 @@ impl AppState {
     /// only the denied identity; selecting by pubkey would also close valid
     /// owner-attested agent sessions that happen to share that pubkey as an
     /// owner relationship.
-    async fn prepare_connection_revocation(
+    async fn prepare_connection_revocation_without_topic_release(
         &self,
-        tenant: &TenantContext,
         conn_id: Uuid,
         reason: &str,
         excluded: bool,
@@ -1848,13 +1913,38 @@ impl AppState {
         if !marked {
             return None;
         }
-        let removed = self.evict_connection_subscriptions(tenant, conn_id).await;
+        let removed = self.detach_connection_subscriptions(conn_id).await;
         Some(PendingPubkeyRevocation {
             conn_id,
             excluded,
             removed,
             _revocation_guard: revocation_guard,
         })
+    }
+
+    /// Prepare one connection for a local policy revocation and release its
+    /// retained Redis topics before returning. Self-leave uses the paired
+    /// `without_topic_release` variant for its origin so the terminal ACK and
+    /// policy close do not wait behind topic cleanup.
+    async fn prepare_connection_revocation(
+        &self,
+        tenant: &TenantContext,
+        conn_id: Uuid,
+        reason: &str,
+        excluded: bool,
+        preheld_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    ) -> Option<PendingPubkeyRevocation> {
+        let pending = self
+            .prepare_connection_revocation_without_topic_release(
+                conn_id,
+                reason,
+                excluded,
+                preheld_guard,
+            )
+            .await?;
+        self.release_detached_subscription_topics(tenant, &pending.removed)
+            .await;
+        Some(pending)
     }
 
     /// Queue final subscription closures and cancel the pending connections.
@@ -2029,16 +2119,119 @@ impl AppState {
         reason: &str,
         options: RevocationOptions,
     ) -> Result<usize, RevocationError> {
-        let pending = self
-            .prepare_pubkey_revocation(
+        // Self-leave has one request-scoped connection whose event ACK must be
+        // queued promptly. Detach that origin first without awaiting Redis
+        // topic cleanup, then let the other local sessions use the ordinary
+        // revocation path in a bounded background pass. The durable writer
+        // row remains the retry authority when that pass cannot finish.
+        let is_self_leave =
+            options.leave_success_message.is_some() && options.excluded_conn_id.is_some();
+        let (origin_pending, origin_removed) = match (is_self_leave, options.excluded_conn_id) {
+            (true, Some(origin_conn_id)) => {
+                let origin_pending = self
+                    .prepare_connection_revocation_without_topic_release(
+                        origin_conn_id,
+                        reason,
+                        true,
+                        options.held_conn_id.map(|(_, guard)| guard),
+                    )
+                    .await;
+                let origin_removed = origin_pending
+                    .as_ref()
+                    .map(|pending| pending.removed.clone())
+                    .unwrap_or_default();
+                (origin_pending, origin_removed)
+            }
+            _ => (None, Vec::new()),
+        };
+
+        let pending = if is_self_leave {
+            let bulk_state = self.clone();
+            let bulk_tenant = tenant.clone();
+            let bulk_pubkey = pubkey.to_vec();
+            let bulk_event_id = event_id.to_owned();
+            let bulk_reason = reason.to_owned();
+            let excluded_conn_id = options.excluded_conn_id;
+            std::mem::drop(tokio::spawn(async move {
+                let cleanup_event_id = bulk_event_id.clone();
+                let cleanup_reason = bulk_reason.clone();
+                let cleanup = async move {
+                    #[cfg(test)]
+                    maybe_stall_self_leave_bulk_for_test().await;
+
+                    let pending = bulk_state
+                        .prepare_pubkey_revocation(
+                            &bulk_tenant,
+                            &bulk_pubkey,
+                            &cleanup_reason,
+                            excluded_conn_id,
+                            true,
+                            None,
+                        )
+                        .await;
+                    bulk_state
+                        .finish_pubkey_revocation(
+                            pending,
+                            &cleanup_event_id,
+                            &cleanup_reason,
+                            None,
+                            true,
+                        )
+                        .await
+                        .closed
+                };
+
+                match tokio::time::timeout(
+                    RELAY_MEMBERSHIP_LEAVE_LOCAL_FINALIZATION_TIMEOUT,
+                    cleanup,
+                )
+                .await
+                {
+                    Ok(closed) => {
+                        tracing::debug!(
+                            event_id = %bulk_event_id,
+                            closed,
+                            "completed bounded local self-leave cleanup"
+                        );
+                    }
+                    Err(_) => {
+                        metrics::counter!("buzz_relay_self_leave_local_cleanup_timeouts_total")
+                            .increment(1);
+                        tracing::warn!(
+                            event_id = %bulk_event_id,
+                            "local self-leave cleanup exceeded its bounded window; durable membership sweep will retry"
+                        );
+                    }
+                }
+            }));
+            Vec::new()
+        } else {
+            // Ordinary revocations retain their existing synchronous ordering:
+            // local subscriptions are detached before the control publish.
+            self.prepare_pubkey_revocation(
                 tenant,
                 pubkey,
                 reason,
                 options.excluded_conn_id,
                 false,
-                options.held_conn_id,
+                None,
             )
-            .await;
+            .await
+        };
+
+        // Topic release for the origin is intentionally fire-and-forget after
+        // detachment and terminal frame queuing. The registry is already
+        // empty, so no stale subscription can receive fan-out while this
+        // in-memory Redis interest is being released.
+        if !origin_removed.is_empty() {
+            let release_state = self.clone();
+            let release_tenant = tenant.clone();
+            std::mem::drop(tokio::spawn(async move {
+                release_state
+                    .release_detached_subscription_topics(&release_tenant, &origin_removed)
+                    .await;
+            }));
+        }
 
         let command = ConnControl::DisconnectPubkey {
             pubkey: pubkey.to_vec(),
@@ -2078,9 +2271,13 @@ impl AppState {
             }
             _ => None,
         };
-        let finish = self
-            .finish_pubkey_revocation(pending, event_id, reason, ack, true)
-            .await;
+        let finish = if let Some(origin_pending) = origin_pending {
+            self.finish_pubkey_revocation(vec![origin_pending], event_id, reason, ack, false)
+                .await
+        } else {
+            self.finish_pubkey_revocation(pending, event_id, reason, ack, true)
+                .await
+        };
 
         let _subscriber_count = publish_result?;
         if !finish.ack_delivered {
@@ -3780,6 +3977,117 @@ pub(crate) mod tests {
         assert!(other_cancel.is_cancelled(), "other session is revoked");
         let frame = other_ctrl.try_recv().expect("other rejection is queued");
         assert!(matches!(frame, WsMessage::Text(ref text) if text.as_str().contains("false")));
+    }
+
+    #[tokio::test]
+    async fn self_leave_origin_finishes_while_bulk_cleanup_is_stalled() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let tenant = TenantContext::resolved(community, "test.local");
+        let pubkey = vec![5u8; 32];
+
+        let register = |state: &AppState| {
+            let conn_id = Uuid::new_v4();
+            let (tx, _rx) = mpsc::channel(1);
+            let (ctrl_tx, ctrl_rx) = mpsc::channel(4);
+            let cancel = CancellationToken::new();
+            state.conn_manager.register(
+                conn_id,
+                tx,
+                ctrl_tx,
+                None,
+                cancel.clone(),
+                community,
+                Arc::new(AtomicU8::new(0)),
+                Arc::new(Mutex::new(HashMap::new())),
+                3,
+            );
+            state
+                .conn_manager
+                .set_authenticated_pubkey(conn_id, pubkey.clone());
+            (conn_id, ctrl_rx, cancel)
+        };
+
+        let (origin_conn, mut origin_ctrl, origin_cancel) = register(&state);
+        let (other_conn, mut other_ctrl, other_cancel) = register(&state);
+        let hook = Arc::new(SelfLeaveBulkTestHook {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        install_self_leave_bulk_test_hook(Some(Arc::clone(&hook))).await;
+
+        let event_id = "4".repeat(64);
+        let revocation_guard = state
+            .conn_manager
+            .try_acquire_revocation_lock(origin_conn)
+            .expect("origin revocation fence");
+        let finalize_state = Arc::clone(&state);
+        let finalize_tenant = tenant.clone();
+        let finalize_pubkey = pubkey.clone();
+        let finalize_event_id = event_id.clone();
+        let finalize = tokio::spawn(async move {
+            finalize_state
+                .disconnect_pubkey_clusterwide_for_leave(
+                    &finalize_tenant,
+                    &finalize_pubkey,
+                    &finalize_event_id,
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                    SelfLeaveRevocation {
+                        conn_id: origin_conn,
+                        success_message: "you left".to_owned(),
+                        revocation_guard,
+                    },
+                )
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), hook.entered.notified())
+            .await
+            .expect("bulk cleanup reaches its bounded background seam");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), finalize)
+            .await
+            .expect("self-leave finalizer must not wait for bulk cleanup")
+            .expect("self-leave finalizer task");
+        install_self_leave_bulk_test_hook(None).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(RevocationError::Publish(_)) | Err(RevocationError::PublishTimeout)
+            ),
+            "the unreachable test Redis should make publication fail after origin finalization"
+        );
+        let frame = origin_ctrl
+            .try_recv()
+            .expect("origin failure ACK is queued");
+        assert!(matches!(
+            frame,
+            WsMessage::Text(ref text)
+                if text.contains(&event_id) && text.contains("OK") && text.contains("false")
+        ));
+        assert!(
+            origin_cancel.is_cancelled(),
+            "origin policy close is terminal"
+        );
+        assert!(
+            !other_cancel.is_cancelled(),
+            "the stalled bulk pass must not delay or preempt origin finalization"
+        );
+
+        hook.release.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if other_cancel.is_cancelled() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("deferred bulk cleanup eventually revokes the other session");
+        let frame = other_ctrl.try_recv().expect("other rejection is queued");
+        assert!(matches!(frame, WsMessage::Text(ref text) if text.contains("false")));
+        state.conn_manager.deregister(origin_conn);
+        state.conn_manager.deregister(other_conn);
     }
 
     #[test]
