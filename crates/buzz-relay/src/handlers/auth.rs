@@ -247,7 +247,7 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
             // owner fallback after its own relay-membership row is removed.
             let backfill_owner = if state.config.allow_nip_oa_auth {
                 crate::api::relay_members::owner_for_nip_oa_backfill(
-                    admission_owner.clone(),
+                    admission_owner,
                     pubkey.as_bytes(),
                     auth_tag_json.as_deref(),
                     Some(signed_auth_created_at),

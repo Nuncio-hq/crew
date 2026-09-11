@@ -841,6 +841,8 @@ struct PendingPubkeyRevocation {
     removed: Vec<crate::subscription::RemovedSubscription>,
 }
 
+type RelayMembershipIdentity = (CommunityId, Vec<u8>, Option<Vec<u8>>);
+
 /// Bounded failure returned by a cluster-wide live revocation.
 #[derive(Debug, Error)]
 pub(crate) enum RevocationError {
@@ -1746,7 +1748,7 @@ impl AppState {
             return 0;
         }
 
-        let mut checked: HashMap<(CommunityId, Vec<u8>, Option<Vec<u8>>), bool> = HashMap::new();
+        let mut checked: HashMap<RelayMembershipIdentity, bool> = HashMap::new();
         let mut denied = Vec::new();
 
         for community_id in self.conn_manager.per_community_ws_connections().into_keys() {
