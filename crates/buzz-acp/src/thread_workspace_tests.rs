@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, time::Duration};
 
 use tokio::process::Command;
 use uuid::Uuid;
@@ -997,6 +997,104 @@ async fn concurrent_same_prefix_legacy_adoptions_cannot_both_succeed() {
     fs::remove_dir_all(&fixture).expect("fixture cleanup");
 }
 
+#[tokio::test]
+async fn config_lock_retry_finishes_after_transient_lock_release() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = Uuid::new_v4().simple().to_string().repeat(2);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    let branch = created.branch.clone();
+    drop_branch_root_records(&workspace.local_path, &branch).await;
+
+    let common_git = common_git_path(&workspace.local_path).await;
+    let config_lock = common_git.join("config.lock");
+    fs::write(&config_lock, b"held").expect("hold git config lock");
+    crate::thread_workspace::clear_branch_root_config_attempts(&common_git, &root);
+
+    let retry_workspace = workspace.clone();
+    let retry_root = root.clone();
+    let retry =
+        tokio::spawn(async move { ensure_thread_worktree(&retry_workspace, &retry_root).await });
+    let mut observed_config_attempt = false;
+    for _ in 0..200 {
+        if crate::thread_workspace::branch_root_config_attempt_observed(&common_git, &root) {
+            observed_config_attempt = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    if !observed_config_attempt {
+        fs::remove_file(&config_lock).expect("release git config lock");
+        let _ = retry.await;
+        panic!("production git config attempt was not observed");
+    }
+    fs::remove_file(&config_lock).expect("release git config lock");
+
+    let result = retry.await;
+    let reused = result
+        .expect("retry task joins")
+        .expect("transient config lock is retried");
+    assert_eq!(reused, created);
+    assert_recorded_winner(&workspace, &branch, &root).await;
+
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
+#[tokio::test]
+async fn persistent_config_lock_is_retryable_and_preserves_durable_state() {
+    let (fixture, workspace, _) = git_fixture().await;
+    let root = "b".repeat(64);
+    let created = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("initial create succeeds");
+    let branch = created.branch.clone();
+    drop_branch_root_records(&workspace.local_path, &branch).await;
+
+    let common_git = common_git_path(&workspace.local_path).await;
+    let config_lock = common_git.join("config.lock");
+    fs::write(&config_lock, b"held").expect("hold git config lock");
+
+    let error = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect_err("persistent config lock must remain retryable");
+    let lock_error = error
+        .downcast_ref::<crate::thread_workspace::ThreadWorkspaceConfigLockError>()
+        .expect("config lock must use the typed retryable error");
+    assert_eq!(lock_error.path, common_git.join("config"));
+    assert_eq!(lock_error.branch, branch);
+    assert_eq!(lock_error.root_event_id, root);
+    assert_eq!(lock_error.attempts, 6);
+    assert!(
+        lock_error
+            .git_stderr
+            .to_ascii_lowercase()
+            .contains("lock config")
+            || lock_error
+                .git_stderr
+                .to_ascii_lowercase()
+                .contains("config.lock"),
+        "typed error must preserve stable Git lock stderr: {}",
+        lock_error.git_stderr
+    );
+    assert!(created.worktree_path.is_dir(), "worktree must be preserved");
+    assert!(
+        common_git
+            .join("buzz-thread-workspace-roots")
+            .join(format!("{}.root", &root[..12]))
+            .is_file(),
+        "durable root claim must be preserved for retry"
+    );
+    fs::remove_file(&config_lock).expect("release git config lock");
+    let recovered = ensure_thread_worktree(&workspace, &root)
+        .await
+        .expect("subsequent ensure finishes durable metadata");
+    assert_eq!(recovered, created);
+    assert_recorded_winner(&workspace, &branch, &root).await;
+
+    fs::remove_dir_all(&fixture).expect("fixture cleanup");
+}
+
 fn exactly_one_winner(
     first_root: String,
     first: anyhow::Result<crate::thread_workspace::ThreadWorkspace>,
@@ -1027,6 +1125,17 @@ async fn assert_recorded_winner(workspace: &ProjectWorkspace, branch: &str, winn
                 .all(|value| value.eq_ignore_ascii_case(winner_root)),
         "only the durable winner may be recorded in branch config"
     );
+}
+
+async fn common_git_path(repo_root: &std::path::Path) -> PathBuf {
+    let common_git = git_output(repo_root, &["rev-parse", "--git-common-dir"]).await;
+    let common_git = PathBuf::from(common_git);
+    let common_git = if common_git.is_absolute() {
+        common_git
+    } else {
+        repo_root.join(common_git)
+    };
+    fs::canonicalize(common_git).expect("canonical common git directory")
 }
 
 async fn remove_root_identity(workspace: &ProjectWorkspace, root: &str, config_key: &str) {
