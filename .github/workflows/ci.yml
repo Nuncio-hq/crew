@@ -710,7 +710,7 @@ jobs:
         run: |
           cargo nextest run \
             --archive-file target/ci/backend-integration-tests.tar.zst \
-            -E 'package(buzz-relay) and test(/handlers::event::tests::fanout_access::closed_relay_membership_removal_denies_req_count_event_and_fanout/)' \
+            -E 'package(buzz-relay) and test(/handlers::event::tests::fanout_access::postgres_tests::closed_relay_membership_removal_denies_req_count_event_and_fanout/)' \
             --run-ignored ignored-only \
             --no-tests fail
           cargo nextest run \
@@ -720,7 +720,7 @@ jobs:
             --no-tests fail
           cargo nextest run \
             --archive-file target/ci/backend-integration-tests.tar.zst \
-            -E 'package(buzz-relay) and test(/handlers::event::tests::fanout_access::self_leave_not_found_ack_wins_over_a_concurrent_revoked_event/)' \
+            -E 'package(buzz-relay) and test(/handlers::event::tests::fanout_access::postgres_tests::self_leave_not_found_ack_wins_over_a_concurrent_revoked_event/)' \
             --run-ignored ignored-only \
             --no-tests fail
         env:

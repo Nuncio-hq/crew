@@ -283,9 +283,7 @@ async fn recv_eose(client: &mut BuzzTestClient, sub_id: &str) {
 /// subscription after its member row is removed. The connection-level
 /// acknowledgement and subscription CLOSED frame are both correlated before
 /// the test accepts the policy reason.
-#[tokio::test]
-#[ignore = "requires PostgreSQL, Redis, and a membership-gated relay"]
-async fn writer_membership_sweep_closes_idle_subscription() {
+async fn writer_membership_sweep_closes_idle_subscription_impl() {
     let url = relay_url();
     let pool = db_pool().await;
     let community_id = deployment_community(&pool).await;
@@ -341,9 +339,7 @@ async fn writer_membership_sweep_closes_idle_subscription() {
 /// row and a successful fresh NIP-42 login are the causal oracle: neither the
 /// periodic writer sweep nor a request-side membership denial can explain the
 /// observed policy close.
-#[tokio::test]
-#[ignore = "requires PostgreSQL, Redis, and a membership-gated relay"]
-async fn redis_connection_control_revokes_live_socket() {
+async fn redis_connection_control_revokes_live_socket_impl() {
     let url = relay_url();
     let pool = db_pool().await;
     let community_id = deployment_community(&pool).await;
@@ -388,4 +384,21 @@ async fn redis_connection_control_revokes_live_socket() {
         disconnect_client(live, "Redis-control member session").await;
     })
     .await;
+}
+
+// These scenarios need a live, membership-gated relay in addition to their
+// PostgreSQL and Redis dependencies. Keep them under the external-infra
+// namespace so discovery does not route them through the database-only lane.
+mod external_infra_membership_tests {
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL, Redis, and network relay fixture"]
+    async fn writer_membership_sweep_closes_idle_subscription() {
+        super::writer_membership_sweep_closes_idle_subscription_impl().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL, Redis, and network relay fixture"]
+    async fn redis_connection_control_revokes_live_socket() {
+        super::redis_connection_control_revokes_live_socket_impl().await;
+    }
 }

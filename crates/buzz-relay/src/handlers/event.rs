@@ -2585,9 +2585,7 @@ mod tests {
         /// Production-bound closed-relay regression: after the real writer
         /// row is deleted, every live read/write seam and the fan-out
         /// chokepoint must deny the already-authenticated principal.
-        #[tokio::test]
-        #[ignore = "requires isolated PostgreSQL"]
-        async fn closed_relay_membership_removal_denies_req_count_event_and_fanout() {
+        async fn closed_relay_membership_removal_denies_req_count_event_and_fanout_impl() {
             let (state, audit_shutdown, pool) = closed_membership_state().await;
             let community_uuid = Uuid::new_v4();
             let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
@@ -2728,9 +2726,7 @@ mod tests {
             .await;
         }
 
-        #[tokio::test]
-        #[ignore = "requires isolated PostgreSQL"]
-        async fn self_leave_not_found_ack_wins_over_a_concurrent_revoked_event() {
+        async fn self_leave_not_found_ack_wins_over_a_concurrent_revoked_event_impl() {
             let (state, audit_shutdown, pool) = closed_membership_state().await;
             let community_uuid = Uuid::new_v4();
             let community = buzz_core::tenant::CommunityId::from_uuid(community_uuid);
@@ -3149,6 +3145,24 @@ mod tests {
             )
             .await;
             assert_eq!(out, matches);
+        }
+
+        // Keep these production-bound regressions in the PostgreSQL lane's
+        // discoverable namespace while leaving their implementation helpers
+        // alongside the fan-out seams they exercise.
+        mod postgres_tests {
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn closed_relay_membership_removal_denies_req_count_event_and_fanout() {
+                super::closed_relay_membership_removal_denies_req_count_event_and_fanout_impl()
+                    .await;
+            }
+
+            #[tokio::test]
+            #[ignore = "requires isolated PostgreSQL"]
+            async fn self_leave_not_found_ack_wins_over_a_concurrent_revoked_event() {
+                super::self_leave_not_found_ack_wins_over_a_concurrent_revoked_event_impl().await;
+            }
         }
     }
 
