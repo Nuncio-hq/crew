@@ -5,7 +5,10 @@ use axum::{
     Json, Router,
 };
 use nostr::{EventBuilder, Keys, Kind, Tag};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 #[tokio::test]
 async fn remote_owned_discovery_and_membership_do_not_require_local_records() {
@@ -187,6 +190,104 @@ async fn remote_owned_discovery_and_membership_do_not_require_local_records() {
         .any(|filter| filter["kinds"] == serde_json::json!([30177])
             && filter["authors"] == serde_json::json!([owner_key])
             && filter.get("#d").is_none()));
+    server.abort();
+    crate::relay_admission::reset_rate_limit_gate();
+}
+
+#[tokio::test]
+async fn directory_deadline_cancels_delayed_policy_fanout_without_partial_success() {
+    let _serial = crate::relay_admission::TEST_SERIAL.lock().await;
+    crate::relay_admission::reset_rate_limit_gate();
+    let relay = Keys::generate();
+    let owner = Keys::generate();
+    let agent = Keys::generate();
+    let agent_key = agent.public_key().to_hex();
+    let auth = buzz_sdk_pkg::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "").unwrap();
+    let auth: Vec<String> = serde_json::from_str(&auth).unwrap();
+    let profile = EventBuilder::new(Kind::Metadata, r#"{"display_name":"Deadline Scout"}"#)
+        .tags([Tag::parse(auth).unwrap()])
+        .sign_with_keys(&agent)
+        .unwrap();
+    let events = Arc::new(Mutex::new(vec![profile]));
+    let delayed_policy_queries = Arc::new(AtomicUsize::new(0));
+    let query_events = events.clone();
+    let query_delays = delayed_policy_queries.clone();
+    let relay_key = relay.public_key().to_hex();
+    let router = Router::new()
+        .route(
+            "/",
+            get(move || {
+                let relay_key = relay_key.clone();
+                async move { Json(serde_json::json!({"self": relay_key})) }
+            }),
+        )
+        .route(
+            "/query",
+            post(move |Json(filters): Json<Vec<serde_json::Value>>| {
+                let events = query_events.clone();
+                let query_delays = query_delays.clone();
+                async move {
+                    let delayed_policy = filters.iter().any(|filter| {
+                        filter["kinds"] == serde_json::json!([30177])
+                            && filter["limit"] == serde_json::json!(1)
+                            && filter.get("#d").is_some()
+                    });
+                    if delayed_policy {
+                        query_delays.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                    let events = events.lock().unwrap();
+                    let result: Vec<_> = events
+                        .iter()
+                        .filter(|event| {
+                            filters.iter().any(|filter| {
+                                filter["kinds"].as_array().is_some_and(|kinds| {
+                                    kinds.contains(&serde_json::json!(event.kind.as_u16()))
+                                }) && filter.get("authors").is_none_or(|authors| {
+                                    authors.as_array().is_some_and(|authors| {
+                                        authors.contains(&serde_json::json!(event.pubkey.to_hex()))
+                                    })
+                                })
+                            })
+                        })
+                        .cloned()
+                        .collect();
+                    Json(result)
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let state = crate::app_state::build_app_state();
+    *state.keys.lock().unwrap() = owner;
+    *state.relay_url_override.lock().unwrap() = Some(format!("ws://{address}"));
+    let requested = std::collections::HashSet::from([agent_key]);
+
+    let result = list_relay_agents_for_selection_with_timeout(
+        &state,
+        Some(&requested),
+        Some("general"),
+        std::time::Duration::from_millis(500),
+    )
+    .await;
+
+    let error = result.expect_err("a delayed policy fanout must not return partial agents");
+    assert_eq!(error, "relay agent directory lookup timed out");
+    assert_eq!(
+        delayed_policy_queries.load(Ordering::SeqCst),
+        1,
+        "the timed-out policy request started exactly once"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        delayed_policy_queries.load(Ordering::SeqCst),
+        1,
+        "cancellation must prevent any next policy/fanout request"
+    );
+
     server.abort();
     crate::relay_admission::reset_rate_limit_gate();
 }

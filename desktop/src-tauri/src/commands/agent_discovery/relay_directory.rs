@@ -8,6 +8,11 @@ use crate::{
 };
 
 const RELAY_DIRECTORY_PAGE_SIZE: usize = 500;
+/// One directory rebuild, including discovery, pagination, and policy fanout,
+/// must finish inside this deadline. Per-request query timeouts alone would
+/// permit the bounded pages and exact-author batches to run sequentially for
+/// many minutes while the caller is waiting on one result.
+const RELAY_DIRECTORY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// A directory rebuild must prove exhaustion with a short page. These bounds
 /// keep a relay that ignores cursors, repeats pages, or keeps returning full
 /// pages from holding the command and accumulating an unbounded event vector.
@@ -192,6 +197,39 @@ pub(crate) async fn list_relay_agents_for_state(
 }
 
 async fn list_relay_agents_for_selection(
+    state: &AppState,
+    requested_pubkeys: Option<&std::collections::HashSet<String>>,
+    channel_id: Option<&str>,
+) -> Result<Vec<RelayAgentInfo>, String> {
+    list_relay_agents_for_selection_with_timeout(
+        state,
+        requested_pubkeys,
+        channel_id,
+        RELAY_DIRECTORY_READ_TIMEOUT,
+    )
+    .await
+}
+
+/// Run one complete directory read under a single deadline. Dropping the
+/// timed-out future cancels pending relay requests, semaphore waits, and
+/// pagination/fanout futures; the command never returns a partial directory.
+/// The private timeout argument lets tests drive this production wrapper with
+/// a short deadline against a controlled relay.
+async fn list_relay_agents_for_selection_with_timeout(
+    state: &AppState,
+    requested_pubkeys: Option<&std::collections::HashSet<String>>,
+    channel_id: Option<&str>,
+    timeout: std::time::Duration,
+) -> Result<Vec<RelayAgentInfo>, String> {
+    tokio::time::timeout(
+        timeout,
+        list_relay_agents_for_selection_inner(state, requested_pubkeys, channel_id),
+    )
+    .await
+    .map_err(|_| "relay agent directory lookup timed out".to_string())?
+}
+
+async fn list_relay_agents_for_selection_inner(
     state: &AppState,
     requested_pubkeys: Option<&std::collections::HashSet<String>>,
     channel_id: Option<&str>,
