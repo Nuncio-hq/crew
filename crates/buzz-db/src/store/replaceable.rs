@@ -24,8 +24,6 @@ pub const MAX_WIKI_LIVE_BYTES: i64 = 512 * 1024 * 1024;
 pub const MAX_WIKI_LIVE_EVENTS: i64 = 4096;
 const MAX_WIKI_SIGNED_EVENT_BYTES: i64 = 192 * 1024;
 
-type ExistingReplaceableRow = (DateTime<Utc>, Vec<u8>, bool, bool, bool, i64);
-
 /// Result of a transaction-bound parameterized-replaceable event write.
 #[derive(Clone, Debug)]
 pub struct ParameterizedReplaceResult {
