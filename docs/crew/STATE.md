@@ -45,6 +45,9 @@ upstream's composer-revision security model with Crew context in
 bounded projection requires the matching native runtime `startNonce`, connected
 transport, and active community scope before exposing zero/nonzero; otherwise
 it stays unknown.
+The Project/Wiki Ask composer is visible but disabled with a plain unavailable
+message; the former sample answer and channel prefill are removed while
+#366/#367's private runtime, history, storage, and dispatch gates remain open.
 
 ## Hermes
 
