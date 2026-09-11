@@ -3,7 +3,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::body::Bytes;
-use axum::extract::ws::Message as WsMessage;
 use tracing::{debug, error, info, warn};
 
 use buzz_core::event::StoredEvent;

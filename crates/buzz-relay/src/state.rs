@@ -2443,6 +2443,48 @@ pub(crate) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn disconnect_pubkey_local_queues_rejection_before_cancellation() {
+        let state = test_state().await;
+        let community = CommunityId::from_uuid(Uuid::nil());
+        let tenant = TenantContext::resolved(community, "test.local");
+        let conn_id = Uuid::new_v4();
+        let (tx, _rx) = mpsc::channel(1);
+        let (ctrl_tx, mut ctrl_rx) = mpsc::channel(4);
+        let cancel = CancellationToken::new();
+        state.conn_manager.register(
+            conn_id,
+            tx,
+            ctrl_tx,
+            None,
+            cancel.clone(),
+            community,
+            Arc::new(AtomicU8::new(0)),
+            Arc::new(Mutex::new(HashMap::new())),
+            3,
+        );
+        let pubkey = vec![8u8; 32];
+        state
+            .conn_manager
+            .set_authenticated_pubkey(conn_id, pubkey.clone());
+
+        assert_eq!(
+            state
+                .disconnect_pubkey_local(
+                    &tenant,
+                    &pubkey,
+                    &"0".repeat(64),
+                    RELAY_MEMBERSHIP_REVOKED_REASON,
+                    None,
+                )
+                .await,
+            1
+        );
+        let frame = ctrl_rx.try_recv().expect("local rejection is queued");
+        assert!(matches!(frame, WsMessage::Text(ref text) if text.as_str().contains("false")));
+        assert!(cancel.is_cancelled(), "local revocation cancels the socket");
+    }
+
     #[test]
     fn owner_revocation_selection_includes_nip_oa_agent_sessions() {
         let mgr = ConnectionManager::new();
