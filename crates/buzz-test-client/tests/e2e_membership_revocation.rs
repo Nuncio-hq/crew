@@ -26,6 +26,10 @@ fn relay_url() -> String {
     std::env::var("RELAY_URL").unwrap_or_else(|_| "ws://localhost:3000".to_owned())
 }
 
+fn redis_url() -> String {
+    std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_owned())
+}
+
 fn relay_host() -> String {
     let parsed = url::Url::parse(&relay_url()).expect("RELAY_URL must be a valid URL");
     let host = parsed.host_str().expect("RELAY_URL must include a host");
@@ -79,6 +83,41 @@ async fn remove_member(pool: &PgPool, community_id: Uuid, keys: &Keys) {
         1,
         "exactly one member row must be removed"
     );
+}
+
+async fn publish_disconnect_pubkey(community_id: Uuid, keys: &Keys, reason: &str) -> i64 {
+    let client = redis::Client::open(redis_url()).expect("valid integration Redis URL");
+    let mut connection = client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("connect to integration Redis");
+    let channel = format!("buzz:{community_id}:conn-control");
+    let payload = json!({
+        "op": "DisconnectPubkey",
+        "pubkey": keys.public_key().to_bytes().to_vec(),
+        "event_id": "redis-membership-control-probe",
+        "reason": reason,
+        "exclude_conn_id": null,
+    })
+    .to_string();
+
+    // Relay readiness does not wait for the reconnecting conn-control
+    // subscriber. Retry the production PUBLISH until Redis reports a
+    // subscriber, so a zero count cannot make the test appear green while the
+    // command was simply published before the consumer subscribed.
+    for _ in 0..100 {
+        let subscribers: i64 = redis::cmd("PUBLISH")
+            .arg(&channel)
+            .arg(&payload)
+            .query_async(&mut connection)
+            .await
+            .expect("publish connection-control command");
+        if subscribers > 0 {
+            return subscribers;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("Redis conn-control subscriber did not become ready on {channel}");
 }
 
 async fn recv_closed(client: &mut BuzzTestClient, sub_id: &str) -> String {
@@ -241,5 +280,57 @@ async fn writer_membership_removal_revokes_live_and_fresh_access() {
     let _ = count.disconnect().await;
     let _ = event.disconnect().await;
     let _ = owner.disconnect().await;
+    let _ = live.disconnect().await;
+}
+
+/// A production-shaped Redis connection-control command must close a live
+/// socket even while its writer membership row remains present. The retained
+/// row and a successful fresh NIP-42 login are the causal oracle: neither the
+/// periodic writer sweep nor a request-side membership denial can explain the
+/// observed policy close.
+#[tokio::test]
+#[ignore = "requires PostgreSQL, Redis, and a membership-gated relay"]
+async fn redis_connection_control_revokes_live_socket() {
+    let url = relay_url();
+    let pool = db_pool().await;
+    let community_id = deployment_community(&pool).await;
+    let member_keys = Keys::generate();
+    add_member(&pool, community_id, &member_keys).await;
+
+    let mut live = BuzzTestClient::connect(&url, &member_keys)
+        .await
+        .expect("member must authenticate while its writer row exists");
+    let live_sub = format!("redis-control-live-{}", Uuid::new_v4());
+    live.subscribe(&live_sub, vec![Filter::new()])
+        .await
+        .expect("open member subscription");
+    recv_eose(&mut live, &live_sub).await;
+
+    let reason = "blocked: redis connection-control probe";
+    let subscriber_count = publish_disconnect_pubkey(community_id, &member_keys, reason).await;
+    assert!(
+        subscriber_count > 0,
+        "PUBLISH must reach the production conn-control subscriber"
+    );
+    assert_eq!(recv_closed(&mut live, &live_sub).await, reason);
+
+    // The row was deliberately retained. A new NIP-42 session must therefore
+    // still authenticate, proving the close came from Redis control delivery.
+    let fresh = BuzzTestClient::connect(&url, &member_keys)
+        .await
+        .expect("Redis disconnect must not revoke the durable membership row");
+    fresh
+        .disconnect()
+        .await
+        .expect("disconnect fresh member session");
+    let result = sqlx::query(
+        "DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2 AND role = 'member'",
+    )
+    .bind(community_id)
+    .bind(member_keys.public_key().to_hex())
+    .execute(&pool)
+    .await
+    .expect("clean up Redis-control membership row");
+    assert_eq!(result.rows_affected(), 1);
     let _ = live.disconnect().await;
 }

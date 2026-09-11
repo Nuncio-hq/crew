@@ -685,10 +685,6 @@ jobs:
             RELAY_URL=ws://localhost:3000 \
             BUZZ_BIND_ADDR=0.0.0.0:3000 \
             BUZZ_REQUIRE_AUTH_TOKEN=false \
-            BUZZ_REQUIRE_RELAY_MEMBERSHIP=true \
-            RELAY_OWNER_PUBKEY=79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798 \
-            BUZZ_RELAY_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
-            BUZZ_COMMUNITY_REVALIDATE_INTERVAL_SECS=1 \
             BUZZ_RECONCILE_CHANNELS=true \
             BUZZ_GIT_PROBE_WRITERS=8 \
             SPROUT_REMINDER_SCHEDULER_INTERVAL_SECS=1 \
@@ -715,17 +711,6 @@ jobs:
             --run-ignored ignored-only
         env:
           DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
-      - name: Live relay membership revocation e2e
-        # Exercise real NIP-42 admission, writer-backed roster removal,
-        # correlated query/write denials, and the revalidator's policy close.
-        run: |
-          cargo nextest run \
-            --archive-file target/ci/backend-integration-tests.tar.zst \
-            -E 'binary(e2e_membership_revocation)' \
-            --run-ignored ignored-only
-        env:
-          RELAY_URL: ws://localhost:3000
-          DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
       - name: Workspace profile (kind:9033) gate tests
         # Call-site integration for the 9033 authorization gate: open relay
         # rosterless/steward transitions and the closed-relay admin/owner rule,
@@ -750,6 +735,59 @@ jobs:
             --run-ignored ignored-only
         env:
           RELAY_URL: ws://localhost:3000
+      - name: Start membership-gated relay
+        # Keep the existing backend integration relay open for its established
+        # tests. The revocation binary gets a second listener and tenant so
+        # closed admission is isolated to this new coverage.
+        run: |
+          docker exec -e PGPASSWORD=buzz_dev buzz-postgres \
+            psql -U buzz -d buzz -v ON_ERROR_STOP=1 -qtA -c "
+          INSERT INTO communities (id, host)
+          VALUES ('00000000-0000-4000-8000-00000000c0d1', 'localhost:3001')
+          ON CONFLICT (lower(host)) DO NOTHING
+          ;"
+          chmod +x ./target/ci/buzz-relay
+          nohup env \
+            DATABASE_URL="postgres://buzz:${BUZZ_TEST_POSTGRES_PASSWORD}@localhost:5432/buzz" \
+            REDIS_URL=redis://localhost:6379 \
+            RELAY_URL=ws://localhost:3001 \
+            BUZZ_BIND_ADDR=0.0.0.0:3001 \
+            BUZZ_HEALTH_PORT=8181 \
+            BUZZ_METRICS_PORT=9201 \
+            BUZZ_REQUIRE_AUTH_TOKEN=false \
+            BUZZ_REQUIRE_RELAY_MEMBERSHIP=true \
+            RELAY_OWNER_PUBKEY=79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798 \
+            BUZZ_RELAY_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
+            BUZZ_COMMUNITY_REVALIDATE_INTERVAL_SECS=1 \
+            BUZZ_RECONCILE_CHANNELS=true \
+            BUZZ_GIT_PROBE_WRITERS=8 \
+            SPROUT_REMINDER_SCHEDULER_INTERVAL_SECS=1 \
+            ./target/ci/buzz-relay > /tmp/buzz-relay-membership.log 2>&1 &
+          echo $! > /tmp/buzz-relay-membership.pid
+          for attempt in $(seq 1 60); do
+            if ! kill -0 "$(cat /tmp/buzz-relay-membership.pid)" 2>/dev/null; then
+              cat /tmp/buzz-relay-membership.log
+              exit 1
+            fi
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8181/_readiness || true)
+            if [ "${status_code}" = "200" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/buzz-relay-membership.log
+          exit 1
+      - name: Live relay membership revocation e2e
+        # Exercise real NIP-42 admission, writer-backed roster removal,
+        # correlated query/write denials, and Redis connection-control.
+        run: |
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'binary(e2e_membership_revocation)' \
+            --run-ignored ignored-only
+        env:
+          RELAY_URL: ws://localhost:3001
+          DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
       - name: NIP-MP coordinate deletion guard
         # Verifies the never-delete-newer invariant of soft_delete_by_coordinate:
         # a stale tombstone (created_at earlier than the live head) spares that
@@ -766,7 +804,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: backend-integration-relay-log
-          path: /tmp/buzz-relay.log
+          path: |
+            /tmp/buzz-relay.log
+            /tmp/buzz-relay-membership.log
           if-no-files-found: ignore
 
   relay-e2e:
