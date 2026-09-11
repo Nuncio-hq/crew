@@ -6,6 +6,7 @@ import { installMockBridge } from "../helpers/bridge";
 const SHOTS = "test-results/crew-wiki";
 /** Mock `buzz` card owner (`deadbeef…`), not tyler. Jobs key on this pubkey. */
 const OWNER = "deadbeef".repeat(8);
+const SOURCE_PATH = "desktop/src/features/projects/ui/ProjectDetailScreen.tsx";
 
 test.use({ video: "on", viewport: { width: 1280, height: 720 } });
 test.describe.configure({ timeout: 90_000 });
@@ -137,6 +138,29 @@ test.describe("Crew Wiki (#200)", () => {
     await page
       .getByTestId("wiki-page")
       .screenshot({ path: `${SHOTS}/06-wiki-page.png` });
+
+    const pageSearch = page.getByTestId("wiki-page-search");
+    await pageSearch.fill("body search proof");
+    await expect(page.getByTestId("wiki-search-results")).toBeVisible();
+    await expect(page.getByTestId("wiki-search-result-overview")).toContainText(
+      "body search proof",
+    );
+    await page.getByTestId("wiki-search-result-overview").click();
+    await expect(pageSearch).toHaveValue("");
+    await expect(page.getByTestId("wiki-markdown")).toContainText(
+      "body search proof",
+    );
+
+    const sourceFiles = page.getByTestId("wiki-source-files");
+    await expect(sourceFiles).toBeVisible();
+    await sourceFiles.locator("summary").click();
+    await expect(
+      sourceFiles.getByText("Folder: E2E mock Buzz checkout"),
+    ).toBeVisible();
+    await sourceFiles.getByRole("button", { name: SOURCE_PATH }).click();
+    await expect(page.getByTestId("wiki-source-preview")).toContainText(
+      "export function ProjectDetailScreen()",
+    );
 
     await expect(page.getByTestId("wiki-mermaid")).toBeVisible();
     await expect(page.getByTestId("wiki-mermaid-fallback")).toBeVisible();

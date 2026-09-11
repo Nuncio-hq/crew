@@ -49,9 +49,12 @@ import {
   isWikiKind,
   readE2eWikiSnapshot,
   resetE2eWiki,
+  readE2eWikiSource,
+  searchE2eWikiEvents,
   seedGeneratedWiki,
   seedCompanyWiki,
   setE2eWikiEvents,
+  wikiSourceCoordinates,
 } from "./e2eWiki.ts";
 import { applyGovernorStatus } from "@/features/tool-pane/governorStore";
 import type { GovernorStatus } from "@/features/tool-pane/types";
@@ -13094,6 +13097,26 @@ export function maybeInstallE2eTauriMocks() {
   ): Promise<unknown> => {
     const activeConfig = getConfig();
     const identity = getActiveIdentity(activeConfig);
+    const activeScope = () => {
+      const activeIdentity = identity ?? DEFAULT_MOCK_IDENTITY;
+      return {
+        scope: {
+          owner: activeIdentity.pubkey,
+          community: new URL(
+            activeConfig?.relayHttpUrl ?? DEFAULT_RELAY_HTTP_URL,
+          ).origin,
+        },
+        workspace_generation: 0,
+        identity_generation: 0,
+      };
+    };
+    const sourceGrant = (repositoryCoordinate: string) => ({
+      capabilityId: `e2e-wiki-source-${repositoryCoordinate.split(":").at(-1)}`,
+      repositoryCoordinate,
+      token: activeScope(),
+      label: "E2E mock Buzz checkout",
+      workspaceMode: "git",
+    });
     window.__BUZZ_E2E_COMMANDS__?.push(command);
     const loggedPayload = (() => {
       if (payload instanceof Uint8Array) {
@@ -13139,17 +13162,71 @@ export function maybeInstallE2eTauriMocks() {
 
     switch (command) {
       case "owner_operation_scope": {
-        const activeIdentity = identity ?? DEFAULT_MOCK_IDENTITY;
-        return {
-          scope: {
-            owner: activeIdentity.pubkey,
-            community: new URL(
-              activeConfig?.relayHttpUrl ?? DEFAULT_RELAY_HTTP_URL,
-            ).origin,
-          },
-          workspace_generation: 0,
-          identity_generation: 0,
+        return activeScope();
+      }
+      case "wiki_search": {
+        const input = payload as {
+          expected?: {
+            scope?: { owner?: string };
+            workspace_generation?: number;
+            identity_generation?: number;
+          };
+          coordinate?: string;
+          snapshotId?: string;
+          pageIds?: string[];
+          query?: string;
         };
+        if (!input.expected) throw new Error("Missing Wiki scope.");
+        if (
+          !input.coordinate ||
+          !input.snapshotId ||
+          !Array.isArray(input.pageIds) ||
+          typeof input.query !== "string"
+        ) {
+          throw new Error("Invalid Wiki search request.");
+        }
+        return {
+          token: input.expected,
+          value: searchE2eWikiEvents({
+            coordinate: input.coordinate,
+            snapshotId: input.snapshotId,
+            pageIds: input.pageIds,
+            query: input.query,
+          }),
+        };
+      }
+      case "wiki_source_grants": {
+        const owner = (identity ?? DEFAULT_MOCK_IDENTITY).pubkey;
+        return wikiSourceCoordinates(owner).map((coordinate) =>
+          sourceGrant(coordinate),
+        );
+      }
+      case "wiki_choose_source_root": {
+        const coordinate = (payload as { repositoryCoordinate?: unknown })
+          .repositoryCoordinate;
+        if (typeof coordinate !== "string" || !coordinate) {
+          throw new Error("Invalid Wiki repository coordinate.");
+        }
+        return sourceGrant(coordinate);
+      }
+      case "wiki_forget_source_root":
+        return null;
+      case "wiki_open_verified_source": {
+        const input = payload as {
+          capabilityId?: string;
+          page?: RelayEvent;
+          referenceIndex?: number;
+        };
+        if (
+          typeof input.capabilityId !== "string" ||
+          !input.page ||
+          typeof input.referenceIndex !== "number"
+        ) {
+          throw new Error("Invalid Wiki source request.");
+        }
+        const source = readE2eWikiSource(input.page, input.referenceIndex);
+        if (!source) throw new Error("Source reference unavailable.");
+        return source;
       }
       case "wiki_snapshot_read": {
         const input = payload as {
