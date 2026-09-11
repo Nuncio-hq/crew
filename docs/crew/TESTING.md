@@ -110,6 +110,23 @@ identity once, and then verify a subsequent authenticated read and write. This
 admission is a staging control-plane operation; it does not grant channel
 membership, provider access, or generation permission.
 
+## Project Wiki read/search/source slice (#397)
+
+The merged [#397](https://github.com/Nuncio-hq/crew/pull/397) implementation
+ships the Project-scoped Wiki read/search/source slice. Native
+`wiki_snapshot_read` verifies one coherent v1 graph before the renderer sees
+page bodies. Body Search is enabled only for a complete verified snapshot and
+uses the native `wiki_search` command over the existing NIP-50 path, with a
+page-id allowlist and bounded query/result sizes. Source preview revalidates
+the signed snapshot, head and scoped native source grant against the page's
+source revision before reading the selected reference.
+
+Native command/API tests, relay interop coverage and the desktop Wiki E2E flow
+provide technical evidence for this merged code. They do not establish an
+installed/native staging run or founder acceptance. Snapshot generation and
+publication, private Ask/History, durable recovery and the #348/#362/#363
+runtime gates remain separate acceptance work.
+
 ### Existing harness limitations
 
 [`docker-compose.harness.yml`](../../docker-compose.harness.yml) is an

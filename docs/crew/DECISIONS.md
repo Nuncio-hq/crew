@@ -1372,7 +1372,10 @@ See spikes 0035–0038.
 
 ## D-061 — Crew Wiki is a separable engine on relay events
 
-- **Status:** Accepted; navigation placement amended by D-078 v0.9. Publication and native recovery architecture amended by D-079; implementation and Ask proof remain gated in #362–#367.
+- **Status:** Accepted; navigation placement amended by D-078 v0.9. The
+  Project Wiki read/search/source slice shipped in [#397](https://github.com/Nuncio-hq/crew/pull/397);
+  publication and native recovery architecture amended by D-079, while native
+  publication/recovery and Ask proof remain gated in #362–#367.
 - **Date:** 2026-08-13
 - **Issue:** #200
 
@@ -1965,9 +1968,12 @@ The accepted demonstrated flow includes Project create/link/manage, optional
 folder and new/existing channels, Project-scoped Wiki Read/full-body Search/
 immutable Source, existing-agent private Ask/History, independent temporary
 generator settings and explicit editable draft → Start thread → Back to Wiki.
-Source snapshot, native path/host semantics, coherent publication/retention,
-private runtime/ACL guarantees and durable recovery are **not** proved by the
-prototype. #361–#367 own their named technical gates and implementation.
+The #397 merge ships the scoped Read/full-body Search/immutable Source slice,
+including bounded native/relay reads and renderer/E2E coverage. This technical
+implementation is distinct from installed/native or founder acceptance:
+source snapshot generation/publication, native path/host semantics, coherent
+publication/retention, private runtime/ACL guarantees and durable recovery are
+not proved here. #361–#367 own their named technical gates and implementation.
 D-061 generation/address/Ask changes require their concrete amendments there;
 this decision does not invent an event kind, generic outbox or private transport.
 D-056/G-THREAD-1 and the other existing gates remain scoped as in the blueprint.

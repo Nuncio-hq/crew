@@ -26,6 +26,10 @@ observer completion is [#352](https://github.com/Nuncio-hq/crew/issues/352). Too
 Crew Dark, text-only zoom, the 1000-line ratchet, and composer-revision mention
 flow are shipped. Agent membership is unknown unless runtime nonce, transport,
 and community scope match.
+Project Wiki Read, bounded full-body Search, and revision-bound Source view are
+shipped in [#397](https://github.com/Nuncio-hq/crew/pull/397). Native generation/
+publication, Ask/History, and installed staging acceptance remain separate
+gates (#348/#362/#363/#366/#367).
 The Project/Wiki Ask composer is visible but disabled with a plain unavailable
 message; its former sample answer and channel prefill are removed while
 #366/#367's private runtime, history, storage, and dispatch gates remain open.
