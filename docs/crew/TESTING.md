@@ -962,13 +962,18 @@ NuncioCrew Gate. See [the runtime limits](ARCHITECTURE.md#bounded-inventory-limi
 for the current unsupported inventory.
 
 Test boundaries include explicit model/profile admission, identity invalidation,
-fixed argv with a fake tool sentinel, native final-result/model parsing, private
-unlinked stdin and size limits, durable process-pending state, copied/symlinked
-ownership records, root-generation replacement, UID/build/profile/exclusion
-mismatch, rejection of generation/auth claims in an ownership-only manifest,
-and production-seam execution with a fake native executable, private stdin and
+fixed Claude and Hermes argv with a fake tool sentinel, native final-result and
+usage-model parsing, copied-profile and symlink rejection, private unlinked
+stdin and size limits, durable process-pending state, copied/symlinked ownership
+records, root-generation replacement, UID/build/profile/exclusion mismatch,
+rejection of generation/auth claims in an ownership-only manifest, and
+production-seam execution with a fake native executable, private stdin and
 finished-run cleanup. The ownership loader also binds a future runtime-ready
 grant to the exact ownership receipt bytes and executable fingerprint.
+The source seam is tested for chronological cursor pagination, newest-window
+selection, auxiliary-event exclusion, and the persisted `source_overflow`
+watermark when the bounded relay scan cannot prove EOF; an overflowed source is
+never reported as a current recap.
 The bounded process tests cover aggregate discovery versus independent recap
 budgets, cancellation before and after spawn, zero deadlines, EPERM retry only
 after observed root reap, and cleanup failures. The existing escaped-descendant
@@ -976,8 +981,9 @@ test deliberately proves the limit of Unix process groups and cleans its own
 fixture; it must never be reported as whole-tree containment.
 
 Keep RED, mutation and restored-GREEN evidence separate. Removing the fixed
-`--tools` argument, prompt cap, pending-process cleanup guard, or EPERM reap
-condition must fail the corresponding production-seam regression. Synthetic
+no-tool Claude/Hermes recipe arguments, prompt cap, pending-process cleanup
+guard, source overflow watermark, or EPERM reap condition must fail the
+corresponding production-seam regression. Synthetic
 argv/output tests and authorized design reviews do not establish provider auth,
 effective generation model, native tool isolation or a working recap. Real
 staging generation remains blocked until one exact runtime combination proves

@@ -6,7 +6,8 @@
 //! never replaces relay-authoritative thread state.
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -24,6 +25,11 @@ const RECAPS_DIRECTORY: &str = "recaps";
 const MAX_SETTINGS_BYTES: usize = 32 * 1024;
 const MAX_RECAP_BYTES: usize = 512 * 1024;
 const MAX_SOURCE_EVENTS: usize = 256;
+// The relay thread bridge pages replies oldest-first. Walk a bounded number of
+// pages so the recap source can reach the tail without allowing a pathological
+// thread to turn one generation into an unbounded relay read. A sentinel page
+// beyond this ceiling sets `source_overflow` when more replies exist.
+const MAX_SOURCE_SCAN_EVENTS: usize = 4096;
 const MAX_RECAP_ENTRIES: usize = 100;
 const MAX_RECAP_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_GENERATION_ID_BYTES: usize = 128;
@@ -118,6 +124,11 @@ pub(crate) struct ThreadRecap {
     pub source_manifest_hash: String,
     pub source_event_ids: Vec<String>,
     pub omitted_message_count: u32,
+    /// True when the bounded relay scan stopped before proving thread EOF.
+    /// The included event IDs remain the newest window observed, but older or
+    /// newer replies may exist outside the scan ceiling.
+    #[serde(default)]
+    pub source_overflow: bool,
     pub oldest_included_event_id: Option<String>,
     pub newest_included_event_id: Option<String>,
 }
@@ -147,6 +158,7 @@ struct ThreadSource {
     manifest_hash: String,
     event_ids: Vec<String>,
     omitted_message_count: u32,
+    source_overflow: bool,
     oldest_included_event_id: Option<String>,
     newest_included_event_id: Option<String>,
 }
@@ -169,6 +181,7 @@ struct SourceManifest {
     events: Vec<SourceManifestEvent>,
     included_event_ids: Vec<String>,
     omitted_message_count: u32,
+    source_overflow: bool,
     max_input_bytes: u64,
 }
 
@@ -176,6 +189,33 @@ struct SourceManifest {
 struct ActiveGeneration {
     generation_id: String,
     cancelled: Arc<AtomicBool>,
+}
+
+struct GenerationGuard {
+    key: String,
+    generation_id: String,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl GenerationGuard {
+    fn register(key: &str, generation_id: &str) -> Result<Self, String> {
+        let cancelled = register_generation(key, generation_id)?;
+        Ok(Self {
+            key: key.to_string(),
+            generation_id: generation_id.to_string(),
+            cancelled,
+        })
+    }
+
+    fn cancelled(&self) -> &Arc<AtomicBool> {
+        &self.cancelled
+    }
+}
+
+impl Drop for GenerationGuard {
+    fn drop(&mut self) {
+        unregister_generation(&self.key, &self.generation_id);
+    }
 }
 
 fn active_generations() -> &'static Mutex<HashMap<String, ActiveGeneration>> {
@@ -222,24 +262,33 @@ fn settings_path<R: tauri::Runtime>(
 }
 
 fn read_private_json(path: &std::path::Path, limit: usize) -> Result<Option<Vec<u8>>, String> {
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    // The metadata probe is only an absent-file fast path. The actual read is
+    // an O_NOFOLLOW open followed by fstat in `private_read_file`, so a path
+    // replacement between these operations cannot redirect the read.
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err("state_io".to_string()),
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > limit as u64 {
+    }
+    let mut file =
+        super::recap_state::private_read_file(path).map_err(|_| "state_ownership".to_string())?;
+    let initial = file.metadata().map_err(|_| "state_ownership".to_string())?;
+    if initial.len() > limit as u64 {
         return Err("state_ownership".to_string());
     }
-    #[cfg(unix)]
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "state_io".to_string())?;
+    let final_metadata = file.metadata().map_err(|_| "state_ownership".to_string())?;
+    if final_metadata.len() != initial.len()
+        || bytes.len() as u64 != initial.len()
+        || bytes.len() > limit
     {
-        use std::os::unix::fs::MetadataExt;
-        if metadata.uid() != rustix::process::getuid().as_raw() || metadata.mode() & 0o077 != 0 {
-            return Err("state_ownership".to_string());
-        }
+        return Err("state_ownership".to_string());
     }
-    std::fs::read(path)
-        .map(Some)
-        .map_err(|_| "state_io".to_string())
+    Ok(Some(bytes))
 }
 
 fn load_settings<R: tauri::Runtime>(
@@ -536,6 +585,10 @@ fn runtime_kind(id: &str) -> &'static str {
     }
 }
 
+fn profile_name_from_path(path: &Path) -> Option<String> {
+    super::recap_adapter::hermes_profile_ref(path)
+}
+
 fn canonical_relay_origin(relay: &str) -> Result<String, String> {
     let mut url = url::Url::parse(relay).map_err(|_| "invalid_relay".to_string())?;
     if !url.username().is_empty()
@@ -604,15 +657,44 @@ fn runtime_inventory<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<RecapRuntimeO
                     if let Ok(admission) =
                         admit_runtime_ready(runtime.id, contract, proof, &requested)
                     {
-                        option.availability = "supported".to_string();
-                        option.reason = None;
-                        option.capability_fingerprint = Some(sha256_hex(format!(
-                            "v1\0{}\0{}\0{}",
-                            admission.runtime_id,
-                            admission.executable.fingerprint,
-                            admission.selection.model,
-                        )));
-                        option.models.push(admission.selection.model);
+                        let profile_ref = admission
+                            .selection
+                            .profile
+                            .as_deref()
+                            .and_then(profile_name_from_path);
+                        if contract.selection
+                            == super::recap_capability::RecapSelectionContract::StagingProfile
+                            && profile_ref.is_none()
+                        {
+                            option.reason = Some("runtime_not_ready".to_string());
+                        } else {
+                            option.availability = "supported".to_string();
+                            option.reason = None;
+                            if let (Some(profile), Some(id)) = (
+                                admission.selection.profile.as_deref(),
+                                profile_ref.as_deref(),
+                            ) {
+                                option.profiles.push(RecapProfileOption {
+                                    id: id.to_string(),
+                                    label: id.to_string(),
+                                });
+                                option.capability_fingerprint = Some(sha256_hex(format!(
+                                    "v1\0{}\0{}\0{}\0{}",
+                                    admission.runtime_id,
+                                    admission.executable.fingerprint,
+                                    admission.selection.model,
+                                    profile.display(),
+                                )));
+                            } else {
+                                option.capability_fingerprint = Some(sha256_hex(format!(
+                                    "v1\0{}\0{}\0{}\0",
+                                    admission.runtime_id,
+                                    admission.executable.fingerprint,
+                                    admission.selection.model,
+                                )));
+                            }
+                            option.models.push(admission.selection.model);
+                        }
                     } else if contract.command.is_some() {
                         option.reason = Some("runtime_not_ready".to_string());
                     }
@@ -666,16 +748,24 @@ fn validate_settings(
         return Err("capability_changed".to_string());
     }
     if runtime.kind == "hermes" {
-        if settings.profile_ref.is_none() {
+        let Some(profile_ref) = settings.profile_ref.as_deref() else {
             return Err("missing_selection".to_string());
+        };
+        if !runtime
+            .profiles
+            .iter()
+            .any(|profile| profile.id == profile_ref)
+        {
+            return Err("profile_mismatch".to_string());
         }
     } else if settings.profile_ref.is_some() {
         return Err("profile_mismatch".to_string());
     }
-    if let Some(model) = settings.requested_model.as_deref() {
-        if !runtime.models.iter().any(|candidate| candidate == model) {
-            return Err("invalid_model_selection".to_string());
-        }
+    let Some(model) = settings.requested_model.as_deref() else {
+        return Err("missing_selection".to_string());
+    };
+    if !runtime.models.iter().any(|candidate| candidate == model) {
+        return Err("invalid_model_selection".to_string());
     }
     Ok(normalized)
 }
@@ -778,13 +868,47 @@ fn source_manifest_event(event: &nostr::Event) -> Result<SourceManifestEvent, St
     })
 }
 
+/// Append one chronological relay page and retain only the bounded tail that
+/// has actually been observed. The returned page length lets the caller
+/// distinguish a proven short-page EOF from a full page; `true` means the
+/// scan ceiling was crossed and the retained tail is only a prefix scan, not
+/// the thread's overall newest window.
+fn append_source_scan_page(
+    replies: &mut Vec<nostr::Event>,
+    page: Vec<nostr::Event>,
+) -> (usize, bool) {
+    let page_len = page.len();
+    replies.extend(page);
+    if replies.len() <= MAX_SOURCE_SCAN_EVENTS {
+        return (page_len, false);
+    }
+    let drop_count = replies.len() - MAX_SOURCE_SCAN_EVENTS;
+    replies.drain(..drop_count);
+    (page_len, true)
+}
+
+#[cfg(test)]
 fn build_thread_source(
-    mut events: Vec<nostr::Event>,
+    events: Vec<nostr::Event>,
     channel_id: &str,
     root_event_id: &str,
 ) -> Result<ThreadSource, String> {
-    let omitted_by_source_cap = events.len().saturating_sub(MAX_SOURCE_EVENTS) as u32;
-    events.truncate(MAX_SOURCE_EVENTS);
+    build_thread_source_with_overflow(events, channel_id, root_event_id, false)
+}
+
+fn build_thread_source_with_overflow(
+    mut events: Vec<nostr::Event>,
+    channel_id: &str,
+    root_event_id: &str,
+    source_overflow: bool,
+) -> Result<ThreadSource, String> {
+    events.sort_by(|left, right| {
+        left.created_at
+            .as_secs()
+            .cmp(&right.created_at.as_secs())
+            .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
+    });
+    events.dedup_by(|left, right| left.id == right.id);
     let Some(root_index) = events
         .iter()
         .position(|event| event.id.to_hex() == root_event_id)
@@ -808,15 +932,21 @@ fn build_thread_source(
     let mut remaining = super::recap_adapter::RECAP_INPUT_LIMIT
         .saturating_sub(prefix.len())
         .saturating_sub(root_bytes.len());
-    let mut omitted_message_count = omitted_by_source_cap;
+    let mut omitted_message_count = 0u32;
+    let mut available_slots = MAX_SOURCE_EVENTS.saturating_sub(1);
     for index in (0..events.len()).rev() {
         if index == root_index {
+            continue;
+        }
+        if available_slots == 0 {
+            omitted_message_count = omitted_message_count.saturating_add(1);
             continue;
         }
         let record = source_record(&events[index]);
         if record.len() <= remaining {
             remaining -= record.len();
             selected.push(index);
+            available_slots -= 1;
         } else {
             omitted_message_count = omitted_message_count.saturating_add(1);
         }
@@ -846,6 +976,7 @@ fn build_thread_source(
         events: manifest_events,
         included_event_ids: event_ids.clone(),
         omitted_message_count,
+        source_overflow,
         max_input_bytes: super::recap_adapter::RECAP_INPUT_LIMIT as u64,
     };
     let manifest_bytes =
@@ -858,6 +989,7 @@ fn build_thread_source(
         manifest_hash,
         event_ids,
         omitted_message_count,
+        source_overflow,
         oldest_included_event_id,
         newest_included_event_id,
     })
@@ -890,22 +1022,70 @@ async fn collect_thread_source(
         return Err("source_unavailable".to_string());
     };
 
-    let replies = super::super::relay::query_relay_at_with_keys(
-        state,
-        &relay_http,
-        &[serde_json::json!({
+    // `get_thread_replies` is intentionally chronological (ASC) because the
+    // desktop timeline walks forward with a composite cursor. Do the same here
+    // until a short page proves EOF, retaining at most a bounded tail. A full
+    // page after the scan ceiling is a sentinel that marks the source as
+    // incomplete; it never gets reported as a complete thread snapshot.
+    let page_limit = MAX_SOURCE_EVENTS as u32;
+    let mut replies = Vec::new();
+    let mut source_overflow = false;
+    let mut cursor: Option<(u64, String)> = None;
+    let mut last_page_tail: Option<String> = None;
+
+    loop {
+        let mut filter = serde_json::json!({
             "#e": [root_event_id],
             "#h": [channel_id],
             "kinds": THREAD_SOURCE_KINDS,
             "depth_limit": 64,
-            "limit": MAX_SOURCE_EVENTS as u32,
-            "include_aux": true,
-        })],
-        &owner_scope.keys,
-        None,
-    )
-    .await
-    .map_err(|_| "source_unavailable".to_string())?;
+            "limit": page_limit,
+            "include_aux": false,
+        });
+        if let Some((created_at, event_id)) = &cursor {
+            filter["thread_cursor"] = serde_json::json!(created_at);
+            filter["thread_cursor_id"] = serde_json::json!(event_id);
+        }
+
+        let page = super::super::relay::query_relay_at_with_keys(
+            state,
+            &relay_http,
+            &[filter],
+            &owner_scope.keys,
+            None,
+        )
+        .await
+        .map_err(|_| "source_unavailable".to_string())?;
+        let page_len = page.len();
+        let page_tail = page.last().map(|event| event.id.to_hex());
+        if page_len == 0 {
+            break;
+        }
+
+        if page_tail == last_page_tail {
+            // A relay that ignores the cursor would otherwise make this read
+            // loop forever while repeatedly appending the same page.
+            return Err("source_unavailable".to_string());
+        }
+        last_page_tail = page_tail.clone();
+        let (page_len, page_overflow) = append_source_scan_page(&mut replies, page);
+
+        if page_overflow {
+            source_overflow = true;
+            // Replies are ASC, so this is the newest window observed before
+            // the bounded scan stopped. Newer replies may still exist; the
+            // overflow bit prevents callers from treating this as current.
+            break;
+        }
+        if page_len < page_limit as usize {
+            break;
+        }
+
+        let Some(tail) = replies.last() else {
+            break;
+        };
+        cursor = Some((tail.created_at.as_secs(), tail.id.to_hex()));
+    }
 
     let mut events = Vec::with_capacity(replies.len() + 1);
     events.push(root);
@@ -914,14 +1094,25 @@ async fn collect_thread_source(
             .into_iter()
             .filter(|event| event_in_channel(event, channel_id)),
     );
-    events.sort_by(|left, right| {
-        left.created_at
-            .as_secs()
-            .cmp(&right.created_at.as_secs())
-            .then_with(|| left.id.to_hex().cmp(&right.id.to_hex()))
-    });
-    events.dedup_by(|left, right| left.id == right.id);
-    build_thread_source(events, channel_id, root_event_id)
+    build_thread_source_with_overflow(events, channel_id, root_event_id, source_overflow)
+}
+
+fn recap_status(
+    source_overflow: bool,
+    settings_is_valid: bool,
+    settings_match: bool,
+    source_match: bool,
+) -> (&'static str, Option<&'static str>) {
+    if source_overflow {
+        // The bounded ASC scan cannot prove that its observed tail is the
+        // thread's newest tail. Preserve the artifact for explicit review, but
+        // never report it as current while newer replies may be unobserved.
+        ("stale", Some("source_overflow"))
+    } else if !settings_is_valid || !settings_match || !source_match {
+        ("stale", None)
+    } else {
+        ("current", None)
+    }
 }
 
 /// Read the latest owner-local artifact and compare it with the current thread
@@ -957,17 +1148,16 @@ pub(crate) async fn get_thread_recap(
     };
     let source = collect_thread_source(&state, &owner_scope, &channel_id, &root_event_id).await?;
     crate::app_state::owner_scope::assert_current(app.clone(), &owner_scope.token).await?;
-    let status = if !settings_is_valid || artifact.settings_fingerprint != settings_fingerprint {
-        "stale"
-    } else if artifact.recap.source_manifest_hash == source.manifest_hash {
-        "current"
-    } else {
-        "stale"
-    };
+    let (status, reason) = recap_status(
+        source.source_overflow,
+        settings_is_valid,
+        artifact.settings_fingerprint == settings_fingerprint,
+        artifact.recap.source_manifest_hash == source.manifest_hash,
+    );
     Ok(ThreadRecapLookup {
         status: status.to_string(),
         recap: Some(artifact.recap),
-        reason: None,
+        reason: reason.map(str::to_string),
     })
 }
 
@@ -1071,18 +1261,13 @@ pub(crate) async fn generate_thread_recap(
     let settings = load_settings(&app, &viewer_pubkey, &relay_origin)?;
     let runtimes = runtime_inventory(&app);
     let settings = validate_settings(&settings, &runtimes)?;
-    let snapshot = RecapSettingsSnapshot {
-        settings: settings.clone(),
-        runtimes,
-    };
     let Some(runtime_id) = settings.runtime_id.clone() else {
         return Err("runtime_not_ready".to_string());
     };
     if settings.mode != RecapMode::Manual {
         return Err("recap_off".to_string());
     }
-    let Some(runtime) = snapshot
-        .runtimes
+    let Some(_runtime) = runtimes
         .iter()
         .find(|runtime| runtime.id == runtime_id && runtime.availability == "supported")
     else {
@@ -1091,28 +1276,27 @@ pub(crate) async fn generate_thread_recap(
     let model = settings
         .requested_model
         .clone()
-        .or_else(|| runtime.models.first().cloned())
         .ok_or_else(|| "invalid_model_selection".to_string())?;
-    let source = collect_thread_source(&state, &owner_scope, &channel_id, &root_event_id).await?;
-    crate::app_state::owner_scope::assert_current(app.clone(), &owner_scope.token).await?;
     let settings_fingerprint = settings_fingerprint(&settings)?;
     let key = generation_key(&relay_origin, &viewer_pubkey, &channel_id, &root_event_id);
-    let cancelled = register_generation(&key, &generation_id)?;
+    let generation = GenerationGuard::register(&key, &generation_id)?;
     // Close the capture/register race: a settings, identity, or relay change
-    // that lands after source collection must still prevent this generation
-    // from reaching the provider. Once registered, the cancellation flag also
-    // covers a change that wins immediately after this check.
+    // that lands before or during source collection must still prevent this
+    // generation from reaching the provider. The guard unregisters it on all
+    // early returns and task failures.
     if let Err(error) =
         crate::app_state::owner_scope::assert_current(app.clone(), &owner_scope.token).await
     {
-        cancelled.store(true, Ordering::Release);
-        unregister_generation(&key, &generation_id);
+        generation.cancelled().store(true, Ordering::Release);
         return Err(error);
     }
-    let runner_cancelled = cancelled.clone();
+    let source = collect_thread_source(&state, &owner_scope, &channel_id, &root_event_id).await?;
+    crate::app_state::owner_scope::assert_current(app.clone(), &owner_scope.token).await?;
+    let runner_cancelled = generation.cancelled().clone();
     let request = RecapRequest {
         runtime_id: runtime_id.clone(),
         model: model.clone(),
+        profile_ref: settings.profile_ref.clone(),
         input: source.prompt.clone(),
     };
     let app_for_run = app.clone();
@@ -1120,7 +1304,7 @@ pub(crate) async fn generate_thread_recap(
         run_recap_sync_with_cancel(app_for_run, request, runner_cancelled)
     })
     .await;
-    let result = match task_result {
+    match task_result {
         Err(_) => Err("recap_task_failed".to_string()),
         Ok(Err(error)) => Err(error),
         Ok(Ok(text)) => {
@@ -1136,6 +1320,7 @@ pub(crate) async fn generate_thread_recap(
                 source_manifest_hash: source.manifest_hash,
                 source_event_ids: source.event_ids,
                 omitted_message_count: source.omitted_message_count,
+                source_overflow: source.source_overflow,
                 oldest_included_event_id: source.oldest_included_event_id,
                 newest_included_event_id: source.newest_included_event_id,
             };
@@ -1149,9 +1334,7 @@ pub(crate) async fn generate_thread_recap(
             };
             commit_artifact(&app, &key, &generation_id, &artifact)
         }
-    };
-    unregister_generation(&key, &generation_id);
-    result
+    }
 }
 
 /// Request cancellation for exactly one active thread generation.
@@ -1237,6 +1420,18 @@ mod tests {
     }
 
     #[test]
+    fn generation_guard_unregisters_on_every_drop_path() {
+        let _guard = REGISTRY_TEST_MUTEX.lock().unwrap();
+        let key = "guard-relay\0guard-viewer\0channel\0root";
+        {
+            let generation = GenerationGuard::register(key, "g-guard").unwrap();
+            assert!(generation_is_current(key, "g-guard"));
+            generation.cancelled().store(true, Ordering::Release);
+        }
+        assert!(!generation_is_current(key, "g-guard"));
+    }
+
+    #[test]
     fn cache_key_binds_source_and_settings_fingerprints() {
         let base = recap_key_digest("https://relay", "viewer", "channel", "root", "a", "b");
         assert_ne!(
@@ -1304,6 +1499,116 @@ mod tests {
         assert!(source.prompt.contains("root"));
         assert!(source.prompt.contains("older"));
         assert!(!source.prompt.contains(&"x".repeat(1024)));
+    }
+
+    #[test]
+    fn source_cap_preserves_newest_page_instead_of_oldest_page() {
+        let channel_id = "550e8400-e29b-41d4-a716-446655440000";
+        let root = event("root", 1, channel_id);
+        let root_id = root.id.to_hex();
+        let mut events = vec![root];
+        for created_at in 2..=301 {
+            events.push(event(format!("reply-{created_at}"), created_at, channel_id));
+        }
+
+        let source = build_thread_source(events, channel_id, &root_id).unwrap();
+        assert_eq!(source.event_ids.len(), MAX_SOURCE_EVENTS);
+        assert!(source.omitted_message_count > 0);
+        assert!(source.prompt.contains("reply-301"));
+        assert!(!source.prompt.lines().any(|line| line.ends_with(" reply-2")));
+        assert_eq!(
+            source.newest_included_event_id.as_deref(),
+            source.event_ids.last().map(String::as_str)
+        );
+    }
+
+    #[test]
+    fn source_scan_ceiling_marks_prefix_truncation_and_keeps_observed_tail() {
+        let channel_id = "550e8400-e29b-41d4-a716-446655440000";
+        let mut replies = Vec::new();
+        let mut overflow = false;
+        for page_index in 0..17 {
+            let start = page_index * MAX_SOURCE_EVENTS + 1;
+            let page = (start..start + MAX_SOURCE_EVENTS)
+                .map(|created_at| {
+                    event(format!("reply-{created_at}"), created_at as u64, channel_id)
+                })
+                .collect();
+            let (_, page_overflow) = append_source_scan_page(&mut replies, page);
+            if page_overflow {
+                overflow = true;
+                break;
+            }
+        }
+
+        assert!(overflow);
+        assert_eq!(replies.len(), MAX_SOURCE_SCAN_EVENTS);
+        assert_eq!(
+            replies.first().map(|event| event.content.as_str()),
+            Some("reply-257")
+        );
+        assert_eq!(
+            replies.last().map(|event| event.content.as_str()),
+            Some("reply-4352")
+        );
+    }
+
+    #[test]
+    fn source_overflow_is_carried_into_the_manifest_input() {
+        let channel_id = "550e8400-e29b-41d4-a716-446655440000";
+        let root = event("root", 1, channel_id);
+        let root_id = root.id.to_hex();
+        let source =
+            build_thread_source_with_overflow(vec![root], channel_id, &root_id, true).unwrap();
+        assert!(source.source_overflow);
+        assert!(source.manifest_hash.len() == 64);
+    }
+
+    #[test]
+    fn source_overflow_can_never_report_a_current_recap() {
+        assert_eq!(
+            recap_status(true, true, true, true),
+            ("stale", Some("source_overflow"))
+        );
+        assert_eq!(recap_status(false, true, true, true), ("current", None));
+    }
+
+    #[test]
+    fn manual_settings_require_explicit_model_and_bound_profile() {
+        let supported = RecapRuntimeOption {
+            id: "hermes".to_string(),
+            label: "Hermes Agent".to_string(),
+            kind: "hermes".to_string(),
+            availability: "supported".to_string(),
+            reason: None,
+            capability_fingerprint: Some("fingerprint".to_string()),
+            profiles: vec![RecapProfileOption {
+                id: "scout".to_string(),
+                label: "scout".to_string(),
+            }],
+            models: vec!["hermes-low".to_string()],
+        };
+        let missing_model = RecapSettings {
+            mode: RecapMode::Manual,
+            runtime_id: Some("hermes".to_string()),
+            profile_ref: Some("scout".to_string()),
+            capability_fingerprint: Some("fingerprint".to_string()),
+            ..default_settings()
+        };
+        assert_eq!(
+            validate_settings(&missing_model, std::slice::from_ref(&supported)),
+            Err("missing_selection".to_string())
+        );
+
+        let wrong_profile = RecapSettings {
+            requested_model: Some("hermes-low".to_string()),
+            profile_ref: Some("other".to_string()),
+            ..missing_model
+        };
+        assert_eq!(
+            validate_settings(&wrong_profile, std::slice::from_ref(&supported)),
+            Err("profile_mismatch".to_string())
+        );
     }
 
     #[test]

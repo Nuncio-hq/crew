@@ -190,9 +190,6 @@ impl VerifiedStagingOwnership {
             || grant.home != self.native.home
             || grant.app_data != self.native.app_data
             || grant.bundle_id != self.native.bundle_id
-            // The only production adapter currently wired is the explicit
-            // model recipe; accepting a profile here would silently ignore it.
-            || grant.selection.profile.is_some()
             || !is_sha256(&grant.ownership_sha256)
         {
             return Err(RecapStateFailure::RuntimeNotReady);
