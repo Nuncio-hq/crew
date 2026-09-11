@@ -507,7 +507,7 @@ restart/recovery proof remains a separate acceptance requirement. Never point
 the harness at a shared or production relay; it intentionally leaves its
 disposable repository data in place.
 
-## Wiki journal v2 recovery
+## Wiki journal v3 recovery
 
 Cancellation acceptance must cover an uncertain head send followed by Cancel,
 process restart and read-only Reconcile. None may implicitly submit again.
@@ -518,10 +518,10 @@ changed live head must resolve as superseded. Verify that typed immutable
 retirement remains Regenerate-only: Cancel and Resume must preserve its typed
 proof and unresolved claim. Reconciled cancellation stays terminal.
 
-Schema v2 and permanent-dependency Regenerate are accepted designs whose
-implementation and runtime evidence remain pending in #362. Release acceptance
-must exercise migration from an existing v1 journal, preserving all owners,
-communities, payloads, revisions and claims. Reopening v2 must be idempotent;
+Schema v3 and permanent-dependency Regenerate are accepted designs whose runtime
+evidence remains pending in #362. Release acceptance must exercise both
+forward migrations from an existing v1 journal, preserving all owners,
+communities, payloads, revisions and claims. Reopening v3 must be idempotent;
 an older reader must refuse it visibly. Injected migration, quota and commit
 failures must preserve the exact predecessor. Test every trim/removal path with
 a pinned direct predecessor, including A→B→C and unrelated scoped operations.
@@ -558,24 +558,24 @@ restart must still send nothing.
 
 After migration, binary rollback alone is unsupported. The forward-recovery
 procedure is to quit every app instance using this journal, preserve its full
-directory, verify a v2-capable build and reopen the same journal. Set the paths
+directory, verify a v3-capable build and reopen the same journal. Set the paths
 below from the exact affected app's native app-data directory and verified app
 bundle; never substitute another staging profile or an old database snapshot.
 
 ```sh
 : "${CREW_APP_DATA:?Set the verified affected app-data directory}"
-: "${CREW_VERIFIED_V2_APP:?Set the verified v2-capable app bundle}"
+: "${CREW_VERIFIED_V3_APP:?Set the verified v3-capable app bundle}"
 umask 077
 CREW_RECOVERY_DB="$CREW_APP_DATA/owner-operations/recovery.db"
-CREW_RECOVERY_COPY="$(mktemp -d "${TMPDIR:-/tmp}/crew-recovery-v2.XXXXXX")"
+CREW_RECOVERY_COPY="$(mktemp -d "${TMPDIR:-/tmp}/crew-recovery-v3.XXXXXX")"
 ditto "$CREW_APP_DATA/owner-operations" "$CREW_RECOVERY_COPY/owner-operations"
 sqlite3 -readonly "$CREW_RECOVERY_DB" 'PRAGMA user_version; PRAGMA integrity_check;'
-open "$CREW_VERIFIED_V2_APP"
+open "$CREW_VERIFIED_V3_APP"
 ```
 
 Run those commands only after app shutdown, with `CREW_APP_DATA` and
-`CREW_VERIFIED_V2_APP` already set to verified absolute paths. Preserve any
-SQLite sidecar in the directory copy. Expect schema `2` and integrity `ok`;
+`CREW_VERIFIED_V3_APP` already set to verified absolute paths. Preserve any
+SQLite sidecar in the directory copy. Expect schema `3` and integrity `ok`;
 otherwise retain the files and investigate with a compatible forward fix.
 Reconcile or retry the durable job through the app and confirm its exact signed
 IDs against a fresh protocol-client read. Do not delete the journal, reset its

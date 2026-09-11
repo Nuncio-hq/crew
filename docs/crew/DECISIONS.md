@@ -2177,16 +2177,18 @@ a new head that commits first prevents the old precondition from overwriting
 it. This is not an everlasting fence after a later generic deletion. Recovery
 must prove both orderings and that a conflict cannot strand a permanent claim.
 
-**Recovery schema compatibility.** The Wiki successor relation requires an
-atomic, idempotent journal schema v1-to-v2 migration preserving every existing
-scoped payload, revision and unresolved claim. Older binaries refuse v2 rather
-than ignoring its retention pins. Reverting only the binary is therefore not a
-safe rollback after migration. Stop publication, preserve the complete v2
-journal and any SQLite sidecar, and recover with a verified v2-capable build or
-forward fix. Restoring a stale v1 backup that discards later operations is not
-permitted. A downgrade requires a separate verified conversion; none is part of
-this change. Migration failure, older-reader refusal and executable forward
-recovery remain release acceptance requirements.
+**Recovery schema compatibility.** The owner-operations journal reaches schema
+v3 through two atomic, idempotent migrations: v1-to-v2 adds the managed-agent
+deletion claim, and v2-to-v3 adds the Wiki successor relation. Both preserve
+every existing scoped payload, revision and unresolved claim. Older binaries
+refuse v3 rather than ignoring its retention pins or managed-delete invariant.
+Reverting only the binary is therefore not a safe rollback after migration.
+Stop publication, preserve the complete v3 journal and any SQLite sidecar, and
+recover with a verified v3-capable build or forward fix. Restoring a stale v1
+backup that discards later operations is not permitted. A downgrade requires a
+separate verified conversion; none is part of this change. Migration failure,
+older-reader refusal and executable forward recovery remain release acceptance
+requirements.
 
 **Channel canvas consumer (#350).** Role edits and member cleanup use this shared
 journal rather than the retention-DB placement originally proposed in the issue.
