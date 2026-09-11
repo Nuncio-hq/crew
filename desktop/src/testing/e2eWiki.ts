@@ -169,6 +169,63 @@ export function seedGeneratedWiki(
   return events;
 }
 
+/**
+ * Return the same legacy-shaped coherent graph that the native snapshot read
+ * exposes to the renderer. The E2E bridge does not verify cryptographic
+ * signatures, but it must still exercise the production snapshot boundary so
+ * Wiki library/page smoke coverage remains useful after the canonical read
+ * moved out of the ambient relay subscription.
+ */
+export function readE2eWikiSnapshot(
+  owner: string,
+  repoD: string,
+): {
+  state: "legacy" | "missing";
+  head: RelayEvent | null;
+  manifest: null;
+  pages: RelayEvent[];
+  error: null;
+  repo_state: RelayEvent | null;
+} {
+  const headD = `${repoD}/_toc`;
+  const head = wikiEvents.find(
+    (event) =>
+      event.kind === KIND_REPO_WIKI_PAGE &&
+      event.pubkey.toLowerCase() === owner.toLowerCase() &&
+      event.tags.some((tag) => tag[0] === "d" && tag[1] === headD),
+  );
+  if (!head) {
+    return {
+      state: "missing",
+      head: null,
+      manifest: null,
+      pages: [],
+      error: null,
+      repo_state: null,
+    };
+  }
+  const pages = wikiEvents.filter(
+    (event) =>
+      event.kind === KIND_REPO_WIKI_PAGE &&
+      event.pubkey.toLowerCase() === owner.toLowerCase() &&
+      event.tags.some(
+        (tag) => tag[0] === "d" && tag[1]?.startsWith(`${repoD}/`),
+      ) &&
+      !event.tags.some((tag) => tag[0] === "d" && tag[1] === headD),
+  );
+  // Repository freshness is supplied by the bridge's independent NIP-34
+  // project-event fixture. Deriving it from this Wiki head would make stale
+  // state impossible to observe in the smoke test.
+  return {
+    state: "legacy",
+    head,
+    manifest: null,
+    pages,
+    error: null,
+    repo_state: null,
+  };
+}
+
 export function seedCompanyWiki(
   pubkey: string,
   options?: { proposal?: boolean },
