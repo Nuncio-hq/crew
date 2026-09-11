@@ -10,7 +10,9 @@ use super::wiki_publication_runtime::{coordinate_parts, now, NativeWikiPublicati
 use crate::app_state::owner_scope::{assert_current, OwnerScopeToken};
 use crate::commands::resolve_wiki_runtime_selection;
 use crate::managed_agents::wiki_runtime::WikiRuntimeSelection;
-use crate::owner_operations::{NewOperation, OperationKind, OperationStatus, OperationUpdate};
+use crate::owner_operations::{
+    NewOperation, Operation, OperationKind, OperationStatus, OperationUpdate,
+};
 use crate::wiki_worker::WikiGeneration;
 use crew_wiki::snapshot_v1_build::{build_cadence_update, build_snapshot, SnapshotBuild};
 use serde::Serialize;
@@ -137,6 +139,18 @@ use projection::{
     job_from_operation, job_from_projection, ForegroundDecision,
 };
 pub(super) use projection::{cancel_intent, wiki_operation_summaries, wiki_operations};
+
+/// Admit a Cancel against the durable row before signaling its foreground
+/// generation. Keeping this ordering in one production seam makes the
+/// Regenerate-only refusal atomic with respect to the cancellation registry.
+pub(super) fn admit_cancel_generation(
+    operation: &Operation,
+    generation_key: &str,
+) -> Result<WikiPublicationRecord, String> {
+    let record = cancel_intent(operation)?;
+    super::super::wiki_worker::cancel_generation(generation_key);
+    Ok(record)
+}
 
 // The Cancel guard's predicate and its exact refusal text are consumed by the
 // recovery regression suite, not by the shipping library: `cancel_intent` is
@@ -734,9 +748,9 @@ pub(crate) async fn wiki_publication_cancel(
     // A prepare/regenerate call may still own a local runtime while the
     // renderer submits Cancel. This flag only reaches the process registered
     // for this exact owner/community/repository; it never touches an employee
-    // runtime or another community.
-    super::super::wiki_worker::cancel_generation(&generation_key);
-    let mut record = cancel_intent(&operation)?;
+    // runtime or another community. The production seam validates the durable
+    // row first, so a stale Cancel cannot stop an active Regenerate.
+    let mut record = admit_cancel_generation(&operation, &generation_key)?;
     let runtime =
         NativeWikiPublication::new(app.clone(), expected.clone(), &operation.resource_key).await?;
     let current_head = runtime.current_head().await?;

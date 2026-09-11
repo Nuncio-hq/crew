@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::commands::wiki_publication_commands::{
-    cancel_intent, may_cancel, RETIRED_CANCEL_REFUSAL,
+    admit_cancel_generation, cancel_intent, may_cancel, RETIRED_CANCEL_REFUSAL,
 };
 use crate::commands::wiki_publication_driver::{may_resume, WikiHeadRetirementProof};
 use crate::commands::wiki_publication_record::WikiHeadRetirement;
@@ -247,10 +247,22 @@ async fn cancel_refuses_a_typed_retired_dependency_and_preserves_its_proof() {
     assert!(!may_cancel(&before));
 
     // Exactly the durable row a Cancel click loads, through the command's own
-    // prelude.
+    // production admission seam. Register a newer foreground generation first
+    // so the test is falsifiable: moving the cancellation signal above the
+    // durable refusal would flip this token.
     let durable = journal.reopened(&id);
-    let refusal = cancel_intent(&durable).expect_err("Cancel must refuse a retired row");
+    let generation_key =
+        crate::wiki_worker::generation_cancel_key(&durable.scope.community, &durable.resource_key);
+    let token = crate::wiki_worker::begin_generation_cancel(&generation_key)
+        .expect("active generation token");
+    let refusal = admit_cancel_generation(&durable, &generation_key)
+        .expect_err("Cancel must refuse a retired row");
     assert_eq!(refusal, RETIRED_CANCEL_REFUSAL);
+    assert!(
+        !token.load(Ordering::Acquire),
+        "refused Cancel did not stop Regenerate"
+    );
+    crate::wiki_worker::finish_generation_cancel(&generation_key, &token);
 
     // The refusal happens before the runtime is built, so nothing was read
     // from the relay and nothing was written to the journal.

@@ -162,7 +162,7 @@ pub(crate) async fn resolve_wiki_runtime_selection<R: Runtime>(
     .map_err(|_| "Wiki runtime settings read failed.".to_string())??;
     assert_current(app, expected).await?;
     selection.ok_or_else(|| {
-        "Wiki generation requires an installed runtime selection; configure one in Wiki settings."
+        "Wiki generation requires an installed runtime selection; choose one with the Wiki Runtime control."
             .to_string()
     })
 }

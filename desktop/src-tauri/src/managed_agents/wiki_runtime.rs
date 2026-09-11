@@ -342,8 +342,6 @@ impl WikiRuntimeGenerator {
                 command
                     .env("HERMES_HOME", self.state_dir.join("hermes"))
                     .args([
-                        "--safe-mode",
-                        "--ignore-user-config",
                         "--ignore-rules",
                         "--no-restore-cwd",
                         // `context_engine` is the installed Hermes CLI's
@@ -927,12 +925,30 @@ mod tests {
             .expect("generated");
         assert!(output.contains(state.join("home").to_str().expect("home")));
         assert!(output.contains(state.join("hermes").to_str().expect("hermes")));
-        assert!(output.contains("--safe-mode"));
         assert!(output.contains("|yes"));
         assert!(
             !output.contains("source-secret-fixture"),
             "fake output is not the model; prompt is argv and not echoed"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hermes_profile_launch_keeps_staged_profile_config_enabled() {
+        let (fixture, executable) = fake_runtime("#!/bin/sh\nprintf '%s' \"$@\"\n");
+        let state = fixture.path().join("state");
+        let generator =
+            WikiRuntimeGenerator::with_executable(hermes("wiki-proof"), executable, state)
+                .expect("generator");
+        let args = generator
+            .command(Some("prompt"))
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(args.windows(2).any(|pair| pair == ["-p", "wiki-proof"]));
+        assert!(args.iter().any(|arg| arg == "--toolsets"));
+        assert!(!args.iter().any(|arg| arg == "--safe-mode"));
+        assert!(!args.iter().any(|arg| arg == "--ignore-user-config"));
     }
 
     #[cfg(unix)]
